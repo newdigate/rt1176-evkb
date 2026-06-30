@@ -47,6 +47,7 @@ on its own:
 | GPIO (`digital`/`pinMode`) | `pinMode`/`digitalWrite`/`digitalRead` | IOMUXC, GPIO regs |
 | `pins_arduino.h` (EVKB) | Arduino pin number ↔ pad/GPIO map | board schematic |
 | `main.c` | setup/loop + yield/EventResponder hook | reused from teensy4 |
+| `teensy-cmake-macros` (branch) | RT1176 build profile (defines, linker, F_CPU, core path) | toolchain |
 
 ## Section 1 — Repo layout
 
@@ -57,21 +58,31 @@ Mirror the rt1060 pattern at `~/Development/rt1170/evkb/`:
   cores/                 # clone of newdigate/teensy-cores, new branch `imxrt1176`
     imxrt1176/           # NEW core, derived from cores/teensy4 (teensy4 stays intact)
   blink/                 # first example sketch (CMake)
-  teensy-cmake-macros/   # build system (reuse upstream)
+  teensy-cmake-macros/   # clone of newdigate/teensy-cmake-macros, new branch `imxrt1176`
   docs/                  # this spec and later design docs
 ```
 
 A **fresh `cores/imxrt1176`** directory (not edits to `teensy4`) keeps the RT1062
-core intact and lets the RT1176 port diverge cleanly. Board name:
+core intact and lets the RT1176 port diverge cleanly. The build macros also need
+a **branch of `newdigate/teensy-cmake-macros`** (see Section 2). Board name:
 **MIMXRT1170-EVKB**.
 
 ## Section 2 — Build & run
 
 Same CMake flow as rt1060: `teensy-cmake-macros` →
-`import_arduino_library(cores .../imxrt1176)` → `teensy_add_executable`. The
-macros gain an RT1176 toolchain/flags profile (CM7, `-mcpu=cortex-m7`,
-hard-float FPU). Output is a `flexspi_nor` image (FCB+IVT+boot_data, linked at
-`0x30000000`).
+`import_arduino_library(cores .../imxrt1176)` → `teensy_add_executable`.
+
+**`teensy-cmake-macros` needs its own branch (`imxrt1176`).** The macros select
+chip config from a `TEENSY_VERSION`-keyed block (the rt1060 EVKB already added a
+`42 → imxrt1060_evkb.ld, __IMXRT1062__` profile). RT1176 adds a new profile:
+- `CPU_DEFINE = __IMXRT1176__`, board define e.g. `ARDUINO_MIMXRT1170_EVKB`
+- `LINKER_FILE = imxrt1176.ld`, `COREPATH` → the `imxrt1176` core
+- `F_CPU = 996000000`
+- CPU/FPU flags unchanged (`-mcpu=cortex-m7 -mfloat-abi=hard -mfpu=fpv5-d16`)
+- image generation (objcopy → `.hex`/`.bin`) reused; the `flexspi_nor` boot
+  header comes from the core's `bootdata.c`, not the macros
+
+Output is a `flexspi_nor` image (FCB+IVT+boot_data, linked at `0x30000000`).
 
 - **QEMU:** `qemu-system-arm -M mimxrt1170-evk -global
   fsl-imxrt1170.boot-xip=on -kernel blink.elf` (or boot the `.bin` via
