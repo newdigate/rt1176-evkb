@@ -1,0 +1,7 @@
+cmake-build-*/
+build/
+*.elf
+*.hex
+*.bin
+*.map
+.DS_Store
