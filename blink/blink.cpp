@@ -5,8 +5,9 @@ void setup() {
 }
 
 void loop() {
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(500);
-    digitalWrite(LED_BUILTIN, LOW);
-    delay(500);
+    // Distinctive "heartbeat": blink-blink, then a long pause.
+    digitalWrite(LED_BUILTIN, HIGH); delay(120);
+    digitalWrite(LED_BUILTIN, LOW);  delay(120);
+    digitalWrite(LED_BUILTIN, HIGH); delay(120);
+    digitalWrite(LED_BUILTIN, LOW);  delay(640);
 }
