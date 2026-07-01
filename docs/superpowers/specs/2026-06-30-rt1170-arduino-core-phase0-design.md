@@ -159,3 +159,26 @@ later phases.
   the LED's controller/bit mapping against the RM during implementation.
 - **EVKB Arduino-header pinout** completeness — Phase 0 needs only LED + a starter
   set; full mapping can extend within the phase.
+
+## Verification result (2026-07-01)
+
+**Phase 0 complete: QEMU ✓ and EVKB hardware ✓.** LED D6 blinks.
+
+Hardware bring-up exposed three real bugs that QEMU's leniency had hidden (and
+which motivate making the QEMU model stricter):
+1. **IVT `csf` != 0** — teensy4's signed-boot placeholder made the real RT1176
+   BootROM attempt HAB auth and refuse to boot. Fixed: `csf = 0` (unsigned).
+2. **`_estack` in phantom DTCM** — the teensy FlexRAM formula put the stack in a
+   480K DTCM that startup never configures; the BootROM-default DTCM is ~128K, so
+   the first push bus-faulted. Fixed: stack in dedicated OCRAM.
+3. **`delay()` hung on SysTick `millis`** — the SysTick tick ISR does not advance
+   `millis()` on silicon, so a millis-based delay spun forever. Fixed: `delay()`
+   uses the free-running DWT cycle counter.
+
+### Known follow-ups (not gating Phase 0)
+- `millis()`/`micros()` still depend on the SysTick ISR, which isn't advancing on
+  hardware — root-cause (RT1176 SysTick clock-source/calibration) before Phase 1.
+- Proper FlexRAM/TCM bank configuration (currently deferred; stack parked in OCRAM).
+- Full ARM PLL fabric / bus+peripheral clock roots for accurate on-hardware timing.
+- Make the QEMU model stricter (validate IVT `csf`, model FlexRAM default, model
+  SysTick faithfully) so these are caught in emulation next time.
