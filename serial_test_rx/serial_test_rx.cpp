@@ -2,7 +2,9 @@
 #include "core_pins.h"
 #include "HardwareSerial.h"
 
-static volatile uint32_t echoed = 0;
+// Not volatile: written only in serialEvent1() (called from yield(), same thread
+// as loop()), never from an ISR — unlike the core's serial1_rx_isr_count.
+static uint32_t echoed = 0;
 
 // serialEvent1() overrides the weak default in HardwareSerial1.cpp.  It is the
 // ONLY echo path: yield() calls it (between loop() iterations) when RX data is
