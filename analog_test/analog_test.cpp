@@ -12,6 +12,10 @@ static void adc_cb(uint16_t v) { async_val = v; async_fired = 1; }
 void setup() {
     Serial1.begin(115200);
     Serial1.println("RT1176 LPADC test");
+    // Hardware: mux A0 (GPIO_AD_06) to a non-driving ALT so LPADC1 ch0 can tap the
+    // pad (SDK lpadc example: ALT5 GPIO_MUX3_IO05, pad 0x02). No-op under QEMU.
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_06 = 5u;
+    IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_06 = 0x02u;
     Serial1.print("adc1_ch5=");     Serial1.println(analogReadChannel(0, 5));    // 0x555>>2 = 341
     Serial1.print("adc2_ch3=");     Serial1.println(analogReadChannel(1, 3));    // 0x333>>2 = 204
     analogReadResolution(12);
