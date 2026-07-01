@@ -1,13 +1,17 @@
 #include "Arduino.h"
 
+// millis()-based blink (no delay()) - proves millis() works on hardware.
+static uint32_t last = 0;
+static bool on = false;
+
 void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
 }
 
 void loop() {
-    // Distinctive "heartbeat": blink-blink, then a long pause.
-    digitalWrite(LED_BUILTIN, HIGH); delay(120);
-    digitalWrite(LED_BUILTIN, LOW);  delay(120);
-    digitalWrite(LED_BUILTIN, HIGH); delay(120);
-    digitalWrite(LED_BUILTIN, LOW);  delay(640);
+    if (millis() - last >= 250) {   // toggle every 250 ms -> ~2 Hz
+        last = millis();
+        on = !on;
+        digitalWrite(LED_BUILTIN, on ? HIGH : LOW);
+    }
 }
