@@ -7,3 +7,4 @@ build/
 .DS_Store
 serial.uart
 serial.dbg
+*.dbg
