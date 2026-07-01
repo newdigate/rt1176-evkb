@@ -51,40 +51,68 @@ GPR14 @ `+0x38`, GPR16 @ `+0x40`, GPR17 @ `+0x44`.
 
 ## Architecture / change
 
-Single-file change plus a generated-register addition. Two units:
+A generated-register addition plus two coordinated edits (startup + linker):
 
 1. **Register defs** (`tools/gen_imxrt1176_h.py` → `imxrt1176.h`): emit
    `IOMUXC_GPR_GPR14`, `IOMUXC_GPR_GPR16`, `IOMUXC_GPR_GPR17` (if not already
    present) at `IOMUXC_GPR_BASE + {0x38, 0x40, 0x44}`.
 
-2. **FlexRAM init** (`startup.c` `ResetHandler`): as the **first** statements
-   (before FPU enable and all memory copies), write GPR17 = `&_flexram_bank_config`,
-   GPR16 = `0x00200007`, GPR14 = `0x00AA0000`. Declare
-   `extern uint32_t _flexram_bank_config;` (already a linker symbol used by the ld
-   script). `ResetHandler` and `memory_copy`/`memory_clear` are FLASH-resident
-   (`section(".startup")`), so they execute before ITCM is populated — the GPR
-   writes correctly precede any ITCM-resident call.
+2. **FlexRAM init** (`startup.c` `ResetHandler`): as the **very first** statements
+   (before setting SP, before FPU enable and all memory copies), write
+   GPR17 = `&_flexram_bank_config`, GPR16 = `0x00200007`, GPR14 = `0x00AA0000`.
+   Declare `extern uint32_t _flexram_bank_config;` (already a linker symbol).
+   `ResetHandler` is `naked` and `memory_copy`/`memory_clear` are FLASH-resident
+   (`section(".startup")`), so this runs before ITCM is populated. The three GPR
+   writes are plain register stores that use no stack, which is essential — see
+   ordering below.
+
+3. **DTCM-top stack** (`imxrt1176.ld` + `startup.c`): move `_estack` from OCRAM
+   back to the top of DTCM using the teensy4 formula (currently present but
+   commented out in the ld script):
+   ```
+   _estack = ORIGIN(DTCM) + ((16 - _itcm_block_count) << 15);
+   ```
+   i.e. DTCM base + (number of DTCM banks) × 32K. `_VectorsFlash[0]` (initial MSP)
+   already resolves to `&_estack`, so no vector-table change is needed.
+
+### Critical ordering (the Phase-0 hazard, now resolved)
+
+At reset the BootROM loads MSP from the vector table = `_estack` = DTCM-top. Under
+the *default* FlexRAM split, DTCM-top is not backed — this is exactly why Phase-0
+parked `_estack` in OCRAM ("DTCM-top `_estack` pointed at non-existent RAM and
+faulted on the first push"). The fix makes DTCM-top valid **before any push**:
+`ResetHandler` is `naked` (no prologue push); its first action is the three GPR
+writes (no stack), which re-bank FlexRAM so DTCM-top is real; only then does it
+`mov sp, &_estack` and proceed. So no stack access occurs against an unbacked
+DTCM-top. Sequence in `ResetHandler`:
+```
+GPR17 = &_flexram_bank_config;  GPR16 = 0x00200007;  GPR14 = 0x00AA0000;  /* FlexRAM banks */
+mov sp, &_estack;                                                         /* DTCM-top, now valid */
+/* FPU enable, memory_copy(.text.itcm/.data), memory_clear(.bss), RAM vectors, ... */
+```
 
 ## What stays the same (scope guard)
 
-- **`_estack` remains in OCRAM** (`0x202C0000`) — independent of FlexRAM, always
-  present. Not moved to DTCM-top; that's an optional later cleanup, not needed here.
-- **Linker script unchanged** — it already computes `_flexram_bank_config`.
+- **Linker `MEMORY`/section layout unchanged** apart from the `_estack` expression;
+  it already computes `_flexram_bank_config`/`_itcm_block_count`.
 - **MPU/cache setup deferred** — teensy4 also calls `configure_cache()` (MPU
   regions + cache enable); Phases 0–2 ran without it. Add it only if hardware still
   faults after the GPR config (incremental, one variable at a time).
 
 ## Data flow
 
-Reset → BootROM → `ResetHandler` (FLASH): write GPR17/16/14 → FlexRAM re-banks so
-ITCM = `_itcm_block_count` × 32K (rest DTCM) → `memory_copy(.text.itcm)` now lands
-in real ITCM → `.data`/`.bss` init → RAM vector table → clocks/systick →
-`__libc_init_array` → `main()`. All ITCM code now backed; virtual calls resolve.
+Reset → BootROM (loads MSP=DTCM-top from vector table, PC=ResetHandler) →
+`ResetHandler` (FLASH, `naked`): write GPR17/16/14 → FlexRAM re-banks so
+ITCM = `_itcm_block_count` × 32K and DTCM = the remaining banks (DTCM-top now
+backed) → `mov sp, &_estack` (DTCM-top) → FPU → `memory_copy(.text.itcm)` lands in
+real ITCM → `.data`/`.bss` init → RAM vector table → clocks/systick →
+`__libc_init_array` → `main()`. All ITCM code backed and the DTCM stack valid.
 
 ## Error handling
 
-- GPR writes are the first ResetHandler action; nothing ITCM-resident or
-  stack-dependent-in-DTCM runs before them (stack is OCRAM).
+- The three GPR writes are the first ResetHandler action and use no stack; SP is
+  set to DTCM-top only after they re-bank FlexRAM, so no push ever hits an unbacked
+  DTCM-top.
 - If hardware still faults after the GPR config, the single next step is the
   MPU/cache configuration (`configure_cache` equivalent) — added and retested in
   isolation.
@@ -104,7 +132,6 @@ in real ITCM → `.data`/`.bss` init → RAM vector table → clocks/systick →
 
 ## Out of scope (YAGNI)
 
-- Moving `_estack` to DTCM-top.
 - MPU region setup / cache enable (unless required after the GPR fix).
 - Any change to the LPADC driver (it is correct; the fault is core memory-map).
 - FlexRAM reconfiguration at runtime (set once at boot).
