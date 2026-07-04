@@ -9,3 +9,5 @@ serial.uart
 serial.dbg
 *.uart
 *.dbg
+*.log
+*.result
