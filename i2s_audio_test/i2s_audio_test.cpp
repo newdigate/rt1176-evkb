@@ -42,4 +42,8 @@ void setup() {
     bool ok = Codec.begin(Wire2);
     Serial1.println(ok ? "STAGE_C_PASS" : "STAGE_C_FAIL");
 }
-void loop() {}
+void loop() {
+    // Continuous transmit so BCLK/FS/DATA stay steady for a Saleae capture on
+    // hardware. 96 frames = exactly 2 full 1 kHz cycles, so this loops seamlessly.
+    I2S.write(g_sine, 96);
+}
