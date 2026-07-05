@@ -2,6 +2,18 @@
 #include "HardwareSerial.h"
 #include "I2S.h"
 
+// 1 kHz @ 48 kHz = 48 samples/cycle. L = full sine, R = half amplitude
+// (distinct so a channel swap is detectable). 2 cycles = 96 frames.
+static int16_t g_sine[96 * 2];
+static void build_sine() {
+    for (int i = 0; i < 96; i++) {
+        double ph = 2.0 * 3.14159265358979 * (i % 48) / 48.0;
+        int16_t v = (int16_t)(0x6000 * __builtin_sin(ph));
+        g_sine[2*i + 0] = v;                 // L
+        g_sine[2*i + 1] = (int16_t)(v / 2);  // R
+    }
+}
+
 void setup() {
     Serial1.begin(115200);
     delay(50);
@@ -20,5 +32,9 @@ void setup() {
     Serial1.print(" tcr5="); Serial1.println(tcr5, HEX);
     if (te && div7 && mclk1 && i2s4 && w16) Serial1.println("STAGE_A_PASS");
     else Serial1.println("STAGE_A_FAIL");
+
+    build_sine();
+    I2S.write(g_sine, 96);
+    Serial1.println("STAGE_B_DONE");   // tap capture is checked host-side
 }
 void loop() {}

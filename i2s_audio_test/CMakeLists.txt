@@ -23,3 +23,10 @@ teensy_target_link_libraries(i2s_audio_test cores)
 # i2s_audio_test.cpp / main.cpp use C++; link the std C++ runtime (nano specs set in
 # the toolchain file).
 target_link_libraries(i2s_audio_test.elf stdc++)
+
+# build_flags_libs="-lm" (teensy-cmake-macros CMakeLists.include.txt) is baked into
+# LINK_FLAGS, which CMake places BEFORE the object files on the link line -- so by the
+# time the linker sees i2s_audio_test.cpp.obj's undefined `sin` (from build_sine()'s
+# __builtin_sin), it has already passed over libm.a and won't rescan it. target_link_libraries
+# appends after the objects (same reason -lstdc++ above works), so re-link libm here too.
+target_link_libraries(i2s_audio_test.elf m)
