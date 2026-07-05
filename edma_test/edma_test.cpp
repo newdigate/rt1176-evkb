@@ -41,14 +41,13 @@ void setup() {
     build_sine();
     I2S.beginDMA(g_sine, 96);                 // static tone: no refill callback
     Serial1.println("STAGE_B_DONE");
+
+    pinMode(LED_BUILTIN, OUTPUT);
 }
 
 void loop() {
-    // DMA plays continuously with zero CPU involvement. Report once the half +
-    // complete interrupts have both fired (block count advanced past 2).
     static bool reported = false;
-    if (!reported && I2S.dmaBlockCount() >= 2) {
-        Serial1.println("STAGE_B_PASS");
-        reported = true;
-    }
+    if (!reported && I2S.dmaBlockCount() >= 2) { Serial1.println("STAGE_B_PASS"); reported = true; }
+    static bool led = false; led = !led; digitalWrite(LED_BUILTIN, led);  // core is idle except this blink -> DMA runs alone
+    delay(100);
 }
