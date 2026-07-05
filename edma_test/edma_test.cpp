@@ -29,9 +29,17 @@ void setup() {
     a_dma.begin();                        // allocate a channel, init TCD
     a_dma.sourceBuffer(a_src, sizeof(a_src));
     a_dma.destinationBuffer(a_dst, sizeof(a_dst));
+    // Real classic-eDMA runs exactly ONE minor loop per software START
+    // (triggerManual), then idles waiting for a request -- so a per-word
+    // (NBYTES=4, CITER=16) copy stalls after 4 bytes on silicon. Configure the
+    // copy as a single minor loop of the whole buffer (NBYTES = full size,
+    // CITER = 1) so one START completes it: the standard mem-to-mem eDMA idiom.
+    a_dma.TCD->NBYTES = sizeof(a_src);
+    a_dma.TCD->CITER = 1;
+    a_dma.TCD->BITER = 1;
     a_dma.interruptAtCompletion();
     a_dma.attachInterrupt(a_isr);
-    a_dma.triggerManual();                // SSRT -> START: runs the whole major loop
+    a_dma.triggerManual();                // SSRT -> START: one minor loop = full copy
     uint32_t guard = 2000000;
     while (!a_done && guard--) { }
     bool ok = a_done;
