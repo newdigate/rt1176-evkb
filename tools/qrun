@@ -1,0 +1,43 @@
+#!/bin/bash
+# qrun — drop-in wrapper for qemu-system-arm used by the gate runners.
+#
+# Why: a stuck or *orphaned* QEMU gate (e.g. the runner script gets interrupted
+# before its own `kill`, leaving QEMU running with `-d guest_errors`) can burn CPU
+# forever AND fill the disk — a runaway once wrote ~100 GB of guest-error log and
+# stalled the machine. QEMU has NO native log rotation / max-size, so we wrap it:
+#
+#   1. Run QEMU under `gtimeout` — a hard runtime cap. Even if the parent runner is
+#      SIGKILLed and QEMU is orphaned, it self-terminates after QRUN_TIMEOUT.
+#   2. Cap the guest-error log (QEMU's stderr) at QRUN_MAXLOG_MB. We keep the FIRST
+#      N MB (plenty: a healthy run logs a few KB; a runaway just repeats the same
+#      lines) and keep draining the rest to /dev/null so QEMU never blocks on a full
+#      pipe or dies on SIGPIPE.
+#
+# Drop-in usage: a runner sets  QEMU=~/Development/rt1170/evkb/tools/qrun  and keeps
+# its existing args, including `-d guest_errors -D <file>`. We intercept `-D <file>`
+# as the (capped) log target; every other arg is passed to the real QEMU untouched.
+# QEMU's stdout is left alone (so -serial file: / -serial mon:stdio still work).
+#
+# Tunables (env):
+#   QRUN_TIMEOUT    hard runtime cap, e.g. 60 or 90s  (default 60)
+#   QRUN_MAXLOG_MB  guest-error log cap in MB          (default 100)
+#   REAL_QEMU       path to the real binary  (default ~/Development/qemu2/build/qemu-system-arm)
+
+REAL_QEMU="${REAL_QEMU:-$HOME/Development/qemu2/build/qemu-system-arm}"
+TIMEOUT="${QRUN_TIMEOUT:-60}"
+MAXBYTES=$(( ${QRUN_MAXLOG_MB:-100} * 1024 * 1024 ))
+
+LOG=/dev/null
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -D) LOG="${2:-/dev/null}"; shift 2 ;;   # intercept QEMU's log-file target
+    *)  args+=("$1"); shift ;;
+  esac
+done
+: > "$LOG" 2>/dev/null || true
+
+# gtimeout bounds runtime (SIGTERM at TIMEOUT, SIGKILL 5s later if it ignores it);
+# the process-substitution caps the log to the first MAXBYTES then drains the rest.
+exec gtimeout --kill-after=5s "$TIMEOUT" "$REAL_QEMU" "${args[@]}" \
+     2> >( { head -c "$MAXBYTES" > "$LOG"; cat > /dev/null; } )

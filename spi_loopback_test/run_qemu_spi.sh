@@ -1,6 +1,6 @@
 #!/bin/sh
 set -e
-QEMU=~/Development/qemu2/build/qemu-system-arm
+QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
 ELF="$DIR/build/spi_loopback_test.elf"; OUT="$DIR/spi.uart"
 rm -f "$OUT"
