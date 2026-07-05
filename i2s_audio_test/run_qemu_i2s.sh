@@ -16,3 +16,5 @@ grep -q "STAGE_A_PASS" "$VCOM" || { echo "FAIL: stage A"; exit 1; }
 grep -q "STAGE_B_DONE" "$VCOM" || { echo "FAIL: stage B not reached"; exit 1; }
 python3 "$DIR/check_tap.py" "$TAP" || { echo "FAIL: stage B tap mismatch"; exit 1; }
 echo "PASS: stages A+B"
+grep -q "STAGE_C_PASS" "$VCOM" || { echo "FAIL: stage C (codec init)"; exit 1; }
+echo "PASS: I2S_ALL (A+B+C)"

@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "HardwareSerial.h"
 #include "I2S.h"
+#include "wm8962.h"
 
 // 1 kHz @ 48 kHz = 48 samples/cycle. L = full sine, R = half amplitude
 // (distinct so a channel swap is detectable). 2 cycles = 96 frames.
@@ -36,5 +37,9 @@ void setup() {
     build_sine();
     I2S.write(g_sine, 96);
     Serial1.println("STAGE_B_DONE");   // tap capture is checked host-side
+
+    Wire2.begin();
+    bool ok = Codec.begin(Wire2);
+    Serial1.println(ok ? "STAGE_C_PASS" : "STAGE_C_FAIL");
 }
 void loop() {}
