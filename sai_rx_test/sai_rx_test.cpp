@@ -45,4 +45,23 @@ void loop() {
         Serial1.println("STAGE_FD_PASS");     // TX DMA + RX DMA both advancing
         fdone = true;
     }
+    // HW: TX plays the 1 kHz sine (tx_ring) out the codec; the mic captures it.
+    // Report the left-channel energy at ~1 kHz and the peak amplitude so the
+    // human can see the tone appear (and rise when the mic hears the speaker).
+    static uint32_t last = 0;
+    if (fdone && (millis() - last) > 500) {
+        last = millis();
+        const double w = 2.0 * 3.14159265358979 * 1000.0 / 48000.0;
+        const double c = 2.0 * __builtin_cos(w);
+        double s1 = 0, s2 = 0; int16_t peak = 0;
+        for (int i = 0; i < 96; i++) {                 // left channel of the RX ring
+            double x = rx_ring[2*i];
+            double s0 = x + c * s1 - s2; s2 = s1; s1 = s0;
+            int16_t a = rx_ring[2*i] < 0 ? -rx_ring[2*i] : rx_ring[2*i];
+            if (a > peak) peak = a;
+        }
+        double mag = s1*s1 + s2*s2 - c*s1*s2;          // Goertzel power at 1 kHz
+        Serial1.print("MIC peak="); Serial1.print(peak);
+        Serial1.print(" e1k="); Serial1.println((uint32_t)(mag / 1e6));
+    }
 }
