@@ -18,7 +18,7 @@ rm -f "$INJ.fifo"; mkfifo "$INJ.fifo"
     -chardev file,id=sai1-tap,path="$TAP" \
     -d guest_errors -D "$DBG" &
 P=$!
-sleep 4; kill $P 2>/dev/null; wait $P 2>/dev/null || true
+sleep 6; kill $P 2>/dev/null; wait $P 2>/dev/null || true
 rm -f "$INJ.fifo.in" "$INJ.fifo.out" "$INJ.fifo"
 echo "==== VCOM ===="; cat "$VCOM" 2>/dev/null || true
 grep -q "STAGE_A_PASS" "$VCOM" || { echo "FAIL: stage A polled read"; exit 1; }
@@ -26,3 +26,7 @@ echo "PASS: stage A"
 grep -q "STAGE_B_DONE" "$VCOM" || { echo "FAIL: stage B not reached"; exit 1; }
 grep -q "STAGE_B_PASS" "$VCOM" || { echo "FAIL: stage B DMA capture"; exit 1; }
 echo "PASS: stage B"
+grep -q "STAGE_C_DONE" "$VCOM" || { echo "FAIL: stage C not reached"; exit 1; }
+python3 "$DIR/check_tap.py" "$TAP" || { echo "FAIL: stage C TX tap mismatch"; exit 1; }
+grep -q "STAGE_FD_PASS" "$VCOM" || { echo "FAIL: full-duplex block counts"; exit 1; }
+echo "PASS: SAI_RX_ALL (A+B+C)"
