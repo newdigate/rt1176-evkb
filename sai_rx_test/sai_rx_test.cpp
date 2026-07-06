@@ -39,6 +39,8 @@ void loop() {
         Serial1.println(ok ? "STAGE_B_PASS" : "STAGE_B_FAIL");
         bdone = true;
     }
+    // RX DMA started ~2 blocks earlier (Stage B) than TX DMA (Stage C), so
+    // by the time TX has 2 blocks, RX (running the whole time) should have >=4.
     if (bdone && !fdone && I2S.dmaBlockCount() >= 2 && I2S.rxBlockCount() >= 4) {
         Serial1.println("STAGE_FD_PASS");     // TX DMA + RX DMA both advancing
         fdone = true;
