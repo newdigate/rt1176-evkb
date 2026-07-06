@@ -23,3 +23,6 @@ rm -f "$INJ.fifo.in" "$INJ.fifo.out" "$INJ.fifo"
 echo "==== VCOM ===="; cat "$VCOM" 2>/dev/null || true
 grep -q "STAGE_A_PASS" "$VCOM" || { echo "FAIL: stage A polled read"; exit 1; }
 echo "PASS: stage A"
+grep -q "STAGE_B_DONE" "$VCOM" || { echo "FAIL: stage B not reached"; exit 1; }
+grep -q "STAGE_B_PASS" "$VCOM" || { echo "FAIL: stage B DMA capture"; exit 1; }
+echo "PASS: stage B"

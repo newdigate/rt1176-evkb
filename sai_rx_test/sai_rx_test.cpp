@@ -1,9 +1,11 @@
 #include <Arduino.h>
 #include "HardwareSerial.h"
 #include "I2S.h"
+#include "core_pins.h"
 
 static int16_t expect_sine[96 * 2];
 static int16_t got[96 * 2];
+static DMAMEM int16_t rx_ring[96 * 2];
 static void build_sine() {
     for (int i = 0; i < 96; i++) {
         double ph = 2.0 * 3.14159265358979 * (i % 48) / 48.0;
@@ -22,5 +24,15 @@ void setup() {
     bool ok = true;
     for (int i = 0; i < 96 * 2; i++) if (got[i] != expect_sine[i]) ok = false;
     Serial1.println(ok ? "STAGE_A_PASS" : "STAGE_A_FAIL");
+    I2S.beginReceiveDMA(rx_ring, 96);
+    Serial1.println("STAGE_B_DONE");
 }
-void loop() { }
+void loop() {
+    static bool reported = false;
+    if (!reported && I2S.rxBlockCount() >= 2) {
+        bool ok = true;
+        for (int i = 0; i < 96 * 2; i++) if (rx_ring[i] != expect_sine[i]) ok = false;
+        Serial1.println(ok ? "STAGE_B_PASS" : "STAGE_B_FAIL");
+        reported = true;
+    }
+}
