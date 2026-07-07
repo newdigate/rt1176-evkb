@@ -42,5 +42,17 @@ void setup() {
 }
 void loop() {
     static uint32_t last = 0;
-    if (millis() - last > 500) { last = millis(); Serial1.println("TONE_PLAYING"); }
+    if (millis() - last > 500) {
+        last = millis();
+        // Periodic health readout for the HW test: the sine also feeds `peak`,
+        // and `peak` only advances when the graph runs (the TX DMA isr pends
+        // update_all). ~0.5 here => the graph self-clocks on silicon => the same
+        // sine is going out SAI1 TX -> WM8962 DAC -> J101. "(no update)" => the
+        // TX DMA isn't driving the graph (a silicon-vs-QEMU divergence to chase).
+        if (peak.available()) {
+            Serial1.print("TONE_PLAYING synth_peak="); Serial1.println(peak.read(), 4);
+        } else {
+            Serial1.println("TONE_PLAYING synth_peak=(no update)");
+        }
+    }
 }
