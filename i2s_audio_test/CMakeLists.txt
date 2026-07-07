@@ -16,9 +16,10 @@ include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
 # Compile the whole imxrt1176 core as the `cores` library. No avr/util subdirs
 # in the minimal Phase-0 core, so none are listed.
 import_arduino_library(cores ${CMAKE_CURRENT_LIST_DIR}/../cores/imxrt1176)
+import_arduino_library(Wire $ENV{HOME}/Development/Wire)
 
 teensy_add_executable(i2s_audio_test i2s_audio_test.cpp)
-teensy_target_link_libraries(i2s_audio_test cores)
+teensy_target_link_libraries(i2s_audio_test cores Wire)
 
 # i2s_audio_test.cpp / main.cpp use C++; link the std C++ runtime (nano specs set in
 # the toolchain file).

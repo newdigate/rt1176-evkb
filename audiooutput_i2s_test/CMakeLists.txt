@@ -6,8 +6,9 @@ FetchContent_Declare(teensy_cmake_macros SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/..
 FetchContent_MakeAvailable(teensy_cmake_macros)
 include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
 import_arduino_library(cores ${CMAKE_CURRENT_LIST_DIR}/../cores/imxrt1176)
+import_arduino_library(Wire $ENV{HOME}/Development/Wire)
 teensy_add_executable(audiooutput_i2s_test audiooutput_i2s_test.cpp)
-teensy_target_link_libraries(audiooutput_i2s_test cores)
+teensy_target_link_libraries(audiooutput_i2s_test cores Wire)
 
 # Task 3 gate: AudioSynthWaveformSine -> AudioOutputI2S (SAI1 TX DMA) + a synth
 # peak sanity, with AudioControlWM8962 bringing up the codec's playback route.

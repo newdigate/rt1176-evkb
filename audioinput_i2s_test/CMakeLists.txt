@@ -6,8 +6,9 @@ FetchContent_Declare(teensy_cmake_macros SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/..
 FetchContent_MakeAvailable(teensy_cmake_macros)
 include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
 import_arduino_library(cores ${CMAKE_CURRENT_LIST_DIR}/../cores/imxrt1176)
+import_arduino_library(Wire $ENV{HOME}/Development/Wire)
 teensy_add_executable(audioinput_i2s_test audioinput_i2s_test.cpp)
-teensy_target_link_libraries(audioinput_i2s_test cores)
+teensy_target_link_libraries(audioinput_i2s_test cores Wire)
 
 # Task 4 integration gate: pull in the fork's audio nodes directly (they live
 # outside the core's glob, in ~/Development/Audio). config_i2s (output_i2s.cpp)
