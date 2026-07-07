@@ -2,6 +2,8 @@
 set -e
 QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
+. ~/Development/rt1170/evkb/tools/gate-lib.sh
+gate_init
 ELF="$DIR/build/usb_enum_test.elf"; OUT="$DIR/usb.uart"
 rm -f "$OUT"
 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
@@ -9,7 +11,7 @@ rm -f "$OUT"
     -serial file:"$OUT" \
     -chardev null,id=usbcdc \
     -d guest_errors -D "$DIR/usb.dbg" &
-P=$!; sleep 6; kill $P 2>/dev/null; wait $P 2>/dev/null || true
+P=$!; gate_pid $P; sleep 6; kill $P 2>/dev/null; wait $P 2>/dev/null || true
 echo "==== VCOM ===="; cat "$OUT"
 echo "==== CI-CDC (enumeration) ===="; grep "CI-CDC" "$DIR/usb.dbg" | head
 grep -q "USB=CONFIGURED" "$OUT" || { echo "FAIL: USB enumeration"; exit 1; }

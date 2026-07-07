@@ -2,6 +2,8 @@
 set -e
 QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
+. ~/Development/rt1170/evkb/tools/gate-lib.sh
+gate_init
 ELF="$DIR/build/audiooutput_i2s_test.elf"
 VCOM="$DIR/vcom.uart"; DBG="$DIR/audiooutput.dbg"; TAP="$DIR/tap.raw"
 rm -f "$VCOM" "$DBG" "$TAP"
@@ -9,7 +11,7 @@ rm -f "$VCOM" "$DBG" "$TAP"
     -display none -serial file:"$VCOM" \
     -chardev file,id=sai1-tap,path="$TAP" \
     -d guest_errors -D "$DBG" &
-P=$!
+P=$!; gate_pid $P
 sleep 5; kill $P 2>/dev/null; wait $P 2>/dev/null || true
 echo "==== VCOM ===="; cat "$VCOM" 2>/dev/null || true
 grep -q "^info synth_peak=" "$VCOM" || { echo "FAIL: no info synth_peak= line"; exit 1; }

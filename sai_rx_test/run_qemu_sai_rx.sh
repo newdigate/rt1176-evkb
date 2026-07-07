@@ -2,22 +2,25 @@
 set -e
 QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
+. ~/Development/rt1170/evkb/tools/gate-lib.sh
+gate_init
 ELF="$DIR/build/sai_rx_test.elf"
 VCOM="$DIR/vcom.uart"; DBG="$DIR/sai_rx.dbg"; INJ="$DIR/inject.raw"; TAP="$DIR/tap.raw"
 python3 "$DIR/gen_inject.py" "$INJ"
 rm -f "$VCOM" "$DBG" "$TAP"
+gate_tmp "$INJ" "$INJ.fifo" "$INJ.fifo.in" "$INJ.fifo.out"
 # NOTE: this QEMU build's "file" chardev backend requires path= (the write/out
 # side) even when only input-path= is given ("chardev: file: no filename
 # given"), so plain input-path=$INJ does not work here. Fall back to a fifo:
 # pump the injector file into a named pipe and point the chardev at that.
 rm -f "$INJ.fifo"; mkfifo "$INJ.fifo"
-(cat "$INJ" > "$INJ.fifo" 2>/dev/null &)
+( cat "$INJ" > "$INJ.fifo" 2>/dev/null ) & gate_pid $!
 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
     -display none -serial file:"$VCOM" \
     -chardev pipe,id=sai1-rxinject,path="$INJ.fifo" \
     -chardev file,id=sai1-tap,path="$TAP" \
     -d guest_errors -D "$DBG" &
-P=$!
+P=$!; gate_pid $P
 sleep 6; kill $P 2>/dev/null; wait $P 2>/dev/null || true
 rm -f "$INJ.fifo.in" "$INJ.fifo.out" "$INJ.fifo"
 echo "==== VCOM ===="; cat "$VCOM" 2>/dev/null || true
