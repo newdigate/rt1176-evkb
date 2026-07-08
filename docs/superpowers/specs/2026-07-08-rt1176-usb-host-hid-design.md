@@ -69,13 +69,13 @@ is idempotent if the PLL turns out to be shared). Gate markers go over **Serial1
 ### C1. `ehci.cpp` — new `__IMXRT1176__` branch in `USBHost::begin()`
 
 Inserted alongside the existing `#elif defined(__IMXRT1052__) || defined(__IMXRT1062__)`
-branch. Three steps, then falls through to the **unchanged** generic EHCI setup
-(ehci.cpp:223–287):
+branch. Two steps, then falls through to the **unchanged** generic EHCI setup
+(ehci.cpp:223–287). **No MPU code is needed** — the RT1176 core `startup.c` already
+configures the M7 MPU to grant DMA masters OCRAM access (proven by eDMA/SAI/USDHC); the
+`MPU_RGDAAC0 |= 0x30000000` in upstream `begin()` is the *Teensy-3.6 (Kinetis)* branch
+only, not the 1062 path (O3 resolved).
 
-1. **MPU** — `MPU_RGDAAC0 |= 0x30000000` to allow the USB DMA master access to memory
-   (Cortex-M7-generic, reused from the 1062 branch verbatim; add `MPU_RGDAAC0` to the
-   core header if absent — open question O3).
-2. **PHY2 + PLL power-up** — a `usbphy2_pll_init()` mirroring the device side's proven
+1. **PHY2 + PLL power-up** — a `usbphy2_pll_init()` mirroring the device side's proven
    `usb_pll_phy_init()`, retargeted to PHY2:
    - ungate the USB LPCG (`CCM_LPCG115_DIRECT = 1`)
    - `USBPHY2_PLL_SIC` bring-up: `PLL_REG_ENABLE` (0x200000), `PLL_POWER` (0x1000),
@@ -84,7 +84,7 @@ branch. Three steps, then falls through to the **unchanged** generic EHCI setup
    - bounded lock-wait (≤~100 iterations, "no infinite spin"; QEMU doesn't model the
      PHY-PLL lock — HW arbiter)
    - `USBPHY2_CTRL_CLR = CLKGATE`, `USBPHY2_PWD = 0`
-3. **Fall through to the generic sequence** (unchanged): `USBHS_USBCMD` reset,
+2. **Fall through to the generic sequence** (unchanged): `USBHS_USBCMD` reset,
    `USBHS_USB_SBUSCFG = 1`, **`USBHS_USBMODE = USBHS_USBMODE_CM(3)`** (host — vs the
    device path's `CM(2)`), `USBHS_PERIODICLISTBASE`/`FRINDEX`/`ASYNCLISTADDR`, start
    (`USBHS_USBCMD` RS + schedule enables), `USBHS_PORTSC1 |= USBHS_PORTSC_PP` (port
@@ -227,14 +227,15 @@ question (risk #2) are truly settled.
   separate gate?
 - **O2.** Exact connect-hook API to print a device's VID/PID (iterate `myusb` drivers /
   a claim hook / `USBDriver` device pointer).
-- **O3.** Is `MPU_RGDAAC0` already defined in the core header, or must it be added?
+- **O3. RESOLVED** — no MPU code needed: the RT1176 core `startup.c` already grants DMA
+  masters OCRAM access (`MPU_RGDAAC0` in upstream `begin()` is Kinetis-only).
 
 ## Repos & files touched
 
 | Repo | Change |
 |---|---|
-| `newdigate/teensy-cores` (`evkb/cores`) | `tools/gen_imxrt1176_h.py` + regen `imxrt1176.h`: USB_OTG2 / USBPHY2 / `USBHS_*` aliases + bit macros / `IRQ_USB_OTG2=135` / `MPU_RGDAAC0` |
-| `newdigate/USBHost_t36` | `ehci.cpp`: new `__IMXRT1176__` branch in `begin()` + `usbphy2_pll_init()`; `DMAMEM` on `periodictable` + `memory.cpp` pools + driver-buffer audit |
+| `newdigate/teensy-cores` (`evkb/cores`) | `tools/gen_imxrt1176_h.py` + regen `imxrt1176.h`: `USB2_*` (OTG2) + `USBPHY2_*` + generic `USB_*` bit macros + `IRQ_USB_OTG2=135` |
+| `newdigate/USBHost_t36` | `utility/imxrt_usbhs.h`: widen `USBHS_*` aliases to `__IMXRT1176__`; `ehci.cpp`: new `__IMXRT1176__` branch in `begin()`; `DMAMEM` on `periodictable` + `memory.cpp` pools + driver-buffer audit |
 | `qemu2` (gitlab) | machine tweak to name OTG2's USB bus; expected host-mode fixes to the chipidea/EHCI glue as the gate surfaces them |
 | `evkb` (local) | new gate `usb_host_hid_test/` (firmware + CMakeLists + runner + checker + input-injection script) |
 
