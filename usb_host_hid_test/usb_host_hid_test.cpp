@@ -6,8 +6,14 @@
 // mouse over USBHost_t36.  Markers go out over Serial1 (LPUART1 / VCOM); connect
 // edges are detected via each controller's operator bool + idVendor()/idProduct().
 USBHost myusb;
-USBHIDParser  hid1(myusb);
-KeyboardController keyboard1(myusb);
+// hid1/keyboard1 carry class-member DMA structures the EHCI DMA master must reach
+// (USBHIDParser::_bigBuffer/mypipes[3]/mytransfers[5]/setup; KeyboardController::
+// leds_).  On RT1176 plain .bss is DTCM (DMA-unreachable), so place the whole
+// objects in OCRAM via DMAMEM.  The core zero-inits .bss.dma before global ctors
+// run, so their non-in-class-initialised members are safe.  myusb has no instance
+// data members and mouse1 has no DMA members, so both correctly stay in DTCM.
+DMAMEM USBHIDParser  hid1(myusb);
+DMAMEM KeyboardController keyboard1(myusb);
 MouseController    mouse1(myusb);
 
 static bool kbd_seen = false, mouse_seen = false;
