@@ -1,0 +1,6 @@
+build/
+*.img
+*.raw
+*.uart
+*.dbg
+*.wav
