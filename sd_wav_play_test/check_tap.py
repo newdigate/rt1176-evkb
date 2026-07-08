@@ -43,14 +43,12 @@ if offset < 0:
 # WAV whose frame count isn't a multiple of 128 ends in a PARTIAL block. The node
 # zero-pads that last block at EOF; for a MONO source it also drops the partial
 # block's RIGHT channel -- stock AudioPlaySdWav::update() cleanup transmits the
-# left block but guards the mono right-dup transmit on `state < 8`, which is false
-# by then (state == STATE_STOP), i.e. the node's literal "TODO: fill remainder of
-# last block with zero and transmit" is unimplemented. That sub-block tail
-# (< 128 frames, < 3 ms) is a known node EOF quirk, not a data-path defect. So we
-# assert sample-EXACTness over the whole-block BODY on both channels, PLUS the
-# LEFT channel across the tail (always exact), and tolerate only the mono
-# right-channel tail -- reporting every count so nothing is hidden. The body is
-# 68 full blocks here (8704 of 8820 frames); this still catches any mid-stream
+# left block but guarded the mono right-dup transmit on `state < 8`, which was
+# false by then (state == STATE_STOP). That mono-right EOF-tail bug is now FIXED
+# in the node (play_sd_wav.cpp cleanup tests block_right == NULL), so we assert
+# sample-EXACTness over the whole WAV on BOTH channels: the whole-block BODY plus
+# both channels of the final partial-block tail. Every count is reported. The body
+# is 68 full blocks here (8704 of 8820 frames); this catches any mid-stream
 # scramble, a channel swap (stereo L!=R), or a wrong offset.
 BLK = 128
 nbody = (len(wavL) // BLK) * BLK
@@ -58,7 +56,7 @@ body_mism = sum(1 for i in range(nbody)
                 if tapL[offset+i] != wavL[i] or tapR[offset+i] != wavR[i])
 tailL_mism = sum(1 for i in range(nbody, len(wavL)) if tapL[offset+i] != wavL[i])
 tailR_mism = sum(1 for i in range(nbody, len(wavL)) if tapR[offset+i] != wavR[i])
-ok = (body_mism == 0 and tailL_mism == 0)
+ok = (body_mism == 0 and tailL_mism == 0 and tailR_mism == 0)
 print("info %s tap_offset=%d body=%d body_mism=%d tail=%d tailL_mism=%d tailR_mism=%d"
       % (kind, offset, nbody, body_mism, len(wavL) - nbody, tailL_mism, tailR_mism))
 print("WAV_SAMPLES_EXACT=PASS" if ok else "WAV_SAMPLES_EXACT=FAIL")
