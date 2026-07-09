@@ -12,6 +12,12 @@ USBHost myusb;
 // objects in OCRAM via DMAMEM.  The core zero-inits .bss.dma before global ctors
 // run, so their non-in-class-initialised members are safe.  myusb has no instance
 // data members and mouse1 has no DMA members, so both correctly stay in DTCM.
+// USBHub: low-speed devices can't run directly on the EHCI root port (no TT) --
+// they need a hub's Transaction Translator.  DMAMEM: USBHub carries member DMA
+// buffers (setup_t etc.), same trap as hid1/keyboard1.  Two tiers for a compound
+// USB3 hub (its internal USB2 hub can present as more than one).
+DMAMEM USBHub        hub1(myusb);
+DMAMEM USBHub        hub2(myusb);
 DMAMEM USBHIDParser  hid1(myusb);
 DMAMEM KeyboardController keyboard1(myusb);
 MouseController    mouse1(myusb);
