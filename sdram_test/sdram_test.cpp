@@ -93,6 +93,25 @@ static void dump_semc_clock(void)
 	Serial1.printf("CLK_ROOT4=%08lX (want 0x602)\n", (unsigned long)root4);
 }
 
+/* Refresh-retention test: write a value to one address per MB across the full
+ * 64 MB, wait well past the 64 ms auto-refresh window, then verify every value
+ * survived. A broken/disabled refresh (bad SDRAMCR2/3 timing) lets un-accessed
+ * rows decay in that window, so this is what actually proves refresh is cycling.
+ * On QEMU (perfect RAM) it always holds; on silicon it's the real test. */
+static bool retention_test(void)
+{
+	volatile uint32_t *ram = (volatile uint32_t *)SDRAM_BASE;
+	const uint32_t stride = 0x100000u / 4u;          /* 1 MB in words */
+	for (uint32_t k = 0; k < 64u; k++) {
+		ram[k * stride] = 0x5A5A0000u ^ (k * 0x9E3779B1u);
+	}
+	delay(200);                                       /* >> 64 ms refresh window */
+	for (uint32_t k = 0; k < 64u; k++) {
+		if (ram[k * stride] != (0x5A5A0000u ^ (k * 0x9E3779B1u))) return false;
+	}
+	return true;
+}
+
 void setup()
 {
 	Serial1.begin(115200);
@@ -107,7 +126,11 @@ void setup()
 	bool addr_ok = addr_line_test();
 	Serial1.print("SDRAM_ADDR="); Serial1.println(addr_ok ? "PASS" : "FAIL");
 
-	Serial1.print("SDRAM_TEST="); Serial1.println((data_ok && addr_ok) ? "PASS" : "FAIL");
+	bool hold_ok = retention_test();
+	Serial1.print("SDRAM_HOLD="); Serial1.println(hold_ok ? "PASS" : "FAIL");
+
+	Serial1.print("SDRAM_TEST=");
+	Serial1.println((data_ok && addr_ok && hold_ok) ? "PASS" : "FAIL");
 }
 
 void loop() {}

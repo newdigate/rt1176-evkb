@@ -16,5 +16,6 @@ P=$!; gate_pid $P; sleep 6; kill $P 2>/dev/null; wait $P 2>/dev/null || true
 echo "==== captured ===="; cat "$OUT"
 grep -q "SDRAM_DATA=PASS" "$OUT" || { echo "FAIL: data-line test"; exit 1; }
 grep -q "SDRAM_ADDR=PASS" "$OUT" || { echo "FAIL: address-line test"; exit 1; }
+grep -q "SDRAM_HOLD=PASS" "$OUT" || { echo "FAIL: refresh-retention test"; exit 1; }
 grep -q "SDRAM_TEST=PASS" "$OUT" || { echo "FAIL: overall"; exit 1; }
 echo "PASS: SEMC SDRAM verified (data-line + address-line over full 64 MB, faithful window)"
