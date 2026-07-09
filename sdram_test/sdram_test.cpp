@@ -74,12 +74,32 @@ static bool addr_line_test(void)
 	return true;
 }
 
+/* Diagnostic dump of the SEMC clock chain — read-only, so the HW arbiter run is
+ * self-documenting. On silicon these read the real boot-ROM state; the question it
+ * answers is whether SYS_PLL2_PFD1 (the 594 MHz SEMC source) is already up from the
+ * boot ROM (like SYS_PLL2_PFD2, which the HW-verified SD card rides) or needs an
+ * explicit init. A fully-up chain is: PFD1_FRAC=16 (594 MHz), GATE=0, STABLE=1, and
+ * CLK_ROOT4=0x602 (MUX=6 SYS_PLL2_PFD1, DIV=2 -> /3 = 198 MHz). Values are raw
+ * registers (ANADIG_PLL @0x40C84000, CCM root @0x40CC0200). */
+static void dump_semc_clock(void)
+{
+	uint32_t pll2  = *(volatile uint32_t *)0x40C84240u; /* ANADIG SYS_PLL2_CTRL */
+	uint32_t pfd   = *(volatile uint32_t *)0x40C84270u; /* ANADIG SYS_PLL2_PFD  */
+	uint32_t root4 = *(volatile uint32_t *)0x40CC0200u; /* CCM CLOCK_ROOT4 (SEMC) */
+	uint32_t f = (pfd >> 8) & 0x3Fu, g = (pfd >> 15) & 0x1u, s = (pfd >> 14) & 0x1u;
+	Serial1.printf("CLK_PLL2_CTRL=%08lX\n", (unsigned long)pll2);
+	Serial1.printf("CLK_PLL2_PFD=%08lX PFD1_FRAC=%lu GATE=%lu STABLE=%lu\n",
+	               (unsigned long)pfd, (unsigned long)f, (unsigned long)g, (unsigned long)s);
+	Serial1.printf("CLK_ROOT4=%08lX (want 0x602)\n", (unsigned long)root4);
+}
+
 void setup()
 {
 	Serial1.begin(115200);
 	while (!Serial1) {}
 
 	Serial1.println("SDRAM_INIT");
+	dump_semc_clock();
 
 	bool data_ok = data_line_test();
 	Serial1.print("SDRAM_DATA="); Serial1.println(data_ok ? "PASS" : "FAIL");
