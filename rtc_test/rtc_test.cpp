@@ -24,10 +24,17 @@ void setup() {
         unsigned long expected = SNVS_LPGPR1;      // rtc_get() captured pre-reset
         unsigned long got = rtc_get();
         bool srtc_env = (SNVS_LPCR & SNVS_LPCR_SRTC_ENV) != 0;
-        // Persisted if HP resumed from the battery-backed LP counter: >= the
-        // pre-reset value, only slightly ahead, and NOT reverted to the 2019
-        // cold-boot default (which would mean startup re-seeded == persistence lost).
-        bool persisted = (got >= expected) && (got < expected + 10) &&
+        // Persisted if HP resumed from the battery-backed LP secure counter:
+        // monotonically >= the pre-reset value (time did not reset backwards) and
+        // NOT reverted to the Jan-2019 cold-boot default (which would mean startup
+        // re-seeded == persistence lost). Those two clauses are what actually prove
+        // persistence. The upper bound is a generous 1-day sanity ceiling, NOT a
+        // tight window: in QEMU the SYSRESETREQ self-reset reboots in ~60 ms, but on
+        // real hardware a debugger halts the core on SYSRESETREQ, so this same gate
+        // is driven across a two-invocation warm reset (`LinkServer run` x2) whose
+        // wall-clock gap is tens of seconds — a tight bound would false-fail on
+        // silicon while adding no persistence-proving power over got>=expected.
+        bool persisted = (got >= expected) && (got < expected + 86400ul) &&
                          (got > DEFAULT_2019 + 100);
         Serial1.print("phase2 expected="); Serial1.print(expected);
         Serial1.print(" got="); Serial1.print(got);
