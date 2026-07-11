@@ -252,7 +252,7 @@ Then: `chmod +x ~/Development/rt1170/evkb/enet_test/run_qemu_enet.sh`.
 - [ ] **Step 5: Build + run — verify the harness.**
 ```sh
 cd ~/Development/rt1170/evkb/enet_test && rm -rf build && cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake >/dev/null && cmake --build build 2>&1 | tail -2
-sh run_qemu_enet.sh boot
+./run_qemu_enet.sh boot
 ```
 Expected: `ENET_BOOT` on VCOM, `PEER-CONNECTED phase=boot` from the peer, `PASS: enet_test harness live`. **If QEMU rejects `-nic socket,listen=...,model=imx.enet`**, this is the moment to reconcile the exact on-SoC-NIC binding syntax (per the spec's known open item) — try `-nic socket,connect=` with the peer as server, or `-netdev socket,id=n0,listen=... -net nic,netdev=n0,model=imx.enet`, until the peer connects and the guest boots. Record the working form.
 
@@ -479,7 +479,7 @@ Update the runner's PASS check for the `mac` phase: after the existing boot chec
 - [ ] **Step 5: Reconfigure (GLOB trap) + run — verify FAIL then PASS.** Adding `enet.c` is a new core file:
 ```sh
 cd ~/Development/rt1170/evkb/enet_test && rm -rf build && cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake >/dev/null && cmake --build build 2>&1 | tail -2
-sh run_qemu_enet.sh mac
+./run_qemu_enet.sh mac
 ```
 Expected once `enet.c` is complete: VCOM shows `ENET_INIT_DONE`, `ENET_TX=PASS`, `ENET_RX=PASS`; peer prints `TX-FRAME=... ok=True`; runner `PASS`. (Fail-first: with the `enet_clock_init`/`enet_pins_init`/`ENET_RCR`/`ENET_TCR`/`MSCR` bodies left as `0`/stubs, the rings won't move and the gate FAILS — implement the real register writes from the SDK/FNET until it passes.)
 
@@ -550,7 +550,7 @@ int enet_phy_link_up(uint32_t timeout_ms) {
 - [ ] **Step 3: Run against UNPATCHED QEMU — verify the false-pass FAILS.**
 ```sh
 cd ~/Development/rt1170/evkb/enet_test && cmake --build build 2>&1 | tail -1
-sh run_qemu_enet.sh mac
+./run_qemu_enet.sh mac
 ```
 Expected: `ENET_PHYID=FFFF:FFFF`, `ENET_PHYID_OK=FAIL` (and `ENET_LINK` may spuriously read PASS off the `0xffff` link bit — exactly the trap). This is the fail-first.
 
@@ -561,7 +561,7 @@ cd ~/Development/qemu2/build && ninja qemu-system-arm 2>&1 | tail -2
 
 - [ ] **Step 5: Re-run — verify PASS.**
 ```sh
-cd ~/Development/rt1170/evkb/enet_test && sh run_qemu_enet.sh mac
+cd ~/Development/rt1170/evkb/enet_test && ./run_qemu_enet.sh mac
 ```
 Expected: `ENET_PHYID=7:C0D1` (QEMU's LAN9118 ID — non-`0xffff`), `ENET_PHYID_OK=PASS`, `ENET_LINK=PASS`. Add `grep -q "ENET_LINK=PASS"` and `grep -q "ENET_PHYID_OK=PASS"` to the runner's `mac`-phase checks.
 
@@ -682,13 +682,13 @@ Replace `loop()` with `void loop() { enet_poll(); }` and drop the Gate-1 TX/RX p
 - [ ] **Step 4: Run — verify FAIL then PASS.**
 ```sh
 cd ~/Development/rt1170/evkb/enet_test && cmake --build build 2>&1 | tail -1
-sh run_qemu_enet.sh ping
+./run_qemu_enet.sh ping
 ```
 Expected once complete: peer prints `ARP-REPLY ok=True` + `ICMP-REPLY ok=True type=0`; VCOM shows `ENET_ARP=PASS`, `ENET_PING=PASS`; runner `PASS`. (Fail-first: before Step 1's responder is added, the peer times out on `recv_frame` → `FAIL`.)
 
 - [ ] **Step 5: Full-suite sanity — all three phases green.**
 ```sh
-cd ~/Development/rt1170/evkb/enet_test && for p in mac ping; do echo "== $p =="; sh run_qemu_enet.sh $p | tail -3; done
+cd ~/Development/rt1170/evkb/enet_test && for p in mac ping; do echo "== $p =="; ./run_qemu_enet.sh $p | tail -3; done
 ```
 Expected: both phases end in `PASS`.
 
