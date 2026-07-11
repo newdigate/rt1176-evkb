@@ -58,8 +58,8 @@ static void handle_ipv4(uint8_t *f, uint16_t len) {
     memcpy(tmp, &f[0], 6); memcpy(&f[0], &f[6], 6); memcpy(&f[6], tmp, 6);   /* swap MAC */
     { int i; for (i = 0; i < 4; i++) { uint8_t t = f[26+i]; f[26+i] = f[30+i]; f[30+i] = t; } } /* swap IP */
     f[icmp] = 0;                                             /* echo reply */
-    f[16] = 0; f[17] = 0;                                    /* IP header cksum field */
-    { uint16_t c = inet_cksum(&f[14], ihl); f[16] = (uint8_t)(c >> 8); f[17] = (uint8_t)c; }
+    /* IP header needs no recompute: src/dst-IP swap preserves the one's-complement
+       header checksum (at f[24:25]); Total Length + all other fields are unchanged. */
     f[icmp+2] = 0; f[icmp+3] = 0;                            /* ICMP cksum field */
     { uint16_t c = inet_cksum(&f[icmp], icmp_len); f[icmp+2] = (uint8_t)(c >> 8); f[icmp+3] = (uint8_t)c; }
     enet_send_frame(f, (uint16_t)(icmp + icmp_len));
