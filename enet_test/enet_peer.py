@@ -32,5 +32,16 @@ if __name__ == "__main__":
     host, port, phase = sys.argv[1], int(sys.argv[2]), sys.argv[3]
     sock = connect(host, port)
     print("PEER-CONNECTED phase=%s" % phase)
+    if phase == "mac":
+        time.sleep(1.0)
+        rx = bytes.fromhex("020000000001020000000002") + b"\x88\xb5" + b"ENET-RX-PROBE"
+        send_frame(sock, rx)
+        try:
+            f = recv_frame(sock, timeout=6)
+        except (EOFError, socket.timeout):
+            print("FAIL: no TX frame from guest"); sys.exit(1)
+        ok = f[12:14] == b"\x88\xb5" and f[14:27] == b"ENET-TX-PROBE"
+        print("TX-FRAME=%r ok=%s" % (f[:32], ok))
+        sys.exit(0 if ok else 1)
     # Task 2: just confirm the socket is live, then exit 0.
     sys.exit(0)
