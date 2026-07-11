@@ -709,6 +709,8 @@ QEMU proved the plumbing; silicon proves the PHY, RMII clocking, and the real pi
 
 - [ ] **Step 1: Pre-flight the board hazards.** Confirm the 10/100 RJ45 connector designator on THIS board (spec flags "J43 area") and the board revision. **Remove any SD card** before the first ENET test (the `AD_32`=ENET_MDC ↔ `SD1_CD_B` REVC conflict); if REVC, note whether `R1926/R136` are populated. Record findings.
 
+- [ ] **Step 1b: ★ Complete the ENET clock init (carried over from Task 3, HW-only — QEMU models no CCM so the gates could not test it).** `enet_clock_init()` in `enet.c` sets `CCM_CLOCK_ROOT51_CONTROL` (mux=4 SysPll1Div2, DIV field=9 for ÷10→50 MHz) and ungates `LPCG112`, but deliberately does NOT init SysPll1/SysPll1-Div2 (the SDK `BOARD_InitModuleClock` calls `CLOCK_InitSysPll1({.pllDiv2En=true})`; re-initing a boot-ROM-managed PLL can reset-loop this core, so it was left out). Before/at first HW bring-up: (a) check whether SysPll1-Div2 is already running at boot (read `ANADIG` PLL status); if not, add a careful SysPll1-Div2 enable (mirror the SDK, guard against reset-loop as SEMC/extmem did). (b) Confirm the CCM CLOCK_ROOT DIV encoding is (divider−1) — i.e. field 9 really yields 50 MHz not 45.5 — by measuring `ENET_REF_CLK` (Saleae) or the link speed. If link never comes up, the clock is the first suspect (see the spec's PHY-timing risk).
+
 - [ ] **Step 2: Flash.**
 ```sh
 pkill -9 -f LinkServer; pkill -9 -f redlinkserv
