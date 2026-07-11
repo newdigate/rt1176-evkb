@@ -125,7 +125,7 @@ L += [
 
 - [ ] **Step 5: Compile smoke-test (existing gate still builds).** The header change must not break the core. Run:
 ```sh
-cd ~/Development/rt1170/evkb/usb_data_test && rm -rf build && cmake -B build -S . >/dev/null && cmake --build build 2>&1 | tail -3
+cd ~/Development/rt1170/evkb/usb_data_test && rm -rf build && cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake >/dev/null && cmake --build build 2>&1 | tail -3
 ```
 Expected: builds to `build/usb_data_test.elf` with no errors.
 
@@ -251,7 +251,7 @@ Then: `chmod +x ~/Development/rt1170/evkb/enet_test/run_qemu_enet.sh`.
 
 - [ ] **Step 5: Build + run — verify the harness.**
 ```sh
-cd ~/Development/rt1170/evkb/enet_test && rm -rf build && cmake -B build -S . >/dev/null && cmake --build build 2>&1 | tail -2
+cd ~/Development/rt1170/evkb/enet_test && rm -rf build && cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake >/dev/null && cmake --build build 2>&1 | tail -2
 sh run_qemu_enet.sh boot
 ```
 Expected: `ENET_BOOT` on VCOM, `PEER-CONNECTED phase=boot` from the peer, `PASS: enet_test harness live`. **If QEMU rejects `-nic socket,listen=...,model=imx.enet`**, this is the moment to reconcile the exact on-SoC-NIC binding syntax (per the spec's known open item) — try `-nic socket,connect=` with the peer as server, or `-netdev socket,id=n0,listen=... -net nic,netdev=n0,model=imx.enet`, until the peer connects and the guest boots. Record the working form.
@@ -478,7 +478,7 @@ Update the runner's PASS check for the `mac` phase: after the existing boot chec
 
 - [ ] **Step 5: Reconfigure (GLOB trap) + run — verify FAIL then PASS.** Adding `enet.c` is a new core file:
 ```sh
-cd ~/Development/rt1170/evkb/enet_test && rm -rf build && cmake -B build -S . >/dev/null && cmake --build build 2>&1 | tail -2
+cd ~/Development/rt1170/evkb/enet_test && rm -rf build && cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake >/dev/null && cmake --build build 2>&1 | tail -2
 sh run_qemu_enet.sh mac
 ```
 Expected once `enet.c` is complete: VCOM shows `ENET_INIT_DONE`, `ENET_TX=PASS`, `ENET_RX=PASS`; peer prints `TX-FRAME=... ok=True`; runner `PASS`. (Fail-first: with the `enet_clock_init`/`enet_pins_init`/`ENET_RCR`/`ENET_TCR`/`MSCR` bodies left as `0`/stubs, the rings won't move and the gate FAILS — implement the real register writes from the SDK/FNET until it passes.)
