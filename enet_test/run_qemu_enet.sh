@@ -31,7 +31,9 @@ if [ "$PHASE" = "mac" ]; then
     grep -q "ENET_INIT_DONE" "$VCOM" || { echo "FAIL: no ENET_INIT_DONE"; exit 1; }
     grep -q "ENET_TX=PASS" "$VCOM" || { echo "FAIL: no ENET_TX=PASS"; exit 1; }
     grep -q "ENET_RX=PASS" "$VCOM" || { echo "FAIL: no ENET_RX=PASS"; exit 1; }
-    echo "PASS: enet_test MAC round-trip (boot + TX=PASS + RX=PASS)"
+    grep -q "ENET_LINK=PASS" "$VCOM" || { echo "FAIL: no ENET_LINK=PASS"; exit 1; }
+    grep -q "ENET_PHYID_OK=PASS" "$VCOM" || { echo "FAIL: no ENET_PHYID_OK=PASS"; exit 1; }
+    echo "PASS: enet_test MAC round-trip (boot + TX=PASS + RX=PASS + LINK=PASS + PHYID_OK=PASS)"
 else
     echo "PASS: enet_test harness live (boot + socket peer)"
 fi

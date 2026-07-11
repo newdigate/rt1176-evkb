@@ -11,6 +11,12 @@ void setup() {
     Serial1.println("ENET_BOOT");
     enet_init(ENET_MAC);
     Serial1.println("ENET_INIT_DONE");
+    uint16_t id1 = enet_mdio_read(3, 2), id2 = enet_mdio_read(3, 3);
+    Serial1.print("ENET_PHYID="); Serial1.print(id1, HEX); Serial1.print(":"); Serial1.println(id2, HEX);
+    int link = enet_phy_link_up(3000);
+    Serial1.print("ENET_LINK="); Serial1.println(link ? "PASS" : "FAIL");
+    bool idok = (id1 != 0xFFFF && id1 != 0x0000);   /* real MDIO round-trip, not 0xffff */
+    Serial1.print("ENET_PHYID_OK="); Serial1.println(idok ? "PASS" : "FAIL");
 }
 void loop() {
     static uint32_t t0 = millis(); static bool sent = false;
