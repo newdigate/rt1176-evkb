@@ -7,7 +7,7 @@ static const uint8_t PROBE_TX[] = {
     0x02,0x00,0x00,0x00,0x00,0x02, 0x02,0x00,0x00,0x00,0x00,0x01, 0x88,0xB5,
     'E','N','E','T','-','T','X','-','P','R','O','B','E' };
 
-static const uint8_t ENET_IP[4] = {192,168,100,50};
+static const uint8_t ENET_IP[4] = {192,168,1,50};   /* free static addr on the test LAN */
 
 static uint16_t inet_cksum(const uint8_t *p, int n) {
     uint32_t s = 0; int i;
@@ -66,8 +66,9 @@ static void handle_ipv4(uint8_t *f, uint16_t len) {
     Serial1.println("ENET_PING=PASS");
 }
 static void enet_poll(void) {
-    uint8_t buf[1536]; uint16_t len = 0;
-    while (enet_read_frame(buf, &len) == 1) {
+    uint8_t buf[1536]; uint16_t len = 0; int r;
+    while ((r = enet_read_frame(buf, &len)) != 0) {
+        if (r < 0) continue;                       /* MAC-error/fragment: dropped, keep draining */
         if (len < 14) continue;
         uint16_t et = (uint16_t)((buf[12] << 8) | buf[13]);
         if (et == 0x0806) handle_arp(buf, len);
@@ -82,7 +83,7 @@ static void enet_poll(void) {
 void setup() {
     Serial1.begin(115200); delay(50);
     Serial1.println("ENET_BOOT");
-    enet_init(ENET_MAC);
+    enet_init(ENET_MAC);           /* clock (incl. SysPll1 bring-up) + pins + PHY reset + rings */
     Serial1.println("ENET_INIT_DONE");
     uint16_t id1 = enet_mdio_read(3, 2), id2 = enet_mdio_read(3, 3);
     Serial1.print("ENET_PHYID="); Serial1.print(id1, HEX); Serial1.print(":"); Serial1.println(id2, HEX);

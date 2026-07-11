@@ -46,7 +46,7 @@ if __name__ == "__main__":
     if phase == "ping":
         time.sleep(1.5)
         BOARD_MAC = bytes.fromhex("020000000001"); PEER_MAC = bytes.fromhex("020000000002")
-        BOARD_IP = bytes([192,168,100,50]); PEER_IP = bytes([192,168,100,1])
+        BOARD_IP = bytes([192,168,1,50]); PEER_IP = bytes([192,168,1,1])
         def cksum(b):
             s = 0
             for i in range(0, len(b) - 1, 2): s += (b[i] << 8) | b[i+1]
