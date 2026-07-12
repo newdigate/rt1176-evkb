@@ -44,6 +44,15 @@ static void try_client_once() {
     did_client = true;
     EthernetClient c;
     if (on_slirp()) {
+        /* This probe targets 10.0.2.100, which is only guestfwd-routed in the
+           "client" phase; in every other phase the connect can't succeed and
+           EthernetClient::connect() blocks loop() for its full timeout
+           (NativeEthernet default 10000 ms) before giving up. loop() also
+           drives serve_tcp()/serve_udp(), so a 10 s stall here starves the
+           echo server for the whole window the peer expects a reply in.
+           Bound it to the same budget the read-loop below already assumes
+           (3000 ms) so a one-shot miss here can't monopolize loop(). */
+        c.setConnectionTimeout(3000);
         if (c.connect(IPAddress(10,0,2,100), 7)) {
             const char *tok = "ETHCLI-PROBE\n"; c.write((const uint8_t*)tok, 13);
             uint32_t t0 = millis(); char in[16]; int got = 0;
