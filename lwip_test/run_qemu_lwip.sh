@@ -3,9 +3,14 @@ set -e
 QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
 . ~/Development/rt1170/evkb/tools/gate-lib.sh
+# gate_init's guard re-exec ("exec ... "$0"" with no argv, see gate-lib.sh) drops
+# CLI args -- capture+export the phase first so it survives via the environment
+# instead (gate-lib.sh's own comment flags this as the expected fix for a
+# runner that takes CLI args).
+export PHASE="${1:-${PHASE:-boot}}"
 gate_init
 ELF="$DIR/build/lwip_test.elf"; VCOM="$DIR/vcom.uart"; DBG="$DIR/lwip.dbg"; RES="$DIR/lwip.result"
-gate_tmp "$RES"; PORT=15600; PHASE="${1:-boot}"
+gate_tmp "$RES"; PORT=15600
 rm -f "$VCOM" "$DBG" "$RES"
 case "$PHASE" in
   ping)  NIC="-nic socket,listen=127.0.0.1:$PORT,model=imx.enet" ;;
@@ -18,7 +23,7 @@ esac
     -display none -serial file:"$VCOM" $NIC -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
 if [ "$PHASE" = ping ] || [ "$PHASE" = udp ] || [ "$PHASE" = tcp ]; then
-    python3 "$DIR/lwip_peer.py" "$PHASE" 127.0.0.1 "$PORT" > "$RES" 2>&1; RC=$?
+    RC=0; python3 "$DIR/lwip_peer.py" "$PHASE" 127.0.0.1 "$PORT" > "$RES" 2>&1 || RC=$?
 else
     sleep 8; RC=0
 fi
