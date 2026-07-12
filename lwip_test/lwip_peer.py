@@ -128,6 +128,24 @@ if __name__ == "__main__":
             except socket.timeout:
                 print("UDP retry %d" % attempt)
         print("FAIL: no UDP echo"); sys.exit(1)
-    # tcp phase: left for later tasks.
+    if phase == "tcp":
+        host, hport = sys.argv[2], 5555
+        time.sleep(6)     # DHCP lease + server up
+        s = None
+        for attempt in range(5):
+            try:
+                s = socket.create_connection((host, hport), timeout=5); break
+            except OSError:
+                print("TCP connect retry %d" % attempt); time.sleep(1)
+        if s is None: print("FAIL: no TCP connect"); sys.exit(1)
+        s.settimeout(6)
+        msg = b"LWIP-TCP-ECHO-PROBE"
+        s.sendall(msg)
+        try:
+            got = recvall(s, len(msg))
+        except (EOFError, socket.timeout):
+            print("FAIL: no TCP echo"); sys.exit(1)
+        print("TCP got=%r" % got); s.close()
+        sys.exit(0 if got == msg else 1)
     print("peer phase=%s (skeleton)" % phase)
     sys.exit(0)
