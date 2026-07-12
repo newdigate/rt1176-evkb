@@ -8,15 +8,17 @@ gate_init
 ELF="$DIR/build/ethernet_test.elf"; VCOM="$DIR/vcom.uart"; DBG="$DIR/eth.dbg"; RES="$DIR/eth.result"
 gate_tmp "$RES"; PORT=15600
 rm -f "$VCOM" "$DBG" "$RES"
+# Carry the -nic VALUE (no flag) so it can be passed as a single quoted arg;
+# the client phase's guestfwd -cmd contains a space that must NOT word-split.
 case "$PHASE" in
-  server) NIC="-nic user,model=imx.enet,hostfwd=tcp::5555-:7" ;;
-  udp)    NIC="-nic user,model=imx.enet,hostfwd=udp::5556-:7" ;;
-  client) NIC="-nic user,model=imx.enet,guestfwd=tcp:10.0.2.100:7-cmd:python3 $DIR/guestfwd_echo.py" ;;
-  dns)    NIC="-nic user,model=imx.enet" ;;
-  *)      NIC="-nic user,model=imx.enet" ;;
+  server) NICVAL="user,model=imx.enet,hostfwd=tcp::5555-:7" ;;
+  udp)    NICVAL="user,model=imx.enet,hostfwd=udp::5556-:7" ;;
+  client) NICVAL="user,model=imx.enet,guestfwd=tcp:10.0.2.100:7-cmd:python3 $DIR/guestfwd_echo.py" ;;
+  dns)    NICVAL="user,model=imx.enet" ;;
+  *)      NICVAL="user,model=imx.enet" ;;
 esac
 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
-    -display none -serial file:"$VCOM" $NIC -d guest_errors -D "$DBG" &
+    -display none -serial file:"$VCOM" -nic "$NICVAL" -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
 if [ "$PHASE" = server ] || [ "$PHASE" = udp ]; then
     RC=0; python3 "$DIR/ethernet_peer.py" "$PHASE" 127.0.0.1 "$PORT" > "$RES" 2>&1 || RC=$?
