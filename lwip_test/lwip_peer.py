@@ -30,9 +30,13 @@ def recv_frame(sock, timeout=5):
 
 if __name__ == "__main__":
     phase, host, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
-    sock = connect(host, port)
-    print("PEER-CONNECTED phase=%s" % phase)
     if phase == "ping":
+        # Only the ping phase uses the raw socket-netdev conduit (-nic socket,listen=...);
+        # udp/tcp run "-nic user" (SLIRP) with no listener on this port, so the
+        # unconditional connect() that used to live here would hang ~10s and
+        # exit(2) before ever reaching those phases' own sockets.
+        sock = connect(host, port)
+        print("PEER-CONNECTED phase=%s" % phase)
         time.sleep(1.5)
         BOARD_MAC = bytes.fromhex("020000000001"); PEER_MAC = bytes.fromhex("020000000002")
         BOARD_IP = bytes([192,168,1,50]); PEER_IP = bytes([192,168,1,1])
@@ -111,6 +115,19 @@ if __name__ == "__main__":
                    and r[off+8:off+8+len(data)] == data and cksum(r[off:off+8+len(data)]) == 0)
         print("ICMP-REPLY ok=%s type=%d" % (icmp_ok, r[off]))
         sys.exit(0 if (arp_ok and icmp_ok) else 1)
-    # udp/tcp phases: left for later tasks.
+    if phase == "udp":
+        host, hport = sys.argv[2], 5556
+        time.sleep(6)     # let DHCP lease + the echo server come up
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(5)
+        msg = b"LWIP-UDP-ECHO-PROBE"
+        for attempt in range(4):
+            s.sendto(msg, (host, hport))
+            try:
+                got, _ = s.recvfrom(1024)
+                print("UDP got=%r" % got); sys.exit(0 if got == msg else 1)
+            except socket.timeout:
+                print("UDP retry %d" % attempt)
+        print("FAIL: no UDP echo"); sys.exit(1)
+    # tcp phase: left for later tasks.
     print("peer phase=%s (skeleton)" % phase)
     sys.exit(0)

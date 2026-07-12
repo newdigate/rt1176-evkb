@@ -8,6 +8,7 @@
 #include "ethernetif.h"
 
 extern "C" { uint8_t g_mac[6] = {0x02,0x00,0x00,0x00,0x00,0x01}; }   /* C linkage: ethernetif.c extern-refs this */
+extern "C" void udpecho_raw_init(void);   /* udpecho_raw.c (compiled as C); no extern "C" guard in its .h */
 static struct netif s_netif;
 
 void setup() {
@@ -19,6 +20,7 @@ void setup() {
     netif_set_default(&s_netif);
     netif_set_up(&s_netif);
     dhcp_start(&s_netif);
+    udpecho_raw_init();     /* raw-API UDP echo server */
     Serial1.println("LWIP_NETIF_UP");
 }
 void loop() {
