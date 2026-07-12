@@ -1,6 +1,7 @@
 #include "Arduino.h"
 #include "HardwareSerial.h"
 #include "Ethernet.h"
+#include "utility/socket_lwip.h"
 
 static uint8_t mac[6] = {0x02,0x00,0x00,0x00,0x00,0x01};
 EthernetServer server(7);
@@ -44,14 +45,13 @@ static void try_client_once() {              /* fires ~immediately after DHCP, b
 }
 static void try_dns_once() {
     did_dns = true;
-    IPAddress r;
-    /* connect() with a hostname exercises DNS; here we resolve via EthernetUDP::beginPacket(host) path.
-       Task 6 wires real resolution; until then this prints DNS_FAIL harmlessly. */
-    EthernetClient c;
-    int ok = c.connect("example.com", 9);      /* discard port; DNS is the point */
-    r = Ethernet.localIP();                     /* placeholder until Task 6 exposes resolved ip */
-    Serial1.print("DNS_TRY ok="); Serial1.println(ok);
-    if (ok) c.stop();
+    ip_addr_t a;
+    if (eth_resolve("example.com", &a, 6000)) {
+        uint32_t v = ip_2_ip4(&a)->addr;
+        Serial1.print("DNS_OK ip=");
+        Serial1.print(v&0xff); Serial1.print('.'); Serial1.print((v>>8)&0xff); Serial1.print('.');
+        Serial1.print((v>>16)&0xff); Serial1.print('.'); Serial1.println((v>>24)&0xff);
+    } else Serial1.println("DNS_FAIL");
 }
 
 void loop() {
