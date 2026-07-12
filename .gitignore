@@ -11,3 +11,4 @@ serial.dbg
 *.dbg
 *.log
 *.result
+tap.raw
