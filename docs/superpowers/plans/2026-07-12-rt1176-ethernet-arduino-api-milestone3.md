@@ -63,9 +63,11 @@ After adding/removing any imported library or source file: `rm -rf "$T/build"` b
 ## Task 1: DNS-enable the vendored lwIP (+ re-verify all 5 m2 gates)
 
 **Files:**
-- Modify: `~/Development/lwip/port/lwipopts.h:16` and `:26`
+- Modify: `~/Development/lwip/port/lwipopts.h` (lines 16, 26, + a new `LWIP_RAND` define)
 
 De-risk the one library change before building on it. `dns.c`/`dns.h` are **already** in the vendored copy (verified) — this task is only the option flip plus a full regression run of milestone 2.
+
+**Why more than the flag flip:** `dns.c` uses `LWIP_RAND` **unconditionally** (for DNS transaction-ID randomization, `dns.c:109`/`:1060`), while every other lwIP module (`udp.c`/`tcp.c`/`dhcp.c`) guards it with `#ifdef` — so DNS-off links fine but DNS-on fails with `undefined reference to LWIP_RAND`. This port never defines `LWIP_RAND` (the `cc.h` fallback behind `LWIP_DEFINE_LWIP_RAND_IN_CC_H` only *declares* an unimplemented `lwip_rand()`), so we define it directly in `lwipopts.h`.
 
 - [ ] **Step 1: Confirm the m2 gates are green BEFORE the change (baseline)**
 
@@ -77,16 +79,22 @@ for p in boot ping dhcp udp tcp; do ./run_qemu_lwip.sh $p 2>&1 | tail -1; done
 ```
 Expected: five `PASS: lwip_test <phase>` lines. (If any fail pre-change, STOP — environment issue, not this task.)
 
-- [ ] **Step 2: Flip `LWIP_DNS` on and give DNS its UDP pcb**
+- [ ] **Step 2: Flip `LWIP_DNS` on, give DNS its UDP pcb, and define `LWIP_RAND`**
 
 In `~/Development/lwip/port/lwipopts.h` change line 16:
 ```c
 #define LWIP_DNS                     1
 ```
-and line 26 (DNS opens one additional UDP pcb):
+change line 26 (DNS opens one additional UDP pcb):
 ```c
 #define MEMP_NUM_UDP_PCB             5
 ```
+and add — immediately after the `#define LWIP_DNS 1` line — a `LWIP_RAND` definition plus the `<stdlib.h>` include it needs (`dns.c` requires `LWIP_RAND` for its transaction-ID; the macro body is only expanded in `dns.c`, where `u32_t` is already defined):
+```c
+#include <stdlib.h>                       /* rand() for LWIP_RAND below */
+#define LWIP_RAND() ((u32_t)rand())       /* dns.c uses LWIP_RAND unconditionally (TXID) */
+```
+*(Best-effort randomness for a non-adversarial LAN; Task 2 seeds `rand()` once in `Ethernet.begin`. A hardware entropy source, TRNG/SNVS, is a future upgrade.)*
 
 - [ ] **Step 3: Rebuild the m2 gate and re-run ALL FIVE phases (regression proof)**
 
@@ -104,9 +112,10 @@ Expected: `BUILD_OK` then five `PASS: lwip_test <phase>` lines — DNS-on must n
 git -C ~/Development/lwip add port/lwipopts.h
 git -C ~/Development/lwip commit -m "feat(dns): enable LWIP_DNS for Ethernet milestone 3
 
-LWIP_DNS=1 + MEMP_NUM_UDP_PCB 4->5 (DNS uses one UDP pcb). dns.c/dns.h
-already vendored. All five m2 gates (boot/ping/dhcp/udp/tcp) re-verified
-green after the flip.
+LWIP_DNS=1 + MEMP_NUM_UDP_PCB 4->5 (DNS uses one UDP pcb) + LWIP_RAND()
+via rand() (dns.c uses LWIP_RAND unconditionally for TXID; this port had
+none). dns.c/dns.h already vendored. All five m2 gates (boot/ping/dhcp/
+udp/tcp) re-verified green after the change.
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
@@ -405,7 +414,11 @@ static void to_ip4(IPAddress in, ip4_addr_t *out) { IP4_ADDR(out, in[0], in[1], 
 
 void EthernetClass::netif_bringup(uint8_t *mac, const ip4_addr_t *ip, const ip4_addr_t *nm, const ip4_addr_t *gw) {
     for (int i=0;i<6;i++) g_mac[i]=mac[i];
-    if (!_inited) { lwip_init(); _inited = true; }
+    if (!_inited) {
+        lwip_init();
+        srand((unsigned)(millis() ^ (g_mac[5] << 8) ^ g_mac[4]));  /* best-effort seed for LWIP_RAND (DNS TXID) */
+        _inited = true;
+    }
     struct netif *n = eth_netif();
     netif_add(n, ip, nm, gw, NULL, ethernetif_init, ethernet_input);
     netif_set_default(n);
@@ -652,15 +665,18 @@ gate_init
 ELF="$DIR/build/ethernet_test.elf"; VCOM="$DIR/vcom.uart"; DBG="$DIR/eth.dbg"; RES="$DIR/eth.result"
 gate_tmp "$RES"; PORT=15600
 rm -f "$VCOM" "$DBG" "$RES"
+# Carry the -nic VALUE (no flag) so it passes as ONE quoted arg — the client
+# phase's guestfwd -cmd contains a space that must NOT word-split (an unquoted
+# $NIC drops the script path, leaving a bare `-cmd:python3`).
 case "$PHASE" in
-  server) NIC="-nic user,model=imx.enet,hostfwd=tcp::5555-:7" ;;
-  udp)    NIC="-nic user,model=imx.enet,hostfwd=udp::5556-:7" ;;
-  client) NIC="-nic user,model=imx.enet,guestfwd=tcp:10.0.2.100:7-cmd:python3 $DIR/guestfwd_echo.py" ;;
-  dns)    NIC="-nic user,model=imx.enet" ;;
-  *)      NIC="-nic user,model=imx.enet" ;;
+  server) NICVAL="user,model=imx.enet,hostfwd=tcp::5555-:7" ;;
+  udp)    NICVAL="user,model=imx.enet,hostfwd=udp::5556-:7" ;;
+  client) NICVAL="user,model=imx.enet,guestfwd=tcp:10.0.2.100:7-cmd:python3 $DIR/guestfwd_echo.py" ;;
+  dns)    NICVAL="user,model=imx.enet" ;;
+  *)      NICVAL="user,model=imx.enet" ;;
 esac
 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
-    -display none -serial file:"$VCOM" $NIC -d guest_errors -D "$DBG" &
+    -display none -serial file:"$VCOM" -nic "$NICVAL" -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
 if [ "$PHASE" = server ] || [ "$PHASE" = udp ]; then
     RC=0; python3 "$DIR/ethernet_peer.py" "$PHASE" 127.0.0.1 "$PORT" > "$RES" 2>&1 || RC=$?
@@ -859,8 +875,24 @@ void EthernetServer::begin() {
     tcp_accept(lp, eth_accept_cb);
 }
 
+/* Reclaim finished server connections (peer FIN/RST, fully drained) so the
+   4-slot pool does not leak under connection churn. A CONN_CLOSING/CLOSED slot
+   with 0 unread bytes is done; free it (eth_conn_free tcp_closes a still-valid
+   pcb, or just frees rx pbufs if err_cb already nulled the pcb). Slots with
+   unread data are kept so connected()/read() still see them past a peer FIN. */
+static void eth_server_reap(uint16_t port) {
+    for (int i = 0; i < ETH_MAX_SOCK_NUM; i++) {
+        tcp_conn_t *c = &eth_conns[i];
+        if (c->accept_port == port &&
+            (c->state == CONN_CLOSED || c->state == CONN_CLOSING) &&
+            eth_conn_available(i) == 0)
+            eth_conn_free(i);
+    }
+}
+
 EthernetClient EthernetServer::available() {
     eth_pump();
+    eth_server_reap(_port);
     for (int i = 0; i < ETH_MAX_SOCK_NUM; i++) {
         tcp_conn_t *c = &eth_conns[i];
         if (c->state != CONN_FREE && c->accept_port == _port && eth_conn_available(i) > 0)
@@ -871,6 +903,7 @@ EthernetClient EthernetServer::available() {
 
 EthernetClient EthernetServer::accept() {
     eth_pump();
+    eth_server_reap(_port);
     for (int i = 0; i < ETH_MAX_SOCK_NUM; i++) {
         tcp_conn_t *c = &eth_conns[i];
         if (c->state == CONN_ESTABLISHED && c->accept_port == _port) {
