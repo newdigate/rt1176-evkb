@@ -73,13 +73,23 @@ if __name__ == "__main__":
                 if r[20:22] == b"\x00\x02" and r[22:28] == BOARD_MAC and r[28:32] == BOARD_IP:
                     return r
                 print("SKIP non-reply ARP op=%r %r" % (r[20:22], r[:42]))
-        # 1) ARP request "who has BOARD_IP tell PEER".
+        # 1) ARP request "who has BOARD_IP tell PEER". This phase runs with no
+        # DHCP server, so the netif has NO address (and won't answer ARP) until
+        # lwip_test.cpp's 5s static-fallback timer fires. Retry the request
+        # until a reply lands: inject, wait ~1.25s (skipping any gratuitous
+        # ARP, incl. the extra one netif_set_addr's fallback itself issues),
+        # re-inject if nothing valid arrived. Up to 8 attempts / ~10s total.
         arp = (b"\xff"*6 + PEER_MAC + b"\x08\x06"
                + b"\x00\x01\x08\x00\x06\x04\x00\x01" + PEER_MAC + PEER_IP + b"\x00"*6 + BOARD_IP)
-        send_frame(sock, arp)
-        try:
-            r = recv_arp_reply(6)
-        except (EOFError, socket.timeout):
+        r = None
+        for attempt in range(1, 9):
+            send_frame(sock, arp)
+            try:
+                r = recv_arp_reply(1.25)
+                break
+            except (EOFError, socket.timeout):
+                print("RETRY no ARP reply yet (attempt %d/8)" % attempt)
+        if r is None:
             print("FAIL: no ARP reply"); sys.exit(1)
         arp_ok = (r[12:14] == b"\x08\x06" and r[20:22] == b"\x00\x02"
                   and r[22:28] == BOARD_MAC and r[28:32] == BOARD_IP)

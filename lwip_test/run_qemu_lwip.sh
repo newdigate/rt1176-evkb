@@ -31,4 +31,7 @@ sleep 1; kill $P 2>/dev/null; wait $P 2>/dev/null || true
 echo "==== VCOM ===="; cat "$VCOM" 2>/dev/null; echo "==== peer ===="; cat "$RES" 2>/dev/null || true
 grep -q "LWIP_NETIF_UP" "$VCOM" || { echo "FAIL: netif did not come up"; exit 1; }
 [ $RC -eq 0 ] || { echo "FAIL: peer rc=$RC"; exit 1; }
+if [ "$PHASE" = dhcp ]; then
+    grep -q "DHCP_OK ip=10.0.2.15" "$VCOM" || { echo "FAIL: no DHCP lease"; exit 1; }
+fi
 echo "PASS: lwip_test $PHASE"
