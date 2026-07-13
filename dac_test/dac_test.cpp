@@ -66,6 +66,21 @@ void setup() {
     DAC_CR = DAC_CR_DACRFS_MASK | DAC_CR_TRGSEL_MASK;
     DAC_CR |= DAC_CR_DACEN_MASK;
     analogWriteResolution(12);
+
+    // --- Phase 3: internal DAC->ADC loopback (RM ch.87 internal sources:
+    // ADC1 CH6A = DAC output).  DAC and ADC share the VREFH reference, so on
+    // silicon read ~= written code -- a probe-free analog verification.  On
+    // QEMU the LPADC model returns synthetic ch*0x111 (ch6 -> 1638 at 12-bit),
+    // so these lines are informational there, decisive on HW.
+    analogReadResolution(12);
+    static const uint16_t lb[] = {0, 1024, 2048, 3072, 4095};
+    for (unsigned i = 0; i < 5; i++) {
+        analogWriteDAC0(lb[i]);
+        delayMicroseconds(100);              // DAC settle
+        Serial1.print("dacloop["); Serial1.print(lb[i]); Serial1.print("]=");
+        Serial1.println(analogReadChannel(0, 6));
+    }
+    Serial1.println("[dacloop] done");
 }
 
 // HW phase (scope/DMM on TP18; VREFH=1.8V nominal): 5-step staircase 2s each
