@@ -41,7 +41,7 @@ void setup()
 	s.toUpperCase();
 	check(s == "HELLO WORLD" && s.length() == 11, "STRING");
 
-	// WMath.cpp: makeWord + reproducible avr-libc PRNG
+	// WMath.cpp: makeWord + reproducible PRNG (clean-room xorshift32)
 	check(makeWord(0x12, 0x34) == 0x1234, "WORD");
 	randomSeed(42);
 	long r1 = random(100);
@@ -60,7 +60,7 @@ void setup()
 	itimer.begin(itimer_isr, 1000); // 1 kHz
 	delay(50);
 	itimer.end();
-	check(itimer_ticks >= 35 && itimer_ticks <= 70, "ITIMER");
+	check(itimer_ticks >= 40 && itimer_ticks <= 60, "ITIMER");
 
 	// pulseIn: quiet-pin timeout path (valid in QEMU and on HW — D4 is
 	// undriven at this point, so a jumpered D5 still reads a quiet LOW)
