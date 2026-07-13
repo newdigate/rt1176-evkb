@@ -12,4 +12,5 @@ rm -f "$OUT"
 P=$!; gate_pid $P; sleep 25; kill $P 2>/dev/null; wait $P 2>/dev/null || true
 echo "==== captured ===="; cat "$OUT"
 grep -q "RTC_ALL=PASS" "$OUT" || { echo "FAIL: rtc"; exit 1; }
+grep -q "TIME_ALL=PASS" "$OUT" || { echo "FAIL: time"; exit 1; }
 echo "PASS: rtc verified"

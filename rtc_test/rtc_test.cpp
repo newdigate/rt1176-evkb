@@ -16,6 +16,42 @@
 #define KNOWN_EPOCH 1700000000ul   // 2023-11-14 22:13:20 UTC — well above the 2019 default
 #define DEFAULT_2019 1546300800ul  // startup.c cold-boot seed (Jan 1 2019)
 
+// breakTime/makeTime vectors (license clean-room oracle). Expected values
+// computed independently with Python datetime (UTC), NOT from the old Time.cpp.
+// DateTimeFields: wday 0=Sunday, mon 0-11, year offset from 1900.
+struct TimeVec { uint32_t t; uint8_t sec, min, hour, wday, mday, mon, year; };
+static const TimeVec time_vecs[] = {
+    { 0u,          0,  0,  0,  4, 1,  0, 70  },  // 1970-01-01 00:00:00 Thu
+    { 86399u,      59, 59, 23, 4, 1,  0, 70  },  // 1970-01-01 23:59:59 Thu
+    { 946684800u,  0,  0,  0,  6, 1,  0, 100 },  // 2000-01-01 Sat
+    { 951782400u,  0,  0,  0,  2, 29, 1, 100 },  // 2000-02-29 Tue (century leap)
+    { 1234567890u, 30, 31, 23, 5, 13, 1, 109 },  // 2009-02-13 23:31:30 Fri
+    { 4102444800u, 0,  0,  0,  5, 1,  0, 200 },  // 2100-01-01 Fri
+    { 4107542399u, 59, 59, 23, 0, 28, 1, 200 },  // 2100-02-28 23:59:59 Sun
+    { 4107542400u, 0,  0,  0,  1, 1,  2, 200 },  // 2100-03-01 Mon (2100 NOT leap)
+    { 4294967295u, 15, 28, 6,  0, 7,  1, 206 },  // 2106-02-07 06:28:15 Sun (u32 max)
+};
+
+static bool time_checks() {
+    for (unsigned i = 0; i < sizeof(time_vecs)/sizeof(time_vecs[0]); i++) {
+        const TimeVec &v = time_vecs[i];
+        DateTimeFields tm;
+        breakTime(v.t, tm);
+        if (tm.sec != v.sec || tm.min != v.min || tm.hour != v.hour ||
+            tm.wday != v.wday || tm.mday != v.mday || tm.mon != v.mon ||
+            tm.year != v.year) return false;
+        if (makeTime(tm) != v.t) return false;
+    }
+    uint32_t x = 12345;                 // deterministic LCG round-trip sweep
+    for (int i = 0; i < 500; i++) {
+        x = x * 1664525u + 1013904223u;
+        DateTimeFields tm;
+        breakTime(x, tm);
+        if (makeTime(tm) != x) return false;
+    }
+    return true;
+}
+
 // Persistence is detected via the LP SECURE COUNTER itself (rtc_get), NOT a scratch
 // SNVS_LPGPR register. HW-observed on this RT1176 EVKB: a reset ZEROES the scratch
 // SNVS_LPGPR while RETAINING the secure RTC counter (retaining time across reset is the
@@ -25,6 +61,9 @@
 void setup() {
     Serial1.begin(115200);
     while (!Serial1) {}
+
+    // Civil-time conversion vectors run on every boot (both phases).
+    Serial1.println(time_checks() ? "TIME_ALL=PASS" : "TIME_ALL=FAIL");
 
     unsigned long now = rtc_get();
     if (now >= KNOWN_EPOCH && now < KNOWN_EPOCH + 86400ul) {
