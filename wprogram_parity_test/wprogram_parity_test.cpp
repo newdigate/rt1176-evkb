@@ -62,19 +62,22 @@ void setup()
 	itimer.end();
 	check(itimer_ticks >= 40 && itimer_ticks <= 60, "ITIMER");
 
-	// pulseIn: quiet-pin timeout path (valid in QEMU and on HW — D4 is
-	// undriven at this point, so a jumpered D5 still reads a quiet LOW)
-	pinMode(5, INPUT_PULLDOWN);
-	check(pulseIn(5, HIGH, 20000) == 0, "PULSE_TIMEOUT");
+	// pulseIn: quiet-pin timeout path (valid in QEMU and on HW — D11 is
+	// undriven at this point, so a jumpered D12 still reads a quiet LOW).
+	// D11/D12 (AD_30/AD_31) are the SPI-loopback pair already HW-proven on
+	// this board; the RevC3 schematic shows AD_06 ("D4") never reaches the
+	// Arduino sockets, so the original D4<->D5 jumper shorted a rail.
+	pinMode(12, INPUT_PULLDOWN);
+	check(pulseIn(12, HIGH, 20000) == 0, "PULSE_TIMEOUT");
 
-	// pulseIn: real measurement — meaningful on HW only (jumper D4 <-> D5).
+	// pulseIn: real measurement — meaningful on HW only (jumper D11 <-> D12).
 	// In QEMU the unjumpered input reads 0, so this prints PULSE_HW=0; the
 	// gate script does not assert on it. HW-RESULTS.md records ~500us
 	// (half-period of the 1 kHz tone), accepted range 400..600.
-	tone(4, 1000);
+	tone(11, 1000);
 	delay(10);
-	uint32_t width = pulseIn(5, HIGH, 50000);
-	noTone(4);
+	uint32_t width = pulseIn(12, HIGH, 50000);
+	noTone(11);
 	Serial1.print("PULSE_HW=");
 	Serial1.println(width);
 
