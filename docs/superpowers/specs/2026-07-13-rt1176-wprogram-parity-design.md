@@ -41,10 +41,15 @@ is deleted — those arrive transitively exactly as on teensy4.
 
 | File | Notes |
 |---|---|
-| `WCharacter.h` | Platform-independent, straight copy |
 | `inplace_function.h` | SG14 header-only, straight copy (used by teensy4 `IntervalTimer.h`) |
 | `avr/interrupt.h` | One line, straight copy |
-| `WMath.cpp` | Fixes latent link error: `random()`/`randomSeed()`/`makeWord()` are declared in our WProgram.h but implemented nowhere |
+
+### Clean-room MIT (user decision 2026-07-13: teensy4's versions are LGPL Wiring lineage)
+
+| File | Notes |
+|---|---|
+| `WCharacter.h` | Written fresh from the documented Arduino character API (isAlpha…toUpperCase as ctype wrappers), NOT copied from the LGPL original |
+| `WMath.cpp` | Fixes latent link error: `random()`/`randomSeed()`/`makeWord()` declared in WProgram.h but implemented nowhere. Fresh implementation: xorshift32 (Marsaglia 2003, public-domain algorithm) behind the documented Arduino random API |
 | `usb_seremu.h`, `usb_keyboard.h`, `usb_mouse.h`, `usb_joystick.h`, `usb_midi.h`, `usb_rawhid.h`, `usb_flightsim.h`, `usb_audio.h`, `usb_touch.h` | All self-gate on `*_INTERFACE` defines from `usb_desc.h`; under our CDC-only descriptors they compile to nothing. `usb_keyboard.h`'s pre-gate includes (`usb_desc.h`, `keylayouts.h`) already exist in the 1176 core |
 | `MTP_Teensy.h` | Gates on `MTP_INTERFACE` (line 31); its heavy includes (`MTP_Storage.h`, `usb_dev.h`, …) sit *inside* the gate, so the header ports alone. `MTP_Storage.{h,cpp}` stay unported |
 | `pulseIn` implementation | ~60 lines from teensy4 `digital.c:275-350` (`pulseIn_high`, `pulseIn_low`, `pulseIn`) into our `digital.c`. Declared today, unimplemented — same latent-link-error class as WMath |
@@ -81,9 +86,12 @@ is deleted — those arrive transitively exactly as on teensy4.
 2. **usb_desc.h divergence.** Our trimmed `usb_desc.h` may lack macros the gated
    headers reference before their gates. Fix by adding the missing inert defines
    to `usb_desc.h`, keeping the ported headers byte-identical.
-3. **License:** everything ported is PJRC MIT-style (same license header already
-   throughout the tree); `inplace_function.h` is SG14 (Boost-ish permissive) —
-   verify its embedded header on port. No copyleft.
+3. **License:** teensy4's `WCharacter.h`/`WMath.cpp` are LGPL-2.1 (Wiring
+   lineage, like the already-present `WString.h`) — per user decision these two
+   are CLEAN-ROOM MIT reimplementations instead of ports. Everything actually
+   ported is PJRC MIT-style; `inplace_function.h` is SG14 (permissive) — verify
+   its embedded header on port. `WString.h` remains LGPL (pre-existing;
+   clean-rooming it is out of scope).
 
 ## Verification
 

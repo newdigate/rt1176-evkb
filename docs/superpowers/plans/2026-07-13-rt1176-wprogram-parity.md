@@ -19,7 +19,7 @@
 - **Gate convention:** each gate is a top-level dir in `evkb/` with `CMakeLists.txt`, `<name>.cpp`, `run_qemu_<name>.sh`, `toolchain/rt1170-evkb.toolchain.cmake` (copied from `dac_test/`), and later `HW-RESULTS.md`. Configure with the toolchain file, build, run the script, grep `=OK` markers.
 - **QEMU timing:** any gate using `delay()`/IntervalTimer needs `-icount shift=auto` (couples DWT-based delay() and the PIT), per `interval_timer_test/run_qemu_intervaltimer.sh`.
 - **Build system picks up new core files automatically** — sources are `GLOB_RECURSE`d (`teensy-cmake-macros/CMakeLists.include.txt:193`). No CMake edits for new `.cpp` files. Globs run at configure time; every task below reconfigures from scratch, so this never goes stale.
-- **License note (user policy: surface copyleft):** `WCharacter.h` and `WMath.cpp` are LGPL-2.1 (Wiring/Arduino lineage), like the already-ported `cores/imxrt1176/WString.h`. Everything else ported here is PJRC MIT-style; `inplace_function.h` is SG14 (permissive — verify its embedded header on copy). This was surfaced to the user before execution; verbatim port approved on the WString.h precedent.
+- **License note (user policy: no new copyleft):** teensy4's `WCharacter.h` and `WMath.cpp` are LGPL-2.1 (Wiring/Arduino lineage). Per user decision (2026-07-13), Tasks 2–3 write **clean-room MIT** versions from the documented Arduino API instead of copying — do NOT open or copy from `teensy4/WCharacter.h` / `teensy4/WMath.cpp` beyond confirming the public signatures already quoted in this plan. Everything else ported here is PJRC MIT-style; `inplace_function.h` is SG14 (permissive — verify its embedded header on copy). Pre-existing `WString.h` stays LGPL (out of scope).
 
 ---
 
@@ -210,21 +210,19 @@ git -C ~/Development/rt1170/evkb commit -m "test: WProgram.h include-parity QEMU
 
 ---
 
-### Task 2: Leaf headers — WCharacter.h, inplace_function.h, avr/interrupt.h (cores repo)
+### Task 2: Leaf headers — WCharacter.h (clean-room), inplace_function.h + avr/interrupt.h (cp) (cores repo)
 
 **Files:**
-- Create: `cores/imxrt1176/WCharacter.h` (cp from teensy4)
-- Create: `cores/imxrt1176/inplace_function.h` (cp from teensy4)
-- Create: `cores/imxrt1176/avr/interrupt.h` (cp from teensy4)
+- Create: `cores/imxrt1176/WCharacter.h` (CLEAN-ROOM MIT — do not copy from teensy4)
+- Create: `cores/imxrt1176/inplace_function.h` (cp from teensy4 — SG14, permissive)
+- Create: `cores/imxrt1176/avr/interrupt.h` (cp from teensy4 — PJRC)
 
-- [ ] **Step 2.1: Copy the three headers verbatim**
+- [ ] **Step 2.1: Copy the two permissive headers verbatim**
 
 ```bash
 cd ~/Development/rt1170/evkb/cores
-cp teensy4/WCharacter.h imxrt1176/WCharacter.h
 cp teensy4/inplace_function.h imxrt1176/inplace_function.h
 cp teensy4/avr/interrupt.h imxrt1176/avr/interrupt.h
-diff teensy4/WCharacter.h imxrt1176/WCharacter.h && \
 diff teensy4/inplace_function.h imxrt1176/inplace_function.h && \
 diff teensy4/avr/interrupt.h imxrt1176/avr/interrupt.h && echo COPIES-OK
 ```
@@ -239,40 +237,143 @@ head -30 ~/Development/rt1170/evkb/cores/imxrt1176/inplace_function.h
 
 Expected: SG14/Boost-style permissive text. If it shows GPL/LGPL, STOP and surface to the user (per license policy).
 
-- [ ] **Step 2.3: Commit (cores repo)**
+- [ ] **Step 2.3: Write `cores/imxrt1176/WCharacter.h` — clean-room MIT**
+
+Written from the documented Arduino character API (ctype wrappers). Do NOT read or copy `teensy4/WCharacter.h` (it is LGPL). Use this content exactly:
+
+```cpp
+/* WCharacter.h - Arduino character classification / conversion API.
+ *
+ * Clean-room MIT implementation for the imxrt1176 core: written from the
+ * documented Arduino API surface (thin wrappers over <ctype.h>), not derived
+ * from the LGPL Wiring/Arduino WCharacter.h.
+ *
+ * Copyright (c) 2026 Nicholas Newdigate
+ * SPDX-License-Identifier: MIT
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included
+ * in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+#pragma once
+
+#include <ctype.h>
+
+/* ctype.h functions have undefined behaviour for arguments outside
+ * unsigned char / EOF; the Arduino API takes plain (possibly signed) chars,
+ * so every wrapper casts through unsigned char first. */
+
+static inline bool isAlpha(int c)             { return isalpha((unsigned char)c) != 0; }
+static inline bool isAlphaNumeric(int c)      { return isalnum((unsigned char)c) != 0; }
+static inline bool isAscii(int c)             { return c >= 0 && c <= 127; }
+static inline bool isControl(int c)           { return iscntrl((unsigned char)c) != 0; }
+static inline bool isDigit(int c)             { return isdigit((unsigned char)c) != 0; }
+static inline bool isGraph(int c)             { return isgraph((unsigned char)c) != 0; }
+static inline bool isHexadecimalDigit(int c)  { return isxdigit((unsigned char)c) != 0; }
+static inline bool isLowerCase(int c)         { return islower((unsigned char)c) != 0; }
+static inline bool isPrintable(int c)         { return isprint((unsigned char)c) != 0; }
+static inline bool isPunct(int c)             { return ispunct((unsigned char)c) != 0; }
+static inline bool isSpace(int c)             { return isspace((unsigned char)c) != 0; }
+static inline bool isUpperCase(int c)         { return isupper((unsigned char)c) != 0; }
+static inline bool isWhitespace(int c)        { return c == ' ' || c == '\t'; }
+
+static inline int toAscii(int c)              { return c & 0x7f; }
+static inline int toLowerCase(int c)          { return tolower((unsigned char)c); }
+static inline int toUpperCase(int c)          { return toupper((unsigned char)c); }
+```
+
+- [ ] **Step 2.4: Commit (cores repo)**
 
 ```bash
 git -C ~/Development/rt1170/evkb/cores add imxrt1176/WCharacter.h imxrt1176/inplace_function.h imxrt1176/avr/interrupt.h
-git -C ~/Development/rt1170/evkb/cores commit -m "feat: WCharacter.h, inplace_function.h, avr/interrupt.h verbatim from teensy4 (WProgram parity)"
+git -C ~/Development/rt1170/evkb/cores commit -m "feat: WCharacter.h (clean-room MIT) + inplace_function.h, avr/interrupt.h from teensy4 (WProgram parity)"
 ```
-
-Note: WCharacter.h is LGPL-2.1 (Wiring lineage) — approved by user on the WString.h precedent; see plan header.
 
 ---
 
-### Task 3: WMath.cpp (cores repo)
+### Task 3: WMath.cpp — clean-room MIT (cores repo)
 
 **Files:**
-- Create: `cores/imxrt1176/WMath.cpp` (cp from teensy4)
+- Create: `cores/imxrt1176/WMath.cpp` (CLEAN-ROOM MIT — do not copy from teensy4; teensy4's is LGPL)
 
-This fixes a latent link error: `random()`/`randomSeed()`/`makeWord()` are declared in our WProgram.h today but implemented nowhere.
+This fixes a latent link error: `random()`/`randomSeed()`/`makeWord()` are declared in our WProgram.h today but implemented nowhere. The PRNG is xorshift32 (Marsaglia, "Xorshift RNGs", JSS 2003 — a public-domain algorithm), NOT the avr-libc Park–Miller code the LGPL original uses. The declared API (matching WProgram.h's prototypes, which come from the MIT PJRC WProgram.h): `void randomSeed(uint32_t)`, `void srandom(unsigned int)`, `int32_t random(void)`, `uint32_t random(uint32_t howbig)`, `int32_t random(int32_t howsmall, int32_t howbig)`, `uint16_t makeWord(uint16_t)`, `uint16_t makeWord(byte h, byte l)`.
 
-- [ ] **Step 3.1: Copy verbatim**
+- [ ] **Step 3.1: Write `cores/imxrt1176/WMath.cpp`**
 
-```bash
-cd ~/Development/rt1170/evkb/cores
-cp teensy4/WMath.cpp imxrt1176/WMath.cpp
-diff teensy4/WMath.cpp imxrt1176/WMath.cpp && echo COPY-OK
+Use the same MIT header block as WCharacter.h (Step 2.3), then:
+
+```cpp
+#include <stdint.h>
+
+/* xorshift32 (Marsaglia 2003). State must never be zero; randomSeed(0) is
+ * ignored (same contract as Arduino: a zero seed leaves the sequence alone). */
+static uint32_t rng_state = 0x11760001u;
+
+void randomSeed(uint32_t newseed)
+{
+	if (newseed != 0) rng_state = newseed;
+}
+
+void srandom(unsigned int newseed)
+{
+	if (newseed != 0) rng_state = newseed;
+}
+
+int32_t random(void)
+{
+	uint32_t x = rng_state;
+	x ^= x << 13;
+	x ^= x >> 17;
+	x ^= x << 5;
+	rng_state = x;
+	/* Arduino contract: non-negative result. */
+	return (int32_t)(x >> 1);
+}
+
+uint32_t random(uint32_t howbig)
+{
+	if (howbig == 0) return 0;
+	return (uint32_t)random() % howbig;
+}
+
+int32_t random(int32_t howsmall, int32_t howbig)
+{
+	if (howsmall >= howbig) return howsmall;
+	return (int32_t)random((uint32_t)(howbig - howsmall)) + howsmall;
+}
+
+uint16_t makeWord(uint16_t w)
+{
+	return w;
+}
+
+uint16_t makeWord(unsigned char h, unsigned char l)
+{
+	return (uint16_t)((h << 8) | l);
+}
 ```
 
 - [ ] **Step 3.2: Commit (cores repo)**
 
 ```bash
 git -C ~/Development/rt1170/evkb/cores add imxrt1176/WMath.cpp
-git -C ~/Development/rt1170/evkb/cores commit -m "feat: WMath.cpp verbatim from teensy4 - random/randomSeed/makeWord were declared but unimplemented"
+git -C ~/Development/rt1170/evkb/cores commit -m "feat: WMath.cpp clean-room MIT (xorshift32) - random/randomSeed/makeWord were declared but unimplemented"
 ```
-
-Note: LGPL-2.1 (Wiring lineage) — approved by user, see plan header.
 
 ---
 
@@ -604,7 +705,9 @@ git -C ~/Development/rt1170/evkb commit -m "docs: WProgram parity HW-verified (a
 
 ---
 
-## Deviations from the spec (agreed during planning)
+## Deviations from the spec (agreed during planning/execution)
+
+- **Clean-room MIT WCharacter.h + WMath.cpp** (user decision 2026-07-13, during execution): teensy4's versions are LGPL Wiring lineage; Tasks 2–3 write fresh MIT implementations from the documented Arduino API instead of porting. Spec updated to match.
 
 - **Metro** is not on disk and **Encoder** (considered as a substitute) doesn't compile for RT1176 for reasons *outside* this pass's scope — its `utility/direct_pin_read.h` needs the `portOutputRegister`/`digitalPinToBitMask` fast-pin macro family, keyed on `__IMXRT1062__`. That's a separate §3-adjacent parity gap worth its own note. The stock-library smoke is therefore **Bounce2 only**.
 - Spec's "negative compile check" is implemented as `#error` tripwires in the gate sketch (fails the build if any `*_INTERFACE` leaks), which is stronger than a runtime `#ifdef` probe.
