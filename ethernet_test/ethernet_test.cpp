@@ -12,7 +12,7 @@ static bool did_client = false, did_dns = false;
  * network-order-in-memory; operator uint32_t returns that memory as-is. */
 class CapturePrint : public Print {
 public:
-    char buf[64]; size_t n = 0;
+    char buf[64] = {0}; size_t n = 0;
     virtual size_t write(uint8_t c) { if (n < sizeof(buf)-1) buf[n++] = c; buf[n] = 0; return 1; }
 };
 
@@ -30,15 +30,19 @@ static bool ipaddr_checks() {
     if (!(c == IPAddress(0, 0, 0, 0))) return false;   /* default = 0.0.0.0 */
     if (!c.fromString("10.0.2.15")) return false;
     if (c[0] != 10 || c[1] != 0 || c[2] != 2 || c[3] != 15) return false;
+    if (!c.fromString("255.255.255.255")) return false; /* boundary accept */
+    if (c[0] != 255 || c[3] != 255) return false;
     if (c.fromString("999.1.2.3")) return false;       /* octet out of range */
     if (c.fromString("1.2.3")) return false;           /* too few octets */
+    if (c.fromString("1..2.3")) return false;          /* empty field */
+    if (c.fromString("1.2.3.4.5")) return false;       /* trailing garbage */
     if (c.fromString("banana")) return false;
     c = raw;                                           /* operator=(const uint8_t*) */
     if (c[3] != 101) return false;
     c[3] = 7;                                          /* operator[] write */
     if (c[3] != 7) return false;
     CapturePrint cp;
-    a.printTo(cp);
+    if (a.printTo(cp) != 13) return false;             /* real character count */
     if (strcmp(cp.buf, "192.168.1.101") != 0) return false;
     return true;
 }
