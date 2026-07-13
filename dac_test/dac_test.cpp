@@ -81,6 +81,38 @@ void setup() {
         Serial1.println(analogReadChannel(0, 6));
     }
     Serial1.println("[dacloop] done");
+
+    // --- Phase 3b: loopback attenuation experiment (raw ADC1 command).
+    // Baseline (phase 3) read ~0.23x on silicon: CMDL.CSCALE=0 scales the input
+    // 30/64 (analog.c leaves it 0; SDK default is 1 = full scale), and the
+    // remaining ~0.49x looks like S/H undercharge (STS=0 minimum sample time vs
+    // the unbuffered DAC's output impedance).  Variants isolate each factor:
+    //   B: CSCALE=1              (full scale, min sample, DAC unbuffered)
+    //   C: CSCALE=1 + STS=7      (131.5-cycle sample)
+    //   D: CSCALE=1 + STS=7 + DAC opamp buffer (BFEN|BFHS)
+    struct { const char *tag; uint32_t cmdl; uint32_t cmdh; uint32_t cr2; } v[] = {
+        { "B", ADC_CMDL_ADCH(6) | ADC_CMDL_CSCALE, 0,               DAC_CR2_IREF_MASK | DAC_CR2_OEN_MASK },
+        { "C", ADC_CMDL_ADCH(6) | ADC_CMDL_CSCALE, ADC_CMDH_STS(7), DAC_CR2_IREF_MASK | DAC_CR2_OEN_MASK },
+        { "D", ADC_CMDL_ADCH(6) | ADC_CMDL_CSCALE, ADC_CMDH_STS(7), DAC_CR2_IREF_MASK | DAC_CR2_BFEN_MASK | DAC_CR2_BFHS_MASK },
+    };
+    for (unsigned k = 0; k < 3; k++) {
+        DAC_CR2 = v[k].cr2;
+        for (unsigned i = 0; i < 5; i++) {
+            analogWriteDAC0(lb[i]);
+            delayMicroseconds(100);
+            ADC1_CMDL1 = v[k].cmdl; ADC1_CMDH1 = v[k].cmdh;
+            ADC1_TCTRL0 = ADC_TCTRL_TCMD(1);
+            ADC1_SWTRIG = 1u;
+            uint32_t guard = 100000u;
+            while (!(ADC1_STAT & ADC_STAT_RDY) && --guard) { }
+            uint32_t r = ADC1_RESFIFO;
+            uint16_t d = (r & ADC_RESFIFO_VALID) ? (uint16_t)((r & ADC_RESFIFO_D) >> 4) : 0xFFFF;
+            Serial1.print("lb"); Serial1.print(v[k].tag); Serial1.print("[");
+            Serial1.print(lb[i]); Serial1.print("]="); Serial1.println(d);
+        }
+    }
+    DAC_CR2 = DAC_CR2_IREF_MASK | DAC_CR2_OEN_MASK;   // restore unbuffered
+    Serial1.println("[dacloop-exp] done");
 }
 
 // HW phase (scope/DMM on TP18; VREFH=1.8V nominal): 5-step staircase 2s each
