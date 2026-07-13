@@ -75,6 +75,12 @@ void setup() {
 	  ok = (m.getReadError() == 0); m.seterr(); ok &= (m.getReadError() != 0);
 	  m.clearReadError(); ok &= (m.getReadError() == 0);
 	  check(ok, "READERROR"); all &= ok; }
+	{ MemStream m("0001x"); m.setTimeout(100);
+	  ok = (m.find((char *)"001") && m.read() == 'x');
+	  check(ok, "FIND_OVERLAP"); all &= ok; }   // overlapping partial match
+	{ MemStream m("99999999999"); m.setTimeout(100);
+	  long r = m.parseInt(); ok = true; (void)r; // must not crash/UB-trap
+	  check(ok, "PARSEINT_LONG"); all &= ok; }
 
 	Serial1.println(all ? "STREAM_ALL=PASS" : "STREAM_ALL=FAIL");
 	Serial1.println("GATE=DONE");
