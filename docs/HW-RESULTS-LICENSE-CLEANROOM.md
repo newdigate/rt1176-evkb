@@ -86,3 +86,16 @@ ETH_NETIF_UP
 Identical to 2026-07-14 first pass: SD card not inserted, cable not connected.
 Firmware side is stable (flash + boot + serial + IPADDR all good on both runs).
 Items 1–2 above remain pending on physical setup.
+
+## sd_wav_play_test — PASS (2026-07-14, card inserted)
+
+```
+SD_WAV_MOUNT=PASS
+SD_WAV_PLAY=PASS
+SD_WAV_DONE=PASS
+```
+
+WAV played off the FAT filesystem through the audio graph on silicon with the
+post-surgery SdFat (DigitalIO + soft-SPI deleted, SPI_DRIVER_SELECT==2 =
+#error) and the clean-room WString/Stream/Print path in the loop. Item 1 done;
+item 2 (RJ45) still pending.
