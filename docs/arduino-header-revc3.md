@@ -114,3 +114,11 @@ circuitry load these nets even with no SIM fitted (e.g. 4.7K R430).  `GPIO_AD_06
    A2/A3 here).
 3. **`digital.c` / PWM table: no change needed** — all 22 entries verified
    correct against schematic + BOM.
+
+## Hardware verification (2026-07-14)
+
+D4↔D5 loopback **HW-VERIFIED** with a jumper across J9 pin 10 ↔ J9 pin 12
+(`gpio_loopback_hw/`, LinkServer run + VCOM capture): `D4->D5 hi=1 lo=0
+D5->D4 hi=1 lo=0`, `LOOPBACK=PASS` steady — driven loopback wins over the
+SIM-circuit loading on `GPIO_AD_05` as expected.  Still pending on hardware:
+A0–A5 `analogRead` (known voltage into J26 even pins).
