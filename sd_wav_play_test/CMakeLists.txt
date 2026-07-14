@@ -33,7 +33,7 @@ import_arduino_library(SPI   $ENV{HOME}/Development/SPI)
 # uses only SDIO. (Same as SdFat/tests/sd_fs_test.)
 import_arduino_library(SdFat $ENV{HOME}/Development/SdFat
     src src/common src/SdCard src/FatLib src/ExFatLib src/FsLib
-    src/iostream src/DigitalIO src/SpiDriver)
+    src/iostream src/SpiDriver)
 import_arduino_library(SD    $ENV{HOME}/Development/PaulS_SD src)
 
 teensy_add_executable(sd_wav_play_test sd_wav_play_test.cpp)
