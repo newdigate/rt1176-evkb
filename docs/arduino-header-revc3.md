@@ -120,5 +120,11 @@ circuitry load these nets even with no SIM fitted (e.g. 4.7K R430).  `GPIO_AD_06
 D4↔D5 loopback **HW-VERIFIED** with a jumper across J9 pin 10 ↔ J9 pin 12
 (`gpio_loopback_hw/`, LinkServer run + VCOM capture): `D4->D5 hi=1 lo=0
 D5->D4 hi=1 lo=0`, `LOOPBACK=PASS` steady — driven loopback wins over the
-SIM-circuit loading on `GPIO_AD_05` as expected.  Still pending on hardware:
-A0–A5 `analogRead` (known voltage into J26 even pins).
+SIM-circuit loading on `GPIO_AD_05` as expected.
+
+A0 analog path **HW-VERIFIED** same day with the jumper moved to J9 pin 10 ↔
+J26 pin 2 (`adc_loopback_hw/`): driving D4 high/low gives `analogRead(A0)`
+`hi=1023 lo=2..3` (10-bit) plus matching `digitalRead(A0)` — the corrected
+`GPIO_AD_10` = ADC1 CH2A mapping is right end-to-end, and full-scale 1023
+re-confirms CSCALE + D[14:3] scaling on a real pad.  A1–A5 rest on the same
+RM channel table + verified J26 nets; only A0 was spot-checked physically.
