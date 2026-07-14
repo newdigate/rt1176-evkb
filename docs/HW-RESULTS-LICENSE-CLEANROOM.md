@@ -99,3 +99,22 @@ WAV played off the FAT filesystem through the audio graph on silicon with the
 post-surgery SdFat (DigitalIO + soft-SPI deleted, SPI_DRIVER_SELECT==2 =
 #error) and the clean-room WString/Stream/Print path in the loop. Item 1 done;
 item 2 (RJ45) still pending.
+
+## ethernet_test — PASS (2026-07-14, card removed, cable in 10/100 port)
+
+```
+ETH_BOOT
+IPADDR=OK
+ETH_DHCP ok=1 ip=192.168.1.107
+ETH_NETIF_UP
+CLIENT_ECHO=FAIL
+DNS_OK ip=172.66.147.243
+```
+
+Real router DHCP lease + DNS resolution of example.com on silicon.
+`CLIENT_ECHO=FAIL` is EXPECTED on HW: it connects to 10.0.2.100:7, the QEMU
+SLIRP guestfwd echo peer that only exists in emulation (same as the 2026-07-12
+milestone-3 HW run). Physical gotcha reproduced: cable was initially in the
+**1G jack — no link**; this firmware drives the RTL8201 on the **10/100 jack**
+only. Both pending physical items are now closed — every clean-room swap and
+GPL deletion is HW-verified end to end.
