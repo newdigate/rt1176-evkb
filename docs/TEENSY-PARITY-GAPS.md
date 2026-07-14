@@ -1,6 +1,6 @@
 # RT1176-EVKB Arduino core — outstanding work & Teensy parity gaps
 
-**As of:** 2026-07-12 (after Ethernet milestone 4, FNET + NativeEthernet).
+**As of:** 2026-07-14 (after USB device HID — Keyboard + Mouse + Joystick composite).
 **Scope:** what remains to reach practical Teensy-4.x (teensy4 core) parity on the
 MIMXRT1170-EVKB CM7, plus infrastructure work that has no Teensy equivalent.
 Everything listed as done below is QEMU-gated AND HW-verified unless noted.
@@ -14,7 +14,8 @@ master + full-duplex DMA async), Wire (lib, master+slave), I2S/SAI TX+RX + WM896
 AudioStream framework + AudioInput/OutputI2S + AudioPlaySdWav, EEPROM
 (flash-emulated), SD card (USDHC/SdFat), USB host (HID kbd/mouse, MIDI), SDRAM/SEMC
 + extmem_malloc, SNVS RTC, Ethernet: enet.c driver → lwIP → Arduino Ethernet API
-(newdigate/Ethernet, lwIP BSD) → FNET + NativeEthernet (Apache-2.0/MIT alternative).
+(newdigate/Ethernet, lwIP BSD) → FNET + NativeEthernet (Apache-2.0/MIT alternative),
+USB device HID (`Keyboard` + `Mouse` + `Joystick`, a composite alongside CDC `Serial`).
 
 ## 1. Queued milestones (kickoff prompts already written in `docs/`)
 
@@ -23,7 +24,6 @@ AudioStream framework + AudioInput/OutputI2S + AudioPlaySdWav, EEPROM
 | FlexCAN (CAN bus) | `NEXT-SESSION-PROMPT-CAN.md` | FlexCAN_T4-style port; J47 = CAN3; clock/pin plumbing needs core + `gen_imxrt1176_h.py` additions |
 | DAC | `NEXT-SESSION-PROMPT-DAC.md` | No on-chip DAC on RT1176 and no teensy4 DAC to port — design question (external DAC / PWM / SAI approach) |
 | Displays (SSD1306 I²C, ST7735 SPI) | `NEXT-SESSION-PROMPT-DISPLAYS.md` | Library integration over already-verified Wire/SPI. CAUTION: untracked WIP exists in the shared tree (`ssd1306_display/`, `st7735_test/`, `mkr_ssd1306_test/`, `wire_oled` edits) — check for a concurrent session before starting |
-| USB device HID (Keyboard/Mouse/Joystick) | `NEXT-SESSION-PROMPT-USB-DEVICE-HID.md` | USB device currently CDC-only; ChipIdea IP byte-identical to Teensy 4 → teensy4 port |
 | USB host MSC (flash-drive files) | `NEXT-SESSION-PROMPT-USB-HOST-MSC.md` | Sub-project B deferred from `rt1176-usb-host-hid`; USB host + SdFat/FS foundations already proven — most "unblocked" next milestone |
 
 ## 2. Deferred sub-items from completed milestones
@@ -56,8 +56,9 @@ AudioStream framework + AudioInput/OutputI2S + AudioPlaySdWav, EEPROM
   (Teensy 4.1 ships LittleFS).
 - **Teensy runtime niceties:** CrashReport, watchdog (WDOG), tempmon
   (temperature monitor), Snooze/low-power modes — none started.
-- **USB device classes beyond CDC + (queued) HID:** MIDI device, RawHID,
-  Serial+Keyboard/Mouse composite configs, MTP.
+- **USB device classes beyond CDC + HID:** MIDI device, RawHID, SEREMU, MTP. (CDC and
+  the Keyboard/Mouse/Joystick HID composite are done + HW-verified; still deferred: the
+  teensy "USB Type" build-selector system and full `keylayouts.h` `Keyboard.print`.)
 - **CM4 second core:** out of scope so far (CM7 only).
 
 ## 4. Infrastructure / distribution
