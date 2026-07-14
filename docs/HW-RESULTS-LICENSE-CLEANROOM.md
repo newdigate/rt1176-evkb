@@ -67,3 +67,22 @@ untouched). PENDING: insert card, re-run (expect MOUNT/PLAY/DONE=PASS).
 Pending physical follow-ups (user action, then one flash each):
 1. Insert SD card → `LinkServer run ... sd_wav_play_test.elf` → expect 3×PASS.
 2. Connect RJ45 → `LinkServer run ... ethernet_test.elf` → expect DHCP lease + DNS_OK.
+
+## Re-run attempt 2026-07-14 — board physical state unchanged
+
+Both gates re-flashed (fresh ELFs, built after all clean-room commits):
+
+```
+SD_WAV_MOUNT=FAIL          <- sd_wav_play_test: still no card inserted
+```
+
+```
+ETH_BOOT
+IPADDR=OK                  <- clean-room IPAddress re-confirmed on silicon
+ETH_DHCP ok=0 ip=0.0.0.0   <- ethernet_test: still no RJ45 link
+ETH_NETIF_UP
+```
+
+Identical to 2026-07-14 first pass: SD card not inserted, cable not connected.
+Firmware side is stable (flash + boot + serial + IPADDR all good on both runs).
+Items 1–2 above remain pending on physical setup.
