@@ -1,5 +1,42 @@
 # RT1176-EVKB Arduino/Teensyduino core — next-session kickoff prompt
 
+## PROGRESS (updated 2026-07-15) — QEMU milestone DONE + gate-verified; HW pending
+
+**USB host mass storage is QEMU-gate-verified end-to-end.** Spec + plan committed
+(`evkb/docs/superpowers/{specs,plans}/2026-07-15-rt1176-usb-host-msc-*`). Both gates GREEN
+(independently re-run):
+- **`evkb/usb_msc_block_test`** — raw sector R/W over `USBDrive` (BOT+SCSI), non-destructive
+  save/restore. `USB_MSC_BLOCK=PASS`.
+- **`evkb/usb_msc_fs_test`** — FAT16 mount over `USBFilesystem` + file write/read-back/dir;
+  host re-mount confirms `RTTEST.TXT` byte-exact. `USB_MSC_FS=PASS`.
+
+**The QEMU "reflect silicon" change was the star** (`qemu2 30e0303`): OTG2's EHCI DMA now
+excludes the M7 TCM (ITCM/DTCM holed out of a dedicated DMA view on `ehci->as`), mirroring
+silicon where peripheral DMA can't reach the CPU's tightly-coupled memory. This turned a
+false-pass into a real RED→GREEN test **and exposed TWO latent stack-DMA bugs** a naive port
+would have shipped broken to HW:
+1. The SCSI **CBW/CSW** are built on the stack (DTCM) — 4 CBW sites (`msDoCommand` +
+   `msTestReady`/`msStartStopUnit`/`msReadSectorsWithCB`) + `msGetCSW`. Fixed: stage through
+   DMAMEM members (`USBHost_t36 7c6bc80`).
+2. `msDoCommand`'s **data stage** DMAs into the caller's buffer, and the internal partition
+   scan (`findPartition`/GPT) reads the MBR into a **stack union** → mount silently failed.
+   Fixed: bounce a TCM-resident data buffer through a DMAMEM member (`USBHost_t36 0b76b0c`).
+   DMAMEM/SDRAM buffers (SdFat, gate) pass straight through.
+
+All `__IMXRT1176__`-guarded, Teensy byte-identical (0 deletions). **Regression clean**: HID +
+MIDI host gates and the OTG1 CDC device gate all re-run green with 0 TCM hits (change scoped to
+OTG2). Commits (master, **NOT pushed**): USBHost_t36 `7c6bc80`+`0b76b0c`; qemu2 `30e0303`; evkb
+gate dirs `cac84ab`(block)+`87bdaf9`(fs). No core changes. No new QEMU device (reused built-in
+`usb-storage`).
+
+**REMAINING: hardware verification** (the real arbiter) — flash both gates via LinkServer,
+real USB flash drive on OTG2 **via an OTG adapter that grounds the ID pin** (VBUS is ID-gated,
+no firmware hook); block gate save/restore round-trip; FS gate write `/RTTEST.TXT` on the board
+→ verify byte-exact on a PC. Then the memory note (`rt1176-usb-host-msc`) + delete this file
+from the index.
+
+---
+
 Paste everything below the line into a fresh Claude Code session started in
 `~/Development/rt1170`.
 
