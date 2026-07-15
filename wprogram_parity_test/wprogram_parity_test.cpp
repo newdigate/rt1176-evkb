@@ -4,15 +4,17 @@
 #include <Arduino.h>
 #include <Bounce2.h>   // stock library smoke test (unmodified, MIT)
 
-// Negative checks: CDC-only descriptors must keep every usb_* gate closed.
-#ifdef KEYBOARD_INTERFACE
-#error "KEYBOARD_INTERFACE leaked into a CDC-only build"
+// USB descriptor sanity: the core now ships a composite CDC + HID device
+// (keyboard + mouse + joystick, see usb_desc.h), so those HID interfaces must
+// be present.  MIDI/MTP are not part of the composite and must stay closed.
+#if !defined(KEYBOARD_INTERFACE) || !defined(MOUSE_INTERFACE) || !defined(JOYSTICK_INTERFACE)
+#error "composite CDC+HID core must define KEYBOARD/MOUSE/JOYSTICK_INTERFACE"
 #endif
 #ifdef MIDI_INTERFACE
-#error "MIDI_INTERFACE leaked into a CDC-only build"
+#error "MIDI_INTERFACE unexpectedly defined (core is CDC+HID, no MIDI device)"
 #endif
 #ifdef MTP_INTERFACE
-#error "MTP_INTERFACE leaked into a CDC-only build"
+#error "MTP_INTERFACE unexpectedly defined (core is CDC+HID, no MTP)"
 #endif
 
 static volatile uint32_t itimer_ticks;
