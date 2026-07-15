@@ -1,8 +1,27 @@
 # RT1176-EVKB Arduino/Teensyduino core — next-session kickoff prompt
 
-## PROGRESS (updated 2026-07-15) — QEMU milestone DONE + gate-verified; HW pending
+## ★★ DONE + HW-VERIFIED end-to-end (2026-07-15). This file can be removed from the index.
 
-**USB host mass storage is QEMU-gate-verified end-to-end.** Spec + plan committed
+**Hardware verification passed on a real PNY 4GB drive on OTG2 (via an OTG adapter grounding
+ID):** block gate — enumerate + `MSC_CAP=7992319x512` + non-destructive save/write/read-back/
+restore round-trip (`USB_MSC_BLOCK=PASS`); FS gate — mounted the drive's **real FAT32**, wrote
+`/RTTEST.TXT`, read it back byte-exact, dir-listed (our file + the user's untouched 150MB WAVs)
+(`USB_MSC_FS=PASS`); **PC round-trip** — the Mac re-mounted the stick and `RTTEST.TXT` read back
+**byte-identical** to the firmware payload. Memory note `rt1176-usb-host-msc` written.
+
+**★★ The expensive HW bug (see the memory note): a full-size 512-byte bulk-OUT (SCSI WRITE)
+hung forever** while enumeration + all READs worked. Root cause via the qH overlay token
+`0x020080a0` = qTD Active + **Data Buffer Error** (bit 5) + `CERR=0` (infinite retry) = a **TX
+latency-FIFO underrun** (the OTG2 DMA can't stream-feed the FIFO for a full HS packet; Teensy's
+1062 can). **Fix = `USBMODE` bit 4 SDIS (Stream Disable)** for `__IMXRT1176__` (`USBHost_t36
+77c23a6`) — buffer the whole packet before launch (RM 62.7.1.28). Dead ends: TXFILLTUNING
+(broke enum) / SBUSCFG burst mode (no help). ★The `no_drive`s were a **drive-stuck confound** (a
+stalled WRITE latches the stick → full power-cycle needed; a read-only gate variant isolated it
+and proved SDIS does not break enumeration).
+
+---
+
+**USB host mass storage was QEMU-gate-verified end-to-end first.** Spec + plan committed
 (`evkb/docs/superpowers/{specs,plans}/2026-07-15-rt1176-usb-host-msc-*`). Both gates GREEN
 (independently re-run):
 - **`evkb/usb_msc_block_test`** — raw sector R/W over `USBDrive` (BOT+SCSI), non-destructive
@@ -25,15 +44,13 @@ would have shipped broken to HW:
 
 All `__IMXRT1176__`-guarded, Teensy byte-identical (0 deletions). **Regression clean**: HID +
 MIDI host gates and the OTG1 CDC device gate all re-run green with 0 TCM hits (change scoped to
-OTG2). Commits (master, **NOT pushed**): USBHost_t36 `7c6bc80`+`0b76b0c`; qemu2 `30e0303`; evkb
-gate dirs `cac84ab`(block)+`87bdaf9`(fs). No core changes. No new QEMU device (reused built-in
-`usb-storage`).
+OTG2). Commits (master, **NOT pushed**): USBHost_t36 `7c6bc80`+`0b76b0c`+`77c23a6`(SDIS); qemu2
+`30e0303`; evkb gate dirs `cac84ab`(block)+`87bdaf9`(fs). No core changes. No new QEMU device
+(reused built-in `usb-storage`).
 
-**REMAINING: hardware verification** (the real arbiter) — flash both gates via LinkServer,
-real USB flash drive on OTG2 **via an OTG adapter that grounds the ID pin** (VBUS is ID-gated,
-no firmware hook); block gate save/restore round-trip; FS gate write `/RTTEST.TXT` on the board
-→ verify byte-exact on a PC. Then the memory note (`rt1176-usb-host-msc`) + delete this file
-from the index.
+**Hardware verification: DONE** (see the completion note at the top). Nothing outstanding — this
+whole sub-project is finished and HW-verified; the file below is the original kickoff, retained
+for context only.
 
 ---
 
