@@ -44,9 +44,9 @@ would have shipped broken to HW:
 
 All `__IMXRT1176__`-guarded, Teensy byte-identical (0 deletions). **Regression clean**: HID +
 MIDI host gates and the OTG1 CDC device gate all re-run green with 0 TCM hits (change scoped to
-OTG2). Commits (master, **NOT pushed**): USBHost_t36 `7c6bc80`+`0b76b0c`+`77c23a6`(SDIS); qemu2
-`30e0303`; evkb gate dirs `cac84ab`(block)+`87bdaf9`(fs). No core changes. No new QEMU device
-(reused built-in `usb-storage`).
+OTG2). Commits: USBHost_t36 `7c6bc80`+`0b76b0c`+`77c23a6`(SDIS) + qemu2 `30e0303` **PUSHED**
+(github newdigate/USBHost_t36, gitlab Newdigate/qemu-rt1170); evkb gate dirs `cac84ab`(block)+
+`87bdaf9`(fs) master, **local**. No core changes. No new QEMU device (reused built-in `usb-storage`).
 
 **Hardware verification: DONE** (see the completion note at the top). Nothing outstanding — this
 whole sub-project is finished and HW-verified; the file below is the original kickoff, retained
