@@ -22,7 +22,7 @@
 ````markdown
 ---
 name: cm4-bringup
-description: Use for ANY i.MX RT1176 CM4/dual-core work — extending the imxrt1176 core or Arduino libraries to the CM4, MU/IPC features, CM4 boot/release sequencing, picking up the "next bring-up phase", or any change that touches a new RT1176 register surface in the cores, libraries, or the qemu2 machine model. Enforces the silicon-truth validation loop and the license firewall.
+description: Use for ANY i.MX RT1176 CM4/dual-core work — extending the imxrt1176 core or Arduino libraries to the CM4, MU/IPC features, CM4 boot/release sequencing, picking up the "next bring-up phase", or work touching the dual-core register surfaces (SRC core-release, MU, IOMUXC_LPSR GPRs, GPC, CM4 TCM/backdoor) in the cores, libraries, or the qemu2 machine model. Enforces the silicon-truth validation loop and the license firewall.
 ---
 
 # CM4 bring-up (silicon-truth dual-core methodology)
@@ -30,9 +30,12 @@ description: Use for ANY i.MX RT1176 CM4/dual-core work — extending the imxrt1
 ## Why this skill exists
 
 The RT1176 docs lie exactly where it is expensive: the RM and NXP's own
-`PERI_MU.h` document MU ASR.RS at bit 7, but silicon never sets it (bit 9
-reads 1 instead); `SCR.BT_RELEASE_M4` is write-1-only; the FlexRAM fuse
-default is 256K+256K, not what third-party writeups claim; a CM4 VTOR in
+`PERI_MU.h` document MU ASR.RS at bit 7, but silicon never sets it —
+and undocumented bit 9 reads 1 in every state, so neither is a hold
+indicator (use `SRC STAT_M4CORE` bit 0); `SCR.BT_RELEASE_M4` is
+write-1-only; the CM7 FlexRAM fuse default is 256K+256K (the
+CM4's own TCMs are a separate fixed 128K+128K), not what
+third-party writeups claim; a CM4 VTOR in
 the TCM windows does not boot. All of this was measured on the EVKB
 (2026-07-16/17, `dualcore_mu_test/transcript_hw_evkb.txt`). This skill
 encodes the loop that caught those: triangulate written references, gate
@@ -51,12 +54,13 @@ everything in QEMU, and probe real silicon whenever a risk trigger fires.
 5. Implement, following `references/license-firewall.md` for any code that
    is adapted or vendored from anywhere.
 6. Run the QEMU gate. If qemu2 was touched, also run its regression set
-   (listed in silicon-truth-loop.md) and scripts/checkpatch.pl.
+   (listed in `references/silicon-truth-loop.md`) and
+   scripts/checkpatch.pl.
 7. If a probe was triggered: run it on the EVKB, diff transcripts, and
-   apply "silicon wins" (below).
+   apply "silicon wins" (below); if that changed any code, repeat step 6.
 8. If any source tree was added or vendored: run
    `evkb/tools/license-audit.sh` and extend its coverage in the SAME
-   change (see license-firewall.md).
+   change (see `references/license-firewall.md`).
 9. Update `references/cm4-roadmap.md` (phase status, queued probes, new
    discoveries) and commit before ending the session.
 
@@ -67,7 +71,7 @@ everything in QEMU, and probe real silicon whenever a risk trigger fires.
 | RT1170 RM (text, greppable) | `~/Development/rt1170/rm_full.txt` | register offsets, bit fields, IRQ tables, memory maps |
 | NXP SDK source | `~/Development/mcuxsdk-ws/mcuxsdk` (+ `~/Development/mcuxsdk-examples`) | driver sequences, MCMGR/RPMsg protocols, dcd/xmcd, linker layouts |
 | Zephyr HAL/soc | `~/Development/zephyr/projects/zepherproject` | second-core boot flow, devicetree facts (MU=IRQ 118), alternative driver shapes |
-| Repo gate firmware | `evkb/*/run_qemu.sh` + sources | known-good bare-metal behavior on this exact machine model |
+| Repo gate firmware | `evkb/*/run_qemu*.sh` + sources | known-good bare-metal behavior on this exact machine model |
 
 ## Risk-trigger table — these MANDATE an EVKB probe
 
