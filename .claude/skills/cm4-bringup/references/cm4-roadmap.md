@@ -87,11 +87,24 @@ hot-swap-CM4-image feature depends on it.
   silicon. Non-breaking (serial_test + cm4_boot_test still build); QEMU gate
   still 9/9. NOT pushed to github/newdigate/teensy-cmake-macros yet (evkb
   gates FetchContent the LOCAL checkout) — push when ready to share.
-- **2C — CM4 NVIC/SysTick** (218 ext IRQs, 4 prio bits, 400 MHz): CM4-side
-  interrupts + delay so a CM4 sketch can blink on its own timer. ★qemu2 gap:
-  peripheral IRQs fan out to the CM7 NVIC only (MU excepted) — split-irq
-  wiring lands per-line as needed, each a new-model risk trigger (probe).
-  SysTick is per-core (built into the CPU) so it needs no split-irq.
+- **2C — CM4 NVIC + timing.** ✅ DONE, ★★HW-VERIFIED 2026-07-17
+  (`evkb/cm4_intr_test`). The CM4 stands up its own DWT CYCCNT (timing base),
+  SysTick, and external NVIC IRQ (MU 118). Asserted tokens (boot/run/dwt/
+  irqecho) BYTE-IDENTICAL HW vs QEMU: CM4 **DWT timing** works and the CM4
+  **handles MU IRQ 118 in its own ISR** (external NVIC dispatch — Phase 1 only
+  proved the CM7 side). ★★NO qemu2 change (DWT/SysTick/NVIC all in TYPE_ARMV7M;
+  MU IRQ 118 already wired to the CM4 NVIC). Built via the 2B
+  `teensy_add_cm4_image` macro (further validates it). ★★SysTick FINDING: the
+  CM7 SysTick millis-ISR is unreliable on RT1176 (delay.c, uses DWT instead) —
+  this gate measured whether that extends to the CM4: it does NOT, the CM4
+  SysTick exception fires + counts reliably (HW systick=0x10D3=4307). `systick`
+  is a characterisation token (QEMU 0x2AC5 vs HW 0x10D3 — differs only by time
+  base: -icount vs real 400MHz; not asserted). DWT still preferred for CM7
+  parity. ★gate uses -icount shift=2 (deterministic SysTick/DWT time base).
+  **Still-open qemu2 gap (for peripherals beyond MU):** non-MU peripheral IRQs
+  fan out to the CM7 NVIC only — routing one to the CM4 needs a per-line
+  TYPE_SPLIT_IRQ (each a new-model risk trigger + probe); 2C did not need it
+  (MU already dual-wired, SysTick is per-core).
 - **2D — capstone dual-sketch blink + IPC demo** as the phase gate.
 **Key 2A discoveries (baked in):** the CM4 DTCM is 128K — reusing the CM7
 linker's `_estack = 0x20040000` (256K) bus-faults; cap at 0x20020000. RM
@@ -145,6 +158,17 @@ audit status.
   sets); use STAT_M4CORE bit0. (b) gen_imxrt1176_h.py has drifted from
   the committed header (hand-edited ADC/DAC) — do not regenerate blindly.
   Phase 2 (CM4 core variant / dual-target build) is now unblocked.
+- 2026-07-17: **Phase 2C DONE + HW-VERIFIED.** CM4 NVIC + timing
+  (`evkb/cm4_intr_test`, built via the 2B macro): CM4 DWT CYCCNT +
+  SysTick + external MU IRQ 118. Asserted tokens (boot/run/dwt/irqecho)
+  byte-identical HW vs QEMU — CM4 DWT timing + CM4-side MU-IRQ dispatch
+  both HW-proven. ★No qemu2 change (DWT/SysTick/NVIC in TYPE_ARMV7M; MU
+  IRQ dual-wired). ★★SysTick characterisation: the CM7 SysTick millis-ISR
+  is flaky on RT1176 (delay.c → DWT); measured the CM4 — its SysTick
+  exception fires + counts reliably (does NOT reproduce the CM7 trap).
+  systick token is characterisation-only (QEMU 0x2AC5 vs HW 0x10D3,
+  time-base difference, not asserted). License audit extended + PASS.
+  Next = 2D (capstone dual-sketch blink+IPC).
 - 2026-07-17: **Phase 2B DONE.** First-class CM4 dual target in
   teensy-cmake-macros (`teensy_add_cm4_image` /
   `teensy_target_link_cm4_image` + pure-CMake `cm4_bin2header.cmake`).
