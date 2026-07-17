@@ -17,10 +17,10 @@ session log below whenever anything here changes.
   silicon).
 - MU mailbox/doorbell library: TR/RR (4 ch), GIR/GIP with ack-side GIR
   auto-clear, TIE/RIE/GIE, IRQ 118 both cores, `ASR` bit 9 quirk noted.
-**Gates:** run_qemu.sh gate; behavior cross-checked against MCMGR
-(`mcuxsdk`) and `dualcore_mu_test` transcripts; probe any register
-behavior not already covered by those transcripts; license audit if any
-tree is added.
+**Gates:** run_qemu*.sh-style gate (gate-lib.sh pattern); behavior
+cross-checked against MCMGR (`mcuxsdk`) and `dualcore_mu_test`
+transcripts; probe any register behavior not already covered by those
+transcripts; license audit if any tree is added or files are vendored.
 
 ## Phase 2 — CM4 core variant (sketches compile for the CM4)
 
@@ -32,8 +32,8 @@ address, code/data in CM4 TCM views: ITCM 0x1FFE0000 / DTCM 0x20000000,
 the gate.
 **Known qemu2 limitation to work through the loop:** peripheral IRQs fan
 out to the CM7 NVIC only (MU excepted). Split-irq wiring lands in qemu2
-per-line as CM4 libraries need it — each such change is a new-model-
-behavior risk trigger (probe).
+per-line as CM4 libraries need it — each such change is a
+new-model-behavior risk trigger (probe).
 
 ## Phase 3+ — per-library CM4 enablement
 
