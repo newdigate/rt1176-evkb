@@ -1,9 +1,9 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 2 (ready to start).** Phase 1 is DONE — QEMU-gate-green,
-license-audited, and ★★HW-VERIFIED on the EVKB (2026-07-17, transcript
-byte-identical to QEMU). Append a dated entry to the session log whenever
-anything here changes.
+**Current phase: 3 (ready to start).** Phases 1 and 2 are DONE — all
+QEMU-gated + ★★HW-VERIFIED on the EVKB (2026-07-17, transcripts
+byte-identical to QEMU), license-audited. Append a dated entry to the
+session log whenever anything here changes.
 
 ## Phase 1 — CM7 boots the CM4 + MU IPC library  ✅ DONE (HW-verified)
 
@@ -105,7 +105,24 @@ hot-swap-CM4-image feature depends on it.
   fan out to the CM7 NVIC only — routing one to the CM4 needs a per-line
   TYPE_SPLIT_IRQ (each a new-model risk trigger + probe); 2C did not need it
   (MU already dual-wired, SysTick is per-core).
-- **2D — capstone dual-sketch blink + IPC demo** as the phase gate.
+- **2D — capstone dual-sketch blink + IPC demo.** ✅ DONE, ★★HW-VERIFIED
+  2026-07-17 (`evkb/cm4_dual_test`, transcript byte-identical to QEMU).
+  CM7 (Arduino) blinks LED_BUILTIN (GPIO3.3) + drives an MU IPC exchange;
+  CM4 (real image via the 2B macro) drives its OWN GPIO5.12 output + answers
+  IPC with a compute (f(V)=V*3+7) from its interrupt handler. Proves on
+  silicon: CM4 GPIO drive, cross-core shared-peripheral visibility (CM7 reads
+  the CM4-driven GPIO5), and bidirectional IPC. ★★NO qemu2 change (GPIO
+  modelled + reachable from the CM4 view). ★KEY: verify GPIO via DR readback,
+  NOT PSR/digitalRead — the qemu2 imxrt_gpio model masks output bits from PSR
+  (`psr & ~gdir`), so PSR-of-an-output reads 0 in QEMU but reflects the pad on
+  silicon; DR readback is QEMU/silicon-consistent (bit the CM7 LED token first
+  tripped on).
+
+**Phase 2 COMPLETE (2026-07-17):** the CM4 boots real compiled sketches
+(2A), builds them as a first-class dual target (2B), runs interrupt-driven +
+timed code (2C), and drives its own peripherals while doing IPC with the CM7
+(2D) — all QEMU-gated and HW-verified. Every deliverable was byte-identical
+HW-vs-QEMU (2C's `systick` characterisation token excepted, by design).
 **Key 2A discoveries (baked in):** the CM4 DTCM is 128K — reusing the CM7
 linker's `_estack = 0x20040000` (256K) bus-faults; cap at 0x20020000. RM
 line-18757 ("M4 ITCM + M7 ... DTCM 0x1FFE0000 640KB") is the AHAB
@@ -158,6 +175,16 @@ audit status.
   sets); use STAT_M4CORE bit0. (b) gen_imxrt1176_h.py has drifted from
   the committed header (hand-edited ADC/DAC) — do not regenerate blindly.
   Phase 2 (CM4 core variant / dual-target build) is now unblocked.
+- 2026-07-17: **Phase 2D DONE + HW-VERIFIED — Phase 2 COMPLETE.**
+  Capstone `evkb/cm4_dual_test` (built via 2B macro): CM7 Arduino sketch
+  (LED blink + IPC driver) + CM4 real image (drives GPIO5.12 + IPC compute
+  responder). Transcript byte-identical HW vs QEMU: CM4 GPIO drive,
+  cross-core GPIO visibility (CM7 reads CM4-driven GPIO5), bidirectional
+  IPC f(0x10)=0x37. ★No qemu2 change (GPIO in system mem, reachable from
+  cm4_view). ★★DISCOVERY: qemu2 imxrt_gpio PSR read masks output bits
+  (`psr & ~gdir`) → PSR/digitalRead of an OUTPUT reads 0 in QEMU but
+  reflects the driven pad on silicon; use DR readback (consistent). License
+  audit extended + PASS. Phase 3 (per-library CM4 enablement) is next.
 - 2026-07-17: **Phase 2C DONE + HW-VERIFIED.** CM4 NVIC + timing
   (`evkb/cm4_intr_test`, built via the 2B macro): CM4 DWT CYCCNT +
   SysTick + external MU IRQ 118. Asserted tokens (boot/run/dwt/irqecho)
