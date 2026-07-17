@@ -28,6 +28,7 @@ EVKB (MCU-Link on the debug USB; VCOM is the LPUART1 console):
         /dev/cu.usbmodem5DQ2DDHVWO5EI3 115200 > hw.uart &
     /Applications/LinkServer_26.6.137/LinkServer flash \
         MIMXRT1176:MIMXRT1170-EVKB load probe.elf     # auto-runs after
+    sleep 3; : > hw.uart          # drop the contaminated post-flash output
     # for an UNCONTAMINATED run (see traps below):
     /Applications/LinkServer_26.6.137/LinkServer probe 5DQ2DDHVWO5EI \
         runscript ~/Development/rt1170/evkb/dualcore_mu_test/clean_boot.scp
@@ -41,8 +42,9 @@ Diff after stripping serial line endings:
 - LinkServer's RT1176 connect script (`RT1170_connect_M7_wake_M4.scp`)
   WAKES THE CM4 into a spin loop at 0x2021FF00, sets CLOCK_ROOT1=0x201,
   and releases `SCR.BT_RELEASE_M4`.
-- `SCR.BT_RELEASE_M4` is write-1-only and SURVIVES debugger resets: a
-  post-flash run starts with `SCR=1` and a woken CM4.
+- `SCR.BT_RELEASE_M4` is write-1-only and survives LinkServer's
+  flash/reset flow (only a full system reset clears it): a post-flash
+  run starts with `SCR=1` and a woken CM4.
 - `DEMCR.VC_CORERESET` stays latched from flash sessions: wire or
   SYSRESETREQ resets halt silently at the reset vector.
 - The boot ROM parks after any debugger-initiated reset — only a true POR
@@ -79,4 +81,4 @@ From `~/Development/qemu2/build`:
     # repo gates most affected by dual-core work:
     #   evkb/serial_test/run_qemu.sh, dualcore_mu_test (diff its
     #   transcript_qemu.txt), NXP SDK mcmgr hello_world + rpmsg pingpong
-    ../scripts/checkpatch.pl --no-signoff <diff>   # CI enforces it
+    git diff | ../scripts/checkpatch.pl --no-signoff -   # CI enforces it
