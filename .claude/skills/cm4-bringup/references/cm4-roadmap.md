@@ -75,11 +75,18 @@ hot-swap-CM4-image feature depends on it.
   confirmed the model handles a real DTCM-resident image. Build:
   `cm4/build_cm4.sh` (bare arm-gcc → objcopy → `cm4_image.h`), wired into the
   gate's CMake.
-- **2B — teensy-cmake-macros dual-target build.** NEXT. Fold the ad-hoc
-  `build_cm4.sh` into the macros as a first-class second target (CM4 ELF →
-  blob → auto-embed in the CM7 image), so a project declares a CM4 sketch
-  and the CM7 stages it. Enables separately-buildable (still co-flashed) CM4
-  firmware.
+- **2B — teensy-cmake-macros dual-target build.** ✅ DONE 2026-07-17.
+  `teensy_add_cm4_image(<name> LINKER <ld> SOURCES ...)` +
+  `teensy_target_link_cm4_image(<exe> <name>)` in `teensy-cmake-macros`
+  (MIT): compiles the bare-metal CM4 sources (cortex-m4 hard-float, own
+  linker) and emits `<name>.h` (a `uint32_t[]`) via a pure-CMake
+  `cm4_bin2header.cmake` (no python), auto-embedded in the CM7 image.
+  `cm4_image_test` refactored to use it (per-gate `build_cm4.sh`/`bin2header.py`
+  deleted). ★★No EVKB re-probe: the macro-built CM4 `.bin` is BYTE-IDENTICAL
+  to the HW-verified 2A image (verified via `cmp`) → nothing changed on
+  silicon. Non-breaking (serial_test + cm4_boot_test still build); QEMU gate
+  still 9/9. NOT pushed to github/newdigate/teensy-cmake-macros yet (evkb
+  gates FetchContent the LOCAL checkout) — push when ready to share.
 - **2C — CM4 NVIC/SysTick** (218 ext IRQs, 4 prio bits, 400 MHz): CM4-side
   interrupts + delay so a CM4 sketch can blink on its own timer. ★qemu2 gap:
   peripheral IRQs fan out to the CM7 NVIC only (MU excepted) — split-irq
@@ -138,6 +145,14 @@ audit status.
   sets); use STAT_M4CORE bit0. (b) gen_imxrt1176_h.py has drifted from
   the committed header (hand-edited ADC/DAC) — do not regenerate blindly.
   Phase 2 (CM4 core variant / dual-target build) is now unblocked.
+- 2026-07-17: **Phase 2B DONE.** First-class CM4 dual target in
+  teensy-cmake-macros (`teensy_add_cm4_image` /
+  `teensy_target_link_cm4_image` + pure-CMake `cm4_bin2header.cmake`).
+  cm4_image_test refactored onto it; per-gate build_cm4.sh/bin2header.py
+  removed. ★No re-probe — macro `.bin` byte-identical to the 2A HW-verified
+  image (cmp). Non-breaking regression (serial_test, cm4_boot_test build);
+  QEMU gate 9/9. teensy-cmake-macros is MIT, committed locally (not pushed).
+  Next = 2C (CM4 NVIC/SysTick).
 - 2026-07-17: **Phase 2A DONE + HW-VERIFIED.** Real compiled CM4 image
   (`evkb/cm4_image_test`): own startup/linker, `.data` ITCM→DTCM copy,
   `.bss` zero, M4F FPU, DTCM stack, MU canaries. QEMU gate 9/9 green;

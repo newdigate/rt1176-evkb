@@ -25,11 +25,14 @@ that only read correct if that startup machinery worked:
     reload MSP, enable FPU, copy `.data`, zero `.bss`, call `main`. No clock/PLL/
     FlexRAM/DCDC (the CM7 + boot ROM already did those; the CM4 TCM is fixed LMEM).
   - `main_cm4.c` — the heartbeat.
-  - `build_cm4.sh` + `bin2header.py` — compile → link → `objcopy -O binary` →
-    `cm4_image.h` (a `uint32_t[]`). Invoked by CMake into the build dir so the
-    embedded blob always reflects the current `cm4/` sources. (Phase 2B folds
-    this into `teensy-cmake-macros` as a first-class dual target.)
 - `cm4_image_test.cpp` — the CM7 gate sketch (boots the image, asserts canaries).
+
+The CM4 image is built as a **first-class dual target** (Phase 2B) by
+`teensy_add_cm4_image` (in `teensy-cmake-macros`): it compiles the `cm4/`
+sources with cortex-m4 flags + their own linker and emits `cm4_image.h` (a
+`uint32_t[]`) into the build dir; `teensy_target_link_cm4_image` embeds it in
+the CM7 sketch. The generated binary is byte-identical to the HW-verified 2A
+image.
 
 ## Build / run
 
