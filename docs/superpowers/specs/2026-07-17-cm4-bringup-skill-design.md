@@ -85,7 +85,12 @@ rt1170/.claude/skills/cm4-bringup -> ../../evkb/.claude/skills/cm4-bringup  (sym
 
 `SKILL.md` frontmatter: `name: cm4-bringup`; description triggers on CM4/dual-core
 core or library work, MU/IPC, "next bring-up phase", QEMU-vs-silicon validation, and
-any RT1176 register surface newly touched by cores/libraries/qemu2. Body: the core
+work touching the dual-core register surfaces (SRC core-release, MU, IOMUXC_LPSR
+GPRs, GPC, CM4 TCM/backdoor) in cores/libraries/qemu2.  *Amended during
+implementation:* the original "any new RT1176 register surface" clause was narrowed
+to the dual-core surfaces after the Task 1 quality review showed it over-triggered
+on unrelated single-core work (e.g. CAN or USB bring-up), for which the skill's
+CM4-roadmap-first checklist is meaningless. Body: the core
 loop (below), a pointer to each reference file with a one-line "read when" rule, and
 the checklist the session must follow. Authoring follows the superpowers
 writing-skills conventions.
