@@ -351,7 +351,9 @@ audit status.
 
 ## Queued hardware checks
 
-(none)
+- Derive and EVKB-validate a minimal LPUART1 init for the asm probe
+  template (templates/probe_firmware/), so probes print on clean-boot
+  silicon without the Arduino core (queued 2026-07-17).
 
 ## Session log
 
@@ -432,7 +434,14 @@ vectors:
 
     .thumb_func
 _start:
-    ldr     r7, =0x4007C000     /* LPUART1 (QEMU TX needs no init) */
+    /*
+     * LPUART1 raw DATA writes need no init under QEMU.  On the EVKB a
+     * clean boot has no UART clock/pinmux/baud/TE set up: add a
+     * silicon-validated LPUART1 init here before printing (reference:
+     * the Arduino core's Serial1.begin path used by dualcore_mu_test),
+     * or expect an empty hw.uart.
+     */
+    ldr     r7, =0x4007C000     /* LPUART1 */
 
     adr     r0, msg_start
     bl      puts
@@ -447,7 +456,7 @@ _start:
     adr     r0, tok_stat
     ldr     r1, [r4, #0x290]    /* STAT_M4CORE */
     bl      phex                /* expect 00000001 while the CM4 is held */
-    /* ---- to here ---- */
+    /* ---- to here (also replace the tok_* strings below) ---- */
 
     adr     r0, msg_done
     bl      puts
@@ -511,7 +520,10 @@ Build:
         -mthumb -Wl,-Ttext=0x30000000 -o probe.elf probe.s
 
 Run on QEMU and on the EVKB, and diff — commands and the debugger
-contamination traps are in `../../references/silicon-truth-loop.md`.
+contamination traps are in the skill's `references/silicon-truth-loop.md`.
+NOTE: under QEMU the raw LPUART writes print with no init; on the EVKB
+you must add a silicon-validated LPUART1 init first (see the probe.s
+comment), or the hardware transcript will be empty.
 For probes needing C (interrupt legs, larger flows), start from
 `evkb/dualcore_mu_test/` instead.
 ````

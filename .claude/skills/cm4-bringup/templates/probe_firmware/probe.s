@@ -45,7 +45,14 @@ vectors:
 
     .thumb_func
 _start:
-    ldr     r7, =0x4007C000     /* LPUART1 (QEMU TX needs no init) */
+    /*
+     * LPUART1 raw DATA writes need no init under QEMU.  On the EVKB a
+     * clean boot has no UART clock/pinmux/baud/TE set up: add a
+     * silicon-validated LPUART1 init here before printing (reference:
+     * the Arduino core's Serial1.begin path used by dualcore_mu_test),
+     * or expect an empty hw.uart.
+     */
+    ldr     r7, =0x4007C000     /* LPUART1 */
 
     adr     r0, msg_start
     bl      puts
@@ -60,7 +67,7 @@ _start:
     adr     r0, tok_stat
     ldr     r1, [r4, #0x290]    /* STAT_M4CORE */
     bl      phex                /* expect 00000001 while the CM4 is held */
-    /* ---- to here ---- */
+    /* ---- to here (also replace the tok_* strings below) ---- */
 
     adr     r0, msg_done
     bl      puts

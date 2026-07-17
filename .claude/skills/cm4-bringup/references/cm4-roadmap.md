@@ -44,7 +44,9 @@ audit status.
 
 ## Queued hardware checks
 
-(none)
+- Derive and EVKB-validate a minimal LPUART1 init for the asm probe
+  template (templates/probe_firmware/), so probes print on clean-boot
+  silicon without the Arduino core (queued 2026-07-17).
 
 ## Session log
 
