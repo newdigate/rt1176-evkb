@@ -61,16 +61,39 @@ hot-swap-CM4-image feature depends on it.
 
 ## Phase 2 — CM4 core variant (sketches compile for the CM4)
 
-**Entry criteria:** Phase 1 merged; its gate green.
-**Deliverables:** CM4 startup + linker (vector table at the backdoor
-address, code/data in CM4 TCM views: ITCM 0x1FFE0000 / DTCM 0x20000000,
-128K each), NVIC/SysTick (218 ext IRQs, 4 prio bits, 400 MHz),
-`teensy-cmake-macros` dual-target build, dual-sketch blink + IPC demo as
-the gate.
-**Known qemu2 limitation to work through the loop:** peripheral IRQs fan
-out to the CM7 NVIC only (MU excepted). Split-irq wiring lands in qemu2
-per-line as CM4 libraries need it — each such change is a
-new-model-behavior risk trigger (probe).
+**Entry criteria:** Phase 1 merged; its gate green. ✅ met.
+**Work items:**
+- **2A — real compiled CM4 image + startup/linker.** ✅ DONE, ★★HW-VERIFIED
+  2026-07-17 (`evkb/cm4_image_test`, transcript byte-identical to QEMU). A
+  real C image (own `cm4/startup_cm4.S` + `cm4.ld`), staged by the Phase-1
+  `Multicore.begin()`, that copies `.data` ITCM→DTCM, zeroes `.bss`, enables
+  the M4F FPU, uses a DTCM stack, and reports canaries over the MU. Proved on
+  silicon the paths Phase 1's leaf blob never touched (CM4-private DTCM
+  read/write, `.data` copy, FPU, runtime VTOR relocation). ★★NO qemu2 change
+  needed — the machine already aliases CM4 ITCM 0x1FFE0000 / DTCM 0x20000000
+  to `ocram_m4` (= system 0x20200000 / 0x20220000), matching the RM; the gate
+  confirmed the model handles a real DTCM-resident image. Build:
+  `cm4/build_cm4.sh` (bare arm-gcc → objcopy → `cm4_image.h`), wired into the
+  gate's CMake.
+- **2B — teensy-cmake-macros dual-target build.** NEXT. Fold the ad-hoc
+  `build_cm4.sh` into the macros as a first-class second target (CM4 ELF →
+  blob → auto-embed in the CM7 image), so a project declares a CM4 sketch
+  and the CM7 stages it. Enables separately-buildable (still co-flashed) CM4
+  firmware.
+- **2C — CM4 NVIC/SysTick** (218 ext IRQs, 4 prio bits, 400 MHz): CM4-side
+  interrupts + delay so a CM4 sketch can blink on its own timer. ★qemu2 gap:
+  peripheral IRQs fan out to the CM7 NVIC only (MU excepted) — split-irq
+  wiring lands per-line as needed, each a new-model risk trigger (probe).
+  SysTick is per-core (built into the CPU) so it needs no split-irq.
+- **2D — capstone dual-sketch blink + IPC demo** as the phase gate.
+**Key 2A discoveries (baked in):** the CM4 DTCM is 128K — reusing the CM7
+linker's `_estack = 0x20040000` (256K) bus-faults; cap at 0x20020000. RM
+line-18757 ("M4 ITCM + M7 ... DTCM 0x1FFE0000 640KB") is the AHAB
+allowable-range table (Table 10-64), column-reversed text — NOT a memory-map
+contradiction (0x1FFE0000 = M4 ITCM, 0x20000000 = M4 DTCM stands). CM4
+`SystemInit` is near-empty by design (CM7/ROM own clocks/PLL/DCDC/FlexRAM;
+CM4 TCM is fixed LMEM, not FlexRAM banks). Full triangulation archived in
+`references/phase2a-triangulation.md`.
 
 ## Phase 3+ — per-library CM4 enablement
 
@@ -115,6 +138,17 @@ audit status.
   sets); use STAT_M4CORE bit0. (b) gen_imxrt1176_h.py has drifted from
   the committed header (hand-edited ADC/DAC) — do not regenerate blindly.
   Phase 2 (CM4 core variant / dual-target build) is now unblocked.
+- 2026-07-17: **Phase 2A DONE + HW-VERIFIED.** Real compiled CM4 image
+  (`evkb/cm4_image_test`): own startup/linker, `.data` ITCM→DTCM copy,
+  `.bss` zero, M4F FPU, DTCM stack, MU canaries. QEMU gate 9/9 green;
+  flashed EVKB (clean_boot.scp) → transcript BYTE-IDENTICAL to QEMU.
+  Triangulated SDK cm4 startup/linker + RM + teensy4 idiom (4-reader
+  workflow, archived phase2a-triangulation.md). ★NO qemu2 change — the
+  machine already models CM4-private ITCM/DTCM as aliases of ocram_m4;
+  the real-image gate confirmed it (GPL firewall clean). ★Avoided the
+  128K-DTCM `_estack` bus-fault trap; ★resolved the RM line-18757
+  false-contradiction (AHAB range table). License audit extended
+  (cm4_image_test) + PASS. Next = 2B (dual-target build).
 - 2026-07-17: **Phase 1 HW-VERIFIED on the EVKB.** Flashed cm4_boot_test
   via LinkServer; a clean boot (clean_boot.scp, M4 held) produced a VCOM
   transcript BYTE-IDENTICAL to QEMU (all tokens, incl. the

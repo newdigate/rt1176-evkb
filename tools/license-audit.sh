@@ -52,8 +52,11 @@ done
 echo "== Part 2: link-manifest audit (depfile walk)"
 # gate_dir:elf_target pairs — the union covers cores+SPI+Wire+Audio+SdFat+SD
 # (sd_wav), Ethernet+lwip (ethernet), NativeEthernet+FNET (native_ethernet),
-# and the dual-core library Multicore+MessagingUnit (cm4_boot).
-GATES="sd_wav_play_test:sd_wav_play_test ethernet_test:ethernet_test native_ethernet_test:native_ethernet_test cm4_boot_test:cm4_boot_test"
+# and the dual-core library Multicore+MessagingUnit (cm4_boot, cm4_image).
+# NB: cm4_image_test's CM4 sub-image (cm4/*.S/.c) is built by a bare arm-gcc
+# step (build_cm4.sh), first-party public-domain, so it is outside this CMake
+# depfile walk by design; the walk still covers the CM7 side (cores).
+GATES="sd_wav_play_test:sd_wav_play_test ethernet_test:ethernet_test native_ethernet_test:native_ethernet_test cm4_boot_test:cm4_boot_test cm4_image_test:cm4_image_test"
 for pair in $GATES; do
   g=${pair%%:*}; t=${pair##*:}
   bdir=$EVKB/$g/build
