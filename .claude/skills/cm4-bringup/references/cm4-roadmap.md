@@ -4,7 +4,9 @@
 WM8962), and 3.3 (shared C register/clock core consolidation) are all
 **DONE**; 3.1/3.2 ★★HW-VERIFIED, and 3.3's refactor is anchored on silicon by
 a wiring-free `cm4_wire_test` re-probe whose EVKB transcript is
-BYTE-IDENTICAL (incl. `rdv=00006243`) with the shared-core binary. The
+BYTE-IDENTICAL (incl. `rdv=00006243`) with the shared-core binary, and
+`cm4_spi_test` re-probed through the SDO→SDI jumper is likewise BYTE-IDENTICAL
+(`rxok=1`, `SPI_CM4=PASS`) — both shared cores now silicon-proven. The
 LPSPI1/LPI2C5 sequences now live ONCE (`~/Development/SPI/lpspi1176.{h,c}`,
 `~/Development/Wire/lpi2c1176.{h,c}`) — the CM7 classes and the CM4 images
 compile the same C files. Next work item: **pick from "Deferred beyond
@@ -236,9 +238,13 @@ green; license-audit PASS (cm4 gate manifests grew 103→105 files = the
 shared core is inside the sweep). **Silicon anchor:** wiring-free
 `cm4_wire_test` EVKB re-probe (flash + clean_boot.scp) BYTE-IDENTICAL to
 `transcript_hw_evkb.txt` incl. `rdv=00006243` — the shared `lpi2c1176.c`
-begin/write/read paths proven on silicon. `cm4_spi_test` re-probe attempted:
-jumper no longer fitted (`rxok=0`, all-FF captures; block readbacks
-cr/cfgr1/lpcg/croot still correct) → queued below. Known deltas absorbed by
+begin/write/read paths proven on silicon. **`cm4_spi_test` re-probe DONE**
+(jumper refitted 2026-07-18): clean-boot capture BYTE-IDENTICAL to
+`transcript_hw_evkb.txt` (md5 `b2364766…`, == QEMU too) — `rxok=1`,
+`SPI_CM4=PASS`, so the shared `lpspi1176.c` begin/transfer paths drove a real
+4 MHz SCK through the SDO(AD_30)→SDI(AD_31) jumper. Both shared cores now
+silicon-anchored; no code changed (silicon == QEMU) → no re-gate. Known
+deltas absorbed by
 design (spec §2 D1–D5): the CM4 images gained the CM7 stream's inert
 `CR/MCR=0` write and the MCFGR1 RMW — every write value/order is inside the
 CM7 HW-verified stream on the same block instances.
@@ -256,14 +262,10 @@ CM7 HW-verified stream on the same block instances.
 
 ## Queued hardware checks
 
-- **cm4_spi_test jumpered re-probe of the 3.3 shared-core binary.** The
-  SDO(AD_30)→SDI(AD_31) jumper is no longer fitted (2026-07-18 attempt:
-  `rxok=0`, all-FF captures; cr/cfgr1/lpcg/croot readbacks still correct on
-  silicon). When the jumper is refitted: flash `cm4_spi_test` +
-  `clean_boot.scp`, expect BYTE-IDENTICAL `transcript_hw_evkb.txt`
-  (`rxok=1`, `SPI_CM4=PASS`). Low risk meanwhile: the shared `lpspi1176.c`
-  is CM7-logic-verbatim, QEMU-gated, and its I2C twin passed the same-shape
-  silicon anchor. Queued 2026-07-18.
+- ~~cm4_spi_test jumpered re-probe of the 3.3 shared-core binary~~ — DONE
+  2026-07-18. Jumper refitted; clean-boot capture BYTE-IDENTICAL to
+  `transcript_hw_evkb.txt` (md5 `b2364766…`), `rxok=1`/`SPI_CM4=PASS`. The
+  shared `lpspi1176.c` is now silicon-proven through the SDO→SDI jumper.
 - Derive and EVKB-validate a minimal LPUART1 init for the asm probe
   template (templates/probe_firmware/), so probes print on clean-boot
   silicon without the Arduino core (queued 2026-07-17).
@@ -470,9 +472,11 @@ CM7 HW-verified stream on the same block instances.
   cores swept). ★Silicon anchor: wiring-free `cm4_wire_test` re-probe
   BYTE-IDENTICAL to `transcript_hw_evkb.txt` incl. `rdv=00006243` — the
   shared lpi2c1176 begin/write/read paths ran on real silicon. ★cm4_spi
-  re-probe attempted: jumper no longer fitted (`rxok=0`, all-FF, block
-  readbacks correct) → queued; board re-flashed to the green cm4_wire
-  firmware. ★Offset cross-asserts (`static_assert(offsetof(...))` shared
+  re-probe COMPLETED later same day once the jumper was refitted: clean-boot
+  capture BYTE-IDENTICAL to `transcript_hw_evkb.txt` (md5 `b2364766…`, ==
+  QEMU), `rxok=1`/`SPI_CM4=PASS` — the shared `lpspi1176.c` drove a real
+  4 MHz SCK through the jumper. Both shared cores now silicon-anchored.
+  ★Offset cross-asserts (`static_assert(offsetof(...))` shared
   overlay vs `IMXRT_LPSPI_t`/`IMXRT_LPI2C_t`) now break the CM7 build on
   any drift. Risk-trigger walk in the spec (§6): the one honest brush is
   "reset/default values you now depend on" via D1/D3 — every such write is
