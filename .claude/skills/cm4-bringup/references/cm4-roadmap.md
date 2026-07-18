@@ -1,12 +1,14 @@
 # CM4 roadmap (LIVING document — update every session)
 
 **Current phase: 3 (IN PROGRESS).** 3.1 (SPI polled master, CM4
-self-configured) is DESIGNED + SPEC'd 2026-07-18
-(`docs/superpowers/specs/2026-07-18-cm4-spi-polled-master-design.md`) —
-ready to implement (writing-plans next). Phases 1 and 2 are DONE — all
-QEMU-gated + ★★HW-VERIFIED on the EVKB (2026-07-17, transcripts
-byte-identical to QEMU), license-audited. Append a dated entry to the
-session log whenever anything here changes.
+self-configured) is **IMPLEMENTED + QEMU-gate-GREEN** 2026-07-18
+(`evkb/cm4_spi_test`, spec + plan in `docs/superpowers/`, 4 commits,
+license-audited, all reviews passed); ★**HW probe PENDING** — the operator
+runs the SDO→SDI jumper + `clean_boot.scp` (the load-bearing clock-gating
+proof; QEMU can't prove it — see the 3.1 entry). NOT HW-verified yet. Phases
+1 and 2 are DONE — all QEMU-gated + ★★HW-VERIFIED on the EVKB (2026-07-17,
+transcripts byte-identical to QEMU), license-audited. Append a dated entry to
+the session log whenever anything here changes.
 
 ## Phase 1 — CM7 boots the CM4 + MU IPC library  ✅ DONE (HW-verified)
 
@@ -154,9 +156,12 @@ CM4 TCM is fixed LMEM, not FlexRAM banks). Full triangulation archived in
   discipline). Ends the 3.1/3.2 duplication.
 
 ### 3.1 — SPI (LPSPI1) polled master, CM4 self-configured  ◀ CURRENT
-**Status:** DESIGNED + SPEC'd 2026-07-18
-(`docs/superpowers/specs/2026-07-18-cm4-spi-polled-master-design.md`), ready
-to implement. **Entry criteria:** Phase 2 done ✅.
+**Status:** IMPLEMENTED + QEMU-gate-GREEN 2026-07-18 (`evkb/cm4_spi_test`;
+spec + plan in `docs/superpowers/`; 4 commits `2aceb19`→`cb2828f`;
+license-audit extended + PASS; per-task + final reviews passed). ★**HW probe
+PENDING** (operator: SDO(AD_30)→SDI(AD_31) jumper + `clean_boot.scp`; then add
+`transcript_hw_evkb.txt` + flip this to HW-VERIFIED). **Entry criteria:**
+Phase 2 done ✅.
 **Deliverable:** a new gate `evkb/cm4_spi_test/` (cloned from `cm4_dual_test`):
 the CM4 self-configures LPSPI1 (`CCM_LPCG104`/`CCM_CLOCK_ROOT43`, mux AD_28/30/31,
 CR/CFGR1/CCR/TCR/MEN) and runs a **polled self-loopback** (SDO→SDI jumper),
@@ -297,3 +302,20 @@ Approach C above; byte-identical-CM7 guardrail.
   readback); peripheral IRQs are **CM7-NVIC-only** (`fsl-imxrt1170.c:961-966`)
   → polled-first. **No qemu2/core/newdigate-SPI change expected.** Next =
   writing-plans → implement → QEMU gate → EVKB probe. D7 still queued.
+- 2026-07-18: **Phase 3.1 IMPLEMENTED + QEMU-gate-GREEN** (subagent-driven
+  execution of the plan; 4 commits on `master` `2aceb19`→`cb2828f`). New gate
+  `evkb/cm4_spi_test` (clone of `cm4_dual_test`): the CM4 self-configures LPSPI1
+  (`CCM_LPCG104`+`CCM_CLOCK_ROOT43`, mux AD_28/30/31, CR/CFGR1/CCR/MEN) and runs
+  a polled loopback, streaming `cr/cfgr1/lpcg/croot/a/b/w/buf/rxok` over MU TR0 →
+  CM7 prints → `SPI_CM4=PASS`. QEMU GREEN + stable 3×; asserted tokens
+  `cr/cfgr1/a/b/w/buf/rxok` (`lpcg/croot` informative). CM4 driver is a distilled
+  C mirror of `newdigate/SPI` `SPIIMXRT1176.cpp` (provenance header; Phase 3.3
+  consolidates). license-audit extended (`cm4_spi_test:cm4_spi_test`) + PASS;
+  `cm4_dual_test` + `spi_loopback_test` regressions green. ★★NO qemu2/core/
+  newdigate-SPI change (LPSPI1 + the board `ssi-loopback` echo child + CCM all
+  reachable from `cm4_view`). Verified via imxrt_lpspi.c/imxrt_ccm.c/
+  mimxrt1170-evk.c reads. **★HW PROBE PENDING** — the qemu2 `ssi-loopback` echoes
+  on `CR.MEN` alone (ignores LPCG/root/pins), so QEMU is a *circular pass*; only
+  the real SDO→SDI jumper proves the CM4's clock-gating + pin-mux. Operator:
+  jumper + flash + `clean_boot.scp`, then `transcript_hw_evkb.txt` + flip 3.1 to
+  HW-VERIFIED (plan Task 5). D7 still queued.
