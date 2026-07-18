@@ -1,14 +1,16 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 3 (IN PROGRESS).** 3.1 (SPI polled master, CM4
-self-configured) is **DONE + ★★HW-VERIFIED 2026-07-18** (`evkb/cm4_spi_test`;
-spec + plan in `docs/superpowers/`; the EVKB clean-boot VCOM transcript is
-BYTE-IDENTICAL to QEMU incl. `rxok=1`/`SPI_CM4=PASS` — through the SDO→SDI
-jumper the CM4 self-brought-up LPSPI1's clock + pins; license-audited, all
-reviews passed). Next work item: **3.2 (Wire/I2C on the CM4)**. Phases 1 and 2
-are DONE — all QEMU-gated + ★★HW-VERIFIED on the EVKB (2026-07-17, transcripts
-byte-identical to QEMU), license-audited. Append a dated entry to the session
-log whenever anything here changes.
+**Current phase: 3 (IN PROGRESS).** 3.2 (Wire/I2C polled master, CM4
+self-configured, → real WM8962) is **IMPLEMENTED + QEMU-gate-GREEN**
+2026-07-18 (`evkb/cm4_wire_test`, 4 commits `0331c2a`→`a37a7bc`,
+license-audited, all reviews passed); ★**HW probe PENDING** — wiring-free:
+flash + `clean_boot.scp`, expect asserted tokens byte-identical +
+`rdv=00006243` (the codec's device ID; QEMU stub reads 0000 — the one
+expected divergence). 3.1 (SPI) is **DONE + ★★HW-VERIFIED 2026-07-18**
+(`evkb/cm4_spi_test`, transcript byte-identical to QEMU through the SDO→SDI
+jumper). Phases 1 and 2 are DONE — all QEMU-gated + ★★HW-VERIFIED on the EVKB
+(2026-07-17). Append a dated entry to the session log whenever anything here
+changes.
 
 ## Phase 1 — CM7 boots the CM4 + MU IPC library  ✅ DONE (HW-verified)
 
@@ -155,7 +157,7 @@ CM4 TCM is fixed LMEM, not FlexRAM banks). Full triangulation archived in
   CM4 image call, guarded by byte-identical CM7 gate output (the 2B `cmp`
   discipline). Ends the 3.1/3.2 duplication.
 
-### 3.1 — SPI (LPSPI1) polled master, CM4 self-configured  ◀ CURRENT
+### 3.1 — SPI (LPSPI1) polled master, CM4 self-configured  ✅ DONE
 **Status:** ✅ DONE + ★★HW-VERIFIED 2026-07-18 (`evkb/cm4_spi_test`; spec +
 plan in `docs/superpowers/`; license-audit extended + PASS; per-task + final
 reviews passed). The EVKB clean-boot VCOM transcript is **BYTE-IDENTICAL to
@@ -182,9 +184,13 @@ modelled and reachable from `cm4_view`; polled avoids the CM7-only-NVIC gap).
 **Audit:** add `cm4_spi_test` to `license-audit.sh` GATES (same change), require PASS.
 
 ### 3.2 — Wire (LPI2C5) polled master, CM4 self-configured  ◀ CURRENT
-**Status:** DESIGNED + SPEC'd 2026-07-18
-(`docs/superpowers/specs/2026-07-18-cm4-wire-polled-master-design.md`), ready
-to implement. **Entry criteria:** 3.1 done ✅.
+**Status:** IMPLEMENTED + QEMU-gate-GREEN 2026-07-18 (`evkb/cm4_wire_test`;
+spec + plan in `docs/superpowers/`; 4 commits `0331c2a`(RED)→`b74918e`(GREEN)
+→`cbd89da`(audit)→`a37a7bc`(README); license-audit PASS; per-task + final
+reviews passed; regressions `cm4_spi_test` + Wire `wire_master_test` green).
+★**HW probe PENDING** (operator, wiring-free: flash + `clean_boot.scp`; expect
+asserted tokens byte-identical + `rdv=00006243`; then `transcript_hw_evkb.txt`
++ flip this to HW-VERIFIED). **Entry criteria:** 3.1 done ✅.
 **Target chosen (brainstorming):** **LPI2C5 + the real on-board WM8962 @0x1A**
 (not AT24C02/slave-persona — those need external HW or cross-core coupling).
 The probe is **wiring-free** (codec soldered on; flash + `clean_boot.scp` only).
@@ -375,3 +381,19 @@ Approach C above; byte-identical-CM7 guardrail.
   clock-gating probe triggers both fire. No qemu2/core/Wire-lib change
   expected. Next = writing-plans → implement → QEMU gate → wiring-free EVKB
   probe. D7 still queued.
+- 2026-07-18: **Phase 3.2 IMPLEMENTED + QEMU-gate-GREEN** (subagent-driven; 4
+  commits `0331c2a`→`a37a7bc` on `master`). `evkb/cm4_wire_test`: CM4
+  self-configures LPI2C5 (LPCG102, ROOT41 mux1, LPSR pads — first CM4-driven
+  LPSR-domain peripheral) + reset-write ACK / 0x2A NACK / R15 ID read-back
+  against the wm8962-stub; 8-token MU contract, stable 3×; `rdv=00000000`
+  asserted per the stub contract (HW will assert `00006243`). Driver =
+  line-faithful distillation of WireIMXRT1176.cpp + control_wm8962.cpp (final
+  review confirmed literal-for-literal vs imxrt1176.h + the Wire lib, incl.
+  judged-at-STOP NACK + independent MCCR0 re-derivation). license-audit
+  extended + PASS; regressions cm4_spi_test + wire_master_test green; NO
+  qemu2/core/lib changes. ★Final-review finding (all-cm4-gates, pre-existing):
+  the audit's depfile walk does NOT cover `teensy_add_cm4_image` CM4 sources
+  (raw add_custom_command, no -MMD → no .obj.d) — CM4-side files rest on the
+  provenance-header convention; queued as a background task to extend the
+  audit. **HW probe pending (wiring-free)** — then flip 3.2 to HW-VERIFIED.
+  D7 still queued.
