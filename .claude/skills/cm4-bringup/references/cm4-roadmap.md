@@ -1,14 +1,14 @@
 # CM4 roadmap (LIVING document — update every session)
 
 **Current phase: 3 (IN PROGRESS).** 3.1 (SPI polled master, CM4
-self-configured) is **IMPLEMENTED + QEMU-gate-GREEN** 2026-07-18
-(`evkb/cm4_spi_test`, spec + plan in `docs/superpowers/`, 4 commits,
-license-audited, all reviews passed); ★**HW probe PENDING** — the operator
-runs the SDO→SDI jumper + `clean_boot.scp` (the load-bearing clock-gating
-proof; QEMU can't prove it — see the 3.1 entry). NOT HW-verified yet. Phases
-1 and 2 are DONE — all QEMU-gated + ★★HW-VERIFIED on the EVKB (2026-07-17,
-transcripts byte-identical to QEMU), license-audited. Append a dated entry to
-the session log whenever anything here changes.
+self-configured) is **DONE + ★★HW-VERIFIED 2026-07-18** (`evkb/cm4_spi_test`;
+spec + plan in `docs/superpowers/`; the EVKB clean-boot VCOM transcript is
+BYTE-IDENTICAL to QEMU incl. `rxok=1`/`SPI_CM4=PASS` — through the SDO→SDI
+jumper the CM4 self-brought-up LPSPI1's clock + pins; license-audited, all
+reviews passed). Next work item: **3.2 (Wire/I2C on the CM4)**. Phases 1 and 2
+are DONE — all QEMU-gated + ★★HW-VERIFIED on the EVKB (2026-07-17, transcripts
+byte-identical to QEMU), license-audited. Append a dated entry to the session
+log whenever anything here changes.
 
 ## Phase 1 — CM7 boots the CM4 + MU IPC library  ✅ DONE (HW-verified)
 
@@ -156,11 +156,14 @@ CM4 TCM is fixed LMEM, not FlexRAM banks). Full triangulation archived in
   discipline). Ends the 3.1/3.2 duplication.
 
 ### 3.1 — SPI (LPSPI1) polled master, CM4 self-configured  ◀ CURRENT
-**Status:** IMPLEMENTED + QEMU-gate-GREEN 2026-07-18 (`evkb/cm4_spi_test`;
-spec + plan in `docs/superpowers/`; 4 commits `2aceb19`→`cb2828f`;
-license-audit extended + PASS; per-task + final reviews passed). ★**HW probe
-PENDING** (operator: SDO(AD_30)→SDI(AD_31) jumper + `clean_boot.scp`; then add
-`transcript_hw_evkb.txt` + flip this to HW-VERIFIED). **Entry criteria:**
+**Status:** ✅ DONE + ★★HW-VERIFIED 2026-07-18 (`evkb/cm4_spi_test`; spec +
+plan in `docs/superpowers/`; license-audit extended + PASS; per-task + final
+reviews passed). The EVKB clean-boot VCOM transcript is **BYTE-IDENTICAL to
+QEMU** (`transcript_hw_evkb.txt` == `transcript_qemu.txt`, md5 `b2364766…`, 168
+bytes incl. CRLF) — `rxok=1`/`SPI_CM4=PASS` through the SDO(AD_30)→SDI(AD_31)
+jumper, closing the circular-pass gap (QEMU's `ssi-loopback` echoes on `CR.MEN`
+alone). Observed `lpcg=1`, `croot=0` (match QEMU — no HW status-bit surprise).
+No code changed after the QEMU gate, so no re-gate needed. **Entry criteria:**
 Phase 2 done ✅.
 **Deliverable:** a new gate `evkb/cm4_spi_test/` (cloned from `cm4_dual_test`):
 the CM4 self-configures LPSPI1 (`CCM_LPCG104`/`CCM_CLOCK_ROOT43`, mux AD_28/30/31,
@@ -319,3 +322,19 @@ Approach C above; byte-identical-CM7 guardrail.
   the real SDO→SDI jumper proves the CM4's clock-gating + pin-mux. Operator:
   jumper + flash + `clean_boot.scp`, then `transcript_hw_evkb.txt` + flip 3.1 to
   HW-VERIFIED (plan Task 5). D7 still queued.
+- 2026-07-18: **Phase 3.1 ★★HW-VERIFIED on the EVKB — Phase 3.1 COMPLETE.**
+  Flashed `cm4_spi_test` + clean boot (`clean_boot.scp`, M4 held: `SCR=0`,
+  `STAT_M4=1`, `MUA_SR=0x00F00200` — uncontaminated) with the SDO(AD_30)→
+  SDI(AD_31) jumper. The VCOM transcript is **BYTE-IDENTICAL to QEMU**
+  (`transcript_hw_evkb.txt` == `transcript_qemu.txt`, md5 `b2364766…`): the
+  CM4-driven polled loopback returned `a=A5 b=3C w=BEEF buf=DEADBEEF rxok=1`,
+  `SPI_CM4=PASS`. ★★This closes the circular-pass gap — the qemu2 `ssi-loopback`
+  echoes on `CR.MEN` alone, so `rxok=1` on silicon (via the physical jumper) is
+  the proof the CM4 itself ungated `CCM_LPCG104`, set `CCM_CLOCK_ROOT43`, muxed
+  AD_28/30/31, and drove a real 4 MHz SCK. `lpcg=1`/`croot=0` matched QEMU (CCM
+  RAM-model faithful, no HW status-bit surprise). ★HW-capture note: the raw
+  `/tmp/hw.uart` had a leading `\0` block (console reconnect after the reset's
+  USB re-enum); stripped the nulls, kept the raw `\r\n` → byte-identical.
+  Committed `transcript_hw_evkb.txt` + this roadmap. No code changed (silicon ==
+  QEMU) → no re-gate. **Phase 3.1 done; next = 3.2 (Wire/I2C on the CM4).** D7
+  still queued.
