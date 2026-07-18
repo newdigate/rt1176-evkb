@@ -11,8 +11,9 @@
  *   croot  = ........    CCM_CLOCK_ROOT41 readback (informative)
  *   rdv    = ????????    R15 ID read by the CM4 ISR — WORLD-SPLIT:
  *                        QEMU wm8962-stub = 0x0000; silicon = 0x6243
+ *   err    = 00000000    ISR outcome (0 = OK; asserted in both worlds)
  *   done   = 00000001   CM4 sequence completed
- * WIRE_INT_MASTER_CM4=PASS requires irqcnt>0, mcr=1, done=1.
+ * WIRE_INT_MASTER_CM4=PASS requires irqcnt>0, mcr=1, err=0, done=1.
  */
 #include "Arduino.h"
 #include "core_pins.h"
@@ -47,10 +48,10 @@ void setup()
     MU.begin();
     Multicore.begin(cm4_wire_int_master, sizeof(cm4_wire_int_master));
 
-    static const char *labels[6] = { "irqcnt", "mcr", "lpcg", "croot", "rdv", "done" };
-    uint32_t v[6];
+    static const char *labels[7] = { "irqcnt", "mcr", "lpcg", "croot", "rdv", "err", "done" };
+    uint32_t v[7];
     bool ok = true;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         if (wait_recv(0, &v[i])) phex(labels[i], v[i]);
         else { ptimeout(labels[i]); v[i] = 0xFFFFFFFFu; ok = false; }
     }
@@ -59,7 +60,8 @@ void setup()
     bool pass = ok
         && v[0] != 0x0u          /* irqcnt: CM4 took the LPI2C5 IRQ */
         && v[1] == 0x1u          /* mcr.MEN */
-        && v[5] == 0x1u;         /* done */
+        && v[5] == 0x0u          /* err: transaction OK (no NDF/ALF/FEF) */
+        && v[6] == 0x1u;         /* done */
     Serial1.println(pass ? "WIRE_INT_MASTER_CM4=PASS" : "WIRE_INT_MASTER_CM4=FAIL");
     Serial1.println("CM4WIREINT-DONE");
 }

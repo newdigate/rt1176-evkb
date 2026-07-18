@@ -6,8 +6,8 @@
  * Phase 4.1) at vector index 16+36 = 52, and the MU interrupt (external IRQ 118)
  * at vector index 16+118 = 134. Unused vectors spin in Default_Handler.
  * SysTick_Handler, LPI2C5_IRQHandler, and MU_IRQHandler are C functions in
- * main_cm4.c; LPI2C5_IRQHandler is an empty placeholder as of Phase 4.1 Task 4
- * (the real ISR body + NVIC-enable land in Task 5).
+ * main_cm4.c; LPI2C5_IRQHandler holds the real interrupt-driven LPI2C5 master
+ * ISR (Phase 4.1 Task 5), and the CM4 NVIC-enables IRQ 36 from main().
  *
  * The table is 135 words (540 B); VTOR must cover it, so it sits at
  * ORIGIN(ITCM)=0x1FFE0000, which is 1 KB aligned. Public domain (N. Newdigate).

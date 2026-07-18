@@ -1,13 +1,12 @@
 #!/bin/sh
-# QEMU gate for Phase-4.1 (Task 3 scaffold — EXPECTED RED): the CM4
-# self-configures LPI2C5 exactly as cm4_wire_test did, but does NOT yet run
-# an interrupt-driven transaction (irqcnt stays 0) — Tasks 4-5 add the CM4's
-# own LPI2C5 ISR on the CM4 NVIC (the first non-MU peripheral IRQ routed
-# there, via the qemu2 split-IRQ). This runner asserts irqcnt>0, so it is
-# INTENDED to fail until that ISR lands.
+# QEMU gate for Phase-4.1: the CM4 self-configures LPI2C5 (as cm4_wire_test)
+# and runs an INTERRUPT-DRIVEN master — it NVIC-enables IRQ 36 on its own NVIC
+# (the first non-MU peripheral IRQ routed to the CM4, via the qemu2 split-IRQ)
+# and services LPI2C5 in its own ISR to read the WM8962 R15 ID. The runner
+# asserts irqcnt>0 (the CM4 took the IRQ) and err=0 (transaction OK).
 # rdv is WORLD-SPLIT by design: this runner asserts the stub contract
-# (rdv=00000000); the HW check (once the ISR lands) will assert the WM8962
-# device ID (rdv=00006243), same as cm4_wire_test's precedent.
+# (rdv=00000000); the HW check asserts the WM8962 device ID (rdv=00006243),
+# same as cm4_wire_test's precedent.
 set -e
 QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
@@ -34,6 +33,7 @@ check() {
 grep -q "CM4WIREINT-GATE v1" "$OUT" || { echo "FAIL: banner missing"; exit 1; }
 check "mcr=00000001"
 check "rdv=00000000"                 # stub contract (HW asserts 00006243)
+check "err=00000000"                 # ISR transaction OK (no NDF/ALF/FEF)
 check "done=00000001"
 grep -q "^irqcnt=00000000" "$OUT" && { echo "FAIL: irqcnt is 0 (no CM4 IRQ)"; fail=1; }
 check "WIRE_INT_MASTER_CM4=PASS"

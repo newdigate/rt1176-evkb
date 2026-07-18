@@ -18,6 +18,7 @@
  *   croot  = ........   CCM_CLOCK_ROOT41 readback (informative)
  *   rdv    = ????????   R15 read by the CM4 ISR — WORLD-SPLIT: QEMU wm8962-stub
  *                       reads 0x0000; silicon reads 0x6243 (device ID)
+ *   err    = 00000000   ISR outcome — 0 OK (no NDF/ALF/FEF); asserted both worlds
  *   done   = 00000001   CM4 sequence completed
  *
  * The self-config sequence (LPI2C5 + its CCM/LPSR-IOMUXC instance table) and
@@ -46,7 +47,6 @@ static const lpi2c1176_hw_t lpi2c5_hw = {
 };
 
 #define WM8962_ADDR  0x1Au
-#define ABSENT_ADDR  0x2Au   /* clear of WM8962 0x1A + FXLS8974 accel 0x18 */
 
 /* MIER shares MSR bit positions (RM 69.5.1.6). */
 #define MIER_TDIE  LPI2C1176_MSR_TDF
@@ -57,8 +57,13 @@ static const lpi2c1176_hw_t lpi2c5_hw = {
 #define MIER_FEIE  LPI2C1176_MSR_FEF
 #define NVIC_ISER1 (*(volatile uint32_t *)0xE000E104u)   /* IRQ 32..63 */
 #define IRQ_LPI2C5 36
+#define ISR_XFER_GUARD 8000000u   /* bounded ISR-completion spin: a stalled ISR fails visibly, never hangs */
 
 enum { PH_WRITE, PH_READ, PH_STOP, PH_DONE, PH_ERR };
+/* Interrupt-driven transfer descriptor: write wr[wn] (cursor wi), then via
+ * repeated-START read rd[rn] (cursor ri); phase walks the state machine; err is
+ * the outcome (0 ok / 2 NACK / 3 ALF|FEF bus error); irqcnt counts ISR entries.
+ * Shared between LPI2C5_IRQHandler and isr_xfer_run through the single static X. */
 typedef struct {
     lpi2c1176_regs_t *p;
     uint8_t addr;
@@ -132,8 +137,8 @@ void LPI2C5_IRQHandler(void)
 /* SysTick and MU interrupts are unused by this gate, but the shared vector
  * table (startup_cm4.S) still references the symbols, so keep empty stubs.
  * The real work is in LPI2C5_IRQHandler above — the dedicated handler slotted
- * at vector index 52 (external IRQ 36), whose body Task 5 fills with the
- * interrupt-driven master state machine. */
+ * at vector index 52 (external IRQ 36), whose body holds the interrupt-driven
+ * master state machine. */
 void SysTick_Handler(void) {}
 void MU_IRQHandler(void) {}
 
@@ -163,7 +168,7 @@ static uint32_t isr_xfer_run(lpi2c1176_regs_t *p, uint8_t addr,
     p->MTDR = LPI2C1176_TX_CMD(LPI2C1176_CMD_START,
                                (uint32_t)(addr << 1) | 0u);   /* START + addr(W) */
     p->MIER = MIER_TDIE | MIER_NDIE | MIER_ALIE | MIER_FEIE;  /* arm write phase */
-    for (uint32_t g = 0; g < 8000000u; g++)                   /* bounded: no hang */
+    for (uint32_t g = 0; g < ISR_XFER_GUARD; g++)             /* bounded: no hang */
         if (X.phase == PH_DONE || X.phase == PH_ERR) break;
     return X.err;
 }
@@ -180,7 +185,7 @@ int main(void)
 
     static const uint8_t reg_addr[2] = { 0x00u, 0x0Fu };    /* WM8962 R15 pointer, MSB first */
     uint8_t rd[2] = { 0, 0 };
-    (void)isr_xfer_run(LPI2C5, WM8962_ADDR, reg_addr, 2, rd, 2);
+    uint32_t err = isr_xfer_run(LPI2C5, WM8962_ADDR, reg_addr, 2, rd, 2);
     uint32_t rdv = ((uint32_t)rd[0] << 8) | rd[1];
 
     mu_send(0, X.irqcnt);
@@ -188,6 +193,7 @@ int main(void)
     mu_send(0, lpcg);
     mu_send(0, croot);
     mu_send(0, rdv);
+    mu_send(0, err);                                         /* 0 = OK (no NDF/ALF/FEF); asserted both worlds */
     mu_send(0, 1u);                                          /* done */
     for (;;) {}
 }
