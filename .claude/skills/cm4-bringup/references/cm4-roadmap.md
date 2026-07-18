@@ -181,10 +181,27 @@ is the ONLY proof the CM4 self-configured the clock + pins + real SCK.** Run via
 modelled and reachable from `cm4_view`; polled avoids the CM7-only-NVIC gap).
 **Audit:** add `cm4_spi_test` to `license-audit.sh` GATES (same change), require PASS.
 
-### 3.2 — Wire (LPI2C) polled master, CM4 self-configured  (queued)
-Same self-config pattern; needs a target that ACKs — the qemu2 LPI2C
-master↔slave-persona loopback (`fsl-imxrt1170.c:1099`) + on-board AT24C02 on
-LPI2C1, or a CM4↔CM7 arrangement. Design when 3.1 lands.
+### 3.2 — Wire (LPI2C5) polled master, CM4 self-configured  ◀ CURRENT
+**Status:** DESIGNED + SPEC'd 2026-07-18
+(`docs/superpowers/specs/2026-07-18-cm4-wire-polled-master-design.md`), ready
+to implement. **Entry criteria:** 3.1 done ✅.
+**Target chosen (brainstorming):** **LPI2C5 + the real on-board WM8962 @0x1A**
+(not AT24C02/slave-persona — those need external HW or cross-core coupling).
+The probe is **wiring-free** (codec soldered on; flash + `clean_boot.scp` only).
+**Deliverable:** `evkb/cm4_wire_test/` (clone of `cm4_spi_test`): CM4
+self-configures LPI2C5 (LPCG102 @0x40CC6CC0, ROOT41 @0x40CC1480 = **mux 1**,
+LPSR pads GPIO_LPSR_05/04 mux 0x10 pad 0x0A — ★first CM4-driven LPSR-domain
+peripheral) + three polled transactions: reset-write R15←0x6243 (`ack=0`),
+absent-addr 0x2A probe (`nack=2`; avoids WM8962 0x1A + FXLS8974 0x18),
+ID read-back R15 (`rdn=2`).
+**★rdv split-assertion:** HW asserts `rdv=0x6243` (R15 readback default =
+device ID; Linux wm8962.c reg_default `{15, 0x6243}`, fetched 2026-07-18,
+FACT-only per license firewall); QEMU asserts `rdv=0x0000` (wm8962-stub
+contract). The ONE expected cross-world divergence (precedent: 2C systick).
+★qemu2 LPI2C NACK path already silicon-corrected (NDF trails TDF) → nack
+token assertable byte-identically. **No qemu2/core/Wire-lib change expected.**
+**Probe (MANDATORY):** clock-gating (CM4 writes CCM, mux 1 = new) + LPSR
+address-map trigger. **Audit:** add `cm4_wire_test` to GATES same-change.
 
 ### 3.3 — shared C register/clock core (consolidation)  (queued)
 Approach C above; byte-identical-CM7 guardrail.
@@ -338,3 +355,23 @@ Approach C above; byte-identical-CM7 guardrail.
   Committed `transcript_hw_evkb.txt` + this roadmap. No code changed (silicon ==
   QEMU) → no re-gate. **Phase 3.1 done; next = 3.2 (Wire/I2C on the CM4).** D7
   still queued.
+- 2026-07-18: **Phase 3.2 DESIGNED + SPEC'd** (brainstorming; spec at
+  `docs/superpowers/specs/2026-07-18-cm4-wire-polled-master-design.md`).
+  Target LOCKED: **LPI2C5 + real on-board WM8962 @0x1A** → the probe is
+  **wiring-free** (flash + clean_boot only). Three transactions distilled from
+  our HW-verified WireIMXRT1176.cpp + control_wm8962.cpp: reset-write
+  R15←0x6243 (`ack`), absent-addr 0x2A probe (`nack` — 0x2A triangulated clear
+  of WM8962 0x1A + FXLS8974 accel 0x18 per SDK bubble.c), ID read-back R15
+  (`rdn`/`rdv`). ★★KEY DESIGN: **rdv split-assertion** — HW asserts 0x6243
+  (R15 readback default = device ID; triangulated via Linux wm8962.c
+  reg_default `{15, 0x6243}` fetched 2026-07-18, GPL source used as FACT ONLY;
+  local SDK/Zephyr only ever WRITE 0x6243, silent on readback), QEMU asserts
+  0x0000 (wm8962-stub contract) — the one expected cross-world divergence
+  (precedent: 2C systick). ★Found during triangulation: the qemu2 LPI2C NACK
+  path is ALREADY silicon-corrected (NDF deferred to trail TDF,
+  imxrt_lpi2c.c:238-295) → `nack` assertable byte-identically. ★LPI2C5 =
+  first CM4-driven **LPSR-domain** peripheral (0x40C34000; LPSR IOMUXC pads
+  0x40C08010-88; ROOT41 **mux 1** unlike SPI's mux 0) → address-map +
+  clock-gating probe triggers both fire. No qemu2/core/Wire-lib change
+  expected. Next = writing-plans → implement → QEMU gate → wiring-free EVKB
+  probe. D7 still queued.
