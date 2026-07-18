@@ -53,9 +53,10 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # gate_dir:elf_target pairs — the union covers cores+SPI+Wire+Audio+SdFat+SD
 # (sd_wav), Ethernet+lwip (ethernet), NativeEthernet+FNET (native_ethernet),
 # and the dual-core library Multicore+MessagingUnit (cm4_boot, cm4_image).
-# NB: cm4_image_test's CM4 sub-image (cm4/*.S/.c) is built by a bare arm-gcc
-# step (build_cm4.sh), first-party public-domain, so it is outside this CMake
-# depfile walk by design; the walk still covers the CM7 side (cores).
+# CM4 sub-images (cm4/*.S/.c) are built by the teensy_add_cm4_image macro
+# (teensy-cmake-macros), whose gcc step emits <obj>.o.d depfiles (-MMD -MF,
+# added 2026-07-18) — so CM4-side sources are covered by this same walk
+# (the *.o.d pattern below), not just their provenance headers.
 GATES="sd_wav_play_test:sd_wav_play_test ethernet_test:ethernet_test native_ethernet_test:native_ethernet_test cm4_boot_test:cm4_boot_test cm4_image_test:cm4_image_test cm4_intr_test:cm4_intr_test cm4_dual_test:cm4_dual_test cm4_spi_test:cm4_spi_test cm4_wire_test:cm4_wire_test"
 for pair in $GATES; do
   g=${pair%%:*}; t=${pair##*:}
@@ -63,7 +64,7 @@ for pair in $GATES; do
   if [ ! -f "$bdir/$t.elf" ]; then
     echo "MISSING BUILD: $g (build it first)"; fail=1; continue
   fi
-  files=$(find "$bdir" -name '*.obj.d' -exec cat {} + 2>/dev/null \
+  files=$(find "$bdir" \( -name '*.obj.d' -o -name '*.o.d' \) -exec cat {} + 2>/dev/null \
           | tr ' \\' '\n\n' | grep '^/' | grep -v ':$' | sort -u)
   n=0; checked=0
   for f in $files; do

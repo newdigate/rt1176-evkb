@@ -417,3 +417,12 @@ Approach C above; byte-identical-CM7 guardrail.
   all asserted tokens) → no re-gate. **Phase 3.2 done; next = 3.3 (shared
   C core consolidation).** D7 still queued; license-audit CM4-source coverage
   gap queued as a background task.
+- 2026-07-18: **license-audit CM4-source coverage gap CLOSED** (the queued
+  item from the 3.2 final review). `teensy_add_cm4_image` now passes
+  `-MMD -MF <obj>.o.d` (macros repo d6c565e) and the audit's part-2 find also
+  matches `*.o.d` — all five macro-built cm4 gates went 101→103 checked files
+  (+main_cm4.c +startup_cm4.S each; cm4_boot_test stays 101, embedded blob).
+  ★Guardrail: all five `.cm4.bin` outputs cmp-verified BYTE-IDENTICAL
+  before/after (side-file-only flag, no codegen change) → NO silicon re-probe
+  (2B precedent). Audit PASS; cm4_wire_test gate re-run green; stale
+  build_cm4.sh comment in the audit script rewritten.
