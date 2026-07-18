@@ -194,8 +194,8 @@ in. CM4 clock+pin self-config is **reused verbatim** from the HW-verified
   `LPI2C_MasterTransferHandleIRQ` + Zephyr; **logic fresh** (own file,
   provenance header). Transactions mirror 3.2 (reset-write ACK; ID read-back).
 - **Tokens (MU ch0):** `irqcnt` (**isolated** — CM4 serviced the IRQ), `mcr`,
-  `lpcg`/`croot` (informative), `ack`, `rdv` (split-assert), `done`,
-  → `WIRE_INT_MASTER_CM4=PASS`.
+  `lpcg`/`croot` (informative), `err` (err=0 subsumes ACK — no NDF/ALF/FEF),
+  `rdv` (split-assert), `done`, → `WIRE_INT_MASTER_CM4=PASS`.
 - **Probe:** **wiring-free** WM8962, `clean_boot.scp`. Un-fakeable:
   `rdv=0x6243` produced by the CM4 ISR with `irqcnt>0`. Split-not-routed on
   silicon ⇒ `irqcnt=0` and the transaction hangs to a guarded FAIL.

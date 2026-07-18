@@ -1,4 +1,4 @@
-/* Cortex-M4 startup for the Phase-2C interrupt/timing CM4 image.
+/* Cortex-M4 startup for the Phase 4.1 interrupt-driven CM4 LPI2C5-master image.
  *
  * Same minimal reset handler as cm4_image_test (relocate VTOR to 0x1FFE0000,
  * reload MSP, enable FPU, copy .data, zero .bss, call main), but with a full
