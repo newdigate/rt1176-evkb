@@ -1,261 +1,188 @@
-# i.MX RT1170 (CM7) QEMU Model — Peripheral Status
+# i.MX RT1170 QEMU Model — Peripheral Status (dual-core)
 
-Status of the QEMU machine model for the **Cortex-M7 core** of the NXP
-i.MX RT1170, plus the bare-metal verification harness in this directory.
+Status of the **qemu2** machine model for the NXP i.MX RT1176 — now covering
+**both cores** (Cortex-M7 primary + Cortex-M4 secondary) — and the gate
+harness that verifies it. Last full revision: **2026-07-18** (post Phase 3.2).
 
-- **Machine:** `mimxrt1170-evk`  ·  **SoC type:** `fsl-imxrt1170`
-- **CPU:** Cortex-M7 (FPU, 8-region MPU, caches present), NVIC = 218 external
-  IRQs, 4 priority bits, no Security Extension (non-secure VTOR only).
-- **QEMU tree:** `/Users/nicholasnewdigate/Development/qemu` (branch
-  `imxrt1170-cm7-skeleton`)
-- **Build:** configured with `--disable-sdl --disable-sdl-image` (headless;
-  no libjxl/SDL dependency). Rebuild: `ninja -C build qemu-system-arm`.
-- **Run:** `qemu-system-arm -M mimxrt1170-evk -nographic -kernel <fw.elf>`
+> Supersedes the 2026-06-08 revision, which documented the retired
+> `~/Development/qemu` `imxrt1170-cm7-skeleton` tree and the old `rt1170-fw`
+> bare-metal harness. Everything below refers to the current tree.
 
-Legend: ✅ modelled & verified · 🟡 stubbed (absorbs accesses, won't hang,
-no behaviour) · ⬜ not modelled (would fault if accessed)
+- **Machine:** `mimxrt1170-evk` · **SoC type:** `fsl-imxrt1170`
+- **CPUs:** Cortex-M7 (FPU, caches, 218 ext IRQs, 4 prio bits) + **Cortex-M4F**
+  (own NVIC, `start-powered-off`, released by SRC — see the dual-core section)
+- **QEMU tree:** `~/Development/qemu2` (branch `master`)
+- **Build:** `ninja -C build qemu-system-arm` (clang ≥ 15 Apple / ≥ 10 upstream —
+  CLT clang 14 silently miscompiles and the M7 crashes on boot)
+- **Run (evkb firmware):**
+  `qemu-system-arm -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel fw.elf -display none -serial file:out.uart`
+  — gates go through `evkb/tools/qrun` (gtimeout + log cap) + `gate-lib.sh`.
+- **`boot-xip`:** enables the boot-ROM stub — reset enters the ROM, which parses
+  the FlexSPI IVT and executes the image's **DCD/XMCD** before dispatch (the
+  same path real silicon takes; EVKB-validated against NXP SDK images).
+
+Legend: ✅ modelled & gate-verified · 🟡 stubbed (absorbs accesses, no
+behaviour) · ⬜ not modelled.
 
 ---
 
-## Memory map (modelled regions)
+## Memory map
 
 | Region | Base | Size | Notes |
 |---|---|---|---|
-| ITCM | `0x0000_0000` | 512 KiB | RAM (reset vector here for ITCM-linked images) |
-| DTCM | `0x2000_0000` | 512 KiB | RAM |
-| OCRAM M4 / OCRAM1 / OCRAM2 / OCRAM M7 | `0x2020_0000` … `0x2036_0000` | 256K–640K | RAM |
-| FlexSPI1 XIP | `0x3000_0000` | 16 MiB | RAM (firmware loaded here; reset VTOR = base) |
-| SEMC SDRAM | `0x8000_0000` | 64 MiB | RAM (always-on; no SEMC init needed) |
-| Peripherals | `0x4000_0000`–`0x40FF_FFFF` | — | per-device (see below) |
-| PPB (NVIC/SysTick/SCS) | `0xE000_0000` | — | provided by the ARMv7-M container |
+| CM7 ITCM / DTCM | `0x0000_0000` / `0x2000_0000` | **FlexRAM-programmed** | Bank config from IOMUXC **GPR16/17** is modelled (`imxrt1170_flexram_update`): reset = the RT1176 fuse default **256K+256K**; firmware's 8/8 split (`0xFFFFAAAA`) gives 512K+512K. Unbacked TCM space faults, as on silicon. |
+| OCRAM M4 backdoor | `0x2020_0000` | 256K | Backs the **CM4's private ITCM/DTCM** (see dual-core) |
+| OCRAM1 / OCRAM2 / OCRAM M7 | `0x2024_0000`… | — | RAM |
+| FlexSPI1 XIP | `0x3000_0000` | 16 MiB | RAM-backed; **FlexSPI controller** (`imxrt_flexspi`) modelled — incl. the IP-command path the flash-EEPROM driver uses (program + AHB-invalidate) |
+| SEMC SDRAM | `0x8000_0000` | 64 MiB | **Faithful window**: unmapped until firmware's `semc_sdram_init()` completes the SEMC Mode-Set IPCMD — a missing/incorrect init **faults** instead of false-passing on plain RAM |
+| Peripherals | `0x4000_0000`+ | — | per-device |
+| PPB | `0xE000_0000` | — | per-core (each CPU has its own NVIC/SysTick/DWT) |
 
 ---
 
-## ✅ Completed peripherals
+## ✅ Dual-core: CM4 + MU + SRC (Phases 1–3.2, all ★★HW-verified)
 
-| Peripheral | Instances | Base(s) | NVIC IRQ(s) | Modelled | Verified |
-|---|---|---|---|---|---|
-| **LPUART** | 12 | `0x4007C000`+ (1–10), `0x40C24000/0x40C28000` (11–12) | 20–31 | TX (instant), RX FIFO (depth 4), STAT/CTRL/BAUD/FIFO/WATER, combined IRQ | Console TX, RX echo over socket |
-| **ANADIG** (PLL/OSC/PMU/MISC) | 1 | `0x40C84000` | — | Register file; PLL/OSC `*_STABLE` set; PFD stable toggles on `PLLn_UPDATE`; PMU `BIAS_CTRL2[WB_OK]` set; anatop-AI `AITOGGLE_DONE` flips on `AITOGGLE` write | Full Zephyr `clock_init` (PLL/OSC/PFD/body-bias/AI) completes |
-| **DCDC** | 1 | `0x40CA8000` | — | Register file; `REG0[STS_DC_OK]` reads set | Zephyr/SDK core-voltage settle poll falls through |
-| **GPT** | 6 | `0x400EC000`+ | 119–124 | Counter, prescaler, OCR1-3 compare, free-run/restart, rollover, IRQ; 24 MHz input clock | Polled compare + interrupt-driven NVIC ISR |
-| **PIT** | 2 (×4 ch) | `0x400D8000`, `0x40CB0000` | 155, 156 | 4 down-counters, LDVAL/CVAL/TCTRL/TFLG, MCR[MDIS] gate, periodic IRQ (one combined line/instance); 24 MHz clock | MDIS gate, CVAL counting, periodic NVIC IRQ, stop-on-disable |
-| **eDMA** | 32 ch | `0x40070000` | 0–15 (+err 16) | TCD engine; software-START (sync) + hardware-request (async via BH) transfers; DONE/INT, channels n & n+16 share a line | M2M copy, NVIC IRQ, LPUART1 TX-DMA |
-| **DMAMUX** | 1 (×32) | `0x40074000` | — | CHCFG register file; routes each peripheral request source to the enabled channel(s) | LPUART TX request → channel routing |
-| **GPIO** | 13 | `0x4012C000`+ (1–6), `0x40C5C000`+ (7–12), `0x40CA0000` (13) | 100–109, 61–62, 93 | DR/GDIR/PSR/ICR/IMR/ISR/EDGE_SEL + atomic DR_SET/CLEAR/TOGGLE; edge/level IRQ; 2 combined lines/bank | Output set/clear/toggle readback; input level IRQ → NVIC ISR |
-| **LPI2C** (master) | 6 | `0x40104000`+ (1–4), `0x40C34000/0x40C38000` (5–6) | 32–37 | MTDR command FIFO (START/TX/RX/STOP), MRDR RX FIFO, MSR, NAK, combined DMA request (MDER); QEMU I2C bus | NAK; EEPROM round-trip; DMA request -> eDMA |
-| **LPSPI** (master) | 6 | `0x40114000`+ (1–4), `0x40C2C000/0x40C30000` (5–6) | 38–43 | TDR/RDR full-duplex, TCR frame size/PCS/CONT, SR, CS gpio outputs, TX/RX DMA request (DER); QEMU SSI bus | JEDEC ID read; DMA request -> eDMA |
-| **CCM** (+ CCM_OBS) | 1 | `0x40CC0000`, `0x40150000` | — | Register file (clock-root CONTROL RMW); OSCPLL/LPCG `DIRECT[ON]`→`STATUS0[ON]` mirror; CCM_OBS `FREQUENCY_CURRENT` non-zero | Clock-root MUX/DIV read-back, LPCG gate wait loop, `CLOCK_GetFreqFromObs` |
-| **IOMUXC** (+GPR/LPSR/SNVS) | 6 windows | `0x400E4000`, `0x400E8000`, `0x40C08000`, `0x40C0C000`, `0x40C94000`, `0x40C98000` | — | Register file per window (pin mux write-only; GPR RMW); maps the LPSR_GPR/SNVS/SNVS_GPR windows that were unmapped | GPR RMW, pad-mux read-back, SNVS window access |
-| **SRC** | 1 | `0x40C04000` | — | Register file; SRSR reports power-on reset (W1C); SBMR read-only; GPR RMW | SRSR POR + W1C, GPR RMW, SBMR read-only |
-| **SNVS** (RTC+GPR) | 1 | `0x40C90000` | 66 (not asserted) | HP + LP secure RTC (47-bit, 32.768 kHz, advances in virtual time); 4 battery-backed LP GPRs (aliased); HPSR/LPSR W1C | LPGPR alias read-back, HP RTC counter advances |
-| **SAI** (I2S) | 4 | `0x40404000`+ (1-3), `0x40C40000` (4) | 76, 77, 78, 80 | Register file; TX FIFO always drained so TCSR[TE]&[FRDE] drives the TX DMA request; SR/FR self-clear, FWF/FRF status set when enabled; combined IRQ/instance; TX streams to a host audio voice | TX request -> DMAMUX slot 55 -> eDMA copy (saitest); 750 Hz sine -> WAV (rt1170-sai) |
-| **WDOG** | 2 | `0x40030000` (1), `0x40034000` (2) | 112, 65 | Reuses QEMU `imx2.wdt`: WCR/WSR/WRSR, WDE enable, WT timeout, 0x5555/0xAAAA service; timeout fires the watchdog action (reset) | unserviced -> SoC reset loop; serviced -> stays up (wdogtest) |
-| **RTWDOG** (WDOG32) | 2 | `0x40038000` (3, CM7), `0x40C10000` (4, CM4) | 113 (RTWDOG3; RTWDOG4 has no CM7 line) | New `imxrt.rtwdog` model: CS/CNT/TOVAL/WIN; unlock key `0xD928C520` (or halves `0xC520`/`0xD928`), refresh key `0xB480A602` (or `0xA602`/`0xB480`); ULK/RCS poll bits set so the MCUXpresso driver + SystemInit complete; ptimer timeout fires the watchdog action (reset). Armed only once firmware writes CS/refreshes, so untouched images aren't reset | configure ~1 s + no refresh -> SoC reset; refresh forever -> stays up (rtwdogtest) |
-| **OCOTP** (eFUSE) | 1 | `0x40CAC000` | 115/116 (not asserted; driver polls) | New `imxrt.ocotp` model: 144 fuse words; controller read (CTRL.ADDR + READ_CTRL.READ_FUSE -> READ_FUSE_DATA) and direct FUSE[] shadow array; program via 0x3E77 write-unlock key + DATA with OTP OR-only semantics; CTRL/OUT_STATUS SET/CLR/TOG aliases; BUSY always ready, RELOAD_SHADOWS self-clears; wrong-key/range -> CTRL.ERROR; WORDLOCK per-word lock. Fuses blank at cold start, survive warm reset | program + read-back via both paths, OR semantics, key error, RELOAD, WORDLOCK (ocotptest 13/13) |
-| **EWM** | 1 | `0x4002C000` | 114 | New `imxrt.ewm` model: CTRL/SERV/CMPL/CMPH/CLKCTRL/CLKPRESCALER (8-bit); CTRL write-once, EWMEN locks config + starts the prescaled up-counter; service sequence `0xB4`/`0x2C` refreshes; counter past CMPH fires the watchdog action (reset); INTEN routes the IRQ. Counter runs only after EWMEN; CMPL lower window stored but not enforced | configure ~1 s + no refresh -> SoC reset; refresh forever -> stays up (ewmtest) |
-| **Key Manager** (CSR) | 1 | `0x40C80000` | — (64 is the PUF line) | New `imxrt.key-manager` model: MASTER/OTFAD1/OTFAD2/IEE/PUF key-control + 5 slot-control registers. Routing SELECT bits stored; security locks enforced — write-once LOCK freezes MASTER/OTFAD/PUF, slot LOCK_LIST freezes the white-list (TZ bits stay writable), LOCK_CONTROL freezes the whole slot; IEE RELOAD self-clears | SELECT read-back, per-register write-once lock, RELOAD self-clear, slot LOCK_LIST/LOCK_CONTROL scopes (kmtest 11/11) |
-| **LPADC** | 2 | `0x40050000` (1), `0x40054000` (2) | 88, 89 | New `imxrt.lpadc` model: CTRL/STAT/IE/CFG, CMDL/CMDH command buffers (15), TCTRL triggers (8), SWTRIG, FCTRL, RESFIFO. SWTRIG launches the command TCTRL.TCMD points at; converts synchronously and pushes a RESFIFO entry (VALID + CMDSRC + TSRC + 12-bit synthetic per-channel sample); RESFIFO read pops; STAT.RDY/IRQ track FCOUNT vs FWMARK; RSTFIFO flush, FOF W1C. Averaging/loop/HW-trigger/compare not modelled | trigger->command->FIFO, channel routing, CMDSRC/TSRC, FIFO order, RSTFIFO, watermark RDY (adctest 15/15) |
-| **FlexCAN** | 3 | `0x400C4000` (1), `0x400C8000` (2), `0x40C3C000` (3) | 44, 46, 48 | New `imxrt.flexcan` model: MCR/CTRL1/IMASK/IFLAG + 64 classic 8-byte message buffers. Freeze handshake (FRZ/HALT->FRZACK), self-clearing SOFTRST, MDIS/LPMACK; CS CODE=TX_DATA in normal mode transmits; internal loopback (CTRL1.LPB) matches Rx MBs (CODE=EMPTY) via global/per-MB mask, delivers (CODE->FULL) and sets IFLAG; ORed MB IRQ. Self-contained (loopback only; no QEMU CAN-bus attach) | soft-reset/freeze handshake, loopback TX->RX with code/DLC/ID/data, TX+RX IFLAG, W1C (cantest 11/11) |
-| **USDHC** (SD/eMMC) | 2 | `0x40418000` (1), `0x4041C000` (2) | 133, 134 | **Reuses QEMU `imx-usdhc`** (SDHCI-compatible, as on imx6/imx7), capareg 0x057834b4. Board attaches a real `sd-card` from `-drive if=sd` onto the controller's sd-bus. Full standard SD data path works; HS200/HS400 DLL/strobe tuning regs not modelled (read 0) | reset, card-detect, clock-stable, full SD init (CMD0/8/ACMD41/2/3/7/16) + CMD17 single-block PIO read verified vs image pattern (sdtest 15/15) |
-| **ENET** (10/100) | 1 | `0x40424000` | 137 | **Reuses QEMU `imx.enet`** (i.MX FEC, as on imx6/imx7/8). phy-num=2 (emulated LAN9118 PHY); two output lines (MAC, MAC\|1588) OR-ed onto the single ENET IRQ; NIC backend via `qemu_configure_nic_device` (optional `-nic user,model=imx.enet`). Reset/MII/MAC/legacy-BD TX work; RCR.LOOP not implemented so no self-contained RX loopback | reset, PHY ID over MDIO (0x0007/0xc0d1), BMCR, EIR.MII set+W1C, PALR/PAUR, TX descriptor consumed + EIR.TXF (enettest 9/9) |
-| **ENET_1G** (gigabit) | 1 | `0x40420000` | 141, 142 | Second **`imx.enet`** instance with its own PHY (phy-num=1) and 3 AVB rings (tx-ring-num=3). MAC and 1588-timer lines wired directly to their own NVIC vectors (141/142). Exercises the enhanced (1588) 32-byte-descriptor multi-queue TX datapath -- the gigabit-distinct feature. RGMII/1000M link config and ENET-QOS are not modelled; QEMU places the ring-1/2 registers at model-specific offsets (not the RT1170 0x604/0x608) | PHY ID over MDIO, PALR/PAUR, enhanced-descriptor TX on rings 0 and 1 (EIR.TXF/TXF1 + descriptor write-back), NVIC 141 assert/deassert (enet1gtest 13/13) |
-| **USB OTG** (1/2) | 2 + 2 PHY | OTG `0x40430000`/`0x4042C000`, PHY `0x40434000`/`0x40438000` | 136, 135 (PHY 90/91 not asserted) | **Reuses QEMU `usb-chipidea`** (ChipIdea EHCI host, caps@0x100/op@0x140/1 port) + **`imx.usbphy`**. PHY has no IRQ line; USBNC (+0x200) and RT1170-only PHY tuning regs not modelled (read 0). Host-mode EHCI; device-controller mode not emulated | EHCI caps, ChipIdea DCIVERSION/DCCPARAMS, USBCMD HCRESET self-clear, HCHALTED, PORTSC; PHY VERSION/CTRL/PWD power-up (usbtest 24/24); `-device usb-storage,bus=usb-bus.0` -> PORTSC connect (0x1003) |
-| **FlexIO** | 2 | `0x400AC000` (1), `0x400B0000` (2) | 110, 111 | New `imxrt.flexio` register model: VERID/PARAM (8 shifters/8 timers), CTRL FLEXEN/SWRST (reset clears all but CTRL), SHIFTCTL/CFG/BUF + TIMCTL/CFG/CMP arrays, SHIFTBUF bit/byte/half-word-swap alias views, status-driven IRQ. SHIFTSTAT reads all-ready when FLEXEN=1 so blocking UART/SPI drivers don't hang; shifter/timer serial datapath NOT emulated | VERID/PARAM, SWRST clears config, FLEXEN, SHIFTSTAT ready, config readback, SHIFTBUF swaps, IRQ assert/deassert via NVIC pending (flexiotest 17/17) |
-| **eLCDIF** (display) | 1 | `0x40804000` | 54 | **Reuses QEMU `imx6ul_lcdif`** (MXS/i.MX6 eLCDIF). Scans a framebuffer out of system memory to a QEMU console surface; CTRL.RUN + WORD_LENGTH (RGB565 / XRGB8888), TRANSFER_COUNT (HxV), CUR_BUF/NEXT_BUF. Renders under `-display none` (captured via QMP `screendump`). LCDIFv2/MIPI-DSI/CSI stay stubbed | 64x64 RGB565 four-quadrant pattern -> eLCDIF scanout -> `screendump` PPM, quadrant colours verified (lcdiftest + run_lcdif.py, 4/4) |
-| **PXP** (2D blitter) | 1 | `0x40814000` | 57 | New `imxrt.pxp` register model: memory-to-memory PS -> OUT copy. CTRL.ENABLE runs a synchronous blit honouring the OUT rectangle (OUT_PS_ULC/LRC), PS/OUT pitches and CTRL ROTATE(180)/HFLIP/VFLIP, then sets STAT.IRQ (driver-polled completion) and self-clears ENABLE; CTRL.IRQ_ENABLE raises the interrupt. SET/CLR/TOG aliases on CTRL/STAT/OUT_CTRL/PS_CTRL. Scaling, CSC, alpha blend and 90/270 rotation NOT modelled | identity / rotate-180 / hflip / vflip / dest-offset copies of a position-encoding RGB565 surface, plus STAT.IRQ, ENABLE self-clear and NVIC assert/deassert (pxptest 13/13) |
+The headline change since the June revision (which listed the CM4 as "not
+represented at all"): the secondary core and the whole boot/IPC surface are
+modelled and validated **byte-identical against EVKB silicon** transcripts.
 
-**Per-device source:** `hw/char/imxrt_lpuart.c`, `hw/misc/imxrt_anadig.c`,
-`hw/misc/imxrt_ccm.c`, `hw/misc/imxrt_iomuxc.c`, `hw/misc/imxrt_src.c`, `hw/misc/imxrt_snvs.c`, `hw/timer/imxrt_gpt.c`, `hw/timer/imxrt_pit.c`, `hw/dma/imxrt_edma.c`,
-`hw/dma/imxrt_dmamux.c`,
-`hw/gpio/imxrt_gpio.c`, `hw/i2c/imxrt_lpi2c.c`, `hw/ssi/imxrt_lpspi.c`,
-`hw/misc/imxrt_dcdc.c`, `hw/audio/imxrt_sai.c`, `hw/watchdog/imxrt_rtwdog.c`,
-`hw/nvram/imxrt_ocotp.c`, `hw/watchdog/imxrt_ewm.c`,
-`hw/misc/imxrt_key_manager.c`, `hw/adc/imxrt_lpadc.c`,
-`hw/net/can/imxrt_flexcan.c`, `hw/misc/imxrt_flexio.c`, `hw/dma/imxrt_pxp.c`
-(+ headers in `include/hw/...`).  **USDHC**, **ENET** and **USB** add no new
-device file — they reuse QEMU's `hw/sd/sdhci.c` (`TYPE_IMX_USDHC`),
-`hw/net/imx_fec.c` (`TYPE_IMX_ENET`), and `hw/usb/chipidea.c` +
-`hw/usb/imx-usb-phy.c` (`TYPE_CHIPIDEA` / `TYPE_IMX_USBPHY`), all wired in
-`hw/arm/fsl-imxrt1170.c` (the SD card is attached in `hw/arm/mimxrt1170-evk.c`).
-
-### Known limitations of completed devices
-- **LPUART:** baud rate ignored (no real timing); slave/9-bit/modem modes not
-  modelled; interrupt logic present but only RX/TX-ready paths exercised; TX/RX
-  DMA request lines are wired (TX verified via eDMA).
-- **GPT:** input-capture (ICR1/2) not modelled; single fixed 24 MHz clock
-  (real CCM clock-root selection not wired).
-- **GPIO:** GPIO7–12 have no dedicated NVIC line on HW (left unconnected);
-  GPIO13's two halves are OR'd onto its single combined line.
-- **LPI2C / LPSPI:** master only (no slave); TX/RX DMA request lines wired to
-  the eDMA (verified); interrupt mode has the plumbing but was polling-verified.
-- **CLI attach note:** `-device ...,bus=/imxrt.lpi2c/i2c` (or `/imxrt.lpspi/spi`)
-  binds to the *first* instance in QEMU's list = the *last-realized* one, i.e.
-  **LPI2C6 / LPSPI6**. The i2c/spi tests target those instances.
+- **CM4 CPU:** M4F (`vfp`, bitband), own NVIC, `start-powered-off`; held until
+  the CM7 sets `SRC.SCR.BT_RELEASE_M4` (write-1-only, as on silicon); reset
+  VTOR from the **IOMUXC LPSR GPR0/GPR1** vector registers; `CTRL_M4CORE.SW_RESET`
+  re-pulse restarts it (D7 new-VTOR reboot: likely-works, clean probe queued).
+- **CM4 private view** (`cm4_view`): ITCM `0x1FFE0000` / DTCM `0x2000_0000`
+  (128K+128K fixed LMEM) alias the **OCRAM-M4 backdoor** `0x2020_0000` the CM7
+  stages images through; everything else falls through to shared system memory
+  — so the CM4 reaches GPIO, LPSPI, LPI2C, CCM, LPSR-domain peripherals, etc.
+- **MU** (`imxrt_mu`, MUA `0x40C48000`-side/MUB): mailboxes TR/RR ×4, GIR/GIP
+  doorbells, flags; **IRQ 118 wired to both NVICs**. Models the measured
+  silicon quirks: `ASR` bit 9 always-1, `ASR.RS` never sets (probe-cited in
+  the source).
+- **Verified by:** `dualcore_mu_test` (probe), `cm4_boot_test` (Multicore/MU
+  library), `cm4_image_test` (real C image, `.data`/`.bss`/FPU/DTCM stack),
+  `cm4_intr_test` (CM4 DWT + SysTick + MU IRQ in the CM4's own ISR),
+  `cm4_dual_test` (CM4-driven GPIO + cross-core visibility + IPC),
+  `cm4_spi_test` (CM4 self-configures LPSPI1, polled loopback),
+  `cm4_wire_test` (CM4 self-configures LPI2C5, polled I2C to the WM8962) —
+  plus NXP SDK **MCMGR hello_world** and **rpmsg_lite pingpong** byte-identical
+  QEMU-vs-board.
+- **Known gap:** peripheral interrupts fan out to the **CM7 NVIC only** (only
+  the MU reaches both cores). Routing a peripheral IRQ to the CM4 needs a
+  per-line `TYPE_SPLIT_IRQ` — a new-model risk trigger + probe when first
+  needed. Hence CM4 peripheral drivers are **polled-first**.
 
 ---
 
-## 🟡 Stubbed peripherals (unimplemented-device)
+## ✅ Modelled peripherals (by area)
 
-These absorb reads/writes (reads return 0) and are logged with `-d unimp`.
-They will **not hang** the boot, but provide no behaviour. Listed by area:
+Per-register details live in the model sources (`hw/*/imxrt_*.c`) — each model
+carries probe-cited comments where silicon corrected it. "Gate" names the
+evkb/library gate that exercises it end-to-end.
 
-| Area | Blocks (base) |
-|---|---|
-| Clocks / power / reset | `gpc-cpu-mode` (`0x40C00000`), `pgmc` (partial) — (CCM, SRC, ANADIG, DCDC are modelled) |
-| Watchdogs | `ewm` (`0x4002C000`) — (WDOG1/2 via imx2.wdt, RTWDOG3/4 via imxrt.rtwdog are modelled) |
-| External memory ctrls | `flexspi1/2-ctrl` (`0x400CC000/0x400D0000`), `semc-ctrl` (`0x400D4000`), `flexram` (`0x40028000`) |
-| Storage / net | `enet-qos` (`0x4043C000`) — (USDHC1/2, ENET 10/100, ENET_1G, and USB OTG1/2 + PHYs are modelled) |
-| Connectivity | — (FlexCAN1/2/3 and FlexIO1/2 are modelled) |
-| Security / OTP / RTC | caam, puf — (Key Manager, OCOTP, SNVS and EWM are modelled) |
-| Analog / audio | `adc-etc` (`0x40048000`), `dac` (`0x40064000`), `spdif` (`0x40400000`) — (LPADC1/2 and SAI1-4 are modelled) |
-| Display / camera | `lcdifv2` (`0x40808000`), `csi` (`0x40800000`), `mipi-dsi/csi` — (eLCDIF via imx6ul_lcdif and PXP are modelled) |
+| Area | Devices (instances) | Model | Gate(s) |
+|---|---|---|---|
+| Console / UART | LPUART ×12 | `imxrt_lpuart` | `serial_test`, `serial_test_rx`, every gate's token output |
+| Clocks / power | CCM (+OBS), ANADIG, DCDC | `imxrt_ccm`, `imxrt_anadig`, `imxrt_dcdc` | boot path of every gate; ★CCM is a RAM-backed register file — LPCG/root **readback** matches HW but **functional gating is not enforced** (see divergences) |
+| Pins / reset | IOMUXC ×6 windows (incl. LPSR + GPR), SRC | `imxrt_iomuxc`, `imxrt_src` | all gates; SRC also owns the **CM4 release** |
+| GPIO | ×13 | `imxrt_gpio` | `blink`, `irq_attach_test`, `cm4_dual_test`; ★PSR masks output bits (see divergences) |
+| Timers | GPT ×6, PIT ×2, QTMR, FlexPWM | `imxrt_gpt`, `imxrt_pit`, `imxrt_qtmr`, `imxrt_flexpwm` | `interval_timer_test`, `tone_test`, `pwm_test`; ★timing gates need `-icount` |
+| DMA | eDMA ×32ch + DMAMUX | `imxrt_edma`, `imxrt_dmamux` | `edma_test`, SPI-DMA, I2S; ★sw-START = whole-major in QEMU vs one minor loop on silicon (`single_minor` flag) |
+| I2C | LPI2C ×6 (master + **slave persona** on LPI2C2) | `imxrt_lpi2c` | Wire `wire_master_test`/`wire_slave_test`, `cm4_wire_test`; ★NDF deliberately **deferred** to trail TDF (silicon-corrected — immediate NDF let a broken scan false-pass) |
+| SPI | LPSPI ×6 | `imxrt_lpspi` | SPI `spi_loopback_test`/`spi_dma_test`, `cm4_spi_test`; ★`min_access_size` 1 so 8-bit DMA works; TCR is a queued command word |
+| Audio / analog | SAI ×4 (TX **and RX**), WM8962 stub, DAC, LPADC ×2 | `imxrt_sai`, `wm8962_stub`, `imxrt_dac`, `imxrt_lpadc` (`imxrt_adc` is the 1062 machine's) | `i2s_audio_test`, `sai_rx_test`, `audioinput/output_i2s_test`, `audiostream_test`, `sd_wav_play_test`, `dac_test`, `analog_test`; SAI1 has **tap/inject chardevs** (`sai1-tap`, `sai1-rxinject`) for sample-exact gating |
+| Storage | USDHC ×2 (+sd-card), FlexSPI ctrl (flash EEPROM) | reuses `imx-usdhc`; `imxrt_flexspi` | `sd_test`, `eeprom_test` |
+| Networking | ENET 10/100 + ENET_1G (imx.enet ×2) | reuses `imx_fec` | `enet_test`, `ethernet_test` (lwIP), `native_ethernet_test` (FNET) — DHCP/TCP/UDP/DNS over SLIRP (`-nic user`, guestfwd); ★checksum-offload off under SLIRP; ENET IRQ 137 exercised by FNET |
+| USB | OTG1/2 + PHYs — **host AND device mode** | reuses `chipidea` (+ its UDC device mode), `imx-usb-phy`, plus `dev-midi` | device: `usb_enum/data/keyboard/mouse/joystick_test` (CDC+HID composite; reactive `hid_in_mask` int-IN tap); host: `usb_host_hid_test`, `usb_midi_test`, `usb_msc_block/fs_test`; ★OTG2 host DMA has a deliberate **TCM hole** (caught 2 real stack-DMA bugs pre-HW) |
+| CAN | FlexCAN ×3 | `imxrt_flexcan` | FlexCAN lib gates; ★`SRXDIS`-gated loopback (honesty fix) + **synchronous** delivery vs ~108µs on silicon |
+| External RAM | SEMC + SDRAM | `imxrt_semc` | `sdram_test`, `extmem_test` (faithful window) |
+| RTC / security / misc | SNVS (SRTC), OCOTP, Key Manager, WDOG/RTWDOG/EWM, LPADC, FlexIO, eLCDIF, PXP | `imxrt_snvs`, `imxrt_ocotp`, `imxrt_key_manager`, `imx2.wdt`/`imxrt_rtwdog`/`imxrt_ewm`, `imxrt_lpadc`, `imxrt_flexio`, `imx6ul_lcdif`, `imxrt_pxp` | `rtc_test` (★HPCR[HP_TS] honoured), display/misc gates from the CM7 bring-up era |
+| Dual-core | CM4 + MU + SRC release + LPSR GPRs | machine + `imxrt_mu` | see the dual-core section |
 
-(Full list: `unimplemented_peripherals[]` in `hw/arm/fsl-imxrt1170.c`, 36 entries.)
+### Board test fixtures (`hw/arm/mimxrt1170-evk.c`)
 
----
+Attached at machine creation so firmware sees a realistic EVKB:
 
-## 🦓 Zephyr RTOS verification
-
-The model boots **real Zephyr v4.4** (built with the ARM_10 GCC `gnuarmemb`
-toolchain; see the build memo). Booting through the full NXP MCUXpresso driver
-stack independently verifies the bring-up peripherals against real firmware —
-not just the bare-metal harness. Build images with
-`-- -DCONFIG_NXP_IMXRT_BOOT_HEADER=n` (vectors at `0x30000000`); run headless and
-capture LPUART1 with `-serial file:`. Helper: `zephyr-samples.sh`.
-
-| Zephyr sample | Result | Verifies |
+| Fixture | Where | Purpose |
 |---|---|---|
-| `hello_world` | `Hello World! mimxrt1170_evk@B/...` | reset, full `clock_init` (DCDC, ANADIG PLL/OSC/PMU/AI, CCM), IOMUXC, LPUART1 console, SDRAM, NVIC, SysTick |
-| `synchronization` | thread_a/thread_b ping-pong | kernel scheduler, threads, semaphores, SysTick tick |
-| `philosophers` | live dining-philosophers demo | preemptible+cooperative threads, dynamic mutexes, sleeping/timing |
-| `basic/blinky` | `LED state: ON/OFF`; GPIO9 DR bit3 toggles (read via monitor `xp/1xw 0x40c64000`) | **GPIO9** output path |
-| `drivers/counter/alarm` | `!!! Alarm !!!` at 2 s / 4 s / 8 s | **GPT2** compare → IRQ 120 → NVIC → counter ISR (needs `-DCONFIG_COUNTER_MCUX_GPT=y` + a 1-line `MCUX_GPT` branch in the sample) |
-| `tests/drivers/dma/loop_transfer` | 2/3 ztests PASS | **eDMA** M2M via `mcux_edma` driver (DMAMUX always-on + SERQ trigger). suspend_resume fails — synchronous (non-time-paced) transfers can't be halted mid-flight |
-| `tests/drivers/eeprom/api` (+at24 on LPI2C6) | 7/7 ztests PASS | **LPI2C6** end-to-end: write/read round-trip + page-crossing multi-byte through the model → QEMU i2c bus → at24 EEPROM |
-| `samples/drivers/spi_flash` (+is25wp256 on LPSPI6) | erase + write + read-back PASS | **LPSPI6** end-to-end: erase/write/read through nxp-lpspi + spi_nor → QEMU SSI → is25wp256 flash |
-
-**LPSPI / Zephyr (fixed, commit `ca15c5ac97`):** the nxp-lpspi driver ends a
-transaction by writing `TCR` with `CONT=0` as a command-only FIFO word to
-release PCS. The model now treats `TCR` as a queued command word (correct PCS
-timing) and connects the command-line flash's chip-select lazily on the first
-frame (LPSPI reset runs before the `-device` flash is attached). `spi_flash`
-erase/write/read passes; bare-metal `spitest` (is25wp128) 3/3 and `dmaperi`
-2/2 stay green.
-
-eDMA needed commit `c88368b7eb` (DMAMUX A_ON / software-trigger); LPI2C needed
-the RX-FIFO pacing fix (3-bit MFSR.RXCOUNT). To attach bus devices:
-`-device at24c-eeprom,bus=/imxrt.lpi2c/i2c,address=0x50,rom-size=256` (binds
-LPI2C6) or an SSI flash (`is25lp064`) on `/imxrt.lpspi/spi` (LPSPI6).
-
-After boot the `-d unimp` trace is ~23 benign one-shot reads (wdog disable, GPC,
-OCOTP fuse). The DCDC/ANADIG fixes that unblocked this are commit `49528bfee2`.
+| **AT24C02 EEPROM** @0x50 | LPI2C1 (Arduino header) | Wire master round-trips real I2C |
+| **`wm8962-stub`** @0x1A | LPI2C5 (codec bus) | ACKs everything, reads 0x00 — lets `WM8962_Init` complete; **not a codec model** |
+| **`ssi-loopback`** | LPSPI1 | echoes MOSI→MISO (mirrors the SDO→SDI jumper) |
+| GPIO **D13→D9 loop** | GPIO3.27→GPIO3.0 | attachInterrupt self-stimulation |
+| **sd-card** ×2 | USDHC1/2 | from `-drive if=sd[,index=1]` |
+| `sai1-tap` / `sai1-rxinject` chardevs | SAI1 | raw TDR capture / RX sample injection |
+| (CLI) `usb-storage`, `usb-kbd/mouse`, `dev-midi` | OTG2 host bus | USB-host gates |
 
 ---
 
-## ⬜ Not represented at all
+## ⚠️ Known QEMU-vs-silicon divergences (deliberate, probe-documented)
 
-- **Cortex-M4 (CM4) core** — only the CM7 is modelled; the CM4 and its
-  message unit (MU), inter-core, and CM4-only peripherals are absent.
-- **Boot ROM / FlexSPI boot flow** — skipped; firmware is loaded directly and
-  the reset vector points at the FlexSPI XIP base.
-- Any peripheral whose base is neither modelled nor in the stub list (a guest
-  access there will hit the default unassigned-memory handler).
+The silicon-truth loop's accumulated map of where a green QEMU run is **not**
+sufficient — each entry is documented at its source and in the owning gate:
 
----
-
-## TODO — suggested priority order
-
-1. ~~**Boot a Zephyr `hello_world`**~~ ✅ **DONE** — boots and runs (see the
-   Zephyr verification section). Build with `-DCONFIG_NXP_IMXRT_BOOT_HEADER=n`
-   so vectors land at `0x30000000`. Required the DCDC + ANADIG fixes (`49528bfee2`).
-   Next Zephyr targets needing more plumbing: RTC (no SNVS RTC driver/node yet),
-   LPI2C/LPSPI (attach QEMU bus devices + DT), eDMA (UART async or a DMA test).
-2. **CCM clock-tree frequencies** — CCM is now modelled (register file + gate
-   mirroring + CCM_OBS), but `CLOCK_GetFreqFromObs()` returns a *fixed 24 MHz
-   placeholder*. To report accurate per-clock frequencies, map the CCM_OBS
-   SELECT signal index to a frequency computed from the ANADIG PLL config and
-   the clock-root MUX/DIV. Not a hang risk; affects only computed baud/timer
-   rates (which the modelled peripherals currently ignore).
-3. **DCDC / GPC** — likely fine as stubs; confirm against a real boot trace.
-   (IOMUXC and SRC are now modelled.)
-4. **More DMA-driven peripherals** — LPUART, LPSPI and LPI2C DMA request
-   lines are wired (peripheral -> DMAMUX -> eDMA, async via a bottom half).
-   SAI/FlexIO/ADC DMA requests could be added similarly.
-5. **ENET-QOS** (TSN Ethernet) — still stubbed: a Synopsys DWC EQOS that
-   QEMU has no model for.  ENET-1G (gigabit) is now modelled as a second
-   `imx.enet` instance.  Everything else commonly used is modelled:
-   USDHC1/2, ENET 10/100, ENET_1G, USB OTG1/2 + PHYs (reusing QEMU's
-   imx-usdhc / imx.enet / chipidea + imx.usbphy), FlexCAN1/2/3, FlexIO1/2,
-   LPADC1/2, and
-   all the small control blocks (WDOG1/2, RTWDOG3/4, EWM, OCOTP, Key Manager,
-   SNVS).
-7. **Interrupt-mode coverage** for LPUART/LPI2C/LPSPI (currently polling-verified).
-8. **Audio (SPDIF/PDM)** and remaining **display/camera (LCDIFv2/MIPI/CSI)** —
-   lowest priority for headless bring-up (SAI, eLCDIF and PXP are modelled).
-
----
-
-## Verification harness (this directory)
-
-Built with the ARM GCC toolchain via `./build.sh` (uses
-`/Applications/ARM_10/bin/arm-none-eabi-gcc`):
-
-| Artifact | What it does | Run command extras |
-|---|---|---|
-| `selftest.elf` | 19 self-checks across LPUART/GPIO/GPT/ANADIG/IOMUXC | — |
-| `i2ctest.elf` | LPI2C NAK + EEPROM round-trip | `-device at24c-eeprom,bus=/imxrt.lpi2c/i2c,address=0x50,rom-size=256,address-size=1` |
-| `spitest.elf` | LPSPI JEDEC-ID read | `-device is25wp128,bus=/imxrt.lpspi/spi` |
-| `clktest.elf` | CCM clock-root RMW, LPCG gate wait, `CLOCK_GetFreqFromObs` | — |
-| `pittest.elf` | PIT module gate, counter, periodic NVIC IRQ | — |
-| `dmatest.elf` | eDMA M2M copy + major-loop NVIC IRQ | — |
-| `dmauart.elf` | LPUART1 TX driven by eDMA (peripheral request path) | — |
-| `dmaperi.elf` | LPSPI1 / LPI2C1 DMA requests drive eDMA | — |
-| `saitest.elf` | SAI1 (I2S) TX DMA request drives eDMA | — |
-| `wdogtest.elf` / `wdogkick.elf` | WDOG1 timeout resets SoC / service keeps it alive | — |
-| `rtwdogtest.elf` / `rtwdogkick.elf` | RTWDOG3 (WDOG32) timeout resets SoC / refresh keeps it alive | — |
-| `ocotptest.elf` | OCOTP eFUSE read/program/lock paths (13/13) | — |
-| `ewmtest.elf` / `ewmkick.elf` | EWM timeout resets SoC / refresh keeps it alive | — |
-| `kmtest.elf` | Key Manager routing + security lock semantics (11/11) | — |
-| `adctest.elf` | LPADC trigger/command/FIFO conversion paths (15/15) | — |
-| `cantest.elf` | FlexCAN loopback TX->RX mailbox path (11/11) | — |
-| `sdtest.elf` | USDHC SD init + block-0 read (15/15) | `-drive file=card.img,if=sd,format=raw` |
-| `enettest.elf` | ENET PHY-ID/MAC/TX-descriptor path (9/9) | optional `-nic user,model=imx.enet` |
-| `enet1gtest.elf` | ENET_1G PHY/MAC + enhanced multi-ring TX (rings 0/1) + NVIC 141 (13/13) | — |
-| `usbtest.elf` | USB EHCI caps/reset + PHY power-up (24/24) | optional `-drive id=u,file=card.img,if=none -device usb-storage,bus=usb-bus.0,drive=u` |
-| `flexiotest.elf` | FlexIO regs/SWRST/SHIFTSTAT/swaps/IRQ (17/17) | — |
-| `lcdiftest.elf` | eLCDIF framebuffer scanout, colours via screendump (4/4) | run via `python3 run_lcdif.py` (headless QMP screendump) |
-| `pxptest.elf` | PXP blit: identity/180/hflip/vflip/dest-offset + STAT/ENABLE/NVIC (13/13) | — |
-| `fw.elf` | LPUART/GPIO/GPT demo banner | — |
-
-Example:
-```sh
-cd /Users/nicholasnewdigate/Development/qemu
-./build/qemu-system-arm -M mimxrt1170-evk -nographic -kernel \
-    /Users/nicholasnewdigate/Development/rt1170-fw/selftest.elf
-```
-
-Source: `startup.c` (vector table + reset), `link.ld` (XIP at `0x30000000`),
-`main.c` / `selftest.c` / `i2ctest.c` / `spitest.c`.
-
----
-
-## Commit history (branch `imxrt1170-cm7-skeleton`)
-
-| Commit | Summary |
+| Divergence | Consequence |
 |---|---|
-| `c978f20` | CM7 SoC + `mimxrt1170-evk` board skeleton |
-| `7c437ce` | LPUART ×12 |
-| `18caa72` | ANADIG (clock-init unblock) |
-| `20a6db8` | GPT ×6 |
-| `25bf158` | GPIO ×13 |
-| `5361983` | LPI2C ×6 |
-| `dcb8879` | LPSPI ×6 |
-| `5f1f2b6` | CCM + CCM_OBS clock controller |
-| `924e0fe` | IOMUXC pin mux / GPR (6 windows) |
-| `8d6a906` | PIT ×2 (4 channels each) |
-| `b8eaa90` | eDMA (32 ch) + DMAMUX |
-| `c341482` | SRC system reset controller |
-| `aaef194` | SNVS (RTC + GPR) |
-| `e3de84e` | peripheral DMA request wiring (LPUART -> DMAMUX -> eDMA) |
-| `f568a13` | LPSPI + LPI2C DMA request wiring |
+| **CCM readback ≠ gating**: LPCG/clock-root registers store/readback faithfully, but peripherals run regardless of the gate | A missing clock-ungate passes in QEMU → **circular pass**; HW is the arbiter (proven load-bearing by `cm4_spi_test`/`cm4_wire_test`) |
+| **`ssi-loopback` echoes on `CR.MEN` alone** (ignores clock/pins) | same circular-pass shape for SPI |
+| **`wm8962-stub` reads 0x0000**; real codec returns real registers (R15 → `0x6243` device ID) | `cm4_wire_test`'s `rdv` token is world-split by design |
+| **GPIO PSR masks output bits** (`psr & ~gdir`) | verify outputs via **DR readback**, never PSR/`digitalRead` |
+| **eDMA software-START drains the whole major loop**; silicon runs one minor loop | `single_minor` compat flag in the model |
+| **FlexCAN loopback delivers synchronously**; silicon needs ~108µs + Rx-MB C/S read LOCKS the MB | tight read-polls starve real frames — poll with a delay gap |
+| **LPI2C NDF is deferred to trail TDF** (matches silicon; immediate NDF false-passed a scan) | never judge ACK at TDF — judge at STOP/SDF |
+| **Timing gates need `-icount`** (shift=2 typical) | else `delay()`/ptimer decouple (PIT, tone, SD-in-audio-ISR) |
+| **SysTick time-base differs** (`-icount` vs real 400 MHz+) | characterisation tokens only (`cm4_intr_test`) |
+| Boot-ROM stub executes IVT+DCD/XMCD but `clean_boot.scp` on HW **cannot** re-run the real ROM's pass | POR (SW4) is the only true full-ROM path on the board |
+
+---
+
+## 🟡 Stubbed (unimplemented-device, 8 entries)
+
+`gpc-cpu-mode` (0x40C00000), `flexram` ctrl block (0x40028000 — banking itself
+comes from the modelled IOMUXC GPR16/17), `flexspi2-ctrl`, `enet-qos`,
+`adc-etc`, `spdif`, `lcdifv2`, `csi`. (List: `unimplemented_peripherals[]` in
+`hw/arm/fsl-imxrt1170.c`.) These absorb accesses; `-d unimp` logs them.
+
+## ⬜ Not modelled
+
+- **ENET-QOS** (Synopsys DWC EQOS — no QEMU model exists).
+- CM4-side **peripheral IRQ routing** (see the dual-core gap above).
+- CAAM, PUF, MIPI-DSI/CSI, LCDIFv2 datapath.
+
+---
+
+## Verification harness
+
+**Primary: the evkb gates** (`evkb/*/run_qemu*.sh`, gate-lib.sh pattern —
+deterministic `token=HEX` transcripts; HW-verified gates check in
+`transcript_qemu.txt` + `transcript_hw_evkb.txt`, byte-identical except
+documented divergences). ~45 gates spanning: serial, GPIO/IRQ, timers/PWM/tone,
+ADC/DAC, I2C/SPI (+DMA), I2S/audio graph (+SD WAV), eDMA, EEPROM, SD, SDRAM/
+extmem, RTC, Ethernet (raw/lwIP/Arduino-API/FNET), USB device (CDC+HID trio) +
+USB host (HID/MIDI/MSC), FlexCAN + ST7735 + Wire/SPI gates in their library
+repos (`~/Development/{SPI,Wire,FlexCAN,Ethernet,...}/tests`), and the seven
+dual-core gates listed above. License coverage: `evkb/tools/license-audit.sh`
+(depfile link-manifest walk incl. CM4 sub-images, + copyleft sweep) must PASS.
+
+**qemu2 regression set** (run whenever qemu2 is touched — see
+`evkb/.claude/skills/cm4-bringup/references/silicon-truth-loop.md`):
+`tests/functional/arm/test_imxrt1170.py` + `test_imxrt1062.py`, the most-affected
+evkb gates, NXP SDK MCMGR hello_world + rpmsg pingpong, and
+`scripts/checkpatch.pl` on the diff.
+
+**Historical:** the June-era Zephyr v4.4 sample matrix (hello_world,
+synchronization, philosophers, blinky, GPT alarm, eDMA/EEPROM/SPI-flash ztests)
+was verified on the predecessor tree; those results predate qemu2 and have not
+been re-run on it. The NXP SDK bare-metal examples above are the current
+third-party-firmware cross-check.
+
+---
+
+## TODO / likely next
+
+1. **CM4 peripheral IRQ routing** (`TYPE_SPLIT_IRQ` per line) — needed for
+   interrupt-driven/DMA drivers on the CM4 (Phase 3 deferred list).
+2. **Clock-gate fidelity** — enforce LPCG/pin-mux in peripheral/fixture paths
+   to close the circular-pass divergences (machine-wide blast radius; HW is
+   the arbiter meanwhile).
+3. **ENET-QOS** — would need a new DWC EQOS model.
+4. CCM_OBS computed frequencies are still placeholders (modelled peripherals
+   don't consume them).
