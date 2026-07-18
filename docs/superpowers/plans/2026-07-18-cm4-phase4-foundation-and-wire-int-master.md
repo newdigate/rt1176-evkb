@@ -73,7 +73,7 @@ In `struct FslIMXRT1170State`, near `OrIRQState gpio13_or;`, add:
 
 ```c
     /* Phase 4: peripheral IRQ lines fanned out to BOTH NVICs (RM Tables
-     * 4-1/4-2).  Silicon truth: cm4_wire_int_master_test / 2026-07-.. . */
+     * 4-1/4-2).  Silicon truth pending -- cm4_wire_int_master_test (4.1). */
     SplitIRQ lpspi1_irq_split;
     SplitIRQ lpi2c5_irq_split;
     SplitIRQ edma_irq_split[IMXRT_EDMA_NUM_IRQS];
@@ -91,26 +91,75 @@ In `fsl-imxrt1170.c`, in the `_init` function right after the `gpio13-or`/`enet-
     object_initialize_child(obj, "lpi2c5-irq-split", &s->lpi2c5_irq_split,
                             TYPE_SPLIT_IRQ);
     for (int i = 0; i < IMXRT_EDMA_NUM_IRQS; i++) {
-        g_autofree char *nm = g_strdup_printf("edma-irq-split%d", i);
-        object_initialize_child(obj, nm, &s->edma_irq_split[i],
+        object_initialize_child(obj, "edma-irq-split[*]", &s->edma_irq_split[i],
                                 TYPE_SPLIT_IRQ);
     }
 ```
 
-- [ ] **Step 3: Build (expect success; nothing wired yet)**
+(Use QOM's native `"[*]"` auto-indexing name — the dominant idiom in this
+function, `lpi2c[*]`/`lpspi[*]`/`sai[*]`/… — not a hand-rolled `g_strdup_printf`.
+`IMXRT_EDMA_NUM_IRQS` is already visible via the existing `imxrt_edma.h`
+include; else use literal `16`, value from `imxrt_edma.h:24`.)
 
-Run: `cd ~/Development/qemu2/build && ninja qemu-system-arm`
-Expected: builds clean (fields added, not yet used → no behavior change).
+- [ ] **Step 3: Realize the splitters (connection-free) in `fsl_imxrt1170_realize`**
 
-- [ ] **Step 4: Commit**
+**Why (verified):** `object_initialize_child()` creates a hard obligation to
+`qdev_realize()` that child before machine construction finishes —
+`qdev_assert_realized_properly()` (`hw/core/qdev.c:293-301`, called
+unconditionally from `qdev_machine_creation_done()`) asserts `realized` for
+every QOM child, so an init-without-realize aborts **every** `mimxrt1170-evk`
+instantiation. Precedent + invariant: `hw/arm/exynos4210.c:429-435`. So Task 1
+must realize the splitters (still connection-free = inert); Task 2 only wires
+them. Put this right after the existing `gpio13_or` realize block (≈`:1056`),
+so it precedes the LPI2C/LPSPI/eDMA connect sites:
+
+```c
+    /* Phase 4: realize the fan-out splitters (num-lines=2 -> CM7+CM4 NVICs).
+     * Connection-free here (inert: nothing routed through them yet); Task 2
+     * wires them.  Mirrors the gpio13_or realize above; required because
+     * qdev_assert_realized_properly() asserts every initialized child. */
+    object_property_set_int(OBJECT(&s->lpspi1_irq_split), "num-lines", 2,
+                            &error_abort);
+    if (!qdev_realize(DEVICE(&s->lpspi1_irq_split), NULL, errp)) {
+        return;
+    }
+    object_property_set_int(OBJECT(&s->lpi2c5_irq_split), "num-lines", 2,
+                            &error_abort);
+    if (!qdev_realize(DEVICE(&s->lpi2c5_irq_split), NULL, errp)) {
+        return;
+    }
+    for (int i = 0; i < IMXRT_EDMA_NUM_IRQS; i++) {
+        object_property_set_int(OBJECT(&s->edma_irq_split[i]), "num-lines", 2,
+                                &error_abort);
+        if (!qdev_realize(DEVICE(&s->edma_irq_split[i]), NULL, errp)) {
+            return;
+        }
+    }
+```
+
+- [ ] **Step 4: Build + smoke-test that the machine still constructs**
+
+```bash
+cd ~/Development/qemu2/build && ninja qemu-system-arm
+timeout 8 ./qemu-system-arm -M mimxrt1170-evk -nographic -monitor none -serial none; echo "exit=$?"
+```
+Expected: builds clean; the run aborts with the **baseline** `Lockup: can't
+escalate 3 to HardFault` (no firmware → CPU faults on zeroed memory) — NOT an
+`Assertion failed: (dev->realized)`. The realize-assert must be gone (that's
+the proof the splitters are properly realized). A/B this against `git stash`
+if unsure.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 cd ~/Development/qemu2
 git add include/hw/arm/fsl-imxrt1170.h hw/arm/fsl-imxrt1170.c
-git commit -m "hw/arm/fsl-imxrt1170: add per-line SplitIRQ children (Phase 4 foundation)
+git commit -m "hw/arm/fsl-imxrt1170: add + realize per-line SplitIRQ children (Phase 4 foundation)
 
 Route LPSPI1/LPI2C5/eDMA IRQs to both NVICs next; mirrors the existing
-gpio13_or TYPE_OR_IRQ child idiom. No wiring yet (inert)."
+gpio13_or TYPE_OR_IRQ child idiom. Realized connection-free here (inert -
+qdev_assert_realized_properly requires every initialized child be realized);
+Task 2 wires them."
 ```
 
 ---
@@ -137,13 +186,18 @@ static void fsl_imxrt1170_connect_irq_both(SplitIRQ *split, DeviceState *m7,
                                            DeviceState *m4, SysBusDevice *dev,
                                            int out, int irqnum)
 {
-    object_property_set_int(OBJECT(split), "num-lines", 2, &error_abort);
-    qdev_realize(DEVICE(split), NULL, &error_abort);
+    /* split is already realized (num-lines=2) in the Task-1 realize block;
+     * here we only WIRE it: peripheral IRQ output -> split input, split's two
+     * outputs -> the CM7 and CM4 NVIC inputs at the same index. */
     sysbus_connect_irq(dev, out, qdev_get_gpio_in(DEVICE(split), 0));
     qdev_connect_gpio_out(DEVICE(split), 0, qdev_get_gpio_in(m7, irqnum));
     qdev_connect_gpio_out(DEVICE(split), 1, qdev_get_gpio_in(m4, irqnum));
 }
 ```
+
+(Note: the helper must be called *after* the Task-1 realize block runs — it
+does, since realize is near `:1056` and the peripheral connect sites are at
+`:1094`+.)
 
 - [ ] **Step 2: Rewire LPI2C5 (index 4) — replace the CM7-only connect at `:1094`**
 
