@@ -398,7 +398,7 @@ grep -q "^irqcnt=00000000" "$OUT" && { echo "FAIL: irqcnt is 0 (no CM4 IRQ)"; fa
 check "WIRE_INT_MASTER_CM4=PASS"
 ```
 
-Also swap `CM4WIRE-DONE`→`CM4WIREINT-DONE`, `$OUT` filename to `cm4_wire_int_master.uart`, `.dbg` and ELF name accordingly.
+Also swap `CM4WIRE-DONE`→`CM4WIREINT-DONE`, `$OUT` filename to `cm4_wire_int_master.uart`, `.dbg` and ELF name accordingly. **And fix the trailing green-path `echo`** (the template's `"CM4 self-configured polled I2C verified in QEMU"`) to describe interrupt-driven I2C, e.g. `"CM4 interrupt-driven I2C master verified in QEMU"` — otherwise it mislabels the achievement once Task 5 turns the gate green.
 
 - [ ] **Step 6: Build + run the gate — expect RED**
 
@@ -447,16 +447,37 @@ Replace the external-IRQ block (`:36-40`) with:
 
 (36 + 1 + 81 + 1 = 119 words for IRQ 0..118; table length unchanged.)
 
-- [ ] **Step 2: Update the header comment**
+- [ ] **Step 2: Add an EMPTY `LPI2C5_IRQHandler` stub so this commit links + stays RED**
+
+The vector table now references `LPI2C5_IRQHandler`, but its real definition
+doesn't land until Task 5's `main_cm4.c` — so **this commit would fail to link
+(undefined reference)** without a placeholder. In `cm4/main_cm4.c`, next to the
+existing `void SysTick_Handler(void) {}` / `void MU_IRQHandler(void) {}` stubs,
+add:
+
+```c
+void LPI2C5_IRQHandler(void) {}   /* Task 4 placeholder; real ISR in Task 5 */
+```
+
+This links, and the gate stays **RED** (the stub `main()` still sends
+`irqcnt=0` and never NVIC-enables/kicks, so the empty handler never fires).
+
+- [ ] **Step 3: Update the header comment**
 
 Change the `.S` top comment to note the LPI2C5 handler at exception 16+36=52 (Phase 4.1) in addition to SysTick and MU.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Build + confirm still RED, then commit**
 
 ```bash
+cd ~/Development/rt1170/evkb/cm4_wire_int_master_test
+cmake --build build >/dev/null && ./run_qemu.sh; echo "exit=$?"   # expect exit 1, FAIL: irqcnt is 0
 cd ~/Development/rt1170/evkb
-git add cm4_wire_int_master_test/cm4/startup_cm4.S
-git commit -m "cm4_wire_int_master_test: vector LPI2C5_IRQHandler at IRQ 36 (Phase 4.1)"
+git add cm4_wire_int_master_test/cm4/startup_cm4.S cm4_wire_int_master_test/cm4/main_cm4.c
+git commit -m "cm4_wire_int_master_test: vector LPI2C5_IRQHandler at IRQ 36 (Phase 4.1)
+
+Split the .rept so external IRQ 36 (LPI2C5) points at LPI2C5_IRQHandler at
+vector index 52; add an empty placeholder handler so the image links and the
+gate stays RED (the real ISR + NVIC-enable land in the next commit)."
 ```
 
 ---
@@ -494,9 +515,12 @@ typedef struct {
 static volatile isr_xfer_t X;
 ```
 
-- [ ] **Step 2: Replace the empty `MU_IRQHandler`/`SysTick_Handler` shim with the LPI2C5 ISR**
+- [ ] **Step 2: Replace the empty Task-4 `LPI2C5_IRQHandler` placeholder with the real ISR**
 
-`startup_cm4.S` still references `SysTick_Handler` and `MU_IRQHandler` (keep those empty stubs) **and now `LPI2C5_IRQHandler`**. Add the ISR (the fresh logic — validate its shape against SDK `fsl_lpi2c.c LPI2C_MasterTransferHandleIRQ` before running; the gate is the oracle):
+Keep the `SysTick_Handler`/`MU_IRQHandler` empty stubs. **Replace** the empty
+`void LPI2C5_IRQHandler(void) {}` placeholder that Task 4 added with the real ISR
+below (the fresh logic — validate its shape against SDK `fsl_lpi2c.c
+LPI2C_MasterTransferHandleIRQ` before running; the gate is the oracle):
 
 ```c
 void SysTick_Handler(void) {}
