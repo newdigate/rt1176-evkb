@@ -57,6 +57,7 @@ static const lpi2c1176_hw_t lpi2c5_hw = {
  * resolve. Tasks 4-5 replace MU_IRQHandler's body with the real LPI2C5 ISR
  * dispatch (or add a dedicated handler slotted at vector index 52). */
 void SysTick_Handler(void) {}
+void LPI2C5_IRQHandler(void) {}   /* Task 4 placeholder; real ISR in Task 5 */
 void MU_IRQHandler(void) {}
 
 static void mu_send(unsigned ch, uint32_t v)

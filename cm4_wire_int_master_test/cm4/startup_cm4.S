@@ -2,9 +2,12 @@
  *
  * Same minimal reset handler as cm4_image_test (relocate VTOR to 0x1FFE0000,
  * reload MSP, enable FPU, copy .data, zero .bss, call main), but with a full
- * vector table: SysTick at exception 15 and the MU interrupt (external IRQ 118)
+ * vector table: SysTick at exception 15, the LPI2C5 interrupt (external IRQ 36,
+ * Phase 4.1) at vector index 16+36 = 52, and the MU interrupt (external IRQ 118)
  * at vector index 16+118 = 134. Unused vectors spin in Default_Handler.
- * SysTick_Handler and MU_IRQHandler are C functions in main_cm4.c.
+ * SysTick_Handler, LPI2C5_IRQHandler, and MU_IRQHandler are C functions in
+ * main_cm4.c; LPI2C5_IRQHandler is an empty placeholder as of Phase 4.1 Task 4
+ * (the real ISR body + NVIC-enable land in Task 5).
  *
  * The table is 135 words (540 B); VTOR must cover it, so it sits at
  * ORIGIN(ITCM)=0x1FFE0000, which is 1 KB aligned. Public domain (N. Newdigate).
@@ -34,7 +37,11 @@ __isr_vector:
     .word Default_Handler       /* 14: PendSV */
     .word SysTick_Handler       /* 15: SysTick */
     /* external IRQs 0..117 -> vector index 16..133 */
-    .rept 118
+    .rept 36                    /* IRQ 0..35 */
+    .word Default_Handler
+    .endr
+    .word LPI2C5_IRQHandler     /* index 52: external IRQ 36 (LPI2C5) */
+    .rept 81                    /* IRQ 37..117 */
     .word Default_Handler
     .endr
     .word MU_IRQHandler         /* 134: external IRQ 118 (MU) */
