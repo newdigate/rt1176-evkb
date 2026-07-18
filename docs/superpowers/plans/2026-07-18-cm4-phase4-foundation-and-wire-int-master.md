@@ -484,6 +484,16 @@ gate stays RED (the real ISR + NVIC-enable land in the next commit)."
 
 ## Task 5: CM4 fresh ISR master + kick — GREEN
 
+> **Post-implementation notes (as landed):** (1) `isr_xfer_run` must queue the
+> START+addr command to MTDR *before* arming `MIER` — arming first lets the CM4
+> take the IRQ in the store gap and push a data byte with no START (a
+> silicon-only race QEMU's TB-boundary IRQ check hides; SDK + polled core both
+> do START-first). (2) A follow-up (`c68c20b`) added a **7th token `err`**
+> (order `irqcnt, mcr, lpcg, croot, rdv, err, done`) asserted `=0` in *both*
+> worlds and folded into PASS (`v[5]==0 && v[6]==1`), so an interrupt-master
+> fault can't read as PASS. The code blocks below show the 6-token pre-follow-up
+> form; the shipped gate streams 7.
+
 **Files:**
 - Modify: `evkb/cm4_wire_int_master_test/cm4/main_cm4.c`
 
