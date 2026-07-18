@@ -1,15 +1,17 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 3 (IN PROGRESS).** 3.1 (SPI) and 3.2 (Wire/I2C → real
-WM8962) are both **DONE + ★★HW-VERIFIED 2026-07-18** (`evkb/cm4_spi_test`,
-`evkb/cm4_wire_test`): the CM4 self-configures each peripheral (clock + pins)
-and the EVKB clean-boot transcripts match QEMU on every asserted token — 3.2's
-wiring-free run additionally returned **`rdv=00006243`** (the real codec's
-device ID; QEMU stub reads 0000 — the one designed divergence, confirmed
-exactly). Next work item: **3.3 (shared C register/clock core
-consolidation)**. Phases 1 and 2 are DONE — all QEMU-gated + ★★HW-VERIFIED
-on the EVKB (2026-07-17). Append a dated entry to the session log whenever
-anything here changes.
+**Current phase: 3 COMPLETE (2026-07-18).** 3.1 (SPI), 3.2 (Wire/I2C → real
+WM8962), and 3.3 (shared C register/clock core consolidation) are all
+**DONE**; 3.1/3.2 ★★HW-VERIFIED, and 3.3's refactor is anchored on silicon by
+a wiring-free `cm4_wire_test` re-probe whose EVKB transcript is
+BYTE-IDENTICAL (incl. `rdv=00006243`) with the shared-core binary. The
+LPSPI1/LPI2C5 sequences now live ONCE (`~/Development/SPI/lpspi1176.{h,c}`,
+`~/Development/Wire/lpi2c1176.{h,c}`) — the CM7 classes and the CM4 images
+compile the same C files. Next work item: **pick from "Deferred beyond
+Phase 3"** (interrupt/DMA-from-CM4 needs the TYPE_SPLIT_IRQ qemu2 work; or
+qemu2 clock-gate fidelity; or cross-core arbitration). Phases 1 and 2 are
+DONE — all QEMU-gated + ★★HW-VERIFIED on the EVKB (2026-07-17). Append a
+dated entry to the session log whenever anything here changes.
 
 ## Phase 1 — CM7 boots the CM4 + MU IPC library  ✅ DONE (HW-verified)
 
@@ -213,8 +215,33 @@ token assertable byte-identically. **No qemu2/core/Wire-lib change expected.**
 **Probe (MANDATORY):** clock-gating (CM4 writes CCM, mux 1 = new) + LPSR
 address-map trigger. **Audit:** add `cm4_wire_test` to GATES same-change.
 
-### 3.3 — shared C register/clock core (consolidation)  (queued)
-Approach C above; byte-identical-CM7 guardrail.
+### 3.3 — shared C register/clock core (consolidation)  ✅ DONE
+**Status:** ✅ DONE 2026-07-18 (spec + plan in `docs/superpowers/`; commits:
+macros `0b50945`, SPI `eefd879`, Wire `aa58de2`, evkb `f0b5c3e`+`b0d46da`).
+Approach C realized: `SPI/lpspi1176.{h,c}` + `Wire/lpi2c1176.{h,c}` hold the
+HW-verified sequences (CM7-logic-verbatim: begin/end/set-clock/transfer;
+I2C wait_flag/bus_recover/master write+read) as freestanding C — offset-
+asserted register overlays cross-`static_assert`ed against
+`IMXRT_LPSPI_t`/`IMXRT_LPI2C_t` in the library .cpp; addresses flow in via a
+pointer desc struct (CM7: imxrt1176.h macros; CM4: the same literals in the
+gate's instance table). `SPIClass`/`TwoWire` delegate (Wire slave block stays
+C++/NVIC); the CM4 mains keep only MU scaffolding + desc + token flow.
+`teensy_add_cm4_image` gained optional `INCLUDE_DIRS` (compile-only `-I`;
+absent ⇒ byte-identical command lines, cm4_dual `.cm4.bin` cmp-proven).
+**Guardrail held everywhere:** cm4_spi/cm4_wire QEMU transcripts byte-
+identical to the checked-in `transcript_qemu.txt` (stable 3×);
+spi_loopback/spi_dma/wire_master/wire_slave uarts byte-identical to
+pre-refactor baselines; st7735 + wire_oled + sd_test + sd_wav_play build
+green; license-audit PASS (cm4 gate manifests grew 103→105 files = the
+shared core is inside the sweep). **Silicon anchor:** wiring-free
+`cm4_wire_test` EVKB re-probe (flash + clean_boot.scp) BYTE-IDENTICAL to
+`transcript_hw_evkb.txt` incl. `rdv=00006243` — the shared `lpi2c1176.c`
+begin/write/read paths proven on silicon. `cm4_spi_test` re-probe attempted:
+jumper no longer fitted (`rxok=0`, all-FF captures; block readbacks
+cr/cfgr1/lpcg/croot still correct) → queued below. Known deltas absorbed by
+design (spec §2 D1–D5): the CM4 images gained the CM7 stream's inert
+`CR/MCR=0` write and the MCFGR1 RMW — every write value/order is inside the
+CM7 HW-verified stream on the same block instances.
 
 ### Deferred beyond Phase 3
 - **Interrupt-driven / DMA SPI/Wire on the CM4** — needs a qemu2 per-line
@@ -229,6 +256,14 @@ Approach C above; byte-identical-CM7 guardrail.
 
 ## Queued hardware checks
 
+- **cm4_spi_test jumpered re-probe of the 3.3 shared-core binary.** The
+  SDO(AD_30)→SDI(AD_31) jumper is no longer fitted (2026-07-18 attempt:
+  `rxok=0`, all-FF captures; cr/cfgr1/lpcg/croot readbacks still correct on
+  silicon). When the jumper is refitted: flash `cm4_spi_test` +
+  `clean_boot.scp`, expect BYTE-IDENTICAL `transcript_hw_evkb.txt`
+  (`rxok=1`, `SPI_CM4=PASS`). Low risk meanwhile: the shared `lpspi1176.c`
+  is CM7-logic-verbatim, QEMU-gated, and its I2C twin passed the same-shape
+  silicon anchor. Queued 2026-07-18.
 - Derive and EVKB-validate a minimal LPUART1 init for the asm probe
   template (templates/probe_firmware/), so probes print on clean-boot
   silicon without the Arduino core (queued 2026-07-17).
@@ -417,6 +452,33 @@ Approach C above; byte-identical-CM7 guardrail.
   all asserted tokens) → no re-gate. **Phase 3.2 done; next = 3.3 (shared
   C core consolidation).** D7 still queued; license-audit CM4-source coverage
   gap queued as a background task.
+- 2026-07-18: **Phase 3.3 DONE — Phase 3 COMPLETE.** Shared-C-core
+  consolidation (approach C) landed across four repos: teensy-cmake-macros
+  `0b50945` (`teensy_add_cm4_image` optional `INCLUDE_DIRS`, compile-only
+  `-I`; untouched images cmp-proven byte-identical), SPI `eefd879`
+  (`lpspi1176.{h,c}` + SPIClass delegation), Wire `aa58de2`
+  (`lpi2c1176.{h,c}` + TwoWire master delegation; slave stays C++/NVIC),
+  evkb `f0b5c3e`/`b0d46da` (both cm4 gates consume the shared cores; local
+  mirrors deleted). Triangulation first proved NO drift between the CM7/CM4
+  pairs (5 known distillation deltas D1–D5, all resolving to the CM7 form —
+  the "two sources disagree" trigger did NOT fire); shared bodies are the
+  CM7 logic verbatim. Guardrail = byte-identity everywhere: 6 QEMU gates
+  (cm4_spi, cm4_wire ×3 stable, spi_loopback, spi_dma, wire_master,
+  wire_slave) transcripts identical to pre-refactor baselines /
+  checked-in transcript_qemu.txt; st7735+wire_oled+sd_test+sd_wav_play
+  builds green; license-audit PASS (cm4 manifests 103→105 files — shared
+  cores swept). ★Silicon anchor: wiring-free `cm4_wire_test` re-probe
+  BYTE-IDENTICAL to `transcript_hw_evkb.txt` incl. `rdv=00006243` — the
+  shared lpi2c1176 begin/write/read paths ran on real silicon. ★cm4_spi
+  re-probe attempted: jumper no longer fitted (`rxok=0`, all-FF, block
+  readbacks correct) → queued; board re-flashed to the green cm4_wire
+  firmware. ★Offset cross-asserts (`static_assert(offsetof(...))` shared
+  overlay vs `IMXRT_LPSPI_t`/`IMXRT_LPI2C_t`) now break the CM7 build on
+  any drift. Risk-trigger walk in the spec (§6): the one honest brush is
+  "reset/default values you now depend on" via D1/D3 — every such write is
+  inside the CM7 HW-verified stream on the SAME block instances, so no new
+  silicon fact; the wire anchor closes it empirically. Next: pick from
+  "Deferred beyond Phase 3". D7 still queued.
 - 2026-07-18: **license-audit CM4-source coverage gap CLOSED** (the queued
   item from the 3.2 final review). `teensy_add_cm4_image` now passes
   `-MMD -MF <obj>.o.d` (macros repo d6c565e) and the audit's part-2 find also
