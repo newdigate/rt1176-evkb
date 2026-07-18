@@ -698,6 +698,10 @@ cd ~/Development/qemu2 && git diff HEAD~2 | ./scripts/checkpatch.pl --no-signoff
 
 Expected: `total: 0 errors, 0 warnings` (fix any style nits inline, amend the Task 2 commit).
 
+- [ ] **Step 4: the rest of the documented regression set** (`silicon-truth-loop.md` lists these as "most affected by dual-core work"):
+  - `evkb/serial_test` — run its gate (`./run_qemu.sh`); expect its PASS. (LPUART, unrelated to the split — a fast sanity check.)
+  - NXP SDK `mcmgr hello_world` + `rpmsg_lite_pingpong` — these validated the machine's CM7↔CM4 boot+MU+RPMsg originally. Re-run if a straightforward build/run path exists; if not, the byte-identical `dualcore_mu_test` (Step 2) already proves those exact primitives (boot release, MU mailbox/doorbell, IRQ 118) untouched, so note them as covered-by-proxy rather than chasing an SDK build. NB `dualcore_mu_test` has no `run_qemu.sh` — invoke via `evkb/tools/qrun` per its README.
+
 ---
 
 ## Task 7: License audit
