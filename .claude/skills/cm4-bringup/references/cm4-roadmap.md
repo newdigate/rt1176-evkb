@@ -1,6 +1,9 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 3 (ready to start).** Phases 1 and 2 are DONE — all
+**Current phase: 3 (IN PROGRESS).** 3.1 (SPI polled master, CM4
+self-configured) is DESIGNED + SPEC'd 2026-07-18
+(`docs/superpowers/specs/2026-07-18-cm4-spi-polled-master-design.md`) —
+ready to implement (writing-plans next). Phases 1 and 2 are DONE — all
 QEMU-gated + ★★HW-VERIFIED on the EVKB (2026-07-17, transcripts
 byte-identical to QEMU), license-audited. Append a dated entry to the
 session log whenever anything here changes.
@@ -132,12 +135,62 @@ contradiction (0x1FFE0000 = M4 ITCM, 0x20000000 = M4 DTCM stands). CM4
 CM4 TCM is fixed LMEM, not FlexRAM banks). Full triangulation archived in
 `references/phase2a-triangulation.md`.
 
-## Phase 3+ — per-library CM4 enablement
+## Phase 3 — per-library CM4 enablement
 
-Wire/SPI/etc., each validated against the SDK bare-metal equivalent and
-gated in QEMU. Ordering decided when Phase 2 lands. Each entry records:
-entry criteria, deliverables, QEMU gate, probe obligations (met/queued),
-audit status.
+**Ordering + architecture LOCKED 2026-07-18 (brainstorming):**
+- **Ownership: the CM4 self-configures** the peripheral (ungates its own
+  clock, muxes its own pins, configures the block), mirroring the 2D pattern
+  where the CM4 drove its own GPIO. Keeps each CM4 image self-contained and
+  independently testable. Fires the *clock/power-gating* probe trigger every
+  time (a CM4 write to CCM) — that probe is the point, not a tax.
+- **Code-org: a distilled C driver that doubles as the probe** (approach B).
+  A small C unit with the CM4 image re-expresses this project's own
+  HW-verified register/clock sequence (provenance + "keep in sync" header);
+  it is both the QEMU gate and the HW probe. No C++ runtime on the lean
+  bare-metal CM4 image, zero risk to the HW-verified CM7 library.
+- **Consolidation deferred to 3.3** (approach C): once SPI + Wire are proven,
+  extract the sequences into a shared C core both the CM7 C++ class and the
+  CM4 image call, guarded by byte-identical CM7 gate output (the 2B `cmp`
+  discipline). Ends the 3.1/3.2 duplication.
+
+### 3.1 — SPI (LPSPI1) polled master, CM4 self-configured  ◀ CURRENT
+**Status:** DESIGNED + SPEC'd 2026-07-18
+(`docs/superpowers/specs/2026-07-18-cm4-spi-polled-master-design.md`), ready
+to implement. **Entry criteria:** Phase 2 done ✅.
+**Deliverable:** a new gate `evkb/cm4_spi_test/` (cloned from `cm4_dual_test`):
+the CM4 self-configures LPSPI1 (`CCM_LPCG104`/`CCM_CLOCK_ROOT43`, mux AD_28/30/31,
+CR/CFGR1/CCR/TCR/MEN) and runs a **polled self-loopback** (SDO→SDI jumper),
+streaming observations over MU → CM7 → VCOM. CM4-exclusive LPSPI1; CM7 = boot
++ reporter only.
+**QEMU gate:** greps `SPI_CM4=PASS` (`rxok=1` + `cr/cfgr1/a/b/w/buf` match).
+Red-first = stub the block-config so no PASS.
+**Probe (MANDATORY — clock-gating trigger):** ★★the board's `ssi-loopback`
+child echoes on `CR_MEN` alone, ignoring LPCG/root/pins → a clock/pin bug is a
+**circular QEMU pass** (FlexCAN-SRXDIS shape). **HW `rx==tx` through the jumper
+is the ONLY proof the CM4 self-configured the clock + pins + real SCK.** Run via
+`clean_boot.scp`; check in both transcripts. `lpcg/croot` are diagnostic-only.
+**No qemu2/core/newdigate-SPI change expected** (LPSPI1 + ssi-loopback + CCM all
+modelled and reachable from `cm4_view`; polled avoids the CM7-only-NVIC gap).
+**Audit:** add `cm4_spi_test` to `license-audit.sh` GATES (same change), require PASS.
+
+### 3.2 — Wire (LPI2C) polled master, CM4 self-configured  (queued)
+Same self-config pattern; needs a target that ACKs — the qemu2 LPI2C
+master↔slave-persona loopback (`fsl-imxrt1170.c:1099`) + on-board AT24C02 on
+LPI2C1, or a CM4↔CM7 arrangement. Design when 3.1 lands.
+
+### 3.3 — shared C register/clock core (consolidation)  (queued)
+Approach C above; byte-identical-CM7 guardrail.
+
+### Deferred beyond Phase 3
+- **Interrupt-driven / DMA SPI/Wire on the CM4** — needs a qemu2 per-line
+  `TYPE_SPLIT_IRQ` routing the peripheral IRQ to the CM4 NVIC
+  (`fsl-imxrt1170.c:961-966`, CM7-NVIC-only today) + eDMA-from-CM4. New-model
+  trigger + its own probe.
+- **qemu2 clock-gate fidelity** (close the 3.1 circular pass) — enforce
+  LPCG/pin-mux in the peripheral/echo path; machine-wide blast radius, HW is
+  the arbiter for now.
+- **Concurrent CM7+CM4 peripheral use / arbitration** — a cross-core ownership
+  protocol.
 
 ## Queued hardware checks
 
@@ -224,3 +277,23 @@ audit status.
   silicon, though not cleanly isolated. Phase 1 fully closed; QEMU model
   confirmed faithful for the whole boot+MU surface. No code changed
   (silicon matched QEMU), so no re-gate needed.
+- 2026-07-18: **Phase 3 opened — 3.1 (CM4 self-configured polled SPI)
+  DESIGNED + SPEC'd** (brainstorming; spec at
+  `docs/superpowers/specs/2026-07-18-cm4-spi-polled-master-design.md`).
+  Ordering + architecture LOCKED: CM4 **self-configures** the peripheral;
+  code-org = **distilled C driver that doubles as the probe** (approach B),
+  shared-C-core consolidation deferred to 3.3. 3.1 = new `evkb/cm4_spi_test`
+  (clone of `cm4_dual_test`), CM4-exclusive LPSPI1, polled SDO→SDI loopback,
+  MU→CM7→VCOM tokens. ★★KEY DISCOVERY (drives the probe): the board fixture
+  `hw/arm/mimxrt1170-evk.c:74-81` attaches an **`ssi-loopback`** echo child to
+  LPSPI1's bus, and `imxrt_lpspi_transfer` echoes on `CR_MEN` **alone** —
+  ignoring LPCG/clock-root/pin-mux — so a CM4 clock/pin bug is a **circular
+  QEMU pass** (FlexCAN-SRXDIS shape); **HW `rx==tx` via the jumper is the only
+  proof** the CM4 self-configured the clock+pins+real SCK. Verified for the
+  spec: LPSPI1 is reachable from `cm4_view` (`cm4_sysmem` = full alias of
+  `system_memory`, `fsl-imxrt1170.c:945-950`); qemu2 CCM is **RAM-backed** so
+  LPCG104/ROOT43 **readback matches HW** (`imxrt_ccm.c:100-125`, corrects the
+  dualcore-README "unmodelled" note — that was about functional *gating*, not
+  readback); peripheral IRQs are **CM7-NVIC-only** (`fsl-imxrt1170.c:961-966`)
+  → polled-first. **No qemu2/core/newdigate-SPI change expected.** Next =
+  writing-plans → implement → QEMU gate → EVKB probe. D7 still queued.
