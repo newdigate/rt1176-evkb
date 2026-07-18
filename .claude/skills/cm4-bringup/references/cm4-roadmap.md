@@ -1,16 +1,15 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 3 (IN PROGRESS).** 3.2 (Wire/I2C polled master, CM4
-self-configured, → real WM8962) is **IMPLEMENTED + QEMU-gate-GREEN**
-2026-07-18 (`evkb/cm4_wire_test`, 4 commits `0331c2a`→`a37a7bc`,
-license-audited, all reviews passed); ★**HW probe PENDING** — wiring-free:
-flash + `clean_boot.scp`, expect asserted tokens byte-identical +
-`rdv=00006243` (the codec's device ID; QEMU stub reads 0000 — the one
-expected divergence). 3.1 (SPI) is **DONE + ★★HW-VERIFIED 2026-07-18**
-(`evkb/cm4_spi_test`, transcript byte-identical to QEMU through the SDO→SDI
-jumper). Phases 1 and 2 are DONE — all QEMU-gated + ★★HW-VERIFIED on the EVKB
-(2026-07-17). Append a dated entry to the session log whenever anything here
-changes.
+**Current phase: 3 (IN PROGRESS).** 3.1 (SPI) and 3.2 (Wire/I2C → real
+WM8962) are both **DONE + ★★HW-VERIFIED 2026-07-18** (`evkb/cm4_spi_test`,
+`evkb/cm4_wire_test`): the CM4 self-configures each peripheral (clock + pins)
+and the EVKB clean-boot transcripts match QEMU on every asserted token — 3.2's
+wiring-free run additionally returned **`rdv=00006243`** (the real codec's
+device ID; QEMU stub reads 0000 — the one designed divergence, confirmed
+exactly). Next work item: **3.3 (shared C register/clock core
+consolidation)**. Phases 1 and 2 are DONE — all QEMU-gated + ★★HW-VERIFIED
+on the EVKB (2026-07-17). Append a dated entry to the session log whenever
+anything here changes.
 
 ## Phase 1 — CM7 boots the CM4 + MU IPC library  ✅ DONE (HW-verified)
 
@@ -183,14 +182,19 @@ is the ONLY proof the CM4 self-configured the clock + pins + real SCK.** Run via
 modelled and reachable from `cm4_view`; polled avoids the CM7-only-NVIC gap).
 **Audit:** add `cm4_spi_test` to `license-audit.sh` GATES (same change), require PASS.
 
-### 3.2 — Wire (LPI2C5) polled master, CM4 self-configured  ◀ CURRENT
-**Status:** IMPLEMENTED + QEMU-gate-GREEN 2026-07-18 (`evkb/cm4_wire_test`;
-spec + plan in `docs/superpowers/`; 4 commits `0331c2a`(RED)→`b74918e`(GREEN)
-→`cbd89da`(audit)→`a37a7bc`(README); license-audit PASS; per-task + final
-reviews passed; regressions `cm4_spi_test` + Wire `wire_master_test` green).
-★**HW probe PENDING** (operator, wiring-free: flash + `clean_boot.scp`; expect
-asserted tokens byte-identical + `rdv=00006243`; then `transcript_hw_evkb.txt`
-+ flip this to HW-VERIFIED). **Entry criteria:** 3.1 done ✅.
+### 3.2 — Wire (LPI2C5) polled master, CM4 self-configured  ✅ DONE
+**Status:** ✅ DONE + ★★HW-VERIFIED 2026-07-18 (`evkb/cm4_wire_test`; spec +
+plan in `docs/superpowers/`; commits `0331c2a`(RED)→`b74918e`(GREEN)→
+`cbd89da`(audit)→`a37a7bc`(README); license-audit PASS; all reviews passed).
+**Wiring-free clean-boot run (SCR=0, STAT_M4=1, MUA_SR=0x00F00200):** every
+asserted token (`mcr/ack/nack/rdn/done` + PASS lines) byte-identical to QEMU,
+`lpcg/croot` matched too, and the full-file diff is EXACTLY the one designed
+line — **`rdv=00000000`(stub) → `rdv=00006243`(silicon)**: the real WM8962
+answered its device ID (= the Linux reg_default fact) over a bus whose clock
+(LPCG102, ROOT41 **mux 1**) and **LPSR pads** the CM4 configured itself —
+first HW-proven CM4-driven LPSR-domain peripheral, circular-pass gap closed.
+No code changed after the QEMU gate → no re-gate. **Entry criteria:** 3.1
+done ✅.
 **Target chosen (brainstorming):** **LPI2C5 + the real on-board WM8962 @0x1A**
 (not AT24C02/slave-persona — those need external HW or cross-core coupling).
 The probe is **wiring-free** (codec soldered on; flash + `clean_boot.scp` only).
@@ -397,3 +401,19 @@ Approach C above; byte-identical-CM7 guardrail.
   provenance-header convention; queued as a background task to extend the
   audit. **HW probe pending (wiring-free)** — then flip 3.2 to HW-VERIFIED.
   D7 still queued.
+- 2026-07-18: **Phase 3.2 ★★HW-VERIFIED on the EVKB — Phase 3.2 COMPLETE.**
+  Flashed `cm4_wire_test` + clean boot (snapshot: SCR=0, STAT_M4=1 held,
+  MUA_SR=0x00F00200 — uncontaminated), NO wiring. Asserted tokens
+  byte-identical to QEMU; `lpcg=1`/`croot=0x100` matched too; full-file diff =
+  exactly the one designed line: **`rdv=00006243`** — the real WM8962 answered
+  its device ID (write-ID-then-read-ID, un-fakeable: stuck-low=0000,
+  stuck-high=FFFF) over a bus whose clock (LPCG102, ROOT41 mux 1) and LPSR
+  pads the CM4 self-configured. ★★First HW-proven CM4-driven LPSR-domain
+  peripheral; ★★ROOT41-mux-1 clock path HW-proven from the CM4; the Linux
+  reg_default R15 fact CONFIRMED on silicon (datasheet-assert design decision
+  vindicated). Contaminated post-flash autorun ALSO passed (bonus D7-adjacent
+  evidence, same confound caveat as Phase 1). Committed
+  `transcript_hw_evkb.txt` + this roadmap. No code changed (silicon == QEMU on
+  all asserted tokens) → no re-gate. **Phase 3.2 done; next = 3.3 (shared
+  C core consolidation).** D7 still queued; license-audit CM4-source coverage
+  gap queued as a background task.
