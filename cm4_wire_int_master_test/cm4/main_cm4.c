@@ -26,6 +26,9 @@
  * lpi2c1176.c from newdigate/Wire (MIT, N. Newdigate) — the same code the CM7
  * TwoWire master path runs. Only the interrupt-driven state machine is new
  * (the CM7 I2C path is polled, so there is no distilled ISR-master to reuse).
+ * The R15 device-ID value this ISR reads back (0x6243) is the same hardware
+ * FACT cm4_wire_test established: taken from the Linux wm8962.c reg_default
+ * table (2026-07-18); no code from that GPL source is used, only the fact.
  * Public-domain scaffolding (N. Newdigate); shared-core register logic MIT. */
 #include <stdint.h>
 #include "lpi2c1176.h"
