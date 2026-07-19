@@ -1,8 +1,13 @@
 /*
- * cm4_wire_int_master_test — Phase 4.1: the CM4 self-configures LPI2C5 and
- * runs an INTERRUPT-DRIVEN master (its own LPI2C5 ISR on the CM4 NVIC — the
- * first non-MU peripheral IRQ routed to the CM4, via the qemu2 split-IRQ).
- * The CM7 only boots the CM4 image and reports its MU tokens on LPUART1.
+ * cm4_wire_int_master_test — Phase 4.1 (HW-VERIFIED): the CM4 self-configures
+ * LPI2C5 and reads the WM8962 device ID over a HYBRID master — the register-
+ * pointer WRITE is polled (shared lpi2c1176_master_write) and only the DATA
+ * READ is interrupt-driven (LPI2C5_IRQHandler on the CM4's own NVIC, via the
+ * qemu2 split-IRQ — the first non-MU peripheral IRQ routed to the CM4).
+ * Silicon-truth: a fully-ISR master raced the cold-bus repeated-START (the
+ * WM8962 never latched the register pointer → read 0x0000 with a false PASS);
+ * see main_cm4.c. The CM7 only boots the CM4 image and reports MU tokens on
+ * LPUART1.
  *
  * Tokens (MU ch0, fixed order):
  *   irqcnt = >0         CM4 serviced the LPI2C5 IRQ (isolated routing proof)

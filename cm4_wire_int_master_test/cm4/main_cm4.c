@@ -162,16 +162,19 @@ static uint32_t i2c_read_reg(lpi2c1176_regs_t *p, uint8_t addr,
     p->MSR = p->MSR;                                          /* clear stale flags */
     p->MTDR = LPI2C1176_TX_CMD(LPI2C1176_CMD_START,
                                (uint32_t)(addr << 1) | 1u);   /* repeated START + addr(R) */
-    uint32_t terr = 0;
+    uint32_t terr = 0xFFu;   /* seed so an addr-phase NACK codes 2 (shared-core convention) */
     if (!lpi2c1176_wait_flag(p, LPI2C1176_MSR_TDF,
             LPI2C1176_MSR_NDF | LPI2C1176_MSR_ALF | LPI2C1176_MSR_FEF, &terr)) {
         p->MTDR = LPI2C1176_TX_CMD(LPI2C1176_CMD_STOP, 0);
-        return terr ? terr : 3u;
+        return terr;         /* wait_flag set it (2 addr-NACK / 3 bus-err) */
     }
     p->MTDR = LPI2C1176_TX_CMD(LPI2C1176_CMD_RXD, (uint8_t)(rn - 1));
     p->MIER = MIER_RDIE | MIER_SDIE | MIER_NDIE | MIER_ALIE | MIER_FEIE; /* arm read ISR */
     for (uint32_t g = 0; g < ISR_XFER_GUARD; g++)             /* bounded: no hang */
         if (X.phase == PH_DONE || X.phase == PH_ERR) break;
+    /* A stalled ISR (guard expired before PH_DONE) must NOT report false
+     * success — surface it as err=4 so the CM7 PASS fails, not just rdv. */
+    if (X.phase != PH_DONE && X.err == 0u) X.err = 4u;
     return X.err;
 }
 
