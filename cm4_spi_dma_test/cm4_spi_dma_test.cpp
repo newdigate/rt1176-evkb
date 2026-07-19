@@ -64,13 +64,17 @@ void setup()
         else { ptimeout(labels[i]); v[i] = 0xFFFFFFFFu; ok = false; }
     }
 
+    /* POLLED-only PASS: this test drives the MAIN eDMA, whose completion IRQ is
+     * CM7-only on silicon (two-eDMA finding — rt1176-cm4-edma-lpsr-split). So
+     * dmairq (v[6]) is EXPECTED 0 and NOT folded into PASS; the CM4 DMA proof is
+     * the polled data path (rxb/rxa). Genuine CM4 interrupt-DMA = cm4_wire_dma_test
+     * (eDMA_LPSR). */
     bool pass = ok
         && v[0] == 0xCAFE0001u
         && v[1] == 0x1u          /* cr.MEN */
         && v[2] == 0x1u          /* cfgr1.MASTER */
-        && v[5] == 0x1u          /* rxb: blocking rx==tx */
-        && v[6] != 0x0u          /* dmairq: CM4 took the eDMA completion IRQ */
-        && v[7] == 0x1u          /* rxa: async rx==tx */
+        && v[5] == 0x1u          /* rxb: blocking DMA rx==tx (polled) */
+        && v[7] == 0x1u          /* rxa: async-stage data rx==tx (completes w/o the IRQ) */
         && v[8] == 0x1u;         /* done */
     /* lpcg/croot printed for HW diagnosis; not asserted. */
     Serial1.println(pass ? "SPI_DMA_CM4=PASS" : "SPI_DMA_CM4=FAIL");

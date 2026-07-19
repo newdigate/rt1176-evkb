@@ -1,10 +1,24 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 4 STARTED — 4.1 + 4.2 (interrupt-driven Wire on CM4) ★★BOTH
-HW-VERIFIED (2026-07-19).** Phase 4 = "Interrupt-driven / DMA SPI/Wire on the
-CM4" (the first "Deferred beyond Phase 3" item), designed as one spec + a
-shared qemu2 split-IRQ foundation, sequenced into 4 slices (4.1 int Wire-master,
-4.2 int Wire-slave, 4.3 DMA SPI, 4.4 DMA Wire). **4.2 DONE + HW-VERIFIED**: the
+**Current phase: 4 — 4.1 + 4.2 (interrupt Wire) + the eDMA_LPSR DMA-Wire
+milestone ★★ALL HW-VERIFIED (2026-07-19); 4.3 SPI-DMA is a polled CM4 result +
+the two-eDMA finding.** Phase 4 = "Interrupt-driven / DMA SPI/Wire on the CM4".
+★★**BIGGEST silicon truth of the phase — the RT1176 has TWO eDMAs** (RM Tables
+4-1/4-2, HW-confirmed): the **main eDMA** (`0x40070000`) channel IRQs go to the
+**CM7 only**; **eDMA_LPSR** (`0x40C14000`) IRQs go to the **CM4**. The 4.1
+"eDMA split→both NVICs" foundation was a fiction for the main eDMA. Exposed by
+the 4.3 SPI-DMA HW probe (`cm4_spi_dma_test`: CM4-driven main-eDMA data works,
+`rxb/rxa=1`, but `dmairq=0` — the completion IRQ went to the CM7). **Pivot
+(user-directed) DONE + ★★HW-VERIFIED**: qemu2 gained `eDMA_LPSR` +
+`DMAMUX1/LPSR` device instances (IRQs→CM4; LPI2C5 dma-req→source 52; main eDMA
+corrected to CM7-only), and `cm4_wire_dma_test` DMA-reads the WM8962 device ID
+over LPI2C5 via eDMA_LPSR with the completion IRQ on the CM4's OWN NVIC
+natively — HW `rdv=0x6243`, `dmairq=2`, wiring-free, stable 3× (7b949f3). That
+is the genuine "interrupt-driven DMA on the CM4" (Phase 4's DMA goal), on the
+correct eDMA. See [[rt1176-cm4-edma-lpsr-split]]. `cm4_spi_dma_test` stays the
+polled main-eDMA SPI-DMA result. Original plan: 4 slices (4.1 int Wire-master,
+4.2 int Wire-slave, 4.3 DMA SPI, 4.4 DMA Wire) — 4.3/4.4 subsumed by the
+eDMA_LPSR reality. **4.2 DONE + HW-VERIFIED**: the
 CM4 runs an interrupt-driven LPI2C1 slave @0x42 (shared-core `lpi2c1176_slave_*`
 + distilled `handle_slave_isr`); an external Arduino MKR-Zero master writes
 {A5 5A C3} and reads back the slave's 0x3C (EVKB `irqcnt=0x0C`, `b0/b1/b2`
@@ -31,10 +45,11 @@ pointer byte still clocking on a cold bus, so the WM8962 never latched the
 pointer → read the wrong register (rdv=0x0000) with a FALSE PASS. Fixed by
 sequencing write→read as the HW-verified polled core does (polled reg-pointer
 write + TDF-wait before the repeated START; the DATA READ stays interrupt-driven).
-Next: **4.3 (DMA SPI — LPSPI1 async, reuses the eDMA split + the SDO→SDI
-jumper)**. Phase 3 (3.1/3.2/3.3) COMPLETE (2026-07-18); Phases 1-2 DONE +
-★★HW-VERIFIED (2026-07-17). Append a dated entry to the session log whenever
-anything here changes.
+**Phase 4 COMPLETE** — interrupt Wire master (4.1) + slave (4.2) + the
+eDMA_LPSR DMA-Wire milestone, all HW-VERIFIED; the two-eDMA finding recorded.
+Next: **D7** (new-VTOR reboot, queued) or a new capability. Phase 3 (3.1/3.2/3.3)
+COMPLETE (2026-07-18); Phases 1-2 DONE + ★★HW-VERIFIED (2026-07-17). Append a
+dated entry to the session log whenever anything here changes.
 
 ## Phase 1 — CM7 boots the CM4 + MU IPC library  ✅ DONE (HW-verified)
 
@@ -586,5 +601,35 @@ CM7 HW-verified stream on the same block instances.
   VERID/clock all correct + SSR=0 idle ⇒ the SoC wasn't driving; the low was
   off-chip) → operator isolated the OTG adapter. See
   [[rt1176-a5-ad08-otg2-id-short]]. Operator ran the EVKB probe + supplied the
-  external MKR master live this session. Next: **4.3 (DMA SPI)** — reuses the
-  eDMA split + the 3.1 SDO→SDI jumper; then 4.4 (DMA Wire). D7 still queued.
+  external MKR master live this session.
+- 2026-07-19: **Phase 4 DMA — the two-eDMA finding + the eDMA_LPSR DMA-Wire
+  milestone (★★HW-VERIFIED).** 4.3 built `cm4_spi_dma_test` (CM4-driven
+  full-duplex DMA on LPSPI1 via the MAIN eDMA, 2 channels, OCRAM2 buffers,
+  blocking-poll + async): QEMU-green, but the SDO→SDI jumper HW probe exposed
+  the phase's biggest silicon truth — **the RT1176 has TWO eDMAs**: the main
+  eDMA (`0x40070000`) channel IRQs are CM7-domain (RM Table 4-1), and the CM4's
+  are `eDMA_LPSR` (`0x40C14000`, RM Table 4-2). The CM4 DROVE the main eDMA
+  (data correct through the jumper, `rxb/rxa=1`) but `dmairq=0` — a CM4
+  register-readback probe (`dma_int=1`, `NVIC_ISPR bit0=0`) proved the
+  completion IRQ went to the CM7. The Phase-4.1 `edma_irq_split[*]`→both-NVICs
+  was a fiction QEMU's single-eDMA model hid. **User chose to pivot to
+  eDMA_LPSR.** qemu2 gained `eDMA_LPSR` + `DMAMUX1/LPSR` (`TYPE_IMXRT_EDMA`/
+  `TYPE_IMXRT_DMAMUX` second instances; IRQs→CM4-only; LPI2C5 dma-req re-routed
+  to DMAMUX1/LPSR **source 52**; main eDMA corrected to CM7-only,
+  `edma_irq_split` removed) — full regression green (`a39e6b3`), checkpatch
+  clean. `cm4_wire_dma_test`: the CM4 self-configs LPI2C5 + eDMA_LPSR and
+  DMA-reads the WM8962 device ID, the completion IRQ firing on the CM4's OWN
+  NVIC natively (IRQ 0). HW-VERIFIED wiring-free (WM8962 on LPI2C5), stable 3×:
+  `rdv=0x6243` (real ID DMA'd — stub reads 0x0000), `dmairq=2` (`7b949f3`).
+  eDMA_LPSR LPCG = CCM LPCG23 (`0x40CC62E0`). Two silicon-neutral qemu2-model
+  accommodations in the firmware (32-bit MRDR access; RXD-before-RDDE order).
+  `cm4_spi_dma_test` reframed as the POLLED main-eDMA CM4-DMA result (dmairq now
+  asserted =0, silicon-faithful). This realizes Phase 4's "interrupt-driven DMA
+  on the CM4" on the correct eDMA. See [[rt1176-cm4-edma-lpsr-split]]. ★Lesson:
+  a CM4 that can DRIVE a peripheral (data) may still not receive its INTERRUPT —
+  the RT1176 splits eDMA (and, by extension, some peripherals) by core domain;
+  the "all IRQs reach both NVICs" premise from Phase 1/4.1 is NOT universal.
+  **Phase 4 COMPLETE** (interrupt Wire master+slave + DMA, all HW-verified).
+  Next: **D7** (new-VTOR reboot, still queued) or a new capability; the DMA
+  goal is met. Deferred-beyond: DMA on more LPSR peripherals (LPSPI5/6, SAI via
+  eDMA_LPSR) if wanted.

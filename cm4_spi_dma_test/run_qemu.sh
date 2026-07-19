@@ -31,10 +31,15 @@ grep -q "CM4SPIDMA-GATE v1" "$OUT" || { echo "FAIL: banner missing"; exit 1; }
 check "ready=CAFE0001"
 check "cr=00000001"
 check "cfgr1=00000001"
-check "rxb=00000001"
-check "rxa=00000001"
+check "rxb=00000001"     # CM4-driven full-duplex DMA data path (polled) — the CM4 proof
+check "rxa=00000001"     # data still correct in the async stage (completes without the IRQ)
 check "done=00000001"
-grep -q "^dmairq=00000000" "$OUT" && { echo "FAIL: dmairq is 0 (no CM4 eDMA IRQ)"; fail=1; }
+# dmairq is EXPECTED 0: this test drives the MAIN eDMA (0x40070000), whose
+# completion IRQ is CM7-only on silicon (RM Table 4-1). The CM4 can DRIVE the
+# main eDMA (data works) but can't take its interrupt — see the two-eDMA finding
+# (rt1176-cm4-edma-lpsr-split memory). Genuine CM4 interrupt-DMA is cm4_wire_dma_test
+# (eDMA_LPSR). QEMU models this faithfully post-correction, so dmairq=0 here too.
+check "dmairq=00000000"
 check "SPI_DMA_CM4=PASS"
 grep -q "CM4SPIDMA-DONE" "$OUT" || { echo "FAIL: DONE missing"; fail=1; }
 
