@@ -77,13 +77,17 @@ typedef struct __attribute__((packed, aligned(4))) {
 
 /* DMA buffers in OCRAM2 (system-visible; DTCM is DMA-unreachable). */
 #define N 16u
-static uint8_t txbuf[N] __attribute__((section(".dmabuf")));
-static uint8_t rxbuf[N] __attribute__((section(".dmabuf")));
+/* volatile so the rx==tx compare can't be hoisted across the DMA-arm barrier. */
+static volatile uint8_t txbuf[N] __attribute__((section(".dmabuf")));
+static volatile uint8_t rxbuf[N] __attribute__((section(".dmabuf")));
 
 static volatile uint32_t dmairq = 0;
 void DMA_CH0_IRQHandler(void)
 {
     DMA_CINT = RX_CH;    /* clear ch0 interrupt request */
+    __asm volatile ("dsb" ::: "memory");  /* retire the posted CINT before return so the
+                                           * still-asserted INT line can't tail-chain a
+                                           * spurious re-entry (keeps dmairq exact) */
     dmairq++;
 }
 void SysTick_Handler(void) {}
@@ -133,6 +137,13 @@ static uint32_t run_dma(int async)
     LPSPI1->FCR = 0u;                                        /* watermark 0 */
     dmairq = 0;
     LPSPI1->DER = LPSPI1176_DER_TDDE | LPSPI1176_DER_RDDE;   /* both DMA requests */
+    /* Order the OCRAM2 buffer prep (txbuf fill + rxbuf-zero, Normal-memory stores
+     * that may linger in the M4 write buffer) BEFORE arming the eDMA master — else
+     * it can read stale txbuf or have its rxbuf writes clobbered by a late-landing
+     * rxbuf-zero (WAW). The intervening Device writes don't drain Normal stores.
+     * SPI.cpp got this free via arm_dcache_flush()'s DSB. QEMU's eDMA is synchronous
+     * so it can't expose this — silicon-only ordering. */
+    __asm volatile ("dsb" ::: "memory");
     DMA_SERQ = RX_CH;                                        /* arm RX before TX */
     DMA_SERQ = TX_CH;                                        /* arm TX -> transfer runs */
 
@@ -154,6 +165,10 @@ int main(void)
 {
     /* --- eDMA global init (mirrors DMAChannel::begin) --- */
     CCM_LPCG22_DIRECT |= 1u;                                 /* ungate eDMA clock */
+    /* SHARED eDMA STATE owned globally by this image: this blind DMA_CR write (GRP1PRI,
+     * EMLM) plus channels 0/1 are safe now only because the CM7 gate uses no DMA. A
+     * future CM7- or second-CM4-task that uses the eDMA MUST read-modify-write DMA_CR
+     * and coordinate channel allocation instead of clobbering this. */
     DMA_CR = DMA_CR_GRP1PRI | DMA_CR_EMLM | DMA_CR_EDBG;
 
     /* --- self-config LPSPI1 via the shared core (4 MHz) --- */
