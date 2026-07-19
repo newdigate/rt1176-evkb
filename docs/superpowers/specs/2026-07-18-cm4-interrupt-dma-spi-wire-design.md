@@ -29,7 +29,7 @@ idiomatic mapping onto *this* silicon (established below) is:
 | # | Slice | CM4 code | Source | qemu2 delta | HW probe |
 |---|---|---|---|---|---|
 | **4.1** | Interrupt Wire-**master** (LPI2C5) | fresh ISR master | RM + SDK/Zephyr-validated | split-IRQ helper + LPI2C5 line | **wiring-free** WM8962 (reuse 3.2) |
-| **4.2** | Interrupt Wire-**slave** (mirrors `wire_slave_test` fixture) | distill `handle_slave_isr` | HW-verified `WireIMXRT1176.cpp` | + the slave-instance line (likely ≠ LPI2C5) | **wired** CM7-master↔CM4-slave |
+| **4.2** | Interrupt Wire-**slave** (world-split instance: LPI2C2-persona in QEMU / LPI2C1 on HW) | distill `handle_slave_isr` | HW-verified `WireIMXRT1176.cpp` | + the LPI2C2 line (IRQ 33) | **wired** external-master↔CM4-slave on the Arduino header |
 | **4.3** | **DMA SPI** (LPSPI1 async) | distill DMA path + `dma_rxisr`→flag | HW-verified `SPI.cpp` / `spi_dma_test.cpp` | split all 16 eDMA lines | **jumper** SDO→SDI (reuse 3.1) |
 | **4.4** | **DMA Wire** (LPI2C5) | fresh LPI2C5+eDMA | RM + SDK `fsl_lpi2c_edma` | (eDMA split from 4.3) | **wiring-free** WM8962 |
 
@@ -157,7 +157,8 @@ NVICs; software's NVIC-enable decides who takes it) is what's fixed here.
 **Applied to exactly:** `LPSPI1` (1 line, replaces `:1115` for i==0),
 `LPI2C5` (1 line, replaces `:1094` for the LPI2C5 index), the **16 eDMA
 completion lines** (replaces the `:1399` loop) — all at 4.1 in one change —
-**plus 4.2's slave-instance line** when that slice lands (§4.2; not LPI2C5).
+**plus 4.2's slave-instance line** when that slice lands (§4.2: LPI2C2,
+IRQ 33 — the QEMU-gate persona; the HW slave rides LPI2C1's native routing).
 The eDMA **error** line (`:1402`) stays CM7-only unless a slice's driver
 relies on it (a plan-time detail). Splitter devices are stored as
 machine-state children so they are not collected. Every other
@@ -224,28 +225,43 @@ because the gap lived in what the `wm8962-stub` could ever represent, not in
 reviewable logic. HW-VERIFIED 3× clean-boot: `irqcnt=4`, `rdv=00006243`,
 `err=0`, PASS.
 
-### 4.2 — Interrupt Wire-slave (mirrors `wire_slave_test`) · distilled
+### 4.2 — Interrupt Wire-slave (world-split instance) · distilled
 
-- **Instance:** *not* LPI2C5 — the slave must share a QEMU I2C bus with the
-  CM7 master, and the only bus-bridge in qemu2 is `lpi2c[1]→lpi2c[0]` (the
-  `wire_slave_test` fixture: `Wire` master + a bridged slave instance). LPI2C5
-  gave 4.1 its wiring-free WM8962 benefit, which a *slave* doesn't get. So 4.2
-  reuses the `wire_slave_test` instances (CM7 `Wire` master + the bridged
-  slave running on the CM4). Exact instance indices/pins pinned at
-  triangulation.
-- **Code:** distill `handle_slave_isr` from HW-verified `WireIMXRT1176.cpp`
-  (SCFGR + slave address, `SIER` TDIE/RDIE/AVIE/SDIE, ISR echo/record) + the
-  CM4 clock/pin bring-up for that instance. Provenance + keep-in-sync header.
-- **Tokens:** slave `irqcnt`, `b0/b1/b2` (bytes the master wrote), a single
-  known response byte, `done` → `WIRE_INT_SLAVE_CM4=PASS`. QEMU master = CM7
-  polled on the bridged bus; single-byte response only (model limit).
-- **Probe:** **wired** CM7-master ↔ CM4-slave (external SDA↔SDA/SCL↔SCL +
-  pull-ups between the two header-accessible instances, `wire_slave_test`'s
-  MKR-Zero-master precedent). Multi-byte works on HW (real master yields to
-  the slave ISR); single-byte in QEMU. Splitting that instance's line is the
-  one extra `connect_irq_both` beyond 4.1 (→ re-run qemu2 regression).
-  **Open item (triangulation + bench check):** which two header-accessible
-  LPI2C instances to pair for master/slave wiring.
+- **Instance — RESOLVED at triangulation (2026-07-19): the slave instance
+  MUST differ per world**, because no LPI2C instance is both bus-bridged in
+  QEMU and header-accessible on the EVKB. The only qemu2 bus-bridge is
+  `lpi2c[1]→lpi2c[0]` (`fsl-imxrt1170.c:1160`) and **LPI2C2 has no physical
+  EVKB pins** (QEMU-only persona, `WireIMXRT1176.cpp:190`); LPI2C1 *is* the
+  Arduino header (`AD_08`=SCL/`AD_09`=SDA, ALT1; base `0x40104000`, IRQ 32);
+  LPI2C5 is the soldered WM8962. So a build-time instance descriptor binds
+  the ONE slave implementation to **LPI2C2 (IRQ 33) in the QEMU gate** and
+  **LPI2C1 (IRQ 32) in the HW build**. The slave logic is instance-agnostic;
+  only base/IRQ/clock/pads differ.
+- **Code:** distill `handle_slave_isr` + slave-init from HW-verified
+  `WireIMXRT1176.cpp:79-126` (SCR RST→SEN|FILTEN, `SAMR`=addr<<1, `SCFGR1`
+  SAEN|TXDSTALL|RXSTALL, `SCFGR2` CLKHOLD=0xF, `SIER`
+  TDIE/RDIE/AVIE/SDIE/BEIE/FEIE; ISR: AVF→SASR, RDF→record SRDR, TDF→STDR
+  response, SDF→done) + CM4 clock/pin bring-up per instance. The shared
+  `lpi2c1176` core is master-only today — 4.2 extends it with the slave
+  block (regs to `0x170` + `lpi2c1176_slave_*`), honoring the Phase 3.3
+  sequences-live-once doctrine. Provenance + keep-in-sync header.
+- **Tokens:** slave `irqcnt`, `b0/b1/b2` (bytes the master wrote), the
+  response byte handed to `STDR`, `done` → `WIRE_INT_SLAVE_CM4=PASS`. The
+  master's write bytes and the slave's response byte are **fixed protocol
+  constants**, identical in both worlds, so `b0/b1/b2` are asserted
+  byte-identically by the CM7 reporter (4.1 lesson: no world-split value
+  goes unasserted on the side that can see it). QEMU master = CM7 polled on
+  LPI2C1 via the bridge, asserting the response byte it reads back;
+  single-byte response only (documented `wire_slave_test` model limit).
+- **Probe:** **wired external I2C master** (MKR-Zero precedent from
+  `wire_slave_test`) on the Arduino-header SDA/SCL + pull-ups → CM4 slave on
+  LPI2C1. The external master writes the protocol constants and reads the
+  response back, asserting it on *its* side (the HW-side oracle for the
+  read-data path — 4.1's `wm8962-stub` lesson). Multi-byte works on HW
+  (real master yields to the slave ISR); single-byte in QEMU. The LPI2C2
+  split is the one extra `connect_irq_both` beyond 4.1 (→ re-run qemu2
+  regression); silicon routes LPI2C1 IRQ 32 to both NVICs natively, so the
+  HW side needs no qemu2 support at all.
 
 ### 4.3 — DMA SPI (LPSPI1 async) · distilled
 
@@ -349,7 +365,7 @@ real on HW — both must see the ISR fire).
 | Split IRQ delivered in QEMU but **not routed on silicon** (the whole new-model bet) | Per-slice HW probe is the arbiter; `irqcnt`/`dmairq` isolate routing from driver logic; a hang→guarded FAIL makes non-routing loud, not silent |
 | Fresh ISR master (4.1) / DMA Wire (4.4) logic wrong | RED-first gate; behavioral validation vs SDK/Zephyr; the transactions reuse 3.2's HW-verified WM8962 protocol so only the *interrupt/DMA plumbing* is new |
 | eDMA can't reach CM4-owned buffers (4.3/4.4) | Buffers in **OCRAM** per the `spi_dma_test` rule; the jumper `rx==tx` proves eDMA truly moved CM4 memory (not a QEMU-only copy) |
-| 4.2 slave probe un-wireable (no two header-accessible LPI2C instances that also bridge in QEMU) | Instance pair chosen at triangulation to satisfy *both* the QEMU bus-bridge and HW header-wireability up front; the `wire_slave_test` fixture is the proven precedent — decided before code |
+| 4.2 slave probe un-wireable (no two header-accessible LPI2C instances that also bridge in QEMU) | **FIRED at triangulation (2026-07-19)** — no such pair exists (LPI2C2 = pin-less QEMU persona). Resolved by the world-split instance binding of §4.2: LPI2C2-persona slave in the QEMU gate, LPI2C1 slave + external I2C master on HW; the slave logic + protocol constants are identical in both worlds |
 | qemu2 split changes an existing single-core gate's IRQ timing | Full regression set at 4.1; change only *adds* fan-out to a masked/off CM4 → expected byte-identical, proven not assumed |
 | Circular QEMU pass (model ignores clock/pins) | HW probe (`rdv=6243` / jumper) is un-fakeable; unchanged from 3.1/3.2 |
 | `EventResponder` scope-creep onto the CM4 | Explicitly excluded — direct `volatile` completion flag in the CM4 ISR |
