@@ -1,10 +1,22 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 4 STARTED — 4.1 (interrupt-driven Wire on CM4) ★★HW-VERIFIED
-(2026-07-19).** Phase 4 = "Interrupt-driven / DMA SPI/Wire on the CM4" (the
-first "Deferred beyond Phase 3" item), designed as one spec + a shared qemu2
-split-IRQ foundation, sequenced into 4 slices (4.1 int Wire-master, 4.2 int
-Wire-slave, 4.3 DMA SPI, 4.4 DMA Wire). **Foundation + 4.1 DONE + HW-VERIFIED**:
+**Current phase: 4 STARTED — 4.1 + 4.2 (interrupt-driven Wire on CM4) ★★BOTH
+HW-VERIFIED (2026-07-19).** Phase 4 = "Interrupt-driven / DMA SPI/Wire on the
+CM4" (the first "Deferred beyond Phase 3" item), designed as one spec + a
+shared qemu2 split-IRQ foundation, sequenced into 4 slices (4.1 int Wire-master,
+4.2 int Wire-slave, 4.3 DMA SPI, 4.4 DMA Wire). **4.2 DONE + HW-VERIFIED**: the
+CM4 runs an interrupt-driven LPI2C1 slave @0x42 (shared-core `lpi2c1176_slave_*`
++ distilled `handle_slave_isr`); an external Arduino MKR-Zero master writes
+{A5 5A C3} and reads back the slave's 0x3C (EVKB `irqcnt=0x0C`, `b0/b1/b2`
+correct, `resp=3C`, PASS; master `wr=0 rd=3C`). World-split instance (LPI2C2
+persona/IRQ 33 in the QEMU gate via the existing loopback bridge, LPI2C1/IRQ 32
+on HW); qemu2 delta = the one LPI2C2 split. ★★HW-DEBUG FINDING: `A5`=`AD_08`=
+`LPI2C1_SCL` is ALSO `USB_OTG2_ID` — a USB OTG adapter on OTG2 grounds ID and
+clamps SCL to 0V (0Ω board-off), silently killing header I2C; unplug OTG2
+(see the `rt1176-a5-ad08-otg2-id-short` memory). QEMU model limit: the
+master-observed read byte races cross-vCPU (no TXDSTALL modeled), so the QEMU
+gate asserts the deterministic slave-side `resp` and leaves `mrd` to the HW
+oracle. **Foundation + 4.1 DONE + HW-VERIFIED**:
 the qemu2 machine now fans `LPSPI1`/`LPI2C5`/16 eDMA IRQ lines to BOTH NVICs
 (targeted `TYPE_SPLIT_IRQ` via `fsl_imxrt1170_connect_irq_both`; realized
 connection-free, then wired; whole regression set green), and `cm4_wire_int_master_test`
@@ -19,9 +31,10 @@ pointer byte still clocking on a cold bus, so the WM8962 never latched the
 pointer → read the wrong register (rdv=0x0000) with a FALSE PASS. Fixed by
 sequencing write→read as the HW-verified polled core does (polled reg-pointer
 write + TDF-wait before the repeated START; the DATA READ stays interrupt-driven).
-Next: **4.2 (interrupt Wire-slave)**. Phase 3 (3.1/3.2/3.3) COMPLETE
-(2026-07-18); Phases 1-2 DONE + ★★HW-VERIFIED (2026-07-17). Append a
-dated entry to the session log whenever anything here changes.
+Next: **4.3 (DMA SPI — LPSPI1 async, reuses the eDMA split + the SDO→SDI
+jumper)**. Phase 3 (3.1/3.2/3.3) COMPLETE (2026-07-18); Phases 1-2 DONE +
+★★HW-VERIFIED (2026-07-17). Append a dated entry to the session log whenever
+anything here changes.
 
 ## Phase 1 — CM7 boots the CM4 + MU IPC library  ✅ DONE (HW-verified)
 
@@ -543,3 +556,35 @@ CM7 HW-verified stream on the same block instances.
   live.** Next: 4.2 (interrupt Wire-slave — needs the wired CM7-master↔CM4-slave
   fixture). D7 still queued; DMA slices (4.3/4.4) use the eDMA split already
   landed in the foundation.
+- 2026-07-19: **Phase 4.2 (interrupt Wire-SLAVE) DONE + ★★HW-VERIFIED.** The
+  CM4 runs an interrupt-driven LPI2C slave @0x42, distilled from the HW-verified
+  `TwoWire::handle_slave_isr`. Shared-core extended: `lpi2c1176_slave_config`/
+  `lpi2c1176_slave_enable` now live once in `newdigate/Wire/lpi2c1176.{h,c}`
+  (regs struct to 0x170 + SCR/SSR/SIER defines); `TwoWire::begin(addr)` migrated
+  onto them with the `wire_slave_test` transcript byte-identical (Phase-3.3
+  guardrail); cross-overlay static_asserts extended to the slave block (Wire
+  `0907b31`+`193e949`). **World-split instance** (triangulation fired the 4.2
+  "un-wireable" risk — no LPI2C is both QEMU-bridged AND header-accessible):
+  one instance-agnostic slave built for LPI2C2-persona/IRQ 33 in the QEMU gate
+  (CM7 masters LPI2C1 over the existing loopback bridge) and LPI2C1/IRQ 32 on
+  HW (external master); protocol constants ({A5 5A C3}→resp 3C) identical, so
+  `b0/b1/b2`+`resp` assert byte-identically both worlds. qemu2 delta = one
+  `connect_irq_both` for LPI2C2 IRQ 33 (`31f04067`; full regression green,
+  functional suites 1/1+34/34, dualcore_mu byte-identical, checkpatch 0/0).
+  **QEMU model limit (contingency fired):** the model serves the master's
+  CMD_RXD synchronously on the CM7 vCPU with a 0xFF empty-FIFO fallback and
+  does not model TXDSTALL cross-vCPU, so `mrd` races scheduling — the gate
+  asserts the deterministic slave-side `resp` and leaves the master-observed
+  byte to the HW oracle (extends 4.1's "wm8962-stub can't validate read-DATA"
+  lesson to a cross-vCPU slave). HW-VERIFIED (`ebb28bc`, stable 3×): EVKB
+  `irqcnt=0x0C`/`b0/b1/b2=A5/5A/C3`/`resp=3C`/PASS + external Arduino MKR-Zero
+  master `wr=0 rd=3C`. **★★HW-DEBUG FINDING (cost a full session, now a
+  memory + README + gate-not-firmware exoneration):** `A5`=`GPIO_AD_08`=
+  `LPI2C1_SCL` is ALSO `USB_OTG2_ID`; a USB OTG adapter on OTG2 grounded ID and
+  clamped SCL to 0V (measured 0Ω A5→GND *board-off* — so, un-caused by any
+  firmware). Diagnosed by a CM4 MU register-readback probe (SCR/SSR/mux/pad/
+  VERID/clock all correct + SSR=0 idle ⇒ the SoC wasn't driving; the low was
+  off-chip) → operator isolated the OTG adapter. See
+  [[rt1176-a5-ad08-otg2-id-short]]. Operator ran the EVKB probe + supplied the
+  external MKR master live this session. Next: **4.3 (DMA SPI)** — reuses the
+  eDMA split + the 3.1 SDO→SDI jumper; then 4.4 (DMA Wire). D7 still queued.

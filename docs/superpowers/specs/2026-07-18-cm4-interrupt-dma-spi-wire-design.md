@@ -262,6 +262,25 @@ reviewable logic. HW-VERIFIED 3× clean-boot: `irqcnt=4`, `rdv=00006243`,
   split is the one extra `connect_irq_both` beyond 4.1 (→ re-run qemu2
   regression); silicon routes LPI2C1 IRQ 32 to both NVICs natively, so the
   HW side needs no qemu2 support at all.
+- **AS-LANDED (2026-07-19, ★★HW-VERIFIED — `ebb28bc`, Wire `0907b31`/`193e949`,
+  qemu2 `31f04067`):** built as designed. Two deviations worth recording.
+  **(1) QEMU model limit / contingency fired:** the `imxrt_lpi2c` model serves
+  the master's `CMD_RXD` synchronously on the CM7 vCPU with a `0xFF`
+  empty-FIFO fallback and does not model the TXDSTALL clock-stretch across
+  vCPUs, so the *master-observed* read byte (`mrd`) races CM4 vCPU scheduling
+  (2 PASS / 7 `mrd=FF` on an identical binary). The **slave-side `resp` IS
+  deterministic** (the CM4 always takes its pended TDF IRQ and loads `STDR`),
+  so the QEMU gate asserts `resp` and leaves `mrd` to the HW oracle — the same
+  "the stub can't validate read-DATA; HW is the only oracle" split as §4.1's
+  `rdv`, now on a cross-vCPU slave. **(2) ★★HW-DEBUG FINDING:** `A5` =
+  `GPIO_AD_08` = `LPI2C1_SCL` is **also** `USB_OTG2_ID` on the EVKB — a USB OTG
+  adapter on OTG2 grounds ID and clamps SCL to 0V (a dead `0Ω A5→GND` *even
+  board-off*), silently killing header I2C. A CM4 MU register-readback probe
+  (SCR/SSR/mux/pad/VERID/clock all correct, `SSR=0` idle ⇒ SoC not driving)
+  proved the low was off-chip; a board-off short can never be firmware. Unplug
+  OTG2 before header I2C (memory `rt1176-a5-ad08-otg2-id-short`). Verified end
+  to end with an external Arduino MKR-Zero master: EVKB `irqcnt=0x0C`,
+  `b0/b1/b2=A5/5A/C3`, `resp=3C`, PASS; master `wr=0 rd=3C`.
 
 ### 4.3 — DMA SPI (LPSPI1 async) · distilled
 
