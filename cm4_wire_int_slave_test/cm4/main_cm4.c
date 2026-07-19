@@ -18,12 +18,15 @@
  * Tokens (MU ch0): READY, then {irqcnt, b0, b1, b2, resp, err, done}.
  *
  * DOCUMENTED MODEL LIMIT (Phase 4.2 contingency, 2026-07-19): in QEMU the
- * master's read-data byte is unasserted — qemu2's imxrt_lpi2c serves the
- * CM7 master's read synchronously on the CM7 vCPU (empty slave_tx -> 0xFF)
- * without modeling the TXDSTALL clock-stretch, so whether this CM4 ISR
- * refills STDR first races vCPU scheduling. The firmware below is correct
- * for silicon (TXDSTALL+CLKHOLD hold SCL until STDR is written); the
- * response byte is HW-verified by the EVKB probe's external master.
+ * MASTER-OBSERVED read byte (mrd/wr) is unasserted — qemu2's imxrt_lpi2c
+ * serves CMD_RXD synchronously on the CM7 vCPU (empty slave_tx -> 0xFF)
+ * without modeling the TXDSTALL clock-stretch across vCPUs, so whether this
+ * CM4 ISR refills STDR first races vCPU scheduling. The slave-side resp
+ * token IS asserted in both worlds: the TDF ISR service is deterministic
+ * (the pended IRQ is always taken and STDR loaded). The firmware below is
+ * correct for silicon (TXDSTALL+CLKHOLD hold SCL until STDR is written);
+ * the master-observed byte is HW-verified by the EVKB probe's external
+ * master.
  *
  * Public-domain scaffolding (N. Newdigate); shared-core register logic MIT. */
 #include <stdint.h>

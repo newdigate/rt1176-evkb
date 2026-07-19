@@ -3,16 +3,17 @@
 # the LPI2C2 persona (IRQ 33 on its own NVIC via the qemu2 split); the CM7
 # masters LPI2C1 across the bridged bus with the shared polled core.
 #
-# DOCUMENTED MODEL LIMIT (Phase 4.2 contingency, 2026-07-19): the QEMU PASS is
-# write-path only — irqcnt, b0/b1/b2, err, done. wr/mrd/resp are printed but
-# UNASSERTED here: qemu2's imxrt_lpi2c serves the master's read synchronously
-# on the CM7 vCPU (slave_recv returns 0xFF when the CM4's TDF ISR hasn't
-# refilled STDR yet — TXDSTALL clock-stretching is not modeled across vCPUs),
-# so the read-data byte races CM4 thread scheduling (observed 2 PASS / 7 FAIL
-# on an identical binary; resp=3C in every run — the ISR always serves TDF,
-# sometimes after the master was already given 0xFF). On silicon TXDSTALL
-# holds SCL until STDR is written, so the race cannot exist; the response
-# byte is HW-verified by the EVKB probe's external-master oracle (rd=3C).
+# DOCUMENTED MODEL LIMIT (Phase 4.2 contingency, 2026-07-19): the
+# master-observed read byte (mrd, and wr-side timing with it) is UNASSERTED
+# in QEMU — qemu2's imxrt_lpi2c serves CMD_RXD synchronously on the CM7 vCPU
+# with a 0xFF empty-FIFO fallback and does not model TXDSTALL clock-stretch
+# across vCPUs, so mrd races CM4 thread scheduling (observed 2 PASS / 7 FAIL
+# on an identical binary). The slave-side resp IS asserted: the CM4's TDF ISR
+# service is deterministic — resp=3C in every one of those runs, including
+# every mrd=FF failure (the ISR always serves TDF; sometimes after the master
+# was already given 0xFF). On silicon TXDSTALL holds SCL until STDR is
+# written, so the race cannot exist; the master-observed byte is HW-verified
+# by the EVKB probe's external-master oracle (rd=3C).
 set -e
 QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
@@ -38,11 +39,13 @@ check() {
 }
 grep -q "CM4WIRESLV-GATE v1" "$OUT" || { echo "FAIL: banner missing"; exit 1; }
 check "ready=CAFE0001"
-# wr/mrd/resp deliberately unasserted — documented model limit (see header):
-# the cross-vCPU read-data byte is HW-verified by the EVKB probe instead.
+# wr/mrd deliberately unasserted — documented model limit (see header): the
+# master-observed read byte is HW-verified by the EVKB probe instead. resp
+# (slave-side TDF ISR served, STDR loaded) is deterministic and IS asserted.
 check "b0=000000A5"
 check "b1=0000005A"
 check "b2=000000C3"
+check "resp=0000003C"
 check "err=00000000"
 check "done=00000001"
 grep -q "^irqcnt=00000000" "$OUT" && { echo "FAIL: irqcnt is 0 (no CM4 IRQ)"; fail=1; }
