@@ -200,6 +200,30 @@ in. CM4 clock+pin self-config is **reused verbatim** from the HW-verified
   `rdv=0x6243` produced by the CM4 ISR with `irqcnt>0`. Split-not-routed on
   silicon ⇒ `irqcnt=0` and the transaction hangs to a guarded FAIL.
 
+**§4.1 as-landed (2026-07-19):** the first implementation was a **pure-ISR
+master** (the ISR pushed the register-pointer write bytes *and* the repeated
+START). It passed QEMU and every review, but hit a **cold-bus repeated-START
+race**: the ISR issued the repeated START the instant the write cursor
+drained, racing the last register-pointer byte still clocking out on a cold
+bus, so the WM8962 never latched the pointer and the read landed on the
+wrong register (`rdv=0x0000` — a false PASS, since `irqcnt>0`/`err=0`/
+`done=1` all still held). The QEMU `wm8962-stub` returns `0x00` for every
+read regardless of register addressed, so this was **structurally invisible
+to QEMU** — only the EVKB probe could catch it. The shipped design
+(`5736662`) is a **hybrid**: the register-pointer write moved to the
+HW-verified **polled** `lpi2c1176_master_write` (bus held), then the
+repeated START + a TDF wait + RXD are issued from `i2c_read_reg`, and only
+the **data read** stays interrupt-driven (`LPI2C5_IRQHandler`, on the CM4's
+own NVIC — the split-IRQ proof is unchanged). Side effect: `irqcnt` joined
+`rdv` as a **world-varying token** (magnitude now differs QEMU vs HW; only
+`>0` is asserted, never byte-identical — the byte-identical-except set grew
+from `{rdv}` to `{irqcnt, rdv}`). This validates this spec's own §1
+"two-layer proof" thesis in its strongest form: the QEMU gate was green and
+every review passed, and only the HW probe closed the gap — precisely
+because the gap lived in what the `wm8962-stub` could ever represent, not in
+reviewable logic. HW-VERIFIED 3× clean-boot: `irqcnt=4`, `rdv=00006243`,
+`err=0`, PASS.
+
 ### 4.2 — Interrupt Wire-slave (mirrors `wire_slave_test`) · distilled
 
 - **Instance:** *not* LPI2C5 — the slave must share a QEMU I2C bus with the

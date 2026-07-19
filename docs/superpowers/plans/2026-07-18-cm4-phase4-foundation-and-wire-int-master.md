@@ -492,7 +492,20 @@ gate stays RED (the real ISR + NVIC-enable land in the next commit)."
 > (order `irqcnt, mcr, lpcg, croot, rdv, err, done`) asserted `=0` in *both*
 > worlds and folded into PASS (`v[5]==0 && v[6]==1`), so an interrupt-master
 > fault can't read as PASS. The code blocks below show the 6-token pre-follow-up
-> form; the shipped gate streams 7.
+> form; the shipped gate streams 7. (3) **Post-HW-probe fix (`5736662`, EVKB
+> 2026-07-19):** the pure-ISR master above (ISR-issued write bytes + ISR-issued
+> repeated START) hit a **cold-bus repeated-START race** — deterministic
+> `rdv=0x0000` on a cold boot (false PASS: `irqcnt>0`/`err=0`/`done=1` all
+> still held), invisible to QEMU (the `wm8962-stub` returns 0x0000 for every
+> read regardless of register). Fixed by making the design a **hybrid**: the
+> register-pointer write moved to the HW-verified polled
+> `lpi2c1176_master_write` (bus held), with only the repeated-START read
+> staying interrupt-driven (`i2c_read_reg` + `LPI2C5_IRQHandler`; the dead
+> pure-ISR write path — `PH_WRITE`, the `wr/wn/wi/addr` descriptor fields,
+> `MIER_TDIE` — was removed). `irqcnt` became a second world-varying token
+> alongside `rdv` (magnitude, not just content, now differs QEMU vs HW).
+> HW-VERIFIED 3× clean-boot: `irqcnt=4`, `rdv=00006243`, `err=0`, PASS.
+> **4.1 is HW-VERIFIED.**
 
 **Files:**
 - Modify: `evkb/cm4_wire_int_master_test/cm4/main_cm4.c`
@@ -728,6 +741,14 @@ git commit -m "license-audit: cover cm4_wire_int_master_test (Phase 4.1)"
 ---
 
 ## Task 8: EVKB probe (wiring-free) — silicon-truth close
+
+> **Post-landing note (2026-07-19):** the probe run here is what *caught* the
+> cold-bus repeated-START race in the original pure-ISR master (deterministic
+> `rdv=0x0000` on a cold boot, false PASS on `irqcnt>0`/`err=0`/`done=1`) — see
+> Task 5 note (3). After the hybrid fix (`5736662`: polled register-pointer
+> write + interrupt-driven read), the clean-boot re-probe is what's checked in
+> as `transcript_hw_evkb.txt`: `irqcnt=4`, `rdv=00006243`, `err=0`, PASS, 3×
+> stable. **4.1 is HW-VERIFIED.**
 
 **Files:** Create `evkb/cm4_wire_int_master_test/transcript_hw_evkb.txt`, `README.md`; update roadmap.
 
