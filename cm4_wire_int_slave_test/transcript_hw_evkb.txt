@@ -1,0 +1,16 @@
+CM4WIRESLV-GATE v1
+ready=CAFE0001
+wr=EXTERN
+mrd=EXTERN
+EXT-MASTER: run ext_master now (write A5 5A C3 to 0x42, read 1 byte)
+irqcnt=0000000C
+b0=000000A5
+b1=0000005A
+b2=000000C3
+resp=0000003C
+err=00000000
+done=00000001
+WIRE_INT_SLAVE_CM4=PASS
+CM4WIRESLV-DONE
+wr=0 rd=3C   (external Arduino MKR-Zero master on A4=SDA/A5=SCL — HW-side oracle for the response byte)
+NOTE: USB OTG2 must be UNPLUGGED — its ID pin is wired to A5/AD_08 and clamps SCL to 0V (see rt1176-a5-ad08-otg2-id-short memory).

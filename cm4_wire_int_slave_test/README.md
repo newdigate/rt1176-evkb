@@ -79,6 +79,15 @@ Needs a **3.3V** I2C master board (Arduino MKR Zero or similar — the
 | SCL | **A5** (GPIO_AD_08) | |
 | GND | **GND** | **ESSENTIAL** — a floating ground was the Phase-3.2 I2C flakiness |
 
+> ### ★ UNPLUG USB OTG2 FIRST
+> `A5` = `GPIO_AD_08` = `LPI2C1_SCL` is **also** wired to `USB_OTG2_ID` on the
+> EVKB. A USB OTG adapter on OTG2 grounds the ID pin, which clamps SCL to 0 V
+> (a dead **0 Ω A5→GND even with the board powered off**) and makes LPI2C1 on
+> the header fail silently — SCL stuck low, the slave never addressed, an
+> Arduino master's `Wire` call hangs. This cost a full HW-debug session on
+> 2026-07-19; see the `rt1176-a5-ad08-otg2-id-short` memory. A board-off short
+> can never be firmware.
+
 - **3.3V logic only.** The EVKB pads are not 5V-tolerant; never wire a 5V
   master without a level shifter.
 - The EVKB pads carry internal pull-ups (pad_ctl `0x1E`). Add external

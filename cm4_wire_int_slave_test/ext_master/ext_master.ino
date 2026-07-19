@@ -22,12 +22,19 @@
  *                                  Phase-3.2 I2C flakiness; not optional)
  * The EVKB pads carry internal pull-ups (pad_ctl 0x1E); add external
  * 2.2-4.7 kOhm pull-ups to 3V3 if the bus is marginal.
+ *
+ * ★ UNPLUG USB OTG2 on the EVKB.  A5/GPIO_AD_08 is also wired to USB_OTG2_ID;
+ * an OTG adapter grounds ID and clamps SCL to 0V (0 ohm A5->GND even
+ * board-off), so LPI2C1 on the header dies silently.  HW-verified 2026-07-19
+ * with an Arduino MKR Zero master: wr=0 rd=3C.
  */
 #include <Wire.h>
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial) {}
+  // NOTE: do NOT `while (!Serial)` here — on the SAMD native-USB MKR that
+  // blocks until a monitor asserts DTR, so the master never transacts when
+  // driven headlessly (e.g. by a pyserial capture). Run autonomously instead.
   Wire.begin();
   Wire.setClock(100000);
 }
