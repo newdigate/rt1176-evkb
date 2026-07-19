@@ -1,0 +1,26 @@
+CM4SPIDMA-GATE v1
+ready=CAFE0001
+cr=00000001
+cfgr1=00000001
+lpcg=00000001
+croot=00000000
+rxb=00000001
+dmairq=00000000
+rxa=00000001
+done=00000001
+dma_int=00000001
+nvic_ispr=00100000
+nvic_iser=00000001
+SPI_DMA_CM4=FAIL
+CM4SPIDMA-DONE
+
+--- HW FINDING (2026-07-19) ---
+CM4-driven DMA DATA path works on LPSPI1 via the MAIN eDMA (0x40070000): rxb=1, rxa=1
+through the SDO->SDI jumper. But dmairq=0: the main eDMA's completion IRQ is wired to
+the CM7's NVIC (RM Table 4-1, IRQ0=eDMA ch0), NOT the CM4's (Table 4-2, CM4 IRQ0 =
+eDMA_LPSR ch0 — a DIFFERENT eDMA at 0x40C14000). Diagnostic: dma_int=1 (eDMA raised
+ch0), nvic_ispr bit0=0 (not pending on the CM4), nvic_iser bit0=1 (enabled). So the
+CM4 can DRIVE the main eDMA (polled) but cannot take its completion interrupt. True
+CM4 interrupt-driven DMA requires eDMA_LPSR + an LPSR-domain peripheral (-> the DMA
+Wire work on LPI2C5). QEMU's single-eDMA-split model hid this. See the
+rt1176-cm4-edma-lpsr-split memory.
