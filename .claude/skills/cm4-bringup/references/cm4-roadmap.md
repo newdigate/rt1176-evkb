@@ -1,18 +1,26 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 3 COMPLETE (2026-07-18).** 3.1 (SPI), 3.2 (Wire/I2C → real
-WM8962), and 3.3 (shared C register/clock core consolidation) are all
-**DONE**; 3.1/3.2 ★★HW-VERIFIED, and 3.3's refactor is anchored on silicon by
-a wiring-free `cm4_wire_test` re-probe whose EVKB transcript is
-BYTE-IDENTICAL (incl. `rdv=00006243`) with the shared-core binary, and
-`cm4_spi_test` re-probed through the SDO→SDI jumper is likewise BYTE-IDENTICAL
-(`rxok=1`, `SPI_CM4=PASS`) — both shared cores now silicon-proven. The
-LPSPI1/LPI2C5 sequences now live ONCE (`~/Development/SPI/lpspi1176.{h,c}`,
-`~/Development/Wire/lpi2c1176.{h,c}`) — the CM7 classes and the CM4 images
-compile the same C files. Next work item: **pick from "Deferred beyond
-Phase 3"** (interrupt/DMA-from-CM4 needs the TYPE_SPLIT_IRQ qemu2 work; or
-qemu2 clock-gate fidelity; or cross-core arbitration). Phases 1 and 2 are
-DONE — all QEMU-gated + ★★HW-VERIFIED on the EVKB (2026-07-17). Append a
+**Current phase: 4 STARTED — 4.1 (interrupt-driven Wire on CM4) ★★HW-VERIFIED
+(2026-07-19).** Phase 4 = "Interrupt-driven / DMA SPI/Wire on the CM4" (the
+first "Deferred beyond Phase 3" item), designed as one spec + a shared qemu2
+split-IRQ foundation, sequenced into 4 slices (4.1 int Wire-master, 4.2 int
+Wire-slave, 4.3 DMA SPI, 4.4 DMA Wire). **Foundation + 4.1 DONE + HW-VERIFIED**:
+the qemu2 machine now fans `LPSPI1`/`LPI2C5`/16 eDMA IRQ lines to BOTH NVICs
+(targeted `TYPE_SPLIT_IRQ` via `fsl_imxrt1170_connect_irq_both`; realized
+connection-free, then wired; whole regression set green), and `cm4_wire_int_master_test`
+proves the CM4 takes the LPI2C5 IRQ on its OWN NVIC (irqcnt>0) and reads the
+WM8962 device ID (`rdv=00006243`) via an interrupt-driven read — the EVKB
+clean-boot transcript byte-identical to QEMU on all tokens except the two
+world-varying (`irqcnt` >0-only; `rdv` 0000/6243). **★★KEY silicon-truth
+discovery** (only the cold-boot HW probe could expose it — the QEMU wm8962-stub
+reads 0x0000 for everything): a fully-ISR master that issued the repeated START
+from the ISR the instant the write cursor drained RACED the last register-
+pointer byte still clocking on a cold bus, so the WM8962 never latched the
+pointer → read the wrong register (rdv=0x0000) with a FALSE PASS. Fixed by
+sequencing write→read as the HW-verified polled core does (polled reg-pointer
+write + TDF-wait before the repeated START; the DATA READ stays interrupt-driven).
+Next: **4.2 (interrupt Wire-slave)**. Phase 3 (3.1/3.2/3.3) COMPLETE
+(2026-07-18); Phases 1-2 DONE + ★★HW-VERIFIED (2026-07-17). Append a
 dated entry to the session log whenever anything here changes.
 
 ## Phase 1 — CM7 boots the CM4 + MU IPC library  ✅ DONE (HW-verified)
@@ -492,3 +500,46 @@ CM7 HW-verified stream on the same block instances.
   before/after (side-file-only flag, no codegen change) → NO silicon re-probe
   (2B precedent). Audit PASS; cm4_wire_test gate re-run green; stale
   build_cm4.sh comment in the audit script rewritten.
+- 2026-07-19: **Phase 4 OPENED (whole interrupt+DMA surface) — foundation +
+  4.1 DONE + ★★HW-VERIFIED.** Brainstormed → one spec
+  (`docs/superpowers/specs/2026-07-18-cm4-interrupt-dma-spi-wire-design.md`) +
+  plan (`docs/.../plans/2026-07-18-cm4-phase4-foundation-and-wire-int-master.md`)
+  covering 4 slices over a shared **targeted split-IRQ foundation**. Executed
+  subagent-driven (implementer + spec + quality review per task).
+  **qemu2 (commits `89bb31b`+`693a466`):** `fsl_imxrt1170_connect_irq_both`
+  inserts a `TYPE_SPLIT_IRQ` (1→2) fanning `LPSPI1`(38)/`LPI2C5`(36)/16 eDMA
+  lines to BOTH NVICs; mirrors the existing `gpio13_or` OR-gate idiom.
+  ★Task-boundary defect caught in review: `object_initialize_child` REQUIRES a
+  matching `qdev_realize` before machine-construction ends
+  (`qdev_assert_realized_properly`, precedent `exynos4210.c:429-435`) — so the
+  splitters are realized connection-free in the SAME commit, wired in the next.
+  Inert (only adds fan-out to a powered-off/NVIC-masked CM4): full regression
+  set green (`test_imxrt1170`+`test_imxrt1062`+`dualcore_mu_test` byte-identical
+  +`serial_test`+checkpatch 0/0; mcmgr/rpmsg covered-by-proxy). **4.1 gate
+  `evkb/cm4_wire_int_master_test`:** CM4 NVIC-enables IRQ 36, services LPI2C5
+  on its own NVIC, reads the WM8962 R15 ID. QEMU + EVKB clean-boot green,
+  byte-identical except the 2 world-varying tokens (`irqcnt` >0-only, `rdv`
+  0000-QEMU/6243-HW). license-audit extended (105 files) + PASS.
+  **★★KEY DISCOVERY — the whole silicon-truth loop paid off here:** the FIRST
+  interrupt-master (pure-ISR) passed QEMU + all reviews but read `rdv=0x0000`
+  on a COLD boot (deterministic 3/3) while the CM7 still printed PASS
+  (irqcnt>0/err=0/done=1 — the exact false-PASS the code-quality reviewer had
+  flagged). The qemu2 `wm8962-stub` reads 0x0000 for ALL reads, so it
+  STRUCTURALLY could not expose it. Root-caused via controlled cold-boot probes
+  (systematic-debugging): polled-cold read = 0x6243 (codec/register/cold-read
+  fine → not H3); instrumented interrupt-first = 0x6243, SAME irqcnt=9
+  (Heisenbug → a timing race). Mechanism: the ISR issued the repeated START the
+  instant the write cursor drained, racing the last register-pointer byte still
+  clocking on the cold bus → WM8962 never latched the pointer → read the wrong
+  register. **Fixed (`5736662`):** `i2c_read_reg` sequences write→read as the
+  HW-verified polled core does — polled reg-pointer write (sendStop=0), repeated
+  START + TDF-wait, then RXD; the DATA READ stays interrupt-driven (ISR captures
+  RX on RDF, completes on SDF → split-IRQ proof). HW 3× rdv=00006243, PASS.
+  ★Lessons for 4.2–4.4: (a) a gate whose HW value is world-split MUST assert
+  that value on the HW side, not lean on the CM7 PASS (which can't see rdv);
+  (b) the wm8962-stub can't validate read-DATA paths — HW is the only oracle;
+  (c) cold-vs-warm first-transaction timing matters on silicon. **Operator ran
+  the EVKB probe this session (board connected); the fix was found + verified
+  live.** Next: 4.2 (interrupt Wire-slave — needs the wired CM7-master↔CM4-slave
+  fixture). D7 still queued; DMA slices (4.3/4.4) use the eDMA split already
+  landed in the foundation.
