@@ -1,0 +1,11 @@
+=== clean-boot snapshot (CM4 HELD before the CM7 ran — no LinkServer contamination) ===
+SCR      = 0x00000000   (BT_RELEASE_M4 not set -> CM4 held)
+STAT_M4  = 0x00000001   (STAT_M4CORE bit0 = held from reset)
+=== VCOM (CM7 boots A, hot-swaps to B) ===
+CM4HOTSWAP-GATE v1
+readyA=CAFE0001
+idA=A1A1A1A1
+readyB=CAFE0001
+idB=B2B2B2B2
+HOTSWAP=PASS
+CM4HOTSWAP-DONE
