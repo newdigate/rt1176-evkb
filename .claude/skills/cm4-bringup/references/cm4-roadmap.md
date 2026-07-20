@@ -47,7 +47,10 @@ sequencing write→read as the HW-verified polled core does (polled reg-pointer
 write + TDF-wait before the repeated START; the DATA READ stays interrupt-driven).
 **Phase 4 COMPLETE** — interrupt Wire master (4.1) + slave (4.2) + the
 eDMA_LPSR DMA-Wire milestone, all HW-VERIFIED; the two-eDMA finding recorded.
-Next: **D7** (new-VTOR reboot, queued) or a new capability. Phase 3 (3.1/3.2/3.3)
+**D7 (CM4 runtime hot-swap) RESOLVED + ★★HW-VERIFIED (2026-07-20)** — the last
+open Phase-1 item is closed (`cm4_hotswap_test`, clean-boot probe, `31c0d53`).
+Next: **a new capability** (the CM4 bring-up backlog — interrupt/DMA Wire+SPI,
+dual-core boot, and hot-swap — is all HW-verified). Phase 3 (3.1/3.2/3.3)
 COMPLETE (2026-07-18); Phases 1-2 DONE + ★★HW-VERIFIED (2026-07-17). Append a
 dated entry to the session log whenever anything here changes.
 
@@ -96,14 +99,20 @@ tokens; the timing-sensitive `gir` also matched). Checked in as
 `cm4_boot_test/transcript_hw_evkb.txt` + `transcript_qemu.txt`. Clean-boot
 snapshot confirmed `SCR=0`, `STAT_M4=1` (held), `MUA_SR=0x00F00200`
 (bit9 set / bit7 clear) before dispatch.
-**D7 (reboot CM4 at a NEW VTOR) — now LIKELY-WORKS, still not cleanly
-isolated:** in the *contaminated* post-flash autorun the CM4 was
-pre-released by LinkServer at its spin address, so `begin()` rebooted it
-at the new VTOR 0x20200000 purely via the `CTRL_M4CORE.SW_RESET` pulse —
-and it produced the full correct transcript (hello…DONE). Strong
-suggestion D7 works on silicon, but LinkServer's exact CM4 state is a
-confound; keep D7 queued for a clean controlled probe before a
-hot-swap-CM4-image feature depends on it.
+**D7 (reboot CM4 at a new VTOR / restart a running CM4) — ★★RESOLVED +
+HW-VERIFIED (2026-07-20).** `cm4_hotswap_test`: the CM7 boots the CM4 with
+image A (identity `0xA1A1A1A1`), then `Multicore.begin(imageB)` re-pulses
+`SRC_CTRL_M4CORE.SW_RESET` and the *running* CM4 reboots into image B
+(`0xB2B2B2B2`). The clean-boot probe removed the old confound: the
+`clean_boot.scp` snapshot showed the CM4 **genuinely held** (`SCR=0`,
+`STAT_M4CORE=1`) before the CM7 ran, so `begin(A)` was the first clean release
+and `begin(B)` the true hot-swap edge. HW `idA=A1A1A1A1 → idB=B2B2B2B2`,
+`HOTSWAP=PASS`, stable 2× (`31c0d53`). **No qemu2 or library change** — the
+existing `Multicore::begin` (SW_RESET on every call) + qemu2
+`fsl_imxrt1170_cm4_boot` (re-reads GPR0/1, `cpu_reset`s a running CM4) already
+supported it. Unlocks runtime CM4 firmware swapping. A "two resident images at
+different VTORs" variant needs only a second CM4 linker layout (GPR0/1 reprogram
+already works). See [[rt1176-cm4-boot-mu]].
 
 ## Phase 2 — CM4 core variant (sketches compile for the CM4)
 
@@ -305,12 +314,11 @@ CM7 HW-verified stream on the same block instances.
 - Derive and EVKB-validate a minimal LPUART1 init for the asm probe
   template (templates/probe_firmware/), so probes print on clean-boot
   silicon without the Arduino core (queued 2026-07-17).
-- **D7 (Phase 1): reboot CM4 at a NEW VTOR.** Re-pulsing
-  CTRL_M4CORE.SW_RESET after reprogramming GPR0/1 to a *different*
-  address. LIKELY works (observed in the cm4_boot_test contaminated
-  autorun, 2026-07-17) but not cleanly isolated (LinkServer CM4-state
-  confound). Do a controlled probe before any hot-swap-CM4-image feature
-  relies on it. Queued 2026-07-17.
+- ~~**D7 (Phase 1): reboot CM4 at a new VTOR / restart a running CM4.**~~ —
+  ★★DONE + HW-VERIFIED 2026-07-20 (`cm4_hotswap_test`, clean-boot controlled
+  probe: CM4 held `SCR=0`/`STAT_M4=1`, then `begin(A)`→idA, `begin(B)` re-pulse
+  SW_RESET→idB; `HOTSWAP=PASS` 2×, `31c0d53`). The LinkServer confound is gone.
+  Unlocks runtime CM4 firmware hot-swapping.
 - ~~Phase 1 library HW transcript~~ — DONE 2026-07-17 (cm4_boot_test
   transcript_hw_evkb.txt, byte-identical to QEMU).
 
@@ -633,3 +641,26 @@ CM7 HW-verified stream on the same block instances.
   Next: **D7** (new-VTOR reboot, still queued) or a new capability; the DMA
   goal is met. Deferred-beyond: DMA on more LPSR peripherals (LPSPI5/6, SAI via
   eDMA_LPSR) if wanted.
+- 2026-07-20: **D7 (CM4 runtime hot-swap) RESOLVED + ★★HW-VERIFIED — the last
+  open Phase-1 item is closed.** `cm4_hotswap_test`: the CM7 boots the CM4 with
+  image A, then `Multicore.begin(imageB)` re-pulses `SRC_CTRL_M4CORE.SW_RESET`
+  and the *running* CM4 reboots into a different program (image B). Two images
+  built from ONE source via `-DHS_IDENTITY` (A=`0xA1A1A1A1`, B=`0xB2B2B2B2`),
+  both staged at the `0x20200000` backdoor (swap-in-place), each `mu_send`ing a
+  ready+identity then parking in WFI (so the CM4 isn't fetching while the CM7
+  overwrites the backdoor with B). Both images embedded in one CM7 elf
+  (`teensy_target_link_cm4_image` ×2). QEMU-GREEN first try (`5d026a9`); the
+  qemu2 `fsl_imxrt1170_cm4_boot` already re-reads GPR0/1 + `cpu_reset`s a running
+  CM4, and `Multicore::begin` already pulses SW_RESET every call — **no qemu2 or
+  library change**. **★★The clean-boot controlled probe finally isolated D7**
+  (the 2026-07-17 evidence was confounded by LinkServer pre-releasing the CM4):
+  `clean_boot.scp` SYSRESETREQ→snapshot showed the CM4 **held** (`SCR=0`,
+  `STAT_M4CORE=1`) before the CM7 ran, so `begin(A)` was the first clean release
+  and `begin(B)` the true hot-swap. HW `idA=A1A1A1A1 → idB=B2B2B2B2`,
+  `HOTSWAP=PASS`, stable 2× (`31c0d53`). Wiring-free (MU tokens on VCOM).
+  license-audit extended + PASS. ★Lesson: a debugger's connect/flow can
+  *contaminate* the very state you're probing — a clean-boot script that holds
+  the core and dispatches the image itself is the only way to isolate boot/reset
+  behavior. **Unlocks runtime CM4 firmware swapping.** The CM4 bring-up backlog
+  (Phases 1-4 + D7) is now all HW-verified. Next: a new capability, or the
+  two-resident-VTOR hot-swap variant (needs only a 2nd CM4 linker layout).
