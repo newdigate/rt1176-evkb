@@ -110,9 +110,14 @@ and `begin(B)` the true hot-swap edge. HW `idA=A1A1A1A1 → idB=B2B2B2B2`,
 `HOTSWAP=PASS`, stable 2× (`31c0d53`). **No qemu2 or library change** — the
 existing `Multicore::begin` (SW_RESET on every call) + qemu2
 `fsl_imxrt1170_cm4_boot` (re-reads GPR0/1, `cpu_reset`s a running CM4) already
-supported it. Unlocks runtime CM4 firmware swapping. A "two resident images at
-different VTORs" variant needs only a second CM4 linker layout (GPR0/1 reprogram
-already works). See [[rt1176-cm4-boot-mu]].
+supported it. Unlocks runtime CM4 firmware swapping. **The TWO-RESIDENT variant
+is ALSO DONE + ★★HW-VERIFIED (`cm4_hotswap2_test`, `f533dd5`):** two images
+co-resident in ITCM (A@`0x1FFE0000`/stage `0x20200000`, B@`0x1FFF0000`/stage
+`0x20210000`), a new `Multicore::switchImage(stageAddr)` (reprogram GPR0/1 +
+re-pulse SW_RESET, NO re-stage — cores `1a16acb`) switches the boot VTOR between
+them; HW `idA=idA2=A1`, `idB=idB2=B2` (booted at the new VTOR `0x20210000`),
+`HOTSWAP2=PASS`, stable 2× — again no qemu2 change (the model maps the full 256K
+ocram_m4 backdoor + reads GPR0/1 fresh). See [[rt1176-cm4-boot-mu]].
 
 ## Phase 2 — CM4 core variant (sketches compile for the CM4)
 
@@ -664,3 +669,24 @@ CM7 HW-verified stream on the same block instances.
   behavior. **Unlocks runtime CM4 firmware swapping.** The CM4 bring-up backlog
   (Phases 1-4 + D7) is now all HW-verified. Next: a new capability, or the
   two-resident-VTOR hot-swap variant (needs only a 2nd CM4 linker layout).
+- 2026-07-20: **Two-resident-images CM4 hot-swap DONE + ★★HW-VERIFIED** (the
+  D7 "new VTOR" in full). `cm4_hotswap2_test`: two images co-resident in the
+  128K CM4 ITCM as two 64K halves — A linked at `0x1FFE0000` (staged at backdoor
+  `0x20200000`), B at `0x1FFF0000` (staged at `0x20210000` = ITCM+0x10000);
+  shared DTCM (serial execution). New core method **`Multicore::switchImage(
+  stageAddr)`** (cores `1a16acb`) = `begin()` minus the image copy + BT_RELEASE:
+  reprogram GPR0/1 + re-pulse SW_RESET to reboot an already-staged image at a
+  new VTOR, no re-stage — completing the API (`begin`=stage+boot,
+  `switchImage`=boot-resident, `restart`=reboot-current). CM7 flow:
+  begin(A)→begin(B@0x20210000)→switchImage(A)→switchImage(B); PASS needs
+  `idA==idA2==A1 && idB==idB2==B2` (the matching idA2/idB2 prove *residency*,
+  not just a reboot). QEMU-GREEN + clean-boot HW probe (CM4 held `SCR=0`/
+  `STAT_M4=1`), stable 2× (`f533dd5`). **No qemu2 change** — the machine already
+  maps the full 256K `ocram_m4` backdoor and `fsl_imxrt1170_cm4_boot` re-reads
+  GPR0/1 fresh + accepts the `0x20210000` VTOR (above the rejected private-TCM
+  range `[0x1FFE0000,0x20020000)`). One-source/two-linker (`-DHS_IDENTITY` +
+  `cm4_a.ld`/`cm4_b.ld`), same startup (VTOR=`__isr_vector`=ORIGIN(ITCM), so it
+  differs per image via the linker). **Unlocks an A/B firmware bank / on-demand
+  CM4 task images** — multiple CM4 programs resident with a fast VTOR-switch, no
+  re-flash/re-copy. CM4 bring-up fully HW-verified (Phases 1-4 + D7 both
+  variants). Next: a new capability.
