@@ -57,7 +57,7 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # (teensy-cmake-macros), whose gcc step emits <obj>.o.d depfiles (-MMD -MF,
 # added 2026-07-18) — so CM4-side sources are covered by this same walk
 # (the *.o.d pattern below), not just their provenance headers.
-GATES="sd_wav_play_test:sd_wav_play_test ethernet_test:ethernet_test native_ethernet_test:native_ethernet_test cm4_boot_test:cm4_boot_test cm4_image_test:cm4_image_test cm4_intr_test:cm4_intr_test cm4_dual_test:cm4_dual_test cm4_spi_test:cm4_spi_test cm4_wire_test:cm4_wire_test cm4_wire_int_master_test:cm4_wire_int_master_test cm4_wire_int_slave_test:cm4_wire_int_slave_test cm4_spi_dma_test:cm4_spi_dma_test cm4_wire_dma_test:cm4_wire_dma_test cm4_hotswap_test:cm4_hotswap_test cm4_hotswap2_test:cm4_hotswap2_test"
+GATES="sd_wav_play_test:sd_wav_play_test ethernet_test:ethernet_test native_ethernet_test:native_ethernet_test cm4_boot_test:cm4_boot_test cm4_image_test:cm4_image_test cm4_intr_test:cm4_intr_test cm4_dual_test:cm4_dual_test cm4_spi_test:cm4_spi_test cm4_wire_test:cm4_wire_test cm4_wire_int_master_test:cm4_wire_int_master_test cm4_wire_int_slave_test:cm4_wire_int_slave_test cm4_spi_dma_test:cm4_spi_dma_test cm4_wire_dma_test:cm4_wire_dma_test cm4_hotswap_test:cm4_hotswap_test cm4_hotswap2_test:cm4_hotswap2_test cm4_imagebank_test:cm4_imagebank_test"
 for pair in $GATES; do
   g=${pair%%:*}; t=${pair##*:}
   bdir=$EVKB/$g/build
