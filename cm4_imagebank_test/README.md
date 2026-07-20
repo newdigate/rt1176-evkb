@@ -1,4 +1,4 @@
-# cm4_imagebank_test — Cm4ImageBank over switchImage (QEMU GREEN; HW pending)
+# cm4_imagebank_test — Cm4ImageBank over switchImage (★★HW-VERIFIED)
 
 A small CM7-side registry (`Cm4ImageBank`, `cores/imxrt1176`) over the
 HW-verified `Multicore` boot machinery: register several build-fixed CM4 images
@@ -39,6 +39,10 @@ when it is not. No `Multicore` or qemu2 change.
   LinkServer flash MIMXRT1176:MIMXRT1170-EVKB load build/cm4_imagebank_test.elf
   LinkServer probe <serial> runscript clean_boot.scp
   ```
+  ★★HW-VERIFIED 2026-07-20 (`transcript_hw_evkb.txt`): the clean-boot snapshot
+  showed `SCR=0`/`STAT_M4=1` (CM4 genuinely held), then the token stream came
+  out **byte-identical to QEMU**, stable 2× — `resABC=E`, `idA2=A1A1A1A1`,
+  `resD=7`, **`idA3=A1A1A1A1` (not `D4`)**, `resA3=E`, `IMAGEBANK=PASS`.
 
 ## What this unlocks
 

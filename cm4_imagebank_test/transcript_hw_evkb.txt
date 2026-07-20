@@ -1,0 +1,31 @@
+cm4_imagebank_test — EVKB clean-boot probe, HW-VERIFIED 2026-07-20
+
+=== clean-silicon snapshot (M4 held, nothing ran) — clean_boot.scp over the DAP ===
+SCR      = 0x00000000
+SRMR     = 0x00000CC0
+MUA_SR   = 0x00F00200
+MUB_SR   = 0x00F00000
+AUTHEN_M4= 0x00000000
+CTRL_M4  = 0x00000000
+STAT_M4  = 0x00000001
+CLKROOT1 = 0x00000201
+LPSR_GPR0= 0x00000400
+LPSR_GPR1= 0x00000020
+img SP = 0x20040000
+img PC = 0x300020AF
+dispatching image
+  (SCR=0 / STAT_M4=1  =>  CM4 genuinely held, no LinkServer contamination)
+
+=== VCOM (LPUART1) — byte-identical to transcript_qemu.txt, stable 2x ===
+CM4IMAGEBANK-GATE v1
+idA=A1A1A1A1
+idB=B2B2B2B2
+idC=C3C3C3C3
+resABC=0000000E
+idA2=A1A1A1A1
+idD=D4D4D4D4
+resD=00000007
+idA3=A1A1A1A1
+resA3=0000000E
+IMAGEBANK=PASS
+CM4IMAGEBANK-DONE

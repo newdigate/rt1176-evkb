@@ -691,8 +691,8 @@ CM7 HW-verified stream on the same block instances.
   re-flash/re-copy. CM4 bring-up fully HW-verified (Phases 1-4 + D7 both
   variants). Next: a new capability.
 - 2026-07-20: **Cm4ImageBank (CM4 image bank over `Multicore::switchImage`)
-  IMPLEMENTED — QEMU GREEN, stable 3× (`51d9457`); HW clean-boot probe PENDING
-  (the next task).** Brainstormed → spec
+  ★★HW-VERIFIED 2026-07-20 — QEMU GREEN stable 3× (`51d9457`) + EVKB clean-boot
+  probe byte-identical to QEMU (`transcript_hw_evkb.txt`).** Brainstormed → spec
   (`docs/superpowers/specs/2026-07-20-cm4-imagebank-design.md`) + plan
   (`docs/superpowers/plans/2026-07-20-cm4-imagebank.md`, 6 tasks). New
   `cores/imxrt1176/Cm4ImageBank.{h,cpp}` + `Cm4Slots.h`: a small CM7-side
@@ -718,7 +718,13 @@ CM7 HW-verified stream on the same block instances.
   (`cm4_imagebank_test:cm4_imagebank_test`) + PASS; `cm4_hotswap_test`/
   `cm4_hotswap2_test` regressions rebuilt clean. HW probe is wiring-free
   (`clean_boot.scp`, MU tokens on VCOM only), same controlled-probe procedure
-  as D7/hotswap2. **Future:** the bank's `blob` is already source-agnostic
-  (spec §8) — SD-loaded CM4 images is the natural next milestone, deliberately
-  deferred until slot-switching itself is HW-verified. Next: the HW probe
-  (plan Task 6), then flip to HW-VERIFIED.
+  as D7/hotswap2 — HW-VERIFIED 2026-07-20 (`transcript_hw_evkb.txt`): snapshot
+  `SCR=0`/`STAT_M4=1` (CM4 held), tokens byte-identical to QEMU, stable 2×.
+  ★A final holistic review caught a `begin()`-timeout eviction bug (the
+  stage-path eviction bookkeeping was gated on the boot result, but `begin()`
+  copies + resets UNCONDITIONALLY, so a later fast-flip could reboot a replaced
+  slot — a silent wrong-image boot); fixed in cores `483b279` (evict outside
+  `if(ok)`, `current_=-1` on a failed boot, overflow-safe `add()` bounds), gate
+  byte-identical after the fix. **Future:** the bank's `blob` is already
+  source-agnostic (spec §8) — SD-loaded CM4 images is the natural next
+  milestone, deferred until slot-switching itself was HW-verified (now done).
