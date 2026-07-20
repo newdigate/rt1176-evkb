@@ -728,3 +728,17 @@ CM7 HW-verified stream on the same block instances.
   byte-identical after the fix. **Future:** the bank's `blob` is already
   source-agnostic (spec §8) — SD-loaded CM4 images is the natural next
   milestone, deferred until slot-switching itself was HW-verified (now done).
+- 2026-07-20: **Repo tidy — all 57 firmware gates moved from the flat `evkb/`
+  root into `evkb/examples/<category>/`** (10 categories: dualcore, usb, audio,
+  networking, storage-memory, gpio-analog, timing, serial, display, framework).
+  Each gate's `CMakeLists.txt` + `toolchain/*.cmake` had its shared-core up-refs
+  deepened (`${CMAKE_CURRENT_LIST_DIR}/../` → `../../../`, `_evkb_root ../..` →
+  `../../../..`); `tools/license-audit.sh` `GATES` now uses
+  `examples/<cat>/<dir>` paths; the `run_qemu.sh` runners were already
+  path-agnostic (absolute `tools/` + `$(dirname $0)`). `cores/`,
+  `teensy-cmake-macros/`, `tools/`, `docs/` stay at the root; `mkr_ssd1306_test`
+  + `qemu_dcd_boot_test` (non-EVKB-target) stay flat. Index +
+  build-how-to: `evkb/examples/README.md`. So a gate now lives at e.g.
+  `evkb/examples/dualcore/cm4_imagebank_test/`. Historical
+  `docs/superpowers/{plans,specs}` + dated log entries above keep their original
+  flat paths as timestamped records.
