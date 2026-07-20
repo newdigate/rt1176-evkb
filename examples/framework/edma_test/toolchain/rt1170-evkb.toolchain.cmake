@@ -13,7 +13,11 @@ get_filename_component(_evkb_root "${CMAKE_CURRENT_LIST_DIR}/../../../.." ABSOLU
 set(COREPATH "${_evkb_root}/cores/imxrt1176/" CACHE STRING "imxrt1176 core path" FORCE)
 
 set(CMAKE_EXE_LINKER_FLAGS "--specs=nano.specs" CACHE INTERNAL "") # for linking stdc++ (nano)
-set(COMPILERPATH "/Applications/ARM_10/bin/")
+if(DEFINED ENV{ARM_TOOLCHAIN_BIN})
+    set(COMPILERPATH "$ENV{ARM_TOOLCHAIN_BIN}/")   # portable override
+else()
+    set(COMPILERPATH "/Applications/ARM_10/bin/")
+endif()
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")

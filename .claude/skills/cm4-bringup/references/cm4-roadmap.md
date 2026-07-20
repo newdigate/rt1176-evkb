@@ -742,3 +742,16 @@ CM7 HW-verified stream on the same block instances.
   `evkb/examples/dualcore/cm4_imagebank_test/`. Historical
   `docs/superpowers/{plans,specs}` + dated log entries above keep their original
   flat paths as timestamped records.
+- 2026-07-20: **Portability — examples now build for other users.** New
+  `evkb/evkb.cmake` (one-line bootstrap, included by all 57 examples): pinned
+  library manifest (13 repos, pinned by SHA) + `import_evkb_library`/
+  `evkb_library_dir`, resolving **local-first** (a `~/Development/<lib>`
+  checkout wins — the silicon-truth loop is unchanged) with a **pinned-GitHub
+  fallback** via new teensy-cmake-macros primitives
+  `resolve_arduino_library_auto`/`import_arduino_library_auto` (macros
+  `b92b235`, pushed). All `$ENV{HOME}/Development` references eliminated from
+  examples; toolchains honor `ARM_TOOLCHAIN_BIN`; `-DEVKB_FORCE_FETCH=ON` =
+  fresh-user mode. Pushed cores `483b279`, Wire `193e949`, SPI `eefd879`.
+  Verified: local 33/33 builds + license-audit PASS + fetch-sim 5/5 (blink,
+  cm4_wire_test, sd_wav_play_test, lwip_test, usb_host_hid_test built with NO
+  local checkouts). Remaining for full reach: evkb itself has no GitHub remote.

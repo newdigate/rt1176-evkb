@@ -4,13 +4,9 @@ project(cm4_image_test)
 # Fallback if the toolchain file isn't passed (see toolchain/rt1170-evkb…).
 set(TEENSY_VERSION 117 CACHE STRING "")
 
-include(FetchContent)
-FetchContent_Declare(teensy_cmake_macros SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../teensy-cmake-macros)
-FetchContent_MakeAvailable(teensy_cmake_macros)
-include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 
 # The imxrt1176 core (includes the Phase-1 Multicore + MessagingUnit).
-import_arduino_library(cores ${CMAKE_CURRENT_LIST_DIR}/../../../cores/imxrt1176)
 
 # Phase 2B: the CM4 secondary image is now a first-class dual target — the
 # macro compiles the bare-metal CM4 sources (own startup/linker) and emits

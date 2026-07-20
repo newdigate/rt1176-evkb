@@ -5,12 +5,8 @@ project(usb_keyboard_test)
 # toolchain file (toolchain/rt1170-evkb.toolchain.cmake); fallback keeps 117.
 set(TEENSY_VERSION 117 CACHE STRING "")
 
-include(FetchContent)
-FetchContent_Declare(teensy_cmake_macros SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../teensy-cmake-macros)
-FetchContent_MakeAvailable(teensy_cmake_macros)
-include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 
-import_arduino_library(cores ${CMAKE_CURRENT_LIST_DIR}/../../../cores/imxrt1176)
 
 teensy_add_executable(usb_keyboard_test usb_keyboard_test.cpp)
 teensy_target_link_libraries(usb_keyboard_test cores)

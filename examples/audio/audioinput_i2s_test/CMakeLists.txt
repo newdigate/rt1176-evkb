@@ -1,12 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 project(audioinput_i2s_test)
 set(TEENSY_VERSION 117 CACHE STRING "")
-include(FetchContent)
-FetchContent_Declare(teensy_cmake_macros SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../teensy-cmake-macros)
-FetchContent_MakeAvailable(teensy_cmake_macros)
-include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
-import_arduino_library(cores ${CMAKE_CURRENT_LIST_DIR}/../../../cores/imxrt1176)
-import_arduino_library(Wire $ENV{HOME}/Development/Wire)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
+evkb_library_dir(Audio EVKB_AUDIO_DIR)
+import_evkb_library(Wire)
 teensy_add_executable(audioinput_i2s_test audioinput_i2s_test.cpp)
 teensy_target_link_libraries(audioinput_i2s_test cores Wire)
 
@@ -16,11 +13,11 @@ teensy_target_link_libraries(audioinput_i2s_test cores Wire)
 # AudioInputI2S::begin() calls AudioOutputI2S::config_i2s() to bring up SAI1 TX
 # (RX runs synchronous to TX -- see input_i2s.cpp).
 target_sources(audioinput_i2s_test.elf PRIVATE
-    $ENV{HOME}/Development/Audio/input_i2s.cpp
-    $ENV{HOME}/Development/Audio/output_i2s.cpp
-    $ENV{HOME}/Development/Audio/control_wm8962.cpp
-    $ENV{HOME}/Development/Audio/analyze_peak.cpp)
-target_include_directories(audioinput_i2s_test.elf PRIVATE $ENV{HOME}/Development/Audio)
+    ${EVKB_AUDIO_DIR}/input_i2s.cpp
+    ${EVKB_AUDIO_DIR}/output_i2s.cpp
+    ${EVKB_AUDIO_DIR}/control_wm8962.cpp
+    ${EVKB_AUDIO_DIR}/analyze_peak.cpp)
+target_include_directories(audioinput_i2s_test.elf PRIVATE ${EVKB_AUDIO_DIR})
 
 target_link_libraries(audioinput_i2s_test.elf stdc++)
 target_link_libraries(audioinput_i2s_test.elf m)

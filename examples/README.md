@@ -15,6 +15,14 @@ cmake --build build
 The two SD examples (`storage-memory/sd_test`, `audio/sd_wav_play_test`) inline
 their toolchain, so they build with a plain `cmake -B build`.
 
+Every example bootstraps through **`../../../evkb.cmake`**: the build macros,
+the `cores` library, and all peripheral libraries resolve **local-first**
+(a `~/Development/<lib>` checkout wins) with a **pinned-GitHub fallback** — a
+fresh clone with no sibling checkouts fetches everything at the SHAs pinned in
+`evkb.cmake`. Set `CPM_SOURCE_CACHE` (e.g. `~/.cache/CPM`) to clone each repo
+once; pass `-DEVKB_FORCE_FETCH=ON` to force the fetch path (fresh-user mode);
+set `ARM_TOOLCHAIN_BIN` if your ARM GCC isn't at `/Applications/ARM_10/bin/`.
+
 ## Categories
 
 | Folder | Examples |

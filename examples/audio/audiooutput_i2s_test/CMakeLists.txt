@@ -1,12 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 project(audiooutput_i2s_test)
 set(TEENSY_VERSION 117 CACHE STRING "")
-include(FetchContent)
-FetchContent_Declare(teensy_cmake_macros SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../teensy-cmake-macros)
-FetchContent_MakeAvailable(teensy_cmake_macros)
-include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
-import_arduino_library(cores ${CMAKE_CURRENT_LIST_DIR}/../../../cores/imxrt1176)
-import_arduino_library(Wire $ENV{HOME}/Development/Wire)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
+evkb_library_dir(Audio EVKB_AUDIO_DIR)
+import_evkb_library(Wire)
 teensy_add_executable(audiooutput_i2s_test audiooutput_i2s_test.cpp)
 teensy_target_link_libraries(audiooutput_i2s_test cores Wire)
 
@@ -20,18 +17,18 @@ teensy_target_link_libraries(audiooutput_i2s_test cores Wire)
 # compiler assembles it without needing enable_language(ASM) project-wide.
 target_sources(audiooutput_i2s_test.elf PRIVATE
     audiooutput_i2s_test.cpp
-    $ENV{HOME}/Development/Audio/synth_sine.cpp
-    $ENV{HOME}/Development/Audio/data_waveforms.c
-    $ENV{HOME}/Development/Audio/analyze_peak.cpp
-    $ENV{HOME}/Development/Audio/output_i2s.cpp
-    $ENV{HOME}/Development/Audio/control_wm8962.cpp
-    $ENV{HOME}/Development/Audio/memcpy_audio.S
+    ${EVKB_AUDIO_DIR}/synth_sine.cpp
+    ${EVKB_AUDIO_DIR}/data_waveforms.c
+    ${EVKB_AUDIO_DIR}/analyze_peak.cpp
+    ${EVKB_AUDIO_DIR}/output_i2s.cpp
+    ${EVKB_AUDIO_DIR}/control_wm8962.cpp
+    ${EVKB_AUDIO_DIR}/memcpy_audio.S
 )
-set_source_files_properties($ENV{HOME}/Development/Audio/memcpy_audio.S PROPERTIES
+set_source_files_properties(${EVKB_AUDIO_DIR}/memcpy_audio.S PROPERTIES
     LANGUAGE C
     COMPILE_OPTIONS "-x;assembler-with-cpp"
 )
-target_include_directories(audiooutput_i2s_test.elf PRIVATE $ENV{HOME}/Development/Audio)
+target_include_directories(audiooutput_i2s_test.elf PRIVATE ${EVKB_AUDIO_DIR})
 
 target_link_libraries(audiooutput_i2s_test.elf stdc++)
 target_link_libraries(audiooutput_i2s_test.elf m)

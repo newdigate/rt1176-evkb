@@ -3,12 +3,11 @@ project(usb_midi_test)
 
 set(TEENSY_VERSION 117 CACHE STRING "")
 
-include(FetchContent)
-FetchContent_Declare(teensy_cmake_macros SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../teensy-cmake-macros)
-FetchContent_MakeAvailable(teensy_cmake_macros)
-include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
+evkb_library_dir(SPI EVKB_SPI_DIR)
+evkb_library_dir(SdFat EVKB_SDFAT_DIR)
+evkb_library_dir(USBHost_t36 EVKB_USBHOST_T36_DIR)
 
-import_arduino_library(cores ${CMAKE_CURRENT_LIST_DIR}/../../../cores/imxrt1176)
 
 teensy_add_executable(usb_midi_test usb_midi_test.cpp)
 teensy_target_link_libraries(usb_midi_test cores)
@@ -23,7 +22,7 @@ teensy_target_link_libraries(usb_midi_test cores)
 # bluetooth / sendL2CapCommand / BTHIDInput across the MIDI-only source set), so the
 # link needs no BluetoothController symbols.  This is the simplification the HID gate
 # could not take.
-set(USBHOST $ENV{HOME}/Development/USBHost_t36)
+set(USBHOST ${EVKB_USBHOST_T36_DIR})
 target_sources(usb_midi_test.elf PRIVATE
     ${USBHOST}/ehci.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
     ${USBHOST}/memory.cpp ${USBHOST}/midi.cpp)
@@ -39,7 +38,7 @@ target_sources(usb_midi_test.elf PRIVATE
 # dropped from this MIDI-only gate).
 target_include_directories(usb_midi_test.elf PRIVATE
     ${USBHOST} ${USBHOST}/utility
-    $ENV{HOME}/Development/SdFat/src
-    $ENV{HOME}/Development/SPI)
+    ${EVKB_SDFAT_DIR}/src
+    ${EVKB_SPI_DIR})
 
 target_link_libraries(usb_midi_test.elf stdc++)

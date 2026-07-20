@@ -3,12 +3,12 @@ project(usb_host_hid_test)
 
 set(TEENSY_VERSION 117 CACHE STRING "")
 
-include(FetchContent)
-FetchContent_Declare(teensy_cmake_macros SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../teensy-cmake-macros)
-FetchContent_MakeAvailable(teensy_cmake_macros)
-include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
+evkb_library_dir(EEPROM EVKB_EEPROM_DIR)
+evkb_library_dir(SPI EVKB_SPI_DIR)
+evkb_library_dir(SdFat EVKB_SDFAT_DIR)
+evkb_library_dir(USBHost_t36 EVKB_USBHOST_T36_DIR)
 
-import_arduino_library(cores ${CMAKE_CURRENT_LIST_DIR}/../../../cores/imxrt1176)
 
 teensy_add_executable(usb_host_hid_test usb_host_hid_test.cpp)
 teensy_target_link_libraries(usb_host_hid_test cores)
@@ -22,7 +22,7 @@ teensy_target_link_libraries(usb_host_hid_test cores)
 # BluetoothController (driver_ready_for_bluetooth / sendL2CapCommand), so it is a
 # required link dep even though the firmware instantiates no BluetoothController
 # (dead code, dropped by --gc-sections) -- same pattern as SPI-SD in the SD fs gate.
-set(USBHOST $ENV{HOME}/Development/USBHost_t36)
+set(USBHOST ${EVKB_USBHOST_T36_DIR})
 target_sources(usb_host_hid_test.elf PRIVATE
     ${USBHOST}/ehci.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
     ${USBHOST}/memory.cpp ${USBHOST}/hid.cpp ${USBHOST}/keyboard.cpp ${USBHOST}/mouse.cpp
@@ -37,8 +37,8 @@ target_sources(usb_host_hid_test.elf PRIVATE
 # MassStorageDriver.cpp does), so the header just needs to parse.
 target_include_directories(usb_host_hid_test.elf PRIVATE
     ${USBHOST} ${USBHOST}/utility
-    $ENV{HOME}/Development/SdFat/src
-    $ENV{HOME}/Development/SPI
-    $ENV{HOME}/Development/EEPROM)   # bluetooth.cpp #includes <EEPROM.h> (core links eeprom.c)
+    ${EVKB_SDFAT_DIR}/src
+    ${EVKB_SPI_DIR}
+    ${EVKB_EEPROM_DIR})   # bluetooth.cpp #includes <EEPROM.h> (core links eeprom.c)
 
 target_link_libraries(usb_host_hid_test.elf stdc++)

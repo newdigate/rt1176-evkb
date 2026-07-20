@@ -34,28 +34,31 @@ example/verification firmwares (`examples/`), and tooling (`tools/`).
   clean-room rewrite, and `tools/license-audit.sh` enforces this as a gate
   (it walks the actual build depfiles, not just the source tree).
 
-Peripheral libraries live as sibling repositories (Teensy library layout) and
-are imported by path: `~/Development/Wire`, `~/Development/SPI`,
-`~/Development/Audio`, `~/Development/SdFat`, `~/Development/PaulS_SD`,
-`~/Development/Ethernet`, `~/Development/NativeEthernet`, `~/Development/FNET`,
-`~/Development/lwip`, `~/Development/USBHost_t36`, `~/Development/EEPROM`,
-`~/Development/Bounce2`.
+Peripheral libraries (Wire, SPI, Audio, SdFat, SD, Ethernet, NativeEthernet,
+FNET, lwip, USBHost_t36, EEPROM, Bounce2) are resolved **local-first with a
+pinned-GitHub fallback** by `evkb.cmake`: a developer's `~/Development/<lib>`
+checkout wins (uncommitted edits included), and when it's absent the library is
+fetched from GitHub at a SHA pinned in the manifest — so a fresh clone builds
+with no sibling checkouts at all.
 
 ## Getting started
 
 **Prerequisites**
 
 - macOS (the tree is developed on macOS; paths below reflect that)
-- **ARM GCC 10** at `/Applications/ARM_10/bin/` (`arm-none-eabi-gcc`) — the
-  toolchain files hardcode this path; edit
-  `examples/*/*/toolchain/rt1170-evkb.toolchain.cmake` if yours lives elsewhere
+- **ARM GCC 10** (`arm-none-eabi-gcc`) — default path `/Applications/ARM_10/bin/`;
+  point the `ARM_TOOLCHAIN_BIN` environment variable at your toolchain's `bin`
+  directory to override
 - **CMake ≥ 3.24**
 - **NXP LinkServer** (e.g. `/Applications/LinkServer_26.6.137/`) for flashing
   via the on-board MCU-Link — use LinkServer, not pyOCD (pyOCD is unreliable
   programming this board's FlexSPI NOR)
 - Optional: the custom **qemu2** (`~/Development/qemu2`, `mimxrt1170-evk`
   machine) to run every example without hardware
-- The sibling library checkouts listed above, for examples that use them
+- Optional: sibling library checkouts under `~/Development/` — used when
+  present; otherwise fetched automatically from GitHub at pinned refs. Set the
+  `CPM_SOURCE_CACHE` env var (e.g. `~/.cache/CPM`) so each repo is cloned once
+  and shared across build directories
 
 **Try an example**
 
@@ -92,18 +95,21 @@ macros; each example is a self-contained consumer project:
 ```cmake
 cmake_minimum_required(VERSION 3.24)
 project(my_sketch)
-include(FetchContent)
-FetchContent_Declare(teensy_cmake_macros SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../teensy-cmake-macros)
-FetchContent_MakeAvailable(teensy_cmake_macros)
-include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)  # macros + cores + manifest
 
-import_arduino_library(cores ${CMAKE_CURRENT_LIST_DIR}/../../../cores/imxrt1176)
-import_arduino_library(Wire  $ENV{HOME}/Development/Wire)   # optional libraries
+import_evkb_library(Wire)     # optional libraries, by manifest name — local
+                              # checkout if present, else pinned GitHub fetch
 
 teensy_add_executable(my_sketch my_sketch.cpp)              # .ino works too
 teensy_target_link_libraries(my_sketch cores Wire)
 target_link_libraries(my_sketch.elf stdc++)
 ```
+
+`evkb.cmake` bootstraps `teensy-cmake-macros`, imports the `cores` library, and
+defines the pinned manifest (`import_evkb_library(<name> [subdirs])`, plus
+`evkb_library_dir(<name> OUT_DIR)` for cherry-picked sources). Configure with
+`-DEVKB_FORCE_FETCH=ON` to ignore all local checkouts and build purely from
+the pinned GitHub refs (the "fresh user" mode).
 
 Configure with the board toolchain file (`TEENSY_VERSION 117`, core clock
 996 MHz, `COREPATH` → `cores/imxrt1176/`, linker script `imxrt1176.ld`, XIP
@@ -157,12 +163,15 @@ on a real EVKB unless noted.
 - **One board.** Only the MIMXRT1170-EVKB (RT1176) is supported — pin tables,
   linker script, clocks and the flash layout are board-specific. No Arduino
   IDE / arduino-cli integration; the build is CMake-only.
-- **macOS-centric tooling.** Toolchain and LinkServer paths are hardcoded for
-  macOS; other hosts will need toolchain-file edits. The serial console must be
-  read with something that holds 115200 (macOS `cat` drops it to 9600).
-- **Sibling-library layout.** Library-using examples expect the library repos
-  checked out under `~/Development/` (see Overview); there is no package
-  manager or automatic fetch for them.
+- **macOS-centric tooling.** LinkServer paths and the default toolchain
+  location are macOS-flavoured (the compiler is overridable via
+  `ARM_TOOLCHAIN_BIN`); other hosts may need small toolchain-file edits. The
+  serial console must be read with something that holds 115200 (macOS `cat`
+  drops it to 9600).
+- **Pinned-manifest maintenance.** Fresh-clone builds fetch libraries at SHAs
+  pinned in `evkb.cmake`; after pushing new library work, the pin must be
+  updated by hand (push → paste the new SHA → commit) or fresh users keep
+  building the older ref.
 - **CM4 constraints.** The main eDMA's completion interrupts are wired to the
   CM7 only — CM4 interrupt-driven DMA requires the eDMA_LPSR instance and an
   LPSR-domain peripheral (LPI2C5/6, LPSPI5/6, LPUART11/12…). The CM4's fast
