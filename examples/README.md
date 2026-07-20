@@ -41,7 +41,7 @@ set `ARM_TOOLCHAIN_BIN` if your ARM GCC isn't at `/Applications/ARM_10/bin/`.
 ## Not examples (still at `evkb/` root)
 
 - `cores/`, `teensy-cmake-macros/` — the Teensy-derived core + build macros (their own nested git repos).
-- `tools/` — `qrun`, `gate-lib.sh`, `license-audit.sh`.
+- `tools/` — `qrun`, `gate-lib.sh`, `license-audit.sh`, and the board helper scripts `rt1170-flash.sh`, `rt1170-qemu.sh`, `rt1170-console.py`.
 - `docs/` — specs, plans, QEMU peripheral status.
 - `mkr_ssd1306_test/`, `qemu_dcd_boot_test/` — an MKR-Zero companion sketch + a DCD boot probe (not EVKB-target gates).
 

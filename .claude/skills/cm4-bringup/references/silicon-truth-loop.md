@@ -24,7 +24,7 @@ QEMU (image is a flexspi_nor boot-header image; the stub needs boot-xip):
 EVKB (MCU-Link on the debug USB; VCOM is the LPUART1 console):
 
     # console capture (survives reconnects); port from rt1170-flash.sh
-    python3 ~/Development/rt1170/rt1170-console.py \
+    python3 ~/Development/rt1170/evkb/tools/rt1170-console.py \
         /dev/cu.usbmodem5DQ2DDHVWO5EI3 115200 > hw.uart &
     /Applications/LinkServer_26.6.137/LinkServer flash \
         MIMXRT1176:MIMXRT1170-EVKB load probe.elf     # auto-runs after

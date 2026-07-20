@@ -57,7 +57,7 @@ the qemu model's deferred-NDF was corrected against this exact trap).
 No jumper needed — the WM8962 and its pull-ups are soldered on (codec I2C
 needs no MCLK for register access).  For an uncontaminated boot:
 
-    python3 ~/Development/rt1170/rt1170-console.py \
+    python3 ~/Development/rt1170/evkb/tools/rt1170-console.py \
         /dev/cu.usbmodem5DQ2DDHVWO5EI3 115200 > /tmp/hw.uart &
     /Applications/LinkServer_26.6.137/LinkServer flash \
         MIMXRT1176:MIMXRT1170-EVKB load build/cm4_wire_test.elf

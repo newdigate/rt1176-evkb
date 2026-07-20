@@ -24,7 +24,7 @@ NVIC 118, and a CM4 restart.
 ## Run on the EVKB
 
     # VCOM reader first, then flash (auto-runs), then a clean boot:
-    python3 ../../rt1170-console.py /dev/cu.usbmodem5DQ2DDHVWO5EI3 115200 > hw.uart &
+    python3 ../../../tools/rt1170-console.py /dev/cu.usbmodem5DQ2DDHVWO5EI3 115200 > hw.uart &
     /Applications/LinkServer_26.6.137/LinkServer flash MIMXRT1176:MIMXRT1170-EVKB load build/cm4_boot_test.elf
     sleep 3; : > hw.uart   # drop the contaminated post-flash autorun
     /Applications/LinkServer_26.6.137/LinkServer probe 5DQ2DDHVWO5EI \

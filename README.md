@@ -83,8 +83,12 @@ LinkServer flash MIMXRT1176:MIMXRT1170-EVKB load build/<name>.elf
 ```
 
 Console output is on the MCU-Link VCOM (`/dev/cu.usbmodem…`) at **115200**.
-Note: macOS `cat` resets the port to 9600 — read it with pyserial (or any
-terminal program that holds the baud rate). If the board is silent after a
+Note: macOS `cat` resets the port to 9600 — read it with
+`tools/rt1170-console.py <port> 115200` (pyserial; holds the baud and
+auto-reconnects across board resets) or any terminal program that holds the
+baud rate. `tools/rt1170-flash.sh <image.elf>` wraps the flash + console
+combo, and `tools/rt1170-qemu.sh <image.elf>` boots an arbitrary image in the
+QEMU machine outside the gate harness. If the board is silent after a
 plain `flash load`, the debug probe left the core halted: power-cycle the
 board, or use `LinkServer run MIMXRT1176:MIMXRT1170-EVKB <name>.elf` which
 loads, resets and free-runs in one step.

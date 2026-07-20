@@ -10,8 +10,10 @@ core. `README.md` and `examples/README.md` are accurate and detailed — read
 them for anything not covered here.
 
 The parent directory (`~/Development/rt1170/`) is a non-git workspace holding
-reference material: NXP PDFs/design files, `rm_full.txt` (the reference manual
-as text), and helper scripts (`rt1170-flash.sh`, `rt1170-console.py`).
+NXP reference material only (reference-manual and board PDFs, `rm_full.txt` —
+the reference manual as searchable text — and the EVKB RevC3 design files).
+It is kept out of the repo deliberately: those files are NXP-copyrighted and
+large.
 
 ### Git layout (important)
 
@@ -93,9 +95,11 @@ LinkServer run MIMXRT1176:MIMXRT1170-EVKB build/<name>.elf   # load + reset + fr
 Use **LinkServer** (`/Applications/LinkServer_26.6.137/`), not pyOCD — pyOCD is
 unreliable programming this board's FlexSPI NOR. Console is the MCU-Link VCOM
 (`/dev/cu.usbmodem…`) at 115200; read it with pyserial
-(`../rt1170-console.py <port> 115200`) — macOS `cat` silently resets the port
-to 9600. Start the serial reader *before* triggering a reset if you need boot
-output.
+(`tools/rt1170-console.py <port> 115200`) — macOS `cat` silently resets the
+port to 9600. Start the serial reader *before* triggering a reset if you need
+boot output. `tools/rt1170-flash.sh` wraps flash + console;
+`tools/rt1170-qemu.sh` boots an arbitrary image in QEMU outside the gate
+harness.
 
 ## Architecture
 

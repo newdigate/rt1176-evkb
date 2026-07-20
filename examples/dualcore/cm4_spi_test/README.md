@@ -50,7 +50,7 @@ Jumper **SDO (GPIO_AD_30) → SDI (GPIO_AD_31)** on the Arduino header. Then, fo
 an uncontaminated boot (LinkServer's connect script otherwise wakes the CM4 and
 pokes CLOCK_ROOT1 — which would mask a CM4 clock-config bug):
 
-    python3 ~/Development/rt1170/rt1170-console.py \
+    python3 ~/Development/rt1170/evkb/tools/rt1170-console.py \
         /dev/cu.usbmodem5DQ2DDHVWO5EI3 115200 > transcript_hw_evkb.txt &
     /Applications/LinkServer_26.6.137/LinkServer flash \
         MIMXRT1176:MIMXRT1170-EVKB load build/cm4_spi_test.elf
