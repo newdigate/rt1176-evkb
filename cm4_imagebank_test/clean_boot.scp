@@ -1,0 +1,49 @@
+100 REM Clean boot: SYSRESETREQ (SoC to reset state, M4 held), snapshot the
+110 REM SRC/MU/CCM registers over the DAP while nothing has run, then dispatch
+120 REM the flexspi image at 0x30002000 manually (the ROM parks after a
+130 REM debugger reset on this silicon) WITHOUT waking the M4.
+200 p% = ProbeFirstFound
+210 WireSwdConnect p%
+220 SelectProbeCore p% 0
+230 CMInitApDp this
+240 CMResetVectorCatchSet this
+250 CMSysResetReq this
+260 WireSwdConnect p%
+270 CMInitApDp this
+300 PRINT "=== clean-silicon snapshot (M4 held, nothing ran) ==="
+310 s% = Peek32 this 0x40C04000
+320 PRINT "SCR      = "; ~s%
+330 s% = Peek32 this 0x40C04004
+340 PRINT "SRMR     = "; ~s%
+350 s% = Peek32 this 0x40C48020
+360 PRINT "MUA_SR   = "; ~s%
+370 s% = Peek32 this 0x40C4C020
+380 PRINT "MUB_SR   = "; ~s%
+390 s% = Peek32 this 0x40C04280
+400 PRINT "AUTHEN_M4= "; ~s%
+410 s% = Peek32 this 0x40C04284
+420 PRINT "CTRL_M4  = "; ~s%
+430 s% = Peek32 this 0x40C0428C
+440 PRINT "DOMAIN_M4= "; ~s%
+450 s% = Peek32 this 0x40C04290
+460 PRINT "STAT_M4  = "; ~s%
+470 s% = Peek32 this 0x40CC0080
+480 PRINT "CLKROOT1 = "; ~s%
+490 s% = Peek32 this 0x40C0C000
+500 PRINT "LPSR_GPR0= "; ~s%
+510 s% = Peek32 this 0x40C0C004
+520 PRINT "LPSR_GPR1= "; ~s%
+600 REM dispatch the image: SP/PC from the application vector table
+610 d% = 0x30002000
+620 b% = Peek32 this d%
+630 a% = Peek32 this (d% + 4)
+640 PRINT "img SP = "; ~b%
+650 PRINT "img PC = "; ~a%
+660 CMWriteReg this 13 b%
+670 CMWriteReg this 15 a%
+680 CMWriteReg this 16 0x01000000
+690 Poke32 this 0xE000ED08 d%
+700 CMResetVectorCatchClear this
+710 PRINT "dispatching image"
+720 CMRun this
+730 END

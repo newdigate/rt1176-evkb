@@ -1,0 +1,89 @@
+/* Cortex-M4 startup for the D7 hot-swap CM4 images (cm4_hs_a / cm4_hs_b).
+ *
+ * Same minimal reset handler as cm4_wire_int_master_test / cm4_image_test
+ * (relocate VTOR to 0x1FFE0000, reload MSP, enable FPU, copy .data, zero .bss,
+ * call main), byte-identical.  These images do NO peripheral interrupts — they
+ * only mu_send() a ready + identity token then park in WFI — so the vector
+ * table is MINIMAL: SysTick at exception 15, every external IRQ 0..117 spins in
+ * Default_Handler, and the MU interrupt (external IRQ 118) at vector index
+ * 16+118 = 134 is referenced but unused (the CM4 never NVIC-enables it).
+ * SysTick_Handler and MU_IRQHandler are empty C functions in main_cm4.c.
+ *
+ * The table is 135 words (540 B); VTOR must cover it, so it sits at
+ * ORIGIN(ITCM)=0x1FFE0000, which is 1 KB aligned. Public domain (N. Newdigate).
+ */
+    .syntax unified
+    .cpu cortex-m4
+    .thumb
+
+    .section .isr_vector, "a"
+    .align 2
+    .global __isr_vector
+__isr_vector:
+    .word __StackTop            /* 0: initial MSP */
+    .word Reset_Handler         /* 1: reset */
+    .word Default_Handler       /* 2: NMI */
+    .word Default_Handler       /* 3: HardFault */
+    .word Default_Handler       /* 4: MemManage */
+    .word Default_Handler       /* 5: BusFault */
+    .word Default_Handler       /* 6: UsageFault */
+    .word 0                     /* 7-10: reserved */
+    .word 0
+    .word 0
+    .word 0
+    .word Default_Handler       /* 11: SVCall */
+    .word Default_Handler       /* 12: DebugMon */
+    .word 0                     /* 13: reserved */
+    .word Default_Handler       /* 14: PendSV */
+    .word SysTick_Handler       /* 15: SysTick */
+    /* external IRQs 0..117 -> vector index 16..133 (all unused, spin) */
+    .rept 118
+    .word Default_Handler
+    .endr
+    .word MU_IRQHandler         /* 134: external IRQ 118 (MU), referenced/unused */
+
+    .text
+    .thumb_func
+    .align 2
+    .global Reset_Handler
+Reset_Handler:
+    cpsid   i
+
+    ldr     r0, =0xE000ED08         /* SCB->VTOR = our ITCM table */
+    ldr     r1, =__isr_vector
+    str     r1, [r0]
+    ldr     r2, [r1]
+    msr     msp, r2
+
+    ldr     r0, =0xE000ED88         /* SCB->CPACR: enable M4F FPU (CP10/CP11) */
+    ldr     r1, [r0]
+    orr     r1, r1, #(0xF << 20)
+    str     r1, [r0]
+    dsb
+    isb
+
+    ldr     r0, =__data_start__     /* copy .data ITCM-LMA -> DTCM-VMA */
+    ldr     r1, =__data_end__
+    ldr     r2, =__data_load__
+1:  cmp     r0, r1
+    ittt    lo
+    ldrlo   r3, [r2], #4
+    strlo   r3, [r0], #4
+    blo     1b
+
+    ldr     r0, =__bss_start__      /* zero .bss */
+    ldr     r1, =__bss_end__
+    movs    r3, #0
+2:  cmp     r0, r1
+    itt     lo
+    strlo   r3, [r0], #4
+    blo     2b
+
+    bl      main
+3:  b       3b
+
+    .thumb_func
+    .align 2
+    .global Default_Handler
+Default_Handler:
+    b       Default_Handler
