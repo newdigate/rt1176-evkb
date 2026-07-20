@@ -1,0 +1,11 @@
+=== clean-boot snapshot (CM4 held — no LinkServer contamination) ===
+SCR      = 0x00000000   (BT_RELEASE_M4 not set -> CM4 held)
+STAT_M4  = 0x00000001   (held from reset)
+=== VCOM (A@0x20200000/ITCM 0x1FFE0000, B@0x20210000/ITCM 0x1FFF0000; switchImage between resident images) ===
+CM4HOTSWAP2-GATE v1
+idA=A1A1A1A1
+idB=B2B2B2B2
+idA2=A1A1A1A1
+idB2=B2B2B2B2
+HOTSWAP2=PASS
+CM4HOTSWAP2-DONE
