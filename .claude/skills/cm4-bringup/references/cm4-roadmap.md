@@ -690,3 +690,35 @@ CM7 HW-verified stream on the same block instances.
   CM4 task images** — multiple CM4 programs resident with a fast VTOR-switch, no
   re-flash/re-copy. CM4 bring-up fully HW-verified (Phases 1-4 + D7 both
   variants). Next: a new capability.
+- 2026-07-20: **Cm4ImageBank (CM4 image bank over `Multicore::switchImage`)
+  IMPLEMENTED — QEMU GREEN, stable 3× (`51d9457`); HW clean-boot probe PENDING
+  (the next task).** Brainstormed → spec
+  (`docs/superpowers/specs/2026-07-20-cm4-imagebank-design.md`) + plan
+  (`docs/superpowers/plans/2026-07-20-cm4-imagebank.md`, 6 tasks). New
+  `cores/imxrt1176/Cm4ImageBank.{h,cpp}` + `Cm4Slots.h`: a small CM7-side
+  registry over the HW-verified `Multicore` boot machinery — register several
+  build-fixed CM4 images and switch the running CM4 among them by handle via
+  one call, `switchTo`, that unifies residency: a fast no-copy VTOR flip
+  (`Multicore::switchImage`) when the target's slot already holds it and the
+  CM4 is running, else (re)stage + boot (`Multicore::begin`), evicting
+  whatever else occupied that slot. Uniform slots come from ONE new build
+  knob, `CM4_SLOT_SIZE`, driving both the linker `ORIGIN` (new
+  `teensy_add_cm4_slot_image` helper, teensy-cmake-macros) and the runtime
+  `CM4_SLOT_STAGE(k)` macro (`Cm4Slots.h`) the CM7 hands `bank.add()` — one
+  source of truth for the layout. New gate `evkb/cm4_imagebank_test` (A/B/C in
+  slots 0/1/2, D sharing A's slot 0) proves all three design claims:
+  co-residency + no-copy flip (`resABC=E`, then `idA2=A1A1A1A1` flipping back
+  through B/C); slot-scoped eviction (`switchTo(D)` evicts ONLY A — `resD=7`,
+  B/C/D stay resident); and an un-fakeable re-stage (`switchTo(A)` after D
+  re-copies A onto slot 0 instead of flipping onto D's resident blob —
+  `idA3=A1A1A1A1`, NOT `D4D4D4D4`, `resA3=E`). **No `Multicore` or qemu2
+  change** — built entirely on the existing HW-verified `switchImage`/`begin`
+  primitives (the machine already maps the full 256K `ocram_m4` backdoor and
+  re-reads GPR0/1 fresh, per the D7/hotswap2 finding). license-audit extended
+  (`cm4_imagebank_test:cm4_imagebank_test`) + PASS; `cm4_hotswap_test`/
+  `cm4_hotswap2_test` regressions rebuilt clean. HW probe is wiring-free
+  (`clean_boot.scp`, MU tokens on VCOM only), same controlled-probe procedure
+  as D7/hotswap2. **Future:** the bank's `blob` is already source-agnostic
+  (spec §8) — SD-loaded CM4 images is the natural next milestone, deliberately
+  deferred until slot-switching itself is HW-verified. Next: the HW probe
+  (plan Task 6), then flip to HW-VERIFIED.
