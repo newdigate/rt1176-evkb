@@ -26,7 +26,8 @@ example/verification firmwares (`examples/`), and tooling (`tools/`).
   (uniform ITCM slots, fast no-copy VTOR switch). CM4 sketches are compiled by
   the same build system and embedded into the CM7 image.
 - **Everything is verified twice.** Each capability has a scripted QEMU gate
-  (a custom `qemu2` machine model of the RT1176, both cores) *and* a hardware
+  (a custom [QEMU machine model](https://gitlab.com/Newdigate/qemu-rt1170) of
+  the RT1176, both cores) *and* a hardware
   probe on the real EVKB with un-fakeable assertions. "Silicon wins" — QEMU
   divergences found on the board are documented, never absorbed silently.
 - **Permissive licensing throughout.** The firmware tree is MIT/BSD/public-
@@ -53,7 +54,8 @@ with no sibling checkouts at all.
 - **NXP LinkServer** (e.g. `/Applications/LinkServer_26.6.137/`) for flashing
   via the on-board MCU-Link — use LinkServer, not pyOCD (pyOCD is unreliable
   programming this board's FlexSPI NOR)
-- Optional: the custom **qemu2** (`~/Development/qemu2`, `mimxrt1170-evk`
+- Optional: the custom
+  [**qemu-rt1170**](https://gitlab.com/Newdigate/qemu-rt1170) (`mimxrt1170-evk`
   machine) to run every example without hardware
 - Optional: sibling library checkouts under `~/Development/` — used when
   present; otherwise fetched automatically from GitHub at pinned refs. Set the
@@ -187,7 +189,9 @@ on a real EVKB unless noted.
   second USB port clamps A5/SCL to 0 V and silently kills header I²C. FlexCAN
   RX mailboxes lock when their C/S word is read; drain via the proper sequence
   rather than tight-polling.
-- **QEMU is a gate, not an oracle.** The qemu2 model doesn't enforce clock
+- **QEMU is a gate, not an oracle.** The
+  [qemu-rt1170](https://gitlab.com/Newdigate/qemu-rt1170) model doesn't enforce
+  clock
   gating/pin muxing everywhere and stubs some devices (e.g. codec register
   reads); several real bugs only ever reproduced on silicon. Hardware remains
   the final arbiter — treat a QEMU pass as necessary, not sufficient.
