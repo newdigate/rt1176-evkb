@@ -87,6 +87,17 @@ docs) with `git -C evkb …`. Check `git status` in each before committing.
 
 ## Task 1: `Cm4ImageBank` core class + slot glue
 
+> **★ Post-implementation refinement (final-review catch, 2026-07-20, cores
+> `483b279`):** the `Cm4ImageBank.cpp` below was shipped as written, then the
+> final holistic review found an error-path bug — `switchTo`'s stage-path
+> eviction was gated behind `if (ok)`, but `Multicore::begin()` copies + resets
+> *unconditionally*, so a `begin()` timeout would leave `resident_` stale and a
+> later fast-flip could reboot a replaced slot (silent wrong-image boot). The
+> shipped fix moves the eviction outside `if (ok)`, sets `current_ = -1` on a
+> failed boot, and makes `add()`'s window check overflow-safe. **Use the
+> corrected logic in spec §3.2, not the code block below.** (Gate output
+> byte-identical; happy path unchanged.)
+
 **Files:**
 - Create: `cores/imxrt1176/Cm4ImageBank.h`
 - Create: `cores/imxrt1176/Cm4ImageBank.cpp`

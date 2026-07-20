@@ -168,8 +168,9 @@ bank.switchTo(a);   // A still resident → fast VTOR flip, no copy
 ```cpp
 int Cm4ImageBank::add(blob, bytes, stageAddr, name) {
     if (n_ >= MAX_IMAGES)                                          return -1;
-    if (stageAddr < CM4_ITCM_BACKDOOR_BASE ||                     // fit window
-        stageAddr + bytes > CM4_ITCM_BACKDOOR_BASE + CM4_ITCM_BACKDOOR_SIZE)
+    if (stageAddr < CM4_ITCM_BACKDOOR_BASE ||                     // fit window,
+        bytes > CM4_ITCM_BACKDOOR_SIZE ||                         // overflow-safe
+        stageAddr - CM4_ITCM_BACKDOOR_BASE > CM4_ITCM_BACKDOOR_SIZE - bytes)
                                                                   return -1;
     for (int i = 0; i < n_; i++)                                  // partial overlap
         if (imgs_[i].stageAddr != stageAddr &&                    // with a *different*
@@ -182,17 +183,16 @@ int Cm4ImageBank::add(blob, bytes, stageAddr, name) {
 bool Cm4ImageBank::switchTo(int h) {
     if (h < 0 || h >= n_) return false;
     bool ok;
-    if (resident_[h] && Multicore.running()) {                    // FAST PATH: VTOR flip
+    if (resident_[h] && Multicore.running()) {                    // FAST PATH: flip, no copy
         Multicore.switchImage(imgs_[h].stageAddr); ok = Multicore.running();
     } else {                                                      // STAGE PATH: copy + boot
         ok = Multicore.begin(imgs_[h].blob, imgs_[h].bytes, imgs_[h].stageAddr);
-        if (ok) {
-            for (int i = 0; i < n_; i++)                          // evict same-slot siblings
-                if (imgs_[i].stageAddr == imgs_[h].stageAddr) resident_[i] = false;
-            resident_[h] = true;
-        }
+        for (int i = 0; i < n_; i++)                              // begin() copied + reset
+            if (imgs_[i].stageAddr == imgs_[h].stageAddr)         // UNCONDITIONALLY, so
+                resident_[i] = false;                             // evict even when !ok
+        resident_[h] = true;
     }
-    if (ok) current_ = h;
+    current_ = ok ? h : -1;      // a failed boot -> running image unknown, not stale
     return ok;
 }
 ```
@@ -209,9 +209,14 @@ bool Cm4ImageBank::switchTo(int h) {
   sharing `h`'s `stageAddr`, then sets `h`. Distinct-slot images keep theirs.
 - `switchTo(current)` when resident is a fast flip = reboots it in place
   ("reset this image").
-- **Errors never corrupt state:** bad handle / full table / out-of-window /
-  overlap → −1 or `false`; a `begin()`/flip reset-timeout → `false`,
-  `current_`/`resident_` unchanged (caller may retry).
+- **Error paths:** bad handle / full table / out-of-window / overlap → −1 or
+  `false` with no side effect. A `begin()`/flip **reset-timeout** returns
+  `false`, but `begin()` has already copied the image and pulsed reset
+  *unconditionally* — so the stage path still records the eviction (`resident_`
+  tracks physical slot content, not the boot outcome) and sets `current_ = −1`
+  (running image unknown). This is what stops a later fast-flip from rebooting a
+  slot whose bytes were already replaced (a silent wrong-image boot). ★Refined
+  post-implementation (final-review catch, 2026-07-20).
 
 ### 3.3 Build-side uniform slots
 
