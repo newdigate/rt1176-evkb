@@ -18,7 +18,8 @@ fail=0
 REPOS="$EVKB/cores $HOME/Development/Ethernet $HOME/Development/NativeEthernet \
 $HOME/Development/SdFat $HOME/Development/SPI $HOME/Development/Wire \
 $HOME/Development/Audio $HOME/Development/SD $HOME/Development/PaulS_SD \
-$HOME/Development/USBHost_t36 $HOME/Development/FNET $HOME/Development/lwip"
+$HOME/Development/USBHost_t36 $HOME/Development/FNET $HOME/Development/lwip \
+$HOME/Development/CMSIS-DSP $HOME/Development/CMSIS_6"
 
 # Allowlist (extended regex), each entry justified:
 #   cores/teensy*        — uncompiled PJRC reference copies, never in any build
@@ -57,7 +58,7 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # (teensy-cmake-macros), whose gcc step emits <obj>.o.d depfiles (-MMD -MF,
 # added 2026-07-18) — so CM4-side sources are covered by this same walk
 # (the *.o.d pattern below), not just their provenance headers.
-GATES="examples/audio/sd_wav_play_test:sd_wav_play_test examples/networking/ethernet_test:ethernet_test examples/networking/native_ethernet_test:native_ethernet_test examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_image_test:cm4_image_test examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_spi_test:cm4_spi_test examples/dualcore/cm4_wire_test:cm4_wire_test examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test examples/dualcore/cm4_imagebank_test:cm4_imagebank_test"
+GATES="examples/audio/sd_wav_play_test:sd_wav_play_test examples/networking/ethernet_test:ethernet_test examples/networking/native_ethernet_test:native_ethernet_test examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_image_test:cm4_image_test examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_spi_test:cm4_spi_test examples/dualcore/cm4_wire_test:cm4_wire_test examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test examples/dualcore/cm4_imagebank_test:cm4_imagebank_test examples/framework/arm_math_test:arm_math_test examples/audio/filter_fir_test:filter_fir_test"
 for pair in $GATES; do
   g=${pair%%:*}; t=${pair##*:}
   bdir=$EVKB/$g/build
