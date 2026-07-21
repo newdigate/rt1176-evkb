@@ -40,7 +40,7 @@ static void pump(int n) {
 // Set the tone, flush the filter+FFT averaging pipeline, return a fresh read.
 static float measure(float freq, int bin) {
     sine1.frequency(freq);
-    pump(48);                  // 24 FFTs -> 3 full 8-FFT averaging rounds settle
+    pump(48);                  // ~47 overlapped FFTs -> ~6 full 8-FFT averaging rounds settle
     (void)fft1.available();    // discard any stale output flag
     for (int i = 0; i < 400; i++) {
         pump(2);
@@ -66,10 +66,11 @@ void setup() {
     float atten_db = (sb > 0.0001f && pb > 0.0f) ? 20.0f * log10f(sb / pb) : -60.0f;
     Serial1.print("FIR: atten_db="); Serial1.println(atten_db, 1);
 
-    bool pass_pb = (pb > 0.30f);
+    bool pass_pb = (pb > 0.30f && pb < 0.55f);
+    bool pass_pk = (pk > 0.7f && pk < 0.95f);
     bool pass_sb = (sb >= 0.0f && sb < 0.04f);
-    Serial1.println(pass_pb ? "STAGE_PB=PASS" : "STAGE_PB=FAIL");
+    Serial1.println((pass_pb && pass_pk) ? "STAGE_PB=PASS" : "STAGE_PB=FAIL");
     Serial1.println(pass_sb ? "STAGE_SB=PASS" : "STAGE_SB=FAIL");
-    Serial1.println((pass_pb && pass_sb) ? "FIR_ALL=PASS" : "FIR_ALL=FAIL");
+    Serial1.println((pass_pb && pass_pk && pass_sb) ? "FIR_ALL=PASS" : "FIR_ALL=FAIL");
 }
 void loop() {}
