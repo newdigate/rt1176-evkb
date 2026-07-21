@@ -65,6 +65,10 @@ target_include_directories(guard_sweep_test.elf PRIVATE
 
 teensy_target_link_libraries(guard_sweep_test cores)
 target_link_libraries(guard_sweep_test.elf stdc++)
+# The toolchain's -lm precedes the objects in LINK_FLAGS; re-link libm after
+# them (same convention as i2s_audio_test and the other audio gates) for the
+# gate's sinf/lrintf and synth_wavetable.h's inline powf.
+target_link_libraries(guard_sweep_test.elf m)
 
 # TEMPORARY (removed in Task 2): synth_wavetable.cpp:30 carries a stale,
 # unconditional `#include <SerialFlash.h>` (zero SerialFlash symbols used).
