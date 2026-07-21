@@ -33,7 +33,7 @@ if(EXISTS ${EVKB_ROOT}/teensy-cmake-macros/CMakeLists.include.txt AND NOT EVKB_F
 else()
     FetchContent_Declare(teensy_cmake_macros
         GIT_REPOSITORY https://github.com/newdigate/teensy-cmake-macros
-        GIT_TAG        b92b235e0717f403265a9b98f4406c1749573319)
+        GIT_TAG        e948da4d43cf76e3a0d8813cd85e6da314a0a569)
 endif()
 FetchContent_MakeAvailable(teensy_cmake_macros)
 include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
@@ -51,7 +51,7 @@ macro(_evkb_lib NAME LOCAL URL REF PATH)
 endmacro()
 
 set(_dev "$ENV{HOME}/Development")
-_evkb_lib(cores          ${EVKB_ROOT}/cores/imxrt1176 https://github.com/newdigate/teensy-cores    483b279c003d10452d79200d250111d3dacdf39a imxrt1176)
+_evkb_lib(cores          ${EVKB_ROOT}/cores/imxrt1176 https://github.com/newdigate/teensy-cores    7f44a4ed9857b2cc4284d6b9472575952e76237f imxrt1176)
 _evkb_lib(Wire           ${_dev}/Wire                 https://github.com/newdigate/Wire            193e949c51c8da316df6ed619e019e308acaca45 .)
 _evkb_lib(SPI            ${_dev}/SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
 _evkb_lib(Audio          ${_dev}/Audio                https://github.com/newdigate/Audio           460d0c174ac5ee4718133942abb094f0caca05dd .)

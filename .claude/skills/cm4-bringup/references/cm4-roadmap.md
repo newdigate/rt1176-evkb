@@ -1,6 +1,11 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 4 — 4.1 + 4.2 (interrupt Wire) + the eDMA_LPSR DMA-Wire
+**Current phase: 5 — CM4 audio foundation, Plan 1 of 2, ★★ALL HW-VERIFIED
+(2026-07-21)** — the SAI1-IRQ-on-CM4 probe, the CM4 C++ image world, and
+AudioStream running on the CM4 are all done (see "Phase 5" below). Plan 2 of 2
+(sai1176 shared core, interrupt-driven I/O nodes, CMSIS-DSP-CM4, capstone) is
+queued next. Superseded pointer, kept for history — **Phase 4: 4.1 + 4.2
+(interrupt Wire) + the eDMA_LPSR DMA-Wire
 milestone ★★ALL HW-VERIFIED (2026-07-19); 4.3 SPI-DMA is a polled CM4 result +
 the two-eDMA finding.** Phase 4 = "Interrupt-driven / DMA SPI/Wire on the CM4".
 ★★**BIGGEST silicon truth of the phase — the RT1176 has TWO eDMAs** (RM Tables
@@ -309,6 +314,114 @@ CM7 HW-verified stream on the same block instances.
   the arbiter for now.
 - **Concurrent CM7+CM4 peripheral use / arbitration** — a cross-core ownership
   protocol.
+
+## Phase 5 — CM4 audio foundation (Plan 1 of 2)  ★★HW-VERIFIED 2026-07-21
+
+**Status: DONE + ★★ALL HW-VERIFIED 2026-07-21.** Plan at
+`docs/superpowers/plans/2026-07-21-cm4-audio-foundation.md` (`e4a5720`,
+"Plan 1 of 2 — probe, qemu2 SAI IRQ, CM4 C++ world, AudioStream on CM4").
+Three gates, one qemu2 model change, one new `cores` shim directory.
+
+- **Probe — `examples/dualcore/cm4_sai_irq_probe` (`eef81d0`):** SAI1's
+  combined FIFO-request IRQ (line 76) reaches the CM4's own NVIC on real
+  silicon — **RM Tables 4-1/4-2 confirmed**, not just documented. EVKB
+  clean-boot: `irqcnt=00000014` (20 `SAI1_IRQHandler` entries), `flags=0`,
+  `SAI_IRQ_CM4=PASS`. qemu2 did **not** model this fan-out yet, so the gate
+  was run red-first and checked in as evidence
+  (`transcript_qemu_red.txt`: `irqcnt=00000000`, exit 1) before the model
+  changed — the mandatory-probe discipline in practice, not just the doc.
+  Register-literal triangulation caught three wrong offsets from the plan
+  draft before they shipped: SAI1 TX `TCSR` is `+0x08` (not `+0x00` —
+  `VERID`/`PARAM` occupy `+0x00`/`+0x04`), four AD-pad `SW_MUX_CTL`
+  addresses were off by the draft's flat `+4n` arithmetic, and the MU B-side
+  `TR0`/`SR` offsets were swapped versus the `cm4_wire_test`-verified values.
+  Also needed the CM4 startup's missing `cpsie i` before the NVIC enable
+  (PRIMASK parked set by the copied startup — would have false-FAILed on
+  silicon, not in QEMU).
+- **qemu2 model change (commit `b597c468ce`, LOCAL ONLY — GPL firewall,
+  never pushed to a firmware repo):** a `TYPE_SPLIT_IRQ` fans SAI1 IRQ 76 to
+  both NVICs (same idiom as the LPSPI1/LPI2C5 splitters from Phase 4), and
+  `imxrt_sai_update()` gained the mirrored RX-side FIFO-request term
+  (previously TX-only). This flips the probe gate from red to green.
+  **QEMU-vs-HW divergence, documented not silently absorbed:** the current
+  QEMU run reports `irqcnt=00000040` (64) against HW's `irqcnt=00000014`
+  (20) — the model's ring-occupancy synthesis toggles the FRF/FWF condition
+  on more transitions than the real 32-deep hardware FIFO watermark would;
+  the commit message records this as a known fidelity limit. The gate
+  asserts `SAI_IRQ_CM4=PASS` (IRQ arrived at all, `irqcnt>0`), not an exact
+  count — precedent: 2C's `systick` and 3.2's `rdv` world-split tokens.
+- **CM4 C++ image world — `examples/dualcore/cm4_cpp_test` (evkb `bfad6eb`
+  + teensy-cmake-macros `e948da4`):** the CM4 image world learns to compile
+  C++ (g++ codegen path, `.init_array` walked by a new `cm4_run_ctors`, and
+  the freestanding `-nostdlib` stubs a real C++ program needs:
+  `__cxa_pure_virtual`, sized `operator delete` (`_ZdlPvj`, referenced by a
+  virtual destructor's deleting-dtor even with no heap use), `memset`/
+  `memcpy`). HW-verified: a static object's constructor runs before `main`
+  (`ctor=CAFEC201`) and virtual dispatch through a `Base*` works
+  (`virt=CAFEC202`). **Byte-identity of existing C images preserved** — the
+  guardrail check re-hashed `cm4_wire_test`'s `.cm4.bin`
+  (sha256 unchanged, `de6698e0…`) and re-ran its QEMU gate green, proving the
+  C++ path is additive, not a regression to the C toolchain flags.
+- **AudioStream on the CM4 — `examples/dualcore/cm4_audiostream_test`
+  (evkb `de15f33`) via `cores/imxrt1176/cm4_shim/` (cores `7f44a4e`):** the
+  real, unmodified `cores/imxrt1176/AudioStream.cpp` compiles for the CM4
+  image world against a new **Arduino-lite shim** (`cm4_shim/Arduino.h`,
+  resolved ahead of the real core `Arduino.h` via `INCLUDE_DIRS` ordering) —
+  pure-CPU ARMv7-M primitives only (PRIMASK masking, raw NVIC registers, DWT
+  CYCCNT) plus the repo's `IRQ_SOFTWARE=44` convention (below).
+  `attachInterruptVector` is a documented shim no-op — the CM4's vector
+  table is static per-image (`startup_cm4.S`), so a handler must already be
+  linked into the table, not attached at runtime. One narrow addition beyond
+  the plan, logged in the shim's own README: `F_CPU_ACTUAL` is declared
+  `extern` **with no definition** — `AudioStream.h`'s inline
+  `processorUsage()`/`processorUsageMax()` expand
+  `CYCLE_COUNTER_APPROX_PERCENT`, which names `F_CPU_ACTUAL`, so the class
+  body fails to *parse* without a declaration; leaving it undefined means an
+  image that actually calls those APIs fails honestly at **link** time
+  instead of silently computing a CPU-usage percentage against a fake CM4
+  clock. **`software_isr` wrapper pattern:** `AudioStream.cpp`'s
+  `software_isr` has C++ linkage (mangled `_Z12software_isrv`), so the CM4's
+  static vector table carries a thin `extern "C" Software_IRQHandler`
+  wrapper at index 60 (`16 + IRQ_SOFTWARE`, `IRQ_SOFTWARE=44`) that calls it
+  — the vector table itself must stay a flat C array of ABI-compatible
+  function pointers. **IRQ-44-is-CAN1 convention:** `IRQ_SOFTWARE=44` reuses
+  the CAN1 NVIC slot — CAN1 is unused by convention on both cores in this
+  repo, and both the CM7 world and the new CM4 shim share the same literal,
+  so a sketch pending "software IRQ 44" means the same thing on either core.
+  A `TestSource`→`TestSink` graph (`AudioMemory(20)` hand-expanded in DTCM
+  `.bss`, since `DMAMEM` is a CM7-world linker section) ran 8 blocks through
+  the CM4 pended 8× on `IRQ_SOFTWARE`: `flow=00000001`, `noleak=00000001`,
+  `recv=00000008`, `memmax=00000001`, `done=D0DE0003`,
+  `AUDIOSTREAM_CM4=PASS` — **token-identical QEMU vs. HW** (a pure-CPU graph
+  engine has no peripheral surface to diverge on, as the plan predicted).
+  Re-proven via a `-DEVKB_FORCE_FETCH=ON` build against the pushed `cores`
+  SHA (`7f44a4ed98…`) and teensy-cmake-macros SHA (`e948da4d43…`): fetched
+  cleanly, built, and booted the same PASS in QEMU.
+- **license-audit:** all three gates added to `tools/license-audit.sh`
+  GATES (105/107/108 project files walked respectively); PASS.
+- **Pre-existing flake note, queued (not fixed this phase):**
+  `examples/audio/audiooutput_i2s_test/run_qemu_audiooutput.sh` still uses a
+  fixed `sleep 5` before killing QEMU and grepping VCOM, instead of the
+  poll-for-a-DONE-token pattern every other gate in this repo uses
+  (`gate_init` + a bounded poll loop, e.g. `cm4_audiostream_test/run_qemu.sh`).
+  A fixed sleep is a latent flake source (slow CI host / cold caches could
+  starve it) — queued as a background cleanup to convert it to a poll-loop
+  runner; not touched here to keep this phase's diff scoped to CM4 audio.
+- **Plan 2 of 2 — queued, not yet designed in detail:**
+  - **`sai1176` shared C core** — consolidate the SAI1 register/clock
+    sequence into a shared freestanding C unit the way Phase 3.3 did for
+    SPI (`lpspi1176`) and Wire (`lpi2c1176`), so the CM7 `I2S` class and a
+    future CM4 SAI driver share one HW-verified sequence instead of two.
+  - **Interrupt-driven I/O nodes on the CM4** — real `AudioInputI2S`/
+    `AudioOutputI2S`-equivalent nodes driven from CM4-side SAI1 ISRs (using
+    the now-HW-proven IRQ 76 fan-out), replacing this phase's pure-CPU
+    `TestSource`/`TestSink` harness with an actual audio I/O path.
+  - **CMSIS-DSP-CM4** — bring the `arm_math`/CMSIS-DSP filter work
+    (`examples/framework/arm_math_test`, `examples/audio/filter_fir_test`)
+    to the CM4 core, so DSP-heavy nodes can run off the CM7.
+  - **Capstone** — a symmetric-audio-ownership demo (per
+    `docs/superpowers/specs/2026-07-21-cm4-audio-ownership-design.md`)
+    combining the above; scope not yet locked.
 
 ## Queued hardware checks
 
@@ -755,3 +868,35 @@ CM7 HW-verified stream on the same block instances.
   Verified: local 33/33 builds + license-audit PASS + fetch-sim 5/5 (blink,
   cm4_wire_test, sd_wav_play_test, lwip_test, usb_host_hid_test built with NO
   local checkouts). Remaining for full reach: evkb itself has no GitHub remote.
+- 2026-07-21: **Phase 5 (CM4 audio foundation, Plan 1 of 2) DONE +
+  ★★ALL HW-VERIFIED — see "Phase 5" above for the full writeup.** Three
+  gates: `cm4_sai_irq_probe` (SAI1 IRQ 76 reaches the CM4 NVIC on silicon,
+  RM Tables 4-1/4-2 confirmed, `irqcnt=0x14`; red-first, then qemu2
+  `b597c468ce` — LOCAL ONLY, GPL firewall — added the `TYPE_SPLIT_IRQ` fan-out
+  + RX-side FIFO-request modeling, flipping it green with a documented
+  `irqcnt` divergence, QEMU `0x40` vs HW `0x14`), `cm4_cpp_test` (the CM4
+  image world compiles C++: ctors via `.init_array`, virtual dispatch,
+  freestanding stubs — teensy-cmake-macros `e948da4d43`; C-image byte-identity
+  reconfirmed via `cm4_wire_test`'s unchanged `.cm4.bin` sha256), and
+  `cm4_audiostream_test` (the real `AudioStream.cpp` runs on the CM4 via the
+  new `cores/imxrt1176/cm4_shim/` Arduino-lite header — cores `7f44a4e`;
+  `IRQ_SOFTWARE=44` repurposed-CAN1 convention shared with the CM7 world;
+  `F_CPU_ACTUAL` declared extern-only so an odr-use fails at link, not
+  silently; a `TestSource`→`TestSink` graph passed token-identically in QEMU
+  and on HW: `flow=1 noleak=1 recv=8 memmax=1 done=D0DE0003
+  AUDIOSTREAM_CM4=PASS`). **Task 5 wrap (this session):** all three gates
+  added to `tools/license-audit.sh` GATES (105/107/108 files walked) — PASS;
+  `cores` pushed to `github.com/newdigate/teensy-cores` `483b279..7f44a4e`
+  and `teensy-cmake-macros` pushed to
+  `github.com/newdigate/teensy-cmake-macros` `b92b235..e948da4`; `evkb.cmake`
+  pins bumped to both new HEADs (cores `7f44a4ed9857b2cc4284d6b9472575952e76237f`,
+  teensy_cmake_macros GIT_TAG `e948da4d43cf76e3a0d8813cd85e6da314a0a569`) and
+  proven with a `-DEVKB_FORCE_FETCH=ON` build of `cm4_audiostream_test`
+  (fresh clone of `cores` at the new SHA, built, booted in QEMU,
+  `AUDIOSTREAM_CM4=PASS`). **Queued, not fixed this session:**
+  `examples/audio/audiooutput_i2s_test/run_qemu_audiooutput.sh`'s fixed
+  `sleep 5` (pre-existing flake risk vs. the poll-loop pattern every other
+  gate uses) needs converting to a poll-loop runner. Next: **Plan 2 of 2** —
+  `sai1176` shared C core, interrupt-driven AudioStream I/O nodes on the CM4,
+  CMSIS-DSP-CM4, and the symmetric-audio-ownership capstone (spec:
+  `docs/superpowers/specs/2026-07-21-cm4-audio-ownership-design.md`).
