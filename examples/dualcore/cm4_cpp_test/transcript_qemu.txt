@@ -1,0 +1,8 @@
+==== captured ====
+CM4CPP-GATE v1
+ctor=CAFEC201
+virt=CAFEC202
+done=D0DE0002
+CPP_CM4=PASS
+CM4CPP-DONE
+PASS: CPP_CM4
