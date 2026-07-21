@@ -32,6 +32,10 @@ bounded by the sketch's `AudioMemory()` pool):
 **Stale-include strips** (fork precedent: synth_sine.h's NOTE comment):
 - `synth_waveform.h:32` — remove `#include <arm_math.h>` (no arm_ symbols used)
 - `analyze_notefreq.cpp:26` — remove `#include "arm_math.h"` (no arm_ calls)
+- `synth_wavetable.cpp:30` — remove `#include <SerialFlash.h>` (zero SerialFlash
+  symbols used; discovered at implementation time when guard_sweep_test became
+  the first gate to compile this file — the red-phase gate uses a temporary
+  empty stub header until this strip lands)
 
 Without the strips, any consumer of these headers/sources needs CMSIS-DSP for
 no reason; with them, neither file depends on the manifest library at all.

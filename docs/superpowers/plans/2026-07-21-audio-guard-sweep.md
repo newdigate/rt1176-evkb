@@ -65,6 +65,21 @@ target_include_directories(guard_sweep_test.elf PRIVATE
 
 teensy_target_link_libraries(guard_sweep_test cores)
 target_link_libraries(guard_sweep_test.elf stdc++)
+
+# TEMPORARY (removed in Task 2): synth_wavetable.cpp:30 carries a stale,
+# unconditional `#include <SerialFlash.h>` (zero SerialFlash symbols used).
+# Task 2 strips it in the Audio fork; until then this empty stub lets the
+# red-phase gate compile against the UNMODIFIED sources.
+target_include_directories(guard_sweep_test.elf PRIVATE ${CMAKE_CURRENT_LIST_DIR}/stub)
+```
+
+- [ ] **Step 2b: Write the temporary stub `stub/SerialFlash.h`**
+
+```c
+// TEMPORARY red-phase stub (Task 1 only; deleted in Task 2).
+// ~/Development/Audio/synth_wavetable.cpp:30 includes <SerialFlash.h> without
+// using any of its symbols; the real strip happens in the guard-sweep task.
+// Intentionally empty.
 ```
 
 - [ ] **Step 3: Write `guard_sweep_test.cpp`**
@@ -325,14 +340,15 @@ End the commit message body with: `Co-Authored-By: Claude Fable 5 <noreply@anthr
 
 ### Task 2: The guard sweep itself (green)
 
-**Files (all in `~/Development/Audio`):**
-- Modify: `synth_karplusstrong.cpp:30`, `synth_karplusstrong.cpp:47`
-- Modify: `synth_simple_drum.cpp:112`
-- Modify: `synth_wavetable.cpp:179`
-- Modify: `effect_delay.h:33`
-- Modify: `play_queue.h:36`
-- Modify: `record_queue.h:36`
-- Modify: `synth_waveform.h:32`, `analyze_notefreq.cpp:26`
+**Files:**
+- Modify (Audio): `synth_karplusstrong.cpp:30`, `synth_karplusstrong.cpp:47`
+- Modify (Audio): `synth_simple_drum.cpp:112`
+- Modify (Audio): `synth_wavetable.cpp:179` and `:30` (SerialFlash strip)
+- Modify (Audio): `effect_delay.h:33`
+- Modify (Audio): `play_queue.h:36`
+- Modify (Audio): `record_queue.h:36`
+- Modify (Audio): `synth_waveform.h:32`, `analyze_notefreq.cpp:26`
+- Modify (evkb): `examples/audio/guard_sweep_test/CMakeLists.txt` (drop the stub include-dir); Delete: `examples/audio/guard_sweep_test/stub/`
 
 - [ ] **Step 1: Capability guards → `__ARM_ARCH_7EM__`** (4 sites, identical edit)
 
@@ -382,6 +398,21 @@ to:
 // NOTE: upstream includes "arm_math.h" here, but this file makes no arm_
 // calls -- stripped so the node doesn't require the CMSIS-DSP library.
 ```
+
+`synth_wavetable.cpp:30` — replace `#include <SerialFlash.h>` with:
+```c
+// NOTE: upstream includes <SerialFlash.h> here, but this file uses no
+// SerialFlash symbol -- stripped so the node doesn't require the SerialFlash
+// library (discovered when guard_sweep_test became the first gate to compile
+// this file; see the plan's Task 1 stub note).
+```
+
+Then **delete the Task 1 temporary stub** and its CMakeLists line:
+```bash
+cd ~/Development/rt1170/evkb/examples/audio/guard_sweep_test
+rm -rf stub
+```
+and remove the `target_include_directories(guard_sweep_test.elf PRIVATE ${CMAKE_CURRENT_LIST_DIR}/stub)` line (and its TEMPORARY comment block) from `CMakeLists.txt`.
 
 - [ ] **Step 4: Rebuild + rerun the gate — must be GREEN**
 
