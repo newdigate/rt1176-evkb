@@ -49,6 +49,13 @@ intrinsics), which the Teensy-derived core deliberately lacks (it has its own
 path — nothing from CMSIS-Core is compiled, and it must not leak onto the
 include path of `cores` or sketches (no collision with `imxrt.h`).
 
+> **Amendment (post-implementation, 2026-07-21):** PUBLIC on the CMSIS-DSP
+> target, not private — consumer TUs transitively include `cmsis_compiler.h`
+> via `arm_math.h`, so the header dir must reach them. Collisions with core
+> headers (`A0`-`A2` defines, `__disable_irq`/`__enable_irq` inlines) are
+> neutralized by a generated `arm_math.h` shim in `evkb.cmake`. Still never
+> added to `cores` itself.
+
 ## 3. Gates (QEMU + HW, two-gate rule)
 
 ### `examples/framework/arm_math_test/` — standalone known-answer
