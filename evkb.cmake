@@ -164,6 +164,17 @@ macro(import_evkb_cmsis_dsp)
     endif()
 endmacro()
 
+# Build-time audio-ownership exclusivity (spec §4): a firmware claims audio
+# for exactly one core. Called by convention from gate CMakeLists that compile
+# SAI I/O node sources.
+macro(evkb_claim_audio_owner CORE)
+    get_property(_owner GLOBAL PROPERTY EVKB_AUDIO_OWNER)
+    if(_owner AND NOT _owner STREQUAL "${CORE}")
+        message(FATAL_ERROR "audio owner already claimed by ${_owner}; cannot also claim ${CORE} (one core owns audio per firmware)")
+    endif()
+    set_property(GLOBAL PROPERTY EVKB_AUDIO_OWNER "${CORE}")
+endmacro()
+
 # --- the imxrt1176 core (every example needs it) -----------------------------
 evkb_library_dir(cores EVKB_CORES_DIR)
 # The toolchain file guessed COREPATH from its own location; re-point it at the
