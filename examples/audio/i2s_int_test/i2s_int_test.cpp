@@ -79,10 +79,14 @@ void setup() {
     Serial1.print("info fef=");         Serial1.println(fef);
     Serial1.print("info codec_ack=");   Serial1.println(codec_ok ? 1 : 0);
     Serial1.print("info synth_peak=");  Serial1.println(synth_pk, 4);
+    // RX overflow counter (FEF-detected + recovered by FIFO reset): any
+    // overflow would have meant a possible silent L/R swap. Must be 0.
+    uint32_t rx_ovf = AudioInputI2SInt::overflows();
+    Serial1.print("info rx_overflows="); Serial1.println(rx_ovf);
 
     bool synth_ok = synth_pk > 0.40f && synth_pk < 0.60f;
     bool pass = (dispatches >= DISPATCH_TARGET) && (underruns == 0u) &&
-                (fef == 0u) && codec_ok && synth_ok;
+                (fef == 0u) && (rx_ovf == 0u) && codec_ok && synth_ok;
     Serial1.println(pass ? "I2SINT=PASS" : "I2SINT=FAIL");
     Serial1.println("HUMAN: listen for 1 kHz on J101");
     Serial1.println("I2SINT-DONE");
@@ -106,6 +110,7 @@ void loop() {
             float mp = micpeak.read();
             Serial1.print("MIC mic_peak="); Serial1.print(mp, 4);
             Serial1.print(" rx_frames=");   Serial1.print(AudioInputI2SInt::frameCount());
+            Serial1.print(" rx_ovf=");      Serial1.print(AudioInputI2SInt::overflows());
             Serial1.println(mp > 0.001f ? " MIC=PASS" : " MIC=low");
         } else {
             Serial1.println("MIC mic_peak=(no update)");

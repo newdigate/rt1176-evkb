@@ -48,6 +48,7 @@ else
 fi
 check "info underruns=0"     # the graph never failed to feed the ISR
 check "info fef=0"           # no TX FIFO error (sticky TCSR.FEF)
+check "info rx_overflows=0"  # no RX FIFO overflow (L/R-desync hazard)
 check "info codec_ack=1"     # WM8962 write-side ACK (QEMU stub / real codec)
 check "I2SINT=PASS"          # firmware verdict (incl. synth peak in range)
 grep -q "I2SINT-DONE" "$OUT" || { echo "FAIL: DONE missing"; fail=1; }

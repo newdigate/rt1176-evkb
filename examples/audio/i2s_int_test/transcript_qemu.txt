@@ -1,11 +1,12 @@
 ==== captured UART ====
 I2SINT-GATE v1
 info dispatches=600
-info isr_count=697
+info isr_count=715
 info underruns=0
 info fef=0
 info codec_ack=1
 info synth_peak=0.5000
+info rx_overflows=0
 I2SINT=PASS
 HUMAN: listen for 1 kHz on J101
 I2SINT-DONE
@@ -13,6 +14,7 @@ MIC mic_peak=(no update)
 PASS: dispatches=600 (>=600)
 PASS: info underruns=0
 PASS: info fef=0
+PASS: info rx_overflows=0
 PASS: info codec_ack=1
 PASS: I2SINT=PASS
 PASS: interrupt-driven SAI nodes verified in QEMU
