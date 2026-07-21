@@ -126,6 +126,24 @@ trigger).
   bugs (TX-clock enable, RDR0 half-word, FCONT); expect the HW capstone to be
   where the truth lands.
 
+## Amendments (post-implementation, 2026-07-21 — Plan 1 of 2)
+
+- Execution split into two plans; Plan 1 (`2026-07-21-cm4-audio-foundation.md`,
+  SHIPPED) covers the probe, the qemu2 model, the CM4 C++ image world, and the
+  graph engine; Plan 2 owns the sai1176 core, interrupt I/O nodes,
+  CMSIS-DSP-CM4, and the capstone.
+- §3's "AudioStream compiles into the CM4 core variant" shipped differently:
+  the CM4 image world stayed explicit-SOURCES — `AudioStream.cpp` compiles
+  UNMODIFIED into the CM4 *image* against the new
+  `cores/imxrt1176/cm4_shim/Arduino.h` (Arduino-lite); no core variant exists.
+- §3's "dispatch IRQ gets a spare slot" was wrong: IRQ 44 is CAN1 on BOTH
+  cores (RM Tables 4-1/4-2) — the CM7's IRQ_SOFTWARE=44 already worked only by
+  repurposed-unused-CAN1 convention, and the CM4 adopts the same slot 44.
+- The probe shipped as `cm4_sai_irq_probe` (not §1's `cm4_audio_probe`);
+  result: PASS on silicon, irqcnt=0x14. The qemu2 SAI model's interrupt is
+  ring-occupancy-based, not watermark-accurate (QEMU irqcnt=0x40) —
+  documented fidelity limit.
+
 ## Out of scope
 
 Simultaneous dual-core audio, IPC audio bridging (a future phase could add
