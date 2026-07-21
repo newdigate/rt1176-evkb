@@ -29,14 +29,14 @@ set `ARM_TOOLCHAIN_BIN` if your ARM GCC isn't at `/Applications/ARM_10/bin/`.
 |--------|----------|
 | **dualcore** | `cm4_boot_test`, `cm4_dual_test`, `cm4_image_test`, `cm4_intr_test`, `cm4_spi_test`, `cm4_wire_test`, `cm4_wire_int_master_test`, `cm4_wire_int_slave_test`, `cm4_spi_dma_test`, `cm4_wire_dma_test`, `cm4_hotswap_test`, `cm4_hotswap2_test`, `cm4_imagebank_test`, `dualcore_mu_test` |
 | **usb** | `usb_data_test`, `usb_enum_test`, `usb_host_hid_test`, `usb_joystick_test`, `usb_keyboard_test`, `usb_midi_test`, `usb_mouse_test`, `usb_msc_block_test`, `usb_msc_fs_test` |
-| **audio** | `audioinput_i2s_test`, `audiooutput_i2s_test`, `audiostream_test`, `i2s_audio_test`, `sai_rx_test`, `sd_wav_play_test`, `tone_test`, `tone_hw` |
+| **audio** | `audioinput_i2s_test`, `audiooutput_i2s_test`, `audiostream_test`, `filter_fir_test`, `i2s_audio_test`, `sai_rx_test`, `sd_wav_play_test`, `tone_test`, `tone_hw` |
 | **networking** | `enet_test`, `ethernet_test`, `native_ethernet_test`, `lwip_test` |
 | **storage-memory** | `sd_test`, `eeprom_test`, `sdram_test`, `extmem_test` |
 | **gpio-analog** | `blink`, `gpio_loopback_hw`, `adc_loopback_hw`, `analog_test`, `dac_test`, `pwm_test`, `irq_attach_test` |
 | **timing** | `interval_timer_test`, `interval_timer_hw`, `rtc_test` |
 | **serial** | `serial_test`, `serial_test_rx` |
 | **display** | `ssd1306_display` |
-| **framework** | `string_test`, `stream_test`, `wprogram_parity_test`, `eventresponder_test`, `edma_test` |
+| **framework** | `arm_math_test`, `string_test`, `stream_test`, `wprogram_parity_test`, `eventresponder_test`, `edma_test` |
 
 ## Not examples (still at `evkb/` root)
 
