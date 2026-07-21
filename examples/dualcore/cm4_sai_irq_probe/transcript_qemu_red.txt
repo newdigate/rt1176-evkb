@@ -1,0 +1,15 @@
+./run_qemu.sh — 2026-07-21, EXPECTED-FAIL (red) baseline, exit status 1.
+qemu2 wires the SAI1 IRQ to the CM7 NVIC only (fsl-imxrt1170.c SAI wiring);
+the fan-out task flips this gate green. flags=00000003 = FRF|FWF (empty TX
+FIFO at/below watermark) with zero CM4 ISR entries — the interrupt condition
+is present but the line never reaches the CM4 NVIC in the model.
+
+==== captured ====
+CM4SAIIRQ-GATE v1
+ready=CAFE0001
+irqcnt=00000000
+flags=00000003
+done=D0DE0001
+SAI_IRQ_CM4=FAIL
+CM4SAIIRQ-DONE
+FAIL: no CM4 SAI IRQ
