@@ -37,6 +37,14 @@ bounded by the sketch's `AudioMemory()` pool):
   the first gate to compile this file — the red-phase gate uses a temporary
   empty stub header until this strip lands)
 
+> **Amendment (post-implementation, 2026-07-21):** a FOURTH strip site shipped:
+> `synth_waveform.cpp:29` also carried its own stale `arm_math.h` include
+> (caught in code review — the .h strip's NOTE claim would otherwise have been
+> false). Final tally: 11 edit sites across 9 files (Audio d886718 + 460d0c1).
+> Recorded red-phase gate signature on pre-sweep sources, reproduced
+> independently at final review: `delay early=0.9000`, karplus/drum/wt
+> `a=0.0000`, `recq held=52`, PLAYQ hung (old 32-cap busy-wait), `FAIL: DELAY`.
+
 Without the strips, any consumer of these headers/sources needs CMSIS-DSP for
 no reason; with them, neither file depends on the manifest library at all.
 
