@@ -25,14 +25,14 @@ static bool stage_fft(void) {
     uint32_t best = 0, best_mag = 0, second = 0;
     for (uint32_t k = 1; k < 128; k++) {
         int32_t re = fft_buf[2 * k], im = fft_buf[2 * k + 1];
-        uint32_t mag = (uint32_t)(re * re + im * im);
+        uint32_t mag = (uint32_t)(re * re) + (uint32_t)(im * im);
         if (mag > best_mag) { second = best_mag; best_mag = mag; best = k; }
         else if (mag > second) { second = mag; }
     }
     Serial1.print("ARM-MATH: fft bin=");  Serial1.print(best);
     Serial1.print(" mag2=");              Serial1.print(best_mag);
     Serial1.print(" next2=");             Serial1.println(second);
-    return best == 8 && best_mag > 0 && best_mag > 4 * second;
+    return best == 8 && best_mag > 50000000u && best_mag < 90000000u && best_mag > 4 * second;
 }
 
 // STAGE_FIR: unit impulse through an 8-tap FIR echoes the coefficients.
@@ -40,7 +40,7 @@ static const q15_t fir_coeffs[8] = {1000, 2000, 3000, 4000, 4000, 3000, 2000, 10
 static q15_t fir_state[8 + 32 - 1];
 static bool stage_fir(void) {
     arm_fir_instance_q15 f;
-    if (arm_fir_init_q15(&f, 8, (q15_t *)fir_coeffs, fir_state, 32) != ARM_MATH_SUCCESS) {
+    if (arm_fir_init_q15(&f, 8, fir_coeffs, fir_state, 32) != ARM_MATH_SUCCESS) {
         Serial1.println("ARM-MATH: fir init failed");
         return false;
     }

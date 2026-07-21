@@ -107,6 +107,9 @@ macro(import_evkb_cmsis_dsp)
         evkb_library_dir(CMSIS-DSP _evkb_cmsisdsp_dir)
         evkb_library_dir(CMSIS-Core _evkb_cmsiscore_dir)
         set(_evkb_cmsisdsp_srcs "")
+        # Pin bump: diff `ls Source/` against this list (a NEW upstream group
+        # would otherwise be silently omitted); F16 amalgams are absent only
+        # for Controller/Quaternion/Window at v1.17.1.
         foreach(_g BasicMathFunctions BayesFunctions CommonTables
                    ComplexMathFunctions ControllerFunctions DistanceFunctions
                    FastMathFunctions FilteringFunctions InterpolationFunctions
