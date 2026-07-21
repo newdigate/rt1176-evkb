@@ -9,8 +9,8 @@ evkb_library_dir(Audio EVKB_AUDIO_DIR)
 teensy_add_executable(guard_sweep_test guard_sweep_test.cpp)
 
 # Cherry-picked (no glob, per gate convention). Deliberately NO CMSIS-DSP
-# import: none of these nodes needs arm_math once the stale includes are
-# stripped -- this gate is also the proof of that.
+# import: compiling synth_wavetable.cpp here with no SerialFlash library on
+# the include path is the proof of the stale-SerialFlash-include strip.
 target_sources(guard_sweep_test.elf PRIVATE
     ${EVKB_AUDIO_DIR}/synth_sine.cpp
     ${EVKB_AUDIO_DIR}/synth_karplusstrong.cpp

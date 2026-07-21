@@ -85,7 +85,7 @@ static float read_peak(AudioAnalyzePeak &p) {
 void setup() {
     Serial1.begin(115200);
     while (!Serial1) {}
-    AudioMemory(150);
+    AudioMemory(150);   // 69-block delay ring + 60-block recq hold + graph slack
     for (int i = 0; i < 260; i++)
         wt_table[i] = (int16_t)lrintf(20000.0f * sinf(2.0f * (float)M_PI * (i % 256) / 256.0f));
 
