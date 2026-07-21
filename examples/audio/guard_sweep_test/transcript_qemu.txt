@@ -1,0 +1,13 @@
+GS: delay early=0.0000 late=0.9000
+STAGE_DELAY=PASS
+GS: karplus a=0.8758 b=0.1300
+STAGE_KARPLUS=PASS
+GS: drum a=0.4728 b=0.0000
+STAGE_DRUM=PASS
+GS: wt a=0.6103 b=0.0000 sustain=1
+STAGE_WAVETABLE=PASS
+GS: recq held=60 drained=60 content=1
+STAGE_RECQ=PASS
+GS: playq got=40 first=100 last=4000
+STAGE_PLAYQ=PASS
+GUARD_SWEEP_ALL=PASS
