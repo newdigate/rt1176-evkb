@@ -1,8 +1,9 @@
 CM4AUDIO-GATE v1
+info pll_prearm=1 (CM7 fallback engaged)
 codec_ack=00000001
 sai_isr_count=00000400
 dispatch_count=00000400
-underruns=000002DD
+underruns=000002E5
 fef=00000000
 rx_overflows=00000000
 mic_peak_q15=00000000

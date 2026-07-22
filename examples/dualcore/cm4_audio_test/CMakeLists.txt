@@ -18,16 +18,22 @@ evkb_library_dir(Wire  EVKB_WIRE_DIR)
 # tables) out of the 128 K ITCM.
 evkb_cmsis_dsp_cm4_sources(_cm4_dsp_srcs _cm4_dsp_incs)
 
-# ★★HW PROBE FALLBACK (default OFF). The default build is the pure capstone: the
-# CM4 owns the WHOLE pipeline including the ANATOP Audio-PLL bring-up. That build
-# is QEMU-verified; on the EVKB it fires the documented ANATOP-PLL-from-CM4 probe
-# (silence + sai_isr_count==0 -- the CM4 cannot drive the AI-write handshake; see
-# Audio/sai1176.c SAI1176_PLL_EXTERNAL and the report). Configure with
-# -DAUDIO_CM4_PLL_FALLBACK=ON to engage the plan's fallback: the CM7 pre-arms the
-# 44.1 kHz Audio PLL before Multicore.begin() and the CM4 image skips the AI
-# writes -- ownership of everything else (clock root/LPCG/pads/SAI/codec/graph)
-# stays on the CM4.
-option(AUDIO_CM4_PLL_FALLBACK "CM7 pre-arms the Audio PLL; CM4 skips ANATOP AI writes" OFF)
+# ★★AUDIO-PLL OWNERSHIP (default ON = the HW-verified working pipeline). With
+# AUDIO_CM4_PLL_FALLBACK=ON (the default) the CM7 pre-arms the 44.1 kHz ANATOP
+# Audio PLL before Multicore.begin() and the CM4 image is built
+# -DSAI1176_PLL_EXTERNAL so it SKIPS the ANATOP AI writes -- ownership of
+# everything else (clock root/LPCG/pads/SAI/codec/graph/FFT) stays on the CM4.
+# This is the config HW-verified on the EVKB (2026-07-22: audible 1 kHz on J101,
+# rx_overflows=0, AUDIO_CM4=PASS -- see transcript_hw_evkb.txt). A gate's default
+# should demonstrate the capability on the target, so this working pre-arm
+# pipeline is the default.
+#
+# Pass -DAUDIO_CM4_PLL_FALLBACK=OFF for the pure-CM4-drives-PLL PROBE: the CM4
+# owns the WHOLE pipeline including the ANATOP Audio-PLL AI-write handshake. That
+# probe PASSES in QEMU (the model fakes the AI handshake) but HANGS on real
+# silicon -- the CM4 cannot drive the ANATOP AI-write handshake (EVKB 2026-07-22
+# finding; see Audio/sai1176.c SAI1176_PLL_EXTERNAL and the report).
+option(AUDIO_CM4_PLL_FALLBACK "ON (default, HW-verified): CM7 pre-arms the Audio PLL, CM4 skips ANATOP AI writes. OFF: pure-CM4-drives-PLL probe (QEMU-only; hangs on silicon)" ON)
 set(_cm4_defines EVKB_CM4_WORLD=1)
 if(AUDIO_CM4_PLL_FALLBACK)
     list(APPEND _cm4_defines SAI1176_PLL_EXTERNAL=1)
@@ -77,7 +83,8 @@ teensy_target_link_libraries(cm4_audio_test cores)
 target_link_libraries(cm4_audio_test.elf stdc++)
 teensy_target_link_cm4_image(cm4_audio_test cm4_audio)
 
-# Fallback engaged: the CM7 pre-arms the Audio PLL (needs sai1176.c + its header).
+# Pre-arm path (default ON): the CM7 pre-arms the Audio PLL before booting the
+# CM4 (needs sai1176.c + its header). Only the pure-CM4-PLL probe (=OFF) omits it.
 if(AUDIO_CM4_PLL_FALLBACK)
     target_compile_definitions(cm4_audio_test.elf PRIVATE AUDIO_CM4_PLL_FALLBACK)
     target_sources(cm4_audio_test.elf PRIVATE ${EVKB_AUDIO_DIR}/sai1176.c)
