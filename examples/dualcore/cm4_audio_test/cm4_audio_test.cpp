@@ -116,11 +116,21 @@ void setup() {
     uint32_t cm7_audio_isers = dma_bits | (sai_bit << 16);
     phex("cm7_audio_isers", cm7_audio_isers);
 
-    bool pass = ok && codec_ack == 1u && sai_isr > 1000u && disp > 500u &&
-                under == 0u && fef == 0u && rx_ovf == 0u &&
-                fft_bin == 6u && cm7_audio_isers == 0u &&
-                done == 0xD0DE0005u;
-    Serial1.println(pass ? "AUDIO_CM4=PASS" : "AUDIO_CM4=FAIL");
+    // Verdict split by world (silicon wins -- document the divergence, don't
+    // weaken). The DETERMINISTIC core runs identically in QEMU and on HW and is
+    // what the QEMU gate asserts. FIFO health (underruns/fef/rx_overflows) is
+    // HW-ONLY truth: the QEMU SAI model does not enforce FIFO timing, so those
+    // metrics are ANTI-correlated with silicon -- EVKB 2026-07-22: at SAI IRQ
+    // prio 224 QEMU was clean but HW rx_overflows=0x3FF (graph preempted RX
+    // service); at the correct prio 192 (SAI outranks the graph) the CM4 is
+    // clean on HW but QEMU shows graph-starvation underruns. mic_peak is HW-only
+    // for the same reason (no acoustic source in QEMU). AUDIO_CM4 (full) is thus
+    // the HW-meaningful verdict; AUDIO_CM4_DET is the both-worlds one.
+    bool det_ok = ok && codec_ack == 1u && sai_isr > 1000u && disp > 500u &&
+                  fft_bin == 6u && cm7_audio_isers == 0u && done == 0xD0DE0005u;
+    bool fifo_ok = under == 0u && fef == 0u && rx_ovf == 0u;   // HW-meaningful
+    Serial1.println(det_ok ? "AUDIO_CM4_DET=PASS" : "AUDIO_CM4_DET=FAIL");
+    Serial1.println((det_ok && fifo_ok) ? "AUDIO_CM4=PASS" : "AUDIO_CM4=FAIL");
     Serial1.println("HUMAN: listen for ~1 kHz on J101 (CM4-owned pipeline)");
     Serial1.println("CM4AUDIO-DONE");
 

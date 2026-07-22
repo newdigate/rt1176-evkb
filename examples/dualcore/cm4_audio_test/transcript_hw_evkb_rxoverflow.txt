@@ -1,18 +1,18 @@
 [console] /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200 — Ctrl-C to quit. Press SW4/RESET to see the boot banner.
+
 CM4AUDIO-GATE v1
 info pll_prearm=1 (CM7 fallback engaged)
 codec_ack=00000001
-sai_isr_count=00020006
+sai_isr_count=0001A817
 dispatch_count=00000400
 underruns=00000000
-fef=00000000
-rx_overflows=00000000
-mic_peak_q15=000001BD
+fef=00000001
+rx_overflows=000003FF
+mic_peak_q15=00006C85
 fft_peak_bin=00000006
 fft_peak_mag=00000FF2
 done=D0DE0005
 cm7_audio_isers=00000000
-AUDIO_CM4_DET=PASS
-AUDIO_CM4=PASS
+AUDIO_CM4=FAIL
 HUMAN: listen for ~1 kHz on J101 (CM4-owned pipeline)
 CM4AUDIO-DONE

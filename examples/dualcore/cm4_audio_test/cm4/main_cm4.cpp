@@ -103,14 +103,16 @@ static audio_block_t audio_pool[AUDIO_POOL_N];
 
 // CM4 NVIC set-enable register 2 (IRQs 64..95): SAI1 = 76 -> bit 12.
 #define NVIC_ISER2 (*(volatile uint32_t *)0xE000E108u)
-// SAI1 (IRQ 76) priority must be NUMERICALLY ABOVE software_isr's 208 (i.e. a
-// LOWER urgency) so a pended update_all (IRQ_SOFTWARE=44 @208, set by
-// update_setup) PREEMPTS the level-held SAI ISR and actually clocks the graph.
-// The CM7 node sets this in sai1176_evkb_nvic_hookup(); on the CM4 that hookup
-// is a deliberate no-op (consumer sequences the NVIC), so the image sets it.
-// Without it the SAI ISR (default priority 0 = highest) starves the graph and
-// every TX block is fed silence (underruns) -- the exact symptom this fixes.
-#define SAI1_IRQ_PRIORITY 224u
+// SAI I/O ISR must outrank the graph (software_isr=208): at prio 224 the fft256
+// graph update preempted RX service on the 400 MHz M4 -> rx_overflows=0x3FF on
+// EVKB 2026-07-22. I/O ISR is time-critical (hard FIFO deadline); the graph can
+// be delayed. So 192 < 208: the SAI I/O ISR PREEMPTS the AudioStream graph
+// (standard Teensy audio design -- the CM7 masks this because DMA/hardware
+// services the FIFO). The node's CM4 NVIC hookup is a deliberate no-op
+// (consumer sequences the NVIC), so the image sets this. 192 does not collide
+// with any CM4 IRQ this image relies on (IRQ_SOFTWARE=44@208, MU=118@default --
+// neither is time-critical here).
+#define SAI1_IRQ_PRIORITY 192u
 
 extern "C" int main(void) {
     cm4_run_ctors();                 // construct the graph nodes + connections
