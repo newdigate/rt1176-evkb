@@ -213,6 +213,39 @@ macro(evkb_claim_audio_owner CORE)
     set_property(GLOBAL PROPERTY EVKB_AUDIO_OWNER "${CORE}")
 endmacro()
 
+# import_evkb_audio_full(): build the ENTIRE Audio fork as one `Audio` library
+# target for the CM7, with every dependency's headers on the global compile
+# path so `#include <Audio.h>` resolves and every node .cpp compiles. Unlike the
+# cherry-picking gates, this globs all 87 sources (import_arduino_library) — so
+# every node must compile clean on RT1176 (empty-on-1176 nodes -> empty objects;
+# --gc-sections drops the unused ones at link).
+macro(import_evkb_audio_full)
+    if(NOT TARGET Audio)
+        # 1. CMSIS-DSP: build the lib AND put the shim+Include dirs on teensy_flags
+        #    so the Audio nodes that #include <arm_math.h> compile. The shim dir
+        #    MUST be first (intercepts the core's A0-A2/IRQ-inline collisions).
+        import_evkb_cmsis_dsp()
+        evkb_cmsis_dsp_cm4_sources(_evkb_audio_cmsis_srcs _evkb_audio_cmsis_incs)
+        # (evkb_cmsis_dsp_cm4_sources returns the SAME include dir list the CM4
+        #  path uses: shim, DSP/Include, DSP/PrivateInclude, Core/Include — the
+        #  shim is first. We reuse only the include list, not the sources.)
+        teensy_set_dynamic_properties()   # ensure teensy_flags exists
+        foreach(_inc ${_evkb_audio_cmsis_incs})
+            target_include_directories(teensy_flags INTERFACE "${_inc}")
+        endforeach()
+        # 2. The peripheral-lib deps Audio's headers reach (Wire/SD/SdFat/
+        #    SerialFlash). import_evkb_library adds each lib root to teensy_flags
+        #    (global) and creates its target; the linker RESCAN group resolves
+        #    cross-refs regardless of order.
+        import_evkb_library(Wire)
+        import_evkb_library(SdFat)
+        import_evkb_library(SD)
+        import_evkb_library(SerialFlash)
+        # 3. The whole Audio fork (root globs 87 .cpp/6 .c; utility/ adds 2).
+        import_evkb_library(Audio utility)
+    endif()
+endmacro()
+
 # --- the imxrt1176 core (every example needs it) -----------------------------
 evkb_library_dir(cores EVKB_CORES_DIR)
 # The toolchain file guessed COREPATH from its own location; re-point it at the
