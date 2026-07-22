@@ -144,6 +144,39 @@ trigger).
   ring-occupancy-based, not watermark-accurate (QEMU irqcnt=0x40) —
   documented fidelity limit.
 
+## Amendments (post-implementation, 2026-07-22 — Plan 2 of 2, SHIPPED)
+
+- Plan 2 SHIPPED (`2026-07-21-cm4-audio-pipeline.md`): the `sai1176` shared C
+  core + `AudioOutputI2SInt`/`AudioInputI2SInt` nodes (Audio `ee8048a`..`f5e4730`),
+  CMSIS-DSP-into-CM4-images (evkb `f81254c`), and the `cm4_audio_test` capstone
+  — the CM4 owns codec+SAI+graph+FFT, CM7 parked in WFI. All HW-verified on the
+  EVKB (audible 1 kHz on J101, mic captured, `AUDIO_CM4=PASS`, `cm7_audio_isers=0`).
+- §1/§3 assumed the CM4 self-configures the *entire* clock tree. Silicon truth:
+  the CM4 CANNOT drive the ANATOP Audio-PLL AI-write handshake — it hangs on the
+  M4 (QEMU fakes the handshake, so it surfaced only on the board; the capstone HW
+  run WAS the probe the plan flagged). Shipped fallback is now the gate DEFAULT:
+  the CM7 pre-arms the 44.1 kHz Audio PLL before `Multicore.begin()` and the CM4
+  image builds `-DSAI1176_PLL_EXTERNAL` (skips the AI writes). The CM4 still owns
+  clock root / LPCG / pads / SAI / codec / graph / FFT — only the PLL arm is a
+  ~3-line CM7 concession, exactly the documented Plan risk-fallback.
+- New finding, not anticipated by §2/§3: the SAI I/O ISR MUST outrank the
+  AudioStream graph. At SAI prio 224 (below `software_isr`=208) the fft256 graph
+  update preempted RX service on the 400 MHz M4 → `rx_overflows=0x3FF`. Correct
+  prio is 192 (SAI > graph — standard Teensy audio design, which the CM7 hides
+  because DMA, not an ISR, services the FIFO). Evidence: `transcript_hw_evkb_rxoverflow.txt`.
+- §5 world-split sharpened: the qemu2 SAI model does not enforce FIFO drain/fill
+  timing, so `underruns`/`fef`/`rx_overflows` are ANTI-correlated with silicon
+  (QEMU shows graph-starve underruns where HW is clean, and vice-versa). The QEMU
+  capstone gate therefore asserts only the deterministic verdict `AUDIO_CM4_DET`
+  (codec + `sai_isr>1000` + `disp>500` + `fft_bin==6` + `cm7_audio_isers==0`); the
+  full `AUDIO_CM4=PASS` (adds FIFO health) is the HW oracle.
+- No new qemu2 change was needed in Plan 2 — the Plan-1 SAI1-IRQ-76→both-NVICs
+  `TYPE_SPLIT_IRQ` (`b597c468ce`, local-only) covered it.
+- Operational lesson (see roadmap Phase 6): a hung dual-core XIP image (e.g. the
+  CM4 stalling on the pure-CM4-PLL probe) is recovered via SDP-mode boot
+  (SW1-3 OFF / SW1-4 ON); the MCU-Link probe stays USB-enumerated even with the
+  target unpowered, so check J38/barrel-jack before chasing the debug chain.
+
 ## Out of scope
 
 Simultaneous dual-core audio, IPC audio bridging (a future phase could add
