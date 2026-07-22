@@ -29,7 +29,7 @@ set `ARM_TOOLCHAIN_BIN` if your ARM GCC isn't at `/Applications/ARM_10/bin/`.
 |--------|----------|
 | **dualcore** | `cm4_boot_test`, `cm4_dual_test`, `cm4_image_test`, `cm4_intr_test`, `cm4_spi_test`, `cm4_wire_test`, `cm4_wire_int_master_test`, `cm4_wire_int_slave_test`, `cm4_spi_dma_test`, `cm4_wire_dma_test`, `cm4_hotswap_test`, `cm4_hotswap2_test`, `cm4_imagebank_test`, `cm4_sai_irq_probe`, `cm4_cpp_test`, `cm4_audiostream_test`, `cm4_fft_test`, `cm4_audio_test`, `dualcore_mu_test` |
 | **usb** | `usb_data_test`, `usb_enum_test`, `usb_host_hid_test`, `usb_joystick_test`, `usb_keyboard_test`, `usb_midi_test`, `usb_mouse_test`, `usb_msc_block_test`, `usb_msc_fs_test` |
-| **audio** | `audioinput_i2s_test`, `audiooutput_i2s_test`, `audiostream_test`, `filter_fir_test`, `guard_sweep_test`, `i2s_audio_test`, `i2s_int_test`, `sai_rx_test`, `sd_wav_play_test`, `tone_test`, `tone_hw` |
+| **audio** | `audio_h_test`, `audioinput_i2s_test`, `audiooutput_i2s_test`, `audiostream_test`, `filter_fir_test`, `guard_sweep_test`, `i2s_audio_test`, `i2s_int_test`, `sai_rx_test`, `sd_wav_play_test`, `tone_test`, `tone_hw` |
 | **networking** | `enet_test`, `ethernet_test`, `native_ethernet_test`, `lwip_test` |
 | **storage-memory** | `sd_test`, `eeprom_test`, `sdram_test`, `extmem_test` |
 | **gpio-analog** | `blink`, `gpio_loopback_hw`, `adc_loopback_hw`, `analog_test`, `dac_test`, `pwm_test`, `irq_attach_test` |
