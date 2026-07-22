@@ -1,0 +1,48 @@
+NOTE — this is the ANATOP-PLL-from-CM4 PROBE RESULT, not a plain gate failure.
+
+The DEFAULT cm4_audio_test image (the CM4 owns the ENTIRE pipeline, including
+bringing up the ANATOP Audio PLL via AI writes in sai1176_pll_init_44k()) was
+flashed to the EVKB (LinkServer run MIMXRT1176:MIMXRT1170-EVKB, 2026-07-22).
+
+Result: the CM4 produced SILENCE and reported nothing (every MU word 0, incl.
+sai_isr_count==0 and done==0), while the SAME image is QEMU-GREEN
+(transcript_qemu.txt). Because sai_isr_count==0 the CM4 never reached the point
+where it enables the SAI FIFO-request IRQ; codec_wm8962_init() and in.begin()
+are bounded, so the hang is in out.begin() -> sai1176_pll_init_44k(), whose only
+unbounded loop is the ANATOP AI-write toggle-done poll. QEMU is green because it
+models the AI handshake; the CM4 cannot complete it on silicon.
+
+This is EXACTLY the probe the plan predicted (docs/superpowers/plans/
+2026-07-21-cm4-audio-pipeline.md, Task 3 step 4 + the "New-territory flag"
+architecture note): "the CM4 bringing up the ANATOP Audio PLL (AI writes) has no
+precedent ... the capstone HW run IS the probe; if the PLL refuses from the CM4,
+fallback = CM7 pre-arms the PLL before boot." ★★SILICON TRUTH: a CM4 image
+cannot drive the ANATOP Audio-PLL AI-write handshake.
+
+REMEDY (implemented, QEMU-verified, ready): configure with
+-DAUDIO_CM4_PLL_FALLBACK=ON. The CM7 pre-arms the 44.1 kHz Audio PLL via
+sai1176_pll_init_44k() before Multicore.begin(); the CM4 image is built
+-DSAI1176_PLL_EXTERNAL and skips the AI writes (Audio/sai1176.c). Ownership of
+the clock root, LPCG, pads, SAI registers, codec (LPI2C5) and the whole
+AudioStream graph stays on the CM4 -- only the raw ANATOP PLL bring-up is
+delegated (the plan's documented 1-line CM7 concession). HW re-run of the
+fallback build is pending an EVKB power-cycle (repeated flashing on the hung
+default image wedged the debug probe this session).
+
+Raw VCOM capture (115200, MCU-Link VCOM) of the default image:
+------------------------------------------------------------------
+ CM4AUDIO-GATE v1
+codec_ack=00000000
+sai_isr_count=00000000
+dispatch_count=00000000
+underruns=00000000
+fef=00000000
+rx_overflows=00000000
+mic_peak_q15=00000000
+fft_peak_bin=00000000
+fft_peak_mag=00000000
+done=00000000
+cm7_audio_isers=00000000
+AUDIO_CM4=FAIL
+HUMAN: listen for ~1 kHz on J101 (CM4-owned pipeline)
+CM4AUDIO-DONE

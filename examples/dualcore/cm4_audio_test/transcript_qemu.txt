@@ -1,0 +1,15 @@
+CM4AUDIO-GATE v1
+codec_ack=00000001
+sai_isr_count=00000400
+dispatch_count=00000400
+underruns=00000000
+fef=00000000
+rx_overflows=00000000
+mic_peak_q15=00000000
+fft_peak_bin=00000006
+fft_peak_mag=00000FF2
+done=D0DE0005
+cm7_audio_isers=00000000
+AUDIO_CM4=PASS
+HUMAN: listen for ~1 kHz on J101 (CM4-owned pipeline)
+CM4AUDIO-DONE
