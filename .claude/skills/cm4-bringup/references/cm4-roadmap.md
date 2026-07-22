@@ -1,10 +1,16 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 5 — CM4 audio foundation, Plan 1 of 2, ★★ALL HW-VERIFIED
+**Current phase: 6 — CM4 audio pipeline, Plan 2 of 2, ★★ALL HW-VERIFIED
+(2026-07-22)** — the CM4 now OWNS the whole audio pipeline: interrupt-driven SAI
+I/O (`sai1176` shared core + `AudioOutputI2SInt`/`AudioInputI2SInt`, no eDMA),
+CMSIS-DSP on the M4, and the codec+SAI+graph+FFT capstone with the CM7 idle and
+audible 1 kHz on J101 (see "Phase 6" below). The CM4 audio arc (Plan 1
+foundation + Plan 2 pipeline) is complete; the DMA I/O nodes stay CM7-only
+forever (main-eDMA completion IRQs are CM7-domain). Superseded pointer, kept for
+history — **Phase 5: CM4 audio foundation (Plan 1 of 2), ★★ALL HW-VERIFIED
 (2026-07-21)** — the SAI1-IRQ-on-CM4 probe, the CM4 C++ image world, and
-AudioStream running on the CM4 are all done (see "Phase 5" below). Plan 2 of 2
-(sai1176 shared core, interrupt-driven I/O nodes, CMSIS-DSP-CM4, capstone) is
-queued next. Superseded pointer, kept for history — **Phase 4: 4.1 + 4.2
+AudioStream running on the CM4 (see "Phase 5" below). Superseded pointer, kept
+for history — **Phase 4: 4.1 + 4.2
 (interrupt Wire) + the eDMA_LPSR DMA-Wire
 milestone ★★ALL HW-VERIFIED (2026-07-19); 4.3 SPI-DMA is a polled CM4 result +
 the two-eDMA finding.** Phase 4 = "Interrupt-driven / DMA SPI/Wire on the CM4".
@@ -422,6 +428,77 @@ Three gates, one qemu2 model change, one new `cores` shim directory.
   - **Capstone** — a symmetric-audio-ownership demo (per
     `docs/superpowers/specs/2026-07-21-cm4-audio-ownership-design.md`)
     combining the above; scope not yet locked.
+
+## Phase 6 — CM4 audio pipeline (Plan 2 of 2)  ★★HW-VERIFIED 2026-07-22
+
+**Status: DONE + ★★HW-VERIFIED 2026-07-22.** Spec:
+`docs/superpowers/specs/2026-07-21-cm4-audio-ownership-design.md`. Builds on
+Plan 1's SAI1-IRQ-on-CM4 probe + CM4 C++ world + AudioStream-on-CM4 (Phase 5).
+**The CM4 now OWNS the whole audio pipeline — interrupt-driven, not DMA.**
+
+- **`sai1176` shared C core + interrupt-driven I/O nodes (Audio
+  `ee8048a`..`68fa2bb`; evkb `i2s_int_test` `c0539eb`/`cd230bd`):** the SAI1
+  register/clock sequence lives ONCE in `newdigate/Audio/sai1176.c` (Phase-3.3
+  idiom, like `lpspi1176`/`lpi2c1176`); new nodes `AudioOutputI2SInt`/
+  `AudioInputI2SInt` drive I/O from the SAI1 FIFO ISR (no eDMA). `i2s_int_test`
+  proves them on the **CM7** (HW-verified); RX-overflow detect+recover (FEF
+  clear + FIFO reset) closes an L/R-desync hole.
+- **CMSIS-DSP on the CM4 (evkb `cm4_fft_test` `f81254c`):** the CMSIS-DSP
+  amalgams compile into a CM4 image; a known-answer FFT runs on the M4,
+  HW-verified. DSP-heavy nodes can now run off the CM7.
+- **Capstone — the CM4 owns the whole pipeline (evkb `cm4_audio_test`
+  `51ad2ce`/`2de47f1`/`52dd048`; Audio `68fa2bb`):** the CM4 owns the WM8962
+  codec (LPI2C5), interrupt-driven SAI1 I/O, the AudioStream graph, and
+  `analyze_fft256`; the CM7 boots the image and parks in WFI. HW-verified clean
+  at SAI prio 192: `AUDIO_CM4=PASS`, `rx_overflows=0`, `cm7_audio_isers=0` (the
+  CM7 enabled NO audio interrupt), audible 1 kHz on J101, mic captured. Default
+  build flipped this session to the HW-verified pre-arm config (see finding 1);
+  `-DAUDIO_CM4_PLL_FALLBACK=OFF` is the pure-CM4-PLL probe (QEMU-only; hangs on
+  HW).
+- **DMA nodes stay CM7-only FOREVER:** `input_i2s`/`output_i2s` use the main
+  eDMA, whose completion IRQs are CM7-domain (RM Table 4-1; the two-eDMA
+  finding, [[rt1176-cm4-edma-lpsr-split]]); the CM4's DMA is eDMA_LPSR, which
+  does not carry the SAI dma-request. The interrupt-driven nodes ARE the CM4
+  audio path.
+
+**Three silicon findings (EVKB 2026-07-22):**
+1. **The CM4 cannot drive the ANATOP Audio PLL.** The AI-write handshake to the
+   ANATOP PLL register file hangs from the M4 (QEMU fakes the handshake, so it
+   only surfaces on silicon — the capstone HW run WAS the probe). Fix: the CM7
+   pre-arms the 44.1 kHz Audio PLL before `Multicore.begin()` and the CM4 image
+   is built `-DSAI1176_PLL_EXTERNAL` (skips the AI writes); the CM4 still owns
+   clock root/LPCG/pads/SAI/codec/graph. Now the gate default
+   (`AUDIO_CM4_PLL_FALLBACK=ON`, flipped from OFF).
+2. **The SAI I/O ISR must OUTRANK the AudioStream graph.** At SAI IRQ prio 224
+   (below `software_isr`=208) the fft256 graph update preempted RX service on the
+   400 MHz M4 → `rx_overflows=0x3FF`. At prio 192 (SAI > graph — standard Teensy
+   audio design; the CM7 hides it because DMA services the FIFO) the CM4 runs
+   clean. `transcript_hw_evkb_rxoverflow.txt` is the prio-224 evidence.
+3. **QEMU FIFO metrics are ANTI-correlated with silicon.** The QEMU SAI model
+   does not enforce FIFO drain/fill timing, so `underruns`/`fef`/`rx_overflows`
+   read the OPPOSITE of HW. → world-split verdict: the QEMU gate asserts only
+   `AUDIO_CM4_DET` (deterministic — codec + `sai_isr>1000` + `disp>500` +
+   `fft_bin==6` + `cm7_audio_isers==0`); the full `AUDIO_CM4=PASS` (adds FIFO
+   health) is the HW oracle.
+
+**★★RECOVERY LESSON (unbricking a hung dual-core XIP image):** a dual-core
+FlexSPI-XIP image that hangs (e.g. the CM4 stalling on the ANATOP-PLL probe) can
+leave the board apparently dead. Recover via **SDP-mode boot (SW1-3 OFF /
+SW1-4 ON)** — the boot ROM enters serial-download instead of executing the bad
+XIP image, so LinkServer/SDP can reflash. ★Diagnostic trap: the **MCU-Link probe
+stays enumerated on USB even when the TARGET is unpowered**, so a LinkServer
+"Wire not connected" (or a dead VCOM) is NOT a probe/USB fault — the target has
+no power; **check J38 / the barrel-jack supply** before chasing the debug chain.
+
+- **qemu2:** the Plan-1 SAI1-IRQ-76→CM4 `TYPE_SPLIT_IRQ` fan-out (`b597c468ce`,
+  LOCAL ONLY — GPL firewall) is all Plan 2 needed; NO new qemu2 change.
+- **license-audit:** `i2s_int_test`/`cm4_fft_test`/`cm4_audio_test` added to
+  GATES (125 / 824 / 846 files walked) — PASS.
+- **Pushes + pins:** Audio → `f5e47306` (github/newdigate/Audio), cores →
+  `31237b4` (github/newdigate/teensy-cores; `cm4_shim/Arduino.h` now pulls
+  `<stdlib.h>` for `abs()` — a hard dep of the CM4 audio nodes that had been left
+  local-only); `evkb.cmake` pins bumped to both, `-DEVKB_FORCE_FETCH=ON`-proven
+  (fresh fetch of both SHAs built + booted `AUDIO_CM4_DET=PASS`).
 
 ## Queued hardware checks
 
@@ -900,3 +977,34 @@ Three gates, one qemu2 model change, one new `cores` shim directory.
   `sai1176` shared C core, interrupt-driven AudioStream I/O nodes on the CM4,
   CMSIS-DSP-CM4, and the symmetric-audio-ownership capstone (spec:
   `docs/superpowers/specs/2026-07-21-cm4-audio-ownership-design.md`).
+- 2026-07-22: **Phase 6 (CM4 audio pipeline, Plan 2 of 2) DONE + ★★ALL
+  HW-VERIFIED — the CM4 audio arc is complete.** See "Phase 6" above. The CM4
+  owns the whole pipeline: the `sai1176` shared SAI core + interrupt-driven nodes
+  `AudioOutputI2SInt`/`AudioInputI2SInt` (Audio `ee8048a`..`68fa2bb`; CM7 proof
+  evkb `i2s_int_test`), CMSIS-DSP on the M4 (evkb `cm4_fft_test`), and the
+  capstone evkb `cm4_audio_test` (CM4 owns codec+SAI+graph+FFT, CM7 idle in WFI;
+  `AUDIO_CM4=PASS`/`rx_overflows=0`/`cm7_audio_isers=0`, audible 1 kHz on J101).
+  **Three silicon findings:** (1) the CM4 CANNOT drive the ANATOP Audio PLL (the
+  AI handshake hangs on the M4; QEMU fakes it, so the capstone HW run was the
+  probe) → the CM7 pre-arms the PLL and the CM4 image is `-DSAI1176_PLL_EXTERNAL`;
+  (2) the SAI I/O ISR must outrank the graph (prio 192 < `software_isr` 208) or
+  the fft256 update starves RX (`rx_overflows=0x3FF` at prio 224); (3) QEMU FIFO
+  metrics are anti-correlated with silicon → world-split verdict `AUDIO_CM4_DET`
+  (QEMU asserts) vs `AUDIO_CM4` (HW oracle). **Wrap (this session):** flipped the
+  `cm4_audio_test` default to the HW-verified pre-arm config
+  (`AUDIO_CM4_PLL_FALLBACK` OFF→ON — the pure-CM4-PLL path is now the opt-in
+  probe that hangs on HW), refreshed `transcript_qemu.txt` + dropped the
+  now-redundant `transcript_qemu_fallback.txt`; license-audit extended
+  (`i2s_int_test`/`cm4_fft_test`/`cm4_audio_test`, 125/824/846 files) + PASS;
+  pushed Audio `a9626fc..f5e4730` + cores `7f44a4e..31237b4` (the latter a
+  local-only `cm4_shim/Arduino.h` `<stdlib.h>` `abs()` fix the CM4 audio nodes
+  needed — surfaced by the FORCE_FETCH proof, which FAILED to compile until
+  cores was pushed+pinned, a deviation from the Audio-only pin the plan named),
+  bumped both `evkb.cmake` pins, and re-proved with `-DEVKB_FORCE_FETCH=ON` (a
+  fresh fetch of both SHAs built + booted `AUDIO_CM4_DET=PASS` in QEMU). qemu2
+  UNCHANGED — Plan-1's SAI-IRQ-76→CM4 split (`b597c468ce`, local-only) sufficed.
+  ★★RECOVERY LESSON: a hung dual-core FlexSPI-XIP image needs SDP-mode boot
+  (SW1-3 OFF/SW1-4 ON) to unbrick; the MCU-Link probe stays enumerated on USB
+  even when the target is UNPOWERED, so LinkServer "Wire not connected" = check
+  J38/barrel power, not the debug chain. Next: a new capability (the CM4 audio
+  arc — Plan 1 foundation + Plan 2 pipeline — is closed).
