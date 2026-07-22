@@ -120,5 +120,7 @@ the only known macro clash). Pattern C was not needed.
 - **Fix locus tally:** helper (evkb.cmake) = SPI + SD/SdFat src · Audio nodes =
   `utility/pdb.h` guard + `effect_reverb.cpp` arm_math.h · gate CMakeLists =
   CMSIS-DSP link line. **~5 edits total — SMALL, as estimated.**
-- **ELF size:** text 9444 · data 8988 · bss 20512 · dec 38944 (~38 KB) — bounded;
+- **ELF size:** the discovery stub (banner only) was ~38 KB; the SHIPPED gate
+  with the real sine→FIR→mixer→FFT256→peak chain is text 14312 · data 24600 ·
+  bss 31616 (the data bump is the CMSIS q15 FFT twiddle tables) — bounded;
   `--gc-sections` dropped every uninstantiated node, no empty-node const-data drag.

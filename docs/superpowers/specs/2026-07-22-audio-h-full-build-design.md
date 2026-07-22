@@ -134,6 +134,43 @@ Audio fork. Expected categories:
 - **Firewall**: SerialFlash and any newly-compiled files must stay permissive
   (the strengthened audit enforces it).
 
+## Amendments (post-implementation, 2026-07-22 — SHIPPED)
+
+- SHIPPED: full Audio library builds for RT1176 CM7 via
+  `import_evkb_audio_full()`; `#include <Audio.h>` compiles + links; known-answer
+  chain HW-verified on the EVKB (QEMU == HW: `fft_bin6=0.4233`, `peak=0.8494`,
+  `AUDIOH_CHAIN=PASS`). Audio `7481139`; evkb `0be316a`..`d13a813`; SerialFlash
+  pin `2b6f241`. Audio pin bumped to `4b3d296` (evkb `44f4c4e`).
+- **The dep list was incomplete: SPI is also required.** §1 / the established-
+  facts "four externals" listed Wire/SD/SerialFlash/CMSIS (plus the fork's own
+  `sai1176.h`/`spi_interrupt.h`), but did not trace `spi_interrupt.h` and
+  `SerialFlash.h` to their `#include <SPI.h>`. Five TUs (SerialFlashChip,
+  SerialFlashDirectory, spi_interrupt, effect_delay_ext, play_serialflash_raw)
+  need the SPI library on the path. Shipped helper adds `import_evkb_library(SPI)`
+  (evkb `4d86a37`); the gate also links `SPI`.
+- **SD/SdFat import needs the `src` sub-dir.** The plan's helper used
+  `import_evkb_library(SdFat)` / `(SD)`; in reality `<SD.h>` → `SdFat.h` resolve
+  only from each repo's `src/`. Shipped as `import_evkb_library(SdFat src)` /
+  `(SD src)` (evkb `4d86a37`).
+- **`effect_reverb.cpp` was a DSP node, not a stale strip.** §2 implied its
+  `math_helper.h` (a CMSIS-DSP *Examples* file) was an unused include to strip.
+  It transitively supplied real `arm_math.h` symbols the node uses (`q31_t`,
+  `arm_float_to_q31`, `arm_shift_q31`, `arm_add_q31`, `arm_q15_to_q31`,
+  `arm_q31_to_q15`); a bare strip broke the TU. Corrected to
+  `#include "arm_math.h"` (Audio `7481139`) — a live DSP node, not empty.
+- **Sweep far smaller than §2/§7 feared; Pattern C never needed.** All but three
+  of the ~20 Kinetis/1062 I/O nodes already compiled to empty objects; those
+  three (output_dac, output_dacs, input_adcs) were fixed by ONE shared one-line
+  guard in `utility/pdb.h` (add `&& !defined(__IMXRT1176__)`). The 81-header
+  `<Audio.h>` aggregation compiled clean on the FIRST try — zero collisions (the
+  CMSIS A0-A2/IRQ shim already on `teensy_flags` covered the only known clash).
+  Net Audio-fork change: 2 files. Final gate ELF: text 14312 / data 24600 / bss
+  31616 (the data is the CMSIS q15 FFT twiddle tables) — bounded; `--gc-sections`
+  drops all uninstantiated nodes.
+- Gate-scaffold detail: `CMSIS-DSP` (a plain `add_library(STATIC)`, no `.o`
+  suffix) links via the raw `target_link_libraries(audio_h_test.elf CMSIS-DSP …)`
+  line, not `teensy_target_link_libraries` (which appends `.o` → `-lCMSIS-DSP.o`).
+
 ## Out of scope
 
 Audio.h on the CM4; new I/O-node ports (SPDIF/MQS/output_dac12); migrating
