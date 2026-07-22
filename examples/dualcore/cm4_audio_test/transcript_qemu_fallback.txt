@@ -1,0 +1,20 @@
+# cm4_audio_test FALLBACK build (-DAUDIO_CM4_PLL_FALLBACK=ON): CM7 pre-arms the
+# 44.1 kHz Audio PLL, CM4 image built -DSAI1176_PLL_EXTERNAL skips the ANATOP AI
+# writes. QEMU evidence that the documented HW-probe fallback functions.
+# ---
+CM4AUDIO-GATE v1
+info pll_prearm=1 (CM7 fallback engaged)
+codec_ack=00000001
+sai_isr_count=00000400
+dispatch_count=00000400
+underruns=00000000
+fef=00000000
+rx_overflows=00000000
+mic_peak_q15=00000000
+fft_peak_bin=00000006
+fft_peak_mag=00000FF2
+done=D0DE0005
+cm7_audio_isers=00000000
+AUDIO_CM4=PASS
+HUMAN: listen for ~1 kHz on J101 (CM4-owned pipeline)
+CM4AUDIO-DONE

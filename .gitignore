@@ -9,7 +9,7 @@
 *.uart
 .DS_Store
 __pycache__/
-build/
+build*/
 cmake-build-*/
 serial.dbg
 serial.uart

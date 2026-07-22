@@ -48,8 +48,8 @@
  *   done          0xD0DE0005
  * Public domain (N. Newdigate); node/register logic is MIT (see each source). */
 #include <stdint.h>
-#include <stdlib.h>          // abs() for the peak read path (also via the shim)
-#include "Arduino.h"         // cores/imxrt1176/cm4_shim/Arduino.h
+#include "Arduino.h"         // cores/imxrt1176/cm4_shim/Arduino.h (pulls <stdlib.h>
+                             // -> abs(), used by the analyze_peak read path)
 #include "AudioStream.h"     // the real core engine header
 #include "synth_sine.h"
 #include "analyze_peak.h"
@@ -73,9 +73,9 @@ extern "C" void SAI1_IRQHandler(void)     { sai1176_isr_dispatch(); }
 
 // --- the CM4-owned audio graph -------------------------------------------
 // 1033.59375 Hz = 6 * 44100/256 -> lands exactly on FFT bin 6 (deterministic
-// in QEMU and on HW); still an audible "~1 kHz" tone on J101.
-#define SINE_HZ         1033.59f
-#define SINE_BIN        6u
+// in QEMU and on HW; the bin==6 assertion is CM7-side); still an audible
+// "~1 kHz" tone on J101.
+#define SINE_HZ         1033.59375f
 #define DISPATCH_TARGET 1024u   // wait for >=1024 dispatches: dispatch_count>500
                                 // AND sai_isr_count(>=dispatch_count)>1000 in
                                 // BOTH worlds, independent of the per-world
@@ -124,7 +124,7 @@ extern "C" int main(void) {
     sine.frequency(SINE_HZ);
     sine.amplitude(0.5f);
 
-    // Phase A: arm the measurement window. The output ISR self-disarms FRIE
+    // Arm the measurement window. The output ISR self-disarms FRIE
     // after DISPATCH_TARGET graph dispatches (the QEMU world-split escape:
     // its TX FIFO-request level never deasserts without an audio backend, so a
     // free-running FRIE would starve main forever; on HW this just pauses the
@@ -190,7 +190,7 @@ extern "C" int main(void) {
     mu_send(fft_mag);
     mu_send(0xD0DE0005u);
 
-    // Phase D: continuous audible tone on HW (re-arm FRIE). In QEMU the TX
+    // Continuous audible tone on HW (re-arm FRIE). In QEMU the TX
     // FIFO-request level free-runs the ISR again and parks main here forever --
     // fine, every token is already on the MU wire.
     AudioOutputI2SInt::setPauseAfter(0u);

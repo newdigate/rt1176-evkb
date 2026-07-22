@@ -44,10 +44,18 @@
 extern "C" void sai1176_pll_init_44k(void);
 #endif
 
-static bool wait_recv(uint8_t ch, uint32_t *out) {
-    for (uint32_t i = 0; i < 6000000u; i++) {
+// Wait for a CM4 MU token with a DWT-cycle deadline. The core enables
+// ARM_DWT_CYCCNT in systick_init() (startup.c) -- it is already counting -- and
+// DWT is the reliable time base on this silicon (SysTick/millis() is flaky:
+// delay.c uses DWT for the same reason), so do NOT bound this with millis() or a
+// raw iteration count. The CM4 emits NO token until it finishes
+// DISPATCH_TARGET=1024 dispatches (~3.0 s at 44.1 kHz); a ~1 s iteration bound
+// would time out and false-FAIL a perfectly healthy HW run while the tone plays.
+static bool wait_recv(uint8_t ch, uint32_t *out, uint32_t max_cycles) {
+    uint32_t start = ARM_DWT_CYCCNT;
+    do {
         if (MU.tryReceive(ch, out)) return true;
-    }
+    } while ((uint32_t)(ARM_DWT_CYCCNT - start) < max_cycles);
     return false;
 }
 
@@ -79,11 +87,17 @@ void setup() {
 
     uint32_t codec_ack = 0, sai_isr = 0, disp = 0, under = 0, fef = 0,
              rx_ovf = 0, mic_q15 = 0, fft_bin = 0, fft_mag = 0, done = 0;
-    bool ok = wait_recv(0, &codec_ack) && wait_recv(0, &sai_isr) &&
-              wait_recv(0, &disp)      && wait_recv(0, &under)   &&
-              wait_recv(0, &fef)       && wait_recv(0, &rx_ovf)  &&
-              wait_recv(0, &mic_q15)   && wait_recv(0, &fft_bin) &&
-              wait_recv(0, &fft_mag)   && wait_recv(0, &done);
+    // The FIRST token gates on the CM4's ~3 s measurement window; 4.2e9 cycles
+    // (~4.2 s @ 996 MHz) covers it with ~1.2 s margin and stays < 2^32 = 4.295e9
+    // so a single unsigned CYCCNT delta is wrap-safe. The remaining 9 tokens
+    // follow within microseconds, so a 0.2 s bound is ample.
+    const uint32_t FIRST_CYCLES = 4200000000u;   // ~4.2 s
+    const uint32_t NEXT_CYCLES  =  200000000u;   // ~0.2 s
+    bool ok = wait_recv(0, &codec_ack, FIRST_CYCLES) && wait_recv(0, &sai_isr, NEXT_CYCLES) &&
+              wait_recv(0, &disp,   NEXT_CYCLES)      && wait_recv(0, &under,   NEXT_CYCLES) &&
+              wait_recv(0, &fef,    NEXT_CYCLES)      && wait_recv(0, &rx_ovf,  NEXT_CYCLES) &&
+              wait_recv(0, &mic_q15, NEXT_CYCLES)     && wait_recv(0, &fft_bin, NEXT_CYCLES) &&
+              wait_recv(0, &fft_mag, NEXT_CYCLES)     && wait_recv(0, &done,    NEXT_CYCLES);
 
     phex("codec_ack",     codec_ack);
     phex("sai_isr_count", sai_isr);
