@@ -11,5 +11,7 @@ rm -f "$OUT"
 P=$!; gate_pid $P; sleep 5; kill $P 2>/dev/null; wait $P 2>/dev/null || true
 echo "==== captured ===="; cat "$OUT"
 grep -q "PXP_BEGIN=PASS" "$OUT" || { echo "FAIL: begin"; exit 1; }
+grep -q "PXP_BLIT=PASS"    "$OUT" || { echo "FAIL: blit"; exit 1; }
+grep -q "PXP_SUBRECT=PASS" "$OUT" || { echo "FAIL: subrect"; exit 1; }
 grep -q "PXP_ALL=PASS"   "$OUT" || { echo "FAIL: overall"; exit 1; }
 echo "PASS: PXP Phase 1 verified"
