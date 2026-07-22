@@ -238,8 +238,9 @@ macro(import_evkb_audio_full)
         #    (global) and creates its target; the linker RESCAN group resolves
         #    cross-refs regardless of order.
         import_evkb_library(Wire)
-        import_evkb_library(SdFat)
-        import_evkb_library(SD)
+        import_evkb_library(SPI)
+        import_evkb_library(SdFat src)
+        import_evkb_library(SD src)
         import_evkb_library(SerialFlash)
         # 3. The whole Audio fork (root globs 87 .cpp/6 .c; utility/ adds 2).
         import_evkb_library(Audio utility)
