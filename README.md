@@ -24,7 +24,10 @@ example/verification firmwares (`examples/`), and tooling (`tools/`).
   `MessagingUnit` (MU) mailbox/doorbell API, and can keep several CM4 firmware
   images resident at once and hot-swap between them with `Cm4ImageBank`
   (uniform ITCM slots, fast no-copy VTOR switch). CM4 sketches are compiled by
-  the same build system and embedded into the CM7 image.
+  the same build system and embedded into the CM7 image. **Either core can own
+  the entire audio pipeline** (codec, SAI1, the `AudioStream` graph, CMSIS-DSP)
+  — on the CM4 it runs interrupt-driven, since the audio DMA path is CM7-only,
+  with the CM7 pre-arming the Audio PLL.
 - **Everything is verified twice.** Each capability has a scripted QEMU gate
   (a custom [QEMU machine model](https://gitlab.com/Newdigate/qemu-rt1170) of
   the RT1176, both cores) *and* a hardware
@@ -154,7 +157,7 @@ on a real EVKB unless noted.
 | Wire (LPI2C master + slave, interrupt-driven) — sibling `Wire` lib | ✅ HW-verified |
 | SPI (LPSPI, blocking + full-duplex DMA/async) — sibling `SPI` lib | ✅ HW-verified |
 | eDMA / `DMAChannel` (Teensy DMAChannel port) | ✅ HW-verified |
-| Audio graph: I2S in/out via SAI1 + WM8962 codec, WAV playback from SD | ✅ HW-verified (audible) |
+| Audio graph: I2S in/out via SAI1 + WM8962 codec (DMA **or** interrupt-driven nodes), WAV playback from SD, CMSIS-DSP (FFT/FIR) | ✅ HW-verified (audible) |
 | SD card (USDHC/SDIO via SdFat), flash-emulated EEPROM | ✅ HW-verified |
 | 64 MB SDRAM (SEMC) + `extmem_malloc`, SNVS RTC | ✅ HW-verified |
 | Ethernet 10/100: lwIP stack + Arduino `Ethernet` API, and FNET/NativeEthernet | ✅ HW-verified (DHCP/ping/TCP/UDP/DNS) |
@@ -162,6 +165,7 @@ on a real EVKB unless noted.
 | USB host: HID (keyboard/mouse via hub), MIDI, mass storage r/w | ✅ HW-verified |
 | FlexCAN (CAN3 on J47), ST7735 display | ✅ HW-verified |
 | **Dual-core:** CM4 boot (`Multicore`), MU IPC, CM4 GPIO/SPI/I2C, CM4 interrupt + DMA I/O (eDMA_LPSR), runtime hot-swap, `Cm4ImageBank` multi-image slots | ✅ HW-verified |
+| **CM4-owned audio:** the CM4 alone drives the WM8962 codec, SAI1 (interrupt-driven nodes), the `AudioStream` graph, and CMSIS-DSP FFT — with the CM7 idle (zero audio IRQs) | ✅ HW-verified (audible 1 kHz on J101; CM7 pre-arms the Audio PLL) |
 | CrashReport, MTP, USB audio/touch/rawhid/flightsim headers | ⚠️ present in tree, not verified on this board |
 
 ## Limitations
@@ -185,9 +189,12 @@ on a real EVKB unless noted.
   CM4's private TCM (use OCRAM for buffers). CM4 images are position-dependent
   (linked for a fixed ITCM address). No cross-core peripheral arbitration
   protocol yet — assign each peripheral instance to one core.
-- **Audio on the CM4** is not supported: SAI/I2S DMA completion is CM7-domain,
-  so the audio graph's clock source can't interrupt the CM4 (the graph runs on
-  the CM7; the CM4 can serve as a DSP worker over MU/OCRAM).
+- **DMA audio is CM7-only.** Main-eDMA completion IRQs are CM7-domain, so the
+  DMA-driven `input_i2s`/`output_i2s` nodes only run on the CM7. The CM4 owns
+  audio a different way — the **interrupt-driven** `AudioInputI2SInt`/
+  `AudioOutputI2SInt` nodes (SAI FIFO IRQ, no DMA) — with the CM7 pre-arming the
+  Audio PLL (the CM4 can't drive the ANATOP AI-write handshake). One core owns
+  the pipeline per firmware; there's no simultaneous dual-core audio.
 - **Board traps worth knowing.** Header pin **A5** (`GPIO_AD_08`, also
   LPI2C1_SCL) is wired to `USB_OTG2_ID` — plugging a USB-OTG adapter into the
   second USB port clamps A5/SCL to 0 V and silently kills header I²C. FlexCAN
