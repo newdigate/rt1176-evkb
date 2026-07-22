@@ -1,0 +1,6 @@
+[console] /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200 — Ctrl-C to quit. Press SW4/RESET to see the boot banner.
+AUDIOH-GATE v1
+AUDIOH: fft_bin6=0.4233
+AUDIOH: peak=0.8494
+AUDIOH_CHAIN=PASS
+AUDIOH-DONE
