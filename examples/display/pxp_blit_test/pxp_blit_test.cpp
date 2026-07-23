@@ -12,8 +12,10 @@
 #define FB_W  64
 #define FB_H  48
 
-DMAMEM static uint16_t src_buf[SRC_W * SRC_H];
-DMAMEM static uint16_t fb_buf[FB_W * FB_H];
+/* 64-byte aligned: PXP's rotate/flip guard (RM 52.6.4 recommends 64B for
+ * OUT_BUF) rejects a misaligned destination.  Explicit, not layout luck. */
+DMAMEM static uint16_t src_buf[SRC_W * SRC_H] __attribute__((aligned(64)));
+DMAMEM static uint16_t fb_buf[FB_W * FB_H]    __attribute__((aligned(64)));
 static   uint16_t ref_buf[FB_W * FB_H];      /* software reference (DTCM ok) */
 
 /* Deterministic, position-dependent pattern - any pitch/stride error shows up. */
@@ -39,12 +41,30 @@ static void fill_src(void)
             src_buf[y * SRC_W + x] = pattern(x, y);
 }
 
-/* Software reference blit: src -> dst at (dx,dy), no rotation yet. */
-static void ref_blit(uint16_t *dst, int dpitchPx, int dx, int dy)
+/* Software reference: src -> dst at (dx,dy) under rotation + flips.
+ * Mirrors the mapping the hardware performs; see plan Task 7.
+ * NOTE: hardware applies flips BEFORE rotation (RM 52.6.1), so this inverse
+ * mapping un-rotates first and un-flips second.  That ordering is deliberate. */
+static void ref_blit_xf(uint16_t *dst, int dpitchPx, int dx, int dy,
+                        PXPRotation rot, bool hflip, bool vflip)
 {
-    for (int y = 0; y < SRC_H; y++)
-        for (int x = 0; x < SRC_W; x++)
-            dst[(dy + y) * dpitchPx + (dx + x)] = src_buf[y * SRC_W + x];
+    int win_w = (rot == PXP_ROT_90 || rot == PXP_ROT_270) ? SRC_H : SRC_W;
+    int win_h = (rot == PXP_ROT_90 || rot == PXP_ROT_270) ? SRC_W : SRC_H;
+
+    for (int py = 0; py < win_h; py++) {
+        for (int px = 0; px < win_w; px++) {
+            int sx, sy;
+            switch (rot) {
+            case PXP_ROT_0:   sx = px;              sy = py;              break;
+            case PXP_ROT_90:  sx = py;              sy = (SRC_H-1) - px;  break;
+            case PXP_ROT_180: sx = (SRC_W-1) - px;  sy = (SRC_H-1) - py;  break;
+            default:          sx = (SRC_W-1) - py;  sy = px;              break;
+            }
+            if (hflip) sx = (SRC_W-1) - sx;
+            if (vflip) sy = (SRC_H-1) - sy;
+            dst[(dy + py) * dpitchPx + (dx + px)] = src_buf[sy * SRC_W + sx];
+        }
+    }
 }
 
 static bool check(const char *token, const uint16_t *got, const uint16_t *want,
@@ -97,17 +117,37 @@ void setup() {
     /* --- full-surface blit into the top-left corner --------------------- */
     memset(fb_buf, 0xA5, sizeof(fb_buf));
     memset(ref_buf, 0xA5, sizeof(ref_buf));
-    ref_blit(ref_buf, FB_W, 0, 0);
+    ref_blit_xf(ref_buf, FB_W, 0, 0, PXP_ROT_0, false, false);
     if (PXP.blit(src, fb) != PXP_OK) { Serial1.println("PXP_BLIT=FAIL op"); all = false; }
     else all &= check("PXP_BLIT", fb_buf, ref_buf, FB_W * FB_H);
 
     /* --- offset sub-rect blit: surroundings MUST be untouched ----------- */
     memset(fb_buf, 0x5A, sizeof(fb_buf));
     memset(ref_buf, 0x5A, sizeof(ref_buf));
-    ref_blit(ref_buf, FB_W, 16, 12);
+    ref_blit_xf(ref_buf, FB_W, 16, 12, PXP_ROT_0, false, false);
     if (PXP.op().source(src).output(fb).outputAt(16, 12).run() != PXP_OK) {
         Serial1.println("PXP_SUBRECT=FAIL op"); all = false;
     } else all &= check("PXP_SUBRECT", fb_buf, ref_buf, FB_W * FB_H);
+
+    /* --- geometry: rotations and flips ---------------------------------- */
+    struct { const char *tok; PXPRotation rot; bool h, v; } xf[] = {
+        { "PXP_ROT90",  PXP_ROT_90,  false, false },
+        { "PXP_ROT180", PXP_ROT_180, false, false },
+        { "PXP_ROT270", PXP_ROT_270, false, false },
+        { "PXP_HFLIP",  PXP_ROT_0,   true,  false },
+        { "PXP_VFLIP",  PXP_ROT_0,   false, true  },
+    };
+    for (unsigned i = 0; i < sizeof(xf)/sizeof(xf[0]); i++) {
+        memset(fb_buf, 0x33, sizeof(fb_buf));
+        memset(ref_buf, 0x33, sizeof(ref_buf));
+        ref_blit_xf(ref_buf, FB_W, 0, 0, xf[i].rot, xf[i].h, xf[i].v);
+        PXPError e = PXP.op().source(src).output(fb)
+                        .rotate(xf[i].rot).flip(xf[i].h, xf[i].v).run();
+        if (e != PXP_OK) {
+            Serial1.print(xf[i].tok); Serial1.print("=FAIL op e=");
+            Serial1.println((int)e); all = false;
+        } else all &= check(xf[i].tok, fb_buf, ref_buf, FB_W * FB_H);
+    }
 
     Serial1.println(all ? "PXP_ALL=PASS" : "PXP_ALL=FAIL");
 }
