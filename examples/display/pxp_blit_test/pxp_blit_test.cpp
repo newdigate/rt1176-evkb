@@ -82,6 +82,18 @@ void setup() {
     PXPSurface src(src_buf, SRC_W, SRC_H, PXP_RGB565);
     PXPSurface fb (fb_buf,  FB_W,  FB_H,  PXP_RGB565);
 
+    /* --- solid fill via PS_BACKGROUND (RGB888 -> output format) ---------- */
+    /* Alignment-exact colour: R/B low 3 bits and G low 2 bits are zero, so the
+     * RGB888->RGB565 narrow is exact regardless of trunc-vs-round on silicon. */
+    const uint32_t FILL_RGB888 = 0x0080C080u;   /* R=0x80 G=0xC0 B=0x80 */
+    uint16_t fill565 = (uint16_t)(((0x80u >> 3) << 11) |
+                                  ((0xC0u >> 2) << 5)  |
+                                   (0x80u >> 3));       /* = 0x8610 */
+    memset(fb_buf, 0x00, sizeof(fb_buf));
+    for (int i = 0; i < FB_W * FB_H; i++) ref_buf[i] = fill565;
+    if (PXP.fill(fb, FILL_RGB888) != PXP_OK) { Serial1.println("PXP_FILL=FAIL op"); all = false; }
+    else all &= check("PXP_FILL", fb_buf, ref_buf, FB_W * FB_H);
+
     /* --- full-surface blit into the top-left corner --------------------- */
     memset(fb_buf, 0xA5, sizeof(fb_buf));
     memset(ref_buf, 0xA5, sizeof(ref_buf));
