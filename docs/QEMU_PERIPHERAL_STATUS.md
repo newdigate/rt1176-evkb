@@ -95,7 +95,8 @@ evkb/library gate that exercises it end-to-end.
 | USB | OTG1/2 + PHYs — **host AND device mode** | reuses `chipidea` (+ its UDC device mode), `imx-usb-phy`, plus `dev-midi` | device: `usb_enum/data/keyboard/mouse/joystick_test` (CDC+HID composite; reactive `hid_in_mask` int-IN tap); host: `usb_host_hid_test`, `usb_midi_test`, `usb_msc_block/fs_test`; ★OTG2 host DMA has a deliberate **TCM hole** (caught 2 real stack-DMA bugs pre-HW) |
 | CAN | FlexCAN ×3 | `imxrt_flexcan` | FlexCAN lib gates; ★`SRXDIS`-gated loopback (honesty fix) + **synchronous** delivery vs ~108µs on silicon |
 | External RAM | SEMC + SDRAM | `imxrt_semc` | `sdram_test`, `extmem_test` (faithful window) |
-| RTC / security / misc | SNVS (SRTC), OCOTP, Key Manager, WDOG/RTWDOG/EWM, LPADC, FlexIO, eLCDIF, PXP | `imxrt_snvs`, `imxrt_ocotp`, `imxrt_key_manager`, `imx2.wdt`/`imxrt_rtwdog`/`imxrt_ewm`, `imxrt_lpadc`, `imxrt_flexio`, `imx6ul_lcdif`, `imxrt_pxp` | `rtc_test` (★HPCR[HP_TS] honoured), display/misc gates from the CM7 bring-up era |
+| Graphics | PXP (2D Pixel Pipeline) | `imxrt_pxp` | `pxp_blit_test`; ★models documented reset values (`CTRL`=`0xC000_0000` held in reset until the RM §52.5 sequence runs), real per-format bpp decode, `PS_BACKGROUND` RGB888→output conversion, and 90°/180°/270° rotation via the source-frame convention (`OUT_LRC`/`OUT_PS_LRC` = source dims — the hardware rotates that frame and lays it out via `OUT_PITCH`); does **not** model CSC1 — plain RGB pixel copy only (see divergences) — scaling/decimation, alpha-surface compositing, YUV formats, the `NEXT` queue, or AXI-error injection |
+| RTC / security / misc | SNVS (SRTC), OCOTP, Key Manager, WDOG/RTWDOG/EWM, LPADC, FlexIO, eLCDIF | `imxrt_snvs`, `imxrt_ocotp`, `imxrt_key_manager`, `imx2.wdt`/`imxrt_rtwdog`/`imxrt_ewm`, `imxrt_lpadc`, `imxrt_flexio`, `imx6ul_lcdif` | `rtc_test` (★HPCR[HP_TS] honoured), display/misc gates from the CM7 bring-up era |
 | Dual-core | CM4 + MU + SRC release + LPSR GPRs | machine + `imxrt_mu` | see the dual-core section |
 
 ### Board test fixtures (`hw/arm/mimxrt1170-evk.c`)
@@ -131,6 +132,7 @@ sufficient — each entry is documented at its source and in the owning gate:
 | **Timing gates need `-icount`** (shift=2 typical) | else `delay()`/ptimer decouple (PIT, tone, SD-in-audio-ISR) |
 | **SysTick time-base differs** (`-icount` vs real 400 MHz+) | characterisation tokens only (`cm4_intr_test`) |
 | Boot-ROM stub executes IVT+DCD/XMCD but `clean_boot.scp` on HW **cannot** re-run the real ROM's pass | POR (SW4) is the only true full-ROM path on the board |
+| **`imxrt_pxp` applies no CSC1 colour-space conversion** (plain RGB pixel copy) | Silicon runs every PS source pixel through CSC1's YUV→RGB matrix unless `CSC1_COEF0[BYPASS]` is explicitly set (it resets NOT-bypassed, with YUV coefficients loaded); QEMU passed regardless, since it never applies CSC1 math — the colour-mangling bug (Amendment 2 finding 1) was HW-only |
 
 ---
 
