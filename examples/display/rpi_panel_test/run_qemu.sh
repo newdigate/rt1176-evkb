@@ -11,7 +11,8 @@ rm -f "$OUT"
 P=$!; gate_pid $P; sleep 5; kill $P 2>/dev/null; wait $P 2>/dev/null || true
 echo "==== captured ===="; cat "$OUT"
 grep -q "ATTINY_OK"     "$OUT" || { echo "FAIL: attiny"; exit 1; }
+grep -q "PLL_OK"        "$OUT" || { echo "FAIL: pll";    exit 1; }
 # FB_SUM (+ PANEL_SUM) deferred: begin() doesn't return true overall until the
-# PLL/LCDIFv2/DSI/TC358762 stages land, so fillScreen() never runs yet.
+# LCDIFv2/DSI/TC358762 stages land, so fillScreen() never runs yet.
 # Restored at Task 13, which also adds the PANEL_SUM bridge-checksum oracle.
-echo "PASS: RPi panel Task 4 (ATtiny power/backlight) verified"
+echo "PASS: RPi panel Task 6 (ATtiny + VIDEO_PLL/LCDIFv2+MIPI clock roots) verified"
