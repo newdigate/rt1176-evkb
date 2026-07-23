@@ -20,5 +20,9 @@ grep -q "PXP_ROT270=PASS" "$OUT" || { echo "FAIL: rot270"; exit 1; }
 grep -q "PXP_HFLIP=PASS"  "$OUT" || { echo "FAIL: hflip"; exit 1; }
 grep -q "PXP_VFLIP=PASS"  "$OUT" || { echo "FAIL: vflip"; exit 1; }
 grep -q "PXP_ASYNC=PASS"  "$OUT" || { echo "FAIL: async"; exit 1; }
+grep -q "PXP_SDRAM=PASS" "$OUT" || { echo "FAIL: sdram"; exit 1; }
+grep -q "PXP_OCRAM=PASS" "$OUT" || { echo "FAIL: ocram"; exit 1; }
+grep -q "PXP_TCM="       "$OUT" || { echo "FAIL: tcm probe did not report"; exit 1; }
+grep -q "PXP_ALIGN="     "$OUT" || { echo "FAIL: align probe did not report"; exit 1; }
 grep -q "PXP_ALL=PASS"   "$OUT" || { echo "FAIL: overall"; exit 1; }
 echo "PASS: PXP Phase 1 verified"

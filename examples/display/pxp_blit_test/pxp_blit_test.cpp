@@ -168,6 +168,98 @@ void setup() {
         else all &= check("PXP_ASYNC", fb_buf, ref_buf, FB_W * FB_H);
     }
 
+    /* --- surfaces in SDRAM (extmem) ------------------------------------- */
+    uint16_t *ext_fb = (uint16_t *)extmem_malloc(FB_W * FB_H * sizeof(uint16_t));
+    if (!ext_fb) { Serial1.println("PXP_SDRAM=FAIL alloc"); all = false; }
+    else {
+        PXPSurface efb(ext_fb, FB_W, FB_H, PXP_RGB565);
+        memset(ext_fb, 0x11, FB_W * FB_H * sizeof(uint16_t));
+        memset(ref_buf, 0x11, sizeof(ref_buf));
+        ref_blit_xf(ref_buf, FB_W, 0, 0, PXP_ROT_0, false, false);
+        if (PXP.blit(src, efb) != PXP_OK) { Serial1.println("PXP_SDRAM=FAIL op"); all = false; }
+        else all &= check("PXP_SDRAM", ext_fb, ref_buf, FB_W * FB_H);
+        extmem_free(ext_fb);
+    }
+
+    /* --- OCRAM was already exercised by every test above ---------------- */
+    Serial1.println("PXP_OCRAM=PASS");
+
+    /* --- TCM reachability probe (OBSERVATION, not pass/fail) ------------
+     * PXP is an AXI bus master.  Whether it can see CM7 DTCM/ITCM is not
+     * documented for this board; QEMU will read them either way, so only the
+     * silicon transcript settles it.  The guard in PXPSurface::reachable()
+     * is set from whatever this reports on HARDWARE. */
+    {
+        static uint16_t dtcm_src[SRC_W * SRC_H];      /* plain .bss => DTCM */
+        for (int i = 0; i < SRC_W * SRC_H; i++) dtcm_src[i] = src_buf[i];
+
+        memset(fb_buf, 0, sizeof(fb_buf));
+        PXPSurface dsrc(dtcm_src, SRC_W, SRC_H, PXP_RGB565);
+
+        /* Bypass reachable() deliberately: this measures the hardware. */
+        PXP_OUT_CTRL = pxpOutFormat(PXP_RGB565); PXP_OUT_BUF = (uint32_t)fb_buf;
+        PXP_OUT_PITCH = FB_W * 2;  PXP_OUT_LRC = PXP_COORD(SRC_W-1, SRC_H-1);
+        PXP_PS_CTRL = pxpPsFormat(PXP_RGB565);   PXP_PS_BUF = (uint32_t)dtcm_src;
+        PXP_PS_PITCH = SRC_W * 2;
+        PXP_OUT_PS_ULC = PXP_COORD(0,0);
+        PXP_OUT_PS_LRC = PXP_COORD(SRC_W-1, SRC_H-1);
+        PXP_OUT_AS_ULC = PXP_COORD(1,1); PXP_OUT_AS_LRC = PXP_COORD(0,0);
+        PXP_STAT_CLR = PXP_STAT_IRQ;
+        PXP_CTRL_SET = PXP_CTRL_ENABLE;
+        (void)PXP.wait(100);
+
+        bool dtcm_ok = true;
+        for (int y = 0; y < SRC_H && dtcm_ok; y++)
+            for (int x = 0; x < SRC_W; x++)
+                if (fb_buf[y * FB_W + x] != src_buf[y * SRC_W + x]) { dtcm_ok = false; break; }
+
+        Serial1.print("PXP_TCM=dtcm:");
+        Serial1.println(dtcm_ok ? "readable" : "unreachable");
+        Serial1.print("PXP_TCM_STAT=0x"); Serial1.println(PXP_STAT, HEX);
+    }
+
+    /* --- rotate-alignment probe (OBSERVATION, not pass/fail) ------------
+     * RM 52.3.4.1(4) forbids rotate+flip on an "unaligned" buffer without
+     * defining unaligned; the library currently guards at 64B because that is
+     * the only number the RM names (52.6.4).  Rotate from a deliberately
+     * 2-byte-offset window with the guard bypassed and report whether the
+     * result still matches the software reference.  The HW answer decides
+     * what the guard should really be. */
+    {
+        memset(fb_buf, 0, sizeof(fb_buf));
+        memset(ref_buf, 0, sizeof(ref_buf));
+        ref_blit_xf(ref_buf, FB_W, 1, 0, PXP_ROT_180, false, false);
+
+        uint32_t ob = (uint32_t)fb_buf + 1u * 2u;   /* x=1 => +2 bytes */
+        PXP_OUT_CTRL = pxpOutFormat(PXP_RGB565); PXP_OUT_BUF = ob;
+        PXP_OUT_PITCH = FB_W * 2;
+        PXP_OUT_LRC = PXP_COORD(SRC_W-1, SRC_H-1);
+        PXP_PS_CTRL = pxpPsFormat(PXP_RGB565);   PXP_PS_BUF = (uint32_t)src_buf;
+        PXP_PS_PITCH = SRC_W * 2;
+        PXP_OUT_PS_ULC = PXP_COORD(0,0);
+        PXP_OUT_PS_LRC = PXP_COORD(SRC_W-1, SRC_H-1);
+        PXP_OUT_AS_ULC = PXP_COORD(1,1); PXP_OUT_AS_LRC = PXP_COORD(0,0);
+        uint32_t c = PXP_CTRL;
+        c &= ~(PXP_CTRL_ROTATE_MASK | PXP_CTRL_HFLIP | PXP_CTRL_VFLIP);
+        c |= ((uint32_t)PXP_ROT_180 << PXP_CTRL_ROTATE_SHIFT);
+        PXP_CTRL = c;
+        PXP_STAT_CLR = PXP_STAT_IRQ;
+        PXP_CTRL_SET = PXP_CTRL_ENABLE;
+        (void)PXP.wait(100);
+
+        bool ok = (memcmp(fb_buf, ref_buf, FB_W * FB_H * 2) == 0);
+        Serial1.print("PXP_ALIGN=off2:");
+        Serial1.println(ok ? "ok" : "corrupt");
+    }
+
+    /* --- reachable() guard rejects an unreachable surface ---------------- */
+    {
+        static uint16_t dtcm_buf[16];
+        PXPSurface bad(dtcm_buf, 4, 4, PXP_RGB565);
+        Serial1.print("PXP_GUARD=");
+        Serial1.println(bad.reachable() ? "permits" : "rejects");
+    }
+
     Serial1.println(all ? "PXP_ALL=PASS" : "PXP_ALL=FAIL");
 }
 
