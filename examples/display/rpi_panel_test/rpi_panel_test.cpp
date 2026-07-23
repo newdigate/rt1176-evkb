@@ -55,6 +55,21 @@ static void dsiApbLongWrite(uint8_t dataType, const uint8_t *p, uint16_t len) {
          (DSI_APB_PKT_STATUS & DSI_APB_PKT_STATUS_NOT_IDLE); g++) { /* wait idle */ }
 }
 
+// TEMP(Task 9 probe) -- remove in Task 10. Sends a DSI SHORT packet via the
+// DSI_APB interface with NO TX_PAYLOAD write: the two data bytes ride in
+// PKT_CONTROL's WORD_COUNT[15:0] as (data1<<8)|data0, matching how the NXP
+// fsl_mipi_dsi driver emits a short packet (wordCount = (data1<<8)|data0, no
+// FIFO write). Same DSI_APB sequence Task 10's dsiWrite() takes for a <=2-byte
+// transfer, and the path Task 12's tc358762Init leans on.
+static void dsiApbShortWrite(uint8_t dataType, uint8_t data0, uint8_t data1) {
+    uint16_t wc = (uint16_t)data0 | ((uint16_t)data1 << 8);   // no FIFO write
+    DSI_APB_PKT_CONTROL = DSI_APB_PKT_CONTROL_WORD_COUNT(wc) |
+                          DSI_APB_PKT_CONTROL_HEADER_TYPE(dataType);
+    DSI_APB_SEND_PACKET = DSI_APB_SEND_PACKET_TX_SEND;   // trigger the send
+    for (int g = 0; g < 1000 &&
+         (DSI_APB_PKT_STATUS & DSI_APB_PKT_STATUS_NOT_IDLE); g++) { /* wait idle */ }
+}
+
 void setup() {
     Serial1.begin(115200);
     delay(200);
@@ -138,6 +153,25 @@ void setup() {
         Serial1.printf("PROBE_DSI=LOCK:%lu DT:%02lX WC:%lu PLD:%s\n",
                        (unsigned long)(lock ? 1u : 0u), (unsigned long)tapDT,
                        (unsigned long)tapWC, pld_ok ? "PASS" : "FAIL");
+
+        // TEMP(Task 9 probe) -- remove in Task 10. Exercise the SHORT-packet
+        // branch (data type 0x23 = generic short write, 2-param): the two data
+        // bytes ride in PKT_CONTROL's word-count field with no TX_PAYLOAD write.
+        // Confirm the model captured DT=0x23, WC=0xCDAB and the payload FNV-1a
+        // of {0xAB,0xCD} (len is always 2 for a short packet). Task 12's
+        // tc358762Init uses this short path, so it is verified at runtime here.
+        const uint8_t sDT = 0x23, s0 = 0xAB, s1 = 0xCD;
+        dsiApbShortWrite(sDT, s0, s1);
+        uint32_t sTapDT  = DSI_HOST_REG(0x3F00);
+        uint32_t sTapWC  = DSI_HOST_REG(0x3F04);
+        uint32_t sTapSUM = DSI_HOST_REG(0x3F08);
+        const uint8_t sExpPld[2] = { s0, s1 };
+        uint32_t sExpSUM = fnv1a(sExpPld, 2);
+        uint32_t sExpWC  = (uint32_t)s0 | ((uint32_t)s1 << 8);
+        bool short_ok = (sTapDT == sDT) && (sTapWC == sExpWC) && (sTapSUM == sExpSUM);
+        Serial1.printf("PROBE_DSI_SHORT=DT:%02lX WC:%04lX PLD:%s\n",
+                       (unsigned long)sTapDT, (unsigned long)sTapWC,
+                       short_ok ? "PASS" : "FAIL");
     }
 
     if (ok) {

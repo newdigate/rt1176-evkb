@@ -31,6 +31,10 @@ grep -Eq "PROBE_LCDIF=.*PASS" "$OUT" || { echo "FAIL: lcdifv2 scan probe"; exit 
 # DSI driver is Task 10): the probe pokes the DSI_DPHY/DSI_APB registers by hand
 # and reads the model's debug tap. Removed at Task 10 when the real driver lands.
 grep -Eq "PROBE_DSI=LOCK:1 .*PLD:PASS" "$OUT" || { echo "FAIL: dsi packet probe"; exit 1; }
+# TEMP(Task 9) -- assert the DSI_APB SHORT-packet path too: the two data bytes
+# ride in the PKT_CONTROL word-count field (no TX_PAYLOAD write). Removed at
+# Task 10; Task 12's TC358762 bridge init depends on this short path.
+grep -Eq "PROBE_DSI_SHORT=.*PLD:PASS" "$OUT" || { echo "FAIL: dsi short probe"; exit 1; }
 # FB_SUM (+ PANEL_SUM) deferred: begin() doesn't return true overall until the
 # DSI/TC358762 stages land, so fillScreen() never runs yet.
 # Restored at Task 13, which also adds the PANEL_SUM bridge-checksum oracle.
