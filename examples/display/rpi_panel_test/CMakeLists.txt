@@ -6,8 +6,9 @@ set(TEENSY_VERSION 117 CACHE STRING "")
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 
 import_evkb_library(RPiDisplay)
+import_evkb_library(Wire)
 
 teensy_add_executable(rpi_panel_test rpi_panel_test.cpp)
-teensy_target_link_libraries(rpi_panel_test cores RPiDisplay)
+teensy_target_link_libraries(rpi_panel_test cores RPiDisplay Wire)
 
 target_link_libraries(rpi_panel_test.elf stdc++)
