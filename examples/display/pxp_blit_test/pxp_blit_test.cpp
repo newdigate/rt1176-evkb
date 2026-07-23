@@ -4,6 +4,7 @@
  */
 #include <Arduino.h>
 #include <PXP.h>
+#include <EventResponder.h>
 #include <string.h>
 
 /* ---- surfaces (OCRAM: PXP is a bus master, so never DTCM) ---------------- */
@@ -147,6 +148,24 @@ void setup() {
             Serial1.print(xf[i].tok); Serial1.print("=FAIL op e=");
             Serial1.println((int)e); all = false;
         } else all &= check(xf[i].tok, fb_buf, ref_buf, FB_W * FB_H);
+    }
+
+    /* --- async completion via IRQ 57 ------------------------------------ */
+    static volatile bool async_done = false;
+    static EventResponder er;
+    er.attachImmediate([](EventResponderRef) { async_done = true; });
+
+    memset(fb_buf, 0x77, sizeof(fb_buf));
+    memset(ref_buf, 0x77, sizeof(ref_buf));
+    ref_blit_xf(ref_buf, FB_W, 0, 0, PXP_ROT_0, false, false);
+    async_done = false;
+    if (PXP.op().source(src).output(fb).runAsync(&er) != PXP_OK) {
+        Serial1.println("PXP_ASYNC=FAIL op"); all = false;
+    } else {
+        uint32_t t0 = millis();
+        while (!async_done && (millis() - t0) < 500) { yield(); }
+        if (!async_done) { Serial1.println("PXP_ASYNC=FAIL callback"); all = false; }
+        else all &= check("PXP_ASYNC", fb_buf, ref_buf, FB_W * FB_H);
     }
 
     Serial1.println(all ? "PXP_ALL=PASS" : "PXP_ALL=FAIL");
