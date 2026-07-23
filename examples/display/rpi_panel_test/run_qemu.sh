@@ -25,17 +25,15 @@ grep -q "LCDIFV2_OK"    "$OUT" || { echo "FAIL: lcdifv2"; exit 1; }
 # of the real driver above. Removed at Task 11 when the checksum tap moves to
 # the TC358762 bridge.
 grep -Eq "PROBE_LCDIF=.*PASS" "$OUT" || { echo "FAIL: lcdifv2 scan probe"; exit 1; }
-# TEMP(Task 9) -- assert the QEMU MIPI-DSI host model reads its D-PHY PLL lock
-# bit set and its DSI_APB packet path captured our known DCS long-write packet
-# (data type + word count + payload checksum). This is NOT DSI_OK (the firmware
-# DSI driver is Task 10): the probe pokes the DSI_DPHY/DSI_APB registers by hand
-# and reads the model's debug tap. Removed at Task 10 when the real driver lands.
-grep -Eq "PROBE_DSI=LOCK:1 .*PLD:PASS" "$OUT" || { echo "FAIL: dsi packet probe"; exit 1; }
-# TEMP(Task 9) -- assert the DSI_APB SHORT-packet path too: the two data bytes
-# ride in the PKT_CONTROL word-count field (no TX_PAYLOAD write). Removed at
-# Task 10; Task 12's TC358762 bridge init depends on this short path.
-grep -Eq "PROBE_DSI_SHORT=.*PLD:PASS" "$OUT" || { echo "FAIL: dsi short probe"; exit 1; }
+# Task 10 -- the firmware MIPI-DSI host driver (RPiDisplay mipi_dsi.cpp) brought
+# the D-PHY up (PLL dividers + HS timing + bounded lock poll), powered the PHY
+# and configured the DPI video mode, with every register reading back what it
+# wrote. This REPLACES the Task-9 PROBE_DSI/PROBE_DSI_SHORT hand-poked probes.
+# NOTE the QEMU model reports D-PHY LOCK the instant PD_PLL clears and stores
+# every DPI register as plain RW, so DSI_OK proves the bring-up SEQUENCE, not
+# that the D-PHY locks at the right bit rate -- that is Task 14 (silicon).
+grep -q "DSI_OK"        "$OUT" || { echo "FAIL: dsi";     exit 1; }
 # FB_SUM (+ PANEL_SUM) deferred: begin() doesn't return true overall until the
-# DSI/TC358762 stages land, so fillScreen() never runs yet.
+# TC358762 stage lands, so fillScreen() never runs yet.
 # Restored at Task 13, which also adds the PANEL_SUM bridge-checksum oracle.
-echo "PASS: RPi panel Task 8 (ATtiny + VIDEO_PLL + LCDIFv2 driver) verified"
+echo "PASS: RPi panel Task 10 (ATtiny + VIDEO_PLL + LCDIFv2 + MIPI-DSI host) verified"
