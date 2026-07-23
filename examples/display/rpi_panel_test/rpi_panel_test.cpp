@@ -49,10 +49,10 @@ void setup() {
     if (ok) {
         Display.fillScreen(COLOR);
         // FB_SUM: checksum the SDRAM framebuffer we painted (proves PXP.fill)
-        uint32_t fb_sum = fnv1a((const uint8_t*)Display.framebuffer(), 800u * 480u * 2u);
+        uint32_t fb_sum = fnv1a((const uint8_t*)Display.framebuffer(), (uint32_t)Display.width() * Display.height() * 2u);
         // expected: whole buffer is COLOR
         uint32_t exp = 2166136261u; uint8_t lo = COLOR & 0xFF, hi = (COLOR >> 8) & 0xFF;
-        for (uint32_t i = 0; i < 800u * 480u; i++) { exp ^= lo; exp *= 16777619u; exp ^= hi; exp *= 16777619u; }
+        for (uint32_t i = 0; i < (uint32_t)Display.width() * Display.height(); i++) { exp ^= lo; exp *= 16777619u; exp ^= hi; exp *= 16777619u; }
         Serial1.printf("FB_SUM=%08lX EXP=%08lX %s\n", (unsigned long)fb_sum, (unsigned long)exp, fb_sum == exp ? "PASS" : "FAIL");
         // PANEL_SUM: QEMU-only oracle -- the virtual TC358762's received-pixel checksum (Task 11/13)
         Serial1.println("PANEL_SUM_PENDING"); // filled in at Task 13
