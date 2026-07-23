@@ -1,4 +1,3 @@
-==== captured ====
 PXP_GATE_START
 PXP_CTRL_POST_BEGIN=0x0
 PXP_BEGIN=PASS
@@ -26,6 +25,6 @@ PXP_OCRAM=PASS
 PXP_TCM=dtcm:readable
 PXP_TCM_STAT=0x0
 PXP_ALIGN=off2:ok
-PXP_GUARD=rejects
+PXP_GUARD=dtcm:permits,unmapped:rejects
 PXP_ALL=PASS
 PASS: PXP Phase 1 verified

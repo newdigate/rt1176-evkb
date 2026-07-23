@@ -204,6 +204,7 @@ void setup() {
         PXP_OUT_PS_ULC = PXP_COORD(0,0);
         PXP_OUT_PS_LRC = PXP_COORD(SRC_W-1, SRC_H-1);
         PXP_OUT_AS_ULC = PXP_COORD(1,1); PXP_OUT_AS_LRC = PXP_COORD(0,0);
+        PXP_CSC1_COEF0 = PXP_CSC1_BYPASS;   /* explicit, not inherited */
         PXP_STAT_CLR = PXP_STAT_IRQ;
         PXP_CTRL_SET = PXP_CTRL_ENABLE;
         (void)PXP.wait(100);
@@ -239,8 +240,9 @@ void setup() {
         PXP_OUT_PS_ULC = PXP_COORD(0,0);
         PXP_OUT_PS_LRC = PXP_COORD(SRC_W-1, SRC_H-1);
         PXP_OUT_AS_ULC = PXP_COORD(1,1); PXP_OUT_AS_LRC = PXP_COORD(0,0);
+        PXP_CSC1_COEF0 = PXP_CSC1_BYPASS;   /* explicit, not inherited */
         uint32_t c = PXP_CTRL;
-        c &= ~(PXP_CTRL_ROTATE_MASK | PXP_CTRL_HFLIP | PXP_CTRL_VFLIP);
+        c &= ~(PXP_CTRL_ROTATE_MASK | PXP_CTRL_HFLIP | PXP_CTRL_VFLIP | PXP_CTRL_ROT_POS);
         c |= ((uint32_t)PXP_ROT_180 << PXP_CTRL_ROTATE_SHIFT);
         PXP_CTRL = c;
         PXP_STAT_CLR = PXP_STAT_IRQ;
@@ -252,11 +254,16 @@ void setup() {
         Serial1.println(ok ? "ok" : "corrupt");
     }
 
-    /* --- reachable() guard rejects an unreachable surface ---------------- */
+    /* --- reachable() now permits DTCM (HW-verified above) and still rejects
+     * a genuinely unmapped region.  PXP_GUARD's dtcm verdict must agree with
+     * PXP_TCM. --------------------------------------------------------------- */
     {
-        static uint16_t dtcm_buf[16];
-        PXPSurface bad(dtcm_buf, 4, 4, PXP_RGB565);
-        Serial1.print("PXP_GUARD=");
+        static uint16_t dtcm_buf[16];                       /* DTCM - reachable */
+        PXPSurface dt(dtcm_buf, 4, 4, PXP_RGB565);
+        PXPSurface bad((void *)0x50000000u, 4, 4, PXP_RGB565);  /* reserved/unmapped */
+        Serial1.print("PXP_GUARD=dtcm:");
+        Serial1.print(dt.reachable() ? "permits" : "rejects");
+        Serial1.print(",unmapped:");
         Serial1.println(bad.reachable() ? "permits" : "rejects");
     }
 
