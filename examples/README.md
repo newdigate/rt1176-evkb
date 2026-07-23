@@ -35,7 +35,7 @@ set `ARM_TOOLCHAIN_BIN` if your ARM GCC isn't at `/Applications/ARM_10/bin/`.
 | **gpio-analog** | `blink`, `gpio_loopback_hw`, `adc_loopback_hw`, `analog_test`, `dac_test`, `pwm_test`, `irq_attach_test` |
 | **timing** | `interval_timer_test`, `interval_timer_hw`, `rtc_test` |
 | **serial** | `serial_test`, `serial_test_rx` |
-| **display** | `ssd1306_display` |
+| **display** | `ssd1306_display`, `pxp_blit_test` |
 | **framework** | `arm_math_test`, `string_test`, `stream_test`, `wprogram_parity_test`, `eventresponder_test`, `edma_test` |
 
 ## Not examples (still at `evkb/` root)
