@@ -2,23 +2,19 @@
  * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT
  *
- * Task 1: scaffold only. Display.begin() is a stub (returns false), so every
- * stage token below prints FAIL and FB_SUM never appears -- this IS the
- * intended red gate. Later tasks (4,6,8,10,12,13) turn each stage green in
- * turn as the real ATtiny/PLL/LCDIFv2/DSI/TC358762/PXP-fill drivers land.
+ * As of Task 4: ATTINY_OK (the RPiDisplay ATtiny88 driver is live), remaining
+ * stage tokens FAIL and FB_SUM never appears -- begin() still returns false
+ * overall (later stages unimplemented). Later tasks (6,8,10,12,13) turn each
+ * remaining stage green in turn as the real PLL/LCDIFv2/DSI/TC358762/PXP-fill
+ * drivers land.
  *
  * NOTE: uses Serial1 (the LPUART console every sibling gate's run_qemu.sh
  * captures via `-serial file:`), not Serial (native USB CDC, which QEMU
  * would not capture here) -- see cores/imxrt1176/usb_serial.h.
  */
 #include <Arduino.h>
-#include <Wire.h>   // TEMP(Task 3 probe) — remove in Task 4 (kept: Task 4 driver needs it)
+#include <Wire.h>   // needed by the RPiDisplay ATtiny driver (Display::begin())
 #include "Display.h"
-
-// TEMP(Task 3 probe) — remove in Task 4. Raw Wire read of the virtual ATtiny88
-// ID register, proving the QEMU model answers over the real emulated LPI2C1
-// before the Display/ATtiny driver (Task 4) exists.
-#define PROBE_ATTINY 1
 
 static const uint16_t COLOR = 0xF800; // solid red (RGB565) -- arbitrary, checksum is computed
 
@@ -43,21 +39,6 @@ void setup() {
     Serial1.begin(115200);
     delay(200);
     Serial1.println("RPI_PANEL_BEGIN");
-
-#ifdef PROBE_ATTINY
-    // TEMP(Task 3 probe) — remove in Task 4.
-    // Register-pointer read of REG_ID (0xFC) at I2C 0x45: set the pointer with a
-    // write, then requestFrom() clocks the byte back. The QEMU ATtiny model
-    // returns 0xDE. This is a standalone raw-Wire probe of the model over the
-    // real LPI2C1 path — the Display driver (Task 4) supersedes it.
-    Wire.begin();
-    Wire.beginTransmission(0x45);
-    Wire.write((uint8_t)0xFC);          // REG_ID
-    Wire.endTransmission(false);        // repeated-START, keep the bus
-    Wire.requestFrom((uint8_t)0x45, (uint8_t)1);
-    uint8_t attiny_id = Wire.available() ? (uint8_t)Wire.read() : 0xFF;
-    Serial1.printf("PROBE_ATTINY=0x%02X\n", attiny_id);
-#endif
 
     bool ok = Display.begin();
     // stage tokens -- emitted unconditionally so the first false pinpoints the broken layer
