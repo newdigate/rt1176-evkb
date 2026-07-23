@@ -16,6 +16,13 @@
 #include <Wire.h>   // needed by the RPiDisplay ATtiny driver (Display::begin())
 #include "Display.h"
 
+// TEMP(Task 5 probe) — remove in Task 6. Minimal VIDEO_PLL enable + STABLE-poll
+// and a CCM_CLOCK_ROOT70 write/read-back, proving the QEMU display-clock model
+// (ANADIG VIDEO_PLL CTRL @0x40C84350 + CCM LCDIFv2/MIPI CLOCK_ROOTs) responds
+// before the real clock bring-up (Task 6) lands. Register defines come from the
+// core's imxrt1176.h (pulled in transitively via <Arduino.h>).
+#define PROBE_PLL 1
+
 static const uint16_t COLOR = 0xF800; // solid red (RGB565) -- arbitrary, checksum is computed
 
 // FNV-1a over the framebuffer bytes
@@ -39,6 +46,27 @@ void setup() {
     Serial1.begin(115200);
     delay(200);
     Serial1.println("RPI_PANEL_BEGIN");
+
+#ifdef PROBE_PLL
+    // TEMP(Task 5 probe) — remove in Task 6.
+    // The SDK's CLOCK_InitVideoPll() sets PLL_VIDEO_CTRL[ENABLE_CLK] and then
+    // spins on PLL_VIDEO_CTRL[STABLE] (bit 29) "wait for PLL locked"; the QEMU
+    // ANADIG model forces that STABLE bit set on read (same mechanism as
+    // SYS_PLL1). Do the minimal representative enable + a bounded STABLE poll —
+    // NOT the full AI/ungate sequence (that is Task 6's job).
+    ANADIG_PLL_VIDEO_CTRL |= ANADIG_PLL_VIDEO_CTRL_ENABLE_CLK;   // the enable bit the firmware sets
+    uint32_t pll_spins = 0;
+    while (!(ANADIG_PLL_VIDEO_CTRL & ANADIG_PLL_VIDEO_CTRL_STABLE) && ++pll_spins < 100000u) { }
+    int pll_lock = (ANADIG_PLL_VIDEO_CTRL & ANADIG_PLL_VIDEO_CTRL_STABLE) ? 1 : 0;
+
+    // CCM LCDIFv2 CLOCK_ROOT70: write mux=VideoPllOut + a divider, read it back
+    // (proves the root register is genuinely RW in the model, not read-as-zero).
+    const uint32_t root_val = (CCM_CLOCK_ROOT_MUX_VIDEO_PLL << 8) | 3u; // div arbitrary
+    CCM_CLOCK_ROOT70_CONTROL = root_val;
+    int root_rw = (CCM_CLOCK_ROOT70_CONTROL == root_val) ? 1 : 0;
+
+    Serial1.printf("PROBE_PLL=LOCK:%d ROOT:%d\n", pll_lock, root_rw);
+#endif
 
     bool ok = Display.begin();
     // stage tokens -- emitted unconditionally so the first false pinpoints the broken layer
