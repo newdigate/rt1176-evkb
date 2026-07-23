@@ -48,6 +48,41 @@ void setup() {
     Serial1.printf("DSI_%s\n",      Display.dsiOk()    ? "OK" : "FAIL");
     Serial1.printf("TC358762_%s\n", Display.bridgeOk() ? "OK" : "FAIL");
 
+    // TEMP(Task 7 probe) -- remove in Task 11. Proves the QEMU LCDIFv2 model
+    // reads the SDRAM layer-0 framebuffer per its CTRLDESCL registers, ahead of
+    // any real LCDIFv2/DSI driver. We point layer 0 at an extmem buffer filled
+    // with a positional RGB565 pattern, then read the model's debug scan-checksum
+    // tap and compare it to the same FNV-1a computed here in software. The tap
+    // lives at a spare offset (0x3FFC) outside the real register file; Task 11
+    // moves the firmware-visible checksum to the TC358762 bridge (DSI region).
+    {
+        const uint32_t PW = 64, PH = 48;             // small test frame
+        const uint32_t PPITCH = PW * 2;              // RGB565, tightly packed
+        uint16_t *pbuf = (uint16_t *)extmem_malloc((size_t)PW * PH * 2);
+        if (!pbuf) {
+            Serial1.println("PROBE_LCDIF=SUM:0 EXP:0 FAIL(alloc)");
+        } else {
+            // positional pattern: consecutive pixels differ, so a stride/pitch
+            // bug in the model would change the checksum
+            for (uint32_t i = 0; i < PW * PH; i++) pbuf[i] = (uint16_t)(0x1000 + i);
+            arm_dcache_flush_delete(pbuf, PW * PH * 2); // no-op here; HW coherency
+
+            // layer-0 descriptor: WxH, pitch, buffer addr, RGB565 format, enable
+            LCDIFV2_CTRLDESCL1(0) = LCDIFV2_CTRLDESCL1_WIDTH(PW) |
+                                    LCDIFV2_CTRLDESCL1_HEIGHT(PH);
+            LCDIFV2_CTRLDESCL3(0) = LCDIFV2_CTRLDESCL3_PITCH(PPITCH);
+            LCDIFV2_CTRLDESCL4(0) = (uint32_t)pbuf;
+            LCDIFV2_CTRLDESCL5(0) = LCDIFV2_CTRLDESCL5_BPP(LCDIFV2_CTRLDESCL5_BPP_RGB565) |
+                                    LCDIFV2_CTRLDESCL5_EN;
+
+            uint32_t tap = LCDIFV2_REG(0x3FFC);       // model's on-demand scan checksum
+            uint32_t exp = fnv1a((const uint8_t *)pbuf, PW * PH * 2);
+            Serial1.printf("PROBE_LCDIF=SUM:%08lX EXP:%08lX %s\n",
+                           (unsigned long)tap, (unsigned long)exp,
+                           tap == exp ? "PASS" : "FAIL");
+        }
+    }
+
     if (ok) {
         Display.fillScreen(COLOR);
         // FB_SUM: checksum the SDRAM framebuffer we painted (proves PXP.fill)
