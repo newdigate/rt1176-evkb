@@ -25,6 +25,12 @@ grep -q "LCDIFV2_OK"    "$OUT" || { echo "FAIL: lcdifv2"; exit 1; }
 # of the real driver above. Removed at Task 11 when the checksum tap moves to
 # the TC358762 bridge.
 grep -Eq "PROBE_LCDIF=.*PASS" "$OUT" || { echo "FAIL: lcdifv2 scan probe"; exit 1; }
+# TEMP(Task 9) -- assert the QEMU MIPI-DSI host model reads its D-PHY PLL lock
+# bit set and its DSI_APB packet path captured our known DCS long-write packet
+# (data type + word count + payload checksum). This is NOT DSI_OK (the firmware
+# DSI driver is Task 10): the probe pokes the DSI_DPHY/DSI_APB registers by hand
+# and reads the model's debug tap. Removed at Task 10 when the real driver lands.
+grep -Eq "PROBE_DSI=LOCK:1 .*PLD:PASS" "$OUT" || { echo "FAIL: dsi packet probe"; exit 1; }
 # FB_SUM (+ PANEL_SUM) deferred: begin() doesn't return true overall until the
 # DSI/TC358762 stages land, so fillScreen() never runs yet.
 # Restored at Task 13, which also adds the PANEL_SUM bridge-checksum oracle.

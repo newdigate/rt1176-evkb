@@ -35,6 +35,26 @@ static inline uint32_t rgb565_to_888(uint16_t c) {
     return (r << 16) | (g << 8) | b;
 }
 
+// TEMP(Task 9 probe) -- remove in Task 10. Sends one DSI DCS/generic packet via
+// the DSI_APB packet interface using the exact register sequence Task 10's
+// dsiWrite() will use: pack the payload little-endian into the TX_PAYLOAD FIFO,
+// write the PKT_CONTROL header (word count + data type), trigger SEND_PACKET,
+// then bounded-poll PKT_STATUS back to idle. Mirrors the NXP driver's
+// DSI_WriteApbTxPayload + DSI_SetApbPacketControl + DSI_SendApbPacket.
+static void dsiApbLongWrite(uint8_t dataType, const uint8_t *p, uint16_t len) {
+    uint16_t i = 0;
+    while (i < len) {                       // pack 4 bytes/word, LE, into the FIFO
+        uint32_t w = 0;
+        for (uint8_t b = 0; b < 4 && i < len; b++, i++) w |= (uint32_t)p[i] << (b * 8);
+        DSI_APB_TX_PAYLOAD = w;
+    }
+    DSI_APB_PKT_CONTROL = DSI_APB_PKT_CONTROL_WORD_COUNT(len) |
+                          DSI_APB_PKT_CONTROL_HEADER_TYPE(dataType);
+    DSI_APB_SEND_PACKET = DSI_APB_SEND_PACKET_TX_SEND;   // trigger the send
+    for (int g = 0; g < 1000 &&
+         (DSI_APB_PKT_STATUS & DSI_APB_PKT_STATUS_NOT_IDLE); g++) { /* wait idle */ }
+}
+
 void setup() {
     Serial1.begin(115200);
     delay(200);
@@ -81,6 +101,43 @@ void setup() {
                            (unsigned long)tap, (unsigned long)exp,
                            tap == exp ? "PASS" : "FAIL");
         }
+    }
+
+    // TEMP(Task 9 probe) -- remove in Task 10. Proves the QEMU MIPI-DSI host
+    // model: (1) the D-PHY PLL LOCK bit reads set once the PLL is powered up
+    // (PD_PLL cleared), and (2) the DSI_APB packet path assembles + forwards a
+    // known DCS long-write packet (data type + word count + payload) to its
+    // internal debug-capture stub sink. We drive the same DSI_DPHY/DSI_APB
+    // register sequence Task 10's dsiWrite() will use, then read the model's
+    // temporary debug tap (spare offsets 0x3F00+ in the DSI region) and compare.
+    // Task 10 lands the real firmware DSI driver (turns DSI_ green) and removes
+    // this; the tap is revisited at Task 11 when the TC358762 bridge is the sink.
+    {
+        DSI_APB_IRQ_MASK  = 0xFFFFFFFFu;          // mask all APB IRQs (as DSI_Init)
+        DSI_APB_IRQ_MASK2 = 0xFFFFFFFFu;
+        DSI_DPHY_PD_PLL = 0;                       // power up the D-PHY PLL
+        DSI_DPHY_PD_TX  = 0;                       // power up the D-PHY TX
+        uint32_t lock = 0;
+        for (int i = 0; i < 1000; i++) {           // bounded lock poll
+            lock = DSI_DPHY_LOCK & DSI_DPHY_LOCK_MASK;
+            if (lock) break;
+        }
+
+        // known DCS long write (data type 0x39): multi-word payload so a FIFO
+        // byte-packing / word-count bug in the model would change the checksum
+        static const uint8_t pld[] = { 0xB0, 0x11, 0x22, 0x33, 0x44, 0x55 };
+        const uint16_t plen = (uint16_t)sizeof(pld);
+        const uint8_t DT = 0x39;
+        dsiApbLongWrite(DT, pld, plen);
+
+        uint32_t tapDT  = DSI_HOST_REG(0x3F00);    // last forwarded data type
+        uint32_t tapWC  = DSI_HOST_REG(0x3F04);    // last forwarded word count
+        uint32_t tapSUM = DSI_HOST_REG(0x3F08);    // FNV-1a of forwarded payload
+        uint32_t expSUM = fnv1a(pld, plen);
+        bool pld_ok = (tapDT == DT) && (tapWC == plen) && (tapSUM == expSUM);
+        Serial1.printf("PROBE_DSI=LOCK:%lu DT:%02lX WC:%lu PLD:%s\n",
+                       (unsigned long)(lock ? 1u : 0u), (unsigned long)tapDT,
+                       (unsigned long)tapWC, pld_ok ? "PASS" : "FAIL");
     }
 
     if (ok) {
