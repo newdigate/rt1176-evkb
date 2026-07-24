@@ -18,13 +18,14 @@ echo "==== captured ===="; cat "$OUT"
 grep -q "ATTINY_OK"     "$OUT" || { echo "FAIL: attiny"; exit 1; }
 grep -q "PLL_OK"        "$OUT" || { echo "FAIL: pll";    exit 1; }
 grep -q "LCDIFV2_OK"    "$OUT" || { echo "FAIL: lcdifv2"; exit 1; }
-# TEMP(Task 7) -- assert the QEMU LCDIFv2 model scanned our SDRAM framebuffer
-# correctly (its debug scan-checksum tap == the software FNV-1a). This is NOT
-# LCDIFV2_OK (the firmware LCDIFv2 driver, now live as of Task 8): the probe
-# pokes the layer-0 registers by hand and reads the model's tap, independently
-# of the real driver above. Removed at Task 11 when the checksum tap moves to
-# the TC358762 bridge.
-grep -Eq "PROBE_LCDIF=.*PASS" "$OUT" || { echo "FAIL: lcdifv2 scan probe"; exit 1; }
+# TEMP(Task 11) -- assert the virtual TC358762 bridge's readiness FSM and its
+# PANEL_SUM oracle. PRE is read with no bridge init sent, over an already
+# enabled layer-0 framebuffer: it MUST be the sentinel (the panel does not
+# light without the init sequence). POST is read after the minimal required
+# init sequence and MUST equal the software FNV-1a of the same framebuffer.
+# This REPLACES the Task-7 PROBE_LCDIF assertion (that tap is gone). Removed at
+# Task 12, when the real firmware bridge driver drives this path.
+grep -Eq "PROBE_BRIDGE=.*PASS" "$OUT" || { echo "FAIL: tc358762 bridge probe"; exit 1; }
 # Task 10 -- the firmware MIPI-DSI host driver (RPiDisplay mipi_dsi.cpp) brought
 # the D-PHY up (PLL dividers + HS timing + bounded lock poll), powered the PHY
 # and configured the DPI video mode, with every register reading back what it
@@ -36,4 +37,4 @@ grep -q "DSI_OK"        "$OUT" || { echo "FAIL: dsi";     exit 1; }
 # FB_SUM (+ PANEL_SUM) deferred: begin() doesn't return true overall until the
 # TC358762 stage lands, so fillScreen() never runs yet.
 # Restored at Task 13, which also adds the PANEL_SUM bridge-checksum oracle.
-echo "PASS: RPi panel Task 10 (ATtiny + VIDEO_PLL + LCDIFv2 + MIPI-DSI host) verified"
+echo "PASS: RPi panel Task 11 (ATtiny + VIDEO_PLL + LCDIFv2 + MIPI-DSI host + virtual TC358762 bridge FSM/PANEL_SUM) verified"

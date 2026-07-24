@@ -2,12 +2,16 @@
  * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT
  *
- * As of Task 10: ATTINY_OK + PLL_OK + LCDIFV2_OK + DSI_OK (the ATtiny88 driver,
+ * As of Task 11: ATTINY_OK + PLL_OK + LCDIFV2_OK + DSI_OK (the ATtiny88 driver,
  * the VIDEO_PLL / LCDIFv2+MIPI clock-root bring-up, the LCDIFv2 driver and the
  * MIPI-DSI host driver are all live), TC358762_FAIL and FB_SUM never appears --
  * begin() still returns false overall (later stages unimplemented). Later tasks
  * (12,13) turn each remaining stage green in turn as the real TC358762 bridge
  * and PXP-fill drivers land.
+ *
+ * PROBE_BRIDGE is a TEMP Task-11 probe of the QEMU-side virtual TC358762
+ * (readiness FSM + PANEL_SUM oracle), removed once Task 12's real bridge
+ * driver drives the same path.
  *
  * NOTE: uses Serial1 (the LPUART console every sibling gate's run_qemu.sh
  * captures via `-serial file:`), not Serial (native USB CDC, which QEMU
@@ -16,6 +20,7 @@
 #include <Arduino.h>
 #include <Wire.h>   // needed by the RPiDisplay ATtiny driver (Display::begin())
 #include "Display.h"
+#include "mipi_dsi.h"   // TEMP(Task 11 probe): dsiWrite() -- remove in Task 12
 
 static const uint16_t COLOR = 0xF800; // solid red (RGB565) -- arbitrary, checksum is computed
 
@@ -49,20 +54,47 @@ void setup() {
     Serial1.printf("DSI_%s\n",      Display.dsiOk()    ? "OK" : "FAIL");
     Serial1.printf("TC358762_%s\n", Display.bridgeOk() ? "OK" : "FAIL");
 
-    // TEMP(Task 7 probe) -- remove in Task 11. Proves the QEMU LCDIFv2 model
-    // reads the SDRAM layer-0 framebuffer per its CTRLDESCL registers, ahead of
-    // any real LCDIFv2/DSI driver. We point layer 0 at an extmem buffer filled
-    // with a positional RGB565 pattern, then read the model's debug scan-checksum
-    // tap and compare it to the same FNV-1a computed here in software. The tap
-    // lives at a spare offset (0x3FFC) outside the real register file; Task 11
-    // moves the firmware-visible checksum to the TC358762 bridge (DSI region).
+    // (The Task-7 LCDIFv2 scan-checksum probe and the Task-9 DSI packet probes
+    // lived here. Both read TEMP debug taps that Task 11 retired: the LCDIFv2
+    // tap at 0x3FFC and the DSI tap at 0x3F00.. are gone from the QEMU model,
+    // superseded by the TC358762 bridge's tap probed below -- which checks the
+    // same scan checksum, but only once the bridge agrees the panel is lit.)
+
+    // TEMP(Task 11 probe) -- remove in Task 12. Proves the virtual TC358762
+    // bridge's readiness FSM and its PANEL_SUM oracle, ahead of the real
+    // firmware bridge driver (Task 12). The bridge is QEMU-only fiction: on a
+    // real board the TC358762 has no registers in the SoC map at all, so this
+    // whole block only means anything under QEMU (TAP_ID reads back a magic
+    // there and 0 on silicon).
+    //
+    // Sequence:
+    //   1. read the tap with NO bridge init sent -- Display.begin() has already
+    //      left layer 0 enabled over a real 800x480 SDRAM framebuffer and the
+    //      DSI host up, so there ARE pixels to checksum; the bridge must still
+    //      report not-ready and hand back the sentinel. That negative case is
+    //      the point: the panel must not light without the init sequence.
+    //   2. point layer 0 at a small buffer holding a known positional pattern;
+    //   3. send the minimal init sequence the bridge requires (see the
+    //      required-init contract in qemu2 include/hw/display/imxrt_tc358762.h);
+    //   4. re-read: ready, and PANEL_SUM == the software FNV-1a of that buffer.
     {
+        const uint32_t TAP_BASE = 0x4080F000u;   // QEMU-only bridge debug tap
+        #define BRIDGE_TAP(off) (*(volatile uint32_t *)(TAP_BASE + (off)))
+        const uint32_t TAP_ID = 0x00, TAP_STATUS = 0x04, TAP_PANEL_SUM = 0x08;
+        const uint32_t TAP_ID_MAGIC = 0x54433632u;   // "TC62"
+        const uint32_t ST_READY = 1u << 3;
+
+        uint32_t id       = BRIDGE_TAP(TAP_ID);
+        uint32_t pre_stat = BRIDGE_TAP(TAP_STATUS);
+        uint32_t pre_sum  = BRIDGE_TAP(TAP_PANEL_SUM);
+
         const uint32_t PW = 64, PH = 48;             // small test frame
         const uint32_t PPITCH = PW * 2;              // RGB565, tightly packed
         uint16_t *pbuf = (uint16_t *)extmem_malloc((size_t)PW * PH * 2);
-        if (!pbuf) {
-            Serial1.println("PROBE_LCDIF=SUM:0 EXP:0 FAIL(alloc)");
-        } else {
+        uint32_t exp = 0, post_stat = 0, post_sum = 0;
+        bool ok_probe = false;
+
+        if (pbuf) {
             // positional pattern: consecutive pixels differ, so a stride/pitch
             // bug in the model would change the checksum
             for (uint32_t i = 0; i < PW * PH; i++) pbuf[i] = (uint16_t)(0x1000 + i);
@@ -76,20 +108,35 @@ void setup() {
             LCDIFV2_CTRLDESCL5(0) = LCDIFV2_CTRLDESCL5_BPP(LCDIFV2_CTRLDESCL5_BPP_RGB565) |
                                     LCDIFV2_CTRLDESCL5_EN;
 
-            uint32_t tap = LCDIFV2_REG(0x3FFC);       // model's on-demand scan checksum
-            uint32_t exp = fnv1a((const uint8_t *)pbuf, PW * PH * 2);
-            Serial1.printf("PROBE_LCDIF=SUM:%08lX EXP:%08lX %s\n",
-                           (unsigned long)tap, (unsigned long)exp,
-                           tap == exp ? "PASS" : "FAIL");
-        }
-    }
+            // Minimal sequence satisfying the model's required-init contract:
+            // a DSI/PPI-layer write (0x0100..0x02FF), then a video-path write
+            // (0x0400..0x04FF), then one more write (the final start). The
+            // ADDRESSES are the contract's regions; the DATA is deliberately 0
+            // -- these are NOT transcribed TC358762 values and must not be
+            // mistaken for the real sequence, which Task 12 transcribes from
+            // the RPi references and Task 14 proves on silicon.
+            static const uint16_t probe_regs[] = { 0x0210, 0x0404, 0x0104 };
+            bool sent = true;
+            for (unsigned i = 0; i < sizeof(probe_regs)/sizeof(probe_regs[0]); i++) {
+                uint8_t pkt[6] = { (uint8_t)(probe_regs[i] & 0xFF),
+                                   (uint8_t)(probe_regs[i] >> 8),
+                                   0, 0, 0, 0 };
+                sent = dsiWrite(0, 0x29 /* generic long write */, pkt, sizeof(pkt)) && sent;
+            }
 
-    // (The Task-9 DSI probes lived here: they poked DSI_DPHY/DSI_APB by hand and
-    // read the QEMU model's debug tap to prove the D-PHY lock bit and the
-    // long/short APB packet paths. Task 10 landed the real firmware driver --
-    // RPiDisplay mipi_dsi.cpp, exercised by DSI_OK above -- so the probes are
-    // gone. The QEMU-side tap itself stays; Task 11 relocates it to the
-    // TC358762 bridge.)
+            post_stat = BRIDGE_TAP(TAP_STATUS);
+            post_sum  = BRIDGE_TAP(TAP_PANEL_SUM);
+            exp = fnv1a((const uint8_t *)pbuf, PW * PH * 2);
+            ok_probe = sent && id == TAP_ID_MAGIC &&
+                       !(pre_stat & ST_READY) && pre_sum == 0 &&
+                       (post_stat & ST_READY) && post_sum == exp && exp != 0;
+        }
+        Serial1.printf("PROBE_BRIDGE=PRE:%08lX POST:%08lX EXP:%08lX STATUS:%08lX %s\n",
+                       (unsigned long)pre_sum, (unsigned long)post_sum,
+                       (unsigned long)exp, (unsigned long)post_stat,
+                       ok_probe ? "PASS" : "FAIL");
+        #undef BRIDGE_TAP
+    }
 
     if (ok) {
         Display.fillScreen(COLOR);
