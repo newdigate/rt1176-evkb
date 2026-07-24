@@ -128,9 +128,26 @@ void setup() {
         // FB_SUM -- oracle 1: the bytes really in SDRAM. Proves the PXP fill.
         // (Read straight back with the CPU: this core runs with the D-cache
         // off, so there is no stale line between the PXP's AXI writes and this.)
+        //
+        // Sized by PANEL_FB_BYTES (display_timing.h, via Display.h) rather than
+        // by re-deriving pixels*2 here: that length already has a name, and it
+        // is the same one lcdifv2Begin() allocates and strides the scanout
+        // descriptor by.
+        //
+        // This walk is flat, but the QEMU-side checksum is PITCH-AWARE (it
+        // hashes width*bpp bytes at addr + y*pitch, skipping any padding), and
+        // the expectation above counts PIXELS.  All three agree only while the
+        // pitch has no padding -- so that is asserted at compile time below
+        // rather than left to be discovered as a confusing runtime mismatch.
+        // A padded pitch would need the walk restructured per-line, here AND in
+        // fnv1a_solid(); no length constant on its own can paper over it.
+        static_assert(PANEL_FB_BYTES ==
+                          (uint32_t)PANEL_WIDTH * PANEL_HEIGHT * PANEL_BYTES_PER_PIXEL,
+                      "FB_SUM walks the framebuffer flat and the expectation "
+                      "counts pixels; a padded pitch breaks both and must be "
+                      "handled per-line instead");
         const uint32_t fb_sum =
-            fnv1a((const uint8_t *)Display.framebuffer(),
-                  pixels * 2u /* RGB565 */);
+            fnv1a((const uint8_t *)Display.framebuffer(), PANEL_FB_BYTES);
         Serial1.printf("FB_SUM=0x%08lX EXP=0x%08lX %s\n",
                        (unsigned long)fb_sum, (unsigned long)expect,
                        fb_sum == expect ? "PASS" : "FAIL");
