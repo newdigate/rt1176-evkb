@@ -18,14 +18,6 @@ echo "==== captured ===="; cat "$OUT"
 grep -q "ATTINY_OK"     "$OUT" || { echo "FAIL: attiny"; exit 1; }
 grep -q "PLL_OK"        "$OUT" || { echo "FAIL: pll";    exit 1; }
 grep -q "LCDIFV2_OK"    "$OUT" || { echo "FAIL: lcdifv2"; exit 1; }
-# TEMP(Task 11) -- assert the virtual TC358762 bridge's readiness FSM and its
-# PANEL_SUM oracle. PRE is read with no bridge init sent, over an already
-# enabled layer-0 framebuffer: it MUST be the sentinel (the panel does not
-# light without the init sequence). POST is read after the minimal required
-# init sequence and MUST equal the software FNV-1a of the same framebuffer.
-# This REPLACES the Task-7 PROBE_LCDIF assertion (that tap is gone). Removed at
-# Task 12, when the real firmware bridge driver drives this path.
-grep -Eq "PROBE_BRIDGE=.*PASS" "$OUT" || { echo "FAIL: tc358762 bridge probe"; exit 1; }
 # Task 10 -- the firmware MIPI-DSI host driver (RPiDisplay mipi_dsi.cpp) brought
 # the D-PHY up (PLL dividers + HS timing + bounded lock poll), powered the PHY
 # and configured the DPI video mode, with every register reading back what it
@@ -34,7 +26,18 @@ grep -Eq "PROBE_BRIDGE=.*PASS" "$OUT" || { echo "FAIL: tc358762 bridge probe"; e
 # every DPI register as plain RW, so DSI_OK proves the bring-up SEQUENCE, not
 # that the D-PHY locks at the right bit rate -- that is Task 14 (silicon).
 grep -q "DSI_OK"        "$OUT" || { echo "FAIL: dsi";     exit 1; }
-# FB_SUM (+ PANEL_SUM) deferred: begin() doesn't return true overall until the
-# TC358762 stage lands, so fillScreen() never runs yet.
-# Restored at Task 13, which also adds the PANEL_SUM bridge-checksum oracle.
-echo "PASS: RPi panel Task 11 (ATtiny + VIDEO_PLL + LCDIFv2 + MIPI-DSI host + virtual TC358762 bridge FSM/PANEL_SUM) verified"
+# Task 12 -- the firmware TC358762 bridge driver (RPiDisplay tc358762.cpp) sent
+# all eleven init writes of NXP's transcribed RPi-panel sequence as DSI generic
+# long writes, and every one was accepted by the DSI host's APB packet path.
+# This REPLACES the Task-11 PROBE_BRIDGE hand-poked probe (that block is gone).
+# NOTE the QEMU bridge never interprets a register address or its data -- its
+# required-init contract is region+order based -- so TC358762_OK proves the
+# sequence is well-formed and correctly ORDERED, never that the ADDRESSES or
+# VALUES are right. Silicon is the only oracle for those (Task 14).
+grep -q "TC358762_OK"   "$OUT" || { echo "FAIL: tc358762"; exit 1; }
+# FB_SUM (+ PANEL_SUM) still deferred, and deliberately NOT asserted here:
+# begin() now returns true, so the harness's if(ok) block runs, but fillScreen()
+# is a Task-13 stub -- it prints FB_SUM_PENDING / PANEL_SUM_PENDING rather than
+# checksumming an unpainted framebuffer. Task 13 implements the PXP fill and
+# restores both comparisons (including the PANEL_SUM bridge oracle).
+echo "PASS: RPi panel Task 12 (ATtiny + VIDEO_PLL + LCDIFv2 + MIPI-DSI host + TC358762 bridge init) verified"
