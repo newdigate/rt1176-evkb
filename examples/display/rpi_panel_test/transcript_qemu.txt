@@ -1,0 +1,32 @@
+RPI_PANEL_BEGIN
+ATTINY_OK
+PLL_OK
+LCDIFV2_OK
+DSI_OK
+TC358762_OK
+FRAME_OK
+FB_SUM=0x62429DC5 EXP=0x62429DC5 PASS
+PANEL_SUM=0x62429DC5 EXP=0x62429DC5 PASS
+RPI_PANEL_END
+PASS: RPi panel Task 13 (ATtiny + VIDEO_PLL + LCDIFv2 + MIPI-DSI host + TC358762 bridge + PXP fill: FB_SUM + PANEL_SUM) verified
+
+==== visual verification (the other half of "lit") ====
+The gate runs headless (-display none), so the checksums above are re-run with a
+QEMU monitor attached and the PANEL console dumped after the fill:
+
+  qemu-system-arm -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on \
+      -kernel build/rpi_panel_test.elf -display none \
+      -serial file:... -monitor unix:mon.sock,server,nowait
+  (qemu) screendump panel.ppm
+
+  panel.ppm: P6, 800 x 480, maxval 255, 1152000 pixel bytes
+  distinct colours: 1
+  RGB = (248, 0, 0) = #F80000, count 384000 (every pixel)
+
+800x480 is the LCDIFv2 layer-0 geometry (the model resizes the console to it),
+and #F80000 is exactly RGB565 0xF800 as the LCDIFv2 model's RGB565 draw line
+renders it: it zero-fills the low bits (31 << 3 = 248) rather than replicating
+them, which is the RENDERER's 565->console-surface expansion and is unrelated to
+the 565->888->565 fill seam this gate checksums.  (Not separately observed here:
+the same model refuses to paint the console at all until the bridge reports
+downstream_ready, so these 384000 pixels also mean the bring-up was accepted.)

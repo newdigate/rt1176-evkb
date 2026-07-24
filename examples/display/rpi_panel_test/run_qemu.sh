@@ -35,9 +35,22 @@ grep -q "DSI_OK"        "$OUT" || { echo "FAIL: dsi";     exit 1; }
 # sequence is well-formed and correctly ORDERED, never that the ADDRESSES or
 # VALUES are right. Silicon is the only oracle for those (Task 14).
 grep -q "TC358762_OK"   "$OUT" || { echo "FAIL: tc358762"; exit 1; }
-# FB_SUM (+ PANEL_SUM) still deferred, and deliberately NOT asserted here:
-# begin() now returns true, so the harness's if(ok) block runs, but fillScreen()
-# is a Task-13 stub -- it prints FB_SUM_PENDING / PANEL_SUM_PENDING rather than
-# checksumming an unpainted framebuffer. Task 13 implements the PXP fill and
-# restores both comparisons (including the PANEL_SUM bridge oracle).
-echo "PASS: RPi panel Task 12 (ATtiny + VIDEO_PLL + LCDIFv2 + MIPI-DSI host + TC358762 bridge init) verified"
+# Task 13 -- the self-validating loop closes here.
+#
+# FRAME_OK: a whole LCDIFv2 frame scanned out after the fill (fillScreen() polls
+# INT_STATUS[VSYNC] for two edges, bounded). Asserted separately from the two
+# checksums because neither of them can see it: both read pixels, and pixels
+# read the same whether the display is scanning or stopped dead.
+grep -q "FRAME_OK"      "$OUT" || { echo "FAIL: no scanout frame"; exit 1; }
+# FB_SUM: FNV-1a of the SDRAM framebuffer == a software-computed full frame of
+# the fill colour. Proves Display::fillScreen()/the PXP wrote what was asked.
+grep -q "FB_SUM=.*PASS"    "$OUT" || { echo "FAIL: fb_sum";    exit 1; }
+# PANEL_SUM: the virtual TC358762's received-pixel checksum == the SAME
+# expectation. Proves the bridge would deliver exactly those pixels: it returns
+# a sentinel unless the panel is powered, the init contract is satisfied, the
+# DSI link is up AND the LCDIFv2 layer is enabled.
+# NOTE this assertion is QEMU-only BY CONSTRUCTION -- the tap is emulator
+# fiction with no silicon counterpart. On hardware the gate prints
+# PANEL_SUM_HW=TAP_ABSENT instead and the panel is verified by eye (Task 14).
+grep -q "PANEL_SUM=.*PASS" "$OUT" || { echo "FAIL: panel_sum"; exit 1; }
+echo "PASS: RPi panel Task 13 (ATtiny + VIDEO_PLL + LCDIFv2 + MIPI-DSI host + TC358762 bridge + PXP fill: FB_SUM + PANEL_SUM) verified"
