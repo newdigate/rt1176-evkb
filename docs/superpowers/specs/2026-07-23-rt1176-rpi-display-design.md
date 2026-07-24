@@ -215,3 +215,49 @@ framebuffer using the LCDIFv2 block, (3) push that stream over MIPI-DSI in *vide
 D-PHY, and (4) send the TC358762 its init register writes over DSI so it starts converting. Get any
 step wrong or out of order and the panel is simply black with no error — which is exactly why the
 QEMU model for this milestone is built to reproduce that ordering as a hard, checksummed gate.
+
+---
+
+## Amendment 1 (2026-07-24) — the TC358762 register map is NOT settled
+
+**Correction.** During Task 11 an implementer was told the bridge's key registers were listed in
+§3 of this spec. **They are not** — §3 is the block/base/IRQ table and contains no TC358762
+registers. The list in question (`0x0004` SYSCTL, `0x0006` SYSPMCTRL, `0x0110` PPICNT,
+`0x0210` DSICMD, `0x0400` VSDLY, `0x0404` VFMTHI, `0x0408`) comes from the project's
+**display reference document**, not from this spec. Recorded here so no later task re-derives a
+false provenance.
+
+**The substantive finding.** There are **two published TC358762 register maps and they disagree**:
+
+| Source | Names |
+|---|---|
+| The reference doc | `0x0004` SYSCTL, `0x0006` SYSPMCTRL, `0x0110` PPICNT, `0x0210` DSICMD, `0x0400`/`0x0404`/`0x0408` video |
+| The RPi/Linux-derived map | `0x0104` PPI_STARTPPI, `0x0114` LPTXTIMECNT, `0x0164` D0S_CLRSIPOCOUNT, `0x0204` DSI_STARTDSI, `0x0210` DSI_LANEENABLE, `0x0420` LCDCTRL, `0x0450` SPICMR, `0x0464` SYSCTRL |
+
+Only two things are common to both: the **regions** (`0x0100–0x02FF` = PPI/DSI receive layer;
+`0x0400–0x04FF` = video/DPI + system) and the **ordering** (receive layer configured before the
+video path, then a final start).
+
+**Consequence for the QEMU bridge (Task 11).** The virtual TC358762's required-init contract is
+deliberately **region-based, not literal-address-based**: it requires ≥1 write in `0x0100–0x02FF`,
+≥1 write in `0x0400–0x04FF`, the former before the latter, and ≥1 further write after. Pinning a
+literal address that neither published map agrees on would have forced the firmware to emit a
+**fabricated** register write to satisfy the emulator — precisely the failure mode the plan's
+convention #2 exists to prevent. Region 2 is broader than its "video" label (it also spans SPI,
+PLL/SYSPMCTRL, GPIO and chip-ID), so a sequence touching those *before* its first PPI write could
+be wrongly rejected; the canonical sequence below does not, and the model — not the firmware — is
+what changes if a genuine sequence ever trips it.
+
+**Task 12's target — the canonical RPi bring-up order** (verified against the Task-11 FSM as
+satisfying all four conditions with margin: lane-seq 1, video-seq 7, post-video writes 4):
+
+```
+DSI_LANEENABLE 0x0210 → PPI 0x0164, 0x0168, 0x0144, 0x0148, 0x0114
+  → SPICMR 0x0450 → LCDCTRL 0x0420 → SYSCTRL 0x0464
+  → PPI_STARTPPI 0x0104 → DSI_STARTDSI 0x0204
+```
+
+Task 12 transcribes the **real** sequence (values included) from the RPi references and sends it as
+DSI generic long writes (`dsiWrite(0, 0x29, {addr_lo, addr_hi, data…})`). It must NOT be trimmed to
+the model's minimum, nor padded to satisfy the model. **Silicon (Task 14) remains the oracle** for
+both the register addresses and their data.
