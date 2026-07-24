@@ -52,7 +52,7 @@ endmacro()
 
 set(_dev "$ENV{HOME}/Development")
 _evkb_lib(cores          ${EVKB_ROOT}/cores/imxrt1176 https://github.com/newdigate/teensy-cores    bbf8af8c44303a45f516e7a132c7a8da8f00ba38 imxrt1176)
-_evkb_lib(Wire           ${_dev}/Wire                 https://github.com/newdigate/Wire            193e949c51c8da316df6ed619e019e308acaca45 .)
+_evkb_lib(Wire           ${_dev}/Wire                 https://github.com/newdigate/Wire            19babd18b83bc2f9ddbd16f6afefcbb42558530d .)
 _evkb_lib(SPI            ${_dev}/SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
 _evkb_lib(PXP         ${_dev}/PXP                  https://github.com/newdigate/PXP          03e1ff2891d96ad46640c195fd86e9e93dd685b1 .)
 _evkb_lib(RPiDisplay     ${_dev}/RPiDisplay           https://github.com/newdigate/RPiDisplay      HEAD .) # TODO(Task 15): replace HEAD with the pushed SHA
