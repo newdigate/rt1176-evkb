@@ -63,7 +63,14 @@ static void csi2_clocks_init(void)
 
 /* ===================== front-end: OV5640 over SCCB (LPI2C6) ================ */
 #define OV5640_ADDR 0x3C
-#define OV5640_REG_4300 0x3F   /* NXP "YUYV"; pinned at M3.6 */
+/* M3.6 (OPEN): the CSI captures only ONE 8-bit YUV component per pixel, not the
+ * full 16-bit YUV422 - so 0x4300 just picks which component survives.  0x3F ->
+ * luma only (honest GRAYSCALE, HW-verified good).  0x30 -> chroma only (FALSE
+ * colour: bright=green/dark=purple, luma leaked into hue - confirmed by eye).
+ * Real colour needs the CSI2RX->CSI gasket to deliver full YUV (422->444 expand),
+ * or capturing packed UYVY 16-bit instead of XYUV8888 - still under investigation.
+ * Keep 0x3F: honest grayscale beats false colour. */
+#define OV5640_REG_4300 0x3F
 static lpi2c1176_regs_t *const LPI2C6 = (lpi2c1176_regs_t *)0x40C38000u;
 static const lpi2c1176_hw_t cam_i2c_hw = {
     (volatile uint32_t *)0x40CC6CE0u, (volatile uint32_t *)0x40CC1500u, (1u << 8),
@@ -263,7 +270,7 @@ void setup()
     csi_init();
     csi_start_capture();
 
-    Serial1.println("CAM_LIVE_SETUP_DONE (live preview running)");
+    Serial1.println("CAM_LIVE_SETUP_DONE (live grayscale preview running)");
 }
 
 /* Output brightness/variation over rgb320: avg luma, min/max, and how many
