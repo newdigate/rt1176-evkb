@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.24)
+project(camera_csi2_clocks)
+set(TEENSY_VERSION 117 CACHE STRING "")
+include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
+teensy_add_executable(camera_csi2_clocks camera_csi2_clocks.cpp)
+teensy_target_link_libraries(camera_csi2_clocks cores)
+target_link_libraries(camera_csi2_clocks.elf stdc++)
