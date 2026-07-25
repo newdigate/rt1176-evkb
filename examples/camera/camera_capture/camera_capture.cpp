@@ -111,6 +111,10 @@ static uint16_t ov5640_config(void)
     wr(0x3824, 0x02); wr(0x4837, 0x0a);
     wr(0x3034, 0x18); wr(0x3017, 0x00); wr(0x3018, 0x00);
     wr(0x300e, 0x45); wr(0x4800, 0x04);
+    wr(0x5000, 0xA7);   /* ISP ctrl00: LENC|gamma|BPC|WPC|CIP. Bit0 CIP (colour
+                         * interpolation) is required for real chroma - without it
+                         * the sensor streams luma + neutral U=V=0x80 (grayscale).
+                         * NXP writes this after the init table; see M3.6 note. */
     wr(0x3008, 0x02);   /* start streaming */
     return id;
 }

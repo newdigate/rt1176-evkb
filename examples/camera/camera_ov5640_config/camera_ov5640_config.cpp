@@ -115,6 +115,10 @@ void setup()
     wr(0x3034, 0x18); wr(0x3017, 0x00); wr(0x3018, 0x00);
     wr(0x300e, 0x45);                    /* MIPI, 2 data lanes */
     wr(0x4800, 0x04);
+    wr(0x5000, 0xA7);                    /* ISP ctrl00: LENC|gamma|BPC|WPC|CIP.
+                                          * Bit0 CIP (colour interpolation) needed
+                                          * for real chroma; NXP writes it after the
+                                          * init table. See M3.6 note. */
 
     /* Start streaming. */
     wr(0x3008, 0x02);

@@ -18,13 +18,13 @@
  * UYVY; CSC1 runs YCbCr2RGB (studio range) and the two-pass (YUV can't decimate
  * in one op) is otherwise identical.
  *
- * ***HW-verified: live, moving, correctly-exposed video on the ILI9341.  The
- * CSC is correct (fixed the coefficient bug - see imxrt1176.h PXP_CSC1_*).  KNOWN
- * LIMITATION: the image is GRAYSCALE - the captured MIPI stream carries luma but
- * neutral chroma (U=V=0x80, zero variation), despite the OV5640 config being
- * byte-identical to NXP's colour demo.  Chroma is lost in the CSI2RX->CSI gasket
- * path; still under investigation.  A gain/AEC boost brightens the (otherwise
- * dim) scene.
+ * ***HW-verified: live, moving, correctly-exposed COLOUR video on the ILI9341.
+ * The CSC is correct (fixed the coefficient bug - see imxrt1176.h PXP_CSC1_*).
+ * M3.6 chroma FIXED (2026-07-25): the missing piece was OV5640 reg 0x5000=0xA7
+ * (ISP ctrl00, bit0 CIP = colour interpolation).  Our config had the init table
+ * byte-identical to NXP but dropped that one trailing write, so the sensor
+ * streamed clean luma + neutral chroma (U=V=0x80) -> grayscale.  With it,
+ * maxChroma jumps 4 -> ~52 (real colour).  A gain/AEC boost brightens the scene.
  *
  * Oracle: the ILI9341 is unmodelled and QEMU-blind - the moving picture is your
  * eyes on the glass.  VCOM prints per-frame liveness (avgY, luma range, a chroma
@@ -63,13 +63,9 @@ static void csi2_clocks_init(void)
 
 /* ===================== front-end: OV5640 over SCCB (LPI2C6) ================ */
 #define OV5640_ADDR 0x3C
-/* M3.6 (OPEN): the CSI captures only ONE 8-bit YUV component per pixel, not the
- * full 16-bit YUV422 - so 0x4300 just picks which component survives.  0x3F ->
- * luma only (honest GRAYSCALE, HW-verified good).  0x30 -> chroma only (FALSE
- * colour: bright=green/dark=purple, luma leaked into hue - confirmed by eye).
- * Real colour needs the CSI2RX->CSI gasket to deliver full YUV (422->444 expand),
- * or capturing packed UYVY 16-bit instead of XYUV8888 - still under investigation.
- * Keep 0x3F: honest grayscale beats false colour. */
+/* 0x4300 = YUV422 output byte order.  0x3F = NXP's "YUYV"; the gasket delivers
+ * full YUV422 and the CSI stores XYUV8888 with real U/V once ISP CIP is on (see
+ * the 0x5000=0xA7 write below - THAT was the M3.6 chroma fix, not this byte). */
 #define OV5640_REG_4300 0x3F
 static lpi2c1176_regs_t *const LPI2C6 = (lpi2c1176_regs_t *)0x40C38000u;
 static const lpi2c1176_hw_t cam_i2c_hw = {
@@ -130,8 +126,16 @@ static uint16_t ov5640_config(void)
     wr(0x3824, 0x02); wr(0x4837, 0x0a);
     wr(0x3034, 0x18); wr(0x3017, 0x00); wr(0x3018, 0x00);
     wr(0x300e, 0x45); wr(0x4800, 0x04);
+    /* ★M3.6 FIX (HW-verified 2026-07-25): ISP control 00.  NXP's OV5640_Init
+     * writes this AFTER the base init table (fsl_ov5640.c:952); our port had
+     * the table byte-identical but dropped this trailing write.  0xA7 =
+     * LENC|raw-gamma|BPC|WPC|CIP.  Bit0 CIP (colour interpolation/demosaic) is
+     * the one that matters: without it the sensor streams clean luma but
+     * NEUTRAL chroma (U=V=0x80) -> grayscale.  Setting it = real colour
+     * (maxChroma 4 -> ~52).  This was the whole M3.6 chroma gap. */
+    wr(0x5000, 0xA7);
     /* Brighten: raise the AEC target luminance window + max gain ceiling so a
-     * dim scene is exposed brighter (low light was suppressing chroma to gray). */
+     * dim scene is exposed brighter. */
     wr(0x3a0f, 0x48); wr(0x3a10, 0x40);   /* stable range high/low  */
     wr(0x3a1b, 0x48); wr(0x3a1e, 0x40);   /* fast-zone high/low     */
     wr(0x3a11, 0x80); wr(0x3a1f, 0x20);   /* outer window           */
@@ -270,7 +274,7 @@ void setup()
     csi_init();
     csi_start_capture();
 
-    Serial1.println("CAM_LIVE_SETUP_DONE (live grayscale preview running)");
+    Serial1.println("CAM_LIVE_SETUP_DONE (live colour preview running)");
 }
 
 /* Output brightness/variation over rgb320: avg luma, min/max, and how many
