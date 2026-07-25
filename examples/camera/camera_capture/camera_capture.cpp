@@ -182,6 +182,112 @@ static void csi2rx_init(uint8_t laneNum, uint8_t tHsSettle)
     REG32(IOMUXC_GPR_GPR59) &= ~GPR59_PD_RX;
 }
 
+/* ===================== M3.4: CSI frame grabber (fsl_csi) =================== */
+/* CSI @ 0x40800000.  On RT1176 the VIDEO_MUX CSI_SEL feeds the CSI2RX gasket
+ * output into the CSI's 24-bit parallel input, so this is a plain GatedClock
+ * 24-bit capture - no CR18 DATA_FROM_MIPI bit is used anywhere in the SDK.
+ * Ported from fsl_csi.c CSI_Reset/CSI_Init + the FB1/FB2 double-buffer in
+ * CSI_TransferStart.  Config values = fsl_csi_camera_adapter.c for the EVKB:
+ * GatedClock, 24-bit bus, XYUV8888 (bpp=4), polarity Hsync-high+rising-edge,
+ * useExtVsync (CR1=0x40000912). */
+#define CSI_CR1   0x40800000u
+#define CSI_CR2   0x40800004u
+#define CSI_CR3   0x40800008u
+#define CSI_SR    0x40800018u
+#define CSI_DMASA_FB1 0x40800028u
+#define CSI_DMASA_FB2 0x4080002Cu
+#define CSI_FBUF_PARA 0x40800030u
+#define CSI_IMAG_PARA 0x40800034u
+#define CSI_CR18  0x40800048u
+/* field masks (fsl PERI_CSI.h) */
+#define CR1_REDGE (1u<<1)
+#define CR1_GCLK_MODE (1u<<4)
+#define CR1_CLR_RXFIFO (1u<<5)
+#define CR1_HSYNC_POL (1u<<11)
+#define CR1_FCC (1u<<8)
+#define CR1_EXT_VSYNC (1u<<30)
+#define CR2_DMA_BURST_RFF_3 (3u<<30)
+#define CR3_ECC_AUTO_EN (1u<<0)
+#define CR3_DMA_REQ_EN_RFF (1u<<12)
+#define CR3_DMA_REFLASH_RFF (1u<<14)
+#define CR3_FRMCNT_RST (1u<<15)
+#define CR3_RxFF_LEVEL_SHIFT 4
+#define CR18_PARALLEL24_EN (1u<<3)
+#define CR18_BASEADDR_SWITCH_EN (1u<<4)
+#define CR18_BASEADDR_SWITCH_SEL (1u<<5)
+#define CR18_AHB_HPROT_0D (0xDu<<12)
+#define CR18_MASK_OPTION (0xC0000u)
+#define CR18_CSI_ENABLE (1u<<31)
+#define SR_SOF_INT (1u<<16)
+#define SR_DMA_TSF_DONE_FB1 (1u<<19)
+#define SR_DMA_TSF_DONE_FB2 (1u<<20)
+#define SR_RF_OR_INT (1u<<24)
+#define SR_BASEADDR_CHANGE_ERROR (1u<<28)
+
+#define CAM_W 640
+#define CAM_H 480
+/* CSI stores each MIPI YUV422 pixel as 32-bit XYUV8888 (24-bit input bus). */
+EXTMEM __attribute__((aligned(64))) static uint32_t csi_fb0[CAM_W * CAM_H];
+EXTMEM __attribute__((aligned(64))) static uint32_t csi_fb1[CAM_W * CAM_H];
+
+static void csi_clear_rxfifo(void)
+{
+    uint32_t cr1 = REG32(CSI_CR1) & ~CR1_FCC;
+    REG32(CSI_CR1) = cr1 | CR1_CLR_RXFIFO;
+    while (REG32(CSI_CR1) & CR1_CLR_RXFIFO) { }
+    REG32(CSI_CR1) = REG32(CSI_CR1) | CR1_FCC;   /* restore FCC (init sets it) */
+}
+static void csi_reflash_rxdma(void)
+{
+    REG32(CSI_CR3) |= CR3_DMA_REFLASH_RFF;
+    while (REG32(CSI_CR3) & CR3_DMA_REFLASH_RFF) { }
+}
+static void csi_init(void)
+{
+    /* --- CSI_Reset --- */
+    REG32(CSI_CR18) &= ~CR18_CSI_ENABLE;         /* stop */
+    REG32(CSI_CR3) = 0u;
+    REG32(CSI_CR3) |= CR3_FRMCNT_RST;
+    while (REG32(CSI_CR3) & CR3_FRMCNT_RST) { }
+    csi_clear_rxfifo();
+    csi_reflash_rxdma();
+    REG32(CSI_SR) = REG32(CSI_SR);               /* clear status */
+    REG32(CSI_CR1) = CR1_HSYNC_POL | CR1_EXT_VSYNC;
+    REG32(CSI_CR2) = 0u;
+    REG32(CSI_CR3) = 0u;
+    REG32(CSI_CR18) = CR18_AHB_HPROT_0D;
+    REG32(CSI_FBUF_PARA) = 0u;
+    REG32(CSI_IMAG_PARA) = 0u;
+
+    /* --- CSI_Init (GatedClock, 24-bit, XYUV8888) --- */
+    /* CR1 = workMode | polarity | FCC | EXT_VSYNC = 0x40000912 */
+    REG32(CSI_CR1) = CR1_GCLK_MODE | CR1_HSYNC_POL | CR1_REDGE | CR1_FCC | CR1_EXT_VSYNC;
+    /* bpp==4 -> 24-bit parallel */
+    REG32(CSI_CR18) |= CR18_PARALLEL24_EN;
+    /* IMAG_PARA: width (busCyclePerPixel=1 for 24-bit) << 16 | height */
+    REG32(CSI_IMAG_PARA) = ((uint32_t)CAM_W << 16) | (uint32_t)CAM_H;
+    /* linePitch == imgWidthBytes -> stride 0 */
+    REG32(CSI_FBUF_PARA) = 0u;
+    /* ECC + burst.  imgWidthBytes=2560 is a multiple of 128 -> burst 16*8, level 2. */
+    REG32(CSI_CR3) |= CR3_ECC_AUTO_EN;
+    REG32(CSI_CR2) = CR2_DMA_BURST_RFF_3;
+    REG32(CSI_CR3) = (REG32(CSI_CR3) & ~0x70u) | (2u << CR3_RxFF_LEVEL_SHIFT);
+    csi_reflash_rxdma();
+}
+static void csi_start_capture(uint32_t *fbA, uint32_t *fbB)
+{
+    /* Double buffer: switch base at each frame's first data (CSI_TransferStart). */
+    REG32(CSI_CR18) = (REG32(CSI_CR18) & ~CR18_MASK_OPTION) |
+                      CR18_BASEADDR_SWITCH_SEL | CR18_BASEADDR_SWITCH_EN;
+    REG32(CSI_DMASA_FB1) = (uint32_t)(uintptr_t)fbA;
+    REG32(CSI_DMASA_FB2) = (uint32_t)(uintptr_t)fbB;
+    csi_reflash_rxdma();               /* after reflash, first frame -> FB1 */
+    REG32(CSI_SR) = REG32(CSI_SR);     /* clear stale status */
+    /* CSI_Start: enable RxFIFO DMA request + CSI enable. */
+    REG32(CSI_CR3) |= CR3_DMA_REQ_EN_RFF;
+    REG32(CSI_CR18) |= CR18_CSI_ENABLE;
+}
+
 void setup()
 {
     Serial1.begin(115200);
@@ -228,8 +334,53 @@ void setup()
                    (unsigned long)REG32(CSI2RX_PPI_ERRSYNCESC),
                    (unsigned long)REG32(CSI2RX_PPI_ERRCONTROL));
 
-    bool ok = (id == 0x5640) && (g_nacks == 0) && cfgOk;
-    Serial1.printf("CSI2RX_INIT=%s\n", ok ? "PASS" : "FAIL");
+    bool csi2rxOk = (id == 0x5640) && (g_nacks == 0) && cfgOk;
+    Serial1.printf("CSI2RX_INIT=%s\n", csi2rxOk ? "PASS" : "FAIL");
+
+    /* ------------------- M3.4: capture a frame -------------------- */
+    for (uint32_t i = 0; i < CAM_W * CAM_H; i++) { csi_fb0[i] = 0; csi_fb1[i] = 0; }
+    csi_init();
+    csi_start_capture(csi_fb0, csi_fb1);
+
+    /* Poll for the first frame into FB1 (buffer 0).  VGA@30 ~= 33ms/frame. */
+    uint32_t t0 = millis(), sr = 0;
+    bool got = false;
+    while ((millis() - t0) < 1000u) {
+        sr = REG32(CSI_SR);
+        if (sr & SR_DMA_TSF_DONE_FB1) { got = true; break; }
+    }
+    Serial1.printf("CSI capture: got_FB1=%d  SR=0x%08lX%s%s%s\n", got,
+                   (unsigned long)sr,
+                   (sr & SR_SOF_INT) ? " SOF" : "",
+                   (sr & SR_RF_OR_INT) ? " RXFIFO_OVERRUN" : "",
+                   (sr & SR_BASEADDR_CHANGE_ERROR) ? " BASEADDR_ERR" : "");
+
+    /* Analyse csi_fb0: real image = many non-zero pixels + spatial variation
+     * (not a flat constant).  XYUV8888, one 32-bit word per pixel. */
+    uint32_t nonzero = 0, distinct_hash = 2166136261u, mn = 0xFFFFFFFFu, mx = 0;
+    uint32_t prev = csi_fb0[0]; uint32_t changes = 0;
+    for (uint32_t i = 0; i < CAM_W * CAM_H; i++) {
+        uint32_t px = csi_fb0[i];
+        if (px != 0u) nonzero++;
+        if (px < mn) mn = px;
+        if (px > mx) mx = px;
+        if (px != prev) { changes++; prev = px; }
+        distinct_hash = (distinct_hash ^ (px & 0xFF)) * 16777619u;
+    }
+    Serial1.printf("frame: nonzero=%lu/%lu changes=%lu min=0x%08lX max=0x%08lX hash=0x%08lX\n",
+                   (unsigned long)nonzero, (unsigned long)(CAM_W * CAM_H),
+                   (unsigned long)changes, (unsigned long)mn, (unsigned long)mx,
+                   (unsigned long)distinct_hash);
+    /* Sample a few center pixels. */
+    uint32_t c = (CAM_H/2) * CAM_W + (CAM_W/2);
+    Serial1.printf("center px: %08lX %08lX %08lX %08lX\n",
+                   (unsigned long)csi_fb0[c], (unsigned long)csi_fb0[c+1],
+                   (unsigned long)csi_fb0[c+2], (unsigned long)csi_fb0[c+3]);
+
+    /* Real pixel data = frame captured, substantially non-zero, and varying. */
+    bool frameOk = got && (nonzero > (CAM_W * CAM_H / 4u)) && (changes > 1000u) && (mn != mx);
+    Serial1.printf("CSI_CAPTURE=%s\n", frameOk ? "PASS" : "FAIL");
+    Serial1.printf("CAM_CAP=%s\n", (csi2rxOk && frameOk) ? "PASS" : "FAIL");
     Serial1.println("CAM_CAP_END");
 }
 
