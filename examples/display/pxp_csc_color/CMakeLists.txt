@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.24)
+project(pxp_csc_color)
+set(TEENSY_VERSION 117 CACHE STRING "")
+include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
+import_evkb_library(PXP)
+teensy_add_executable(pxp_csc_color pxp_csc_color.cpp)
+teensy_target_link_libraries(pxp_csc_color cores PXP)
+target_link_libraries(pxp_csc_color.elf stdc++)

@@ -12,16 +12,23 @@
  *      -> PXP pass 2: decimate /2 (pixel-drop)   -> RGB565 320x240
  *      -> ILI9341 writeRect, landscape 320x240
  *
- * This is camera_preview_synth's back-half (HW-verified) fed by the real M3
- * front-end (camera_capture, HW-verified) instead of gen_frame().  The CSI
- * stores 32-bit XYUV8888, so the PS source format is PXP_YUV1P444 (0x10), not
- * the synth path's UYVY - the CSC1 math and the two-pass (YUV can't decimate in
- * one op) are otherwise identical.
+ * This is camera_preview_synth's back-half fed by the real M3 front-end
+ * (camera_capture, HW-verified) instead of gen_frame().  The CSI stores 32-bit
+ * XYUV8888, so the PS source format is PXP_YUV1P444 (0x10), not the synth path's
+ * UYVY; CSC1 runs YCbCr2RGB (studio range) and the two-pass (YUV can't decimate
+ * in one op) is otherwise identical.
+ *
+ * ***HW-verified: live, moving, correctly-exposed video on the ILI9341.  The
+ * CSC is correct (fixed the coefficient bug - see imxrt1176.h PXP_CSC1_*).  KNOWN
+ * LIMITATION: the image is GRAYSCALE - the captured MIPI stream carries luma but
+ * neutral chroma (U=V=0x80, zero variation), despite the OV5640 config being
+ * byte-identical to NXP's colour demo.  Chroma is lost in the CSI2RX->CSI gasket
+ * path; still under investigation.  A gain/AEC boost brightens the (otherwise
+ * dim) scene.
  *
  * Oracle: the ILI9341 is unmodelled and QEMU-blind - the moving picture is your
- * eyes on the glass.  VCOM prints per-frame liveness (capture ok, PXP ok, a
- * checksum + centre pixels) so a still can be sanity-checked, but "is it live
- * video" is a human check.
+ * eyes on the glass.  VCOM prints per-frame liveness (avgY, luma range, a chroma
+ * proxy, a changing hash) so "is it live" is checkable from the log.
  *
  * Display wiring (same as ili9341 gate): SCK=D13 MOSI=D11 MISO=D12 CS=D10 DC=D8 RST=D9.
  * Camera on J2 (MIPI). See rt1176-ov5640-camera memory note for the full map.
@@ -116,6 +123,12 @@ static uint16_t ov5640_config(void)
     wr(0x3824, 0x02); wr(0x4837, 0x0a);
     wr(0x3034, 0x18); wr(0x3017, 0x00); wr(0x3018, 0x00);
     wr(0x300e, 0x45); wr(0x4800, 0x04);
+    /* Brighten: raise the AEC target luminance window + max gain ceiling so a
+     * dim scene is exposed brighter (low light was suppressing chroma to gray). */
+    wr(0x3a0f, 0x48); wr(0x3a10, 0x40);   /* stable range high/low  */
+    wr(0x3a1b, 0x48); wr(0x3a1e, 0x40);   /* fast-zone high/low     */
+    wr(0x3a11, 0x80); wr(0x3a1f, 0x20);   /* outer window           */
+    wr(0x3a18, 0x00); wr(0x3a19, 0xf8);   /* max AGC gain ceiling   */
     wr(0x3008, 0x02);
     return id;
 }
@@ -250,24 +263,38 @@ void setup()
     csi_init();
     csi_start_capture();
 
-    /* First frame end-to-end, with diagnostics printed before the slow SPI push. */
-    uint32_t *fb = wait_frame(1000);
-    Serial1.printf("first frame: %s\n", fb ? "captured" : "TIMEOUT");
-    if (fb) {
-        PXPError e = run_pipeline(fb);
-        uint32_t sum = 2166136261u;
-        for (uint32_t i = 0; i < OUT_W * OUT_H; i++) { sum = (sum ^ (rgb320[i] & 0xFF)) * 16777619u; sum = (sum ^ (rgb320[i] >> 8)) * 16777619u; }
-        Serial1.printf("PIPE_RUN=%s (err=%d) RGB_SUM=0x%08lX center=%04X %04X\n",
-                       e == PXP_OK ? "PASS" : "FAIL", (int)e, (unsigned long)sum,
-                       rgb320[OUT_H/2*OUT_W + OUT_W/2], rgb320[OUT_H/2*OUT_W + OUT_W/2 + 1]);
-        if (e == PXP_OK) tft.writeRect(0, 0, OUT_W, OUT_H, rgb320);
+    Serial1.println("CAM_LIVE_SETUP_DONE (live preview running)");
+}
+
+/* Output brightness/variation over rgb320: avg luma, min/max, and how many
+ * pixels are non-black - to tell a real (if dark) image from a flat one. */
+static void frame_stats(uint32_t frameNo)
+{
+    uint32_t n = 0, mn = 255, mx = 0, maxChroma = 0; uint64_t sY = 0;
+    uint32_t hash = 2166136261u;
+    for (uint32_t i = 0; i < OUT_W * OUT_H; i += 7) {
+        uint16_t p = rgb320[i];
+        int R = ((p>>11)&0x1F)<<3, G = ((p>>5)&0x3F)<<2, B = (p&0x1F)<<3;
+        int Y = (R + 2*G + B) >> 2;
+        sY += Y; if ((uint32_t)Y < mn) mn = Y; if ((uint32_t)Y > mx) mx = Y;
+        /* chroma proxy: how far R,G,B diverge from gray (0 = pure gray). */
+        int hi = R>G?R:G; hi = hi>B?hi:B; int lo = R<G?R:G; lo = lo<B?lo:B;
+        if ((uint32_t)(hi - lo) > maxChroma) maxChroma = hi - lo;
+        hash = (hash ^ p) * 16777619u;
+        n++;
     }
-    Serial1.println("CAM_LIVE_SETUP_DONE (look at the ILI9341 for live video)");
+    Serial1.printf("frame %lu: avgY=%lu min=%lu max=%lu maxChroma=%lu hash=0x%08lX\n",
+                   (unsigned long)frameNo, (unsigned long)(sY/n), (unsigned long)mn,
+                   (unsigned long)mx, (unsigned long)maxChroma, (unsigned long)hash);
 }
 
 void loop()
 {
+    static uint32_t frameNo = 0, lastReport = 0;
     uint32_t *fb = wait_frame(200);
-    if (fb && run_pipeline(fb) == PXP_OK)
+    if (fb && run_pipeline(fb) == PXP_OK) {
         tft.writeRect(0, 0, OUT_W, OUT_H, rgb320);
+        frameNo++;
+        if (millis() - lastReport > 1000) { frame_stats(frameNo); lastReport = millis(); }
+    }
 }
