@@ -55,7 +55,7 @@ _evkb_lib(cores          ${EVKB_ROOT}/cores/imxrt1176 https://github.com/newdiga
 _evkb_lib(Wire           ${_dev}/Wire                 https://github.com/newdigate/Wire            19babd18b83bc2f9ddbd16f6afefcbb42558530d .)
 _evkb_lib(SPI            ${_dev}/SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
 _evkb_lib(PXP         ${_dev}/PXP                  https://github.com/newdigate/PXP          230556934b9761c635809cb36cafa77d7576a8c3 .)
-_evkb_lib(ILI9341_t3     ${_dev}/ILI9341_t3           https://github.com/newdigate/ILI9341_t3      964ffe751c8f167edbf313a752b2cdbb415448f3 .)
+_evkb_lib(ILI9341_t3     ${_dev}/ILI9341_t3           https://github.com/newdigate/ILI9341_t3      e69e657f360e997e93fc7736a23eba8b09d1a043 .)
 _evkb_lib(RPiDisplay     ${_dev}/RPiDisplay           https://github.com/newdigate/RPiDisplay      HEAD .) # TODO(Task 15): replace HEAD with the pushed SHA
 _evkb_lib(Audio          ${_dev}/Audio                https://github.com/newdigate/Audio           4b3d296d55be9a2e3cf5b9dafd23b8c33388bad4 .)
 _evkb_lib(SdFat          ${_dev}/SdFat                https://github.com/newdigate/SdFat           681bfcf83d05beb943e3d905f15d8181bf9072c7 .)
