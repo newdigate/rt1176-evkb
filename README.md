@@ -78,6 +78,20 @@ Examples are grouped by category under `examples/` (dualcore, usb, audio,
 networking, storage-memory, gpio-analog, timing, serial, display, framework) —
 see [examples/README.md](examples/README.md) for the full index.
 
+To run every QEMU gate at once (exits non-zero if any fail, so it drops
+straight into CI):
+
+```sh
+./tools/run-all-qemu-gates.sh              # all gates, serial
+./tools/run-all-qemu-gates.sh dualcore     # only gates matching a pattern
+./tools/run-all-qemu-gates.sh -j 4         # parallel (faster; timing-sensitive
+                                           # gates can flake under contention)
+```
+
+Gates assume the example is already built; unbuilt ones are reported as SKIP
+rather than a confusing failure. `-l` lists what would run, `-x` stops at the
+first failure, `-h` documents the rest.
+
 **Flash the board**
 
 ```sh
