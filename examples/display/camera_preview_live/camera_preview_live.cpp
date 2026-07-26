@@ -24,7 +24,9 @@
  * (ISP ctrl00, bit0 CIP = colour interpolation).  Our config had the init table
  * byte-identical to NXP but dropped that one trailing write, so the sensor
  * streamed clean luma + neutral chroma (U=V=0x80) -> grayscale.  With it,
- * maxChroma jumps 4 -> ~52 (real colour).  A gain/AEC boost brightens the scene.
+ * maxChroma jumps 4 -> ~72-100 (real colour).  Exposure is the sensor's stock NXP
+ * AEC (the old manual gain/AEC boost is gone - it was a workaround for the
+ * grayscale-era dark picture and is unnecessary now the ISP path is enabled).
  *
  * Oracle: the ILI9341 is unmodelled and QEMU-blind - the moving picture is your
  * eyes on the glass.  VCOM prints per-frame liveness (avgY, luma range, a chroma
@@ -132,14 +134,13 @@ static uint16_t ov5640_config(void)
      * LENC|raw-gamma|BPC|WPC|CIP.  Bit0 CIP (colour interpolation/demosaic) is
      * the one that matters: without it the sensor streams clean luma but
      * NEUTRAL chroma (U=V=0x80) -> grayscale.  Setting it = real colour
-     * (maxChroma 4 -> ~52).  This was the whole M3.6 chroma gap. */
+     * (maxChroma 4 -> ~72-100).  This was the whole M3.6 chroma gap. */
     wr(0x5000, 0xA7);
-    /* Brighten: raise the AEC target luminance window + max gain ceiling so a
-     * dim scene is exposed brighter. */
-    wr(0x3a0f, 0x48); wr(0x3a10, 0x40);   /* stable range high/low  */
-    wr(0x3a1b, 0x48); wr(0x3a1e, 0x40);   /* fast-zone high/low     */
-    wr(0x3a11, 0x80); wr(0x3a1f, 0x20);   /* outer window           */
-    wr(0x3a18, 0x00); wr(0x3a19, 0xf8);   /* max AGC gain ceiling   */
+    /* NOTE: the old AEC/gain "brighten" override (0x3a0f/10/1b/1e/11/1f +
+     * 0x3a18/19=0xf8) is gone.  It was a workaround from when the picture was
+     * dark AND grayscale - a wrong guess that low light was suppressing chroma.
+     * The real cause was the missing 0x5000 CIP bit above; with the ISP path on,
+     * the init table's stock NXP AEC defaults expose correctly on their own. */
     wr(0x3008, 0x02);
     return id;
 }
