@@ -161,8 +161,13 @@ while keeping it working for the panel that needs it.
 ### 4.3 Derived figures
 
 - **Frame rate:** 58.667 MHz ÷ 999,744 = **58.7 Hz**.
-- **D-PHY bit clock:** `dpiClkFreq × (24 / laneCount) × 9/8` = 58.667 M × 12 × 9/8 = **792 MHz**
-  over 2 lanes. (The RPi panel locked at 744 MHz over 1 lane on real silicon, so 792 MHz is in a
+- **D-PHY bit clock:** `dpiClkFreq × (24 / laneCount) × 9/8` = **791,999,991 Hz** over 2 lanes.
+  (Corrected 2026-07-27 from a nominal "792 MHz": the arithmetic is integer and truncates twice —
+  528,000,000/9 = 58,666,666 rather than 58,666,666.67, then 703,999,992/8 = 87,999,999. The
+  9 Hz shortfall is irrelevant to the link but the exact value is what the firmware asserts, so
+  the round number is not written anywhere it could be mistaken for the computed one. Elsewhere
+  in this document "792 MHz" is used as the informal name for this rate.)
+  (The RPi panel locked at 744 MHz over 1 lane on real silicon, so this rate is in a
   demonstrated range for this D-PHY — but see §8.)
 - **Framebuffer:** 720 × 1280 × 2 = **1,843,200 bytes**, pitch **1440 bytes** (already 32-aligned,
   and within `CTRLDESCL3[PITCH]`'s 16-bit field). Single buffer in SDRAM for v1.
