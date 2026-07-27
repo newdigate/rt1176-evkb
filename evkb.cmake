@@ -66,7 +66,7 @@ _evkb_lib(nativeethernet ${_dev}/NativeEthernet       https://github.com/newdiga
 _evkb_lib(fnet           ${_dev}/FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
 _evkb_lib(lwip           ${_dev}/lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 _evkb_lib(USBHost_t36    ${_dev}/USBHost_t36          https://github.com/newdigate/USBHost_t36     77c23a6a1c692c987e9c27e4caa1a3ea402ca92f .)
-_evkb_lib(LVGL           ${_dev}/LVGL                 https://github.com/newdigate/LVGL            HEAD .) # TODO: replace HEAD with the pushed SHA (Task 5)
+_evkb_lib(LVGL           ${_dev}/LVGL                 https://github.com/newdigate/LVGL            a601a123e37b3a989e1c28fae95d5e6a28a5ac98 .)
 _evkb_lib(EEPROM         ${_dev}/EEPROM               https://github.com/PaulStoffregen/EEPROM     9790da76d62bc633563f763c3dc1526539ed0a6b .)
 _evkb_lib(Bounce2        ${_dev}/Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).

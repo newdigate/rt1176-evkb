@@ -134,6 +134,21 @@ defines the pinned manifest (`import_evkb_library(<name> [subdirs])`, plus
 `-DEVKB_FORCE_FETCH=ON` to ignore all local checkouts and build purely from
 the pinned GitHub refs (the "fresh user" mode).
 
+Two libraries are too large for the Arduino-style importer, which globs only one
+directory level, and get dedicated macros instead: `import_evkb_cmsis_dsp()` and
+`import_evkb_lvgl()`. Both build a plain CMake static-library target, so link
+them directly rather than through the Teensy macro:
+
+```cmake
+import_evkb_lvgl()
+teensy_target_link_libraries(my_sketch cores SPI ILI9341_t3)
+target_link_libraries(my_sketch.elf LVGL stdc++)
+```
+
+The `LVGL` sibling repo vendors LVGL 9.4.0 (MIT), pruned of `vg_lite_driver`
+(dual-licensed) and `frogfs` (MPL-2.0) so the tree stays MIT/BSD-only — see its
+`VENDORING.md` before bumping the pin.
+
 Configure with the board toolchain file (`TEENSY_VERSION 117`, core clock
 996 MHz, `COREPATH` → `cores/imxrt1176/`, linker script `imxrt1176.ld`, XIP
 image at `0x30002000`):
@@ -179,6 +194,7 @@ on a real EVKB unless noted.
 | USB host: HID (keyboard/mouse via hub), MIDI, mass storage r/w | ✅ HW-verified |
 | FlexCAN (CAN3 on J47), ST7735 display | ✅ HW-verified |
 | PXP 2D blitter (fill/blit/rotate/flip, sync+async) — sibling `PXP` lib | ✅ HW-verified |
+| LVGL 9.4 GUI (MIT) — sibling `LVGL` lib, software render, bindings for ILI9341 (SPI) and the RPi 7" MIPI-DSI panel | ⚠️ QEMU-gated (render checksums); **not yet confirmed on glass** |
 | **Dual-core:** CM4 boot (`Multicore`), MU IPC, CM4 GPIO/SPI/I2C, CM4 interrupt + DMA I/O (eDMA_LPSR), runtime hot-swap, `Cm4ImageBank` multi-image slots | ✅ HW-verified |
 | **CM4-owned audio:** the CM4 alone drives the WM8962 codec, SAI1 (interrupt-driven nodes), the `AudioStream` graph, and CMSIS-DSP FFT — with the CM7 idle (zero audio IRQs) | ✅ HW-verified (audible 1 kHz on J101; CM7 pre-arms the Audio PLL) |
 | CrashReport, MTP, USB audio/touch/rawhid/flightsim headers | ⚠️ present in tree, not verified on this board |
