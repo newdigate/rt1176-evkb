@@ -194,7 +194,8 @@ on a real EVKB unless noted.
 | USB host: HID (keyboard/mouse via hub), MIDI, mass storage r/w | ✅ HW-verified |
 | FlexCAN (CAN3 on J47), ST7735 display | ✅ HW-verified |
 | PXP 2D blitter (fill/blit/rotate/flip, sync+async) — sibling `PXP` lib | ✅ HW-verified |
-| LVGL 9.4 GUI (MIT) — sibling `LVGL` lib, software render, bindings for ILI9341 (SPI) and the RPi 7" MIPI-DSI panel | ⚠️ QEMU-gated (render checksums); **not yet confirmed on glass** |
+| LVGL 9.4 GUI (MIT) — sibling `LVGL` lib, software render, ILI9341 (SPI) binding | ✅ HW-verified (widgets on the glass; silicon render checksum bit-identical to the QEMU golden) |
+| LVGL 9.4 on the RPi 7" MIPI-DSI panel (800×480, direct render into the LCDIFv2 scanout buffer) | ⚠️ QEMU-gated only — **panel not yet connected, unconfirmed on glass** |
 | **Dual-core:** CM4 boot (`Multicore`), MU IPC, CM4 GPIO/SPI/I2C, CM4 interrupt + DMA I/O (eDMA_LPSR), runtime hot-swap, `Cm4ImageBank` multi-image slots | ✅ HW-verified |
 | **CM4-owned audio:** the CM4 alone drives the WM8962 codec, SAI1 (interrupt-driven nodes), the `AudioStream` graph, and CMSIS-DSP FFT — with the CM7 idle (zero audio IRQs) | ✅ HW-verified (audible 1 kHz on J101; CM7 pre-arms the Audio PLL) |
 | CrashReport, MTP, USB audio/touch/rawhid/flightsim headers | ⚠️ present in tree, not verified on this board |
