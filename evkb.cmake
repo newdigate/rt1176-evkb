@@ -56,7 +56,7 @@ _evkb_lib(Wire           ${_dev}/Wire                 https://github.com/newdiga
 _evkb_lib(SPI            ${_dev}/SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
 _evkb_lib(PXP         ${_dev}/PXP                  https://github.com/newdigate/PXP          728c109f5787525d4ab50f97b57c85ef2cf1501c .)
 _evkb_lib(ILI9341_t3     ${_dev}/ILI9341_t3           https://github.com/newdigate/ILI9341_t3      e69e657f360e997e93fc7736a23eba8b09d1a043 .)
-_evkb_lib(MipiDisplay    ${_dev}/MipiDisplay          https://github.com/newdigate/MipiDisplay     HEAD .) # panel chosen by the importer: import_evkb_library(MipiDisplay soc panels/<name>)
+_evkb_lib(MipiDisplay    ${_dev}/MipiDisplay          https://github.com/newdigate/MipiDisplay     HEAD .) # TODO: still the ONLY floating-HEAD entry — create the remote, push, then pin the SHA. Panel chosen by the importer: import_evkb_library(MipiDisplay soc panels/<name>)
 _evkb_lib(Audio          ${_dev}/Audio                https://github.com/newdigate/Audio           4b3d296d55be9a2e3cf5b9dafd23b8c33388bad4 .)
 _evkb_lib(SdFat          ${_dev}/SdFat                https://github.com/newdigate/SdFat           681bfcf83d05beb943e3d905f15d8181bf9072c7 .)
 _evkb_lib(SD             ${_dev}/PaulS_SD             https://github.com/newdigate/SD              e28c549918ea34ffb2942fd84deffc7c76a89880 .)
