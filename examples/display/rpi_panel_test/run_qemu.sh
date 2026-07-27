@@ -18,7 +18,7 @@ echo "==== captured ===="; cat "$OUT"
 grep -q "ATTINY_OK"     "$OUT" || { echo "FAIL: attiny"; exit 1; }
 grep -q "PLL_OK"        "$OUT" || { echo "FAIL: pll";    exit 1; }
 grep -q "LCDIFV2_OK"    "$OUT" || { echo "FAIL: lcdifv2"; exit 1; }
-# Task 10 -- the firmware MIPI-DSI host driver (RPiDisplay mipi_dsi.cpp) brought
+# Task 10 -- the firmware MIPI-DSI host driver (MipiDisplay soc/mipi_dsi.cpp) brought
 # the D-PHY up (PLL dividers + HS timing + bounded lock poll), powered the PHY
 # and configured the DPI video mode, with every register reading back what it
 # wrote. This REPLACES the Task-9 PROBE_DSI/PROBE_DSI_SHORT hand-poked probes.
@@ -26,7 +26,7 @@ grep -q "LCDIFV2_OK"    "$OUT" || { echo "FAIL: lcdifv2"; exit 1; }
 # every DPI register as plain RW, so DSI_OK proves the bring-up SEQUENCE, not
 # that the D-PHY locks at the right bit rate -- that is Task 14 (silicon).
 grep -q "DSI_OK"        "$OUT" || { echo "FAIL: dsi";     exit 1; }
-# Task 12 -- the firmware TC358762 bridge driver (RPiDisplay tc358762.cpp) sent
+# Task 12 -- the firmware TC358762 bridge driver (MipiDisplay panels/rpi7/tc358762.cpp) sent
 # all eleven init writes of NXP's transcribed RPi-panel sequence as DSI generic
 # long writes, and every one was accepted by the DSI host's APB packet path.
 # This REPLACES the Task-11 PROBE_BRIDGE hand-poked probe (that block is gone).

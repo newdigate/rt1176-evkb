@@ -19,14 +19,14 @@
  * `-serial file:`), not Serial (native USB CDC), like every sibling gate.
  */
 #include <Arduino.h>
-#include <Wire.h>   // needed by the RPiDisplay ATtiny driver (Display::begin())
+#include <Wire.h>   // needed by the MipiDisplay ATtiny driver (Display::begin())
 #include "Display.h"
 #include "lvgl_rt1176.h"
-#include "lvgl_rpi_panel.h"
+#include "lvgl_mipi_panel.h"
 
 /* No LVGL draw buffers are declared here, on purpose: DIRECT mode renders into
- * the panel's own scanout framebuffer, which RPiDisplay already allocated in
- * SDRAM. See lvgl_rpi_panel.h. */
+ * the panel's own scanout framebuffer, which MipiDisplay already allocated in
+ * SDRAM. See lvgl_mipi_panel.h. */
 
 static void build_scene()
 {
@@ -68,7 +68,7 @@ void setup()
     if (!ok) {
         /* Bail: framebuffer()/geometry are only meaningful after a successful
          * begin(), and handing LVGL a null buffer would fault rather than fail
-         * a token (lvgl_rpi_panel_create() asserts on exactly that).
+         * a token (lvgl_mipi_panel_create() asserts on exactly that).
          *
          * This path leaves LVGL uninitialised while loop() below still calls
          * lv_timer_handler() every pass. That is SAFE, but only just: with no
@@ -87,12 +87,12 @@ void setup()
     Display.fillScreen(0x0000);
 
     lvgl_rt1176_begin();
-    lvgl_rpi_panel_create(Display);
+    lvgl_mipi_panel_create(Display);
     build_scene();
 
     /* Render one full frame. */
     uint32_t t0 = millis();
-    while (!lvgl_rpi_panel_frame_done() && (millis() - t0) < 5000) {
+    while (!lvgl_mipi_panel_frame_done() && (millis() - t0) < 5000) {
         lvgl_rt1176_loop();
     }
 
@@ -106,7 +106,7 @@ void setup()
     lvgl_sum_reset();
     lvgl_sum_feed(Display.framebuffer(), PANEL_FB_BYTES);
 
-    Serial1.printf("LVGL_FLUSHED=%s\n", lvgl_rpi_panel_frame_done() ? "PASS" : "FAIL");
+    Serial1.printf("LVGL_FLUSHED=%s\n", lvgl_mipi_panel_frame_done() ? "PASS" : "FAIL");
     /* LVGL_BYTES is the total AREA LVGL flushed, not the extent of the feed
      * above -- and that difference is the whole point. The feed is one
      * unconditional call of PANEL_FB_BYTES, so printing lvgl_sum_bytes() here
@@ -117,7 +117,7 @@ void setup()
      * different LVGL_SUM. Equal to PANEL_FB_BYTES only if LVGL really redrew
      * all 800x480. */
     Serial1.printf("LVGL_BYTES=%lu\n",
-                   (unsigned long)(lvgl_rpi_panel_flushed_px() * PANEL_BYTES_PER_PIXEL));
+                   (unsigned long)(lvgl_mipi_panel_flushed_px() * PANEL_BYTES_PER_PIXEL));
     Serial1.printf("LVGL_SUM=0x%08lX\n", (unsigned long)lvgl_sum_value());
     Serial1.println("LVGL_RPI_PANEL_DONE");
 }

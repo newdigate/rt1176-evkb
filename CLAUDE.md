@@ -114,9 +114,14 @@ harness.
   `Cm4ImageBank`). `cores/teensy4/` is an uncompiled upstream reference copy —
   never built.
 - **Peripheral libraries are sibling repos**, not in-core: Wire (LPI2C),
-  SPI (LPSPI), Audio (graph nodes + WM8962 codec driver), Ethernet stacks, etc.
-  Core-vs-library boundary follows Teensy convention; several subsystems were
-  deliberately moved out of the core into `newdigate/<lib>` forks.
+  SPI (LPSPI), Audio (graph nodes + WM8962 codec driver), MipiDisplay
+  (MIPI-DSI panels), Ethernet stacks, etc. Core-vs-library boundary follows
+  Teensy convention; several subsystems were deliberately moved out of the core
+  into `newdigate/<lib>` forks. MipiDisplay is split panel-independent `soc/`
+  vs. per-panel `panels/<name>/`, so it is imported as
+  `import_evkb_library(MipiDisplay soc panels/<name>)` — the panel is chosen by
+  which directory the example imports (the RT1176 has one MIPI-DSI host, so
+  only one panel can ever be live).
 - **Dual-core model**: the CM7 stages/boots/hot-swaps CM4 images and talks over
   the MU mailbox. Key constraints: main-eDMA completion IRQs reach the CM7
   only (CM4 interrupt-driven DMA needs eDMA_LPSR + an LPSR peripheral);

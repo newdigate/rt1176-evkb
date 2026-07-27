@@ -27,7 +27,7 @@
  * would not capture here) -- see cores/imxrt1176/usb_serial.h.
  */
 #include <Arduino.h>
-#include <Wire.h>   // needed by the RPiDisplay ATtiny driver (Display::begin())
+#include <Wire.h>   // needed by the MipiDisplay ATtiny driver (Display::begin())
 #include "Display.h"
 
 // Solid red.  ARBITRARY -- the checksum is computed, never keyed to a colour --
@@ -101,10 +101,10 @@ void setup() {
     bool ok = Display.begin();
     // stage tokens -- emitted unconditionally so the first false pinpoints the broken layer
     Serial1.printf("ATTINY_%s\n",   Display.attinyOk() ? "OK" : "FAIL");
-    Serial1.printf("PLL_%s\n",      Display.pllOk()    ? "OK" : "FAIL");
+    Serial1.printf("PLL_%s\n",      Display.clkOk()    ? "OK" : "FAIL");
     Serial1.printf("LCDIFV2_%s\n",  Display.lcdifOk()  ? "OK" : "FAIL");
     Serial1.printf("DSI_%s\n",      Display.dsiOk()    ? "OK" : "FAIL");
-    Serial1.printf("TC358762_%s\n", Display.bridgeOk() ? "OK" : "FAIL");
+    Serial1.printf("TC358762_%s\n", Display.panelOk()  ? "OK" : "FAIL");
 
     // (The Task-7 LCDIFv2 scan-checksum probe, the Task-9 DSI packet probes and
     // the Task-11 PROBE_BRIDGE bridge-FSM probe all lived here. The first two
@@ -129,7 +129,7 @@ void setup() {
         // (Read straight back with the CPU: this core runs with the D-cache
         // off, so there is no stale line between the PXP's AXI writes and this.)
         //
-        // Sized by PANEL_FB_BYTES (display_timing.h, via Display.h) rather than
+        // Sized by PANEL_FB_BYTES (panel_config.h, via Display.h) rather than
         // by re-deriving pixels*2 here: that length already has a name, and it
         // is the same one lcdifv2Begin() allocates and strides the scanout
         // descriptor by.
