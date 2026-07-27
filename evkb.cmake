@@ -66,6 +66,7 @@ _evkb_lib(nativeethernet ${_dev}/NativeEthernet       https://github.com/newdiga
 _evkb_lib(fnet           ${_dev}/FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
 _evkb_lib(lwip           ${_dev}/lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 _evkb_lib(USBHost_t36    ${_dev}/USBHost_t36          https://github.com/newdigate/USBHost_t36     77c23a6a1c692c987e9c27e4caa1a3ea402ca92f .)
+_evkb_lib(LVGL           ${_dev}/LVGL                 https://github.com/newdigate/LVGL            HEAD .) # TODO: replace HEAD with the pushed SHA (Task 5)
 _evkb_lib(EEPROM         ${_dev}/EEPROM               https://github.com/PaulStoffregen/EEPROM     9790da76d62bc633563f763c3dc1526539ed0a6b .)
 _evkb_lib(Bounce2        ${_dev}/Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).
@@ -184,6 +185,38 @@ macro(import_evkb_cmsis_dsp)
         # line — the toolchain's own -lm sits before them and resolves nothing
         # (same reason the audio examples each re-link m).
         target_link_libraries(CMSIS-DSP PUBLIC m)
+    endif()
+endmacro()
+
+# --- LVGL --------------------------------------------------------------------
+# LVGL is 449 .c files across ~145 directories; import_arduino_library() globs
+# only one level deep, so LVGL gets a dedicated target the same way CMSIS-DSP
+# does. The port's display bindings are deliberately NOT compiled here — each
+# example compiles the one binding it needs, so an ILI9341 sketch never pulls
+# in RPiDisplay.
+#
+# The glob is *.c ONLY and must stay that way: src/libs/thorvg/ is 47 .cpp
+# files needing a config.h that is absent from a fresh clone.
+macro(import_evkb_lvgl)
+    if(NOT TARGET LVGL)
+        evkb_library_dir(LVGL _evkb_lvgl_dir)
+        file(GLOB_RECURSE _evkb_lvgl_srcs CONFIGURE_DEPENDS
+             "${_evkb_lvgl_dir}/lvgl/src/*.c")
+        add_library(LVGL STATIC
+            ${_evkb_lvgl_srcs}
+            "${_evkb_lvgl_dir}/port/lvgl_rt1176.cpp")
+        target_include_directories(LVGL PUBLIC
+            "${_evkb_lvgl_dir}/lvgl"
+            "${_evkb_lvgl_dir}/port")
+        target_compile_definitions(LVGL PUBLIC LV_CONF_INCLUDE_SIMPLE=1)
+        target_link_libraries(LVGL PRIVATE teensy_flags)
+        # LVGL's software renderer calls libm (sqrtf/sinf/cosf in the vector,
+        # gradient and transform paths). PUBLIC for the same reason CMSIS-DSP
+        # does it above: -lm must land AFTER the consumer's objects on the link
+        # line — the toolchain's own -lm sits before them and resolves nothing.
+        # Inert today (those paths are behind disabled config), but it turns a
+        # confusing undefined-reference in Task 3/4 into a non-event.
+        target_link_libraries(LVGL PUBLIC m)
     endif()
 endmacro()
 
