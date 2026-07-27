@@ -40,5 +40,19 @@ When a phase adds a source tree or a new gate build:
 - run `sh evkb/tools/license-audit.sh` and require `LICENSE-AUDIT: PASS`.
 
 Any allowlist addition needs a written justification comment in the
-script, following the existing entries (uncompiled reference copies, or
-preprocessor-dead dual-licensed branches proven empty by nm).
+script, following the existing entries (uncompiled reference copies,
+preprocessor-dead dual-licensed branches proven empty by nm, or the one
+MPL-bearing thorvg file the `.c`-only glob never compiles). That applies
+to `BIN_ALLOW` — the binary-provenance allowlist — as well as `ALLOW`.
+
+Part 1 covers three things, and vendoring trips them in different ways:
+- GPL/LGPL **and MPL-2.0** header text (MPL is weak copyleft, and it
+  fails the gate deliberately — an allowlist entry, not silence, is how
+  a retained-but-uncompiled MPL file gets through),
+- git-tracked `.a`/`.o`/`.so`/`.dylib`/`.lib` binaries with no licence
+  text in their own directory or one level up. `grep -I` cannot read a
+  binary, so provenance for opaque blobs is checked structurally.
+
+After editing the audit, run `sh evkb/tools/license-audit.test.sh` —
+negative tests that prove each part-1 check still fires. A gate that
+only ever passes proves nothing.

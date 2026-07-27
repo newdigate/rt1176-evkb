@@ -80,9 +80,12 @@ work in this tree.
 
 Repo-wide gates in `tools/`:
 - `license-audit.sh` — proves no copyleft source is compiled into firmware
-  (header sweep + link-manifest depfile audit). The tree is deliberately
-  MIT/BSD-only; every inherited LGPL file has a clean-room rewrite. Don't
-  introduce GPL/LGPL code or dependencies.
+  (header sweep + binary-provenance check + link-manifest depfile audit). The
+  tree is deliberately MIT/BSD-only; every inherited LGPL file has a clean-room
+  rewrite. Don't introduce GPL/LGPL/MPL code or dependencies, and don't vendor a
+  prebuilt binary without licence text beside it.
+- `license-audit.test.sh` — negative tests proving the audit's part-1 checks
+  actually fire (unlicensed binary, MPL header) rather than passing vacuously.
 - `gate-lib.test.sh` — tests for the gate runner lifecycle library.
 
 ## Flash / run on hardware

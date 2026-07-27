@@ -2,7 +2,8 @@
 # license-audit.sh — prove no copyleft source is compiled into RT1176 firmware.
 #
 # Part 1: wrap-tolerant copyleft-header sweep over every ecosystem repo,
-#         against a documented allowlist.
+#         against a documented allowlist, PLUS a binary-provenance check
+#         (grep cannot read binaries, so opaque blobs are checked structurally).
 # Part 2: link-manifest audit — walk the CMake depfiles (*.obj.d) of three fat
 #         gate builds; every source AND header that fed any object must have a
 #         permissive header. Dual-licensed allowlisted SOURCES must compile to
@@ -15,12 +16,12 @@ TOOL=/Applications/ARM_10/bin
 EVKB=$HOME/Development/rt1170/evkb
 fail=0
 
-REPOS="$EVKB/cores $HOME/Development/Ethernet $HOME/Development/NativeEthernet \
+REPOS=${LICENSE_AUDIT_REPOS:-"$EVKB/cores $HOME/Development/Ethernet $HOME/Development/NativeEthernet \
 $HOME/Development/SdFat $HOME/Development/SPI $HOME/Development/Wire \
 $HOME/Development/Audio $HOME/Development/SD $HOME/Development/PaulS_SD \
 $HOME/Development/USBHost_t36 $HOME/Development/FNET $HOME/Development/lwip \
 $HOME/Development/CMSIS-DSP $HOME/Development/CMSIS_6 $HOME/Development/SerialFlash \
-$HOME/Development/PXP $HOME/Development/RPiDisplay $HOME/Development/LVGL"
+$HOME/Development/PXP $HOME/Development/RPiDisplay $HOME/Development/LVGL"}
 
 # Allowlist (extended regex), each entry justified:
 #   cores/teensy*        — uncompiled PJRC reference copies, never in any build
@@ -30,13 +31,67 @@ $HOME/Development/PXP $HOME/Development/RPiDisplay $HOME/Development/LVGL"
 #                          preprocessor-dead under __IMXRT1176__ (documented in
 #                          each repo's LICENSE.md); their objects are verified
 #                          EMPTY in part 2, so the claim is self-enforcing.
-ALLOW='cores/teensy/|cores/teensy3/|cores/teensy4/|Development/SPI/SPI\.(h|cpp)$|Development/Wire/Wire\.(h|cpp)$|Development/Wire/utility/twi\.(h|c)$'
+#   LVGL/lvgl/src/libs/thorvg/tvgLottieInterpolator.cpp
+#                        — MIT-headered ThorVG file carrying one MPL-2.0 snippet
+#                          (the Firefox cubic-bezier solver) inside
+#                          #if LV_USE_THORVG_INTERNAL, which is 0. It is NOT
+#                          compiled: evkb.cmake globs lvgl/src/*.c only, and
+#                          deliberately never *.cpp (all 47 thorvg files are
+#                          .cpp). Being a .cpp on this allowlist, part 2 holds it
+#                          to the EMPTY-object rule, so enabling thorvg would
+#                          fail this audit rather than slip through.
+ALLOW='cores/teensy/|cores/teensy3/|cores/teensy4/|Development/SPI/SPI\.(h|cpp)$|Development/Wire/Wire\.(h|cpp)$|Development/Wire/utility/twi\.(h|c)$|Development/LVGL/lvgl/src/libs/thorvg/tvgLottieInterpolator\.cpp$'
 # Between keywords, tolerate whitespace AND comment decoration (* / # ! -):
 # a wrapped header line like "GNU\n * Lesser General Public\n * License"
 # must still match. Plain [[:space:]]+ misses star-prefixed continuations —
 # that exact gap was caught by this script's own negative test.
 SEP='([[:space:]]|[*/#!-])+'
-COPYLEFT="GNU${SEP}(General|Lesser)${SEP}(General${SEP})?Public${SEP}License"
+# STRONG copyleft: GNU GPL/LGPL — must never reach firmware.
+# WEAK copyleft: MPL-2.0 — file-level, so it is arguably tolerable in a tree that
+# does not compile it. That leniency is a DECISION, not a regex accident: MPL text
+# FAILS this gate exactly like GPL, and the only way past it is an ALLOW entry
+# with a written justification (see thorvg above). LVGL 9.4.0 shipped MPL-2.0
+# code in src/libs/frogfs/ that the pre-MPL regex could not see; it was pruned by
+# hand, and this gate now catches its like on re-vendor.
+COPYLEFT="(GNU${SEP}(General|Lesser)${SEP}(General${SEP})?Public${SEP}License\
+|Mozilla${SEP}Public${SEP}License)"
+
+# --- binary provenance -------------------------------------------------------
+# grep -I skips binary files entirely, so the header sweep above is structurally
+# blind to prebuilt archives. Not hypothetical: LVGL 9.4.0 vendored 8 git-tracked
+# .a files (2.6 MB) under lvgl/libs/nema_gfx/ with no licence text anywhere in
+# that subtree, and they passed this audit invisibly.
+#
+# The rule enforced is "binaries without provenance", NOT "no binaries":
+# lvgl/src/libs/freetype/LiberationSans-Regular.ttf is equally unreadable to
+# grep, but ships LiberationSans-LICENSE.txt right beside it and is legitimately
+# retained. So an object/library binary must have licence text in its OWN
+# directory or ONE level up.
+#
+# Why not walk all the way to the repo root: lvgl/LICENCE.txt is an ancestor of
+# lvgl/libs/nema_gfx/, so a root-to-leaf walk would have excused the very blobs
+# that motivated this check. An ancestor licence describes the host project's own
+# source; it says nothing about which licence covers an opaque third-party blob
+# vendored beneath it. Provenance for a binary has to be adjacent to the binary.
+#
+# Tracked files only (git ls-files): build outputs are untracked by design, and
+# what ships in a checkout is what matters.
+BINARY_EXT='\.(a|o|so|dylib|lib)$'
+# Binary allowlist (extended regex, matched against the repo-relative path),
+# each entry to be justified here like ALLOW above. Empty today: no swept repo
+# tracks a single object/library binary, and any future one needs either adjacent
+# licence text or a justification written right here. '^$' matches nothing.
+BIN_ALLOW='^$'
+# What counts as licence text sitting in a directory. Deliberately excludes
+# COPYRIGHT*/NOTICE*: lvgl/COPYRIGHTS.md is an attribution index, not a grant.
+LICTEXT='(licen[cs]e|copying)[^/]*$'
+
+# Test hooks, used only by license-audit.test.sh (see LICENSE_AUDIT_REPOS above):
+# restrict which parts run, so a negative test can exercise part 1 against a
+# throwaway repo without needing the fat gate builds part 2 walks.
+PARTS=${LICENSE_AUDIT_PARTS:-123}
+SHARED="Client.h Server.h IPAddress.h IPAddress.cpp"
+case "$PARTS" in *1*) ;; *) REPOS="" ;; esac
 
 echo "== Part 1: repo copyleft-header sweep"
 for r in $REPOS; do
@@ -49,6 +104,41 @@ for r in $REPOS; do
     echo "$hits"
     fail=1
   fi
+
+  # Binary provenance (see BINARY_EXT above). Needs git to tell tracked source
+  # from build output; a non-repo directory is reported, never silently skipped.
+  if ! git -C "$r" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "  note: $r is not a git repo — binary-provenance check not applicable"
+    continue
+  fi
+  tracked=$(git -C "$r" ls-files 2>/dev/null || true)
+  bins=$(printf '%s\n' "$tracked" | grep -iE "$BINARY_EXT" | grep -vE "$BIN_ALLOW" || true)
+  [ -n "$bins" ] || continue
+  # Only computed when the repo actually tracks binaries, so the common case
+  # costs one `git ls-files` per repo and nothing else.
+  licdirs=$(printf '%s\n' "$tracked" | grep -iE "$LICTEXT" \
+            | while IFS= read -r p; do dirname "$p"; done | sort -u)
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    own=$(dirname "$b"); up=$(dirname "$own")
+    ok=0
+    for cand in "$own" "$up"; do
+      # Newline-delimited containment: plain string equality, so a path
+      # containing regex metacharacters cannot skew the match.
+      case "
+$licdirs
+" in *"
+$cand
+"*) ok=1 ;;
+      esac
+    done
+    if [ $ok -eq 0 ]; then
+      echo "UNLICENSED BINARY (no licence text in its dir or one level up): $r/$b"
+      fail=1
+    fi
+  done <<EOF
+$bins
+EOF
 done
 
 echo "== Part 2: link-manifest audit (depfile walk)"
@@ -60,6 +150,7 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # added 2026-07-18) — so CM4-side sources are covered by this same walk
 # (the *.o.d pattern below), not just their provenance headers.
 GATES="examples/audio/sd_wav_play_test:sd_wav_play_test examples/networking/ethernet_test:ethernet_test examples/networking/native_ethernet_test:native_ethernet_test examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_image_test:cm4_image_test examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_spi_test:cm4_spi_test examples/dualcore/cm4_wire_test:cm4_wire_test examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test examples/dualcore/cm4_imagebank_test:cm4_imagebank_test examples/framework/arm_math_test:arm_math_test examples/audio/filter_fir_test:filter_fir_test examples/audio/guard_sweep_test:guard_sweep_test examples/dualcore/cm4_sai_irq_probe:cm4_sai_irq_probe examples/dualcore/cm4_cpp_test:cm4_cpp_test examples/dualcore/cm4_audiostream_test:cm4_audiostream_test examples/audio/i2s_int_test:i2s_int_test examples/dualcore/cm4_fft_test:cm4_fft_test examples/dualcore/cm4_audio_test:cm4_audio_test examples/audio/audio_h_test:audio_h_test examples/display/pxp_blit_test:pxp_blit_test examples/display/rpi_panel_test:rpi_panel_test examples/display/lvgl_ili9341_test:lvgl_ili9341_test"
+case "$PARTS" in *2*) ;; *) GATES="" ;; esac
 for pair in $GATES; do
   g=${pair%%:*}; t=${pair##*:}
   bdir=$EVKB/$g/build
@@ -117,7 +208,8 @@ for pair in $GATES; do
 done
 
 echo "== Part 3: Ethernet/NativeEthernet byte-identical shared files"
-for f in Client.h Server.h IPAddress.h IPAddress.cpp; do
+case "$PARTS" in *3*) ;; *) SHARED="" ;; esac
+for f in $SHARED; do
   if ! cmp -s "$HOME/Development/Ethernet/src/$f" "$HOME/Development/NativeEthernet/src/$f"; then
     echo "DRIFT: src/$f differs between Ethernet and NativeEthernet"; fail=1
   fi
