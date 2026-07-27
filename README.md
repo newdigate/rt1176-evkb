@@ -146,7 +146,9 @@ target_link_libraries(my_sketch.elf LVGL stdc++)
 ```
 
 The `LVGL` sibling repo vendors LVGL 9.4.0 (MIT), pruned of `vg_lite_driver`
-(dual-licensed) and `frogfs` (MPL-2.0) so the tree stays MIT/BSD-only — see its
+(dual-licensed), `frogfs` (MPL-2.0) and `nema_gfx` (unlicensed prebuilt `.a`
+binaries, which a source-header grep is structurally blind to) so the tree stays
+MIT/BSD-only — see its
 `VENDORING.md` before bumping the pin.
 
 Configure with the board toolchain file (`TEENSY_VERSION 117`, core clock

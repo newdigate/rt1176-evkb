@@ -39,7 +39,10 @@ grep -q "LVGL_BYTES=768000" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; }
 # software renderer has drawn the scene into it. QEMU does model this panel, but
 # what it models is the transport (rpi_panel_test's FB_SUM/PANEL_SUM assert
 # that); this number is the RENDERER's output, and it is the only automated
-# signal that LVGL painted the right pixels. Glass is verified on silicon (Task 5).
+# signal that LVGL painted the right pixels. Glass is NOT verified: the RPi panel
+# is not currently connected, so this golden pins REPRODUCIBILITY only, never
+# correctness. (Contrast the ILI9341 gate, whose golden a human has confirmed on
+# real glass.) See the capability table in the repo README.
 #
 # RECORDED, not derived: it legitimately changes when the LVGL pin, lv_conf.h,
 # the fonts, or the scene change. On a mismatch work out WHICH of those changed.

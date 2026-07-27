@@ -59,7 +59,7 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # (teensy-cmake-macros), whose gcc step emits <obj>.o.d depfiles (-MMD -MF,
 # added 2026-07-18) — so CM4-side sources are covered by this same walk
 # (the *.o.d pattern below), not just their provenance headers.
-GATES="examples/audio/sd_wav_play_test:sd_wav_play_test examples/networking/ethernet_test:ethernet_test examples/networking/native_ethernet_test:native_ethernet_test examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_image_test:cm4_image_test examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_spi_test:cm4_spi_test examples/dualcore/cm4_wire_test:cm4_wire_test examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test examples/dualcore/cm4_imagebank_test:cm4_imagebank_test examples/framework/arm_math_test:arm_math_test examples/audio/filter_fir_test:filter_fir_test examples/audio/guard_sweep_test:guard_sweep_test examples/dualcore/cm4_sai_irq_probe:cm4_sai_irq_probe examples/dualcore/cm4_cpp_test:cm4_cpp_test examples/dualcore/cm4_audiostream_test:cm4_audiostream_test examples/audio/i2s_int_test:i2s_int_test examples/dualcore/cm4_fft_test:cm4_fft_test examples/dualcore/cm4_audio_test:cm4_audio_test examples/audio/audio_h_test:audio_h_test examples/display/pxp_blit_test:pxp_blit_test examples/display/rpi_panel_test:rpi_panel_test"
+GATES="examples/audio/sd_wav_play_test:sd_wav_play_test examples/networking/ethernet_test:ethernet_test examples/networking/native_ethernet_test:native_ethernet_test examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_image_test:cm4_image_test examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_spi_test:cm4_spi_test examples/dualcore/cm4_wire_test:cm4_wire_test examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test examples/dualcore/cm4_imagebank_test:cm4_imagebank_test examples/framework/arm_math_test:arm_math_test examples/audio/filter_fir_test:filter_fir_test examples/audio/guard_sweep_test:guard_sweep_test examples/dualcore/cm4_sai_irq_probe:cm4_sai_irq_probe examples/dualcore/cm4_cpp_test:cm4_cpp_test examples/dualcore/cm4_audiostream_test:cm4_audiostream_test examples/audio/i2s_int_test:i2s_int_test examples/dualcore/cm4_fft_test:cm4_fft_test examples/dualcore/cm4_audio_test:cm4_audio_test examples/audio/audio_h_test:audio_h_test examples/display/pxp_blit_test:pxp_blit_test examples/display/rpi_panel_test:rpi_panel_test examples/display/lvgl_ili9341_test:lvgl_ili9341_test"
 for pair in $GATES; do
   g=${pair%%:*}; t=${pair##*:}
   bdir=$EVKB/$g/build
@@ -68,17 +68,23 @@ for pair in $GATES; do
   fi
   files=$(find "$bdir" \( -name '*.obj.d' -o -name '*.o.d' \) -exec cat {} + 2>/dev/null \
           | tr ' \\' '\n\n' | grep '^/' | grep -v ':$' | sort -u)
-  n=0; checked=0
-  for f in $files; do
-    n=$((n + 1))
-    case "$f" in
-      /Applications/ARM_10/*) continue ;;  # GCC + newlib headers: GPL with the
-                                           # GCC Runtime Library Exception / BSD
-                                           # — linking into firmware permitted.
-    esac
-    [ -f "$f" ] || continue
-    checked=$((checked + 1))
-    if head -c 6000 "$f" | tr '\n' ' ' | grep -qE "$COPYLEFT"; then
+  n=$(printf '%s\n' $files | grep -c '^/' || true)
+  # Project files only: GCC + newlib headers are GPL with the GCC Runtime
+  # Library Exception / BSD — linking into firmware permitted.
+  project=$(printf '%s\n' $files | grep -v '^/Applications/ARM_10/' || true)
+  checked=0
+  for f in $project; do [ -f "$f" ] && checked=$((checked + 1)); done
+  # ONE batched grep instead of a head|tr|grep pipeline per file. The LVGL gate
+  # pulls ~24k dep paths, where per-file pipelines take minutes and an audit
+  # nobody runs protects nothing. -lz matches Part 1's proven flags: -z makes
+  # each file a single record, so the COPYLEFT separator class (which includes
+  # newlines) still spans headers wrapped across lines, as tr '\n' ' ' did.
+  # Note this now scans whole files rather than the first 6000 bytes — strictly
+  # more thorough, never less.
+  candidates=$(printf '%s\n' $project | tr '\n' '\0' \
+               | xargs -0 grep -lzIE "$COPYLEFT" 2>/dev/null || true)
+  for f in $candidates; do
+    if [ -f "$f" ]; then
       if echo "$f" | grep -qE "$ALLOW"; then
         case "$f" in
           *.c|*.cpp)

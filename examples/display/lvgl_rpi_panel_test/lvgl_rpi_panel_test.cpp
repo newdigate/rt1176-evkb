@@ -122,8 +122,9 @@ void setup()
     Serial1.println("LVGL_RPI_PANEL_DONE");
 }
 
-/* Kept running deliberately, so the scene stays live on the panel for the
- * hardware pass (Task 5) instead of the gate ending with a frozen display.
+/* Kept running deliberately, so the scene stays live on the panel for a FUTURE
+ * hardware pass instead of the gate ending with a frozen display.  (That pass
+ * has not happened: the RPi panel is not currently connected.)
  *
  * Unlike the ILI9341 sibling, a lv_timer_handler() here writes into a buffer
  * the LCDIFv2 is actively scanning out, so "just keep calling it" deserves the
