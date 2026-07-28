@@ -10,11 +10,11 @@ rm -f "$OUT" "$DIR/rk055_touch.dbg"
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/rk055_touch.dbg" &
 P=$!; gate_pid $P
 # 10s: the 8s the sibling display gates use for a cold binary (SEMC init + a
-# 1.8 MB extmem framebuffer + LCDIFv2 config), plus margin.  NOT for the touch
-# script: nothing reads contacts at this stage, so the model publishes step 0
-# and then stalls for ever waiting for the mandatory status clear that never
-# comes.  (The full script is 25 steps at 20 ms = 500 ms, and only Task 5's
-# read() will ever let it advance past the first.)
+# 1.8 MB extmem framebuffer + LCDIFv2 config), plus margin.  Barely any of it is
+# for the touch script -- the firmware polls only until the part has published
+# its second instant, which is 20 ms of guest time after the first, and then
+# stops.  The remaining 23 steps are left unread on purpose; consuming the whole
+# scripted path is a later stage's job.
 # `|| true` on the kill, and it is load-bearing under `set -e`: if QEMU has
 # already exited (bad binary, instant crash) the kill fails, and without this
 # the script dies HERE -- exit 1 with no message at all, before any assertion
@@ -90,6 +90,39 @@ grep -q "CFG_OK" "$OUT" || { echo "FAIL: config blob"; exit 1; }
 # these lines exist to put the truth in the transcript.
 grep -q "RES=" "$OUT"    || { echo "FAIL: resolution not reported"; exit 1; }
 grep -q "POINTS=" "$OUT" || { echo "FAIL: contact count not reported"; exit 1; }
+# --- the coordinate layer --------------------------------------------------
+# FIRST_TOUCH -- read() returned at least one contact.  The trailing SPACE in
+# the pattern is load-bearing: the failure token is FIRST_TOUCH_NONE, and
+# without the space it would match this assertion and turn a driver that never
+# saw a contact into a pass.
+#
+# What it proves is modest and deliberately so: that the status read, the
+# contact-array read and the point decode all work end to end.  The COORDINATES
+# in it are recorded, never asserted -- the model's scripted path and any
+# on-screen target are both percentages of the same resolution, so model and
+# firmware share an assumption about which corner is (0,0), and no QEMU run can
+# falsify a shared assumption.  Orientation is a hardware finding.
+grep -q "FIRST_TOUCH " "$OUT" || { echo "FAIL: read() never reported a contact"; exit 1; }
+# TOUCH_ADVANCED -- and THIS is the assertion this stage exists for.
+#
+# The GT911 republishes a coordinate buffer only after the host acknowledges the
+# previous one by writing 0 to 0x814E.  A read() that omits that write sees the
+# same contact for ever, on silicon and in the model alike: imxrt_gt911_tick()
+# refuses to advance the script while the ready bit is still set, so the second
+# instant never comes into existence.  FIRST_TOUCH above passes perfectly well
+# against a driver in that state; this line is what catches it.
+#
+# The firmware emits this token only when it has seen a published buffer
+# carrying ZERO contacts -- the release after the tap.  That is the state which
+# cannot be reached without the acknowledgement, because an unacknowledged part
+# keeps re-serving the same ONE-contact buffer.
+#
+# NEGATIVE-TESTED, and it needed to be: the first version of this assertion
+# accepted merely observing a fresh buffer twice, which a wedged part does on
+# every poll for ever.  With the status clear deleted from the driver that
+# version stayed GREEN.  The zero-contact condition goes red.  Do not relax it
+# back to "fresh twice".
+grep -q "TOUCH_ADVANCED" "$OUT" || { echo "FAIL: the part never published a second buffer -- read() did not clear the status register at 0x814E"; exit 1; }
 # The driver must NEVER write the configuration space.  NXP's own driver
 # rewrites all 186 bytes when the stored point count or trigger mode differ,
 # and warns that a wrong write breaks the part.  The QEMU model logs any such
@@ -109,6 +142,7 @@ grep -q "POINTS=" "$OUT" || { echo "FAIL: contact count not reported"; exit 1; }
 if grep -q "gt911: guest wrote config" "$DIR/rk055_touch.dbg"; then
     echo "FAIL: firmware wrote the GT911 configuration space"; exit 1
 fi
-echo "PASS: RK055 touch T1+T2 (GT911 reset + INT-level address latch at 0x5D"
+echo "PASS: RK055 touch T1+T2+T3a (GT911 reset + INT-level address latch at 0x5D"
 echo "      + product ID + the 186-byte config blob read and checksummed,"
-echo "      with the config space untouched)"
+echo "      with the config space untouched; and a polled contact read whose"
+echo "      mandatory status clear let the part publish a second buffer)"

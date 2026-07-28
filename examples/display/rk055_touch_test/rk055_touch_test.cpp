@@ -9,6 +9,15 @@
  * and the resolution and contact count it was programmed with are recorded.
  * Recorded, not asserted -- see the RES/POINTS comment in run_qemu.sh.
  *
+ * Stage 3 (MINIMAL, deliberately): read() is polled just far enough to prove
+ * two things -- that a contact comes back at all, and that the part goes on to
+ * publish a SECOND coordinate buffer.  The second is the load-bearing one: this
+ * part republishes only after the host acknowledges the previous buffer by
+ * writing 0 to the status register, so a driver that skips that write sees the
+ * first contact for ever.  A full three-phase check of the scripted path (five
+ * taps in order, a monotonic drag, two contacts with distinct track ids) is a
+ * later stage; this one covers the driver's central discipline and nothing more.
+ *
  * Every stage token is emitted UNCONDITIONALLY so the first FAIL pinpoints the
  * broken layer rather than the run simply stopping.
  *
@@ -102,6 +111,73 @@ void setup() {
                        (unsigned long)touch.lastDeviceId(),
                        (unsigned)touch.lastI2cStatus());
     }
+
+    // --- Stage 3: the coordinate layer -------------------------------------
+    // Ten slots, and sized by a literal ten on purpose: the driver's header
+    // promises the register file holds ten contact slots and that
+    // configuredPoints() is validated into 1..10, so a caller may size by ten
+    // and read configuredPoints() contacts into it safely.  Sizing this by
+    // touch.configuredPoints() instead would let a byte the PART reported
+    // decide a stack array's length, which is the hazard that validation
+    // exists to close -- do not "improve" it that way.
+    TouchPoint pts[10];
+    TouchPoint first{};
+    bool haveFirst = false;
+    bool advanced  = false;
+
+    // A bounded poll, not a spin: a wedged part must reach the tokens below so
+    // the gate can name the layer that broke, rather than hanging until the
+    // harness kills QEMU with nothing in the transcript.  ~500 ms is generous
+    // -- the first published instant and the one after it are 20 ms apart.
+    for (uint16_t i = 0; i < 500 && !advanced; i++) {
+        const uint8_t n = touch.read(pts, (uint8_t)(sizeof(pts) / sizeof(pts[0])));
+        if (!haveFirst) {
+            if (n > 0) {
+                first = pts[0];
+                haveFirst = true;
+            }
+        } else if (touch.lastPollFresh() && n == 0) {
+            // THE RELEASE: a published buffer carrying zero contacts.  Both
+            // halves of this test are load-bearing, and the first draft got it
+            // wrong in a way worth recording.
+            //
+            // `lastPollFresh()` ALONE is not evidence of anything.  It reports
+            // that the ready bit was set on this poll, and a driver that never
+            // acknowledged the buffer sees that bit set on every poll for ever
+            // -- so "fresh twice" is true of a completely wedged part.  A
+            // negative test confirmed it: with the status clear deleted, a
+            // fresh-only condition still went green.
+            //
+            // `n == 0` is what makes it real.  The part re-serves the SAME
+            // one-contact buffer until it is acknowledged, so a buffer with
+            // zero contacts cannot exist unless the tap was acknowledged and
+            // the part moved on.  With the clear deleted this stays false and
+            // the gate goes red, which is the whole purpose of the stage.
+            //
+            // And note it must be tested as fresh-AND-zero rather than by the
+            // count alone: `n == 0` on its own is also what an idle poll
+            // returns.  Telling "nothing new" from "new, and nobody is
+            // touching" is exactly what lastPollFresh() exists for.
+            advanced = true;
+        }
+        delay(1);
+    }
+
+    // Unconditional, like every stage above, and the coordinates are RECORDED
+    // rather than asserted for the same reason RES/POINTS are: in QEMU the
+    // scripted path and any on-screen target are both expressed as percentages
+    // of the same resolution, so model and firmware share an assumption about
+    // which corner is (0,0).  No QEMU run can falsify a shared assumption.
+    // Only a finger on glass settles the coordinate-to-display mapping.
+    if (haveFirst) {
+        Serial1.printf("FIRST_TOUCH x=%u y=%u id=%u\n",
+                       (unsigned)first.x, (unsigned)first.y, (unsigned)first.id);
+    } else {
+        Serial1.printf("FIRST_TOUCH_NONE err=%s I2C=%u\n",
+                       GT911::errorName(touch.lastError()),
+                       (unsigned)touch.lastI2cStatus());
+    }
+    Serial1.printf("TOUCH_%s\n", advanced ? "ADVANCED" : "STALLED");
 }
 
 void loop() {}
