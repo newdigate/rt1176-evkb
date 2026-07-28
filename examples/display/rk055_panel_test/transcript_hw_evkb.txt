@@ -90,3 +90,105 @@ Working order on this board:
 The repo rule "start the reader before triggering a reset if you need boot
 output" still holds -- it is specifically holding the port DURING PROGRAMMING
 that fails.
+
+
+=================================================================
+M2 PHASE-1 DIAGNOSTIC RUN — locating PANEL_FAIL on silicon
+=================================================================
+Date:   2026-07-28
+Board:  MIMXRT1170-EVKB, panel on J48 (40-pin FPC, native RK055 connector)
+Probe:  MCU-LINK on-board (r0E2) CMSIS-DAP V2.250, serial 5DQ2DDHVWO5EI
+Image:  examples/display/rk055_panel_test/build/rk055_panel_test.elf
+        (with hx8394LastError() + dsiLastWriteStatus(), MipiDisplay)
+
+Purpose: hx8394Init() has SIX early returns and PANEL_FAIL could not tell them
+apart.  This run adds the two permanent failure-point accessors and reads them
+back off the board.  NO bring-up logic, timing, register value, packet or
+ordering was changed — the additions are diagnostic reporting only, and the
+QEMU gate's captured output is byte-identical to before on a passing run.
+
+PROGRAMMING
+-----------
+  LinkServer flash MIMXRT1176:MIMXRT1170-EVKB load   <elf>   -> EXIT=0
+  LinkServer flash MIMXRT1176:MIMXRT1170-EVKB verify <elf>   -> EXIT=0
+      "File matches flash", both ELF data sections verified.
+
+RESULT — INTERMITTENT OCCURRENCE, DETERMINISTIC LOCATION
+--------------------------------------------------------
+15 valid captured resets (a few further attempts produced no capture: the VCOM
+re-enumerated, or LinkServer lost the DAP after many back-to-back resets —
+probe-level, not firmware).
+
+    PANEL_OK    11 runs
+    PANEL_FAIL   4 runs   (~27%)
+
+All four failures are byte-for-byte identical:
+
+RK055_PANEL_BEGIN
+PANEL=RK055HDMIPI4MA0 720x1280 (HX8394)
+GEOM=720x1280 PIXCLK=58666666 LANES=2
+CLK_OK
+LCDIFV2_OK
+DSI_OK
+PANEL_FAIL
+PANEL_ERR=TUNING IDX=9 OPCODE=0xC0
+DSI_ERR=NEVER_IDLE DT=0x29 LEN=3
+DSI_PKT_STATUS=0x00000001 IRQ1=0x00000003 IRQ2=0x00000000 RXERR=0x00000000
+DSI_FIFO=wr:0 rd:0 LOCK=0x00000001 SPINS=entry:0 start:1 idle:100000
+RK055_PANEL_END
+
+WHAT THE EVIDENCE SAYS
+----------------------
+The failure point is TUNING index 9, opcode 0xC0 — the 3-byte {C0 1F 31}
+generic long write.  It is the command IMMEDIATELY AFTER index 8, the 59-byte
+0xE0 gamma table, which is by a wide margin the longest packet in the sequence.
+Index 9 never varies across failures.
+
+Decoding the DSI host snapshot (RM 49.7.3.5.4 PKT_STATUS / 49.7.3.10.4
+IRQ_STATUS, both: [0] state machine not idle, [1] Tx packet done, [3] Tx FIFO
+overflow, [4] Tx FIFO underflow):
+
+  SPINS entry:0    the APB was ALREADY IDLE when packet 9 was submitted, so
+                   packet 8 (the 59-byte one) was reported complete.  This is
+                   NOT "busy on entry".
+  SPINS start:1    the state machine asserted not-idle on the very first poll
+                   after SEND_PACKET.  This is NOT "never started".
+  SPINS idle:100000  APB_IDLE_SPIN_CAP exhausted.  This IS "never went idle":
+                   the transfer began and the machine never returned to idle.
+  PKT_STATUS=0x1   bit0 (not idle) stuck set; bit1 (Tx packet done) NEVER set
+                   for this packet; bits 3/4 clear, so NOT a FIFO error.
+  RXERR=0x0        no HS-TX / LP-RX / BTA timeout (all three are disabled —
+                   CFG_*_TO_COUNT are 0 — so this is expected, not informative).
+  FIFO wr:0        the TX payload FIFO drained: the one word was consumed.
+  LOCK=0x1         the D-PHY PLL is STILL LOCKED at the failure point.  The
+                   link did not collapse.
+  IRQ1=0x3         bits 0+1 latched.  Bit 1 here is packet 8's Tx-packet-done
+                   latch carried forward (IRQ_STATUS is read-to-clear and
+                   dsiWrite() reads it once per transfer), so this is the
+                   normal steady-state value, not a signal.
+
+So: the host accepted the packet, drained its FIFO, went busy, and wedged with
+the PLL still locked and no error bit anywhere.  Because dsiWrite() is TX-only
+— no BTA, no read-back, PKT_CONTROL's BTA and BTA_ONLY bits never set, and
+nothing in the path waits on a reply — the panel cannot influence this outcome.
+PANEL_FAIL here is a HOST-side stall, not dead or absent glass.
+
+HYPOTHESIS (recorded, NOT acted on)
+-----------------------------------
+LCDIFv2 scanout is deliberately started BEFORE the panel is configured
+(Display::begin(), Task-14 HW-found ordering), so DPI video is streaming while
+these LP command packets go out, and the host has to fit each APB packet into a
+BLLP window.  What is new and unproven on silicon for RK055 versus the working
+RPi-7" path is exactly the combination that would stress that: 2 lanes, burst
+video mode (kDSI_DpiBurst), autoInsertEoTp = true, and a 59-byte payload where
+the RPi driver's longest is 6.  The 59-byte packet plus its EoTp may not fit
+the available window, leaving the APB machine mid-transfer when the next packet
+is submitted — which would explain both the fixed location (always the packet
+after the longest one) and the intermittency (the phase of the command stream
+relative to the frame differs per boot).  UNVERIFIED.
+
+QEMU
+----
+./run_qemu.sh still PASSes; a passing run's captured UART is byte-identical to
+before these additions (the diagnostic lines print only on PANEL_FAIL, and
+strictly after the PANEL_ token the gate greps for).
