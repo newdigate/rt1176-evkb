@@ -35,6 +35,15 @@ time on a subsystem you probably are not touching.
 > list is a fix, and nobody fixed anything — the gate changed behaviour on its own, which is a
 > weaker reason to trust it, not a stronger one. Cheapest next step is now: re-run it under
 > deliberate heavy load and see whether the old red reproduces.
+>
+> **★ A second variable, recorded because it confounds the first: the host was REBOOTED between
+> the red runs and the green ones.** Earlier in the same session `uptime` read `up 45 days` under
+> load 300+; the green runs above were taken at `up 32 mins` under load ~4. So "load" and "45 days
+> of uptime" changed together, and this evidence cannot separate them. A 45-day-old host
+> accumulates its own pathologies — memory pressure, thermal state, leaked file descriptors in
+> long-lived daemons — any of which could starve QEMU as effectively as the build did. Whoever
+> tests the load hypothesis should reload the machine *without* rebooting it first, or the
+> experiment answers the wrong question.
 
 **Symptom (as recorded 2026-07-27).** The gate reports:
 
