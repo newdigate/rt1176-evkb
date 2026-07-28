@@ -1,0 +1,57 @@
+transcript_qemu.txt - rk055_panel_test on the mimxrt1170-evk QEMU machine
+Date: 2026-07-28
+
+MILESTONE M1 -- the SoC chain ONLY: display clocks, LCDIFv2 scanout, MIPI-DSI
+host.  The HX8394 panel driver is M2 and the test pattern + checksums are M3;
+neither exists yet, so this gate deliberately asserts three tokens and no more.
+There is no PANEL_OK here BY DESIGN -- Display::panelOk() is hardwired false on
+this panel until M2 lands, and a gate asserting it now would be asserting
+nothing.
+
+THIS IS THE ONLY EVIDENCE THIS EXAMPLE HAS. The RK055HDMIPI4MA0 panel is not
+currently connected to J48, so there is no transcript_hw_evkb.txt.
+
+RK055_PANEL_BEGIN
+PANEL=RK055HDMIPI4MA0 720x1280 (HX8394)
+GEOM=720x1280 PIXCLK=58666666 LANES=2
+CLK_OK
+LCDIFV2_OK
+DSI_OK
+RK055_PANEL_END
+PASS: RK055 panel M1 (clocks + LCDIFv2 + MIPI-DSI host at 720x1280, 2 lanes)
+
+==== what each token does and does NOT prove ====
+
+GEOM/PIXCLK/LANES are echoed from panels/rk055/panel_config.h, so the line above
+is the build confirming WHICH panel got compiled in -- 58,666,666 Hz is
+528 MHz / 9 and 2 lanes is DEMO_MIPI_DSI_LANE_NUM, both transcribed from NXP's
+display_support.c.  They are not measurements.
+
+CLK_OK: the three CCM roots (LCDIFv2, MIPI_REF, MIPI_ESC) took their mux/divider
+settings and read back.  This panel sets PANEL_NEEDS_VIDEO_PLL 0 -- it sources
+the pixel and escape clocks from PLL_528, which the boot ROM already locked --
+so displayClockInit() took its no-VIDEO_PLL path and VERIFIED SYS_PLL2 (stable,
+ungated, not bypassed) rather than bringing a PLL up.  That path had no compiled
+consumer before this example; this is its first exercise.  Note the limit
+display_clock.cpp documents: it proves SYS_PLL2 is RUNNING, not that it runs at
+528 MHz.
+
+LCDIFV2_OK: the 1.8 MB SDRAM framebuffer was allocated and the 720x1280
+modeline + layer-0 descriptors were programmed and read back.  QEMU stores these
+as plain RW, so this is a well-formedness check, not a timing check.
+
+DSI_OK: the D-PHY PLL/timing/power-up and the DPI video-mode config completed in
+order.  The QEMU model reports D-PHY LOCK as soon as PD_PLL clears and stores
+every DPI register as plain RW, so this proves the bring-up SEQUENCE is
+well-formed and correctly ordered -- NOT that the D-PHY locks at the ~792 MHz
+this panel's 2-lane burst-mode link needs.  Silicon is the only oracle for that
+and it is what the M1 hardware run settles.
+
+Also unproven here and specific to this panel: burst mode (kDSI_DpiBurst) and
+autoInsertEoTp, both of which differ from the rpi7 panel and neither of which
+the model interprets.
+
+==== guest_errors ====
+rk055_panel.dbg contains only the pre-existing noise every example on this
+machine emits (USB PHY registers 0xa0/0xa4/0xa8, NVIC offset 0xdfc, the host
+coreaudio backend).  Nothing display-related.
