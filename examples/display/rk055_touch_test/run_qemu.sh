@@ -15,7 +15,12 @@ P=$!; gate_pid $P
 # and then stalls for ever waiting for the mandatory status clear that never
 # comes.  (The full script is 25 steps at 20 ms = 500 ms, and only Task 5's
 # read() will ever let it advance past the first.)
-sleep 10; kill $P 2>/dev/null; wait $P 2>/dev/null || true
+# `|| true` on the kill, and it is load-bearing under `set -e`: if QEMU has
+# already exited (bad binary, instant crash) the kill fails, and without this
+# the script dies HERE -- exit 1 with no message at all, before any assertion
+# runs.  That is the second shape of "the run never happened", and it has to
+# reach the named FAIL below like the first does.
+sleep 10; kill $P 2>/dev/null || true; wait $P 2>/dev/null || true
 # The capture has to EXIST before any grep of it means anything.  Without this,
 # a QEMU that died before opening the serial file failed as `cat: no such file`
 # -- a non-zero exit, so never a false green, but a message that points at
