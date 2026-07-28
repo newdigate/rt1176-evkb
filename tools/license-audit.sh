@@ -14,7 +14,11 @@
 # Exit 0 = LICENSE-AUDIT: PASS, nonzero otherwise. Run from anywhere.
 set -u
 TOOL=/Applications/ARM_10/bin
-EVKB=$HOME/Development/rt1170/evkb
+# EVKB / GATES / GATES_EXEMPT are overridable for the same reason REPOS and
+# PARTS are: license-audit.test.sh drives the checks against throwaway trees so
+# the negative tests need no gate builds and no network. Nothing in normal use
+# sets them.
+EVKB=${LICENSE_AUDIT_EVKB:-$HOME/Development/rt1170/evkb}
 fail=0
 
 REPOS=${LICENSE_AUDIT_REPOS:-"$EVKB/cores $HOME/Development/Ethernet $HOME/Development/NativeEthernet \
@@ -150,7 +154,7 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # (teensy-cmake-macros), whose gcc step emits <obj>.o.d depfiles (-MMD -MF,
 # added 2026-07-18) — so CM4-side sources are covered by this same walk
 # (the *.o.d pattern below), not just their provenance headers.
-GATES="examples/audio/sd_wav_play_test:sd_wav_play_test examples/networking/ethernet_test:ethernet_test examples/networking/native_ethernet_test:native_ethernet_test examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_image_test:cm4_image_test examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_spi_test:cm4_spi_test examples/dualcore/cm4_wire_test:cm4_wire_test examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test examples/dualcore/cm4_imagebank_test:cm4_imagebank_test examples/framework/arm_math_test:arm_math_test examples/audio/filter_fir_test:filter_fir_test examples/audio/guard_sweep_test:guard_sweep_test examples/dualcore/cm4_sai_irq_probe:cm4_sai_irq_probe examples/dualcore/cm4_cpp_test:cm4_cpp_test examples/dualcore/cm4_audiostream_test:cm4_audiostream_test examples/audio/i2s_int_test:i2s_int_test examples/dualcore/cm4_fft_test:cm4_fft_test examples/dualcore/cm4_audio_test:cm4_audio_test examples/audio/audio_h_test:audio_h_test examples/display/pxp_blit_test:pxp_blit_test examples/display/rpi_panel_test:rpi_panel_test examples/display/lvgl_ili9341_test:lvgl_ili9341_test examples/display/lvgl_rpi_panel_test:lvgl_rpi_panel_test examples/display/rk055_panel_test:rk055_panel_test examples/display/lvgl_smoke_test:lvgl_smoke_test examples/serial/serial_test:serial_test"
+GATES=${LICENSE_AUDIT_GATES:-"examples/audio/sd_wav_play_test:sd_wav_play_test examples/networking/ethernet_test:ethernet_test examples/networking/native_ethernet_test:native_ethernet_test examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_image_test:cm4_image_test examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_spi_test:cm4_spi_test examples/dualcore/cm4_wire_test:cm4_wire_test examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test examples/dualcore/cm4_imagebank_test:cm4_imagebank_test examples/framework/arm_math_test:arm_math_test examples/audio/filter_fir_test:filter_fir_test examples/audio/guard_sweep_test:guard_sweep_test examples/dualcore/cm4_sai_irq_probe:cm4_sai_irq_probe examples/dualcore/cm4_cpp_test:cm4_cpp_test examples/dualcore/cm4_audiostream_test:cm4_audiostream_test examples/audio/i2s_int_test:i2s_int_test examples/dualcore/cm4_fft_test:cm4_fft_test examples/dualcore/cm4_audio_test:cm4_audio_test examples/audio/audio_h_test:audio_h_test examples/display/pxp_blit_test:pxp_blit_test examples/display/rpi_panel_test:rpi_panel_test examples/display/lvgl_ili9341_test:lvgl_ili9341_test examples/display/lvgl_rpi_panel_test:lvgl_rpi_panel_test examples/display/rk055_panel_test:rk055_panel_test examples/display/lvgl_smoke_test:lvgl_smoke_test examples/serial/serial_test:serial_test"}
 
 # --- GATES drift check -------------------------------------------------------
 # GATES is hand-maintained, and an example silently missing from it means Part 2
@@ -175,7 +179,7 @@ GATES="examples/audio/sd_wav_play_test:sd_wav_play_test examples/networking/ethe
 # deriving the list from all 82 examples would make the audit require a complete
 # tree build. Checking the hand list for completeness costs nothing and closes
 # the same hole.
-GATES_EXEMPT=""   # "examples/<cat>/<name>  # why" — none today
+GATES_EXEMPT=${LICENSE_AUDIT_GATES_EXEMPT:-""}   # "examples/<cat>/<name>" + why — none today
 case "$PARTS" in *2*)
   drift=0
   for gsh in "$EVKB"/examples/*/*/run_qemu.sh; do

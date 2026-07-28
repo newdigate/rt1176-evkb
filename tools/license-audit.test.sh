@@ -1,11 +1,13 @@
 #!/bin/sh
-# Negative tests for license-audit.sh part 1 — the copyleft-header sweep and the
-# binary-provenance check. A gate that only ever passes proves nothing, so every
+# Negative tests for license-audit.sh — part 1 (the copyleft-header sweep and the
+# binary-provenance check) and part 2 (the GATES drift check). A gate that only ever passes proves nothing, so every
 # check here is shown FIRING on a throwaway repo built to trip it, and NOT firing
 # on the licensed shapes the audit must keep tolerating.
 #
 # Part 1 is driven against a temp repo via the LICENSE_AUDIT_REPOS /
-# LICENSE_AUDIT_PARTS hooks, so no gate builds and no network are needed.
+# LICENSE_AUDIT_PARTS hooks, and part 2 against a throwaway example tree via
+# LICENSE_AUDIT_EVKB / LICENSE_AUDIT_GATES / LICENSE_AUDIT_GATES_EXEMPT — so no
+# gate builds and no network are needed for any case here.
 # Usage: sh evkb/tools/license-audit.test.sh   (prints PASS:/FAIL: per case)
 set -u
 AUDIT="$(cd "$(dirname "$0")" && pwd)/license-audit.sh"
@@ -222,5 +224,102 @@ test_licence_files_still_excluded() {
     [ $rc -eq 0 ] && echo "$out" | grep -q 'LICENSE-AUDIT: PASS'
 }
 test_licence_files_still_excluded; report test_licence_files_still_excluded $?
+
+# =============================================================================
+# Part 2 — the GATES drift check
+# =============================================================================
+# GATES is hand-maintained, and an example missing from it is invisible to the
+# depfile walk. That gap recurred three times in one day (rk055_panel_test,
+# lvgl_rpi_panel_test, then lvgl_smoke_test — which links LVGL, the tree's most
+# licence-sensitive dependency), which is why the check exists. These cases pin
+# that it actually fires, rather than being one more thing that always passes.
+#
+# The tree below is throwaway: an empty build/<target>.elf and no depfiles means
+# the walk finds 0 dep paths and completes cleanly, so these cases exercise the
+# drift logic alone with no compiler, no builds and no network.
+
+# A fake evkb tree with <n> gate examples. Each gets a run_qemu.sh (what the
+# drift check enumerates), a CMakeLists.txt with a project() (what the target
+# name is checked against), a stub built ELF, and a depfile naming 120 real
+# permissively-headered sources.
+#
+# The 120 is not padding: the walk has a "too few files checked" guard that
+# fires below 100, so a gate that is listed but effectively auditing nothing
+# gets caught. A fixture with no depfiles trips that guard and would make these
+# cases pass for the wrong reason — it was the first thing these tests hit.
+new_tree() { # <name> <example...> -> prints path
+    t="$WORK/$1"; shift
+    for ex in "$@"; do
+        d="$t/examples/display/$ex"
+        mkdir -p "$d/build/src"
+        printf '#!/bin/sh\nexit 0\n' > "$d/run_qemu.sh"
+        printf 'project(%s)\n' "$ex" > "$d/CMakeLists.txt"
+        : > "$d/build/$ex.elf"
+        i=0
+        : > "$d/build/stub.obj.d"
+        while [ $i -lt 120 ]; do
+            f="$d/build/src/h$i.h"
+            printf '/* MIT licensed: permission is hereby granted. */\n' > "$f"
+            printf '%s \\\n' "$f" >> "$d/build/stub.obj.d"
+            i=$((i + 1))
+        done
+    done
+    printf '%s' "$t"
+}
+
+# Run part 2 only, against a fake tree and an explicit GATES list.
+run_part2() { # <tree> <gates> [exempt]
+    LICENSE_AUDIT_PARTS=2 LICENSE_AUDIT_EVKB="$1" LICENSE_AUDIT_GATES="$2" \
+        LICENSE_AUDIT_GATES_EXEMPT="${3:-}" sh "$AUDIT" 2>&1
+}
+
+# --- control: a complete list passes ----------------------------------------
+# Same reasoning as the part-1 control: without it, a drift check that fired on
+# everything would "detect" all the cases below.
+test_gates_complete_passes() {
+    t=$(new_tree complete alpha_test beta_test)
+    out=$(run_part2 "$t" "examples/display/alpha_test:alpha_test examples/display/beta_test:beta_test")
+    rc=$?
+    [ $rc -eq 0 ] \
+        && ! echo "$out" | grep -q 'GATES DRIFT' \
+        && echo "$out" | grep -q 'LICENSE-AUDIT: PASS'
+}
+test_gates_complete_passes; report test_gates_complete_passes $?
+
+# --- the motivating shape: a gate exists but is not listed -------------------
+# Exactly what lvgl_smoke_test was: a run_qemu.sh with no GATES entry, so Part 2
+# silently never walked it.
+test_gates_missing_entry_fires() {
+    t=$(new_tree missing alpha_test beta_test)
+    out=$(run_part2 "$t" "examples/display/alpha_test:alpha_test"); rc=$?
+    [ $rc -ne 0 ] \
+        && echo "$out" | grep -q 'GATES DRIFT.*beta_test' \
+        && echo "$out" | grep -q 'LICENSE-AUDIT: FAIL'
+}
+test_gates_missing_entry_fires; report test_gates_missing_entry_fires $?
+
+# --- a listed gate whose target name is wrong --------------------------------
+# Part 2 looks for build/<target>.elf, so a wrong target name makes the gate
+# report MISSING BUILD forever — auditing nothing while looking listed.
+test_gates_wrong_target_fires() {
+    t=$(new_tree wrongname alpha_test)
+    out=$(run_part2 "$t" "examples/display/alpha_test:not_the_project"); rc=$?
+    [ $rc -ne 0 ] && echo "$out" | grep -q "GATES MISMATCH.*not_the_project.*alpha_test"
+}
+test_gates_wrong_target_fires; report test_gates_wrong_target_fires $?
+
+# --- the escape hatch works, and only when used ------------------------------
+# An example that genuinely should not be audited goes in GATES_EXEMPT with a
+# written reason. Pin that it suppresses the drift — otherwise the only way past
+# a false positive is deleting the check, which is how these erode.
+test_gates_exempt_suppresses() {
+    t=$(new_tree exempt alpha_test beta_test)
+    out=$(run_part2 "$t" "examples/display/alpha_test:alpha_test" \
+                    "examples/display/beta_test"); rc=$?
+    [ $rc -eq 0 ] \
+        && ! echo "$out" | grep -q 'GATES DRIFT' \
+        && echo "$out" | grep -q 'LICENSE-AUDIT: PASS'
+}
+test_gates_exempt_suppresses; report test_gates_exempt_suppresses $?
 
 exit $FAILED
