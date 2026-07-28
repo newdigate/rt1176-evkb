@@ -47,8 +47,11 @@ void setup() {
     // ACK at the address we latched"; GT911_ is "was it a GT911".  A part that
     // latched the OTHER address fails the first; a different part on the bus
     // would fail the second.
-    Serial1.printf("I2C_%s\n", (ok || touch.lastError() != GT911::Error::NoAck)
-                               ? "OK" : "FAIL");
+    //
+    // busOk() rather than a test on lastError() here: classifying errors is the
+    // driver's job, and an example that enumerated the driver's taxonomy would
+    // quietly go wrong the first time an enumerator was added.
+    Serial1.printf("I2C_%s\n", touch.busOk() ? "OK" : "FAIL");
     Serial1.printf("ADDR=0x%02X\n", touch.address());
     Serial1.printf("GT911_%s\n", ok ? "OK" : "FAIL");
 
