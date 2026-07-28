@@ -100,6 +100,49 @@ through **populated** 0Ω resistors (R1904–R1912, R1811–R1813) — pull-ups/
 circuitry load these nets even with no SIM fitted (e.g. 4.7K R430).  `GPIO_AD_06`
 (D4) is the *only* AD-pad digital pin with no second load anywhere.
 
+## Board traps
+
+### ★ D6 and D9 are the RK055 panel's touch INT and RST
+
+`GPIO_AD_00` (**D6**) and `GPIO_AD_01` (**D9**) carry the RK055HDMIPI4MA0's
+capacitive-touch interrupt and reset lines: RevC3 nets `CTP_INT` and
+`CTP_RST_B`, through 0 Ω R2032 / R2031 to `J48` pins 29 and 28.
+
+Three consequences, in order of how much they hurt:
+
+1. **The GT911's I²C address is latched from the INT pin level when reset is
+   released** — low gives 0x5D, high gives 0x14. Anything loading `GPIO_AD_00`
+   during that ~55 ms window can change which address the part answers at. The
+   symptom is "the touch controller isn't there", with no other clue.
+   HW-VERIFIED 2026-07-28: with nothing else on D6/D9, `rk055_touch_test`
+   reports `ADDR=0x5D` on the first attempt, every attempt.
+2. **`irq_attach_test` jumpers D13 → D9.** With the RK055 attached that wire
+   drives the panel's touch reset line. Remove it before running touch work,
+   and do not run `irq_attach_test` with the panel connected.
+3. Both pads also appear **raw on `J25` odd pins 15 and 13** (no series
+   resistor) and fan out through populated 0 Ω into the SIM circuit (sheet 22)
+   and the motor-control column.
+
+**Open finding — `CTP_INT` has no pull-up anywhere in the RevC3 netlist.**
+`GPIO_AD_00` carries only 0 Ω series parts (R2032 to `J48.29`, plus
+R6/R1811/R1906 fanning into the SIM and motor-control circuits). The driver
+leaves D6 a plain `INPUT` after `begin()` releases it, and on hardware
+`rk055_touch_test` counted `INT_EDGES=147` against `BUFFERS=138` — 6.5 % more
+rising edges than coordinate buffers consumed — with `POLL_FAILS=0`, i.e. the
+line moved with nothing published and no I²C transfer failed. That is the
+signature of a floating input chattering. Unconfirmed: it needs a scope on
+`GPIO_AD_00` and an `INPUT_PULLUP` experiment. Possibly the same fault as the
+next item, possibly not.
+
+**Open finding — the panel wants a falling-edge interrupt.** The RK055's stored
+GT911 configuration reports `SWITCH1=0x05`, whose bits[1:0] = `01` =
+`kGT911_IntFallingEdge`. The firmware attaches `RISING` (following NXP's own
+`lvgl_support.c`, which *writes* `kGT911_IntRisingEdge`); this project
+deliberately never writes the GT911 config space, so the panel's stored value
+governs. Bit 3 of the same byte (X2Y) reads 0, independently confirming **no
+axis swap** — which agrees with the hardware run's five in-order target hits.
+The touch phases themselves are polled and unaffected by either finding.
+
 ## Corrections made to the core (2026-07-13)
 
 1. **`analog.c`**: `analogRead(A0)` sampled **LPADC1 CH0A = `GPIO_AD_06` = the

@@ -12,7 +12,31 @@ time on a subsystem you probably are not touching.
 
 **Status:** broken. **Do not run by default.** Not a regression from any current work.
 
-**Symptom.** The gate reports:
+> ### ⚠ 2026-07-28 — it passed, 5 runs out of 5. Cause still unidentified; section stays.
+>
+> During the RK055-touch wrap this gate came up **green in the full sweep and in four further
+> individual runs**, all on an otherwise idle machine (load average ~4–5). Not vacuous: it printed
+> `fft_peak_bin=00000006`, `AUDIO_CM4_DET=PASS`, `codec_ack=1`, `cm7_audio_isers=0` — the four
+> values it actually asserts — and exited 0 every time.
+>
+> **Unconfirmed hypothesis: machine load.** The 2026-07-27 bisect below ran while this machine was
+> carrying load averages above 300 from unrelated builds. A starved host decouples QEMU's SAI
+> timing from the audio graph, which would present exactly as "ISRs fire, dispatch runs, the FFT
+> sees silence". That would make **every row of the bisect table below a false negative**, which is
+> also why none of them moved the needle. This is a hypothesis, not a finding — it has not been
+> tested by deliberately reloading the machine and re-running.
+>
+> One real difference from the committed transcript: `underruns` is now `0x2E4`–`0x2E7` (~740), not
+> 0. The gate does not assert `underruns`, so it passes regardless, and the transcript's
+> hardware-only `AUDIO_CM4=FAIL` line is likewise unasserted. Whether the underruns are the same
+> host-starvation artefact is unknown.
+>
+> **The section stays until someone understands why.** The rule below is that the only way off this
+> list is a fix, and nobody fixed anything — the gate changed behaviour on its own, which is a
+> weaker reason to trust it, not a stronger one. Cheapest next step is now: re-run it under
+> deliberate heavy load and see whether the old red reproduces.
+
+**Symptom (as recorded 2026-07-27).** The gate reports:
 
 ```
 fft_peak_bin=00000000        (expected 00000006)
@@ -80,7 +104,13 @@ transcript".
 
 ## Current expected sweep result
 
-`28 passed, 1 failed, 0 SKIP` — the one failure being `dualcore/cm4_audio_test`.
+**30 gates** since `examples/display/rk055_touch_test` joined on 2026-07-28.
+
+`30 passed, 0 failed, 0 SKIP` was the observed result on 2026-07-28 on an idle machine.
+`29 passed, 1 failed, 0 SKIP` — the failure being `dualcore/cm4_audio_test` — is still an
+acceptable outcome while the section above is unresolved. **Any other failure is a real
+regression.** If you see more than one failure, check `uptime` before you check your diff: gates
+starved of CPU fail with missing or truncated UART capture, which mimics a regression convincingly.
 
 **Zero SKIPs matters as much as the pass count.** A `SKIP` means a missing ELF, i.e. a gate that
 silently never ran — build the example and re-run rather than accepting it.
