@@ -3,6 +3,56 @@
 Start by invoking the `superpowers:brainstorming` skill — this is a design
 conversation, not an implementation request. Explore before proposing.
 
+---
+
+## PROGRESS (2026-07-28) — delete this file once the plan exists
+
+**Spec written and approved in conversation:**
+`docs/superpowers/specs/2026-07-28-rt1176-rk055-touch-design.md`.
+
+Decisions taken (all validated with the user, one question at a time):
+
+1. **Scope** — raw touch only; LVGL `lv_indev` deferred to v3.
+2. **Library home** — a new `newdigate/TouchPanel` sibling repo, `gt911/` subdir,
+   `import_evkb_library(TouchPanel gt911)`. Not inside `MipiDisplay`: touch has
+   none of MIPI-DSI's one-host-only constraint, and this keeps `Wire` out of the
+   display library. No abstract base class until the FT5406 actually lands.
+3. **Hardware assertion** — all three phases: five ordered on-glass targets, a
+   directional swipe, and a two-finger hold.
+4. **Config blob** — **read-only, never written.** `GT911_Init` would rewrite 186
+   bytes of the touch IC's config; NXP warns a wrong write bricks it. We read,
+   verify the checksum, and adapt to the stored point count instead.
+5. **Read path** — polled, plus an `attachInterrupt` edge counter on INT as a
+   corroborating token only.
+6. **QEMU** — a virtual GT911 with the INT-level address latch, the mandatory
+   `0x814E` status-clear enforcement, and a **model-owned** timer-driven touch
+   path (no firmware-writable injection tap — that would be circular).
+7. **Board state** — RK055 on `J48` only, RPi panel disconnected. Recorded as a
+   stated precondition.
+
+**Findings this session that were not in the brief below** (all now in the spec):
+
+- **The `GPIO8`/`GPIO9` CM7 interrupt trap does not apply.** Those are fast
+  aliases. Netlist: `J48.29 → CTP_INT_C → R2032 (0Ω) → GPIO_AD_00` (U19 N12),
+  `J48.28 → CTP_RST_B_C → R2031 (0Ω) → GPIO_AD_01` (U19 R14). This core already
+  muxes both through the **normal** ports at ALT5 (`digital.c:76,79`), so INT is
+  CM7-interrupt-capable for free via GPIO2 (IRQ 103).
+- **★ New board trap: touch INT/RST *are* Arduino D6 and D9.** `irq_attach_test`
+  uses a D13→D9 jumper — D9 is the touch reset line. Both pads also appear raw on
+  `J25` odd pins 15/13 and fan out through populated 0Ω into the SIM circuit
+  (RevC3 sheet 22). Because the I²C address is latched from the INT level, that
+  loading can silently change which address the device answers at.
+- **`GT911_Init` is destructive** — it rewrites the config blob whenever the
+  stored point count or trigger mode differ. The brief did not list this.
+- The `irq_attach` QEMU fixture drives `gpio[2]` **input** 0 while the GT911 model
+  needs `gpio[2]` **output** 0 — same pin, opposite direction, no contention, but
+  it needs a comment in the machine file.
+
+**Remaining:** write the implementation plan to `docs/superpowers/plans/`, then
+delete this file.
+
+---
+
 ## The goal
 
 Add **capacitive touch** to the RK055HDMIPI4MA0 panel we just brought up, as the
