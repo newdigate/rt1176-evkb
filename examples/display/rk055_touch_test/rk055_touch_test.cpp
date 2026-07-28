@@ -20,11 +20,14 @@
  *               coordinate-to-display MAPPING, and only on hardware: a
  *               flipped, swapped or mis-scaled axis makes the sequence
  *               impossible because the operator touches where the graphic is.
- *   SWIPE_OK    a drag whose x advances monotonically across >= SWIPE_MIN_PCT
- *               of the axis over >= SWIPE_MIN_SAMPLES samples.  Catches a
- *               stuck value and a mirrored axis without depending on absolute
- *               registration, and no single coordinate contributes more than
- *               one sample to it.
+ *   SWIPE_OK    a drag by ONE track id whose x advances across >=
+ *               SWIPE_MIN_PCT of the axis over >= SWIPE_MIN_SAMPLES samples,
+ *               every one of which must STRICTLY ADVANCE -- so the sample
+ *               count means N distinct increasing coordinates, and a repeated
+ *               or jittering value contributes nothing.  Catches a stuck value
+ *               and a mirrored axis without depending on absolute
+ *               registration.  The track-id clause is what stops two taps at
+ *               opposite edges passing as a drag.
  *   MULTI_OK    two simultaneous contacts with DISTINCT track ids, far apart.
  *               The only phase that exercises the contact array and the count
  *               field rather than just points[0].
@@ -36,7 +39,11 @@
  * ever arrived" in a transcript where the phase tokens are all absent.
  * TOUCH_ADVANCED in particular remains the direct assertion on the mandatory
  * status clear: it is emitted on a published RELEASE, which an unacknowledged
- * part can never produce.
+ * part can never produce.  It is a ONCE-EVER token, though, so it cannot speak
+ * for phase 1's per-target release wait -- any release in the script satisfies
+ * it, including the drag's.  TARGET_RELEASES counts the releases that wait
+ * actually consumed, and run_qemu.sh pins it; without that the wait was
+ * asserted by nothing and deleting it produced a byte-identical green run.
  *
  *   INT_EDGES   how many times the INT line actually moved, from an
  *   BUFFERS     attachInterrupt() on D6 -- against how many fresh buffers the
@@ -97,7 +104,12 @@ static constexpr uint16_t TARGET_TOL   = 110;  // accepted box, half-width
 // --- Phase 2 / 3 thresholds ------------------------------------------------
 static constexpr uint8_t  SWIPE_MIN_SAMPLES = 8;
 static constexpr uint8_t  SWIPE_MIN_PCT     = 60;  // of the x axis
-static constexpr uint16_t SWIPE_BACK_TOL    = 2;   // px of backwards jitter tolerated
+// Backwards jitter tolerated before a forward run is abandoned.  4 px, not 2:
+// a real contact wanders by a couple of pixels while a finger is moving slowly,
+// and at 2 px a deliberately slow swipe restarted its run constantly.  It stays
+// tiny against the 432 px the span test demands, so relaxing it does not make
+// the phase easier to pass -- only easier to pass HONESTLY.
+static constexpr uint16_t SWIPE_BACK_TOL    = 4;
 static constexpr uint16_t MULTI_MIN_SEP     = 200; // px between the contacts
 
 // Per-phase patience, in guest milliseconds.  Sized for the HARDWARE operator,
@@ -155,6 +167,16 @@ static_assert(targetsUnambiguous(),
               "two phase-1 acceptance boxes overlap: one coordinate could "
               "satisfy both targets, and phase 1 would stop proving that the "
               "contacts moved.  Move the targets apart or shrink TARGET_TOL.");
+// And the other side of the same number.  TARGET_TOL is what the firmware
+// ACCEPTS; TARGET_HALF is what the operator is SHOWN.  If the accepted box ever
+// shrank inside the drawn square, a bench operator touching the middle of the
+// graphic could be rejected -- and QEMU would never notice, because the model
+// lands dead centre where the two agree whatever their sizes.  The assert above
+// stops the box growing until targets collide; this one stops it shrinking
+// below the thing being aimed at.
+static_assert(TARGET_TOL >= TARGET_HALF,
+              "the accepted box is smaller than the drawn target: an operator "
+              "touching inside the square they were shown would be rejected.");
 
 // --- The INT line ----------------------------------------------------------
 // The ISR counts and does nothing else.  read() is a multi-step I2C
@@ -172,6 +194,19 @@ static bool     have_first  = false;
 static bool     saw_release = false;
 static uint32_t buffers     = 0;   // fresh buffers consumed since the attach
 static uint32_t poll_fails  = 0;
+// Releases consumed BY PHASE 1'S PER-TARGET RELEASE WAIT specifically -- not
+// every release anywhere.  This exists because the wait was, as written,
+// asserted by nothing: deleting it produced a BYTE-IDENTICAL green run, since
+// the release instant was still consumed, just by the next target's hit loop
+// discarding non-Contacts polls.  Not even BUFFERS moved.  TOUCH_ADVANCED
+// cannot cover the clause either -- it is a once-ever token that ANY release in
+// the 25-instant script satisfies, including the drag's.
+//
+// The property is worth asserting rather than merely claiming: on hardware the
+// wait forces a LIFT between targets, so an operator cannot drag a finger from
+// target to target with it never leaving the glass.  run_qemu.sh pins this at
+// NUM_TARGETS.
+static uint32_t target_releases = 0;
 
 // Poll the part and fold the result into the observations above.
 //
@@ -214,6 +249,15 @@ static uint32_t poll_fails  = 0;
       }
       break;
     case GT911::Poll::Failed:
+      // NOT counted as a buffer, and it cannot honestly be: a Failed poll may
+      // or may not have consumed one.  read() acknowledges the part even when
+      // the contact read FAILED -- deliberately, so a fault cannot wedge it --
+      // so a point-read failure whose status clear then succeeded HAS consumed
+      // its buffer and had its edge counted, while a status-READ failure has
+      // consumed nothing.  Nothing in the returned state distinguishes them,
+      // and re-deriving it from lastError() is exactly the taxonomy-spreading
+      // that busOk()'s contract forbids.  So the ambiguity is carried into the
+      // relation reportInt() asserts instead of being guessed at here.
       poll_fails++;
       break;
     case GT911::Poll::Idle:
@@ -223,6 +267,21 @@ static uint32_t poll_fails  = 0;
 }
 
 // --- Drawing ---------------------------------------------------------------
+// Paint the background and CONFIRM IT REACHED THE GLASS.
+//
+// fillScreen() returns void and bails silently if the framebuffer was never
+// allocated or the PXP fill failed; it records the outcome in frameOk(), which
+// is per-call (it is cleared at the top of every fillScreen()).  Unchecked, a
+// drawing fault on the bench presents as a TOUCH fault: the operator sees a
+// blank or stale panel, TOUCH_PROMPT still names coordinates they cannot see,
+// and the phase fails reason=timeout.  The drawn targets ARE the basis of the
+// mapping proof this example exists for, so a phase that cannot draw must say
+// so in its own words.
+[[nodiscard]] static bool paintBackground(uint16_t rgb565) {
+  Display.fillScreen(rgb565);
+  return Display.frameOk();
+}
+
 // The CM7 D-cache is off (startup.c), so a plain CPU write into the SDRAM
 // framebuffer is coherent with the LCDIFv2's fetch -- there is nothing to clean
 // between writing here and the panel seeing it.
@@ -273,7 +332,13 @@ static bool phaseTargets() {
   for (uint8_t i = 0; i < NUM_TARGETS; i++) {
     const uint16_t cx = targetCx(i), cy = targetCy(i);
 
-    Display.fillScreen(0x0000);
+    if (!paintBackground(0x0000)) {
+      Serial1.printf("TARGET_FAIL phase=1 target=%u reason=paint want=(%u,%u) "
+                     "-- the panel never scanned out the target; this is a "
+                     "DRAWING fault, not a touch fault\n",
+                     (unsigned)(i + 1), (unsigned)cx, (unsigned)cy);
+      return false;
+    }
     fillRect((int32_t)cx - TARGET_HALF, (int32_t)cy - TARGET_HALF,
              TARGET_HALF * 2, TARGET_HALF * 2, 0xFFFF);
     Serial1.printf("TOUCH_PROMPT phase=1 target=%u/%u at=(%u,%u)\n",
@@ -315,11 +380,15 @@ static bool phaseTargets() {
     // never acknowledged re-serves the same one-contact buffer for ever and can
     // never reach Released, so this is where a missing status clear is caught
     // by name rather than three targets later as an unexplained timeout.
+    // COUNTED, so the clause is observable.  See target_releases.
     const uint32_t rel = millis() + PHASE_TIMEOUT_MS;
     bool released = false;
     while ((int32_t)(millis() - rel) < 0 && !released) {
       uint8_t n = 0;
-      if (pollTouch(pts, 2, n) == GT911::Poll::Released) released = true;
+      if (pollTouch(pts, 2, n) == GT911::Poll::Released) {
+        released = true;
+        target_releases++;
+      }
     }
     if (!released) {
       Serial1.printf("TARGET_FAIL phase=1 target=%u reason=no-release "
@@ -336,17 +405,31 @@ static bool phaseTargets() {
 
 static bool phaseSwipe() {
   TouchPoint pts[2];
-  Display.fillScreen(0x0000);
+  if (!paintBackground(0x0000)) {
+    Serial1.println("SWIPE_FAIL phase=2 reason=paint -- the panel never scanned "
+                    "out the band; this is a DRAWING fault, not a touch fault");
+    return false;
+  }
   fillRect(0, (int32_t)Display.height() / 2 - 40, (int32_t)Display.width(), 80,
            0x07E0);
-  Serial1.println("TOUCH_PROMPT phase=2 swipe LEFT to RIGHT across the band");
+  // "One brisk stroke" is not decoration: the run is abandoned if the contact
+  // falls back more than SWIPE_BACK_TOL from its own high-water mark, so a
+  // hesitant, stop-start swipe keeps restarting.
+  Serial1.println("TOUCH_PROMPT phase=2 swipe LEFT to RIGHT across the band, "
+                  "one brisk stroke, do not pause");
 
   const uint32_t deadline = millis() + PHASE_TIMEOUT_MS;
-  uint16_t minX = 0, maxX = 0, prevX = 0;
+  // maxX IS the run's high-water mark and is what every comparison is against.
+  // There is no separate prevX: keeping the high-water mark rather than the
+  // previous sample means a slow backwards DRIFT cannot creep the run along a
+  // few tolerated pixels at a time.
+  uint16_t minX = 0, maxX = 0;
   int32_t  lastX = -1, lastY = -1;
   uint8_t  samples = 0;
+  uint8_t  runId = 0;      // the track id this forward run belongs to
+  uint32_t bestSpan = 0;   // best span reached by any run, for the failure line
+  uint16_t lifts = 0;      // runs ended by a lift that was too short
   bool     down = false;
-  const char *reason = "timeout";
 
   while ((int32_t)(millis() - deadline) < 0) {
     uint8_t n = 0;
@@ -359,10 +442,11 @@ static bool phaseSwipe() {
     if (p == GT911::Poll::Idle) continue;
     if (p == GT911::Poll::Failed) continue;   // counted in POLL_FAILS below
     if (p == GT911::Poll::Released) {
-      // A genuine lift.  If the run was long enough to be interesting it had
-      // its chance at the span test below and did not pass it, so say so
-      // rather than blaming the clock.
-      if (down && samples >= SWIPE_MIN_SAMPLES) { reason = "lifted-short"; break; }
+      // A genuine lift ends the run.  It does NOT end the phase: the deadline
+      // is 60 s of operator patience and consuming all of it on one short
+      // stroke would fail the whole gate with no retry.  The count is reported
+      // instead, so a transcript shows how many attempts were made.
+      if (down && samples >= SWIPE_MIN_SAMPLES && lifts < 0xFFFFu) lifts++;
       down = false; samples = 0;
       continue;
     }
@@ -371,36 +455,49 @@ static bool phaseSwipe() {
     lastX = (int32_t)x;
     lastY = (int32_t)toScreenY(pts[0].y);
     if (!down) {
-      down = true; prevX = x; minX = x; maxX = x; samples = 1;
+      down = true; runId = pts[0].id; minX = x; maxX = x; samples = 1;
       continue;
     }
-    // Monotonic in +x.  A step backwards by more than SWIPE_BACK_TOL restarts
-    // the run rather than failing outright -- a real finger jitters -- and the
-    // restart discards the span too, so a finger that wanders back and forth
-    // accumulates nothing.  The SPAN requirement is what actually makes this
-    // hard to fake: SWIPE_MIN_PCT of the axis has to be crossed inside ONE
-    // uninterrupted forward run.
-    if (x + SWIPE_BACK_TOL < prevX) {
-      samples = 1; minX = x; maxX = x; prevX = x;
+    // ONE TRACK ID FOR THE WHOLE RUN.  points[0] is the LOWEST track id
+    // currently down, not "the finger doing the gesture", so without this a
+    // parked low-id contact at the left edge plus a second contact at the right
+    // edge lets points[0] jump 80% of the axis the instant the first is lifted
+    // -- two taps passing as a drag, on the one phase whose job is to prove
+    // directionality independently of phase 1.
+    if (pts[0].id != runId) {
+      runId = pts[0].id; minX = x; maxX = x; samples = 1;
       continue;
     }
-    if (x > maxX) maxX = x;
-    if (x < minX) minX = x;
-    prevX = x;
+    // Falling back more than SWIPE_BACK_TOL from the run's high-water mark
+    // abandons the run rather than failing outright -- a real finger jitters --
+    // and the restart discards the span with it, so a contact wandering back
+    // and forth accumulates nothing.
+    if (x + SWIPE_BACK_TOL < maxX) {
+      minX = x; maxX = x; samples = 1;
+      continue;
+    }
+    // EVERY COUNTED SAMPLE MUST ADVANCE.  A repeated or jittering-but-not-
+    // retreating x is not a backwards step, so it used to fall straight through
+    // to samples++ with the span untouched: {72,72,72,72,72,72,72,648} scored
+    // eight samples and an 80% span from TWO distinct coordinates, and the
+    // sample count proved nothing the comment claimed for it.  Requiring a
+    // strict advance makes "8 samples" mean 8 distinct increasing coordinates.
+    if (x <= maxX) continue;
+    maxX = x;
     if (samples < 255) samples++;
 
     const uint32_t span_pct = (uint32_t)(maxX - minX) * 100u / Display.width();
+    if (span_pct > bestSpan) bestSpan = span_pct;
     if (samples >= SWIPE_MIN_SAMPLES && span_pct >= SWIPE_MIN_PCT) {
-      Serial1.printf("SWIPE_OK dir=+x span=%lu%% samples=%u\n",
-                     (unsigned long)span_pct, (unsigned)samples);
+      Serial1.printf("SWIPE_OK dir=+x span=%lu%% samples=%u id=%u\n",
+                     (unsigned long)span_pct, (unsigned)samples,
+                     (unsigned)runId);
       return true;
     }
   }
-  Serial1.printf("SWIPE_FAIL phase=2 reason=%s samples=%u span=%lu%%", reason,
-                 (unsigned)samples,
-                 (unsigned long)(down ? (uint32_t)(maxX - minX) * 100u /
-                                            Display.width()
-                                      : 0u));
+  Serial1.printf("SWIPE_FAIL phase=2 reason=timeout samples=%u bestspan=%lu%% "
+                 "shortlifts=%u", (unsigned)samples, (unsigned long)bestSpan,
+                 (unsigned)lifts);
   printLast(lastX, lastY);
   Serial1.println();
   return false;
@@ -408,8 +505,23 @@ static bool phaseSwipe() {
 
 static bool phaseMulti() {
   TouchPoint pts[2];
-  Display.fillScreen(0x001F);
-  Serial1.println("TOUCH_PROMPT phase=3 hold TWO fingers apart");
+  if (!paintBackground(0x001F)) {
+    Serial1.println("MULTI_FAIL phase=3 reason=paint -- the panel never scanned "
+                    "out the background; this is a DRAWING fault, not a touch "
+                    "fault");
+    return false;
+  }
+  // "PLACE", not "hold": one qualifying buffer satisfies this phase, and the
+  // prompt has to say what is actually asserted.  Requiring several consecutive
+  // buffers would be a stronger claim, and it was measured against the oracle
+  // and rejected: the model publishes exactly THREE two-contact instants, and
+  // phase 3 already opens by consuming three instants left over from phase 2's
+  // gesture, so demanding two consecutive holds would leave a single instant of
+  // margin before the phase ran off the end of the script -- a failure mode
+  // whose only symptom is a bare harness kill with no MULTI_FAIL line.  The
+  // BUFFERS assertion in run_qemu.sh pins that boundary instead.
+  Serial1.println("TOUCH_PROMPT phase=3 place TWO fingers on the panel at once, "
+                  "well apart");
 
   const uint32_t deadline = millis() + PHASE_TIMEOUT_MS;
   int32_t lastX = -1, lastY = -1;
@@ -477,8 +589,22 @@ static void reportReadPathGaps() {
 // nothing about the pin at all.  Together they state a relation that run_qemu.sh
 // asserts -- the part pulses INT once per published instant and read()
 // acknowledges each published instant exactly once, so the two counts are the
-// same number, give or take one instant published after the last poll and
-// before this print.
+// same number, give or take TWO documented slacks:
+//
+//   +1 for an instant published after the last poll and before this print; and
+//   +POLL_FAILS, because a Failed poll MAY have consumed a buffer without
+//   BUFFERS counting it.  read() acknowledges the part even when the contact
+//   read failed, so a point-read failure followed by a successful status clear
+//   consumes its buffer and has its edge counted, while a status-read failure
+//   consumes nothing -- and the returned state does not say which.  Absorbing
+//   that into the +1 was wrong twice over: one such failure passed silently,
+//   and two reported "the line moved with nothing published" when something
+//   HAD been published.  Hardware-only; QEMU cannot fault I2C.
+//
+// So: BUFFERS <= INT_EDGES <= BUFFERS + POLL_FAILS + 1.  On a clean bus
+// POLL_FAILS is 0 and the band collapses to the tight relation -- which is why
+// run_qemu.sh asserts POLL_FAILS=0 as well, rather than leaving the slack it
+// grants unbounded.
 //
 // THE WINDOW THIS DOES NOT COVER, stated rather than papered over: an instant
 // published in the gap between begin() returning and the attachInterrupt()
@@ -500,18 +626,27 @@ static bool reportInt() {
   const uint32_t edges = int_edges;
   Serial1.printf("INT_EDGES=%lu\n", (unsigned long)edges);
   Serial1.printf("BUFFERS=%lu\n", (unsigned long)buffers);
-  // The +1 is the one legitimate discrepancy: an instant published after the
-  // last poll and before this print.  Anything else is a finding.
-  const bool ok = edges >= buffers && edges <= buffers + 1u;
+  const bool ok = edges >= buffers && edges <= buffers + poll_fails + 1u;
   if (!ok) {
-    Serial1.printf("INT_MISMATCH edges=%lu buffers=%lu reason=%s\n",
+    Serial1.printf("INT_MISMATCH edges=%lu buffers=%lu pollfails=%lu reason=%s\n",
                    (unsigned long)edges, (unsigned long)buffers,
-                   edges < buffers ? "edges-missing" : "edges-unexplained");
+                   (unsigned long)poll_fails,
+                   edges < buffers
+                       ? "edges-missing"
+                       : "more-edges-than-published-buffers-and-failed-polls-"
+                         "can-account-for");
   }
   // Recorded, never asserted.  A failing poll is not fatal on its own -- the
   // driver clears lastError() on the next good one and the phases simply keep
   // polling -- but a nonzero count beside a phase failure is the first thing
   // worth knowing, and on silicon it is the bus-quality reading this gate has.
+  Serial1.printf("TARGET_RELEASES=%lu\n", (unsigned long)target_releases);
+  // Phase 1 already fails by name if a release wait times out, so on any path
+  // that reached here with p1 true this holds by construction.  It is checked
+  // anyway, for the same reason the INT relation is: Task 7 reads this
+  // transcript off real glass with no shell gate beside it, and an edit that
+  // removed the wait would otherwise still print TOUCH_OK.  Measured -- that is
+  // exactly what deleting the wait produced.
   Serial1.printf("POLL_FAILS=%lu\n", (unsigned long)poll_fails);
   Serial1.printf("ELAPSED_MS=%lu\n", (unsigned long)millis());
   return ok;
@@ -578,6 +713,15 @@ void setup() {
     Serial1.printf("RES=%ux%u\n", (unsigned)touch.resolutionX(),
                                   (unsigned)touch.resolutionY());
     Serial1.printf("POINTS=%u\n", (unsigned)touch.configuredPoints());
+    // The INT trigger mode the part was PROGRAMMED with (config 0x804D, bits
+    // 1:0: 0 rising, 1 falling, 2 low level, 3 high level).  Recorded, never
+    // asserted -- the model synthesises this byte like the rest of the blob, so
+    // only silicon says what this panel holds.  It is in the transcript because
+    // it is the most likely cause of a hardware INT_MISMATCH: attachInterrupt()
+    // below asks for RISING, and a part programmed for anything else produces a
+    // line that simply never behaves as expected, with nothing else to point
+    // at.  Task 7 reads this transcript with no shell gate beside it.
+    Serial1.printf("SWITCH1=0x%02X\n", (unsigned)touch.configSwitch1());
 
     // begin()'s RETURN VALUE is the guard for everything below, checked once,
     // here.  Not lastError(), and not Poll::Failed: the driver's header is
@@ -613,11 +757,17 @@ void setup() {
     const bool p3 = p2 && phaseMulti();
     reportReadPathGaps();
     const bool intOk = reportInt();
+    const bool relOk = (target_releases == NUM_TARGETS);
+    if (!relOk) {
+      Serial1.printf("RELEASE_SHORTFALL got=%lu want=%u -- phase 1 did not "
+                     "observe a published release after every target\n",
+                     (unsigned long)target_releases, (unsigned)NUM_TARGETS);
+    }
 
-    // TOUCH_OK means EVERYTHING this gate checks passed, INT evidence included
-    // -- see reportInt() for why that verdict is drawn here as well as in
-    // run_qemu.sh.
-    if (p3 && intOk) Serial1.println("TOUCH_OK");
+    // TOUCH_OK means EVERYTHING this gate checks passed -- the three phases,
+    // the INT evidence and phase 1's release clause.  See reportInt() for why
+    // those verdicts are drawn here as well as in run_qemu.sh.
+    if (p3 && intOk && relOk) Serial1.println("TOUCH_OK");
 }
 
 void loop() {}
