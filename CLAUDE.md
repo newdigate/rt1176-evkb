@@ -78,6 +78,15 @@ gate or the QEMU model to make a divergence disappear; document it instead.
 There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
+**★ Before running `./tools/run-all-qemu-gates.sh`, read
+`docs/KNOWN-BROKEN-GATES.md`.** `dualcore/cm4_audio_test` is currently broken
+for reasons unrelated to any current work (fails on macOS, the only platform
+tested; bisected to neither a bus-clock nor a QEMU-model regression, cause
+still unidentified). **Do not run it by default** and do not chase its red —
+but equally, do not delete it, weaken it, or drop it from the runner to make a
+sweep green. Expected result today is **28 passed, 1 failed, 0 SKIP**; any
+*other* failure is a real regression from what you are doing.
+
 Repo-wide gates in `tools/`:
 - `license-audit.sh` — proves no copyleft source is compiled into firmware
   (header sweep + binary-provenance check + link-manifest depfile audit). The
