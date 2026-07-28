@@ -10,11 +10,22 @@ rm -f "$OUT" "$DIR/rk055_touch.dbg"
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/rk055_touch.dbg" &
 P=$!; gate_pid $P
 # 10s: the 8s the sibling display gates use for a cold binary (SEMC init + a
-# 1.8 MB extmem framebuffer + LCDIFv2 config), plus margin.  Barely any of it is
-# for the touch script -- the firmware polls only until the part has published
-# its second instant, which is 20 ms of guest time after the first, and then
-# stops.  The remaining 23 steps are left unread on purpose; consuming the whole
-# scripted path is a later stage's job.
+# 1.8 MB extmem framebuffer + LCDIFv2 config), plus margin.  The three phases
+# consume 22 of the model's 25 scripted instants at 20 ms of guest time each,
+# which is 440 ms on top of that -- measured end to end at 1.09 s of guest time
+# and 2.2 s of wall, so this window carries a 4.5x margin.  (The last three
+# instants are the drag's final two samples and its release, which phase 2 has
+# already been satisfied by the time they are published.)
+#
+# WHAT THIS WINDOW CANNOT DO, and it is a deliberate trade, not an oversight:
+# guest time runs at roughly half wall here, so a phase that genuinely times out
+# burns its PHASE_TIMEOUT_MS (60 s guest, ~2 minutes of wall) and is killed
+# here long before its named *_FAIL line reaches the UART.  The gate still goes
+# red -- on the missing token, from the assertions below -- and the partial
+# transcript still shows which phase was reached and what the basic read path
+# was doing.  The alternative is a phase timeout short enough for QEMU, which
+# would mean a bench operator losing a target because they took too long
+# reading the prompt.  See PHASE_TIMEOUT_MS in the .cpp.
 # `|| true` on the kill, and it is load-bearing under `set -e`: if QEMU has
 # already exited (bad binary, instant crash) the kill fails, and without this
 # the script dies HERE -- exit 1 with no message at all, before any assertion
@@ -135,6 +146,76 @@ grep -q "FIRST_TOUCH " "$OUT" || { echo "FAIL: read() never reported a contact";
 # injection goes red against the current driver and green against the previous
 # one.  Do not reduce this to a test on a contact count.
 grep -q "TOUCH_ADVANCED" "$OUT" || { echo "FAIL: the part never published a second buffer -- read() did not clear the status register at 0x814E"; exit 1; }
+# --- the three phases ------------------------------------------------------
+# Phase 1 -- five drawn targets, hit IN ORDER.  This is the ONLY assertion in
+# the whole gate that proves the coordinate-to-display MAPPING: a flipped,
+# swapped or mis-scaled axis makes the sequence impossible to complete, because
+# the operator is touching where the graphic actually is.  A stuck or
+# fabricated coordinate satisfies at most one target -- the firmware carries a
+# static_assert that the five acceptance boxes are pairwise disjoint, so that
+# claim is enforced at compile time rather than eyeballed off the geometry.
+#
+# ORIENTATION IS HARDWARE-ONLY BY CONSTRUCTION, AND THIS RUN PROVES NONE OF IT.
+# The QEMU model places its scripted contacts at the same percentages the
+# firmware places its targets at (qemu2 hw/i2c/imxrt_gt911.c, gt911_script[]),
+# so model and firmware SHARE an assumption about which corner is (0,0) and
+# which way each axis runs.  A shared assumption cannot be falsified by the two
+# parties that share it: this sequence would complete just as happily with both
+# axes mirrored.  What a green run here does prove is the DECODE and the phase
+# state machine -- that the contacts came back in the order the part published
+# them, distinct and correctly scaled by the resolution the part reported.
+# Only a finger on real glass settles the mapping; that is Task 7.
+grep -q "TARGETS_OK" "$OUT" || { echo "FAIL: target sequence"; exit 1; }
+# All five, individually.  TARGETS_OK alone would still be true of a firmware
+# that had quietly dropped a target from the list, and the per-target lines are
+# what a human reads on the bench.
+for t in 1 2 3 4 5; do
+    grep -q "TARGET $t/5 HIT" "$OUT" || { echo "FAIL: target $t of 5 never hit"; exit 1; }
+done
+# Phase 2 -- a directional drag. Catches a stuck value and a mirrored axis
+# independently of phase 1, which a single tap cannot: it needs EIGHT samples
+# advancing in +x across >= 60% of the axis, so no single coordinate, however
+# well chosen, contributes more than one sample to it.
+grep -q "SWIPE_OK"   "$OUT" || { echo "FAIL: swipe"; exit 1; }
+# Phase 3 -- two contacts with DISTINCT track ids. Exercises the contact array
+# and the count field, which phases 1 and 2 only ever touch for points[0].
+grep -q "MULTI_OK"   "$OUT" || { echo "FAIL: two-finger"; exit 1; }
+# --- the INT line ----------------------------------------------------------
+# INT_EDGES counts rising edges seen by an attachInterrupt() on D6 (GPIO2_IO31);
+# BUFFERS counts the fresh buffers read() consumed while that interrupt was
+# attached.  Both are printed, and the RELATION between them is what is
+# asserted -- a bare "INT_EDGES is present" would pass against a counter wired
+# to nothing.
+#
+# The relation, and why it is defensible on both sides: the part pulses INT
+# once per published instant, and read() acknowledges each published instant
+# exactly once, so over any interval the two counts are the same number.  The
+# single legitimate discrepancy is an instant published after the last poll and
+# before the print -- hence BUFFERS <= INT_EDGES <= BUFFERS+1, and not equality.
+#
+# What each direction catches.  INT_EDGES < BUFFERS means the pin is not
+# delivering edges at all (wrong pin, wrong port, no CM7 interrupt line on a
+# fast-GPIO alias) -- and this is this project's FIRST exercise of a GPIO2
+# interrupt; irq_attach_test only ever proved GPIO3.  INT_EDGES > BUFFERS+1
+# means the line moved when nothing was published, which on silicon is the
+# chatter predicted by HW-TO-CONFIRM item 2 in gt911.h: begin() leaves D6 a
+# plain INPUT with no pull, and nobody has confirmed a board pull-up on the
+# RevC3 CTP_INT net.  QEMU cannot show that -- the model drives the line both
+# ways -- so a green run here does NOT retire that item.
+#
+# The read path stays POLLED.  This counter is corroboration, never control
+# flow; the ISR does nothing but increment.
+EDGES=$(sed -n 's/^INT_EDGES=\([0-9][0-9]*\).*$/\1/p' "$OUT" | tail -1)
+BUFS=$(sed -n 's/^BUFFERS=\([0-9][0-9]*\).*$/\1/p' "$OUT" | tail -1)
+[ -n "$EDGES" ] && [ -n "$BUFS" ] || { echo "FAIL: INT_EDGES/BUFFERS not reported"; exit 1; }
+[ "$EDGES" -gt 0 ] || { echo "FAIL: INT_EDGES=0 -- the INT pin delivered no rising edge for any of the $BUFS buffers the poll path consumed"; exit 1; }
+[ "$EDGES" -ge "$BUFS" ] && [ "$EDGES" -le "$((BUFS + 1))" ] || { echo "FAIL: INT_EDGES=$EDGES against BUFFERS=$BUFS -- expected $BUFS or $((BUFS + 1)); fewer means edges are being missed, more means the line moved with nothing published"; exit 1; }
+# TOUCH_OK is the firmware's own verdict on everything above -- all three
+# phases AND the INT relation, which it recomputes rather than leaving to this
+# script.  That overlap is deliberate and is documented in reportInt(): Task 7
+# reads the transcript off real glass with no shell gate near it, so a run that
+# printed TOUCH_OK above an INT_EDGES=0 would be read as a pass.  Keep both.
+grep -q "TOUCH_OK"   "$OUT" || { echo "FAIL: gate did not complete"; exit 1; }
 # The driver must NEVER write the configuration space.  NXP's own driver
 # rewrites all 186 bytes when the stored point count or trigger mode differ,
 # and warns that a wrong write breaks the part.  The QEMU model logs any such
@@ -154,7 +235,10 @@ grep -q "TOUCH_ADVANCED" "$OUT" || { echo "FAIL: the part never published a seco
 if grep -q "gt911: guest wrote config" "$DIR/rk055_touch.dbg"; then
     echo "FAIL: firmware wrote the GT911 configuration space"; exit 1
 fi
-echo "PASS: RK055 touch T1+T2+T3a (GT911 reset + INT-level address latch at 0x5D"
-echo "      + product ID + the 186-byte config blob read and checksummed,"
-echo "      with the config space untouched; and a polled contact read whose"
-echo "      mandatory status clear let the part go on to publish the release)"
+echo "PASS: RK055 touch T1+T2+T3 (GT911 reset + INT-level address latch at 0x5D"
+echo "      + product ID + the 186-byte config blob read and checksummed, with"
+echo "      the config space untouched; a polled contact read whose mandatory"
+echo "      status clear let the part go on to publish the release; and all"
+echo "      three phases -- five targets in order, a +x drag, two contacts with"
+echo "      distinct ids -- with INT edges matching the buffers consumed."
+echo "      NOT proved here: the coordinate-to-display mapping.  See TARGETS_OK.)"
