@@ -53,9 +53,22 @@ void setup() {
     // quietly go wrong the first time an enumerator was added.
     Serial1.printf("I2C_%s\n", touch.busOk() ? "OK" : "FAIL");
     Serial1.printf("ADDR=0x%02X\n", touch.address());
-    Serial1.printf("GT911_%s\n", ok ? "OK" : "FAIL");
 
-    if (!ok) {
+    if (ok) {
+        // Design 6.1 asks for "GT911_OK  ID=911".  The ID is RENDERED FROM THE
+        // FOUR BYTES ACTUALLY READ at 0x8140, not printed as a literal -- a
+        // literal would assert nothing.  Safe to treat as text only here:
+        // begin() has already proved these bytes equal "911\0", so the NUL
+        // terminates the string and every character is printable.  The failure
+        // path keeps the raw hex instead, which is what you want when the
+        // bytes are NOT "911".
+        const uint32_t raw = touch.lastDeviceId();
+        char id[5];
+        for (uint8_t i = 0; i < 4; i++) id[i] = (char)((raw >> (8 * i)) & 0xFF);
+        id[4] = '\0';
+        Serial1.printf("GT911_OK  ID=%s\n", id);
+    } else {
+        Serial1.println("GT911_FAIL");
         Serial1.printf("TOUCH_ERR=%s ID=0x%08lX I2C=%u\n",
                        GT911::errorName(touch.lastError()),
                        (unsigned long)touch.lastDeviceId(),

@@ -40,6 +40,13 @@ grep -q "ADDR=0x5D" "$OUT" || { echo "FAIL: no successful bring-up at 0x5D"; exi
 # the ID is 4 bytes, a single loop iteration.  Nothing reads more than 32 bytes
 # until Task 4's 186-byte config blob.
 grep -q "GT911_OK" "$OUT" || { echo "FAIL: product ID"; exit 1; }
+# Design 6.1 specifies the line as "GT911_OK  ID=911".  Asserted separately so
+# the ID cannot quietly stop being echoed.  Note what this does NOT add: the
+# driver's own byte assembly is already covered, because a byte-order slip there
+# would fail the DEVICE_ID equality check and never reach GT911_OK.  What it
+# covers is the EXAMPLE's rendering of those bytes back to text, and the token's
+# continued presence in the transcript.
+grep -q "ID=911" "$OUT" || { echo "FAIL: product ID not echoed as ID=911"; exit 1; }
 # The driver must NEVER write the configuration space.  NXP's own driver
 # rewrites all 186 bytes when the stored point count or trigger mode differ,
 # and warns that a wrong write breaks the part.  The QEMU model logs any such
