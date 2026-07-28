@@ -45,6 +45,22 @@ echo "==== captured ===="; cat "$OUT"
 # visible.  Re-asserted here rather than assumed from rk055_panel_test: a
 # regression there would otherwise surface as a baffling touch failure.
 grep -q "PANEL_OK" "$OUT" || { echo "FAIL: panel bring-up"; exit 1; }
+# A DRAWING FAULT IS CHECKED BEFORE ANY TOUCH ASSERTION, and the ordering is the
+# whole point of the line.  A phase that cannot paint returns before it polls
+# anything, so the first touch assertion below (FIRST_TOUCH) fires and the
+# harness headline read "FAIL: read() never reported a contact" -- the exact
+# touch-fault misdiagnosis the firmware's reason=paint tokens exist to prevent,
+# reintroduced one layer up in the gate's one-line verdict.  Task 7 reads the
+# transcript rather than the headline, but the headline is what a sweep reports.
+if grep -q "reason=paint" "$OUT"; then
+    echo "FAIL: a phase background never scanned out -- this is a DRAWING fault, not a touch fault; see PAINT_NOTE and the TARGET_FAIL/SWIPE_FAIL/MULTI_FAIL line above"
+    exit 1
+fi
+# The initial clear, the one paint that is not a phase background.  Recorded by
+# the firmware rather than gating it there -- phase 1 repaints moments later and
+# its check is what fails the run -- so this is where a fault that cleared up in
+# between becomes visible instead of vanishing.
+grep -q "^INIT_PAINT=OK$" "$OUT" || { echo "FAIL: the initial screen clear never scanned out -- DRAWING fault"; exit 1; }
 # I2C_OK -- the GT911 ACKed at the address it LATCHED.  In QEMU this proves the
 # reset/INT sequence is well-formed: the virtual part has no address at all
 # until a genuine reset pulse, and takes 0x14 rather than 0x5D if INT was not
@@ -256,15 +272,25 @@ grep -q "MULTI_OK"   "$OUT" || { echo "FAIL: two-finger"; exit 1; }
 # HOW MUCH OF THE SCRIPT THE RUN CONSUMED IN TOTAL, pinned.
 #
 # BE EXACT ABOUT WHAT THIS DOES AND DOES NOT CATCH, because the obvious reading
-# is wrong and was measured to be wrong: it does NOT pin the phase-2/3 boundary.
-# Phase 3 silently skips any number of leading n<2 instants and always stops at
-# the FIRST two-contact instant, number 21, so BUFFERS is 22 for every
-# SWIPE_MIN_SAMPLES in 2..10 alike.  The SWIPE_OK line above is what pins that
-# boundary.  What this catches is the total: a phase 1 that consumed a different
-# number of instants, or a phase 3 that needed more than one qualifying buffer
-# and so ate into the two spare two-contact instants -- past which phase 3 runs
-# off the end of the 25-instant script and fails as a bare 10-second harness
-# kill with no MULTI_FAIL line at all.
+# is wrong and was measured to be wrong TWICE.  This number pins WHERE THE RUN
+# STOPS, and nothing whatever about how it got there: phase 3 discards any
+# number of leading instants carrying fewer than two contacts and always halts
+# at the FIRST two-contact instant, number 21, so BUFFERS is 22 no matter what
+# precedes it.
+#
+#   - It does NOT pin the phase-2/3 boundary.  SWIPE_MIN_SAMPLES 8 and 10 both
+#     gave BUFFERS=22 and a PASS.  The SWIPE_OK line above pins that.
+#   - It does NOT observe phase 1 either.  With TARGETS[] cut from five entries
+#     to four, phase 1 consumed 8 instants instead of 10 and BUFFERS was STILL
+#     22.  The gate went red -- on the per-target TARGET n/5 greps and on
+#     TARGET_RELEASES -- but never here.
+#
+# What it DOES catch is a change to phase 3's own stopping rule or to the
+# model's script: a MULTI_MIN_SEP that the first hold no longer satisfies, or a
+# phase 3 requiring more than one qualifying buffer, either of which eats into
+# the two spare two-contact instants -- past which phase 3 runs off the end of
+# the 25-instant script and fails as a bare 10-second harness kill with no
+# MULTI_FAIL line at all.
 #
 # 22 is 10 for phase 1 (five taps and five releases), 8 for phase 2 (the span
 # test is checked per sample, so it is satisfied at drag sample 8 of 10), and 4

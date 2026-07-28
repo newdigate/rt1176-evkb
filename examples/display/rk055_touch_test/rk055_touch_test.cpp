@@ -267,6 +267,29 @@ static uint32_t target_releases = 0;
 }
 
 // --- Drawing ---------------------------------------------------------------
+// THE 128-BYTE PRINTF CEILING.  Print::printf() formats into a fixed 128-byte
+// stack buffer (cores/imxrt1176/Print.cpp) and TRUNCATES at 127 characters --
+// silently, and including the trailing newline, so an over-long line also
+// swallows the start of the next one.  This bit the phase-1 drawing-fault
+// diagnosis: at 142 characters it lost "t a touch fault" and its newline, and
+// FIRST_TOUCH_NONE collided onto the end of it -- the one bench-facing line
+// that exists to stop a drawing fault being misread as a touch fault.
+//
+// THE RULE, for anything added below: keep every printf() format short enough
+// that its WIDEST substitution fits in 127 bytes, and put long fixed prose in
+// println(), which takes a single literal straight to write() and has no
+// buffer to overflow.  That is why the human-readable half of a paint failure
+// lives in paintFailNote() and the machine-readable half stays a short token
+// line: neither can grow into the other's budget.  Swept after this change,
+// substituting the widest value every conversion can take: the widest printf in
+// this file is INT_MISMATCH at 113 characters, then RELEASE_SHORTFALL at 110.
+// Both had to be shortened to get there -- INT_MISMATCH's reason string alone
+// was 65 characters and pushed the line to 144 once the counts grew.
+static void paintFailNote() {
+  Serial1.println("PAINT_NOTE the panel never scanned out the background -- "
+                  "this is a DRAWING fault, not a touch fault");
+}
+
 // Paint the background and CONFIRM IT REACHED THE GLASS.
 //
 // fillScreen() returns void and bails silently if the framebuffer was never
@@ -333,10 +356,9 @@ static bool phaseTargets() {
     const uint16_t cx = targetCx(i), cy = targetCy(i);
 
     if (!paintBackground(0x0000)) {
-      Serial1.printf("TARGET_FAIL phase=1 target=%u reason=paint want=(%u,%u) "
-                     "-- the panel never scanned out the target; this is a "
-                     "DRAWING fault, not a touch fault\n",
+      Serial1.printf("TARGET_FAIL phase=1 target=%u reason=paint want=(%u,%u)\n",
                      (unsigned)(i + 1), (unsigned)cx, (unsigned)cy);
+      paintFailNote();
       return false;
     }
     fillRect((int32_t)cx - TARGET_HALF, (int32_t)cy - TARGET_HALF,
@@ -406,8 +428,8 @@ static bool phaseTargets() {
 static bool phaseSwipe() {
   TouchPoint pts[2];
   if (!paintBackground(0x0000)) {
-    Serial1.println("SWIPE_FAIL phase=2 reason=paint -- the panel never scanned "
-                    "out the band; this is a DRAWING fault, not a touch fault");
+    Serial1.println("SWIPE_FAIL phase=2 reason=paint");
+    paintFailNote();
     return false;
   }
   fillRect(0, (int32_t)Display.height() / 2 - 40, (int32_t)Display.width(), 80,
@@ -428,7 +450,16 @@ static bool phaseSwipe() {
   uint8_t  samples = 0;
   uint8_t  runId = 0;      // the track id this forward run belongs to
   uint32_t bestSpan = 0;   // best span reached by any run, for the failure line
-  uint16_t lifts = 0;      // runs ended by a lift that was too short
+  // TWO counters, because one was worse than none.  This was a single `lifts`
+  // reported as "shortlifts=" whose condition was samples >= SWIPE_MIN_SAMPLES
+  // -- the exact opposite of its name: it counted runs that were LONG ENOUGH
+  // and failed on span.  An operator making five hesitant short strokes saw
+  // "shortlifts=0", reading as "no short lifts", on the phase whose prompt
+  // warns against pausing.  Fix 2 of the previous round made it worse: only
+  // strictly-advancing coordinates count now, so a jittery stroke accumulates
+  // fewer samples and is even less likely to be counted.
+  uint16_t attempts = 0;   // runs ended by a lift, i.e. strokes actually tried
+  uint16_t shortRuns = 0;  // ...of which ended with too few advancing samples
   bool     down = false;
 
   while ((int32_t)(millis() - deadline) < 0) {
@@ -444,9 +475,14 @@ static bool phaseSwipe() {
     if (p == GT911::Poll::Released) {
       // A genuine lift ends the run.  It does NOT end the phase: the deadline
       // is 60 s of operator patience and consuming all of it on one short
-      // stroke would fail the whole gate with no retry.  The count is reported
-      // instead, so a transcript shows how many attempts were made.
-      if (down && samples >= SWIPE_MIN_SAMPLES && lifts < 0xFFFFu) lifts++;
+      // stroke would fail the whole gate with no retry.  Both counts are
+      // reported instead, so the transcript shows how many strokes were tried
+      // AND how many were too hesitant to count -- which is the actionable one
+      // at the bench, and the one the old counter could not express.
+      if (down) {
+        if (attempts < 0xFFFFu) attempts++;
+        if (samples < SWIPE_MIN_SAMPLES && shortRuns < 0xFFFFu) shortRuns++;
+      }
       down = false; samples = 0;
       continue;
     }
@@ -496,8 +532,9 @@ static bool phaseSwipe() {
     }
   }
   Serial1.printf("SWIPE_FAIL phase=2 reason=timeout samples=%u bestspan=%lu%% "
-                 "shortlifts=%u", (unsigned)samples, (unsigned long)bestSpan,
-                 (unsigned)lifts);
+                 "attempts=%u short=%u", (unsigned)samples,
+                 (unsigned long)bestSpan, (unsigned)attempts,
+                 (unsigned)shortRuns);
   printLast(lastX, lastY);
   Serial1.println();
   return false;
@@ -506,9 +543,8 @@ static bool phaseSwipe() {
 static bool phaseMulti() {
   TouchPoint pts[2];
   if (!paintBackground(0x001F)) {
-    Serial1.println("MULTI_FAIL phase=3 reason=paint -- the panel never scanned "
-                    "out the background; this is a DRAWING fault, not a touch "
-                    "fault");
+    Serial1.println("MULTI_FAIL phase=3 reason=paint");
+    paintFailNote();
     return false;
   }
   // "PLACE", not "hold": one qualifying buffer satisfies this phase, and the
@@ -631,22 +667,23 @@ static bool reportInt() {
     Serial1.printf("INT_MISMATCH edges=%lu buffers=%lu pollfails=%lu reason=%s\n",
                    (unsigned long)edges, (unsigned long)buffers,
                    (unsigned long)poll_fails,
-                   edges < buffers
-                       ? "edges-missing"
-                       : "more-edges-than-published-buffers-and-failed-polls-"
-                         "can-account-for");
+                   edges < buffers ? "edges-missing"
+                                   : "edges-exceed-buffers-plus-pollfails");
   }
-  // Recorded, never asserted.  A failing poll is not fatal on its own -- the
-  // driver clears lastError() on the next good one and the phases simply keep
-  // polling -- but a nonzero count beside a phase failure is the first thing
-  // worth knowing, and on silicon it is the bus-quality reading this gate has.
-  Serial1.printf("TARGET_RELEASES=%lu\n", (unsigned long)target_releases);
-  // Phase 1 already fails by name if a release wait times out, so on any path
-  // that reached here with p1 true this holds by construction.  It is checked
-  // anyway, for the same reason the INT relation is: Task 7 reads this
+  // ASSERTED, twice: by RELEASE_SHORTFALL below and by run_qemu.sh.  Phase 1
+  // already fails by name if a release wait times out, so on any path that
+  // reached here with p1 true this holds by construction -- it is checked
+  // anyway for the same reason the INT relation is, because Task 7 reads this
   // transcript off real glass with no shell gate beside it, and an edit that
-  // removed the wait would otherwise still print TOUCH_OK.  Measured -- that is
+  // removed the wait would otherwise still print TOUCH_OK.  Measured: that is
   // exactly what deleting the wait produced.
+  Serial1.printf("TARGET_RELEASES=%lu\n", (unsigned long)target_releases);
+  // Recorded, and asserted only as a BOUND on the slack the relation above
+  // grants -- never as a pass/fail on its own.  A failing poll is not fatal:
+  // the driver clears lastError() on the next good one and the phases simply
+  // keep polling.  But a nonzero count beside a phase failure is the first
+  // thing worth knowing, and on silicon it is the bus-quality reading this
+  // gate has.
   Serial1.printf("POLL_FAILS=%lu\n", (unsigned long)poll_fails);
   Serial1.printf("ELAPSED_MS=%lu\n", (unsigned long)millis());
   return ok;
@@ -659,7 +696,13 @@ void setup() {
 
     Display.begin();
     Serial1.printf("PANEL_%s\n", Display.panelOk() ? "OK" : "FAIL");
-    Display.fillScreen(0x0000);
+    // The initial clear goes through the same checked helper as every phase
+    // background -- it was the one paint in the file whose frameOk() nobody
+    // read.  Reported, not fatal on its own: phase 1 paints again moments later
+    // and ITS check is what gates the run, so a persistent drawing fault still
+    // produces a named TARGET_FAIL reason=paint.  This line exists so a fault
+    // that clears up in between is still visible in the transcript.
+    Serial1.printf("INIT_PAINT=%s\n", paintBackground(0x0000) ? "OK" : "FAIL");
 
     // LPI2C5 is shared with the WM8962 codec, so the EXAMPLE owns the bus, not
     // the driver.  400 kHz is the GT911's rated maximum; the 24 MHz functional
