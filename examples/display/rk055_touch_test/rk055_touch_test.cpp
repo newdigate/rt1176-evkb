@@ -5,6 +5,10 @@
  * Stage 1: the panel is up and the GT911 has been reset, has latched its I2C
  * address from the INT pin, and has identified itself.
  *
+ * Stage 2: its 186-byte configuration blob reads back with a valid checksum,
+ * and the resolution and contact count it was programmed with are recorded.
+ * Recorded, not asserted -- see the RES/POINTS comment in run_qemu.sh.
+ *
  * Every stage token is emitted UNCONDITIONALLY so the first FAIL pinpoints the
  * broken layer rather than the run simply stopping.
  *
@@ -69,6 +73,28 @@ void setup() {
         Serial1.printf("GT911_OK  ID=%s\n", id);
     } else {
         Serial1.println("GT911_FAIL");
+    }
+
+    // The configuration layer.  begin() reads and verifies the 186-byte blob as
+    // its last act, so `ok` IS "the blob arrived and verified" -- there is no
+    // separate query to make, and CFG_FAIL after an earlier failure (a bad ID,
+    // say) is honest: the blob was never verified.  TOUCH_ERR below names the
+    // layer that actually broke.
+    //
+    // RES/POINTS are printed unconditionally and are 0 0 on any failure, which
+    // is the driver's contract, not a special case here.  They are RECORDED,
+    // not asserted: the real panel reports whatever it was programmed with.
+    Serial1.printf("CFG_%s\n", ok ? "OK" : "FAIL");
+    Serial1.printf("RES=%ux%u\n", (unsigned)touch.resolutionX(),
+                                  (unsigned)touch.resolutionY());
+    Serial1.printf("POINTS=%u\n", (unsigned)touch.configuredPoints());
+
+    // Last, because it summarises all the layers above it.  Note what the
+    // combination says: a config-CHECKSUM failure prints I2C_OK (186 bytes did
+    // arrive; only their content is wrong) while a config-READ failure prints
+    // I2C_FAIL -- the driver draws that line in busOk(), and this example only
+    // reports it.
+    if (!ok) {
         Serial1.printf("TOUCH_ERR=%s ID=0x%08lX I2C=%u\n",
                        GT911::errorName(touch.lastError()),
                        (unsigned long)touch.lastDeviceId(),

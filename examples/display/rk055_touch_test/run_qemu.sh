@@ -37,8 +37,8 @@ grep -q "ADDR=0x5D" "$OUT" || { echo "FAIL: no successful bring-up at 0x5D"; exi
 # GT911_OK -- the product ID reads "911\0".  QEMU returns a constant here, so
 # this proves our 16-bit big-endian sub-address encoding; only silicon proves
 # the real part's identity.  It does NOT exercise the multi-chunk read path:
-# the ID is 4 bytes, a single loop iteration.  Nothing reads more than 32 bytes
-# until Task 4's 186-byte config blob.
+# the ID is 4 bytes, a single loop iteration.  The config read below is what
+# covers chunking.
 grep -q "GT911_OK" "$OUT" || { echo "FAIL: product ID"; exit 1; }
 # Design 6.1 specifies the line as "GT911_OK  ID=911".  Asserted separately so
 # the ID cannot quietly stop being echoed.  Note what this does NOT add: the
@@ -47,6 +47,25 @@ grep -q "GT911_OK" "$OUT" || { echo "FAIL: product ID"; exit 1; }
 # covers is the EXAMPLE's rendering of those bytes back to text, and the token's
 # continued presence in the transcript.
 grep -q "ID=911" "$OUT" || { echo "FAIL: product ID not echoed as ID=911"; exit 1; }
+# CFG_OK -- the 186-byte configuration blob read back with a valid checksum.
+# The checksum matters beyond "did the read work": the resolution we are about
+# to scale every coordinate by lives inside this blob, so a blob we cannot
+# trust is a scale factor we cannot trust.
+#
+# It is ALSO this gate's only proof that the chunked read path works.  186 bytes
+# at 32 per chunk is five full chunks plus a 26-byte remainder, and every chunk
+# restates its own sub-address -- so a dropped chunk, a mis-advanced offset or a
+# short read anywhere in the sequence lands wrong bytes in the buffer and the
+# 184-byte sum stops matching byte 184.  Nothing before this read more than 4
+# bytes at a time.
+grep -q "CFG_OK" "$OUT" || { echo "FAIL: config blob"; exit 1; }
+# RES/POINTS are RECORDED, never asserted.  A real GT911 reports whatever it
+# reports and it is NOT guaranteed to equal the panel's 720x1280; asserting
+# equality would fail on a legitimate panel variant.  A wrong resolution
+# already has a natural detector -- the drawn targets become unhittable -- so
+# these lines exist to put the truth in the transcript.
+grep -q "RES=" "$OUT"    || { echo "FAIL: resolution not reported"; exit 1; }
+grep -q "POINTS=" "$OUT" || { echo "FAIL: contact count not reported"; exit 1; }
 # The driver must NEVER write the configuration space.  NXP's own driver
 # rewrites all 186 bytes when the stored point count or trigger mode differ,
 # and warns that a wrong write breaks the part.  The QEMU model logs any such
@@ -54,5 +73,6 @@ grep -q "ID=911" "$OUT" || { echo "FAIL: product ID not echoed as ID=911"; exit 
 if grep -q "gt911: guest wrote config" "$DIR/rk055_touch.dbg" 2>/dev/null; then
     echo "FAIL: firmware wrote the GT911 configuration space"; exit 1
 fi
-echo "PASS: RK055 touch T1 (GT911 reset + INT-level address latch at 0x5D"
-echo "      + product ID, with the config space untouched)"
+echo "PASS: RK055 touch T1+T2 (GT911 reset + INT-level address latch at 0x5D"
+echo "      + product ID + the 186-byte config blob read and checksummed,"
+echo "      with the config space untouched)"
