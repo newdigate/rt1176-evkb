@@ -4,8 +4,9 @@
 # Part 1: wrap-tolerant copyleft-header sweep over every ecosystem repo,
 #         against a documented allowlist, PLUS a binary-provenance check
 #         (grep cannot read binaries, so opaque blobs are checked structurally).
-# Part 2: link-manifest audit — walk the CMake depfiles (*.obj.d) of three fat
-#         gate builds; every source AND header that fed any object must have a
+# Part 2: link-manifest audit — walk the CMake depfiles (*.obj.d) of EVERY
+#         example that owns a run_qemu.sh (it began as three fat builds and
+#         grew; the GATES drift check below now enforces the wider intent); every source AND header that fed any object must have a
 #         permissive header. Dual-licensed allowlisted SOURCES must compile to
 #         EMPTY objects (nm check) — the "preprocessor-dead" claim, enforced.
 # Part 3: Ethernet/NativeEthernet shared files must be byte-identical.
@@ -149,7 +150,58 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # (teensy-cmake-macros), whose gcc step emits <obj>.o.d depfiles (-MMD -MF,
 # added 2026-07-18) — so CM4-side sources are covered by this same walk
 # (the *.o.d pattern below), not just their provenance headers.
-GATES="examples/audio/sd_wav_play_test:sd_wav_play_test examples/networking/ethernet_test:ethernet_test examples/networking/native_ethernet_test:native_ethernet_test examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_image_test:cm4_image_test examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_spi_test:cm4_spi_test examples/dualcore/cm4_wire_test:cm4_wire_test examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test examples/dualcore/cm4_imagebank_test:cm4_imagebank_test examples/framework/arm_math_test:arm_math_test examples/audio/filter_fir_test:filter_fir_test examples/audio/guard_sweep_test:guard_sweep_test examples/dualcore/cm4_sai_irq_probe:cm4_sai_irq_probe examples/dualcore/cm4_cpp_test:cm4_cpp_test examples/dualcore/cm4_audiostream_test:cm4_audiostream_test examples/audio/i2s_int_test:i2s_int_test examples/dualcore/cm4_fft_test:cm4_fft_test examples/dualcore/cm4_audio_test:cm4_audio_test examples/audio/audio_h_test:audio_h_test examples/display/pxp_blit_test:pxp_blit_test examples/display/rpi_panel_test:rpi_panel_test examples/display/lvgl_ili9341_test:lvgl_ili9341_test examples/display/lvgl_rpi_panel_test:lvgl_rpi_panel_test examples/display/rk055_panel_test:rk055_panel_test"
+GATES="examples/audio/sd_wav_play_test:sd_wav_play_test examples/networking/ethernet_test:ethernet_test examples/networking/native_ethernet_test:native_ethernet_test examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_image_test:cm4_image_test examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_spi_test:cm4_spi_test examples/dualcore/cm4_wire_test:cm4_wire_test examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test examples/dualcore/cm4_imagebank_test:cm4_imagebank_test examples/framework/arm_math_test:arm_math_test examples/audio/filter_fir_test:filter_fir_test examples/audio/guard_sweep_test:guard_sweep_test examples/dualcore/cm4_sai_irq_probe:cm4_sai_irq_probe examples/dualcore/cm4_cpp_test:cm4_cpp_test examples/dualcore/cm4_audiostream_test:cm4_audiostream_test examples/audio/i2s_int_test:i2s_int_test examples/dualcore/cm4_fft_test:cm4_fft_test examples/dualcore/cm4_audio_test:cm4_audio_test examples/audio/audio_h_test:audio_h_test examples/display/pxp_blit_test:pxp_blit_test examples/display/rpi_panel_test:rpi_panel_test examples/display/lvgl_ili9341_test:lvgl_ili9341_test examples/display/lvgl_rpi_panel_test:lvgl_rpi_panel_test examples/display/rk055_panel_test:rk055_panel_test examples/display/lvgl_smoke_test:lvgl_smoke_test examples/serial/serial_test:serial_test"
+
+# --- GATES drift check -------------------------------------------------------
+# GATES is hand-maintained, and an example silently missing from it means Part 2
+# never walks its depfiles. Those files still get Part 1's header sweep, so they
+# are not unaudited — but the check that proves what actually reaches the
+# firmware image skips them, which is the stronger of the two.
+#
+# This is not hypothetical. rk055_panel_test and lvgl_rpi_panel_test were both
+# absent until 2026-07-28, and lvgl_smoke_test — which links LVGL, the most
+# licence-sensitive dependency in this tree (it is where the MPL-2.0 frogfs code
+# and the eight unlicensed nema_gfx archives came from) — was still absent after
+# that gap had supposedly been closed. A hand-maintained list drifts every time
+# an example lands.
+#
+# So the omission is made LOUD instead of silent: every example owning a
+# run_qemu.sh must appear in GATES, with the target name matching its
+# project(). An example that genuinely should be excluded goes in GATES_EXEMPT
+# with a written justification — the same discipline the ALLOW list uses — never
+# a quiet deletion.
+#
+# Deliberately NOT fully derived: Part 2 hard-errors on MISSING BUILD, so
+# deriving the list from all 82 examples would make the audit require a complete
+# tree build. Checking the hand list for completeness costs nothing and closes
+# the same hole.
+GATES_EXEMPT=""   # "examples/<cat>/<name>  # why" — none today
+case "$PARTS" in *2*)
+  drift=0
+  for gsh in "$EVKB"/examples/*/*/run_qemu.sh; do
+    [ -f "$gsh" ] || continue
+    gdir=${gsh%/run_qemu.sh}; rel=${gdir#$EVKB/}; name=${rel##*/}
+    case " $GATES_EXEMPT " in *" $rel "*) continue ;; esac
+    case "$GATES" in
+      *"$rel:"*)
+        # listed — also check the target name matches the CMake project()
+        proj=$(sed -n 's/^project(\([A-Za-z0-9_.-]*\).*/\1/p' "$gdir/CMakeLists.txt" 2>/dev/null | head -1)
+        listed=$(printf '%s\n' $GATES | grep "^$rel:" | head -1); listed=${listed##*:}
+        if [ -n "$proj" ] && [ "$proj" != "$listed" ]; then
+          echo "GATES MISMATCH: $rel listed as target '$listed' but project() says '$proj'"
+          drift=1
+        fi
+        ;;
+      *)
+        echo "GATES DRIFT: $rel has a run_qemu.sh but is missing from the Part-2 GATES list"
+        echo "  -> add \"$rel:$name\", or add it to GATES_EXEMPT with a written reason"
+        drift=1
+        ;;
+    esac
+  done
+  [ "$drift" -eq 0 ] || fail=1
+esac
+
 case "$PARTS" in *2*) ;; *) GATES="" ;; esac
 for pair in $GATES; do
   g=${pair%%:*}; t=${pair##*:}
