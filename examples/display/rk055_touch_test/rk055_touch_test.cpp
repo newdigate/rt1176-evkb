@@ -90,10 +90,12 @@ void setup() {
     Serial1.printf("POINTS=%u\n", (unsigned)touch.configuredPoints());
 
     // Last, because it summarises all the layers above it.  Note what the
-    // combination says: a config-CHECKSUM failure prints I2C_OK (186 bytes did
-    // arrive; only their content is wrong) while a config-READ failure prints
-    // I2C_FAIL -- the driver draws that line in busOk(), and this example only
-    // reports it.
+    // combination says: a config-CONTENT failure (CFGVER / CFGSUM / CFGRES /
+    // CFGPTS) prints I2C_OK, because 186 bytes did arrive and only what they
+    // hold is wrong, while a config-READ failure prints I2C_FAIL.  The driver
+    // draws that line in busOk(); this example only reports it, and deliberately
+    // does not enumerate the taxonomy itself -- the four content tokens above
+    // were added to the driver without touching a line of this file.
     if (!ok) {
         Serial1.printf("TOUCH_ERR=%s ID=0x%08lX I2C=%u\n",
                        GT911::errorName(touch.lastError()),

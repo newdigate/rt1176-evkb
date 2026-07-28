@@ -16,6 +16,11 @@ P=$!; gate_pid $P
 # comes.  (The full script is 25 steps at 20 ms = 500 ms, and only Task 5's
 # read() will ever let it advance past the first.)
 sleep 10; kill $P 2>/dev/null; wait $P 2>/dev/null || true
+# The capture has to EXIST before any grep of it means anything.  Without this,
+# a QEMU that died before opening the serial file failed as `cat: no such file`
+# -- a non-zero exit, so never a false green, but a message that points at
+# nothing.  Two runs in five died this way during bring-up.
+[ -s "$OUT" ] || { echo "FAIL: no UART capture at $OUT -- QEMU produced no serial output (did it start?)"; exit 1; }
 echo "==== captured ===="; cat "$OUT"
 # The panel has to be up before touch means anything -- targets have to be
 # visible.  Re-asserted here rather than assumed from rk055_panel_test: a
@@ -58,6 +63,13 @@ grep -q "ID=911" "$OUT" || { echo "FAIL: product ID not echoed as ID=911"; exit 
 # short read anywhere in the sequence lands wrong bytes in the buffer and the
 # 184-byte sum stops matching byte 184.  Nothing before this read more than 4
 # bytes at a time.
+#
+# That claim is only true because the MODEL cooperates: it fills the blob's
+# unspecified bytes with a position-dependent pattern, verified so that no
+# aligned chunk sums to zero and no two chunk sums collide.  While those bytes
+# were zeros this assertion was decorative -- a dropped middle chunk contributed
+# exactly what it should have (nothing) and the gate stayed green.  If anyone
+# ever flattens that filler, this line stops testing chunking.
 grep -q "CFG_OK" "$OUT" || { echo "FAIL: config blob"; exit 1; }
 # RES/POINTS are RECORDED, never asserted.  A real GT911 reports whatever it
 # reports and it is NOT guaranteed to equal the panel's 720x1280; asserting
@@ -70,7 +82,14 @@ grep -q "POINTS=" "$OUT" || { echo "FAIL: contact count not reported"; exit 1; }
 # rewrites all 186 bytes when the stored point count or trigger mode differ,
 # and warns that a wrong write breaks the part.  The QEMU model logs any such
 # write as a guest error; this turns the design decision into an assertion.
-if grep -q "gt911: guest wrote config" "$DIR/rk055_touch.dbg" 2>/dev/null; then
+#
+# The log must EXIST first.  `grep -q ... 2>/dev/null` inside an `if` scores a
+# missing or empty file as "no write happened", so the assertion would pass
+# most loudly in the one case where it knows nothing -- absent evidence read as
+# evidence of absence.  -d guest_errors always creates this file, so its absence
+# means the run itself was broken.
+[ -f "$DIR/rk055_touch.dbg" ] || { echo "FAIL: no guest-error log -- the config-write assertion cannot be checked"; exit 1; }
+if grep -q "gt911: guest wrote config" "$DIR/rk055_touch.dbg"; then
     echo "FAIL: firmware wrote the GT911 configuration space"; exit 1
 fi
 echo "PASS: RK055 touch T1+T2 (GT911 reset + INT-level address latch at 0x5D"
