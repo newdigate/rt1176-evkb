@@ -91,9 +91,19 @@ Repo-wide gates in `tools/`:
 ## Flash / run on hardware
 
 ```sh
-pkill LinkServer; pkill redlinkserv        # always clear stale probe daemons first
-LinkServer run MIMXRT1176:MIMXRT1170-EVKB build/<name>.elf   # load + reset + free-run
+pkill LinkServer; pkill redlinkserv; pkill crt_emu_cm_redlink   # clear stale probe daemons
+LinkServer run MIMXRT1176:MIMXRT1170-EVKB build/<name>.elf      # load + reset + free-run
 ```
+
+**★ Do NOT hold the VCOM while programming.** With `tools/rt1170-console.py`
+attached, `LinkServer flash … load` dies with `request to clear DAP error failed
+- status 131` / `LOAD_EXIT=255` and the port re-enumerates mid-attempt. The
+identical command succeeds the moment nothing holds the port. Working order:
+`flash … load` → `flash … verify` (both VCOM-free) → **then** attach the reader
+→ reset. There is no standalone `LinkServer reset` subcommand in 26.6.137;
+backgrounding `LinkServer run` is how you trigger one. Note `pkill LinkServer`
+alone leaves `redlinkserv`/`crt_emu_cm_redlink` resident, which silently kills
+the next few runs.
 
 Use **LinkServer** (`/Applications/LinkServer_26.6.137/`), not pyOCD — pyOCD is
 unreliable programming this board's FlexSPI NOR. Console is the MCU-Link VCOM

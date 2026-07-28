@@ -308,3 +308,72 @@ That RPi panel CANNOT be hardware-verified right now — its hardware is blocked
 on an unrelated connector fault.  So for that panel the evidence is the QEMU
 gates plus the fact that its ordering is byte-for-byte the order it was already
 HW-verified with at Task 14.  Nothing more is claimed.
+
+
+=================================================================
+M3 HARDWARE VERIFICATION — PIXELS ON GLASS.  v1 COMPLETE.
+=================================================================
+Date:   2026-07-28
+Board:  MIMXRT1170-EVKB, panel on J48 (40-pin FPC, native RK055 connector)
+Image:  examples/display/rk055_panel_test/build/rk055_panel_test.elf
+Cores:  afff78a (BUS_CLK_ROOT = SYS_PLL3_OUT/2 = 240 MHz)
+
+PROGRAMMING
+-----------
+  LinkServer flash ... load    -> LOAD_EXIT=0
+  LinkServer flash ... verify  -> VERIFY_EXIT=0   "File matches flash."
+
+CAPTURED UART
+-------------
+RK055_PANEL_BEGIN
+PANEL=RK055HDMIPI4MA0 720x1280 (HX8394)
+GEOM=720x1280 PIXCLK=58666666 LANES=2
+CLK_OK
+LCDIFV2_OK
+DSI_OK
+PANEL_OK
+FRAME_OK
+FB_SUM=0x9831F3C5 EXP=0x9831F3C5 PASS
+PANEL_SUM_HW=TAP_ABSENT (TAP_ID=0x00000000) -- verify by eye
+UNDERRUN=0/10
+RK055_PANEL_END
+
+BY EYE:  eight vertical colour bars (white, yellow, cyan, green, magenta, red,
+         blue, black, left to right) with a white diagonal running top-left to
+         bottom-right.  CORRECT.  Confirmed by the operator, 2026-07-28.
+
+WHAT EACH LINE IS WORTH
+-----------------------
+FB_SUM      0x9831F3C5 on silicon is BYTE-IDENTICAL to the QEMU gate's value,
+            and both match an expectation computed by a SECOND, independent
+            implementation of the pattern rule in the gate sketch (its own
+            bars[] table and loop nest -- it never calls into the driver, so
+            the two cannot agree with each other while both disagree with the
+            panel).  The framebuffer genuinely holds the pattern.
+
+PANEL_SUM   TAP_ABSENT, TAP_ID = 0.  Working exactly as designed: the virtual
+            HX8394's checksum tap is emulator fiction mapped over reserved
+            space in the DSI host's AIPS slot, so on silicon the read returns 0
+            instead of faulting.  The gate branches on TAP_ID, never on the
+            checksum -- had it tested the checksum against 0 it would have
+            conflated "no tap here" with "dark panel" and failed this run
+            spuriously.  QEMU-ONLY BY CONSTRUCTION.
+
+★ UNDERRUN  0/10, and note the ABSENCE of the "(QEMU: vacuous)" suffix -- that
+            suffix keys off the same TAP_ID, so its absence is the token saying
+            this is the real measurement.  ZERO LCDIFv2 output-FIFO underruns
+            across 10 frames at ~108 MB/s sustained scanout (720x1280 RGB565 at
+            58.7 Hz).  This is the number the whole M0 milestone existed for:
+            raising BUS_CLK_ROOT to SYS_PLL3_OUT/2 = 240 MHz.  It is
+            HARDWARE-ONLY BY CONSTRUCTION -- QEMU has no timing model, so its
+            0/10 proves nothing.  The spec's pre-designed escalation (drop to
+            kDSI_DpiNonBurstWithSyncEvent, or a larger ROOT70 divider) is NOT
+            needed; 240 MHz has the headroom.
+
+NOT PROVEN, STILL
+-----------------
+  * Sustained behaviour over long runs.  10 frames is ~170 ms.  A thermal or
+    long-run underrun would not show here.
+  * Any second buffer / page flip -- v1 is single-buffered, so tearing is not
+    exercised.
+  * Touch (v2), LVGL (v3).
