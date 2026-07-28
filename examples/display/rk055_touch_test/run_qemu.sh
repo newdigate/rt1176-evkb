@@ -112,16 +112,28 @@ grep -q "FIRST_TOUCH " "$OUT" || { echo "FAIL: read() never reported a contact";
 # instant never comes into existence.  FIRST_TOUCH above passes perfectly well
 # against a driver in that state; this line is what catches it.
 #
-# The firmware emits this token only when it has seen a published buffer
-# carrying ZERO contacts -- the release after the tap.  That is the state which
+# The firmware emits this token only on GT911::Poll::Released -- a buffer the
+# part PUBLISHED carrying zero contacts, the release after the tap.  That state
 # cannot be reached without the acknowledgement, because an unacknowledged part
 # keeps re-serving the same ONE-contact buffer.
 #
-# NEGATIVE-TESTED, and it needed to be: the first version of this assertion
-# accepted merely observing a fresh buffer twice, which a wedged part does on
-# every poll for ever.  With the status clear deleted from the driver that
-# version stayed GREEN.  The zero-contact condition goes red.  Do not relax it
-# back to "fresh twice".
+# NEGATIVE-TESTED TWICE, and it needed both.  Two earlier versions of this
+# assertion stayed GREEN against a driver that never cleared the status
+# register:
+#
+#   1. "a fresh buffer seen twice" -- a wedged part reports the ready bit set on
+#      every poll for ever, so this was true of a completely stuck part.
+#   2. "fresh AND zero contacts" -- closed case 1 for a clean bus, but with the
+#      clear deleted AND a contact-read fault injected, the driver's freshness
+#      flag was set before the contact read and so was inherited by the fault
+#      path, whose zero count then looked exactly like a release.  QEMU never
+#      faults I2C, so nothing here could see it; a bus glitch on silicon
+#      produces precisely that state.
+#
+# Both are now unrepresentable rather than merely fixed: read() returns a state,
+# and Failed is not Released.  Verified in both directions -- the compound
+# injection goes red against the current driver and green against the previous
+# one.  Do not reduce this to a test on a contact count.
 grep -q "TOUCH_ADVANCED" "$OUT" || { echo "FAIL: the part never published a second buffer -- read() did not clear the status register at 0x814E"; exit 1; }
 # The driver must NEVER write the configuration space.  NXP's own driver
 # rewrites all 186 bytes when the stored point count or trigger mode differ,
@@ -145,4 +157,4 @@ fi
 echo "PASS: RK055 touch T1+T2+T3a (GT911 reset + INT-level address latch at 0x5D"
 echo "      + product ID + the 186-byte config blob read and checksummed,"
 echo "      with the config space untouched; and a polled contact read whose"
-echo "      mandatory status clear let the part publish a second buffer)"
+echo "      mandatory status clear let the part go on to publish the release)"

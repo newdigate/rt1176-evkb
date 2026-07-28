@@ -11,12 +11,12 @@
  *
  * Stage 3 (MINIMAL, deliberately): read() is polled just far enough to prove
  * two things -- that a contact comes back at all, and that the part goes on to
- * publish a SECOND coordinate buffer.  The second is the load-bearing one: this
- * part republishes only after the host acknowledges the previous buffer by
- * writing 0 to the status register, so a driver that skips that write sees the
- * first contact for ever.  A full three-phase check of the scripted path (five
- * taps in order, a monotonic drag, two contacts with distinct track ids) is a
- * later stage; this one covers the driver's central discipline and nothing more.
+ * publish the RELEASE after it.  The second is the load-bearing one: this part
+ * republishes only after the host acknowledges the previous buffer by writing 0
+ * to the status register, so a driver that skips that write sees the first
+ * contact for ever.  A full three-phase check of the scripted path (five taps
+ * in order, a monotonic drag, two contacts with distinct track ids) is a later
+ * stage; this one covers the driver's central discipline and nothing more.
  *
  * Every stage token is emitted UNCONDITIONALLY so the first FAIL pinpoints the
  * broken layer rather than the run simply stopping.
@@ -130,34 +130,38 @@ void setup() {
     // harness kills QEMU with nothing in the transcript.  ~500 ms is generous
     // -- the first published instant and the one after it are 20 ms apart.
     for (uint16_t i = 0; i < 500 && !advanced; i++) {
-        const uint8_t n = touch.read(pts, (uint8_t)(sizeof(pts) / sizeof(pts[0])));
+        uint8_t n = 0;
+        const GT911::Poll p =
+            touch.read(pts, (uint8_t)(sizeof(pts) / sizeof(pts[0])), &n);
+
         if (!haveFirst) {
-            if (n > 0) {
+            if (p == GT911::Poll::Contacts && n > 0) {
                 first = pts[0];
                 haveFirst = true;
             }
-        } else if (touch.lastPollFresh() && n == 0) {
-            // THE RELEASE: a published buffer carrying zero contacts.  Both
-            // halves of this test are load-bearing, and the first draft got it
-            // wrong in a way worth recording.
+        } else if (p == GT911::Poll::Released) {
+            // THE RELEASE, and this single comparison is the whole assertion.
             //
-            // `lastPollFresh()` ALONE is not evidence of anything.  It reports
-            // that the ready bit was set on this poll, and a driver that never
-            // acknowledged the buffer sees that bit set on every poll for ever
-            // -- so "fresh twice" is true of a completely wedged part.  A
-            // negative test confirmed it: with the status clear deleted, a
-            // fresh-only condition still went green.
+            // Released is a buffer the part PUBLISHED carrying zero contacts.
+            // An unacknowledged part re-serves the same one-contact buffer for
+            // ever, so this state is unreachable unless read() performed the
+            // mandatory status clear and the part moved on.
             //
-            // `n == 0` is what makes it real.  The part re-serves the SAME
-            // one-contact buffer until it is acknowledged, so a buffer with
-            // zero contacts cannot exist unless the tap was acknowledged and
-            // the part moved on.  With the clear deleted this stays false and
-            // the gate goes red, which is the whole purpose of the stage.
+            // Two earlier versions of this test were wrong, both by rebuilding
+            // "release" out of ingredients instead of asking for it:
             //
-            // And note it must be tested as fresh-AND-zero rather than by the
-            // count alone: `n == 0` on its own is also what an idle poll
-            // returns.  Telling "nothing new" from "new, and nobody is
-            // touching" is exactly what lastPollFresh() exists for.
+            //   n == 0 alone            -- also true of an idle poll, and the
+            //                              poll loop runs far faster than the
+            //                              part publishes, so almost every poll
+            //                              is idle.
+            //   fresh && n == 0         -- a wedged part reports the ready bit
+            //                              set on every poll, and a faulting
+            //                              contact read then yields a zero
+            //                              count, so a permanently stuck part
+            //                              satisfied it and the gate went GREEN.
+            //
+            // The driver now answers the question directly.  Poll::Failed is a
+            // distinct state, so a fault can no longer masquerade as a release.
             advanced = true;
         }
         delay(1);
@@ -177,7 +181,17 @@ void setup() {
                        GT911::errorName(touch.lastError()),
                        (unsigned)touch.lastI2cStatus());
     }
-    Serial1.printf("TOUCH_%s\n", advanced ? "ADVANCED" : "STALLED");
+    // The stalled line carries diagnostics because the two ways of reaching it
+    // need telling apart in a transcript: a part that is wedged on one buffer
+    // (err=NONE -- nothing failed, it simply never moved on) versus one whose
+    // transfers are failing (err=PTREAD / STATCLR / STATREAD).
+    if (advanced) {
+        Serial1.println("TOUCH_ADVANCED");
+    } else {
+        Serial1.printf("TOUCH_STALLED err=%s I2C=%u\n",
+                       GT911::errorName(touch.lastError()),
+                       (unsigned)touch.lastI2cStatus());
+    }
 }
 
 void loop() {}
