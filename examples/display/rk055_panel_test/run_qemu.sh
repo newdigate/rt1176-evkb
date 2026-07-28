@@ -25,4 +25,10 @@ grep -q "LCDIFV2_OK" "$OUT" || { echo "FAIL: lcdifv2"; exit 1; }
 # well-formed and correctly ordered -- NOT that the D-PHY locks at ~792 MHz over
 # two lanes. That is silicon-only and is what the M1 hardware run settles.
 grep -q "DSI_OK"     "$OUT" || { echo "FAIL: dsi";     exit 1; }
-echo "PASS: RK055 panel M1 (clocks + LCDIFv2 + MIPI-DSI host at 720x1280, 2 lanes)"
+# M2 -- the HX8394 driver sent the fsl_hx8394.c sequence over the DSI link and
+# the virtual panel accepted it. NOTE the QEMU model checks the ORDER and the
+# lane agreement, never the 21 tuning commands' VALUES (they are panel
+# calibration data it has no way to judge) -- silicon is the only oracle for
+# those.
+grep -q "PANEL_OK" "$OUT" || { echo "FAIL: hx8394"; exit 1; }
+echo "PASS: RK055 panel M2 (clocks + LCDIFv2 + MIPI-DSI host + HX8394 panel init at 720x1280, 2 lanes)"

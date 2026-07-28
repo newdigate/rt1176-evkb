@@ -29,6 +29,7 @@ void setup() {
     Serial1.printf("CLK_%s\n",     Display.clkOk()   ? "OK" : "FAIL");
     Serial1.printf("LCDIFV2_%s\n", Display.lcdifOk() ? "OK" : "FAIL");
     Serial1.printf("DSI_%s\n",     Display.dsiOk()   ? "OK" : "FAIL");
+    Serial1.printf("PANEL_%s\n", Display.panelOk() ? "OK" : "FAIL");
 
     Serial1.println("RK055_PANEL_END");
 }
