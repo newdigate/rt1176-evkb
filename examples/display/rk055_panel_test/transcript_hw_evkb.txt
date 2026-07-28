@@ -192,3 +192,119 @@ QEMU
 ./run_qemu.sh still PASSes; a passing run's captured UART is byte-identical to
 before these additions (the diagnostic lines print only on PANEL_FAIL, and
 strictly after the PANEL_ token the gate greps for).
+
+
+=================================================================
+M2 PHASE-3/4 — THE FIX: PANEL INIT BEFORE SCANOUT (22/22 CLEAN)
+=================================================================
+Date:   2026-07-28
+Board:  MIMXRT1170-EVKB, panel on J48 (40-pin FPC, native RK055 connector)
+Probe:  MCU-LINK on-board (r0E2) CMSIS-DAP V2.250, serial 5DQ2DDHVWO5EI
+Image:  examples/display/rk055_panel_test/build/rk055_panel_test.elf
+        (MipiDisplay with PANEL_INIT_BEFORE_SCANOUT)
+
+ROOT CAUSE
+----------
+The Phase-1 hypothesis, confirmed by fixing it: we were sending the HX8394 init
+while the LCDIFv2 was ALREADY STREAMING DPI VIDEO.  NXP does not.  In
+mcuxsdk/examples/driver_examples/lcdifv2/rgb565/lcdifv2_rgb565.c the panel is
+brought up before the display controller exists:
+
+    :152  BOARD_InitDisplayInterface()   <- DSI host bring-up AND the whole
+                                            HX8394 init
+    :161  LCDIFV2_Init()                 <- LCDIFv2 initialised only after
+    :163  LCDIFV2_SetDisplayConfig()
+    :165  LCDIFV2_EnableDisplay(true)
+    :184  LCDIFV2_EnableLayer(true)      <- scanout actually begins later still
+
+In video mode the host can only fit an LP escape packet into a blanking (BLLP)
+window, so it WAITS rather than erroring — which is exactly the Phase-1
+signature: no FIFO error, no RX error, D-PHY still locked, the APB state
+machine simply never returning to idle.  The location was fixed (always tuning
+index 9, the packet after the 59-byte gamma table) because that packet's
+duration is fixed, so index 9 always lands at the same phase offset; the
+absolute frame phase at boot varies, which gave the intermittency.
+
+THE CHANGE (one change, nothing else)
+-------------------------------------
+Bring-up order became a PANEL property, the same shape this library already
+uses for lane count, video mode and the clock plan:
+
+  panels/rk055/panel_config.h   #define PANEL_INIT_BEFORE_SCANOUT 1
+  panels/rpi7/panel_config.h    #define PANEL_INIT_BEFORE_SCANOUT 0
+
+  Display::begin() now runs, for rk055:  clocks -> DSI host -> HX8394 -> LCDIFv2
+                             for rpi7:   ATtiny -> clocks -> LCDIFv2 -> DSI host -> TC358762
+
+The two panels genuinely want OPPOSITE orders and both are HW-found: a
+TC358762 BRIDGE needs valid video sync present before it will lock (Task 14 —
+starting it with no video left the RPi panel dark), whereas a NATIVE DSI
+controller needs the link quiet to be programmed.  Both reasons are documented
+in BOTH panel_config.h files so neither can be "simplified" to match the other.
+No timing, register value, packet, or packet-sequence value was touched.
+mipiDsiBegin() is unaffected by the move: it only programs the DPI input's
+geometry, it does not require pixels to already be arriving — which is why
+NXP's own BOARD_InitDisplayInterface() runs the entire DSI host bring-up before
+LCDIFV2_Init() is called at all.
+
+PROGRAMMING
+-----------
+  LinkServer flash MIMXRT1176:MIMXRT1170-EVKB load   <elf>   -> EXIT=0
+  LinkServer flash MIMXRT1176:MIMXRT1170-EVKB verify <elf>   -> EXIT=0
+      "File matches flash", both ELF data sections verified.
+
+RESULT — 22 VALID RESETS, 22 PASS, 0 FAIL
+------------------------------------------
+    before (Phase 1):   11 PANEL_OK / 4 PANEL_FAIL out of 15   (~27% failure)
+    after  (this fix):  22 PANEL_OK / 0 PANEL_FAIL out of 22
+
+28 reset attempts were made; 6 produced NO capture at all — not even the
+unconditional RK055_PANEL_BEGIN banner — because the VCOM re-enumerated or
+LinkServer lost the DAP after many back-to-back resets.  Those are probe-level
+losses, not runs, and are excluded rather than counted as passes.  A real panel
+failure could not hide in them: the banner and the four stage tokens are
+printed unconditionally, so a genuine failure appears as PANEL_FAIL plus the
+PANEL_ERR/DSI_ERR block, which occurs in ZERO of the 28 captures.
+
+Under the Phase-1 failure rate of 4/15 = 26.7%, 22 consecutive clean runs has
+probability 0.733^22 = 0.00097 — about 1 in 1000.  Every captured run:
+
+RK055_PANEL_BEGIN
+PANEL=RK055HDMIPI4MA0 720x1280 (HX8394)
+GEOM=720x1280 PIXCLK=58666666 LANES=2
+CLK_OK
+LCDIFV2_OK
+DSI_OK
+PANEL_OK
+RK055_PANEL_END
+
+The failure did not MOVE (no different index/opcode ever appeared) and did not
+recur — the two signatures that would have meant "wrong root cause" and "right
+cause, incomplete fix" respectively.
+
+PROCEDURE NOTE — pkill LinkServer is NOT enough
+-----------------------------------------------
+`pkill LinkServer` kills only the wrapper; it leaves `redlinkserv` and
+`crt_emu_cm_redlink` resident, and the next `LinkServer run` then finds the
+probe occupied and silently produces a dead run.  Four consecutive no-captures
+were caused by exactly this before the loop also did:
+
+    pkill redlinkserv; pkill -f crt_emu_cm_redlink
+
+Second note: the console log contains a NUL byte where the VCOM re-enumerates,
+so BSD grep treats it as a binary file — tally these captures with `grep -a` or
+a genuine PANEL_OK reads as a no-capture.
+
+OTHER PANELS — WHAT IS AND IS NOT PROVEN
+-----------------------------------------
+The RPi 7" panel keeps the ordering it already had (PANEL_INIT_BEFORE_SCANOUT
+0), and its QEMU gates still pass with the unchanged checksums:
+
+    display/rpi_panel_test       FB_SUM=0x62429DC5  PANEL_SUM=0x62429DC5  PASS
+    display/lvgl_rpi_panel_test  LVGL_SUM=0xB220E6E4                      PASS
+    display/rk055_panel_test     PASS
+
+That RPi panel CANNOT be hardware-verified right now — its hardware is blocked
+on an unrelated connector fault.  So for that panel the evidence is the QEMU
+gates plus the fact that its ordering is byte-for-byte the order it was already
+HW-verified with at Task 14.  Nothing more is claimed.
