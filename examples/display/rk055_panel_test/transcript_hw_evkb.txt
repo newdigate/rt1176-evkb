@@ -1,0 +1,92 @@
+RK055HDMIPI4MA0 — M1 hardware verification on the MIMXRT1170-EVKB
+=================================================================
+Date:   2026-07-28
+Board:  MIMXRT1170-EVKB, panel on J48 (40-pin FPC, native RK055 connector)
+Probe:  MCU-LINK on-board (r0E2) CMSIS-DAP V2.250, serial 5DQ2DDHVWO5EI
+Image:  examples/display/rk055_panel_test/build/rk055_panel_test.elf
+Cores:  afff78a (BUS_CLK_ROOT = SYS_PLL3_OUT/2 = 240 MHz)
+
+
+PROGRAMMING (real status codes, not "LinkServer stayed attached")
+-----------------------------------------------------------------
+  LinkServer flash MIMXRT1176:MIMXRT1170-EVKB load   <elf>   -> LOAD_EXIT=0
+  LinkServer flash MIMXRT1176:MIMXRT1170-EVKB verify <elf>   -> VERIFY_EXIT=0
+      Flash variant 'iMXRT1170_SFDP_FlexSPI1_A_QSPI' (64MB at 0x30000000)
+      File matches flash.
+      Read 0xFE0 bytes in 27ms - verify succeeded
+
+
+CAPTURED UART (MCU-Link VCOM, 115200, via tools/rt1170-console.py)
+------------------------------------------------------------------
+RK055_PANEL_BEGIN
+PANEL=RK055HDMIPI4MA0 720x1280 (HX8394)
+GEOM=720x1280 PIXCLK=58666666 LANES=2
+CLK_OK
+LCDIFV2_OK
+DSI_OK
+RK055_PANEL_END
+
+
+WHAT THIS PROVES ON SILICON (and only silicon)
+-----------------------------------------------
+DSI_OK is the milestone's whole point and is a HARDWARE-ONLY fact.  The QEMU
+model reports D-PHY LOCK the instant PD_PLL clears and stores every DPI
+register as plain RW, so the QEMU gate proves the bring-up SEQUENCE and nothing
+about the analog link.  On the board it means:
+
+  * the D-PHY PLL genuinely LOCKED at the sized bit rate -- desired
+    791,999,991 Hz (58,666,666 x 24/2 x 9/8, integer-truncated twice), which
+    the divider search rounds to CN=1 / CM=33 / CO=0 = 792,000,000 Hz actual;
+  * across TWO data lanes, versus the RPi panel's one.  This is the first
+    2-lane MIPI-DSI link brought up on this board;
+  * with the DPI blanking arithmetic producing positive HFP/HBP/HSA
+    (28 / 71 / 10) -- blanking-byte underflow is what made the mainline RPi
+    modeline unreachable on this DSI host, and this modeline clears it.
+
+CLK_OK is also a first: this is the first compiled consumer of
+displayClockInit()'s no-VIDEO_PLL path.  It confirms on silicon that SYS_PLL2
+reads stable (bit 29), not gated (bit 30) and not bypassed (bit 16) at boot --
+i.e. the boot ROM really does leave PLL_528 running, so this panel needs no PLL
+bring-up at all.  Note that check was added deliberately: the branch originally
+set its lock flag vacuously true, which would have made clkOk() report success
+for a clock source that might not be running, since a CCM CONTROL register
+latches a mux selection whether or not the PLL behind it is alive.
+
+LCDIFV2_OK means the scanout block accepted the 720x1280 geometry and the
+layer-0 descriptor.  It does NOT mean pixels reach the glass -- there is no
+panel driver yet (M2) and nothing painted into the framebuffer (M3).  The panel
+is expected to show nothing at this milestone.
+
+
+NOT PROVEN HERE
+---------------
+  * Anything past the DSI host.  The HX8394 has received no init sequence.
+  * Sustained scanout bandwidth.  ~108 MB/s at 58.7 Hz is what the 240 MHz
+    BUS_CLK_ROOT exists for, but nothing is scanning out real pixels yet, so
+    the LCDIFv2 output-underrun counter is not meaningful until M3.
+
+
+PROCEDURE NOTE -- worth heeding, it cost a failed flash
+-------------------------------------------------------
+The plan said to start the serial reader BEFORE flashing.  On this MCU-Link
+that BROKE the debug session: with tools/rt1170-console.py holding the VCOM,
+`LinkServer flash ... load` failed with
+
+    Error: Hardware interface transfer error
+    request to clear DAP error failed - status 131
+    error on reset - Ee(83). Hardware Transfer Error
+    LOAD_EXIT=255
+
+and the VCOM re-enumerated mid-attempt ("port dropped, reconnecting").  The
+identical command succeeded (LOAD_EXIT=0) as soon as nothing held the port.
+
+Working order on this board:
+    1. flash ... load     (VCOM free)
+    2. flash ... verify   (VCOM free)
+    3. attach the serial reader
+    4. reset -- `LinkServer run <dev> <elf>` in the background works; there is
+       no standalone `LinkServer reset` subcommand in 26.6.137.
+
+The repo rule "start the reader before triggering a reset if you need boot
+output" still holds -- it is specifically holding the port DURING PROGRAMMING
+that fails.
