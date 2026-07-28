@@ -64,17 +64,24 @@ grep -q "ID=911" "$OUT" || { echo "FAIL: product ID not echoed as ID=911"; exit 
 #
 # It is ALSO this gate's only proof that the chunked read path works.  186 bytes
 # at 32 per chunk is five full chunks plus a 26-byte remainder, and every chunk
-# restates its own sub-address -- so a dropped chunk, a mis-advanced offset or a
-# short read anywhere in the sequence lands wrong bytes in the buffer and the
+# restates its own sub-address -- so a dropped chunk, a short read, or a chunk
+# fetched from the wrong sub-address lands wrong bytes in the buffer and the
 # 184-byte sum stops matching byte 184.  Nothing before this read more than 4
 # bytes at a time.
 #
-# That claim is only true because the MODEL cooperates: it fills the blob's
-# unspecified bytes with a position-dependent pattern, verified so that no
-# aligned chunk sums to zero and no two chunk sums collide.  While those bytes
-# were zeros this assertion was decorative -- a dropped middle chunk contributed
-# exactly what it should have (nothing) and the gate stayed green.  If anyone
-# ever flattens that filler, this line stops testing chunking.
+# What it does NOT catch, so nobody reads more into a green run than is there:
+# two whole chunks TRANSPOSED.  The checksum is a sum and addition commutes, so
+# exchanging two equal-length blocks inside bytes 0..183 leaves it identical --
+# unfixable at this layer, by any model.  Enumerated: 17 of 298 injected
+# chunking faults survive, 10 of them transpositions.
+#
+# The rest of the claim is only true because the MODEL cooperates: it fills the
+# blob's unspecified bytes with a position-dependent pattern, verified so that
+# no aligned chunk sums to zero and no two chunk sums collide.  While those
+# bytes were zeros this assertion was decorative -- a dropped middle chunk
+# contributed exactly what it should have (nothing) and the gate stayed green.
+# That property is now pinned by an abort() in the model itself, so flattening
+# the filler fails loudly instead of silently retiring this line.
 grep -q "CFG_OK" "$OUT" || { echo "FAIL: config blob"; exit 1; }
 # RES/POINTS are RECORDED, never asserted.  A real GT911 reports whatever it
 # reports and it is NOT guaranteed to equal the panel's 720x1280; asserting
@@ -91,8 +98,13 @@ grep -q "POINTS=" "$OUT" || { echo "FAIL: contact count not reported"; exit 1; }
 # The log must EXIST first.  `grep -q ... 2>/dev/null` inside an `if` scores a
 # missing or empty file as "no write happened", so the assertion would pass
 # most loudly in the one case where it knows nothing -- absent evidence read as
-# evidence of absence.  -d guest_errors always creates this file, so its absence
-# means the run itself was broken.
+# evidence of absence.
+#
+# Belt and braces only, and be honest about why: tools/qrun creates this file
+# with `: > "$LOG"` BEFORE it execs QEMU, so the file existing proves qrun ran,
+# not that QEMU did -- a run that died at startup leaves a populated .dbg beside
+# an empty .uart.  The `-s "$OUT"` check above is what actually catches that
+# shape; this one catches a .dbg that never appeared at all.
 [ -f "$DIR/rk055_touch.dbg" ] || { echo "FAIL: no guest-error log -- the config-write assertion cannot be checked"; exit 1; }
 if grep -q "gt911: guest wrote config" "$DIR/rk055_touch.dbg"; then
     echo "FAIL: firmware wrote the GT911 configuration space"; exit 1
