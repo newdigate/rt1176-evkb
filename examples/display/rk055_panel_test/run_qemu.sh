@@ -31,4 +31,25 @@ grep -q "DSI_OK"     "$OUT" || { echo "FAIL: dsi";     exit 1; }
 # calibration data it has no way to judge) -- silicon is the only oracle for
 # those.
 grep -q "PANEL_OK" "$OUT" || { echo "FAIL: hx8394"; exit 1; }
-echo "PASS: RK055 panel M2 (clocks + LCDIFv2 + MIPI-DSI host + HX8394 panel init at 720x1280, 2 lanes)"
+# M3 -- pixels. FRAME_OK: a whole LCDIFv2 frame scanned out after the paint.
+# Asserted separately from the checksum because the checksum cannot see it:
+# pixels read the same whether the display is scanning or stopped dead.
+grep -q "FRAME_OK"      "$OUT" || { echo "FAIL: no scanout frame"; exit 1; }
+# FB_SUM: FNV-1a of the SDRAM framebuffer vs a software-computed expectation.
+# Proves drawTestPattern() wrote what it was asked to.
+grep -q "FB_SUM=.*PASS" "$OUT" || { echo "FAIL: fb_sum"; exit 1; }
+# PANEL_SUM: the virtual HX8394's received-pixel checksum vs the SAME
+# expectation. QEMU-ONLY BY CONSTRUCTION -- the tap is emulator fiction with no
+# silicon counterpart. On hardware the gate prints PANEL_SUM_HW=TAP_ABSENT and
+# the panel is verified by eye.
+grep -q "PANEL_SUM=.*PASS" "$OUT" || { echo "FAIL: panel_sum"; exit 1; }
+# UNDERRUN: LCDIFV2_INT_STATUS_D0[1] sampled over N frames. HARDWARE-ONLY BY
+# CONSTRUCTION -- QEMU has no timing model, so a QEMU UNDERRUN=0/N proves
+# NOTHING about the ~108 MB/s scanout this panel demands. Asserted PRESENT here
+# so it can never be silently dropped; its VALUE only means something in
+# transcript_hw_evkb.txt.
+grep -q "UNDERRUN=" "$OUT" || { echo "FAIL: underrun token missing"; exit 1; }
+echo "PASS: RK055 panel M3 (clocks + LCDIFv2 + MIPI-DSI host + HX8394 panel init"
+echo "      + colour-bar/diagonal test pattern on glass at 720x1280, 2 lanes:"
+echo "      scanout frame, FB_SUM == PANEL_SUM == software expectation,"
+echo "      underrun sampler present)"

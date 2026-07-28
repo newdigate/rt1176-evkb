@@ -1,15 +1,15 @@
 transcript_qemu.txt - rk055_panel_test on the mimxrt1170-evk QEMU machine
 Date: 2026-07-28
 
-MILESTONE M1 -- the SoC chain ONLY: display clocks, LCDIFv2 scanout, MIPI-DSI
-host.  The HX8394 panel driver is M2 and the test pattern + checksums are M3;
-neither exists yet, so this gate deliberately asserts three tokens and no more.
-There is no PANEL_OK here BY DESIGN -- Display::panelOk() is hardwired false on
-this panel until M2 lands, and a gate asserting it now would be asserting
-nothing.
+MILESTONE M3 -- pixels.  The full chain: display clocks, LCDIFv2 scanout,
+MIPI-DSI host (M1), the HX8394 panel driver (M2), and now a colour-bar/diagonal
+test pattern in the framebuffer checked against two independent oracles, plus
+the LCDIFv2 output-underrun sampler.
 
-THIS IS THE ONLY EVIDENCE THIS EXAMPLE HAS. The RK055HDMIPI4MA0 panel is not
-currently connected to J48, so there is no transcript_hw_evkb.txt.
+This file records the QEMU half only.  The hardware half is
+transcript_hw_evkb.txt (M2's 22/22 clean panel-init runs); the M3 hardware run
+-- the one that actually looks at the glass and reads a non-vacuous UNDERRUN --
+is the NEXT task and is not recorded here yet.
 
 RK055_PANEL_BEGIN
 PANEL=RK055HDMIPI4MA0 720x1280 (HX8394)
@@ -17,8 +17,16 @@ GEOM=720x1280 PIXCLK=58666666 LANES=2
 CLK_OK
 LCDIFV2_OK
 DSI_OK
+PANEL_OK
+FRAME_OK
+FB_SUM=0x9831F3C5 EXP=0x9831F3C5 PASS
+PANEL_SUM=0x9831F3C5 EXP=0x9831F3C5 PASS
+UNDERRUN=0/10 (QEMU: vacuous)
 RK055_PANEL_END
-PASS: RK055 panel M1 (clocks + LCDIFv2 + MIPI-DSI host at 720x1280, 2 lanes)
+PASS: RK055 panel M3 (clocks + LCDIFv2 + MIPI-DSI host + HX8394 panel init
+      + colour-bar/diagonal test pattern on glass at 720x1280, 2 lanes:
+      scanout frame, FB_SUM == PANEL_SUM == software expectation,
+      underrun sampler present)
 
 ==== what each token does and does NOT prove ====
 
@@ -31,8 +39,7 @@ CLK_OK: the three CCM roots (LCDIFv2, MIPI_REF, MIPI_ESC) took their mux/divider
 settings and read back.  This panel sets PANEL_NEEDS_VIDEO_PLL 0 -- it sources
 the pixel and escape clocks from PLL_528, which the boot ROM already locked --
 so displayClockInit() took its no-VIDEO_PLL path and VERIFIED SYS_PLL2 (stable,
-ungated, not bypassed) rather than bringing a PLL up.  That path had no compiled
-consumer before this example; this is its first exercise.  Note the limit
+ungated, not bypassed) rather than bringing a PLL up.  Note the limit
 display_clock.cpp documents: it proves SYS_PLL2 is RUNNING, not that it runs at
 528 MHz.
 
@@ -44,14 +51,64 @@ DSI_OK: the D-PHY PLL/timing/power-up and the DPI video-mode config completed in
 order.  The QEMU model reports D-PHY LOCK as soon as PD_PLL clears and stores
 every DPI register as plain RW, so this proves the bring-up SEQUENCE is
 well-formed and correctly ordered -- NOT that the D-PHY locks at the ~792 MHz
-this panel's 2-lane burst-mode link needs.  Silicon is the only oracle for that
-and it is what the M1 hardware run settles.
+this panel's 2-lane burst-mode link needs.  Silicon settled that in M1.
 
 Also unproven here and specific to this panel: burst mode (kDSI_DpiBurst) and
 autoInsertEoTp, both of which differ from the rpi7 panel and neither of which
 the model interprets.
 
+PANEL_OK: hx8394Init() sent the fsl_hx8394.c sequence over the DSI link and the
+virtual HX8394 accepted it -- the four contract conditions in qemu2
+include/hw/display/imxrt_hx8394.h (EXTC unlock first, SETMIPI lane count
+agreeing with the host's CFG_NUM_LANES, sleep-out before display-on,
+display-on seen).  The model COUNTS the 21 tuning commands and never inspects
+their values: they are panel calibration data it has no way to judge.
+
+FRAME_OK: a whole LCDIFv2 frame scanned out AFTER the paint (two VSYNC edges, so
+the second frame is the first drawn entirely from the new contents).  This is
+asserted separately from the checksums because neither checksum can see it --
+both read pixels, and pixels read the same whether the display is scanning or
+stopped dead.  What the model gates VSYNC on is a free-running 16 ms timer under
+DISP_ON, so this proves the display is enabled and ticking, not that it ticks at
+this panel's real 58.68 Hz.
+
+FB_SUM: FNV-1a-32 of the 1,843,200-byte SDRAM framebuffer, against an
+expectation computed by a SECOND, INDEPENDENT walk of the pattern rule in
+rk055_panel_test.cpp -- deliberately not a call into the driver, which would
+only prove the driver agrees with itself.  Proves drawTestPattern() wrote what
+it was asked to.
+
+PANEL_SUM: the virtual HX8394's received-pixel checksum against the SAME
+expectation.  It matching FB_SUM means the pixels in SDRAM are the pixels the
+panel would be handed -- the scanout descriptor's base, pitch, format and
+geometry all agree with what was painted.  The tap returns its sentinel unless
+the init contract is satisfied AND the LCDIFv2 layer is enabled, so a pass also
+carries those.  QEMU-ONLY BY CONSTRUCTION: the real HX8394 is on the far side of
+the DSI link with no registers in the SoC map at all, so on silicon this reads
+back TAP_ID=0 and the gate prints PANEL_SUM_HW=TAP_ABSENT instead.
+
+Why a pattern rather than a solid fill: a uniform colour is indistinguishable
+from the LCDIFv2 emitting its safe colour after a FIFO underrun -- the exact
+ambiguity that cost the rpi7 bring-up two sessions of by-eye checking.  Eight
+bars plus a diagonal make each plausible failure look different: blank output,
+a wrong stride (the bars shear), a wrong pixel format (the colours change), a
+flipped image (the diagonal runs the other way).  The bar colours were picked so
+adjacent ones differ in more than one channel, so a swapped or truncated channel
+shows as a WRONG BAR rather than a subtly wrong shade.
+
+UNDERRUN=0/10 (QEMU: vacuous): LCDIFV2_INT_STATUS_D0[1], the OUTPUT (TXFIFO)
+underrun latch, cleared and re-read once per frame over ten frames.  THE VALUE
+HERE MEANS NOTHING.  QEMU has no timing model -- it does not simulate SDRAM
+bandwidth, AXI arbitration or the scanout FIFO's drain rate -- so a 0/10 under
+emulation is not evidence about the ~108 MB/s this panel's 720x1280 RGB565
+scanout actually demands.  The token is asserted PRESENT by run_qemu.sh (never
+its value) purely so the sampler can never be silently dropped, which is what
+happened to the equivalent diagnostic on the previous panel.  Its value is only
+meaningful in transcript_hw_evkb.txt.  The "(QEMU: vacuous)" suffix is emitted
+off the same TAP_ID test that already separates emulator from silicon, so a QEMU
+transcript cannot be misread as bandwidth evidence.
+
 ==== guest_errors ====
 rk055_panel.dbg contains only the pre-existing noise every example on this
-machine emits (USB PHY registers 0xa0/0xa4/0xa8, NVIC offset 0xdfc, the host
-coreaudio backend).  Nothing display-related.
+machine emits (USB PHY registers 0xa0/0xa4/0xa8, NVIC offset 0xdfc, CI-UDC
+USBMODE.CM, the host coreaudio backend).  Nothing display-related.
