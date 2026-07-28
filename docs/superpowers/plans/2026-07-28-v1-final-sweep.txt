@@ -1,0 +1,62 @@
+Running 29 QEMU gate(s)  timeout 120s each
+
+  PASS  audio/audio_h_test                             1s
+  PASS  audio/filter_fir_test                          10s
+  PASS  audio/guard_sweep_test                         11s
+  PASS  audio/i2s_int_test                             1s
+  PASS  display/lvgl_ili9341_test                      10s
+  PASS  display/lvgl_rpi_panel_test                    12s
+  PASS  display/lvgl_smoke_test                        6s
+  PASS  display/rk055_panel_test                       9s
+  PASS  display/rpi_panel_test                         8s
+  FAIL  dualcore/cm4_audio_test                        2s
+  PASS  dualcore/cm4_audiostream_test                  1s
+  PASS  dualcore/cm4_boot_test                         1s
+  PASS  dualcore/cm4_cpp_test                          1s
+  PASS  dualcore/cm4_dual_test                         1s
+  PASS  dualcore/cm4_fft_test                          1s
+  PASS  dualcore/cm4_hotswap2_test                     1s
+  PASS  dualcore/cm4_hotswap_test                      1s
+  PASS  dualcore/cm4_image_test                        1s
+  PASS  dualcore/cm4_imagebank_test                    1s
+  PASS  dualcore/cm4_intr_test                         2s
+  PASS  dualcore/cm4_sai_irq_probe                     1s
+  PASS  dualcore/cm4_spi_dma_test                      1s
+  PASS  dualcore/cm4_spi_test                          1s
+  PASS  dualcore/cm4_wire_dma_test                     0s
+  PASS  dualcore/cm4_wire_int_master_test              0s
+  PASS  dualcore/cm4_wire_int_slave_test               1s
+  PASS  dualcore/cm4_wire_test                         1s
+  PASS  framework/arm_math_test                        5s
+  PASS  serial/serial_test                             3s
+
+──── failing gate output ────
+
+dualcore/cm4_audio_test
+    ==== captured UART ====
+    CM4AUDIO-GATE v1
+    info pll_prearm=1 (CM7 fallback engaged)
+    codec_ack=00000001
+    sai_isr_count=00000400
+    dispatch_count=00000400
+    underruns=00000000
+    fef=00000000
+    rx_overflows=00000000
+    mic_peak_q15=00000000
+    fft_peak_bin=00000000
+    fft_peak_mag=00000000
+    done=D0DE0005
+    cm7_audio_isers=00000000
+    AUDIO_CM4_DET=FAIL
+    AUDIO_CM4=FAIL
+    HUMAN: listen for ~1 kHz on J101 (CM4-owned pipeline)
+    CM4AUDIO-DONE
+    PASS: codec_ack=00000001
+    FAIL: expected fft_peak_bin=00000006
+    PASS: cm7_audio_isers=00000000
+    FAIL: expected AUDIO_CM4_DET=PASS
+    GATE FAILED
+    [exit status 1]
+
+gates: 28 passed, 1 failed
+EXIT=1
