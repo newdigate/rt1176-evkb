@@ -14,3 +14,6 @@ cmake-build-*/
 serial.dbg
 serial.uart
 tap.raw
+
+# superpowers brainstorming companion (transient mockups)
+.superpowers/
