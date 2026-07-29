@@ -79,13 +79,28 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** `dualcore/cm4_audio_test` is currently broken
-for reasons unrelated to any current work (fails on macOS, the only platform
-tested; bisected to neither a bus-clock nor a QEMU-model regression, cause
-still unidentified). **Do not run it by default** and do not chase its red —
-but equally, do not delete it, weaken it, or drop it from the runner to make a
-sweep green. Expected result today is **28 passed, 1 failed, 0 SKIP**; any
-*other* failure is a real regression from what you are doing.
+`docs/KNOWN-BROKEN-GATES.md`.** Expected result, measured 2026-07-29:
+**68 passed, 0 failed, 0 SKIP**. Any failure at all is a real regression from
+what you are doing.
+
+Two things that number depends on:
+
+- **Gates do not build.** The runner assumes `build/<name>.elf` exists and
+  reports a missing one as SKIP, not as a failure. A non-zero SKIP count means
+  you measured less than you think — build every gate-owning example first, or
+  the sweep quietly under-reports.
+- **`dualcore/cm4_audio_test` has a history.** It was long documented as broken
+  on macOS for reasons unrelated to any current work, cause never identified.
+  It has now passed every run since 2026-07-28, including this sweep. Treat a
+  red from it as suspect rather than as your bug — but do not delete it, weaken
+  it, or drop it from the runner to make a sweep green. See
+  `docs/KNOWN-BROKEN-GATES.md`, which is still the record.
+
+The previously documented baseline here was `28 passed, 1 failed, 0 SKIP`,
+which had gone stale by more than half the tree. A baseline that understates the
+gate count that badly means a sweep can silently lose dozens of gates and still
+look right — the same class of defect the audit's `GATES` drift check exists to
+catch. Re-measure this line when you add gates.
 
 Repo-wide gates in `tools/`:
 - `license-audit.sh` — proves no copyleft source is compiled into firmware
