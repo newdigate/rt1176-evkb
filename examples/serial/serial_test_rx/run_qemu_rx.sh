@@ -1,8 +1,14 @@
 #!/bin/sh
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/serial_test_rx.elf"
 PORT=45455
@@ -13,5 +19,5 @@ P=$!; gate_pid $P
 sleep 1
 RC=0
 python3 "$DIR/qemu_rx_driver.py" $PORT || RC=1
-kill $P 2>/dev/null; wait $P 2>/dev/null || true
+gate_reap $P
 exit $RC

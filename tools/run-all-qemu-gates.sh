@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # run-all-qemu-gates.sh — run every QEMU gate under examples/ and summarise.
 #
-# Each example owns a ./run_qemu.sh that boots its image on the custom
+# Each example owns exactly one gate that boots its image on the custom
 # mimxrt1170-evk QEMU machine and asserts the expected UART tokens. This runs
 # them all, prints one line per gate, and exits non-zero if any gate failed —
 # so it drops straight into CI or a pre-push check.
 #
+# Discovery is `run_qemu*.sh`, NOT `run_qemu.sh`. Roughly half the gates in this
+# tree are named for what they test (run_qemu_usb.sh, run_qemu_lwip.sh, …), and
+# while discovery was the bare name those 38 gates were never swept at all —
+# they went stale unnoticed, and a defect fixed in the other 29 stayed live in
+# them. One gate per example directory, so the "<category>/<name>" id stays
+# unique regardless of the script's filename.
+#
 # Things this gets right, per the repo's gate contract:
 #
-#  * Gates are executed DIRECTLY ("$gate"), never `sh run_qemu.sh`. Each gate
+#  * Gates are executed DIRECTLY ("$gate"), never `sh <gate>`. Each gate
 #    re-execs itself under gtimeout via tools/gate-lib.sh (gate_init), which
 #    only works when the shebang runs. A non-executable gate is reported as an
 #    error rather than silently downgraded to `sh`.
@@ -113,7 +120,7 @@ while IFS= read -r gate; do
     GATES="$GATES$id	$gate"$'\n'
     NGATES=$((NGATES + 1))
 done <<EOF
-$(find "$REPO/examples" -name run_qemu.sh -type f | LC_ALL=C sort)
+$(find "$REPO/examples" -name 'run_qemu*.sh' -type f | LC_ALL=C sort)
 EOF
 
 if [ "$NGATES" -eq 0 ]; then

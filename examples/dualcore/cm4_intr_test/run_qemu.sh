@@ -2,9 +2,15 @@
 # QEMU gate for Phase-2C: the CM4 stands up its own DWT timing + SysTick + NVIC
 # (external MU IRQ 118) and reports over the MU.
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/cm4_intr_test.elf"
 OUT="$DIR/cm4_intr.uart"
@@ -17,9 +23,10 @@ for _ in $(seq 1 60); do
     [ -f "$OUT" ] && grep -q "CM4INTR-DONE" "$OUT" 2>/dev/null && break
     sleep 0.25
 done
-kill $P 2>/dev/null; wait $P 2>/dev/null || true
+gate_reap $P
+gate_require_capture "$OUT"
 
-echo "==== captured UART ===="; [ -f "$OUT" ] && cat "$OUT" || echo "(no UART output)"
+echo "==== captured UART ===="; cat "$OUT"
 
 fail=0
 check() {

@@ -4,9 +4,15 @@
 # NVIC). Pure-CPU graph — a green QEMU run is meaningful and expected to be
 # token-identical to the EVKB run; the EVKB run confirms on silicon.
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/cm4_audiostream_test.elf"
 OUT="$DIR/cm4_audiostream.uart"
@@ -18,9 +24,10 @@ for _ in $(seq 1 40); do
     [ -f "$OUT" ] && grep -q "CM4AUDIOSTREAM-DONE" "$OUT" 2>/dev/null && break
     sleep 0.25
 done
-kill $P 2>/dev/null; wait $P 2>/dev/null || true
+gate_reap $P
+gate_require_capture "$OUT"
 
-echo "==== captured ===="; [ -f "$OUT" ] && cat "$OUT" || echo "(no UART output)"
+echo "==== captured ===="; cat "$OUT"
 grep -q "CM4AUDIOSTREAM-DONE" "$OUT" || { echo "FAIL: no done"; exit 1; }
 grep -q "flow=00000001" "$OUT" || { echo "FAIL: blocks did not flow in order"; exit 1; }
 grep -q "noleak=00000001" "$OUT" || { echo "FAIL: audio pool leaked"; exit 1; }

@@ -12,9 +12,15 @@
 # done TIMEOUT and this gate ends WIRE_DMA_CM4=FAIL / GATE FAILED (exit 1). That
 # RED is the Task-3 pass criterion; Task 4 turns it GREEN.
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/cm4_wire_dma_test.elf"
 OUT="$DIR/cm4_wire_dma.uart"
@@ -31,9 +37,10 @@ for _ in $(seq 1 100); do
     [ -f "$OUT" ] && grep -q "CM4WIREDMA-DONE" "$OUT" 2>/dev/null && break
     sleep 0.25
 done
-kill $P 2>/dev/null; wait $P 2>/dev/null || true
+gate_reap $P
+gate_require_capture "$OUT"
 
-echo "==== captured UART ===="; [ -f "$OUT" ] && cat "$OUT" || echo "(no UART output)"
+echo "==== captured UART ===="; cat "$OUT"
 
 fail=0
 check() {
@@ -41,6 +48,14 @@ check() {
 }
 grep -q "CM4WIREDMA-GATE v1" "$OUT" || { echo "FAIL: banner missing"; exit 1; }
 check "ready=CAFE0001"
+# dmairq>0 is this gate's whole point -- the CM4 took the eDMA_LPSR completion
+# IRQ on its own NVIC.  The zero-check alone could not carry that: `grep -q
+# "^dmairq=00000000" && fail` scores a MISSING dmairq as "not zero, therefore the
+# IRQ fired", so the assertion passed most confidently in the one case where it
+# knew nothing.  Not hypothetical here -- the RED scaffold described in the
+# header TIMES THIS TOKEN OUT (the CM4 emits only READY), which is exactly that
+# case.  Require the token PRESENT, then require it non-zero.
+grep -q "^dmairq=" "$OUT" || { echo "FAIL: dmairq not reported -- the CM4 eDMA_LPSR IRQ assertion cannot be checked"; fail=1; }
 grep -q "^dmairq=00000000" "$OUT" && { echo "FAIL: dmairq is 0 (no CM4 eDMA_LPSR IRQ)"; fail=1; }
 check "err=00000000"                 # DMA/transaction OK (no NDF/ALF/FEF)
 check "done=00000001"

@@ -1,8 +1,14 @@
 #!/bin/sh
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/lvgl_rpi_panel_test.elf"; OUT="$DIR/lvgl_rpi.uart"
 rm -f "$OUT"
@@ -13,7 +19,8 @@ P=$!; gate_pid $P
 # bring-up (ATtiny/I2C + VIDEO_PLL + LCDIFv2 + MIPI-DSI + TC358762) before LVGL
 # gets a look in, and then renders 800x480 instead of 320x240. Same cold-binary
 # timing flake rpi_panel_test documents; 12s gives margin.
-sleep 12; kill $P 2>/dev/null; wait $P 2>/dev/null || true
+sleep 12; gate_reap $P
+gate_require_capture "$OUT"
 echo "==== captured UART ===="; cat "$OUT"
 # The panel chain itself must still come up before LVGL means anything: in DIRECT
 # mode LVGL renders straight into the LCDIFv2's live scanout buffer, so a

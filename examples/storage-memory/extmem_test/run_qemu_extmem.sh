@@ -1,14 +1,21 @@
 #!/bin/sh
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/extmem_test.elf"; OUT="$DIR/extmem.uart"
 rm -f "$OUT"
 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/extmem.dbg" &
-P=$!; gate_pid $P; sleep 6; kill $P 2>/dev/null; wait $P 2>/dev/null || true
+P=$!; gate_pid $P; sleep 6; gate_reap $P
+gate_require_capture "$OUT"
 echo "==== captured ===="; cat "$OUT"
 grep -q "EXTMEM_ALLOC=PASS"    "$OUT" || { echo "FAIL: malloc/IS_EXTMEM";   exit 1; }
 grep -q "EXTMEM_CALLOC=PASS"   "$OUT" || { echo "FAIL: calloc-zero";        exit 1; }

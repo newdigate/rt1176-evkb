@@ -154,7 +154,49 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # (teensy-cmake-macros), whose gcc step emits <obj>.o.d depfiles (-MMD -MF,
 # added 2026-07-18) — so CM4-side sources are covered by this same walk
 # (the *.o.d pattern below), not just their provenance headers.
-GATES=${LICENSE_AUDIT_GATES:-"examples/audio/sd_wav_play_test:sd_wav_play_test examples/networking/ethernet_test:ethernet_test examples/networking/native_ethernet_test:native_ethernet_test examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_image_test:cm4_image_test examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_spi_test:cm4_spi_test examples/dualcore/cm4_wire_test:cm4_wire_test examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test examples/dualcore/cm4_imagebank_test:cm4_imagebank_test examples/framework/arm_math_test:arm_math_test examples/audio/filter_fir_test:filter_fir_test examples/audio/guard_sweep_test:guard_sweep_test examples/dualcore/cm4_sai_irq_probe:cm4_sai_irq_probe examples/dualcore/cm4_cpp_test:cm4_cpp_test examples/dualcore/cm4_audiostream_test:cm4_audiostream_test examples/audio/i2s_int_test:i2s_int_test examples/dualcore/cm4_fft_test:cm4_fft_test examples/dualcore/cm4_audio_test:cm4_audio_test examples/audio/audio_h_test:audio_h_test examples/display/pxp_blit_test:pxp_blit_test examples/display/rpi_panel_test:rpi_panel_test examples/display/lvgl_ili9341_test:lvgl_ili9341_test examples/display/lvgl_rpi_panel_test:lvgl_rpi_panel_test examples/display/rk055_panel_test:rk055_panel_test examples/display/rk055_touch_test:rk055_touch_test examples/display/lvgl_smoke_test:lvgl_smoke_test examples/serial/serial_test:serial_test"}
+GATES=${LICENSE_AUDIT_GATES:-"examples/audio/audio_h_test:audio_h_test examples/audio/audioinput_i2s_test:audioinput_i2s_test \
+examples/audio/audiooutput_i2s_test:audiooutput_i2s_test \
+examples/audio/audiostream_test:audiostream_test examples/audio/filter_fir_test:filter_fir_test \
+examples/audio/guard_sweep_test:guard_sweep_test examples/audio/i2s_audio_test:i2s_audio_test \
+examples/audio/i2s_int_test:i2s_int_test examples/audio/sai_rx_test:sai_rx_test \
+examples/audio/sd_wav_play_test:sd_wav_play_test examples/audio/tone_test:tone_test \
+examples/display/camera_preview_synth:camera_preview_synth \
+examples/display/lvgl_ili9341_test:lvgl_ili9341_test \
+examples/display/lvgl_rpi_panel_test:lvgl_rpi_panel_test \
+examples/display/lvgl_smoke_test:lvgl_smoke_test examples/display/pxp_blit_test:pxp_blit_test \
+examples/display/pxp_decimate_test:pxp_decimate_test examples/display/pxp_yuv_test:pxp_yuv_test \
+examples/display/rk055_panel_test:rk055_panel_test \
+examples/display/rk055_touch_test:rk055_touch_test \
+examples/display/rpi_panel_test:rpi_panel_test \
+examples/dualcore/cm4_audio_test:cm4_audio_test \
+examples/dualcore/cm4_audiostream_test:cm4_audiostream_test \
+examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_cpp_test:cm4_cpp_test \
+examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_fft_test:cm4_fft_test \
+examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test \
+examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_image_test:cm4_image_test \
+examples/dualcore/cm4_imagebank_test:cm4_imagebank_test \
+examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_sai_irq_probe:cm4_sai_irq_probe \
+examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_spi_test:cm4_spi_test \
+examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test \
+examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test \
+examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test \
+examples/dualcore/cm4_wire_test:cm4_wire_test examples/framework/arm_math_test:arm_math_test \
+examples/framework/edma_test:edma_test examples/framework/eventresponder_test:eventresponder_test \
+examples/framework/stream_test:stream_test examples/framework/string_test:string_test \
+examples/framework/wprogram_parity_test:wprogram_parity_test \
+examples/gpio-analog/analog_test:analog_test examples/gpio-analog/dac_test:dac_test \
+examples/gpio-analog/irq_attach_test:irq_attach_test examples/networking/enet_test:enet_test \
+examples/networking/ethernet_test:ethernet_test examples/networking/lwip_test:lwip_test \
+examples/networking/native_ethernet_test:native_ethernet_test \
+examples/serial/serial_test:serial_test examples/serial/serial_test_rx:serial_test_rx \
+examples/storage-memory/eeprom_test:eeprom_test examples/storage-memory/extmem_test:extmem_test \
+examples/storage-memory/sdram_test:sdram_test \
+examples/timing/interval_timer_test:interval_timer_test examples/timing/rtc_test:rtc_test \
+examples/usb/usb_data_test:usb_data_test examples/usb/usb_enum_test:usb_enum_test \
+examples/usb/usb_host_hid_test:usb_host_hid_test examples/usb/usb_joystick_test:usb_joystick_test \
+examples/usb/usb_keyboard_test:usb_keyboard_test examples/usb/usb_midi_test:usb_midi_test \
+examples/usb/usb_mouse_test:usb_mouse_test examples/usb/usb_msc_block_test:usb_msc_block_test \
+examples/usb/usb_msc_fs_test:usb_msc_fs_test"}
 
 # --- GATES drift check -------------------------------------------------------
 # GATES is hand-maintained, and an example silently missing from it means Part 2
@@ -169,22 +211,31 @@ GATES=${LICENSE_AUDIT_GATES:-"examples/audio/sd_wav_play_test:sd_wav_play_test e
 # that gap had supposedly been closed. A hand-maintained list drifts every time
 # an example lands.
 #
-# So the omission is made LOUD instead of silent: every example owning a
-# run_qemu.sh must appear in GATES, with the target name matching its
-# project(). An example that genuinely should be excluded goes in GATES_EXEMPT
-# with a written justification — the same discipline the ALLOW list uses — never
-# a quiet deletion.
+# So the omission is made LOUD instead of silent: every example owning a gate
+# must appear in GATES, with the target name matching its project(). An example
+# that genuinely should be excluded goes in GATES_EXEMPT with a written
+# justification — the same discipline the ALLOW list uses — never a quiet
+# deletion.
 #
-# Deliberately NOT fully derived: Part 2 hard-errors on MISSING BUILD, so
-# deriving the list from all 82 examples would make the audit require a complete
-# tree build. Checking the hand list for completeness costs nothing and closes
-# the same hole.
+# The glob is run_qemu*.sh, NOT run_qemu.sh (widened 2026-07-29). Roughly half
+# the gates in this tree are named for what they test (run_qemu_usb.sh,
+# run_qemu_lwip.sh, …), and while this check globbed the bare name it policed 33
+# of the 67 gate-owning examples while claiming to police all of them — the
+# drift check had the same blind spot as the thing it was guarding against.
+# Closing it added 34 entries below.
+#
+# Scope is examples that own a GATE (67), never all 82 examples: Part 2
+# hard-errors on MISSING BUILD, so this does require those 67 built before the
+# audit passes. That cost is deliberate and it is the point — a depfile walk
+# that silently skips an unbuilt example proves nothing about it, and this tree
+# treats a check that quietly does not run as a defect, not a convenience.
+# Building only some examples is what `LICENSE_AUDIT_PARTS=13` is for.
 GATES_EXEMPT=${LICENSE_AUDIT_GATES_EXEMPT:-""}   # "examples/<cat>/<name>" + why — none today
 case "$PARTS" in *2*)
   drift=0
-  for gsh in "$EVKB"/examples/*/*/run_qemu.sh; do
+  for gsh in "$EVKB"/examples/*/*/run_qemu*.sh; do
     [ -f "$gsh" ] || continue
-    gdir=${gsh%/run_qemu.sh}; rel=${gdir#$EVKB/}; name=${rel##*/}
+    gdir=${gsh%/*}; rel=${gdir#$EVKB/}; name=${rel##*/}
     case " $GATES_EXEMPT " in *" $rel "*) continue ;; esac
     case "$GATES" in
       *"$rel:"*)

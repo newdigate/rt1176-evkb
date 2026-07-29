@@ -1,8 +1,14 @@
 #!/bin/sh
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/sd_wav_play_test.elf"
 [ -f "$ELF" ] || { echo "FAIL: no ELF ($ELF) — build first"; exit 1; }
@@ -35,8 +41,9 @@ run_one() {   # $1 = mono|stereo
         -chardev file,id=sai1-tap,path="$TAP" \
         -icount shift=auto \
         -d guest_errors,unimp -D "$DBG" &
-    P=$!; gate_pid $P; sleep 20; kill $P 2>/dev/null; wait $P 2>/dev/null || true
-    echo "==== $KIND VCOM ===="; cat "$VCOM" 2>/dev/null || true
+    P=$!; gate_pid $P; sleep 20; gate_reap $P
+    gate_require_capture "$VCOM"
+    echo "==== $KIND VCOM ===="; cat "$VCOM"
     grep -q "SD_WAV_MOUNT=PASS" "$VCOM" || { echo "FAIL($KIND): mount"; return 1; }
     grep -q "SD_WAV_PLAY=PASS"  "$VCOM" || { echo "FAIL($KIND): play";  return 1; }
     grep -q "SD_WAV_DONE=PASS"  "$VCOM" || { echo "FAIL($KIND): done";  return 1; }

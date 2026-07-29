@@ -113,13 +113,38 @@ transcript".
 
 ## Current expected sweep result
 
-**30 gates** since `examples/display/rk055_touch_test` joined on 2026-07-28.
+**68 gates** since `tools/run-all-qemu-gates.sh` discovery widened from `run_qemu.sh` to
+`run_qemu*.sh` on 2026-07-29 (it had been sweeping 29 of them; the other 38, named for what they
+test, were never run by anything) and `examples/display/rk055_touch_test` joined on 2026-07-28.
 
-`30 passed, 0 failed, 0 SKIP` was the observed result on 2026-07-28 on an idle machine.
-`29 passed, 1 failed, 0 SKIP` — the failure being `dualcore/cm4_audio_test` — is still an
-acceptable outcome while the section above is unresolved. **Any other failure is a real
-regression.** If you see more than one failure, check `uptime` before you check your diff: gates
-starved of CPU fail with missing or truncated UART capture, which mimics a regression convincingly.
+Two outcomes are acceptable while the section above is unresolved, because **`cm4_audio_test` is
+intermittent, not reliably broken**:
+
+- `67 passed, 1 failed, 0 SKIP` — the failure being `dualcore/cm4_audio_test`. Observed on
+  2026-07-29 across five consecutive sweeps plus a direct run.
+- `68 passed, 0 failed, 0 SKIP` — observed 2026-07-28, 5 runs out of 5, on an idle machine.
+
+Same pinned `cores` (`2f15ff5`) in both cases, so it is not a core-version difference. That the
+same gate can be consistently red one day and 5/5 green the next is itself the finding; treat the
+section above as "intermittent, cause unidentified" rather than "broken".
+
+**Any OTHER failure is a real regression.** If you see more than one failure, check `uptime` before
+you check your diff: gates starved of CPU fail with missing or truncated UART capture, which mimics
+a regression convincingly.
+
+That failure mode is now *legible* rather than misleading — gates assert `gate_require_capture`
+before grepping, so a starved run says `no UART capture ... QEMU produced no serial output` instead
+of blaming the firmware with `banner missing`. The five thinnest-budget gates (`enet_test` at
+`sleep 1`; `analog_test`, `dac_test`, `irq_attach_test`, `serial_test` at `sleep 3`) were converted
+to bounded poll-for-token loops on 2026-07-29 for the same reason. That reduces the exposure; it has
+not been shown to eliminate it, and the trigger is still unidentified — 2x CPU saturation did not
+reproduce it.
 
 **Zero SKIPs matters as much as the pass count.** A `SKIP` means a missing ELF, i.e. a gate that
 silently never ran — build the example and re-run rather than accepting it.
+
+**The sweep covers 67 gates, up from 29 (2026-07-29).** `run-all-qemu-gates.sh` used to discover
+`run_qemu.sh` only, which silently excluded the 38 gates named for what they test
+(`run_qemu_usb.sh`, `run_qemu_lwip.sh`, …) — over half the suite, never swept, so nothing was
+checking whether they still passed. Discovery is now `run_qemu*.sh`. If you are comparing against
+an older transcript, `28 passed` was that narrower set, not a regression.

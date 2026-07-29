@@ -1,8 +1,14 @@
 #!/bin/sh
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/audioinput_i2s_test.elf"
 VCOM="$DIR/vcom.uart"; DBG="$DIR/audioinput.dbg"; INJ="$DIR/inject.raw"
@@ -28,10 +34,11 @@ gate_pid $PUMP_PID
     -chardev pipe,id=sai1-rxinject,path="$INJ.fifo" \
     -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
-sleep 5; kill $P 2>/dev/null; wait $P 2>/dev/null || true
+sleep 5; gate_reap $P
+gate_require_capture "$VCOM"
 kill $PUMP_PID 2>/dev/null || true
 rm -f "$INJ.fifo.in" "$INJ.fifo.out" "$INJ.fifo"
-echo "==== VCOM ===="; cat "$VCOM" 2>/dev/null || true
+echo "==== VCOM ===="; cat "$VCOM"
 grep -q "^info peak=" "$VCOM" || { echo "FAIL: no info peak= line"; exit 1; }
 grep "^info peak=" "$VCOM"
 grep -q "STAGE_PEAK=PASS" "$VCOM" || { echo "FAIL: STAGE_PEAK"; exit 1; }
