@@ -1,8 +1,14 @@
 #!/bin/sh
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/rk055_touch_test.elf"; OUT="$DIR/rk055_touch.uart"
 rm -f "$OUT" "$DIR/rk055_touch.dbg"
@@ -29,17 +35,25 @@ P=$!; gate_pid $P
 # was doing.  The alternative is a phase timeout short enough for QEMU, which
 # would mean a bench operator losing a target because they took too long
 # reading the prompt.  See PHASE_TIMEOUT_MS in the .cpp.
-# `|| true` on the kill, and it is load-bearing under `set -e`: if QEMU has
-# already exited (bad binary, instant crash) the kill fails, and without this
-# the script dies HERE -- exit 1 with no message at all, before any assertion
-# runs.  That is the second shape of "the run never happened", and it has to
-# reach the named FAIL below like the first does.
-sleep 10; kill $P 2>/dev/null || true; wait $P 2>/dev/null || true
-# The capture has to EXIST before any grep of it means anything.  Without this,
-# a QEMU that died before opening the serial file failed as `cat: no such file`
-# -- a non-zero exit, so never a false green, but a message that points at
-# nothing.  Two runs in five died this way during bring-up.
-[ -s "$OUT" ] || { echo "FAIL: no UART capture at $OUT -- QEMU produced no serial output (did it start?)"; exit 1; }
+# Poll for TOUCH_OK rather than always burning the full window. Same 10 s
+# CEILING as the `sleep 10` this replaces -- 40 x 0.25 s -- so the deliberate
+# trade documented just above is unchanged: a phase that genuinely times out is
+# still killed here long before its named *_FAIL line reaches the UART, and the
+# gate still goes red on the missing token. What changes is the healthy path,
+# which now exits at the measured ~2.2 s instead of waiting out all 10, and the
+# loaded path, which no longer depends on 10 s being enough. TOUCH_OK is the
+# capture's last line and follows every token asserted below.
+for _ in $(seq 1 40); do
+    [ -f "$OUT" ] && grep -q "TOUCH_OK" "$OUT" 2>/dev/null && break
+    sleep 0.25
+done
+gate_reap $P
+# gate_require_capture: the capture must EXIST and be non-empty before any grep
+# of it means anything. Two runs in five died as `cat: no such file` during
+# bring-up -- non-zero, so never a false green, but a message pointing nowhere.
+# (Deliberately NOT applied to the .dbg below: a healthy run leaves that EMPTY,
+# so -s would reject exactly the runs that should pass. See gate-lib.sh.)
+gate_require_capture "$OUT"
 echo "==== captured ===="; cat "$OUT"
 # The panel has to be up before touch means anything -- targets have to be
 # visible.  Re-asserted here rather than assumed from rk055_panel_test: a
