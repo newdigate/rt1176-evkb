@@ -8,9 +8,15 @@
 # (rdv=00000000); the HW check asserts the WM8962 device ID (rdv=00006243),
 # same as cm4_wire_test's precedent.
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/cm4_wire_int_master_test.elf"
 OUT="$DIR/cm4_wire_int_master.uart"
@@ -22,9 +28,10 @@ for _ in $(seq 1 40); do
     [ -f "$OUT" ] && grep -q "CM4WIREINT-DONE" "$OUT" 2>/dev/null && break
     sleep 0.25
 done
-kill $P 2>/dev/null; wait $P 2>/dev/null || true
+gate_reap $P
+gate_require_capture "$OUT"
 
-echo "==== captured UART ===="; [ -f "$OUT" ] && cat "$OUT" || echo "(no UART output)"
+echo "==== captured UART ===="; cat "$OUT"
 
 fail=0
 check() {
@@ -35,6 +42,13 @@ check "mcr=00000001"
 check "rdv=00000000"                 # stub contract (HW asserts 00006243)
 check "err=00000000"                 # ISR transaction OK (no NDF/ALF/FEF)
 check "done=00000001"
+# irqcnt>0 is this gate's whole point -- the CM4 took LPI2C5's IRQ 36 on its own
+# NVIC.  The zero-check alone could not carry that: `grep -q "^irqcnt=00000000"
+# && fail` scores a MISSING irqcnt as "not zero, therefore the IRQ fired", so the
+# assertion passed most confidently in the one case where it knew nothing -- a
+# firmware that stopped reporting the counter would have gone green.  Require the
+# token PRESENT, then require it non-zero.
+grep -q "^irqcnt=" "$OUT" || { echo "FAIL: irqcnt not reported -- the CM4-IRQ assertion cannot be checked"; fail=1; }
 grep -q "^irqcnt=00000000" "$OUT" && { echo "FAIL: irqcnt is 0 (no CM4 IRQ)"; fail=1; }
 check "WIRE_INT_MASTER_CM4=PASS"
 # lpcg= / croot= are printed for HW diagnosis but intentionally NOT asserted.

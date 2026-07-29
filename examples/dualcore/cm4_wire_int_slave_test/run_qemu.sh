@@ -15,9 +15,15 @@
 # written, so the race cannot exist; the master-observed byte is HW-verified
 # by the EVKB probe's external-master oracle (rd=3C).
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/cm4_wire_int_slave_test.elf"
 OUT="$DIR/cm4_wire_int_slave.uart"
@@ -29,9 +35,10 @@ for _ in $(seq 1 40); do
     [ -f "$OUT" ] && grep -q "CM4WIRESLV-DONE" "$OUT" 2>/dev/null && break
     sleep 0.25
 done
-kill $P 2>/dev/null; wait $P 2>/dev/null || true
+gate_reap $P
+gate_require_capture "$OUT"
 
-echo "==== captured UART ===="; [ -f "$OUT" ] && cat "$OUT" || echo "(no UART output)"
+echo "==== captured UART ===="; cat "$OUT"
 
 fail=0
 check() {
@@ -48,6 +55,13 @@ check "b2=000000C3"
 check "resp=0000003C"
 check "err=00000000"
 check "done=00000001"
+# irqcnt>0 is this gate's whole point -- the CM4 took LPI2C2's IRQ 33 on its own
+# NVIC.  The zero-check alone could not carry that: `grep -q "^irqcnt=00000000"
+# && fail` scores a MISSING irqcnt as "not zero, therefore the IRQ fired", so the
+# assertion passed most confidently in the one case where it knew nothing -- a
+# firmware that stopped reporting the counter would have gone green.  Require the
+# token PRESENT, then require it non-zero.
+grep -q "^irqcnt=" "$OUT" || { echo "FAIL: irqcnt not reported -- the CM4-IRQ assertion cannot be checked"; fail=1; }
 grep -q "^irqcnt=00000000" "$OUT" && { echo "FAIL: irqcnt is 0 (no CM4 IRQ)"; fail=1; }
 check "WIRE_INT_SLAVE_CM4=PASS"
 grep -q "CM4WIRESLV-DONE" "$OUT" || { echo "FAIL: DONE missing"; fail=1; }
