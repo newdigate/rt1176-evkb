@@ -26,9 +26,26 @@ rm -f "$VCOM" "$DBG" "$RES"
     -nic socket,listen=127.0.0.1:$PORT,model=imx.enet \
     -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
-python3 "$DIR/enet_peer.py" 127.0.0.1 $PORT "$PHASE" > "$RES" 2>&1
-RC=$?
-sleep 1; gate_reap $P
+# `|| RC=$?` is load-bearing under `set -e`. Unguarded, a peer failure aborted
+# the script HERE -- so the `FAIL: peer rc=` assertion below could never run, and
+# the gate died silently on precisely the failure it was written to report.
+# lwip_test's equivalent line already guards it; this one did not.
+RC=0; python3 "$DIR/enet_peer.py" 127.0.0.1 $PORT "$PHASE" > "$RES" 2>&1 || RC=$?
+# The peer has finished; wait for the guest's terminal token rather than a flat
+# second. The `sleep 1` this replaces made the gate LOAD-SENSITIVE -- the
+# thinnest budget in the tree -- so on a busy machine the reap landed before
+# QEMU wrote a byte and the run failed with "no UART capture", a red that says
+# nothing about the firmware and passes on retry. Observed during the 2026-07-29
+# sweep. 40 x 0.25s bounds it at 10s; a healthy run breaks out in well under 1s.
+case "$PHASE" in
+    ping) _tok="ENET_PING=PASS" ;;
+    *)    _tok="ENET_PHYID_OK=PASS" ;;   # last line the firmware emits in boot/mac
+esac
+for _ in $(seq 1 40); do
+    [ -f "$VCOM" ] && grep -q "$_tok" "$VCOM" 2>/dev/null && break
+    sleep 0.25
+done
+gate_reap $P
 gate_require_capture "$VCOM"
 echo "==== VCOM ===="; cat "$VCOM"
 echo "==== peer ===="; cat "$RES"
