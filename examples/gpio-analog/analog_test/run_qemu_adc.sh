@@ -14,7 +14,21 @@ ELF="$DIR/build/analog_test.elf"; OUT="$DIR/adc.uart"
 rm -f "$OUT"
 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/adc.dbg" &
-P=$!; gate_pid $P; sleep 3; gate_reap $P
+P=$!; gate_pid $P
+# Poll for the run's terminal token instead of guessing a duration. The fixed
+# `sleep 3` this replaces made the gate LOAD-SENSITIVE: on a busy machine QEMU
+# had not written a byte before the reap, and the run failed with "no UART
+# capture" -- a red that says nothing about the firmware and passes on retry.
+# Observed repeatedly during the 2026-07-29 sweep. Same idiom as the dualcore
+# gates. 40 x 0.25s bounds it at 10s; a healthy run breaks out well inside 3s.
+#
+# "[adc] done" is emitted AFTER every token asserted below (async_val= is the
+# last of them); the A0= lines that follow it are the idle loop.
+for _ in $(seq 1 40); do
+    [ -f "$OUT" ] && grep -q "\[adc\] done" "$OUT" 2>/dev/null && break
+    sleep 0.25
+done
+gate_reap $P
 gate_require_capture "$OUT"
 echo "==== captured ===="; cat "$OUT"
 grep -q "adc1_ch5=341"       "$OUT" || { echo "FAIL: adc1_ch5"; exit 1; }
