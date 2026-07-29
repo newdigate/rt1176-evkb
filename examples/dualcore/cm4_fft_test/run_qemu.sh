@@ -3,9 +3,15 @@
 # (FFT bin-8, FIR impulse echo, arm_sin_q31 spot check). Pure-CPU math, so a
 # green QEMU run is meaningful; the EVKB run confirms on silicon.
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/cm4_fft_test.elf"
 OUT="$DIR/cm4_fft.uart"
@@ -17,9 +23,10 @@ for _ in $(seq 1 40); do
     [ -f "$OUT" ] && grep -q "CM4FFT-DONE" "$OUT" 2>/dev/null && break
     sleep 0.25
 done
-kill $P 2>/dev/null; wait $P 2>/dev/null || true
+gate_reap $P
+gate_require_capture "$OUT"
 
-echo "==== captured ===="; [ -f "$OUT" ] && cat "$OUT" || echo "(no UART output)"
+echo "==== captured ===="; cat "$OUT"
 grep -q "CM4FFT-DONE" "$OUT" || { echo "FAIL: no done"; exit 1; }
 grep -q "fft_bin=00000008" "$OUT" || { echo "FAIL: FFT energy not in bin 8"; exit 1; }
 grep -q "fir_ok=00000001" "$OUT" || { echo "FAIL: FIR echo"; exit 1; }

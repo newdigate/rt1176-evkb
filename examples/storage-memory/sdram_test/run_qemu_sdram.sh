@@ -1,8 +1,14 @@
 #!/bin/sh
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/sdram_test.elf"; OUT="$DIR/sdram.uart"
 rm -f "$OUT"
@@ -12,7 +18,8 @@ rm -f "$OUT"
 # setup() runs the memory test. No -icount: a plain memory test isn't timing-sensitive.
 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/sdram.dbg" &
-P=$!; gate_pid $P; sleep 6; kill $P 2>/dev/null; wait $P 2>/dev/null || true
+P=$!; gate_pid $P; sleep 6; gate_reap $P
+gate_require_capture "$OUT"
 echo "==== captured ===="; cat "$OUT"
 grep -q "SDRAM_DATA=PASS" "$OUT" || { echo "FAIL: data-line test"; exit 1; }
 grep -q "SDRAM_ADDR=PASS" "$OUT" || { echo "FAIL: address-line test"; exit 1; }

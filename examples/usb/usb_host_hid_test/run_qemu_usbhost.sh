@@ -27,9 +27,15 @@
 # its interrupt-IN. -icount shift=auto keeps the EHCI frame timer
 # (QEMU_CLOCK_VIRTUAL) deterministic against the firmware's polling.
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/build/usb_host_hid_test.elf"
 OUT_A="$DIR/usb_kbd.uart"; OUT_B="$DIR/usb_mouse.uart"; OUT_C="$DIR/usb_kbd_fs.uart"
@@ -57,7 +63,8 @@ rm -f "$SOCK_A" "$SOCK_B" "$SOCK_C"
 P=$!; gate_pid $P
 python3 "$DIR/inject_qmp.py" --sock "$SOCK_A" --marker "$OUT_A" \
     --kind kbd --connect KBD_CONNECT --result "KEY=" || echo "WARN: kbd/HS injector rc=$?"
-sleep 1; kill $P 2>/dev/null; wait $P 2>/dev/null || true
+sleep 1; gate_reap $P
+gate_require_capture "$OUT_A"
 
 # Run B: high-speed mouse on the OTG2 root port.
 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
@@ -68,7 +75,8 @@ sleep 1; kill $P 2>/dev/null; wait $P 2>/dev/null || true
 P=$!; gate_pid $P
 python3 "$DIR/inject_qmp.py" --sock "$SOCK_B" --marker "$OUT_B" \
     --kind mouse --connect MOUSE_CONNECT --result "MOUSE=" || echo "WARN: mouse/HS injector rc=$?"
-sleep 1; kill $P 2>/dev/null; wait $P 2>/dev/null || true
+sleep 1; gate_reap $P
+gate_require_capture "$OUT_B"
 
 # Run C: full-speed keyboard (usb_version=1) -- exercises the companion-less
 # FS/LS root-port path (enumeration + interrupt-IN) a real keyboard/mouse uses.
@@ -80,7 +88,8 @@ sleep 1; kill $P 2>/dev/null; wait $P 2>/dev/null || true
 P=$!; gate_pid $P
 python3 "$DIR/inject_qmp.py" --sock "$SOCK_C" --marker "$OUT_C" \
     --kind kbd --connect KBD_CONNECT --result "KEY=" || echo "WARN: kbd/FS injector rc=$?"
-sleep 1; kill $P 2>/dev/null; wait $P 2>/dev/null || true
+sleep 1; gate_reap $P
+gate_require_capture "$OUT_C"
 
 echo "==== run A (usb-kbd, high speed) ===="; cat "$OUT_A"
 echo "==== run B (usb-mouse, high speed) ===="; cat "$OUT_B"
