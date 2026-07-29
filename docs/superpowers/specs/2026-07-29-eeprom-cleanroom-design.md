@@ -267,9 +267,10 @@ three greps added to `run_qemu_eeprom.sh`. Existing stages (`EEPROM_RW`,
   `sector_index[]`, `eeprom.c:77-92`) that makes persistence work, and it is
   testable inside one run with no new infrastructure.
 - **`EEPROM_BOOT`** — a magic marker plus payload at address 4200 (clear of stage
-  RW's 0–255, `put()`'s 1000–1015, and wear's 42/43; 4200+16 is inside E2END =
-  4283). Marker absent → write it, print `EEPROM_BOOT=FIRST`. Marker present →
-  verify the retained payload, print `EEPROM_BOOT=RETURN`.
+  RW's 0–255, `put()`'s 1000–1015, and wear's 42/43; the marker is two
+  `uint32_t`s, so 4200–4207 is well inside E2END = 4283). Marker absent → write
+  it, print `EEPROM_BOOT=FIRST`. Marker present → verify the retained payload,
+  print `EEPROM_BOOT=RETURN`.
 
   QEMU has no backing store, so it is deterministically `FIRST` and the gate
   asserts exactly that. On the EVKB, a power-cycle turns it into `RETURN`, and
