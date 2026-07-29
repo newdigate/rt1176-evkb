@@ -1,8 +1,14 @@
 #!/bin/sh
 set -e
-QEMU=~/Development/rt1170/evkb/tools/qrun
 DIR=$(cd "$(dirname "$0")" && pwd)
-. ~/Development/rt1170/evkb/tools/gate-lib.sh
+# Tools come from THIS checkout, derived from the gate's own location. The old
+# hardcoded ~/Development/rt1170/evkb/tools/... meant a worktree or a clone at
+# any other path silently loaded a DIFFERENT tree's gate-lib.sh -- which surfaces
+# as "gate_reap: command not found", or worse, as a gate quietly running against
+# the wrong library.
+EVKB=$(cd "$DIR/../../.." && pwd)
+QEMU="$EVKB/tools/qrun"
+. "$EVKB/tools/gate-lib.sh"
 # gate_init's guard re-exec ("exec ... "$0"" with no argv, see gate-lib.sh) drops
 # CLI args -- capture+export the phase first so it survives via the environment
 # instead (gate-lib.sh's own comment flags this as the expected fix for a
@@ -27,8 +33,15 @@ if [ "$PHASE" = ping ] || [ "$PHASE" = udp ] || [ "$PHASE" = tcp ]; then
 else
     sleep 8; RC=0
 fi
-sleep 1; kill $P 2>/dev/null; wait $P 2>/dev/null || true
-echo "==== VCOM ===="; cat "$VCOM" 2>/dev/null; echo "==== peer ===="; cat "$RES" 2>/dev/null || true
+sleep 1; gate_reap $P
+gate_require_capture "$VCOM"
+echo "==== VCOM ===="; cat "$VCOM"
+# The peer log only exists in the phases that actually run a peer; in the
+# DEFAULT `boot` phase there is none. Displaying it unconditionally aborted the
+# gate under `set -e` (`cat: no such file`) before a single assertion ran --
+# the same "the run reports nothing" failure gate_reap exists to stop. The
+# capture above is asserted; this one is genuinely optional, so it is guarded.
+[ -f "$RES" ] && { echo "==== peer ===="; cat "$RES"; }
 grep -q "LWIP_NETIF_UP" "$VCOM" || { echo "FAIL: netif did not come up"; exit 1; }
 [ $RC -eq 0 ] || { echo "FAIL: peer rc=$RC"; exit 1; }
 if [ "$PHASE" = dhcp ]; then
