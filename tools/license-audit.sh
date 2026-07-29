@@ -26,7 +26,8 @@ $HOME/Development/SdFat $HOME/Development/SPI $HOME/Development/Wire \
 $HOME/Development/Audio $HOME/Development/SD $HOME/Development/PaulS_SD \
 $HOME/Development/USBHost_t36 $HOME/Development/FNET $HOME/Development/lwip \
 $HOME/Development/CMSIS-DSP $HOME/Development/CMSIS_6 $HOME/Development/SerialFlash \
-$HOME/Development/PXP $HOME/Development/MipiDisplay $HOME/Development/LVGL"}
+$HOME/Development/PXP $HOME/Development/MipiDisplay $HOME/Development/LVGL \
+$HOME/Development/EEPROM"}
 
 # Allowlist (extended regex), each entry justified:
 #   cores/teensy*        — uncompiled PJRC reference copies, never in any build
