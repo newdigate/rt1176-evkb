@@ -229,7 +229,7 @@ examples/usb/usb_msc_fs_test:usb_msc_fs_test"}
 # authority, and the drift check is what keeps it honest. Reconciled 2026-07-29:
 # 68 gate-owning directories, 68 GATES entries, no drift in either direction.
 #
-# Scope is examples that own a GATE (68 as of 2026-07-29), never all 82
+# Scope is examples that own a GATE (68 as of 2026-07-29), never all 84
 # examples: Part 2 hard-errors on MISSING BUILD, so this requires those built
 # before the
 # audit passes. That cost is deliberate and it is the point — a depfile walk

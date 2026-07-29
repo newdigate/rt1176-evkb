@@ -79,9 +79,10 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** Expected result, measured 2026-07-29:
-**68 passed, 0 failed, 0 SKIP**. Any failure at all is a real regression from
-what you are doing.
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **68 gates**. Expect
+**68 passed, 0 failed, 0 SKIP** *or* **67 passed, 1 failed, 0 SKIP** — the one
+permitted failure being `dualcore/cm4_audio_test`. Any *other* failure is a real
+regression from what you are doing.
 
 Two things that number depends on:
 
@@ -89,12 +90,13 @@ Two things that number depends on:
   reports a missing one as SKIP, not as a failure. A non-zero SKIP count means
   you measured less than you think — build every gate-owning example first, or
   the sweep quietly under-reports.
-- **`dualcore/cm4_audio_test` has a history.** It was long documented as broken
-  on macOS for reasons unrelated to any current work, cause never identified.
-  It has now passed every run since 2026-07-28, including this sweep. Treat a
-  red from it as suspect rather than as your bug — but do not delete it, weaken
-  it, or drop it from the runner to make a sweep green. See
-  `docs/KNOWN-BROKEN-GATES.md`, which is still the record.
+- **`dualcore/cm4_audio_test` is load-sensitive, not deterministic.**
+  `docs/KNOWN-BROKEN-GATES.md` records both outcomes on consecutive days: 68/0
+  on 2026-07-28 (5 runs of 5, idle machine) and 67/1 on 2026-07-29 (five
+  consecutive sweeps). It passed again on 2026-07-29 in the sweep that produced
+  the count above. Do not chase its red, and equally do not delete it, weaken
+  it, or drop it from the runner to make a sweep green. That file is the record;
+  keep this line agreeing with it.
 
 The previously documented baseline here was `28 passed, 1 failed, 0 SKIP`,
 which had gone stale by more than half the tree. A baseline that understates the

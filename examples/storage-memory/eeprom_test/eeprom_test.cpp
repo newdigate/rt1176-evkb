@@ -20,9 +20,15 @@ void setup() {
 	// QEMU boots from -kernel with no backing store behind the FlexSPI window,
 	// so nothing written survives the process: this is deterministically FIRST
 	// there, and the gate asserts exactly that. On the EVKB it reads RETURN
-	// after a power-cycle with no reflash -- the only un-fakeable proof that
-	// the data actually persisted. A QEMU-only test cannot produce RETURN, and
-	// that asymmetry is the point, not a gap.
+	// after a power-cycle with no reflash.
+	//
+	// RETURN on its own is NOT proof that the data persisted, and an earlier
+	// version of this comment wrongly said it was. The board runs this sketch
+	// on power-up before any console can attach, so a marker lost to power loss
+	// would be silently recreated by that unobserved boot and every later reset
+	// would still print RETURN. See transcript_hw_evkb.txt, which measures the
+	// NOR array directly instead, and is explicit about what that does and does
+	// not settle.
 	BootMark bm;
 	EEPROM.get(BOOT_ADDR, bm);
 	if (bm.magic == BOOT_MAGIC) {
