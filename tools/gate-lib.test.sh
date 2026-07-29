@@ -164,4 +164,91 @@ EOF
 }
 test_hang_backstop; report test_hang_backstop $?
 
+# --- gate_reap ------------------------------------------------------------
+#
+# THE case this helper exists for: under `set -e`, a bare `kill $P` on a child
+# that has ALREADY EXITED fails, errexit fires, and the gate dies before any
+# assertion runs -- exit 1 with no message naming what broke. The fixture is
+# shaped like a real runner (`set -e`, gate_init, background child) and the
+# assertion is that execution REACHES the line after gate_reap.
+#
+# Mutation-checked: drop the `|| true` from gate_reap's kill and this case fails
+# (no REACHED, rc=1). It is not passing vacuously.
+test_reap_dead_process() {
+    fx=$(mktemp)
+    cat > "$fx" <<EOF
+#!/bin/sh
+set -e
+GATE_GUARDED=1; . "$LIB"
+gate_init
+sh -c 'exit 0' & p=\$!
+sleep 1                 # let it die AND be noticed, so the kill really fails
+gate_reap \$p
+echo REACHED
+EOF
+    out=$(sh "$fx" 2>/dev/null); rc=$?
+    rm -f "$fx"
+    [ "$rc" -eq 0 ] && [ "$out" = "REACHED" ]
+}
+test_reap_dead_process; report test_reap_dead_process $?
+
+# ...and it must still actually REAP a live process (the `|| true` above must not
+# have turned the helper into a no-op). Detached child again, so only the
+# explicit kill can reach it.
+test_reap_live_process() {
+    ( . "$LIB"
+      p=$(sh -c 'sleep 60 >/dev/null 2>&1 & echo $!')
+      gate_reap "$p"
+      sleep 1
+      ! kill -0 "$p" 2>/dev/null )
+}
+test_reap_live_process; report test_reap_live_process $?
+
+# --- gate_require_capture -------------------------------------------------
+#
+# Shared driver: build a capture in state <setup>, assert the gate's exit code
+# and whether the post-assertion line was reached.
+_require_capture_case() {  # <setup: none|empty|full> <expected_rc> <expect_reached>
+    fx=$(mktemp); cap=$(mktemp)
+    case "$1" in
+        none)  rm -f "$cap" ;;
+        empty) : > "$cap" ;;
+        full)  echo "SOME_TOKEN=PASS" > "$cap" ;;
+    esac
+    cat > "$fx" <<EOF
+#!/bin/sh
+set -e
+GATE_GUARDED=1; . "$LIB"
+gate_init
+gate_require_capture "$cap"
+echo REACHED
+EOF
+    out=$(sh "$fx" 2>&1); rc=$?
+    rm -f "$fx" "$cap"
+    result=0
+    [ "$rc" -eq "$2" ] || result=1
+    if [ "$3" = yes ]; then
+        echo "$out" | grep -q REACHED || result=1
+    else
+        echo "$out" | grep -q REACHED && result=1
+        # the failure must NAME itself, not just exit non-zero
+        echo "$out" | grep -q "FAIL: no UART capture" || result=1
+    fi
+    return $result
+}
+# A capture that never appeared: fail, by name.
+test_require_capture_missing() { _require_capture_case none 1 no; }
+test_require_capture_missing; report test_require_capture_missing $?
+
+# An EMPTY capture must fail too -- this is what pins `-s` rather than `-f`.
+# tools/qrun creates the serial file before exec'ing QEMU, so a `-f` test would
+# green-light a QEMU that started and emitted nothing, which is the exact case
+# the helper is for.
+test_require_capture_empty() { _require_capture_case empty 1 no; }
+test_require_capture_empty; report test_require_capture_empty $?
+
+# Over-correction guard: a real capture must pass straight through.
+test_require_capture_ok() { _require_capture_case full 0 yes; }
+test_require_capture_ok; report test_require_capture_ok $?
+
 exit $FAILED
