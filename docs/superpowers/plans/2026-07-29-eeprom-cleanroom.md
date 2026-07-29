@@ -1043,7 +1043,20 @@ Expected: `LICENSE-AUDIT: PASS`, `exit=0`.
 LICENSE_AUDIT_PARTS=2 LICENSE_AUDIT_GATES="examples/storage-memory/eeprom_test:eeprom_test examples/usb/usb_host_hid_test:usb_host_hid_test" ./tools/license-audit.sh; echo "exit=$?"
 ```
 
-Expected: no `COPYLEFT FILE COMPILED` lines, `exit=0`.
+Expected: no `COPYLEFT FILE COMPILED` lines.
+
+**Do not expect `exit=0` here.** Restricting `GATES` to two examples makes the
+Part-2 drift check report every *other* gate-owning example as `GATES DRIFT`,
+and drift sets `fail=1` — so this invocation exits 1 no matter what, on the
+restriction alone. The assertion that matters is the *absence* of the two
+`COPYLEFT FILE COMPILED` lines. Check that specifically:
+
+```bash
+LICENSE_AUDIT_PARTS=2 LICENSE_AUDIT_GATES="examples/storage-memory/eeprom_test:eeprom_test examples/usb/usb_host_hid_test:usb_host_hid_test" ./tools/license-audit.sh 2>&1 | grep -c 'COPYLEFT FILE COMPILED'
+```
+
+Expected: `0`. The whole-tree `exit=0` is proven in Task 8 Step 5, where every
+gate-owning example is built and `GATES` is unrestricted.
 
 **No entry may be added to `ALLOW`, and neither example may be added to
 `GATES_EXEMPT`.** Suppressing the finding is not a fix — this tree treats a
