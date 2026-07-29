@@ -80,7 +80,13 @@ transcript".
 
 ## Current expected sweep result
 
-`28 passed, 1 failed, 0 SKIP` — the one failure being `dualcore/cm4_audio_test`.
+`66 passed, 1 failed, 0 SKIP` — the one failure being `dualcore/cm4_audio_test`.
 
 **Zero SKIPs matters as much as the pass count.** A `SKIP` means a missing ELF, i.e. a gate that
 silently never ran — build the example and re-run rather than accepting it.
+
+**The sweep covers 67 gates, up from 29 (2026-07-29).** `run-all-qemu-gates.sh` used to discover
+`run_qemu.sh` only, which silently excluded the 38 gates named for what they test
+(`run_qemu_usb.sh`, `run_qemu_lwip.sh`, …) — over half the suite, never swept, so nothing was
+checking whether they still passed. Discovery is now `run_qemu*.sh`. If you are comparing against
+an older transcript, `28 passed` was that narrower set, not a regression.
