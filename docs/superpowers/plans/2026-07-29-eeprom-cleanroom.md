@@ -477,13 +477,19 @@ compiled into any binary it ships.
   unchanged, so `update(a, v)` and `write(a, v)` cost the same. For the same
   reason `put()` is inherently wear-friendly — it writes byte by byte through
   that same check.
-- Out-of-range addresses are clamped by the backend, not by this wrapper: reads
-  past the end return `0xFF`, writes past the end are dropped. This matches the
-  AVR original's observable behaviour.
+- Out-of-range addresses are rejected by the backend, not by this wrapper: reads
+  past the end return `0xFF`, writes past the end are dropped. Nothing is
+  clamped to the last valid address. This matches the AVR original's observable
+  behaviour.
 - `get()`/`put()` are compile-time checked — the type must be trivially
-  copyable and must fit in the device. Both are `static_assert`s, so they cost
-  nothing at runtime and can only reject code that was already undefined
-  behaviour or could never have fit.
+  copyable and must be no larger than the device. Both are `static_assert`s, so
+  they cost nothing at runtime and can only reject code that was already
+  undefined behaviour or could never have fit.
+- That size check is against the device capacity, **not** against the target
+  address. `put(4280, something_16_bytes)` starts in range, runs off the end,
+  and silently loses the overhanging bytes — a later `get()` reads `0xFF` for
+  them. The address is a runtime value, so no compile-time check can catch it;
+  budget your layout yourself.
 
 ## Licence
 
@@ -590,18 +596,25 @@ this same needle.
 
 /* Addresses are plain int, matching every in-tree call site (which pass
  * uint32_t and uint16_t values that convert cleanly). A negative index becomes
- * a large uint32_t inside the backend, exceeds E2END, and is clamped there --
- * silent, but never undefined. */
+ * a large uint32_t inside the backend, exceeds E2END, and is REJECTED there --
+ * reads yield 0xFF, writes are dropped. Silent, but never undefined. Nothing
+ * is clamped to the last valid address. */
 typedef int eeprom_index_t;
 
 /* The backend takes pointers whose VALUE is the EEPROM address, not a real
  * pointer into the address space (see eeprom.c, which immediately casts back
  * to uint32_t). These two helpers keep that unusual convention in one place
- * instead of scattering casts through every accessor. */
-static inline const uint8_t *_ee_cptr(eeprom_index_t i) {
+ * instead of scattering casts through every accessor.
+ *
+ * Plain inline, NOT static inline: these are odr-used from the implicitly
+ * inline member functions below, which have external linkage. Internal linkage
+ * here would make those definitions differ between translation units, which is
+ * ill-formed-no-diagnostic-required. The names also avoid a leading underscore,
+ * which is reserved in the global namespace. */
+inline const uint8_t *eeprom_cptr(eeprom_index_t i) {
 	return (const uint8_t *)(uintptr_t)i;
 }
-static inline uint8_t *_ee_ptr(eeprom_index_t i) {
+inline uint8_t *eeprom_ptr(eeprom_index_t i) {
 	return (uint8_t *)(uintptr_t)i;
 }
 
@@ -614,10 +627,10 @@ class EERef {
 public:
 	explicit EERef(eeprom_index_t index) : index(index) {}
 
-	operator uint8_t() const { return eeprom_read_byte(_ee_cptr(index)); }
+	operator uint8_t() const { return eeprom_read_byte(eeprom_cptr(index)); }
 
 	EERef &operator=(uint8_t value) {
-		eeprom_write_byte(_ee_ptr(index), value);
+		eeprom_write_byte(eeprom_ptr(index), value);
 		return *this;
 	}
 
@@ -679,11 +692,11 @@ inline EEPtr EERef::operator&() const { return EEPtr(index); }
 
 class EEPROMClass {
 public:
-	uint8_t read(eeprom_index_t idx) const { return eeprom_read_byte(_ee_cptr(idx)); }
-	void write(eeprom_index_t idx, uint8_t val) { eeprom_write_byte(_ee_ptr(idx), val); }
+	uint8_t read(eeprom_index_t idx) const { return eeprom_read_byte(eeprom_cptr(idx)); }
+	void write(eeprom_index_t idx, uint8_t val) { eeprom_write_byte(eeprom_ptr(idx), val); }
 
 	/* See EERef::update -- same story, same reason it is not an optimisation. */
-	void update(eeprom_index_t idx, uint8_t val) { eeprom_write_byte(_ee_ptr(idx), val); }
+	void update(eeprom_index_t idx, uint8_t val) { eeprom_write_byte(eeprom_ptr(idx), val); }
 
 	EERef operator[](eeprom_index_t idx) { return EERef(idx); }
 
@@ -691,10 +704,15 @@ public:
 	 * hardcoded: avr/eeprom.h is the single source of truth and eeprom.c
 	 * guards E2END against the sector count at build time.
 	 *
-	 * uint16_t and not size_t, deliberately: it promotes to int, so an
-	 * expression like `EEPROM.length() - <int>` stays SIGNED. USBHost_t36's
-	 * bluetooth.cpp computes exactly that against a negative sentinel; a
-	 * size_t return would silently make it unsigned and wrap. */
+	 * uint16_t and not size_t, matching the AVR convention. It promotes to int,
+	 * which keeps an expression like `EEPROM.length() - x` signed. That matters
+	 * wherever the difference is USED directly -- `EEPROM.length() - x > 0` is
+	 * false when signed and true when unsigned, for x past the end.
+	 *
+	 * Note it does NOT matter at the one in-tree call site that computes such a
+	 * difference (USBHost_t36 bluetooth.cpp), because that assigns straight to
+	 * an int, which undoes the wrap either way. Measured, not assumed -- do not
+	 * cite that call site as the reason for this return type. */
 	uint16_t length() const { return (uint16_t)(E2END + 1); }
 
 	EEPtr begin() const { return EEPtr(0); }
@@ -709,7 +727,7 @@ public:
 		              "EEPROM.get() requires a trivially copyable type");
 		static_assert(sizeof(T) <= (unsigned)(E2END + 1),
 		              "EEPROM.get(): type is larger than the EEPROM");
-		eeprom_read_block((void *)&t, (const void *)_ee_cptr(idx), (uint32_t)sizeof(T));
+		eeprom_read_block((void *)&t, (const void *)eeprom_cptr(idx), (uint32_t)sizeof(T));
 		return t;
 	}
 
@@ -720,7 +738,7 @@ public:
 		              "EEPROM.put(): type is larger than the EEPROM");
 		/* Wear-friendly for free: eeprom_write_block goes byte by byte through
 		 * eeprom_write_byte, which skips bytes that already hold the value. */
-		eeprom_write_block((const void *)&t, (void *)_ee_ptr(idx), (uint32_t)sizeof(T));
+		eeprom_write_block((const void *)&t, (void *)eeprom_ptr(idx), (uint32_t)sizeof(T));
 		return t;
 	}
 };

@@ -104,7 +104,7 @@ established, and the plan must not assume it.
    range-for iteration works. Rationale: drop-in compatibility for third-party
    Teensy sketches is this repo's premise.
 3. **Strictness: compile-time guards only.** `static_assert` on trivial
-   copyability and size; runtime out-of-range keeps today's backend clamping, so
+   copyability and size; runtime out-of-range keeps today's backend rejection, so
    no existing sketch changes meaning.
 4. **Persistence: re-init stage in QEMU + a real power-cycle on hardware.** Not
    an mtd-backed two-boot gate — that would need full-flash-image (FCB + IVT +
@@ -194,7 +194,9 @@ Design decisions, each with its reason:
   silently make it unsigned.
 - **Addresses are `int`.** Both consumers' `uint32_t` and `uint16_t` call sites
   convert cleanly. A negative index becomes a large `uint32_t` in the backend,
-  exceeds `E2END`, and is clamped — silent, but not undefined.
+  exceeds `E2END`, and is rejected there (reads yield `0xFF`, writes are
+  dropped) — silent, but not undefined. Nothing is clamped to the last valid
+  address.
 - **`static_assert` uses the GCC builtin `__is_trivially_copyable(T)`, not
   `<type_traits>`.** `EEPROM.h` is included by `bluetooth.cpp` and every
   consumer TU; pulling a libstdc++ header into all of them for one trait is the
