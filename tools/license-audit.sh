@@ -26,7 +26,8 @@ $HOME/Development/SdFat $HOME/Development/SPI $HOME/Development/Wire \
 $HOME/Development/Audio $HOME/Development/SD $HOME/Development/PaulS_SD \
 $HOME/Development/USBHost_t36 $HOME/Development/FNET $HOME/Development/lwip \
 $HOME/Development/CMSIS-DSP $HOME/Development/CMSIS_6 $HOME/Development/SerialFlash \
-$HOME/Development/PXP $HOME/Development/MipiDisplay $HOME/Development/LVGL"}
+$HOME/Development/PXP $HOME/Development/MipiDisplay $HOME/Development/LVGL \
+$HOME/Development/EEPROM"}
 
 # Allowlist (extended regex), each entry justified:
 #   cores/teensy*        — uncompiled PJRC reference copies, never in any build
@@ -220,12 +221,17 @@ examples/usb/usb_msc_fs_test:usb_msc_fs_test"}
 # The glob is run_qemu*.sh, NOT run_qemu.sh (widened 2026-07-29). Roughly half
 # the gates in this tree are named for what they test (run_qemu_usb.sh,
 # run_qemu_lwip.sh, …), and while this check globbed the bare name it policed 33
-# of the 67 gate-owning examples while claiming to police all of them — the
+# of the then-67 gate-owning examples while claiming to police all of them — the
 # drift check had the same blind spot as the thing it was guarding against.
 # Closing it added 34 entries below.
 #
-# Scope is examples that own a GATE (67), never all 82 examples: Part 2
-# hard-errors on MISSING BUILD, so this does require those 67 built before the
+# Counts here are a snapshot and go stale as examples land — GATES itself is the
+# authority, and the drift check is what keeps it honest. Reconciled 2026-07-29:
+# 68 gate-owning directories, 68 GATES entries, no drift in either direction.
+#
+# Scope is examples that own a GATE (68 as of 2026-07-29), never all 84
+# examples: Part 2 hard-errors on MISSING BUILD, so this requires those built
+# before the
 # audit passes. That cost is deliberate and it is the point — a depfile walk
 # that silently skips an unbuilt example proves nothing about it, and this tree
 # treats a check that quietly does not run as a defect, not a convenience.

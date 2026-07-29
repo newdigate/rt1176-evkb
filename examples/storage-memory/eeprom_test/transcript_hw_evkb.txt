@@ -1,0 +1,126 @@
+EEPROM flash-emulation — hardware verification on MIMXRT1170-EVKB (RevC3)
+=========================================================================
+Date:     2026-07-29
+Image:    build/eeprom_test.elf, built against the clean-room MIT EEPROM
+          library (newdigate/EEPROM), MIT backend cores/imxrt1176/eeprom.c
+Probe:    MCU-LINK on-board (r0E2) CMSIS-DAP V2.250, LinkServer 26.6.137
+Console:  /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200 via tools/rt1170-console.py
+
+WHAT IS PROVEN HERE, AND WHY IT TAKES A BOOT COUNTER
+----------------------------------------------------
+The property under test is the one QEMU cannot test: that a value written to the
+flash-emulated EEPROM is still there after power is physically removed. The QEMU
+gate boots from -kernel with no backing store behind the FlexSPI window, so it
+can only ever print EEPROM_BOOT=FIRST boots=1, and run_qemu_eeprom.sh asserts
+exactly that.
+
+TWO WEAKER TESTS WERE TRIED FIRST AND BOTH FAILED TO DISCRIMINATE. Recording
+them because the failure mode is subtle and easy to repeat:
+
+  1. Console only ("does it print RETURN after a power cycle?"). Unsound: the
+     board runs the sketch on power-up before any console can attach, so a
+     marker lost to power loss is silently recreated by that unobserved boot,
+     and every later reset still prints RETURN.
+
+  2. Raw flash byte-comparison across the power cycle. Also unsound, for a less
+     obvious reason: the marker was deterministic. Had power loss erased those
+     sectors, the next boot would append the same entries at the same offsets in
+     the same order into blank sectors -- byte-identical, same md5. Survival and
+     deterministic re-creation are indistinguishable.
+
+The fix is a value a fresh boot CANNOT fabricate. BootMark now carries a
+`boots` counter that increments on every boot finding the marker. A recreated
+marker reports 1; a surviving one carries its count forward. That is read
+directly out of the NOR array over SWD, so it needs no console timing and does
+not depend on catching any particular boot.
+
+Marker layout: 12 bytes at 4200..4211 (magic, payload, boots), spanning flash
+sectors 42, 43 and 44 -- (addr>>2) % 63 for 4200/4204/4208 -- at 0x30FEA000,
+0x30FEB000 and 0x30FEC000, given FLASH_BASEADDR 0x30FC0000 in eeprom.c.
+
+Note those sectors are ALSO written by stage RW, which writes 0..255: addresses
+168..175 map into sectors 42 and 43. That is why the entry counts below are 8
+and not 4 -- four marker entries (offsets 64..67) plus four RW entries (offsets
+0..3). It does not affect the counter argument.
+
+=========================================================================
+STEP 1 -- start from a known-blank EEPROM region
+=========================================================================
+  LinkServer flash ... load build/eeprom_test.elf          -> LOAD_EXIT=0
+  LinkServer flash ... erase-range 0x30FC0000 0x40000      -> ERASE_EXIT=0
+    "Erase 4/1024 sectors at 0x30FC0000-0x31000000"
+
+Erasing the EEPROM region while the application was already programmed is what
+finally made the first boot observable: the reset below is genuinely the first
+boot against a blank marker, so EEPROM_BOOT=FIRST could be captured on hardware
+for the first time.
+
+=========================================================================
+STEP 2 -- first boot, console captured
+=========================================================================
+[console] /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200 — Ctrl-C to quit. Press SW4/RESET to see the boot banner.
+
+EEPROM_BOOT=FIRST boots=1
+EEPROM_RW=PASS
+EEPROM_WEAR=PASS
+EEPROM_API=PASS
+EEPROM_PERSIST=PASS
+EEPROM_LENGTH=4284
+EEPROM_ALL=PASS
+
+=========================================================================
+STEP 3 -- counter read out of the NOR array BEFORE power removal
+=========================================================================
+  LinkServer flash ... dump 0x30FEA000 0x3000
+
+  entries per sector: {42: 8, 43: 8, 44: 8}
+  raw bytes @4200: 99 EE 07 B0 0D F0 FE CA 01 00 00 00
+                   |__ magic __| |_payload_| |_ boots _|
+  magic   = 0xB007EE99  OK
+  payload = 0xCAFEF00D  OK
+  boots   = 1
+  md5(dump) = 62f25fc6d33c6c0de3cf2cc21bdbe648
+
+Decoded by replaying the log entries independently of the firmware -- the
+emulation is not in this read path.
+
+=========================================================================
+STEP 4 -- power physically removed and restored
+=========================================================================
+Board unplugged, several seconds, reconnected. NOT the reset button: a warm
+reset leaves the FlexSPI NOR powered throughout and would prove strictly less.
+No reflash, no erase, no programming of any kind after STEP 1.
+
+=========================================================================
+STEP 5 -- counter read again AFTER power removal
+=========================================================================
+  entries per sector: {42: 8, 43: 8, 44: 9}
+  raw bytes @4200: 99 EE 07 B0 0D F0 FE CA 02 00 00 00
+  magic   = 0xB007EE99  OK
+  payload = 0xCAFEF00D  OK
+  boots   = 2
+  md5(dump) = fbcb19eddab42f0882f68dd190363ad2
+
+RESULT: boots went 1 -> 2 across a power cycle. PERSISTENCE PROVEN.
+
+A boot finding blank flash writes boots=1. This reads 2, so the boot that ran
+when power was restored found the marker already present and incremented it.
+That value cannot be produced by a fresh boot on erased flash, which is exactly
+what the two earlier tests could not establish.
+
+The entry counts corroborate it independently. Only sector 44 grew, by exactly
+one entry -- the counter byte changing 01 -> 02. Sectors 42 and 43 stayed at 8
+because magic and payload were unchanged and eeprom_write_byte elides a write
+whose value already matches (eeprom.c:137). A wiped-and-recreated marker would
+instead have re-appended into all three blank sectors.
+
+=========================================================================
+COVERAGE SUMMARY
+=========================================================================
+Proven on silicon:  data written to the flash-emulated EEPROM survives physical
+                    power removal, verified by a counter read out of the NOR
+                    array rather than by console output.
+Proven in QEMU:     the FIRST path, byte RW across the address space, wear
+                    levelling with sector compaction, the full API surface
+                    (update / operator[] / iteration), the cold-start rescan,
+                    and length() == 4284. See transcript_qemu.txt.

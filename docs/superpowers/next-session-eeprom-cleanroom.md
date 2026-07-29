@@ -1,7 +1,31 @@
 # Next session: clean-room rewrite of `EEPROM.h`
 
-Paste the section below into a fresh session. Everything it needs is here; the
-research has been done, and one instruction in it is load-bearing (§0).
+> ## ✅ DONE — 2026-07-29. This brief has been executed; do not action it again.
+>
+> Everything below is written in the present tense as an open task, and is now
+> **historical**. The rewrite shipped as `newdigate/EEPROM` (MIT, fresh history),
+> `evkb.cmake` was repointed off `PaulStoffregen/EEPROM`, `EEPROM` was added to
+> the audit's Part-1 `REPOS`, and `./tools/license-audit.sh` exits 0 with nothing
+> added to `ALLOW` or `GATES_EXEMPT`.
+>
+> What actually happened, and the decisions taken, are recorded in:
+> - `docs/superpowers/specs/2026-07-29-eeprom-cleanroom-design.md`
+> - `docs/superpowers/plans/2026-07-29-eeprom-cleanroom.md`
+> - `examples/storage-memory/eeprom_test/transcript_qemu.txt` and
+>   `transcript_hw_evkb.txt`
+>
+> **Two figures below are wrong and were corrected during execution.** The brief
+> says the full sweep is `66 passed, 1 failed`; it is 68 gates (measured
+> 2026-07-29 — see `CLAUDE.md`). And it says EEPROM is the only manifest entry
+> still pointing at an upstream; `Bounce2` and the two CMSIS repos are as well.
+>
+> **Nothing left open.** The hardware persistence proof went through two unsound
+> attempts before landing. A console-only test cannot work (the board boots before
+> a console can attach, so a lost marker is silently recreated), and neither can a
+> raw-flash byte comparison (the marker was deterministic, so re-creation is
+> byte-identical). It is now settled by a `boots` counter in the marker: read out
+> of the NOR array over SWD, it went 1 -> 2 across a physical power cycle, and a
+> boot finding blank flash writes 1. See `transcript_hw_evkb.txt`.
 
 ---
 

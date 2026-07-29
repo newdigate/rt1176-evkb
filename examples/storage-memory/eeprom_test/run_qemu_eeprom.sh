@@ -14,12 +14,36 @@ ELF="$DIR/build/eeprom_test.elf"; OUT="$DIR/eeprom.uart"
 rm -f "$OUT"
 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/eeprom.dbg" &
-P=$!; gate_pid $P; sleep 4; gate_reap $P
+P=$!; gate_pid $P
+# Poll for EEPROM_ALL -- the capture's last line, printed after every token
+# asserted below -- instead of always burning a fixed window. An 8 s CEILING
+# (32 x 0.25 s), double the `sleep 4` this replaces, because the sketch now
+# does ~4.3k extra reads for the iteration stage and a full 63-sector rescan for
+# the persist stage on top of the 2100 wear writes. A healthy run exits as soon
+# as the token lands; a hung one is still killed here and still goes red on the
+# missing token below, never on a silent timeout.
+for _ in $(seq 1 32); do
+    # Match the VALUE, not the bare `EEPROM_ALL=` prefix. The token is emitted
+    # as two Serial1 calls (print of the label, then println of the value), so
+    # polling on the prefix can fire between them, reap QEMU, and lose the
+    # `PASS` that the assertion below needs -- a spurious red. Accepting either
+    # value keeps a genuine FAIL fast instead of burning the full window.
+    [ -f "$OUT" ] && grep -qE "EEPROM_ALL=(PASS|FAIL)" "$OUT" 2>/dev/null && break
+    sleep 0.25
+done
+gate_reap $P
 gate_require_capture "$OUT"
 echo "==== captured ===="; cat "$OUT"
-grep -q "EEPROM_RW=PASS"     "$OUT" || { echo "FAIL: RW"; exit 1; }
-grep -q "EEPROM_WEAR=PASS"   "$OUT" || { echo "FAIL: wear-leveling"; exit 1; }
+grep -q "EEPROM_RW=PASS"      "$OUT" || { echo "FAIL: RW"; exit 1; }
+grep -q "EEPROM_WEAR=PASS"    "$OUT" || { echo "FAIL: wear-leveling"; exit 1; }
+grep -q "EEPROM_API=PASS"     "$OUT" || { echo "FAIL: API surface (update/operator[]/iteration)"; exit 1; }
+grep -q "EEPROM_PERSIST=PASS" "$OUT" || { echo "FAIL: cold-start rescan"; exit 1; }
+# FIRST, not merely "present": QEMU has no backing store behind the FlexSPI
+# window, so a RETURN here would mean the model had grown persistence and this
+# assertion had stopped testing what it claims. The RETURN case is proven on
+# hardware instead -- see transcript_hw_evkb.txt.
+grep -q "EEPROM_BOOT=FIRST boots=1" "$OUT" || { echo "FAIL: boot marker not FIRST boots=1 (QEMU cannot persist)"; exit 1; }
 # 4284 = EEPROM.length() = E2END(0x10BB=4283)+1 — proves the emulated region is sized right
-grep -q "EEPROM_LENGTH=4284" "$OUT" || { echo "FAIL: length"; exit 1; }
-grep -q "EEPROM_ALL=PASS"    "$OUT" || { echo "FAIL: overall"; exit 1; }
-echo "PASS: EEPROM flash-emulation verified (RW + wear-leveling + length)"
+grep -q "EEPROM_LENGTH=4284"  "$OUT" || { echo "FAIL: length"; exit 1; }
+grep -q "EEPROM_ALL=PASS"     "$OUT" || { echo "FAIL: overall"; exit 1; }
+echo "PASS: EEPROM flash-emulation verified (RW + wear + API + cold-start rescan + length)"

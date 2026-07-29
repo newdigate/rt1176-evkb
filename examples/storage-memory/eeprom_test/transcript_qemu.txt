@@ -1,0 +1,9 @@
+==== captured ====
+EEPROM_BOOT=FIRST
+EEPROM_RW=PASS
+EEPROM_WEAR=PASS
+EEPROM_API=PASS
+EEPROM_PERSIST=PASS
+EEPROM_LENGTH=4284
+EEPROM_ALL=PASS
+PASS: EEPROM flash-emulation verified (RW + wear + API + cold-start rescan + length)

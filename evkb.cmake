@@ -68,7 +68,7 @@ _evkb_lib(fnet           ${_dev}/FNET/src             https://github.com/newdiga
 _evkb_lib(lwip           ${_dev}/lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 _evkb_lib(USBHost_t36    ${_dev}/USBHost_t36          https://github.com/newdigate/USBHost_t36     77c23a6a1c692c987e9c27e4caa1a3ea402ca92f .)
 _evkb_lib(LVGL           ${_dev}/LVGL                 https://github.com/newdigate/LVGL            6dbb5abe2f607686cb46a2a5432a4397355a8161 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
-_evkb_lib(EEPROM         ${_dev}/EEPROM               https://github.com/PaulStoffregen/EEPROM     9790da76d62bc633563f763c3dc1526539ed0a6b .)
+_evkb_lib(EEPROM         ${_dev}/EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 _evkb_lib(Bounce2        ${_dev}/Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).
 # CMSIS-Core is a headers-only dependency of CMSIS-DSP (cmsis_compiler.h et al).

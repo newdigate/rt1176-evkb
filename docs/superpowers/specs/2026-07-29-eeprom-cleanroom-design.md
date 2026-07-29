@@ -44,9 +44,10 @@ established, and the plan must not assume it.
   `if (data == olddata) return;`. So `update()` and `write()` have identical
   wear behaviour on this part, and `put()` is inherently wear-friendly because
   `eeprom_write_block` goes byte-by-byte through that same check.
-- **The backend already clamps every access.** `eeprom_read_byte` returns `0xFF`
-  for `addr > E2END` (`eeprom.c:101`); `eeprom_write_byte` returns early
-  (`eeprom.c:124`). Out-of-range is silent, never memory-unsafe.
+- **The backend already bounds-checks every access.** `eeprom_read_byte` returns
+  `0xFF` for `addr > E2END` (`eeprom.c:101`); `eeprom_write_byte` returns early
+  (`eeprom.c:124`). Out-of-range is silent and never memory-unsafe — rejected,
+  not clamped.
 - **`E2END` resolves in `cores/imxrt1176/avr/eeprom.h:33` to `0x10BB`** (4283),
   with a build-time guard at `eeprom.c:61`. So `length()` is `E2END + 1` = 4284,
   which is the number the existing gate already asserts.
@@ -103,7 +104,7 @@ established, and the plan must not assume it.
    range-for iteration works. Rationale: drop-in compatibility for third-party
    Teensy sketches is this repo's premise.
 3. **Strictness: compile-time guards only.** `static_assert` on trivial
-   copyability and size; runtime out-of-range keeps today's backend clamping, so
+   copyability and size; runtime out-of-range keeps today's backend rejection, so
    no existing sketch changes meaning.
 4. **Persistence: re-init stage in QEMU + a real power-cycle on hardware.** Not
    an mtd-backed two-boot gate — that would need full-flash-image (FCB + IVT +
@@ -193,7 +194,9 @@ Design decisions, each with its reason:
   silently make it unsigned.
 - **Addresses are `int`.** Both consumers' `uint32_t` and `uint16_t` call sites
   convert cleanly. A negative index becomes a large `uint32_t` in the backend,
-  exceeds `E2END`, and is clamped — silent, but not undefined.
+  exceeds `E2END`, and is rejected there (reads yield `0xFF`, writes are
+  dropped) — silent, but not undefined. Nothing is clamped to the last valid
+  address.
 - **`static_assert` uses the GCC builtin `__is_trivially_copyable(T)`, not
   `<type_traits>`.** `EEPROM.h` is included by `bluetooth.cpp` and every
   consumer TU; pulling a libstdc++ header into all of them for one trait is the
@@ -273,9 +276,17 @@ three greps added to `run_qemu_eeprom.sh`. Existing stages (`EEPROM_RW`,
   print `EEPROM_BOOT=RETURN`.
 
   QEMU has no backing store, so it is deterministically `FIRST` and the gate
-  asserts exactly that. On the EVKB, a power-cycle turns it into `RETURN`, and
-  that is the un-fakeable persistence proof. The stage runs **first**, before the
-  other stages write anything.
+  asserts exactly that. The stage runs **first**, before anything else writes.
+
+  **`RETURN` on hardware is NOT by itself the persistence proof** — that was an
+  error in this spec's first revision, found during execution. The board boots
+  before a console can attach, so a marker lost to power loss is silently
+  recreated by that unobserved boot and every later reset still prints `RETURN`.
+  A raw-flash byte comparison fails for the same underlying reason: a
+  deterministic marker is recreated byte-identically. The marker therefore
+  carries a **`boots` counter**, cumulative state a fresh boot cannot fabricate,
+  read directly out of the NOR array over SWD. Verified 1 → 2 across a physical
+  power cycle.
 
 ### Hardware verification
 
