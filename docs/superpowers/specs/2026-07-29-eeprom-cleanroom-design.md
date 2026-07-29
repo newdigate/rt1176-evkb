@@ -44,9 +44,10 @@ established, and the plan must not assume it.
   `if (data == olddata) return;`. So `update()` and `write()` have identical
   wear behaviour on this part, and `put()` is inherently wear-friendly because
   `eeprom_write_block` goes byte-by-byte through that same check.
-- **The backend already clamps every access.** `eeprom_read_byte` returns `0xFF`
-  for `addr > E2END` (`eeprom.c:101`); `eeprom_write_byte` returns early
-  (`eeprom.c:124`). Out-of-range is silent, never memory-unsafe.
+- **The backend already bounds-checks every access.** `eeprom_read_byte` returns
+  `0xFF` for `addr > E2END` (`eeprom.c:101`); `eeprom_write_byte` returns early
+  (`eeprom.c:124`). Out-of-range is silent and never memory-unsafe — rejected,
+  not clamped.
 - **`E2END` resolves in `cores/imxrt1176/avr/eeprom.h:33` to `0x10BB`** (4283),
   with a build-time guard at `eeprom.c:61`. So `length()` is `E2END + 1` = 4284,
   which is the number the existing gate already asserts.
