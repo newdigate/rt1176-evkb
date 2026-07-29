@@ -57,6 +57,7 @@ _evkb_lib(SPI            ${_dev}/SPI                  https://github.com/newdiga
 _evkb_lib(PXP         ${_dev}/PXP                  https://github.com/newdigate/PXP          728c109f5787525d4ab50f97b57c85ef2cf1501c .)
 _evkb_lib(ILI9341_t3     ${_dev}/ILI9341_t3           https://github.com/newdigate/ILI9341_t3      e69e657f360e997e93fc7736a23eba8b09d1a043 .)
 _evkb_lib(MipiDisplay    ${_dev}/MipiDisplay          https://github.com/newdigate/MipiDisplay     931ed1f4d8aa1431d97422d7c577a69e28eefdc5 .) # panel chosen by the importer: import_evkb_library(MipiDisplay soc panels/<name>)
+_evkb_lib(TouchPanel     ${_dev}/TouchPanel           https://github.com/newdigate/TouchPanel      d20499c707290985379cb407689eca7f2c14fd08 .) # controller chosen by the importer: import_evkb_library(TouchPanel gt911)
 _evkb_lib(Audio          ${_dev}/Audio                https://github.com/newdigate/Audio           4b3d296d55be9a2e3cf5b9dafd23b8c33388bad4 .)
 _evkb_lib(SdFat          ${_dev}/SdFat                https://github.com/newdigate/SdFat           681bfcf83d05beb943e3d905f15d8181bf9072c7 .)
 _evkb_lib(SD             ${_dev}/PaulS_SD             https://github.com/newdigate/SD              e28c549918ea34ffb2942fd84deffc7c76a89880 .)

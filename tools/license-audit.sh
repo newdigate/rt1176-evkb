@@ -165,7 +165,9 @@ examples/display/lvgl_ili9341_test:lvgl_ili9341_test \
 examples/display/lvgl_rpi_panel_test:lvgl_rpi_panel_test \
 examples/display/lvgl_smoke_test:lvgl_smoke_test examples/display/pxp_blit_test:pxp_blit_test \
 examples/display/pxp_decimate_test:pxp_decimate_test examples/display/pxp_yuv_test:pxp_yuv_test \
-examples/display/rk055_panel_test:rk055_panel_test examples/display/rpi_panel_test:rpi_panel_test \
+examples/display/rk055_panel_test:rk055_panel_test \
+examples/display/rk055_touch_test:rk055_touch_test \
+examples/display/rpi_panel_test:rpi_panel_test \
 examples/dualcore/cm4_audio_test:cm4_audio_test \
 examples/dualcore/cm4_audiostream_test:cm4_audiostream_test \
 examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_cpp_test:cm4_cpp_test \

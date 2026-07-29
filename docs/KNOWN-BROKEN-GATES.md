@@ -12,7 +12,40 @@ time on a subsystem you probably are not touching.
 
 **Status:** broken. **Do not run by default.** Not a regression from any current work.
 
-**Symptom.** The gate reports:
+> ### ⚠ 2026-07-28 — it passed, 5 runs out of 5. Cause still unidentified; section stays.
+>
+> During the RK055-touch wrap this gate came up **green in the full sweep and in four further
+> individual runs**, all on an otherwise idle machine (load average ~4–5). Not vacuous: it printed
+> `fft_peak_bin=00000006`, `AUDIO_CM4_DET=PASS`, `codec_ack=1`, `cm7_audio_isers=0` — the four
+> values it actually asserts — and exited 0 every time.
+>
+> **Unconfirmed hypothesis: machine load.** The 2026-07-27 bisect below ran while this machine was
+> carrying load averages above 300 from unrelated builds. A starved host decouples QEMU's SAI
+> timing from the audio graph, which would present exactly as "ISRs fire, dispatch runs, the FFT
+> sees silence". That would make **every row of the bisect table below a false negative**, which is
+> also why none of them moved the needle. This is a hypothesis, not a finding — it has not been
+> tested by deliberately reloading the machine and re-running.
+>
+> One real difference from the committed transcript: `underruns` is now `0x2E4`–`0x2E7` (~740), not
+> 0. The gate does not assert `underruns`, so it passes regardless, and the transcript's
+> hardware-only `AUDIO_CM4=FAIL` line is likewise unasserted. Whether the underruns are the same
+> host-starvation artefact is unknown.
+>
+> **The section stays until someone understands why.** The rule below is that the only way off this
+> list is a fix, and nobody fixed anything — the gate changed behaviour on its own, which is a
+> weaker reason to trust it, not a stronger one. Cheapest next step is now: re-run it under
+> deliberate heavy load and see whether the old red reproduces.
+>
+> **★ A second variable, recorded because it confounds the first: the host was REBOOTED between
+> the red runs and the green ones.** Earlier in the same session `uptime` read `up 45 days` under
+> load 300+; the green runs above were taken at `up 32 mins` under load ~4. So "load" and "45 days
+> of uptime" changed together, and this evidence cannot separate them. A 45-day-old host
+> accumulates its own pathologies — memory pressure, thermal state, leaked file descriptors in
+> long-lived daemons — any of which could starve QEMU as effectively as the build did. Whoever
+> tests the load hypothesis should reload the machine *without* rebooting it first, or the
+> experiment answers the wrong question.
+
+**Symptom (as recorded 2026-07-27).** The gate reports:
 
 ```
 fft_peak_bin=00000000        (expected 00000006)
@@ -80,7 +113,32 @@ transcript".
 
 ## Current expected sweep result
 
-`66 passed, 1 failed, 0 SKIP` — the one failure being `dualcore/cm4_audio_test`.
+**68 gates** since `tools/run-all-qemu-gates.sh` discovery widened from `run_qemu.sh` to
+`run_qemu*.sh` on 2026-07-29 (it had been sweeping 29 of them; the other 38, named for what they
+test, were never run by anything) and `examples/display/rk055_touch_test` joined on 2026-07-28.
+
+Two outcomes are acceptable while the section above is unresolved, because **`cm4_audio_test` is
+intermittent, not reliably broken**:
+
+- `67 passed, 1 failed, 0 SKIP` — the failure being `dualcore/cm4_audio_test`. Observed on
+  2026-07-29 across five consecutive sweeps plus a direct run.
+- `68 passed, 0 failed, 0 SKIP` — observed 2026-07-28, 5 runs out of 5, on an idle machine.
+
+Same pinned `cores` (`2f15ff5`) in both cases, so it is not a core-version difference. That the
+same gate can be consistently red one day and 5/5 green the next is itself the finding; treat the
+section above as "intermittent, cause unidentified" rather than "broken".
+
+**Any OTHER failure is a real regression.** If you see more than one failure, check `uptime` before
+you check your diff: gates starved of CPU fail with missing or truncated UART capture, which mimics
+a regression convincingly.
+
+That failure mode is now *legible* rather than misleading — gates assert `gate_require_capture`
+before grepping, so a starved run says `no UART capture ... QEMU produced no serial output` instead
+of blaming the firmware with `banner missing`. The five thinnest-budget gates (`enet_test` at
+`sleep 1`; `analog_test`, `dac_test`, `irq_attach_test`, `serial_test` at `sleep 3`) were converted
+to bounded poll-for-token loops on 2026-07-29 for the same reason. That reduces the exposure; it has
+not been shown to eliminate it, and the trigger is still unidentified — 2x CPU saturation did not
+reproduce it.
 
 **Zero SKIPs matters as much as the pass count.** A `SKIP` means a missing ELF, i.e. a gate that
 silently never ran — build the example and re-run rather than accepting it.

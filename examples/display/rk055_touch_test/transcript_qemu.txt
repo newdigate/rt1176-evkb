@@ -1,0 +1,43 @@
+==== captured ====
+RK055_TOUCH_BEGIN
+PANEL_OK
+INIT_PAINT=OK
+I2C_OK
+ADDR=0x5D
+GT911_OK  ID=911
+CFG_OK
+RES=720x1280
+POINTS=5
+SWITCH1=0x00
+TOUCH_PROMPT phase=1 target=1/5 at=(108,128)
+FIRST_TOUCH x=108 y=128 id=0
+TARGET 1/5 HIT x=108 y=128
+TOUCH_ADVANCED
+TOUCH_PROMPT phase=1 target=2/5 at=(612,128)
+TARGET 2/5 HIT x=612 y=128
+TOUCH_PROMPT phase=1 target=3/5 at=(108,1152)
+TARGET 3/5 HIT x=108 y=1152
+TOUCH_PROMPT phase=1 target=4/5 at=(612,1152)
+TARGET 4/5 HIT x=612 y=1152
+TOUCH_PROMPT phase=1 target=5/5 at=(360,640)
+TARGET 5/5 HIT x=360 y=640
+TARGETS_OK
+TOUCH_PROMPT phase=2 swipe LEFT to RIGHT across the band, one brisk stroke, do not pause
+SWIPE_OK dir=+x span=62% samples=8 id=0
+TOUCH_PROMPT phase=3 place TWO fingers on the panel at once, well apart
+MULTI_OK ids=0,1 sep=360
+INT_EDGES=22
+BUFFERS=22
+TARGET_RELEASES=5
+POLL_FAILS=0
+ELAPSED_MS=1084
+TOUCH_OK
+PASS: RK055 touch T1+T2+T3 (GT911 reset + INT-level address latch at 0x5D
+      + product ID + the 186-byte config blob read and checksummed, with
+      the config space untouched; a polled contact read whose mandatory
+      status clear let the part go on to publish the release; and all
+      three phases -- five targets in order each with its published
+      release, a single-track +x drag of strictly advancing samples,
+      and two contacts with distinct ids -- with INT edges matching the
+      buffers consumed.
+      NOT proved here: the coordinate-to-display mapping.  See TARGETS_OK.)

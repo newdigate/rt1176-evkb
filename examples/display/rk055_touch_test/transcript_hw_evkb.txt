@@ -1,0 +1,155 @@
+RK055 capacitive touch (GT911) — hardware verification on the MIMXRT1170-EVKB
+=============================================================================
+
+Date:      2026-07-28
+Board:     MIMXRT1170-EVKB RevC3, RK055HDMIPI4MA0 latched on J48
+Setup:     RPi 7" panel DISCONNECTED. Nothing on D6/D9 or J25 odd pins 13/15.
+Firmware:  examples/display/rk055_touch_test, evkb ebed340 (branch rk055-touch)
+           TouchPanel d20499c, qemu2 826a138f1d (model untouched)
+Flash:     LinkServer 26.6.137, VCOM-free load + verify, then console attached
+           and reset via a backgrounded `LinkServer run`. LOAD_EXIT=0,
+           VERIFY_EXIT=0, no DAP errors.
+Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200 via tools/rt1170-console.py
+
+RESULT: all three touch phases PASS on real glass. The coordinate-to-display
+mapping is CORRECT — this is the one property QEMU can never prove, because
+the model places its scripted contacts at the same percentages the firmware
+places its targets.
+
+TOUCH_OK was correctly WITHHELD on the INT edge relation. That is a real
+finding, not a defect in the touch path — see "OPEN FINDINGS" below.
+
+
+Second (complete) run, verbatim
+-------------------------------
+
+ RK055_TOUCH_BEGIN
+PANEL_OK
+INIT_PAINT=OK
+I2C_OK
+ADDR=0x5D
+GT911_OK  ID=911
+CFG_OK
+RES=720x1280
+POINTS=5
+SWITCH1=0x05
+TOUCH_PROMPT phase=1 target=1/5 at=(108,128)
+TOUCH_ADVANCED
+FIRST_TOUCH x=79 y=105 id=0
+TARGET 1/5 HIT x=79 y=105
+TOUCH_PROMPT phase=1 target=2/5 at=(612,128)
+TARGET 2/5 HIT x=630 y=136
+TOUCH_PROMPT phase=1 target=3/5 at=(108,1152)
+TARGET 3/5 HIT x=124 y=1124
+TOUCH_PROMPT phase=1 target=4/5 at=(612,1152)
+TARGET 4/5 HIT x=569 y=1124
+TOUCH_PROMPT phase=1 target=5/5 at=(360,640)
+TARGET 5/5 HIT x=363 y=643
+TARGETS_OK
+TOUCH_PROMPT phase=2 swipe LEFT to RIGHT across the band, one brisk stroke, do not pause
+SWIPE_OK dir=+x span=60% samples=23 id=0
+TOUCH_PROMPT phase=3 place TWO fingers on the panel at once, well apart
+MULTI_OK ids=0,1 sep=343
+INT_EDGES=147
+BUFFERS=138
+INT_MISMATCH edges=147 buffers=138 pollfails=0 reason=edges-exceed-buffers-plus-pollfails
+TARGET_RELEASES=5
+POLL_FAILS=0
+ELAPSED_MS=19015
+
+A first run (same boot sequence, identical bring-up tokens) completed phases 1
+and 2 — TARGETS_OK, SWIPE_OK span=61% samples=34 — and was interrupted during
+phase 3 by a board reset. Both runs agree on every bring-up value.
+
+
+★★ WHAT SILICON PROVED THAT QEMU COULD NOT
+------------------------------------------
+
+1. THE INT-LEVEL I2C ADDRESS LATCH WORKS ON THE REAL PART. ADDR=0x5D on the
+   first attempt, every attempt. This was the subtlest fact in the whole task
+   (fsl_gt911.c drives INT low across the reset release to select 0x5D over
+   0x14) and the entire QEMU oracle was built to protect it.
+
+2. THE COORDINATE-TO-DISPLAY MAPPING IS CORRECT. No axis swap, no mirroring,
+   no scale error. All five targets were hit in order, in a fixed sequence the
+   operator could not have satisfied with a flipped mapping — a mirrored X
+   would have made targets 1 and 2 mutually unreachable.
+
+   Corroborated independently by SWITCH1 bit 3 (X2Y) reading 0: the part
+   itself reports no axis swap.
+
+3. THE REPORTED COORDINATES ARE A REAL FINGER, NOT A FABRICATION. Hits land
+   10–45 px from the target centres (79,105 vs 108,128; 630,136 vs 612,128;
+   124,1124 vs 108,1152; 569,1124 vs 612,1152; 363,643 vs 360,640). A stuck
+   or synthesised value would land exactly on centre, as it does in QEMU —
+   where the model computes the same percentage of the same resolution the
+   firmware does, so dx=dy=0 every time.
+
+4. THE REAL RESOLUTION IS 720x1280 and the real stored contact count is 5.
+   Both were previously unknown to this project — the driver reads and scales
+   by them rather than asserting them (design §5.4), so the panel was free to
+   report anything.
+
+5. A REAL DRAG PRODUCES 23–34 SAMPLES, against the model's 8. The swipe's
+   span requirement (>=60% of the axis, strictly advancing, single track id)
+   was met by an actual stroke.
+
+6. FIRST SILICON EXERCISE OF GPIO2 INTERRUPTS on this core. irq_attach_test
+   only ever proved GPIO3. The INT line does fire — see the finding below for
+   what is wrong with the count, not with the mechanism.
+
+
+★★ OPEN FINDINGS — SILICON DIVERGES FROM THE MODEL
+--------------------------------------------------
+
+FINDING 1: SWITCH1 = 0x05 on hardware; the QEMU model serves 0x00.
+
+  0x05 = 0b00000101
+    bits[1:0] = 01 = kGT911_IntFallingEdge
+    bit 2     = 1
+    bit 3     = 0 = no X2Y axis swap
+
+  The panel is configured for a FALLING-EDGE interrupt. The firmware attaches
+  attachInterrupt(..., RISING). NXP's own config in lvgl_support.c requests
+  kGT911_IntRisingEdge, which is what the QEMU model was built to — but this
+  panel's stored configuration says otherwise, and we deliberately never write
+  the config space (design §5.3), so the stored value governs.
+
+  This is exactly the divergence the SWITCH1= diagnostic was added to expose.
+  It was added at a reviewer's request on the grounds that it would be the most
+  likely cause of an INT_MISMATCH and that the bench transcript would otherwise
+  be unable to show it. That prediction was correct.
+
+FINDING 2: INT_EDGES=147 exceeds BUFFERS=138 by 9 (+6.5%), with POLL_FAILS=0.
+
+  More rising edges were seen than coordinate buffers were consumed, and no
+  I2C transfer failed. So the line moved with nothing published.
+
+  This is the symptom predicted by gt911.h HW-TO-CONFIRM item 2: D6 is left a
+  plain INPUT after begin() releases it, and no pull-up on CTP_INT could be
+  found in the RevC3 netlist — GPIO_AD_00 carries only 0R series parts
+  (R2032 to J48.29, plus R6/R1811/R1906 fanning into the SIM and motor-control
+  circuits). A floating input chatters.
+
+  Findings 1 and 2 may be one fault or two. Both need a scope on GPIO_AD_00,
+  and an INPUT_PULLUP experiment, before either is closed.
+
+  NOT DONE, DELIBERATELY: the QEMU model was not changed to match, and the INT
+  assertion was not relaxed. Silicon wins, and a divergence gets documented,
+  never engineered away. The three touch phases are POLLED and are unaffected
+  by any of this — INT_EDGES is a corroborating token by design (§6.3).
+
+
+Reproduction
+------------
+
+  pkill LinkServer; pkill redlinkserv; pkill crt_emu_cm_redlink
+  cd examples/display/rk055_touch_test
+  /Applications/LinkServer_26.6.137/LinkServer flash MIMXRT1176:MIMXRT1170-EVKB load   build/rk055_touch_test.elf
+  /Applications/LinkServer_26.6.137/LinkServer flash MIMXRT1176:MIMXRT1170-EVKB verify build/rk055_touch_test.elf
+  python3 ../../../tools/rt1170-console.py /dev/cu.usbmodem<probe> 115200 &
+  /Applications/LinkServer_26.6.137/LinkServer run MIMXRT1176:MIMXRT1170-EVKB build/rk055_touch_test.elf &
+
+  Do NOT hold the VCOM during load or verify — it kills the debug session with
+  DAP status 131. There is no standalone `LinkServer reset` in 26.6.137; a
+  backgrounded `run` is how the target is reset.

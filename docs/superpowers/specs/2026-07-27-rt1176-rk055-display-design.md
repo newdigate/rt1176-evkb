@@ -43,6 +43,8 @@ mistake of planning a HW gate against an assumed connection.
 **Out of scope — named follow-ons, not silently dropped:**
 
 - **v2** — capacitive touch (controller on `J48` pins 26–29 via LPI2C5/Wire2).
+  **Now designed and delivered** — see `2026-07-28-rt1176-rk055-touch-design.md`
+  (GT911 driver, `examples/display/rk055_touch_test`, HW-verified 2026-07-28).
 - **v3** — LVGL `lv_indev` binding on top of v2, joining the existing `lvgl_rpi_panel_test` shape.
 - **v4** — double buffering / page flip on vsync, PXP-accelerated drawing, XRGB8888.
 - **Any hardware re-verification of the Raspberry Pi 7" panel.** That panel remains blocked on the
