@@ -96,6 +96,13 @@ Repo-wide gates in `tools/`:
 - `license-audit.test.sh` — negative tests proving the audit's part-1 checks
   actually fire (unlicensed binary, MPL header) rather than passing vacuously.
 - `gate-lib.test.sh` — tests for the gate runner lifecycle library.
+- `gate-vacuity.test.sh` — negative tests proving the *gates themselves* fail
+  when they should: a run that produced no UART must fail by name rather than
+  die silently or blame the firmware, and a missing counter token must not read
+  as proof the good outcome happened. Drives real runners against a fake QEMU
+  (via `qrun`'s `REAL_QEMU` hook) using each gate's committed
+  `transcript_qemu.txt` as the fixture, so it needs no prior gate run — but it
+  does need the examples it covers built.
 
 ## Flash / run on hardware
 
