@@ -42,7 +42,7 @@ grep -q "EEPROM_PERSIST=PASS" "$OUT" || { echo "FAIL: cold-start rescan"; exit 1
 # window, so a RETURN here would mean the model had grown persistence and this
 # assertion had stopped testing what it claims. The RETURN case is proven on
 # hardware instead -- see transcript_hw_evkb.txt.
-grep -q "EEPROM_BOOT=FIRST"   "$OUT" || { echo "FAIL: boot marker not FIRST (QEMU cannot persist)"; exit 1; }
+grep -q "EEPROM_BOOT=FIRST boots=1" "$OUT" || { echo "FAIL: boot marker not FIRST boots=1 (QEMU cannot persist)"; exit 1; }
 # 4284 = EEPROM.length() = E2END(0x10BB=4283)+1 — proves the emulated region is sized right
 grep -q "EEPROM_LENGTH=4284"  "$OUT" || { echo "FAIL: length"; exit 1; }
 grep -q "EEPROM_ALL=PASS"     "$OUT" || { echo "FAIL: overall"; exit 1; }

@@ -19,13 +19,13 @@
 > 2026-07-29 — see `CLAUDE.md`). And it says EEPROM is the only manifest entry
 > still pointing at an upstream; `Bounce2` and the two CMSIS repos are as well.
 >
-> **One open item.** The hardware persistence evidence is weaker than
-> `transcript_hw_evkb.txt` originally claimed. The marker written by the gate is
-> deterministic, so a marker lost to power loss would be recreated byte-identically
-> by the next boot, and neither the console nor a raw-flash comparison can tell
-> that from survival. Closing it properly needs a non-reproducible element in the
-> marker (a boot counter, or an RTC-seeded payload). See the caveat section in
-> that transcript.
+> **Nothing left open.** The hardware persistence proof went through two unsound
+> attempts before landing. A console-only test cannot work (the board boots before
+> a console can attach, so a lost marker is silently recreated), and neither can a
+> raw-flash byte comparison (the marker was deterministic, so re-creation is
+> byte-identical). It is now settled by a `boots` counter in the marker: read out
+> of the NOR array over SWD, it went 1 -> 2 across a physical power cycle, and a
+> boot finding blank flash writes 1. See `transcript_hw_evkb.txt`.
 
 ---
 

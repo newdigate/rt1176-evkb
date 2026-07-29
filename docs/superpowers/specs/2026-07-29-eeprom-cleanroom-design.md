@@ -276,9 +276,17 @@ three greps added to `run_qemu_eeprom.sh`. Existing stages (`EEPROM_RW`,
   print `EEPROM_BOOT=RETURN`.
 
   QEMU has no backing store, so it is deterministically `FIRST` and the gate
-  asserts exactly that. On the EVKB, a power-cycle turns it into `RETURN`, and
-  that is the un-fakeable persistence proof. The stage runs **first**, before the
-  other stages write anything.
+  asserts exactly that. The stage runs **first**, before anything else writes.
+
+  **`RETURN` on hardware is NOT by itself the persistence proof** — that was an
+  error in this spec's first revision, found during execution. The board boots
+  before a console can attach, so a marker lost to power loss is silently
+  recreated by that unobserved boot and every later reset still prints `RETURN`.
+  A raw-flash byte comparison fails for the same underlying reason: a
+  deterministic marker is recreated byte-identically. The marker therefore
+  carries a **`boots` counter**, cumulative state a fresh boot cannot fabricate,
+  read directly out of the NOR array over SWD. Verified 1 → 2 across a physical
+  power cycle.
 
 ### Hardware verification
 
