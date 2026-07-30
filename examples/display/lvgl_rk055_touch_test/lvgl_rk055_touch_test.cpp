@@ -97,6 +97,16 @@ static_assert(TRAP_RECT.x + TRAP_RECT.w <= 598,
 // Phase patience: sized for a bench operator reading prompts (v2's rationale);
 // QEMU's script finishes each phase in well under a second.
 static constexpr uint32_t PHASE_TIMEOUT_MS = 60000;
+// The FIRST watch gets 10 minutes, because its window arms at RESET, not when
+// the operator is ready.  On a remotely-driven bench (agent flashes, human
+// walks over) the operator arrives on human latency; 60 s expired before the
+// first tap TWICE, each time with the identical no-contact signature
+// (IDLE_POLLS=6047, BUFFERS=3) while the operator's later taps played to
+// watches that had already exited -- the widgets still react (loop() keeps
+// LVGL live), which makes the failure look like success on the glass.  Once
+// the operator is engaged, PHASE_TIMEOUT_MS per step is ample.  QEMU is
+// indifferent: the scripted first tap arrives within milliseconds.
+static constexpr uint32_t FIRST_TOUCH_TIMEOUT_MS = 600000;
 // Quiet time with no fresh buffer before the final verdict is read: long
 // enough that the tail of the script (2 x 20 ms steps) cannot still be in
 // flight, short enough to cost nothing.
@@ -185,10 +195,11 @@ static void build_scene()
 // QEMU script fires the events in exactly this order, so the same watches
 // serve both the model and a prompted bench operator.
 
-// Pump LVGL until `obj` reports CHECKED or the phase times out.
-[[nodiscard]] static bool waitChecked(lv_obj_t *obj, const char *tok)
+// Pump LVGL until `obj` reports CHECKED or `timeout_ms` expires.
+[[nodiscard]] static bool waitChecked(lv_obj_t *obj, const char *tok,
+                                      uint32_t timeout_ms = PHASE_TIMEOUT_MS)
 {
-    const uint32_t deadline = millis() + PHASE_TIMEOUT_MS;
+    const uint32_t deadline = millis() + timeout_ms;
     while ((int32_t)(millis() - deadline) < 0) {
         lvgl_rt1176_loop();
         if (lv_obj_has_state(obj, LV_STATE_CHECKED)) {
@@ -209,7 +220,11 @@ static void build_scene()
                        (unsigned)(i + 1),
                        (int)(BTN_RECT[i].x + BTN_RECT[i].w / 2),
                        (int)(BTN_RECT[i].y + BTN_RECT[i].h / 2));
-        if (!waitChecked(s_btn[i], TOK[i])) return false;
+        // Button 1's window is the operator-arrival window -- see
+        // FIRST_TOUCH_TIMEOUT_MS.  The rest run on normal phase patience.
+        if (!waitChecked(s_btn[i], TOK[i],
+                         i == 0 ? FIRST_TOUCH_TIMEOUT_MS : PHASE_TIMEOUT_MS))
+            return false;
     }
     return true;
 }
