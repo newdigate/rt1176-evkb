@@ -174,3 +174,35 @@ Operator, verbatim: "no flickering - smooth and responsive"
 
 The v5 phase-C prompt (HOLD finger placed FIRST) made the ritual's
 primary-adoption deterministic, as the v3 final review asked.
+
+
+======================================================================
+v6 section — the PXP sync copy under a real finger (2026-07-30)
+======================================================================
+
+Firmware:  evkb 8f1fdd2 (branch lvgl-pxp-v6), LVGL 4ad68be, MipiDisplay
+           eb22e0b, TouchPanel d20499c, qemu2 f10de76d1e
+Flash:     VCOM-free load+verify, exit 0 both.
+
+RESULT: PASS -- the full ritual with lvgl_pxp_copy_install(1024) live.
+
+Key lines (full run in console order, all v3/v5 tokens present and correct):
+
+LVGL_SUM=0xE1559496          (the golden, unchanged -- the handler changed
+                              no pixel)
+BTN1..5=CHECKED
+DRAG_END x=610 moves=35
+HOLD=CHECKED
+TRAP=UNCHECKED
+IDLE_POLLS=642  POLL_FAILS=0  BUFFERS=530
+FLIPS=161  VSYNC_TIMEOUTS=0
+PXP_COPIES=103  PXP_FALLBACKS=77
+LVGL_TOUCH_OK
+
+THE SPLIT IS THE STORY: 103 sync copies took the PXP (the drag-band and
+multi-widget regions), 77 fell through to the CPU (small single-widget
+syncs below the height/area rule) -- the threshold measured by the bench
+(transcript_hw_evkb.txt in lvgl_pxp_copy_bench, ANALYSIS point 3) doing
+exactly what it was adopted to do, visibly, under a live finger.
+
+Operator, verbatim: "drag was smooth, no artifacts"
