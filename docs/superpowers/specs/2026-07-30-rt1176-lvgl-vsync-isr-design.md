@@ -90,8 +90,15 @@ enable last, so no interrupt can arrive before the vector is set.
 **The ISR never calls LVGL.** The callback does the minimum interrupt-context work:
 
 ```
-isr callback:  vsync_isr_count++;
-               if (a flip is pending) { scanned_fb = pending_fb; pending_fb = null; }
+isr callback:  if (a flip is pending AND the shadow load has LATCHED --
+                   the self-clearing SHADOW_LOAD_EN bit is the ground truth):
+                   { scanned_fb = pending_fb; pending_fb = null; retires++; }
+               (retires, not entries, is the counted quantity: the ISR runs on
+                every ~60 Hz vsync and raw entry counts are runtime-dependent.
+                The latch guard closes a tens-of-cycles IRQ-propagation window
+                found by the final review -- a stale vsync's interrupt arriving
+                after the pending store must not retire a flip that latches
+                only at the NEXT vsync.)
 ```
 
 `flush_wait_cb` keeps its v4 role and its v4 guarantees — the 40 ms bound, the
@@ -161,8 +168,11 @@ Existing assertions unchanged in meaning (`FLIP_A/B=MATCH` pairs, `DISTINCT=OK`,
 - **`VSYNC_ISR=120`** (new token): the ISR observed and retired every flip — interrupt
   delivery end-to-end (INT_ENABLE, NVIC, vector, W1C handshake) under the modelled level
   IRQ.
-- `VSYNCS=120` keeps its v4 meaning (landings consumed by the wait path) — now via the
-  ISR-set flag. The v4 history paragraph in the gate comment stays; its "if this reads
+- `VSYNCS=120` keeps its v4 meaning (landings consumed by the wait path) — via a
+  thread-owned consumed-counter lagging the ISR's retire counter, so the retire is
+  STICKY: a wait arriving a whole refresh after the vsync still consumes that landing
+  (v4's latched INT_STATUS read was implicitly sticky; the first ISR build lost that and
+  the pin caught it at VSYNCS=3). The v4 history paragraph in the gate comment stays; its "if this reads
   low, that regression is back" clause now also covers a dead ISR.
 
 ### 6.2 Negative tests (measured red before the green is trusted)
@@ -170,10 +180,12 @@ Existing assertions unchanged in meaning (`FLIP_A/B=MATCH` pairs, `DISTINCT=OK`,
 1. **Stale-buffer flip** (v4's) — re-measured against the ISR path; expected red at
    `FLIP_B=MATCH`.
 2. **NEW: interrupt never enabled** — temporarily skip the `INT_ENABLE_D0` write in
-   `lcdifv2AttachVsyncInterrupt`. The ISR never fires; every wait must trip the 40 ms
-   bound; expected red at `^VSYNC_TIMEOUTS=0$` **with the gate completing rather than
-   hanging** — the proof that the degraded mode survived the ISR migration. If this run
-   hangs to the harness timeout instead, the design's central safety claim is false: STOP.
+   `lcdifv2AttachVsyncInterrupt`. The ISR never fires; the waits trip the 40 ms bound
+   **with the gate completing rather than hanging** — the proof that the degraded mode
+   survived the ISR migration. (As measured: the example bails at the first MISMATCH, so
+   the red lands at a MATCH token with `VSYNC_TIMEOUTS=1` in the transcript — one
+   timeout, not one per frame; the completing-not-hanging property is the claim.) If the
+   run hangs to the harness timeout instead, the central safety claim is false: STOP.
 
 ### 6.3 What each side is allowed to prove
 

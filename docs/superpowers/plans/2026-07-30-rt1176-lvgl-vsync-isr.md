@@ -424,6 +424,14 @@ are complete — in its own commit, per the established pattern.
 
 ---
 
+## Post-execution re-sync note
+
+Task 3's shipped code differs from the fence below in two reviewed ways: the retire is
+STICKY (a thread-owned consumed-counter lags the ISR's retires -- the gate's VSYNCS pin
+caught the non-sticky version at 3, LVGL 921ad96) and the ISR retires only a LATCHED
+flip (lcdifv2FlipLatched() guards a tens-of-cycles IRQ-propagation window, LVGL 8ede90c,
+found by the final review).  The binding source is the reference; this fence is history.
+
 ## Self-review notes (kept for the executor)
 
 - **Spec coverage:** §3.1→Task 2; §3.2→Task 3 (ownership table verbatim); §3.3→Task 5;
