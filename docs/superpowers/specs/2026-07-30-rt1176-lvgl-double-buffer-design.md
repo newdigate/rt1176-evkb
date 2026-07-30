@@ -149,8 +149,9 @@ write-1-to-clear. The change:
 - `SHADOW_LOAD_EN` written 1 → the model records the *pending* shadow ADDR;
 - at the next vsync-timer tick, the pending ADDR is latched into the address the scanout/
   panel-tap path reads, and `SHADOW_LOAD_EN` reads back 0 (self-cleared);
-- writes to CTRLDESCL4 between the pulse and the vsync do **not** reach the scanned address
-  — exactly the shadowed behaviour the RM describes and `lcdifv2.cpp:211–220` documents.
+- writes to CTRLDESCL4 never reach the scanned address **before** a vsync: the latch copies
+  the shadow registers **as they stand at that vsync** — exactly the shadowed behaviour the
+  RM describes and `lcdifv2.cpp:211–220` documents.
 
 **What this makes provable:** the virtual HX8394's pixel-checksum tap now sums *whichever
 buffer the panel actually scanned at that vsync*. A gate can therefore prove the panel showed
