@@ -1,0 +1,118 @@
+LVGL lv_indev over the GT911 (v3) — hardware verification on the MIMXRT1170-EVKB
+=================================================================================
+
+Date:      2026-07-30
+Board:     MIMXRT1170-EVKB RevC3, RK055HDMIPI4MA0 latched on J48
+Setup:     RPi 7" panel DISCONNECTED. Nothing on D6/D9 or J25 odd pins 13/15.
+Firmware:  examples/display/lvgl_rk055_touch_test, evkb 6cbab5e (branch
+           lvgl-touch-v3), LVGL 90f577a (port/lvgl_gt911_indev), TouchPanel
+           d20499c, qemu2 db4bbd40b6 (model untouched for this run)
+Flash:     LinkServer 26.6.137, VCOM-free load + verify, then console attached
+           and reset via a backgrounded `LinkServer run`. LOAD_EXIT=0,
+           VERIFY_EXIT=0, no DAP errors.
+Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200 via tools/rt1170-console.py
+
+RESULT: PASS — a real finger drove real LVGL widgets through the full ritual,
+and the firmware's own verdict token (LVGL_TOUCH_OK) was earned, not assumed.
+
+
+Console capture, verbatim (the passing attended run)
+----------------------------------------------------
+
+ LVGL_RK055_TOUCH_BEGIN
+PANEL_OK
+LVGL_FLUSHED=PASS
+LVGL_BYTES=1843200
+LVGL_SUM=0xE1559496
+I2C_OK
+ADDR=0x5D
+GT911_OK
+CFG_OK RES=720x1280 POINTS=5
+TOUCH_PROMPT phase=A tap button 1 at=(108,128)
+BTN1=CHECKED
+TOUCH_PROMPT phase=A tap button 2 at=(612,128)
+BTN2=CHECKED
+TOUCH_PROMPT phase=A tap button 3 at=(108,1152)
+BTN3=CHECKED
+TOUCH_PROMPT phase=A tap button 4 at=(612,1152)
+BTN4=CHECKED
+TOUCH_PROMPT phase=A tap button 5 at=(360,640)
+BTN5=CHECKED
+TOUCH_PROMPT phase=B drag the amber handle to the right edge of its band, one continuous stroke
+DRAG_END x=610 moves=25
+TOUCH_PROMPT phase=C two fingers, one on HOLD one on TRAP, together; lift the HOLD finger FIRST, then the other
+HOLD=CHECKED
+TRAP=UNCHECKED
+IDLE_POLLS=23076
+POLL_FAILS=0
+BUFFERS=312
+LVGL_TOUCH_OK
+LVGL_RK055_TOUCH_DONE
+
+
+★★ WHAT SILICON PROVED THAT QEMU COULD NOT
+------------------------------------------
+
+1. THE COORDINATE→WIDGET MAPPING IS CORRECT THROUGH LVGL'S OWN HIT-TESTING.
+   Five buttons checked in a fixed order a mis-mapped axis makes impossible —
+   the same argument as v2, but this time the hit-test and click delivery are
+   LVGL's, not the example's.
+
+2. THE DRAG IS A REAL FINGER: DRAG_END x=610 moves=25, against the model's
+   exact x=598 moves=9. Twenty-five distinct handle positions is a human
+   stroke sampled at ~100 Hz; the scripted run cannot produce it, and a
+   binding that forwarded Idle as released could not have produced ANY of it
+   (the handle would have died at the left edge — measured in QEMU negative
+   test 1, transcript_qemu commit 00e8fcf).
+
+3. THE PRIMARY-CONTACT POLICY HELD UNDER A REAL HAND: two simultaneous
+   fingers, the primary lifted first, and TRAP stayed UNCHECKED while HOLD
+   clicked clean. The QEMU phase-3b instants exercise this deterministically;
+   a hand's imprecise, non-simultaneous lifts exercise it the way users will.
+
+4. THE HARDWARE SCENE CHECKSUM EQUALS THE QEMU GOLDEN (0xE1559496): the
+   pre-touch render is byte-deterministic across emulator and silicon.
+
+5. REAL-WORLD POLL TRAFFIC: IDLE_POLLS=23076 against BUFFERS=312 — idle
+   outnumbers fresh data ~74:1 on silicon, which is the ratio the Idle latch
+   exists for. POLL_FAILS=0: the 400 kHz bus stayed clean throughout.
+
+TEARING (spec §8.1 accepted it; recording what was actually seen): operator
+reports the handle "tracked cleanly, no tearing noticed, some very minor
+flickering". Consistent with the accepted direct-render trade — a transient
+artefact on a moving widget, no sliced frames observed. v4's double-buffer
+milestone remains the fix.
+
+
+Bench finding worth keeping: THE FIRST WATCH'S WINDOW ARMS AT RESET
+-------------------------------------------------------------------
+
+Two earlier attended attempts failed with the identical signature
+(BTN1_FAIL reason=timeout, IDLE_POLLS=6047, BUFFERS=3): the 60 s window for
+button 1 expired before the operator reached the bench, the phase chain
+short-circuited, and the operator's subsequent taps played to watches that
+had already exited — while the widgets still visibly reacted, because loop()
+keeps LVGL live. On a remotely-driven bench that failure LOOKS like success
+on the glass. Fixed in 6cbab5e: button 1 waits 10 minutes (the operator-
+arrival window); the rest keep 60 s. QEMU is indifferent — its scripted
+first tap arrives within milliseconds.
+
+Also observed on those runs: BUFFERS=3 with no finger on the glass, twice,
+identically — the real GT911 publishes a few buffers after reset with no
+contact. Harmless here (they carry zero contacts and the binding latches),
+but worth knowing before anyone asserts BUFFERS==0 on an untouched panel.
+
+
+Reproduction
+------------
+
+  pkill LinkServer; pkill redlinkserv; pkill crt_emu_cm_redlink
+  cd examples/display/lvgl_rk055_touch_test
+  /Applications/LinkServer_26.6.137/LinkServer flash MIMXRT1176:MIMXRT1170-EVKB load   build/lvgl_rk055_touch_test.elf
+  /Applications/LinkServer_26.6.137/LinkServer flash MIMXRT1176:MIMXRT1170-EVKB verify build/lvgl_rk055_touch_test.elf
+  python3 ../../../tools/rt1170-console.py /dev/cu.usbmodem<probe> 115200 &
+  /Applications/LinkServer_26.6.137/LinkServer run MIMXRT1176:MIMXRT1170-EVKB build/lvgl_rk055_touch_test.elf &
+  # then follow the TOUCH_PROMPT lines; button 1 waits 10 minutes for you.
+
+  Do NOT hold the VCOM during load or verify (DAP status 131). There is no
+  standalone `LinkServer reset` in 26.6.137; a backgrounded `run` is the reset.
