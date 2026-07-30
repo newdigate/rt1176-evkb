@@ -102,8 +102,14 @@ uint32_t lvgl_mipi_panel_vsyncs();   // vsync events consumed by the wait path
 
 - Allocates the alt buffer (asserting success), hands **both** buffers to
   `lv_display_set_buffers(..., LV_DISPLAY_RENDER_MODE_DIRECT)`.
-- `flush_cb` (last flush only): `lcdifv2VsyncArm()`, `lcdifv2FlipTo(just_rendered)`,
-  mark flip pending, count the flip, `lv_display_flush_ready()`.
+- `flush_cb` (last flush only): `lcdifv2FlipTo(just_rendered)`, `lcdifv2VsyncArm()`, mark
+  flip pending, count the flip — and **no `lv_display_flush_ready()`**: with a
+  `flush_wait_cb` registered, LVGL clears `flushing` itself after that callback returns
+  (`lv_refr.c:1428-1440`), and a synchronous `flush_ready` would disarm the wait entirely,
+  leaving the invariant to timing luck. (Found by the gate: `VSYNCS` read 3 instead of one
+  consumed landing per flip. `FlipTo` before `Arm` is likewise load-bearing — a vsync
+  between the two then merely costs one extra frame of wait instead of passing a wait the
+  flip never latched at.)
 - `flush_wait_cb`: if a flip is pending, poll `lcdifv2VsyncSeen()` until it lands (counting
   the vsync), then clear pending. LVGL calls this only when the next refresh needs the
   buffer — the deferred-wait shape of the approved polling design.
@@ -119,10 +125,12 @@ scanning. It holds because rendering begins only after `flush_wait_cb` returns, 
 ```
 refresh N:   LVGL syncs dirty areas front→back (refr_sync_areas, LVGL-internal)
              LVGL renders dirty areas into BACK
-flush (last): arm vsync · FlipTo(BACK) · pending=1 · flush_ready
-             [panel still scanning FRONT until vsync]
+flush (last): FlipTo(BACK) · arm vsync · pending=1 · NO flush_ready
+             [panel still scanning FRONT until vsync; `flushing` stays set]
 vsync:       hardware latches ADDR; BACK becomes the scanned buffer
-refresh N+1: flush_wait_cb sees pending, waits VsyncSeen() → roles swapped, repeat
+refresh N+1: LVGL invokes flush_wait_cb (flushing still set) → waits
+             VsyncSeen(), clears pending; LVGL clears `flushing` itself →
+             roles swapped, repeat
 ```
 
 ---
