@@ -179,6 +179,7 @@ void setup()
     Serial1.printf("REFRESHES=%lu\n", (unsigned long)frames_done);
     Serial1.printf("FLIPS=%lu\n", (unsigned long)lvgl_mipi_panel_flips());
     Serial1.printf("VSYNCS=%lu\n", (unsigned long)lvgl_mipi_panel_vsyncs());
+    Serial1.printf("VSYNC_ISRS=%lu\n", (unsigned long)lvgl_mipi_panel_vsync_isrs());
     Serial1.printf("VSYNC_TIMEOUTS=%lu\n",
                    (unsigned long)lvgl_mipi_panel_vsync_timeouts());
     if (pass && lvgl_mipi_panel_vsync_timeouts() == 0) {
