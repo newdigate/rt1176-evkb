@@ -32,27 +32,27 @@ grep -q "FLIP_A=MATCH" "$OUT" || { echo "FAIL: panel did not scan buffer A"; exi
 grep -q "FLIP_B=MATCH" "$OUT" || { echo "FAIL: panel did not scan buffer B"; exit 1; }
 # Vacuity guard: identical frames would make the alternation proof unfalsifiable.
 grep -q "DISTINCT=OK" "$OUT" || { echo "FAIL: frames identical -- alternation unproven"; exit 1; }
-# Discipline: one flip per refresh, no dead waits.  Pinned exactly because
-# the flow is ack-driven and deterministic.  Derivation (measured, then
-# re-derived from source -- the plan's nominal was VSYNCS=120):
+# Discipline: one flip per refresh, EVERY landing consumed exactly once, no
+# dead waits.  Pinned exactly because the flow is ack-driven and
+# deterministic.  Derivation:
 #   REFRESHES=120  TOTAL_FRAMES=120 includes the 2 assertion frames;
 #                  frames_done is read from lvgl_mipi_panel_flips().
 #   FLIPS=120      db_flush_cb issues one shadow-load per full refresh.
-#   VSYNCS=3       s_db_vsyncs counts vsyncs consumed inside
-#                  lvgl_mipi_panel_flip_sync() with a flip pending.  Only the
-#                  firmware's three explicit calls qualify (after frame A,
-#                  after frame B, after the discipline loop): db_flush_cb
-#                  calls lv_display_flush_ready() synchronously, so LVGL's
-#                  flush_wait_cb never observes a flush in progress and never
-#                  reaches flip_sync with a flip pending.  The remaining 117
-#                  flips land at vsync unobserved by this counter (LVGL's
-#                  33 ms refresh period > the 17 ms frame period, so each
-#                  lands before the next is issued -- but nobody consumes
-#                  the landing).  A change that makes the fence per-frame
-#                  must re-pin this to 120 and delete this paragraph.
+#   VSYNCS=120     one consumed landing per flip.  This number is the direct
+#                  witness of the binding's invariant enforcement: the last
+#                  flush DEFERS lv_display_flush_ready(), so LVGL invokes
+#                  flush_wait_cb (which waits out the vsync) before it next
+#                  touches the buffer.  HISTORY, kept on purpose: the first
+#                  build called flush_ready synchronously in flush_cb, the
+#                  wait_cb never engaged, and this counter read 3 (only the
+#                  example's own explicit flip_sync calls) -- the invariant
+#                  was resting on the 33 ms refresh period exceeding the
+#                  17 ms flip latency, timing luck the gate correctly
+#                  refused.  If this pin ever reads low again, that
+#                  regression is back.
 grep -q "^REFRESHES=120$"      "$OUT" || { echo "FAIL: refresh count"; exit 1; }
 grep -q "^FLIPS=120$"          "$OUT" || { echo "FAIL: flip count"; exit 1; }
-grep -q "^VSYNCS=3$"           "$OUT" || { echo "FAIL: vsync count"; exit 1; }
+grep -q "^VSYNCS=120$"         "$OUT" || { echo "FAIL: vsync count -- the flush_wait fence is not engaging"; exit 1; }
 grep -q "^VSYNC_TIMEOUTS=0$"   "$OUT" || { echo "FAIL: a vsync wait gave up"; exit 1; }
 grep -q "FLIP_OK"              "$OUT" || { echo "FAIL: firmware verdict withheld"; exit 1; }
 [ -f "$DIR/lvgl_rk055_flip.dbg" ] || { echo "FAIL: no guest-error log"; exit 1; }
