@@ -46,6 +46,11 @@ to be taken **only after v4 is complete and hardware-verified**:
   across two runs AND a human eye on the glass, in the same commit.
 - **Do not** let the ISR session grow into PXP or XRGB8888 — those remain their own
   milestones with their own driving measurements.
+- Small model debt from the v4 final review, decide-or-defer: the QEMU LCDIFv2 paint
+  path gates on enabled/geometry but not `layer0_active_addr != 0`, so a GUI repaint
+  in the sub-frame window before the first latch reads guest address 0 — unreachable
+  by any gate (`-display none`), but the state-struct comment promises "dark until
+  the first load" and the code does not implement it.
 
 ## Non-negotiable project conventions
 

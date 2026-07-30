@@ -62,8 +62,10 @@ static void build_scene()
     lv_obj_set_style_bg_color(s_box, lv_color_hex(0xE0A030), LV_PART_MAIN);
 }
 
+#if !defined(FLIP_DEMO_SINGLE)
 /* Advance the box one step and pump LVGL until exactly one more full refresh
- * (== one more flip) has happened.  False on timeout. */
+ * (== one more flip) has happened.  False on timeout.  Compiled out of the
+ * single-buffer demo variant with its callers (see the MODE comment). */
 [[nodiscard]] static bool renderFrame()
 {
     s_box_x = (s_box_x + BOX_STEP) % (int32_t)(PANEL_WIDTH - BOX_W);
@@ -77,13 +79,16 @@ static void build_scene()
     return false;
 }
 
-/* FNV-1a over a whole framebuffer, matching the tap's arithmetic. */
+/* FNV-1a over a whole framebuffer, matching the tap's arithmetic.  Compiled
+ * out of the single-buffer demo variant with its only caller, so that build
+ * stays warning-clean. */
 static uint32_t fb_sum(const uint16_t *fb)
 {
     lvgl_sum_reset();
     lvgl_sum_feed(fb, PANEL_FB_BYTES);
     return lvgl_sum_value();
 }
+#endif
 
 void setup()
 {
@@ -99,8 +104,11 @@ void setup()
     lvgl_rt1176_begin();
 #if defined(FLIP_DEMO_SINGLE)
     /* The bench "before": same animation, v1 single-buffer direct render,
-     * tearing accepted and expected.  No flip assertions are possible or
-     * attempted -- the counters below would all read 0. */
+     * tearing accepted and expected.  The proof and discipline phases are
+     * COMPILED OUT -- flip counters cannot advance without the db binding,
+     * so running them would only stall for a timeout and print a FLIP_FAIL
+     * that means nothing.  This variant exists for the eye: setup() ends at
+     * DONE and loop()'s endless sweep is the demonstration. */
     lvgl_mipi_panel_create(Display);
     Serial1.println("MODE=SINGLE_BUFFER_DEMO");
 #else
@@ -109,9 +117,9 @@ void setup()
 #endif
     build_scene();
 
+#if !defined(FLIP_DEMO_SINGLE)
     bool pass = true;
 
-#if !defined(FLIP_DEMO_SINGLE)
     /* --- frames 1 and 2: the panel-scanned-this-buffer proof ------------- */
     uint32_t sumA = 0, sumB = 0;
     for (uint8_t f = 0; f < 2 && pass; f++) {
@@ -154,7 +162,6 @@ void setup()
     } else if (pass) {
         Serial1.println("DISTINCT=OK");
     }
-#endif
 
     /* --- the remaining frames: discipline counters ------------------------ */
     uint32_t frames_done = lvgl_mipi_panel_flips();
@@ -177,6 +184,7 @@ void setup()
     if (pass && lvgl_mipi_panel_vsync_timeouts() == 0) {
         Serial1.println("FLIP_OK");
     }
+#endif  /* !FLIP_DEMO_SINGLE */
     Serial1.println("LVGL_RK055_FLIP_DONE");
 }
 
