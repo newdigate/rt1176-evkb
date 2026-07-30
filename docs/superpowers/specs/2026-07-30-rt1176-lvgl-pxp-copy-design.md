@@ -100,6 +100,16 @@ The wrapper checks its conditions per call; a PXP `blit` that returns an error o
 loud (a counter), correct always (the CPU copy runs), the v4/v5 philosophy applied to a
 new subsystem.
 
+> **AS SHIPPED (P2 re-sync).** The measured table changed the accelerated-shape rule:
+> the load-bearing check is **copy height ≥ 2 rows** (the bench's one CPU win was the
+> single-row case; a 256-px, 16-row copy won 21× on the PXP), with `threshold_px` kept
+> as a belt-and-braces area floor. Per-surface stride-sane checks replaced
+> "strides equal and unpadded" (the offset arithmetic handles padded strides), and the
+> reachability pre-check was deliberately dropped — an unreachable surface returns a
+> PXP error, which chains to the default anyway; the handler header says so. PXP errors
+> are counted apart from shape fallbacks (`lvgl_pxp_copy_errors()`, pinned 0 by the
+> adopting gates) so a dying PXP is loud by name.
+
 ---
 
 ## 4. The bench: `lvgl_pxp_copy_bench`

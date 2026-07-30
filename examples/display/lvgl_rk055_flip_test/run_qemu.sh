@@ -70,6 +70,8 @@ grep -q "^VSYNC_TIMEOUTS=0$"   "$OUT" || { echo "FAIL: a vsync wait gave up"; ex
 # above: a wrong copy moves the FLIP sums and the MATCH pair.
 grep -q "^PXP_COPIES=" "$OUT" || { echo "FAIL: pxp copy count missing"; exit 1; }
 grep -q "^PXP_COPIES=0$" "$OUT" && { echo "FAIL: handler installed but never engaged"; exit 1; }
+# A dying PXP is loud by name, not a drifting fallback ratio.
+grep -q "^PXP_ERRORS=0$" "$OUT" || { echo "FAIL: the PXP itself errored"; exit 1; }
 grep -q "FLIP_OK"              "$OUT" || { echo "FAIL: firmware verdict withheld"; exit 1; }
 [ -f "$DIR/lvgl_rk055_flip.dbg" ] || { echo "FAIL: no guest-error log"; exit 1; }
 grep -q "guest" "$DIR/lvgl_rk055_flip.dbg" && { echo "FAIL: guest errors logged"; exit 1; }

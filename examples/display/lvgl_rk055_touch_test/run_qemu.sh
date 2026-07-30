@@ -86,6 +86,8 @@ grep -q "^VSYNC_TIMEOUTS=0$" "$OUT" || { echo "FAIL: a vsync wait gave up"; exit
 # above: a wrong copy moves LVGL_SUM.
 grep -q "^PXP_COPIES=" "$OUT" || { echo "FAIL: pxp copy count missing"; exit 1; }
 grep -q "^PXP_COPIES=0$" "$OUT" && { echo "FAIL: handler installed but never engaged"; exit 1; }
+# A dying PXP is loud by name, not a drifting fallback ratio.
+grep -q "^PXP_ERRORS=0$" "$OUT" || { echo "FAIL: the PXP itself errored"; exit 1; }
 # Every scripted instant consumed, exactly: 10 taps+releases, 10 drag samples,
 # 1 release, 3 two-contact holds, 2 phase-3b, 1 final release = 27.
 grep -q "^BUFFERS=27$" "$OUT" || { echo "FAIL: buffer count moved -- script/phase boundary shifted"; exit 1; }

@@ -193,6 +193,7 @@ void setup()
      * never a pinned value (copy count tracks invalidation patterns). */
     Serial1.printf("PXP_COPIES=%lu\n", (unsigned long)lvgl_pxp_copies());
     Serial1.printf("PXP_FALLBACKS=%lu\n", (unsigned long)lvgl_pxp_copy_fallbacks());
+    Serial1.printf("PXP_ERRORS=%lu\n", (unsigned long)lvgl_pxp_copy_errors());
     if (pass && lvgl_mipi_panel_vsync_timeouts() == 0) {
         Serial1.println("FLIP_OK");
     }

@@ -363,6 +363,7 @@ void setup()
      * never a pinned value (copy count tracks the touch-driven redraws). */
     Serial1.printf("PXP_COPIES=%lu\n", (unsigned long)lvgl_pxp_copies());
     Serial1.printf("PXP_FALLBACKS=%lu\n", (unsigned long)lvgl_pxp_copy_fallbacks());
+    Serial1.printf("PXP_ERRORS=%lu\n", (unsigned long)lvgl_pxp_copy_errors());
 
     if (a && b && c && trap_clear &&
         lvgl_gt911_idle_polls() > 0 && lvgl_gt911_poll_fails() == 0) {

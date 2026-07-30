@@ -25,8 +25,9 @@ echo "==== captured UART ===="; cat "$OUT"
 grep -q "ALLOC_OK" "$OUT" || { echo "FAIL: extmem alloc"; exit 1; }
 grep -q "PXP_OK"   "$OUT" || { echo "FAIL: PXP bring-up"; exit 1; }
 # Every case must MATCH, by name -- a dropped case cannot hide behind a count.
+# Space-anchored i= so case 1's grep cannot be satisfied by cases 10-14.
 for i in $(seq 1 14); do
-  grep -q "^CASE i=$i .* MATCH " "$OUT" || { echo "FAIL: case $i did not match"; exit 1; }
+  grep -q "^CASE i=$i " "$OUT" && grep "^CASE i=$i " "$OUT" | grep -q " MATCH " || { echo "FAIL: case $i did not match"; exit 1; }
 done
 grep -q "MISMATCH" "$OUT" && { echo "FAIL: at least one case mismatched"; exit 1; }
 # The count pin catches a matrix edit that forgot the loop above.
