@@ -67,7 +67,7 @@ _evkb_lib(nativeethernet ${_dev}/NativeEthernet       https://github.com/newdiga
 _evkb_lib(fnet           ${_dev}/FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
 _evkb_lib(lwip           ${_dev}/lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 _evkb_lib(USBHost_t36    ${_dev}/USBHost_t36          https://github.com/newdigate/USBHost_t36     77c23a6a1c692c987e9c27e4caa1a3ea402ca92f .)
-_evkb_lib(LVGL           ${_dev}/LVGL                 https://github.com/newdigate/LVGL            8ede90c6e7c7c521aa36f170367fcdad15cfb427 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
+_evkb_lib(LVGL           ${_dev}/LVGL                 https://github.com/newdigate/LVGL            4ad68be469f100ea982936fe85db6b4ed0f60b09 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
 _evkb_lib(EEPROM         ${_dev}/EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 _evkb_lib(Bounce2        ${_dev}/Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).

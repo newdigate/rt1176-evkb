@@ -129,6 +129,12 @@ intermittent failure (`dualcore/cm4_audio_test`).
 LCDIFv2 vsync interrupt rather than polling), and the touch gate (`lvgl_rk055_touch_test`)
 migrated to double buffering — its render golden was re-recorded and came out value-unchanged.
 
+**2026-07-30 — v6 (PXP sync copy): gate count moved 71 → 72.** `examples/display/lvgl_pxp_copy_bench`
+joined the sweep. It asserts PXP-vs-CPU copy **correctness** (checksum match per rectangle case);
+the timing table is hardware-only and lives in its `transcript_hw_evkb.txt`. The expectation is now
+`72 passed, 0 failed, 0 SKIP` or `71 passed, 1 failed, 0 SKIP`, same single permitted intermittent
+failure (`dualcore/cm4_audio_test`).
+
 **68 gates** since `tools/run-all-qemu-gates.sh` discovery widened from `run_qemu.sh` to
 `run_qemu*.sh` on 2026-07-29 (it had been sweeping 29 of them; the other 38, named for what they
 test, were never run by anything) and `examples/display/rk055_touch_test` joined on 2026-07-28.

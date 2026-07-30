@@ -163,6 +163,7 @@ examples/audio/i2s_int_test:i2s_int_test examples/audio/sai_rx_test:sai_rx_test 
 examples/audio/sd_wav_play_test:sd_wav_play_test examples/audio/tone_test:tone_test \
 examples/display/camera_preview_synth:camera_preview_synth \
 examples/display/lvgl_ili9341_test:lvgl_ili9341_test \
+examples/display/lvgl_pxp_copy_bench:lvgl_pxp_copy_bench \
 examples/display/lvgl_rk055_flip_test:lvgl_rk055_flip_test \
 examples/display/lvgl_rk055_panel_test:lvgl_rk055_panel_test \
 examples/display/lvgl_rk055_touch_test:lvgl_rk055_touch_test \
