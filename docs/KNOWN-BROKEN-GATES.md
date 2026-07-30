@@ -113,6 +113,12 @@ transcript".
 
 ## Current expected sweep result
 
+**2026-07-30 — gate count moved 68 → 70.** Two new LVGL RK055 gates joined the sweep
+(`examples/display/lvgl_rk055_panel_test` and `examples/display/lvgl_rk055_touch_test`). The
+expectation is now `70 passed, 0 failed, 0 SKIP` or `69 passed, 1 failed, 0 SKIP`, with the same
+single permitted intermittent failure (`dualcore/cm4_audio_test`). The paragraphs below record the
+68-gate history and still apply otherwise.
+
 **68 gates** since `tools/run-all-qemu-gates.sh` discovery widened from `run_qemu.sh` to
 `run_qemu*.sh` on 2026-07-29 (it had been sweeping 29 of them; the other 38, named for what they
 test, were never run by anything) and `examples/display/rk055_touch_test` joined on 2026-07-28.
