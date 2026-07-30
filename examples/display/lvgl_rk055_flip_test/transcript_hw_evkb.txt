@@ -108,3 +108,36 @@ Reproduction
   # ... verify, console, backgrounded run, watch the same sweep
 
   Do NOT hold the VCOM during load or verify (DAP status 131).
+
+
+======================================================================
+v5 section — the ISR-fenced flip on silicon (2026-07-30)
+======================================================================
+
+Firmware:  evkb 51b39cb (branch lvgl-vsync-isr-v5), LVGL 921ad96 (ISR-
+           signalled fence, sticky retires), MipiDisplay 2a67481
+           (lcdifv2AttachVsyncInterrupt), qemu2 365e672f47
+Flash:     VCOM-free load+verify, LOAD/VERIFY exit 0, console then reset.
+
+ LVGL_RK055_FLIP_BEGIN
+PANEL_OK
+MODE=DOUBLE_BUFFER
+FLIP_A_SUM=0x8CCC9E1D PANEL_A_SUM=0x00000000
+FLIP_A_HW=TAP_ABSENT (TAP_ID=0x00000000) -- verify by eye
+FLIP_B_SUM=0x8BF7C89D PANEL_B_SUM=0x00000000
+FLIP_B_HW=TAP_ABSENT (TAP_ID=0x00000000) -- verify by eye
+DISTINCT=OK
+REFRESHES=120
+FLIPS=120
+VSYNCS=120
+VSYNC_ISRS=120
+VSYNC_TIMEOUTS=0
+FLIP_OK
+LVGL_RK055_FLIP_DONE
+
+★ VSYNC_ISRS=120 IS THE FIRST LCDIFv2 INTERRUPT ON SILICON in this tree:
+the real ISR (IRQ 55, INT_ENABLE_D0, priority 128) retired every one of
+120 flips at the panel's true 58.7 Hz, zero timeouts.  Every counter and
+both frame sums are byte-identical to the QEMU run.
+
+Operator, eye on the sweep, verbatim: "yes, still smooth, no tearing"

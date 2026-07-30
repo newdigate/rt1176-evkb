@@ -116,3 +116,61 @@ Reproduction
 
   Do NOT hold the VCOM during load or verify (DAP status 131). There is no
   standalone `LinkServer reset` in 26.6.137; a backgrounded `run` is the reset.
+
+
+======================================================================
+v5 section — double-buffered, ISR-fenced, under a real finger (2026-07-30)
+======================================================================
+
+Firmware:  evkb (branch lvgl-vsync-isr-v5, the migration committed with
+           this transcript per the re-record rule), LVGL 921ad96,
+           MipiDisplay 2a67481, TouchPanel d20499c, qemu2 365e672f47
+Flash:     VCOM-free load+verify, LOAD/VERIFY exit 0, console then reset.
+
+RESULT: PASS — the full v3 ritual on the double-buffered path.  The
+re-recorded golden 0xE1559496 (identical to v3's: same pixels, different
+buffer) matched on silicon, and the operator confirmed the scene on
+glass — the re-record rule's both halves, in this commit.
+
+ LVGL_RK055_TOUCH_BEGIN
+PANEL_OK
+LVGL_FLUSHED=PASS
+LVGL_BYTES=1843200
+LVGL_SUM=0xE1559496
+I2C_OK
+ADDR=0x5D
+GT911_OK
+CFG_OK RES=720x1280 POINTS=5
+TOUCH_PROMPT phase=A tap button 1 at=(108,128)
+BTN1=CHECKED
+TOUCH_PROMPT phase=A tap button 2 at=(612,128)
+BTN2=CHECKED
+TOUCH_PROMPT phase=A tap button 3 at=(108,1152)
+BTN3=CHECKED
+TOUCH_PROMPT phase=A tap button 4 at=(612,1152)
+BTN4=CHECKED
+TOUCH_PROMPT phase=A tap button 5 at=(360,640)
+BTN5=CHECKED
+TOUCH_PROMPT phase=B drag the amber handle to the right edge of its band, one continuous stroke
+DRAG_END x=620 moves=38
+TOUCH_PROMPT phase=C place a finger on HOLD, then a second on TRAP; lift the HOLD finger FIRST, then the other
+HOLD=CHECKED
+TRAP=UNCHECKED
+IDLE_POLLS=30013
+POLL_FAILS=0
+BUFFERS=707
+FLIPS=69
+VSYNC_TIMEOUTS=0
+LVGL_TOUCH_OK
+LVGL_RK055_TOUCH_DONE
+
+★ WHAT THIS RUN PROVED BEYOND v3: 69 ISR-fenced flips landed under live
+touch load — 10 ms GT911 polling, LVGL rendering, and the LCDIFv2 ISR
+interleaving — with VSYNC_TIMEOUTS=0 and zero drift in any touch token
+(DRAG x=620 moves=38 is a real stroke; v3's was x=610 moves=25).  The
+v3 transcript's "very minor flickering" on the drag is retired:
+
+Operator, verbatim: "no flickering - smooth and responsive"
+
+The v5 phase-C prompt (HOLD finger placed FIRST) made the ritual's
+primary-adoption deterministic, as the v3 final review asked.

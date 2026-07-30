@@ -27,10 +27,9 @@
  * and nobody polls until the indev is created), it asserts "the scene built
  * correctly" and NOTHING about touch.  No post-touch checksum is asserted.
  *
- * TEARING is expected and accepted (spec 8.1): direct render, no back buffer,
- * no vsync fence -- a dragged widget may show a sliced edge for a frame on
- * real glass.  That is v1's documented trade, fixed by v4's double-buffer
- * milestone, NOT a bug in this example.  Do not scope a "flicker bug" here.
+ * DOUBLE-BUFFERED as of v5: LVGL renders off-screen and the LCDIFv2 flips at
+ * vsync, ISR-fenced (lvgl_mipi_panel_create_db).  The v3-era tearing caveat
+ * is retired, re-verified on glass -- see transcript_hw_evkb.txt's v5 section.
  *
  * QEMU vs HARDWARE: in QEMU the virtual GT911 replays a model-owned script
  * (5 taps, a 10-sample drag, two-contact holds, then phase 3b: the primary
@@ -285,7 +284,7 @@ void setup()
 
     Display.fillScreen(0x0000);
     lvgl_rt1176_begin();
-    lv_display_t *disp = lvgl_mipi_panel_create(Display);
+    lv_display_t *disp = lvgl_mipi_panel_create_db(Display);
     build_scene();
 
     /* Render and checksum the initial frame BEFORE the indev exists.  Safe by
@@ -297,8 +296,19 @@ void setup()
     while (!lvgl_mipi_panel_frame_done() && (millis() - t0) < 5000) {
         lvgl_rt1176_loop();
     }
+    /* Under create_db the first frame renders into the ALT buffer;
+     * Display.framebuffer() would checksum the stale zeroed scanout buffer
+     * and the assertion would silently stop covering the scene.  Wait for
+     * the flip to LAND, then checksum the buffer actually being scanned. */
+    lvgl_mipi_panel_flip_sync();
+    const uint16_t *scanned = lvgl_mipi_panel_scanned_fb();
+    if (!scanned) {
+        Serial1.println("SCENE_SUM_FAIL reason=no-flip");
+        Serial1.println("LVGL_RK055_TOUCH_DONE");
+        return;
+    }
     lvgl_sum_reset();
-    lvgl_sum_feed(Display.framebuffer(), PANEL_FB_BYTES);
+    lvgl_sum_feed(scanned, PANEL_FB_BYTES);
     Serial1.printf("LVGL_FLUSHED=%s\n", lvgl_mipi_panel_frame_done() ? "PASS" : "FAIL");
     Serial1.printf("LVGL_BYTES=%lu\n",
                    (unsigned long)(lvgl_mipi_panel_flushed_px() * PANEL_BYTES_PER_PIXEL));
@@ -339,6 +349,8 @@ void setup()
     Serial1.printf("IDLE_POLLS=%lu\n", (unsigned long)lvgl_gt911_idle_polls());
     Serial1.printf("POLL_FAILS=%lu\n", (unsigned long)lvgl_gt911_poll_fails());
     Serial1.printf("BUFFERS=%lu\n", (unsigned long)lvgl_gt911_buffers());
+    Serial1.printf("FLIPS=%lu\n", (unsigned long)lvgl_mipi_panel_flips());
+    Serial1.printf("VSYNC_TIMEOUTS=%lu\n", (unsigned long)lvgl_mipi_panel_vsync_timeouts());
 
     if (a && b && c && trap_clear &&
         lvgl_gt911_idle_polls() > 0 && lvgl_gt911_poll_fails() == 0) {
