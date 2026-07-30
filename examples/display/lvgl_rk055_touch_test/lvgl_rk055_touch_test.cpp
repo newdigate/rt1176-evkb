@@ -249,8 +249,8 @@ static void build_scene()
 
 [[nodiscard]] static bool phaseHold()
 {
-    Serial1.println("TOUCH_PROMPT phase=C two fingers, one on HOLD one on "
-                    "TRAP, together; lift the HOLD finger FIRST, then the other");
+    Serial1.println("TOUCH_PROMPT phase=C place a finger on HOLD, then a second "
+                    "on TRAP; lift the HOLD finger FIRST, then the other");
     return waitChecked(s_hold, "HOLD");
 }
 
