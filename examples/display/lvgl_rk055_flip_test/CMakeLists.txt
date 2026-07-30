@@ -13,7 +13,8 @@ evkb_library_dir(LVGL _lvgl_dir)
 
 teensy_add_executable(lvgl_rk055_flip_test
     lvgl_rk055_flip_test.cpp
-    ${_lvgl_dir}/port/lvgl_mipi_panel.cpp)
+    ${_lvgl_dir}/port/lvgl_mipi_panel.cpp
+    ${_lvgl_dir}/port/lvgl_pxp_copy.cpp)
 teensy_target_link_libraries(lvgl_rk055_flip_test cores MipiDisplay PXP)
 
 target_link_libraries(lvgl_rk055_flip_test.elf LVGL stdc++)

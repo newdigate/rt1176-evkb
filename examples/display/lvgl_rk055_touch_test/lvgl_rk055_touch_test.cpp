@@ -47,6 +47,7 @@
 #include "lvgl_rt1176.h"
 #include "lvgl_mipi_panel.h"
 #include "lvgl_gt911_indev.h"
+#include "lvgl_pxp_copy.h"
 
 // D9 = GPIO_AD_01 = touch reset; D6 = GPIO_AD_00 = touch interrupt (owned by
 // begin(); v3 never attaches an interrupt to it -- the two v2 INT findings
@@ -284,6 +285,13 @@ void setup()
 
     Display.fillScreen(0x0000);
     lvgl_rt1176_begin();
+    /* v6: PXP-backed sync copy.  The handler's load-bearing rule is height
+     * >= 2 rows (the bench's one CPU win was single-row -- see
+     * lvgl_pxp_copy_bench/transcript_hw_evkb.txt ANALYSIS point 3); 1024 px
+     * is the belt-and-braces area floor.  Wrong shapes chain to the CPU
+     * default, so every pre-existing token must stay byte-identical --
+     * including the pre-touch golden. */
+    lvgl_pxp_copy_install(1024);
     lv_display_t *disp = lvgl_mipi_panel_create_db(Display);
     build_scene();
 
@@ -351,6 +359,10 @@ void setup()
     Serial1.printf("BUFFERS=%lu\n", (unsigned long)lvgl_gt911_buffers());
     Serial1.printf("FLIPS=%lu\n", (unsigned long)lvgl_mipi_panel_flips());
     Serial1.printf("VSYNC_TIMEOUTS=%lu\n", (unsigned long)lvgl_mipi_panel_vsync_timeouts());
+    /* Adoption corroboration: the gate asserts PXP_COPIES exists and != 0,
+     * never a pinned value (copy count tracks the touch-driven redraws). */
+    Serial1.printf("PXP_COPIES=%lu\n", (unsigned long)lvgl_pxp_copies());
+    Serial1.printf("PXP_FALLBACKS=%lu\n", (unsigned long)lvgl_pxp_copy_fallbacks());
 
     if (a && b && c && trap_clear &&
         lvgl_gt911_idle_polls() > 0 && lvgl_gt911_poll_fails() == 0) {

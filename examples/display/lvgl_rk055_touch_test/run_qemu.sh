@@ -80,6 +80,12 @@ grep -q "^POLL_FAILS=0$" "$OUT" || { echo "FAIL: failed poll(s) -- QEMU cannot f
 grep -q "^FLIPS=" "$OUT" || { echo "FAIL: flip count missing"; exit 1; }
 grep -q "^FLIPS=0$" "$OUT" && { echo "FAIL: no flips -- the db path is not live"; exit 1; }
 grep -q "^VSYNC_TIMEOUTS=0$" "$OUT" || { echo "FAIL: a vsync wait gave up"; exit 1; }
+# v6 adoption corroboration (the IDLE_POLLS idiom): the PXP sync-copy handler
+# must exist AND have engaged.  NOT pinned exactly -- the copy count tracks
+# the touch-driven redraws.  Correctness is carried by the pre-touch golden
+# above: a wrong copy moves LVGL_SUM.
+grep -q "^PXP_COPIES=" "$OUT" || { echo "FAIL: pxp copy count missing"; exit 1; }
+grep -q "^PXP_COPIES=0$" "$OUT" && { echo "FAIL: handler installed but never engaged"; exit 1; }
 # Every scripted instant consumed, exactly: 10 taps+releases, 10 drag samples,
 # 1 release, 3 two-contact holds, 2 phase-3b, 1 final release = 27.
 grep -q "^BUFFERS=27$" "$OUT" || { echo "FAIL: buffer count moved -- script/phase boundary shifted"; exit 1; }

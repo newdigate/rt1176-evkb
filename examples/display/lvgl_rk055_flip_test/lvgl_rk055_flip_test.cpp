@@ -28,6 +28,7 @@
 #include <Display.h>
 #include "lvgl_rt1176.h"
 #include "lvgl_mipi_panel.h"
+#include "lvgl_pxp_copy.h"
 
 /* The HX8394 tap window (QEMU-only; reads as 0 on silicon).  Address and
  * TAP_ID protocol: transcribed from rk055_panel_test.cpp -- same oracle,
@@ -102,6 +103,12 @@ void setup()
     Display.fillScreen(0x0000);
 
     lvgl_rt1176_begin();
+    /* v6: PXP-backed sync copy.  The handler's load-bearing rule is height
+     * >= 2 rows (the bench's one CPU win was single-row -- see
+     * lvgl_pxp_copy_bench/transcript_hw_evkb.txt ANALYSIS point 3); 1024 px
+     * is the belt-and-braces area floor.  Wrong shapes chain to the CPU
+     * default, so every pre-existing token must stay byte-identical. */
+    lvgl_pxp_copy_install(1024);
 #if defined(FLIP_DEMO_SINGLE)
     /* The bench "before": same animation, v1 single-buffer direct render,
      * tearing accepted and expected.  The proof and discipline phases are
@@ -182,6 +189,10 @@ void setup()
     Serial1.printf("VSYNC_ISRS=%lu\n", (unsigned long)lvgl_mipi_panel_vsync_isrs());
     Serial1.printf("VSYNC_TIMEOUTS=%lu\n",
                    (unsigned long)lvgl_mipi_panel_vsync_timeouts());
+    /* Adoption corroboration: the gate asserts PXP_COPIES exists and != 0,
+     * never a pinned value (copy count tracks invalidation patterns). */
+    Serial1.printf("PXP_COPIES=%lu\n", (unsigned long)lvgl_pxp_copies());
+    Serial1.printf("PXP_FALLBACKS=%lu\n", (unsigned long)lvgl_pxp_copy_fallbacks());
     if (pass && lvgl_mipi_panel_vsync_timeouts() == 0) {
         Serial1.println("FLIP_OK");
     }

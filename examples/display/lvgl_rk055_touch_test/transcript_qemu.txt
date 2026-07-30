@@ -19,11 +19,15 @@ TOUCH_PROMPT phase=A tap button 5 at=(360,640)
 BTN5=CHECKED
 TOUCH_PROMPT phase=B drag the amber handle to the right edge of its band, one continuous stroke
 DRAG_END x=598 moves=9
-TOUCH_PROMPT phase=C two fingers, one on HOLD one on TRAP, together; lift the HOLD finger FIRST, then the other
+TOUCH_PROMPT phase=C place a finger on HOLD, then a second on TRAP; lift the HOLD finger FIRST, then the other
 HOLD=CHECKED
 TRAP=UNCHECKED
-IDLE_POLLS=65
+IDLE_POLLS=57
 POLL_FAILS=0
 BUFFERS=27
+FLIPS=17
+VSYNC_TIMEOUTS=0
+PXP_COPIES=11
+PXP_FALLBACKS=51
 LVGL_TOUCH_OK
 LVGL_RK055_TOUCH_DONE
