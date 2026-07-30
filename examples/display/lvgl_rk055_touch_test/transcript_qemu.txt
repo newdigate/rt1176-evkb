@@ -1,0 +1,29 @@
+LVGL_RK055_TOUCH_BEGIN
+PANEL_OK
+LVGL_FLUSHED=PASS
+LVGL_BYTES=1843200
+LVGL_SUM=0xE1559496
+I2C_OK
+ADDR=0x5D
+GT911_OK
+CFG_OK RES=720x1280 POINTS=5
+TOUCH_PROMPT phase=A tap button 1 at=(108,128)
+BTN1=CHECKED
+TOUCH_PROMPT phase=A tap button 2 at=(612,128)
+BTN2=CHECKED
+TOUCH_PROMPT phase=A tap button 3 at=(108,1152)
+BTN3=CHECKED
+TOUCH_PROMPT phase=A tap button 4 at=(612,1152)
+BTN4=CHECKED
+TOUCH_PROMPT phase=A tap button 5 at=(360,640)
+BTN5=CHECKED
+TOUCH_PROMPT phase=B drag the amber handle to the right edge of its band, one continuous stroke
+DRAG_END x=598 moves=9
+TOUCH_PROMPT phase=C two fingers, one on HOLD one on TRAP, together; lift the HOLD finger FIRST, then the other
+HOLD=CHECKED
+TRAP=UNCHECKED
+IDLE_POLLS=65
+POLL_FAILS=0
+BUFFERS=27
+LVGL_TOUCH_OK
+LVGL_RK055_TOUCH_DONE

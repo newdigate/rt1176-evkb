@@ -831,6 +831,16 @@ static_assert(TRAP_RECT.x + TRAP_RECT.w <= 598,
 // Phase patience: sized for a bench operator reading prompts (v2's rationale);
 // QEMU's script finishes each phase in well under a second.
 static constexpr uint32_t PHASE_TIMEOUT_MS = 60000;
+// The FIRST watch gets 10 minutes, because its window arms at RESET, not when
+// the operator is ready.  On a remotely-driven bench (agent flashes, human
+// walks over) the operator arrives on human latency; 60 s expired before the
+// first tap TWICE, each time with the identical no-contact signature
+// (IDLE_POLLS=6047, BUFFERS=3) while the operator's later taps played to
+// watches that had already exited -- the widgets still react (loop() keeps
+// LVGL live), which makes the failure look like success on the glass.  Once
+// the operator is engaged, PHASE_TIMEOUT_MS per step is ample.  QEMU is
+// indifferent: the scripted first tap arrives within milliseconds.
+static constexpr uint32_t FIRST_TOUCH_TIMEOUT_MS = 600000;
 // Quiet time with no fresh buffer before the final verdict is read: long
 // enough that the tail of the script (2 x 20 ms steps) cannot still be in
 // flight, short enough to cost nothing.
@@ -840,6 +850,7 @@ static constexpr uint32_t DRAIN_QUIET_MS = 500;
 static lv_obj_t *s_btn[5];
 static lv_obj_t *s_hold, *s_trap, *s_handle;
 static int32_t   s_drag_moves = 0;
+static int32_t   s_handle_x   = 0;   /* last COMMANDED x -- see the cb comment */
 
 static void handle_pressing_cb(lv_event_t *e)
 {
@@ -854,8 +865,17 @@ static void handle_pressing_cb(lv_event_t *e)
     if (nx < 0) nx = 0;
     if (nx > (int32_t)PANEL_WIDTH - HANDLE_RECT.w)
         nx = (int32_t)PANEL_WIDTH - HANDLE_RECT.w;
-    if (nx != lv_obj_get_x(obj)) {
+    /* Compare against the last COMMANDED x, never lv_obj_get_x(): the getter
+     * returns the PRE-LAYOUT coordinate until LVGL's refresh timer
+     * recalculates it, so a second PRESSING event for the same published
+     * sample re-triggers this branch off the stale read and double-counts
+     * the move.  Measured, not theorised: off the getter, moves oscillated
+     * 12/13 across seven otherwise-identical QEMU runs (the 33 ms refresh
+     * phase against the 10 ms read timer decides which); off the commanded
+     * value it is exactly the 9 distinct scripted positions, every run. */
+    if (nx != s_handle_x) {
         lv_obj_set_x(obj, nx);
+        s_handle_x = nx;
         s_drag_moves++;
     }
 }
@@ -895,6 +915,7 @@ static void build_scene()
     s_trap = make_checkable(TRAP_RECT, "TRAP", &lv_font_montserrat_14);
 
     s_handle = lv_obj_create(scr);
+    s_handle_x = HANDLE_RECT.x;   /* the commanded-x tracker starts where the handle does */
     lv_obj_set_pos(s_handle, HANDLE_RECT.x, HANDLE_RECT.y);
     lv_obj_set_size(s_handle, HANDLE_RECT.w, HANDLE_RECT.h);
     lv_obj_remove_flag(s_handle, LV_OBJ_FLAG_SCROLLABLE);
@@ -908,10 +929,11 @@ static void build_scene()
 // QEMU script fires the events in exactly this order, so the same watches
 // serve both the model and a prompted bench operator.
 
-// Pump LVGL until `obj` reports CHECKED or the phase times out.
-[[nodiscard]] static bool waitChecked(lv_obj_t *obj, const char *tok)
+// Pump LVGL until `obj` reports CHECKED or `timeout_ms` expires.
+[[nodiscard]] static bool waitChecked(lv_obj_t *obj, const char *tok,
+                                      uint32_t timeout_ms = PHASE_TIMEOUT_MS)
 {
-    const uint32_t deadline = millis() + PHASE_TIMEOUT_MS;
+    const uint32_t deadline = millis() + timeout_ms;
     while ((int32_t)(millis() - deadline) < 0) {
         lvgl_rt1176_loop();
         if (lv_obj_has_state(obj, LV_STATE_CHECKED)) {
@@ -932,7 +954,11 @@ static void build_scene()
                        (unsigned)(i + 1),
                        (int)(BTN_RECT[i].x + BTN_RECT[i].w / 2),
                        (int)(BTN_RECT[i].y + BTN_RECT[i].h / 2));
-        if (!waitChecked(s_btn[i], TOK[i])) return false;
+        // Button 1's window is the operator-arrival window -- see
+        // FIRST_TOUCH_TIMEOUT_MS.  The rest run on normal phase patience.
+        if (!waitChecked(s_btn[i], TOK[i],
+                         i == 0 ? FIRST_TOUCH_TIMEOUT_MS : PHASE_TIMEOUT_MS))
+            return false;
     }
     return true;
 }
@@ -957,8 +983,8 @@ static void build_scene()
 
 [[nodiscard]] static bool phaseHold()
 {
-    Serial1.println("TOUCH_PROMPT phase=C two fingers, one on HOLD one on "
-                    "TRAP, together; lift the HOLD finger FIRST, then the other");
+    Serial1.println("TOUCH_PROMPT phase=C place a finger on HOLD, then a second "
+                    "on TRAP; lift the HOLD finger FIRST, then the other");
     return waitChecked(s_hold, "HOLD");
 }
 

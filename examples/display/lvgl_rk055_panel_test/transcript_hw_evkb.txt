@@ -1,0 +1,64 @@
+LVGL on the RK055HDMIPI4MA0 — hardware verification on the MIMXRT1170-EVKB
+===========================================================================
+
+Date:      2026-07-29
+Board:     MIMXRT1170-EVKB RevC3, RK055HDMIPI4MA0 latched on J48
+Setup:     RPi 7" panel DISCONNECTED. Nothing on D6/D9 or J25 odd pins 13/15.
+Firmware:  examples/display/lvgl_rk055_panel_test, evkb 968f7bf (branch
+           lvgl-touch-v3), LVGL b745cc5, MipiDisplay 931ed1f
+Flash:     LinkServer 26.6.137, VCOM-free load + verify, then console attached
+           and reset via a backgrounded `LinkServer run`. LOAD_EXIT=0,
+           VERIFY_EXIT=0, no DAP errors.
+Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200 via tools/rt1170-console.py
+
+RESULT: PASS. The scene renders on real glass, and the hardware checksum is
+IDENTICAL to the QEMU golden — the renderer is deterministic CPU work, so any
+divergence would have meant memory corruption or a different binary.
+
+THE POINT OF THIS RUN: the golden 0xDF2A1A03 is now pinned to "CORRECT", not
+merely "deterministic". lvgl_rpi_panel_test's golden pins reproducibility only
+(that panel is disconnected and hardware-blocked); this is the first MIPI-DSI
+LVGL golden in the tree that a human eye has confirmed on glass.
+
+
+Console capture, verbatim
+-------------------------
+
+ LVGL_RK055_PANEL_BEGIN
+PANEL_OK
+LVGL_FLUSHED=PASS
+LVGL_BYTES=1843200
+LVGL_SUM=0xDF2A1A03
+LVGL_RK055_PANEL_DONE
+
+LVGL_SUM equals the QEMU golden (transcript_qemu.txt): 0xDF2A1A03.
+LVGL_BYTES=1843200 = 720*1280*2: LVGL redrew the whole screen.
+
+
+Human confirmation (the assertion QEMU cannot make)
+---------------------------------------------------
+
+The operator was asked to confirm: a dark blue-grey background; "RT1176 +
+LVGL" in large white text near the top; "RK055HDMIPI4MA0 720x1280 MIPI-DSI"
+in smaller light-blue text under it; a horizontal bar ~62% filled at centre;
+portrait orientation, text upright, no skew, no visible corruption.
+
+Operator's answer, verbatim (2026-07-29):
+
+    "yes, panel looks exactly as described"
+
+No tearing observed (the scene is static, as designed).
+
+
+Reproduction
+------------
+
+  pkill LinkServer; pkill redlinkserv; pkill crt_emu_cm_redlink
+  cd examples/display/lvgl_rk055_panel_test
+  /Applications/LinkServer_26.6.137/LinkServer flash MIMXRT1176:MIMXRT1170-EVKB load   build/lvgl_rk055_panel_test.elf
+  /Applications/LinkServer_26.6.137/LinkServer flash MIMXRT1176:MIMXRT1170-EVKB verify build/lvgl_rk055_panel_test.elf
+  python3 ../../../tools/rt1170-console.py /dev/cu.usbmodem<probe> 115200 &
+  /Applications/LinkServer_26.6.137/LinkServer run MIMXRT1176:MIMXRT1170-EVKB build/lvgl_rk055_panel_test.elf &
+
+  Do NOT hold the VCOM during load or verify (DAP status 131). There is no
+  standalone `LinkServer reset` in 26.6.137; a backgrounded `run` is the reset.
