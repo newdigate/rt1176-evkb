@@ -124,6 +124,11 @@ sweep (LVGL double buffering + page flip on vsync on the RK055). The expectation
 `71 passed, 0 failed, 0 SKIP` or `70 passed, 1 failed, 0 SKIP`, same single permitted
 intermittent failure (`dualcore/cm4_audio_test`).
 
+**2026-07-30 — v5 (vsync ISR fence): gate count unchanged at 71.** No new gate. The flip gate
+(`lvgl_rk055_flip_test`) gained a `VSYNC_ISRS=120` assertion (the flip fence is now driven by the
+LCDIFv2 vsync interrupt rather than polling), and the touch gate (`lvgl_rk055_touch_test`)
+migrated to double buffering — its render golden was re-recorded and came out value-unchanged.
+
 **68 gates** since `tools/run-all-qemu-gates.sh` discovery widened from `run_qemu.sh` to
 `run_qemu*.sh` on 2026-07-29 (it had been sweeping 29 of them; the other 38, named for what they
 test, were never run by anything) and `examples/display/rk055_touch_test` joined on 2026-07-28.

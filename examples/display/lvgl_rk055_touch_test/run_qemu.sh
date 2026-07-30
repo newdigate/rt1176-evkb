@@ -31,7 +31,11 @@ grep -q "LVGL_BYTES=1843200" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; 
 # until the first ack, and nobody polls until the indev is created), so it is
 # static on QEMU and glass alike.  It asserts the scene BUILT correctly and
 # says nothing about touch -- no post-touch checksum exists in this gate.
-# Provenance: recorded 2026-07-29, LVGL 9.4.0, montserrat 14/28.  Re-record
+# Golden re-recorded for the v5 double-buffer migration: the checksum source
+# moved to the SCANNED buffer (scanned_fb() after flip_sync); the pixel
+# content is unchanged, and the value came back identical to v3's -- recorded
+# (stable x2), not assumed.
+# Provenance: recorded 2026-07-30, LVGL 9.4.0, montserrat 14/28.  Re-record
 # rules as in lvgl_rk055_panel_test/run_qemu.sh.
 grep -q "LVGL_SUM=0xE1559496" "$OUT" || { echo "FAIL: scene checksum"; exit 1; }
 
@@ -70,6 +74,12 @@ grep -q "^TRAP=UNCHECKED$" "$OUT" || { echo "FAIL: pointer re-adopted the surviv
 grep -q "^IDLE_POLLS=" "$OUT" || { echo "FAIL: idle-poll count missing"; exit 1; }
 grep -q "^IDLE_POLLS=0$" "$OUT" && { echo "FAIL: no idle polls -- latch untested, re-tune the period"; exit 1; }
 grep -q "^POLL_FAILS=0$" "$OUT" || { echo "FAIL: failed poll(s) -- QEMU cannot fault I2C, unmodelled"; exit 1; }
+# Flip corroboration (the touch phases are the claim; these say the fence ran).
+# NOT pinned exactly: refresh count under touch load is input-dependent, and a
+# pinned value here would be vacuous precision.
+grep -q "^FLIPS=" "$OUT" || { echo "FAIL: flip count missing"; exit 1; }
+grep -q "^FLIPS=0$" "$OUT" && { echo "FAIL: no flips -- the db path is not live"; exit 1; }
+grep -q "^VSYNC_TIMEOUTS=0$" "$OUT" || { echo "FAIL: a vsync wait gave up"; exit 1; }
 # Every scripted instant consumed, exactly: 10 taps+releases, 10 drag samples,
 # 1 release, 3 two-contact holds, 2 phase-3b, 1 final release = 27.
 grep -q "^BUFFERS=27$" "$OUT" || { echo "FAIL: buffer count moved -- script/phase boundary shifted"; exit 1; }

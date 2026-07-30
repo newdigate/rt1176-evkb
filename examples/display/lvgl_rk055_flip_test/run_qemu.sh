@@ -49,10 +49,19 @@ grep -q "DISTINCT=OK" "$OUT" || { echo "FAIL: frames identical -- alternation un
 #                  was resting on the 33 ms refresh period exceeding the
 #                  17 ms flip latency, timing luck the gate correctly
 #                  refused.  If this pin ever reads low again, that
-#                  regression is back.
+#                  regression is back.  As of v5 the wait CONSUMES the
+#                  ISR-set retire flag rather than polling INT_STATUS
+#                  itself, so "if this reads low" now covers a dead ISR
+#                  too: an interrupt that never fires leaves nothing to
+#                  consume and the waits all time out.
 grep -q "^REFRESHES=120$"      "$OUT" || { echo "FAIL: refresh count"; exit 1; }
 grep -q "^FLIPS=120$"          "$OUT" || { echo "FAIL: flip count"; exit 1; }
 grep -q "^VSYNCS=120$"         "$OUT" || { echo "FAIL: vsync count -- the flush_wait fence is not engaging"; exit 1; }
+# One retire per flip, BY THE ISR -- interrupt delivery end-to-end
+# (INT_ENABLE, NVIC, vector, W1C) under the modelled level IRQ.  Retires,
+# not ISR entries: the ISR runs on every ~60 Hz vsync and raw entry counts
+# are runtime-dependent -- pinning them would flake by design.
+grep -q "^VSYNC_ISRS=120$" "$OUT" || { echo "FAIL: ISR did not retire every flip"; exit 1; }
 grep -q "^VSYNC_TIMEOUTS=0$"   "$OUT" || { echo "FAIL: a vsync wait gave up"; exit 1; }
 grep -q "FLIP_OK"              "$OUT" || { echo "FAIL: firmware verdict withheld"; exit 1; }
 [ -f "$DIR/lvgl_rk055_flip.dbg" ] || { echo "FAIL: no guest-error log"; exit 1; }
