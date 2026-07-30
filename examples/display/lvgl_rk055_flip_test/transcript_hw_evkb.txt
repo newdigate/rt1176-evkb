@@ -1,0 +1,110 @@
+LVGL double buffering with page flip on vsync (v4) — hardware verification
+==========================================================================
+
+Date:      2026-07-30
+Board:     MIMXRT1170-EVKB RevC3, RK055HDMIPI4MA0 latched on J48
+Setup:     RPi 7" panel DISCONNECTED. Nothing on D6/D9 or J25 odd 13/15.
+Firmware:  examples/display/lvgl_rk055_flip_test, evkb 6637eff (branch
+           lvgl-flip-v4), LVGL df85850 (create_db + the deferral fix),
+           MipiDisplay 1b0cca7 (primitives), qemu2 6a7e95aaac (vsync-latched
+           shadow load — model untouched between the QEMU run and this one)
+Flash:     LinkServer 26.6.137, VCOM-free load + verify for BOTH variants.
+           LOAD/VERIFY exit 0 each time, no DAP errors.
+Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200 via tools/rt1170-console.py
+
+RESULT: PASS. The before/after demonstration this milestone exists for:
+the SAME animation, single-buffer then double-buffer, and the artefact the
+operator saw in the first run is gone in the second.
+
+
+Run 1 — the "before": single-buffer variant (-DFLIP_DEMO_SINGLE=ON)
+-------------------------------------------------------------------
+
+ LVGL_RK055_FLIP_BEGIN
+PANEL_OK
+MODE=SINGLE_BUFFER_DEMO
+FLIP_FAIL frame=1 reason=refresh-timeout
+REFRESHES=0
+FLIPS=0
+VSYNCS=0
+VSYNC_TIMEOUTS=0
+LVGL_RK055_FLIP_DONE
+
+(The FLIP_FAIL line and zero counters are EXPECTED in this variant: the
+proof phase waits on flip counters that cannot advance without the db
+binding, bails after its timeout, and loop()'s endless sweep — the actual
+demonstration — takes over.  This variant exists only for the eye.)
+
+Operator, watching the sweeping box, verbatim:
+
+    "yes, I can see flickering on the background of the sliding box"
+
+That is v1's accepted direct-render artefact, on demand: LVGL repainting
+the background/box into the buffer the LCDIFv2 is scanning.
+
+
+Run 2 — the "after": double-buffer build
+----------------------------------------
+
+ LVGL_RK055_FLIP_BEGIN
+PANEL_OK
+MODE=DOUBLE_BUFFER
+FLIP_A_SUM=0x8CCC9E1D PANEL_A_SUM=0x00000000
+FLIP_A_HW=TAP_ABSENT (TAP_ID=0x00000000) -- verify by eye
+FLIP_B_SUM=0x8BF7C89D PANEL_B_SUM=0x00000000
+FLIP_B_HW=TAP_ABSENT (TAP_ID=0x00000000) -- verify by eye
+DISTINCT=OK
+REFRESHES=120
+FLIPS=120
+VSYNCS=120
+VSYNC_TIMEOUTS=0
+FLIP_OK
+LVGL_RK055_FLIP_DONE
+
+Operator, same sweep, verbatim:
+
+    "flickering is gone, much smoother"
+
+
+★★ WHAT SILICON PROVED THAT QEMU COULD NOT
+------------------------------------------
+
+1. TEARING'S ABSENCE — the milestone's whole point, and invisible to a
+   model with no partial-scanout timing.  Same scene, same animation, same
+   eye, minutes apart: artefact present single-buffered, gone
+   double-buffered.
+
+2. THE REAL VSYNC/SHADOW-LOAD PATH WORKS AS MODELLED.  VSYNC_TIMEOUTS=0
+   across 120 flips is the first silicon exercise of the INT_STATUS_D0
+   polling path (lcdifv2VsyncArm/Seen): the real latch answered inside the
+   40 ms bound on every single flip, at the panel's true 58.7 Hz — not the
+   model's 60 Hz fiction.
+
+3. THE COUNTERS ARE IDENTICAL TO QEMU: REFRESHES=FLIPS=VSYNCS=120,
+   and both frame checksums (0x8CCC9E1D / 0x8BF7C89D) equal the QEMU run's
+   byte-for-byte — the renderer is deterministic CPU work on both.
+
+4. THE TAP IS CORRECTLY ABSENT.  PANEL_*_SUM read 0 with TAP_ID=0 and the
+   firmware branched to TAP_ABSENT instead of asserting — the QEMU-only
+   oracle stayed QEMU-only, per the standing asymmetry discipline.
+
+What this run does NOT prove: the panel-scanned-A-then-B claim itself —
+that is the tap's job and lives in transcript_qemu.txt; on silicon its
+witness is the operator's eye on the intact, smooth sweep.
+
+
+Reproduction
+------------
+
+  pkill LinkServer; pkill redlinkserv; pkill crt_emu_cm_redlink
+  cd examples/display/lvgl_rk055_flip_test
+  # BEFORE (tearing visible):
+  cmake -B build-single -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake -DFLIP_DEMO_SINGLE=ON
+  cmake --build build-single
+  /Applications/LinkServer_26.6.137/LinkServer flash MIMXRT1176:MIMXRT1170-EVKB load   build-single/lvgl_rk055_flip_test.elf
+  # ... verify, console, backgrounded run, watch the sweep
+  # AFTER (no tearing):
+  /Applications/LinkServer_26.6.137/LinkServer flash MIMXRT1176:MIMXRT1170-EVKB load   build/lvgl_rk055_flip_test.elf
+  # ... verify, console, backgrounded run, watch the same sweep
+
+  Do NOT hold the VCOM during load or verify (DAP status 131).

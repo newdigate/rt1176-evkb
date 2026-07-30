@@ -200,6 +200,7 @@ on a real EVKB unless noted.
 | LVGL 9.4 on the RPi 7" MIPI-DSI panel (800×480, direct render into the LCDIFv2 scanout buffer) | ⚠️ QEMU-gated only — **panel not yet connected, unconfirmed on glass** |
 | LVGL 9.4 on the RK055HDMIPI4MA0 5.5" MIPI-DSI panel (720×1280, direct render) | ✅ HW-verified (its render golden is **human-confirmed on glass** — the RPi LVGL golden above pins reproducibility only) |
 | LVGL pointer indev over the GT911 touch controller (RK055): taps, drag, two-finger press/release | ✅ HW-verified (asserts **LVGL's reaction** — widget state/position — not pixels) |
+| LVGL double buffering + page flip on vsync on the RK055 (`lvgl_mipi_panel_create_db`) | ✅ HW-verified (tearing demonstrated single-buffered, gone double-buffered; QEMU proves the panel scanned each buffer in turn via the vsync-latched shadow load) |
 | **Dual-core:** CM4 boot (`Multicore`), MU IPC, CM4 GPIO/SPI/I2C, CM4 interrupt + DMA I/O (eDMA_LPSR), runtime hot-swap, `Cm4ImageBank` multi-image slots | ✅ HW-verified |
 | **CM4-owned audio:** the CM4 alone drives the WM8962 codec, SAI1 (interrupt-driven nodes), the `AudioStream` graph, and CMSIS-DSP FFT — with the CM7 idle (zero audio IRQs) | ✅ HW-verified (audible 1 kHz on J101; CM7 pre-arms the Audio PLL) |
 | CrashReport, MTP, USB audio/touch/rawhid/flightsim headers | ⚠️ present in tree, not verified on this board |

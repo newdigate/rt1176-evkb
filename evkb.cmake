@@ -56,7 +56,7 @@ _evkb_lib(Wire           ${_dev}/Wire                 https://github.com/newdiga
 _evkb_lib(SPI            ${_dev}/SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
 _evkb_lib(PXP         ${_dev}/PXP                  https://github.com/newdigate/PXP          728c109f5787525d4ab50f97b57c85ef2cf1501c .)
 _evkb_lib(ILI9341_t3     ${_dev}/ILI9341_t3           https://github.com/newdigate/ILI9341_t3      e69e657f360e997e93fc7736a23eba8b09d1a043 .)
-_evkb_lib(MipiDisplay    ${_dev}/MipiDisplay          https://github.com/newdigate/MipiDisplay     931ed1f4d8aa1431d97422d7c577a69e28eefdc5 .) # panel chosen by the importer: import_evkb_library(MipiDisplay soc panels/<name>)
+_evkb_lib(MipiDisplay    ${_dev}/MipiDisplay          https://github.com/newdigate/MipiDisplay     7f3bbd97f0949e6eaab32c82b51cf9a9a9520677 .) # panel chosen by the importer: import_evkb_library(MipiDisplay soc panels/<name>)
 _evkb_lib(TouchPanel     ${_dev}/TouchPanel           https://github.com/newdigate/TouchPanel      d20499c707290985379cb407689eca7f2c14fd08 .) # controller chosen by the importer: import_evkb_library(TouchPanel gt911)
 _evkb_lib(Audio          ${_dev}/Audio                https://github.com/newdigate/Audio           4b3d296d55be9a2e3cf5b9dafd23b8c33388bad4 .)
 _evkb_lib(SdFat          ${_dev}/SdFat                https://github.com/newdigate/SdFat           681bfcf83d05beb943e3d905f15d8181bf9072c7 .)
@@ -67,7 +67,7 @@ _evkb_lib(nativeethernet ${_dev}/NativeEthernet       https://github.com/newdiga
 _evkb_lib(fnet           ${_dev}/FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
 _evkb_lib(lwip           ${_dev}/lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 _evkb_lib(USBHost_t36    ${_dev}/USBHost_t36          https://github.com/newdigate/USBHost_t36     77c23a6a1c692c987e9c27e4caa1a3ea402ca92f .)
-_evkb_lib(LVGL           ${_dev}/LVGL                 https://github.com/newdigate/LVGL            9a2e9b75c22572f4d190aa79053aa9bb45e98575 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
+_evkb_lib(LVGL           ${_dev}/LVGL                 https://github.com/newdigate/LVGL            40b70975abab34db126215d4299306904be96dd5 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
 _evkb_lib(EEPROM         ${_dev}/EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 _evkb_lib(Bounce2        ${_dev}/Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).

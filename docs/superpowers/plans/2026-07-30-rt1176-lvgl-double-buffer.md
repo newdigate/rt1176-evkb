@@ -319,6 +319,16 @@ static void db_flush_wait_cb(lv_display_t *disp)
 {
     (void)disp;
     lvgl_mipi_panel_flip_sync();
+    /* No lv_display_flush_ready() here, and none in db_flush_cb's last-flush
+     * branch either: with a flush_wait_cb registered, LVGL ITSELF clears
+     * `flushing` the moment this callback returns (lv_refr.c:1435-1440,
+     * wait_for_flushing).  Calling flush_ready from the flush_cb instead
+     * would clear the flag synchronously, this callback would never run,
+     * and the render-into-scanned-buffer hazard would be prevented only by
+     * the 33 ms refresh period happening to exceed the flip latency --
+     * timing luck, not the invariant.  MEASURED, not theorised: with the
+     * synchronous flush_ready the gate's VSYNCS counted 3 (the example's own
+     * explicit syncs) instead of one consumed landing per flip. */
 }
 
 static void db_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
@@ -339,7 +349,13 @@ static void db_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_m
         s_db_pending_fb = (const uint16_t *)px_map;
         s_db_flips++;
         s_frame_done = true;
+        /* Deliberately NO flush_ready on the last flush: `flushing` stays
+         * set until LVGL next needs the buffer, at which point it invokes
+         * db_flush_wait_cb above and clears the flag itself.  That deferral
+         * IS the invariant's enforcement -- see the wait_cb comment. */
+        return;
     }
+    /* Non-last flushes have nothing to wait for. */
     lv_display_flush_ready(disp);
 }
 

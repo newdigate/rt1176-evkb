@@ -119,6 +119,11 @@ expectation is now `70 passed, 0 failed, 0 SKIP` or `69 passed, 1 failed, 0 SKIP
 single permitted intermittent failure (`dualcore/cm4_audio_test`). The paragraphs below record the
 68-gate history and still apply otherwise.
 
+**2026-07-30 — gate count moved 70 → 71.** `examples/display/lvgl_rk055_flip_test` joined the
+sweep (LVGL double buffering + page flip on vsync on the RK055). The expectation is now
+`71 passed, 0 failed, 0 SKIP` or `70 passed, 1 failed, 0 SKIP`, same single permitted
+intermittent failure (`dualcore/cm4_audio_test`).
+
 **68 gates** since `tools/run-all-qemu-gates.sh` discovery widened from `run_qemu.sh` to
 `run_qemu*.sh` on 2026-07-29 (it had been sweeping 29 of them; the other 38, named for what they
 test, were never run by anything) and `examples/display/rk055_touch_test` joined on 2026-07-28.
