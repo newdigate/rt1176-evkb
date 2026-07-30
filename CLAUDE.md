@@ -79,8 +79,8 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **71 gates**. Expect
-**71 passed, 0 failed, 0 SKIP** *or* **70 passed, 1 failed, 0 SKIP** — the one
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **72 gates**. Expect
+**72 passed, 0 failed, 0 SKIP** *or* **71 passed, 1 failed, 0 SKIP** — the one
 permitted failure being `dualcore/cm4_audio_test`. Any *other* failure is a real
 regression from what you are doing.
 

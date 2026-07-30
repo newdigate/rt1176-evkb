@@ -1,0 +1,66 @@
+PXP vs CPU for LVGL's cross-buffer sync copy — hardware measurement (v6 P2)
+===========================================================================
+
+Date:      2026-07-30
+Board:     MIMXRT1170-EVKB RevC3 (panel not involved -- pure memory benchmark)
+Firmware:  examples/display/lvgl_pxp_copy_bench, evkb 5718315 (branch
+           lvgl-pxp-v6), PXP d-pinned per evkb.cmake, LVGL 8ede90c,
+           qemu2 f10de76d1e (the PXP clamp fix this bench's QEMU run forced)
+Flash:     LinkServer 26.6.137, VCOM-free load+verify, LOAD/VERIFY exit 0.
+Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200
+
+RESULT: all 14 cases MATCH on silicon (the correctness claim re-proven on the
+real PXP), and the timing table below is the P2 decision input.
+
+Console capture, verbatim
+-------------------------
+
+ PXP_COPY_BENCH_BEGIN
+ALLOC_OK
+PXP_OK
+CASE i=1 r=16x16+0+0 CPU=0x4C7924B5 PXP=0x4C7924B5 MATCH cpu_us=84 pxp_us=4
+CASE i=2 r=16x16+13+7 CPU=0x327C137F PXP=0x327C137F MATCH cpu_us=85 pxp_us=5
+CASE i=3 r=64x64+0+0 CPU=0x3573AAB1 PXP=0x3573AAB1 MATCH cpu_us=614 pxp_us=57
+CASE i=4 r=64x64+13+7 CPU=0x85CEA741 PXP=0x85CEA741 MATCH cpu_us=626 pxp_us=76
+CASE i=5 r=120x140+0+0 CPU=0x2CA133A3 PXP=0x2CA133A3 MATCH cpu_us=1790 pxp_us=233
+CASE i=6 r=120x140+599+1139 CPU=0x4D473031 PXP=0x4D473031 MATCH cpu_us=1837 pxp_us=312
+CASE i=7 r=200x160+8+48 CPU=0x0A082C62 PXP=0x0A082C62 MATCH cpu_us=3271 pxp_us=431
+CASE i=8 r=360x320+0+0 CPU=0x47C412AF PXP=0x47C412AF MATCH cpu_us=11152 pxp_us=1540
+CASE i=9 r=360x320+180+480 CPU=0x66C494CE PXP=0x66C494CE MATCH cpu_us=11176 pxp_us=2063
+CASE i=10 r=719x1+1+0 CPU=0x1F29262D PXP=0x1F29262D MATCH cpu_us=70 pxp_us=105
+CASE i=11 r=1x1280+719+0 CPU=0xB37610A8 PXP=0xB37610A8 MATCH cpu_us=536 pxp_us=269
+CASE i=12 r=720x640+0+320 CPU=0x6BD8C9EC PXP=0x6BD8C9EC MATCH cpu_us=44753 pxp_us=6150
+CASE i=13 r=720x640+0+640 CPU=0x081A077C PXP=0x081A077C MATCH cpu_us=44749 pxp_us=6145
+CASE i=14 r=720x1280+0+0 CPU=0xC5BFBE26 PXP=0xC5BFBE26 MATCH cpu_us=89499 pxp_us=12295
+NOTE timings are hardware-only; QEMU numbers are vacuous
+CASES=14
+COPY_BENCH_OK
+PXP_COPY_BENCH_DONE
+
+
+★★ ANALYSIS — the P2 decision input
+-----------------------------------
+
+1. THE CPU FULL-SCREEN SYNC COPY COSTS 89.5 ms — 2.7x THE ENTIRE 33 ms FRAME
+   BUDGET.  Non-cacheable SDRAM memcpy runs at ~20 MB/s effective; the PXP
+   does the same copy in 12.3 ms (~150 MB/s), a 7.3x win.  Any full-screen
+   invalidation (screen transition, theme change) on the double-buffered path
+   currently pays the CPU number every frame it happens.
+
+2. PXP WINS 13 OF 14 CASES, from 5.4x to 21x.  The realistic button-press
+   sync (case 5, 120x140) is 1.79 ms CPU vs 0.23 ms PXP.
+
+3. THE ONE CPU WIN IS THE SINGLE-ROW CASE (10: 719x1 — 70 us vs 105 us).
+   The discriminator is NOT area: case 1 (256 px over 16 ROWS) wins 21x on
+   the PXP while case 10 (719 px in ONE row) loses.  The CPU's row-loop is
+   fast on one contiguous row and slow on many small rows; the PXP's cost is
+   near-flat per operation.  THE HONEST THRESHOLD IS HEIGHT >= 2 ROWS, not a
+   pixel-area floor.
+
+4. Case 11 (1x1280 — 1280 rows of one pixel) still wins 2x on the PXP,
+   consistent with (3).
+
+Crossover, stated for the handler: accelerate when the copy spans >= 2 rows;
+single-row copies stay on the CPU default.  (The install API's threshold_px
+remains as a belt-and-braces floor; the height check is the load-bearing one
+and cites this transcript.)

@@ -16,7 +16,8 @@ evkb_library_dir(LVGL _lvgl_dir)
 teensy_add_executable(lvgl_rk055_touch_test
     lvgl_rk055_touch_test.cpp
     ${_lvgl_dir}/port/lvgl_mipi_panel.cpp
-    ${_lvgl_dir}/port/lvgl_gt911_indev.cpp)
+    ${_lvgl_dir}/port/lvgl_gt911_indev.cpp
+    ${_lvgl_dir}/port/lvgl_pxp_copy.cpp)
 teensy_target_link_libraries(lvgl_rk055_touch_test cores MipiDisplay PXP TouchPanel Wire)
 
 # Plain-target link for LVGL, exactly as the sibling LVGL gates do.

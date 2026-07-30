@@ -141,3 +141,29 @@ the real ISR (IRQ 55, INT_ENABLE_D0, priority 128) retired every one of
 both frame sums are byte-identical to the QEMU run.
 
 Operator, eye on the sweep, verbatim: "yes, still smooth, no tearing"
+
+
+======================================================================
+v6 section — the PXP carries the sync copies (2026-07-30)
+======================================================================
+
+Firmware:  evkb 8f1fdd2 (branch lvgl-pxp-v6), LVGL 4ad68be (lvgl_pxp_copy,
+           height >= 2 rule), MipiDisplay eb22e0b, qemu2 f10de76d1e
+Flash:     VCOM-free load+verify, exit 0 both.
+
+Counter tail of the run (all earlier tokens identical to the v5 section):
+
+REFRESHES=120
+FLIPS=120
+VSYNCS=120
+VSYNC_ISRS=120
+VSYNC_TIMEOUTS=0
+PXP_COPIES=122
+PXP_FALLBACKS=0
+FLIP_OK
+
+PXP_COPIES=122 / FALLBACKS=0 on silicon, identical to QEMU: every sync-area
+copy of the animation qualified for the accelerated path.  Frame sums and
+every counter byte-identical to v5 -- the handler changed no pixel.
+
+Operator, eye on the sweep, verbatim: "yes, still smooth"

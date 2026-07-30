@@ -63,6 +63,15 @@ grep -q "^VSYNCS=120$"         "$OUT" || { echo "FAIL: vsync count -- the flush_
 # are runtime-dependent -- pinning them would flake by design.
 grep -q "^VSYNC_ISRS=120$" "$OUT" || { echo "FAIL: ISR did not retire every flip"; exit 1; }
 grep -q "^VSYNC_TIMEOUTS=0$"   "$OUT" || { echo "FAIL: a vsync wait gave up"; exit 1; }
+# v6 adoption corroboration (the IDLE_POLLS idiom): the PXP sync-copy handler
+# must exist AND have engaged.  NOT pinned exactly -- the copy count tracks
+# the animation's invalidation pattern, and a pinned value here would be
+# vacuous precision.  Correctness is carried by the byte-identical tokens
+# above: a wrong copy moves the FLIP sums and the MATCH pair.
+grep -q "^PXP_COPIES=" "$OUT" || { echo "FAIL: pxp copy count missing"; exit 1; }
+grep -q "^PXP_COPIES=0$" "$OUT" && { echo "FAIL: handler installed but never engaged"; exit 1; }
+# A dying PXP is loud by name, not a drifting fallback ratio.
+grep -q "^PXP_ERRORS=0$" "$OUT" || { echo "FAIL: the PXP itself errored"; exit 1; }
 grep -q "FLIP_OK"              "$OUT" || { echo "FAIL: firmware verdict withheld"; exit 1; }
 [ -f "$DIR/lvgl_rk055_flip.dbg" ] || { echo "FAIL: no guest-error log"; exit 1; }
 grep -q "guest" "$DIR/lvgl_rk055_flip.dbg" && { echo "FAIL: guest errors logged"; exit 1; }
