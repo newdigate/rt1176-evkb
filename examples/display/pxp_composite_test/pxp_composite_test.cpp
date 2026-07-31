@@ -11,12 +11,13 @@
  *
  * THE ORACLE'S EPISTEMIC STATUS (read before touching it): the RM contradicts
  * itself at least twice (blend direction, AS-key result - see the v8 plan's
- * "Known RM contradictions").  Every CONTESTED rule therefore lives in exactly
- * one small named function tagged "MEASURED: pending (P2b)" below; Task 3
- * flips ONLY those functions to silicon's measured truth and updates the tag.
- * A MISMATCH not explained by a contested rule is a real finding - stop and
- * investigate, do not tune anything else.  Everything outside the tagged
- * functions is an RM-documented fact and is cited where encoded.
+ * "Known RM contradictions").  Every formerly-CONTESTED rule lives in exactly
+ * one small named function tagged "MEASURED: <date> ... SOLVED" below - the
+ * tags record silicon's verdicts (Task 3, six instrumented runs; the
+ * transcript's RESOLVED AMBIGUITIES section is the authority).  The oracle is
+ * FROZEN: it IS the silicon truth, and any QEMU-vs-oracle disagreement is a
+ * model bug by definition.  Everything outside the tagged functions is an
+ * RM-documented fact and is cited where encoded.
  *
  * Per case: (re)fill the PS region with a position-dependent pattern, run the
  * PXPOp, oracle the same composite into an expected-frame scratch, compare the
@@ -32,10 +33,11 @@
  * no timing model), CASES, COMPOSITE_OK, PXP_COMPOSITE_DONE.  Every early-out
  * path prints PXP_COMPOSITE_DONE - the run never hangs silently.
  *
- * QEMU BASELINE (recorded, not a failure): the QEMU PXP model has no AS
- * datapath yet, so AS cases MISMATCH / show pass-through content under QEMU
- * until Task 4 lands the model.  There is deliberately NO run_qemu gate in
- * this commit; the gate lands with the model so the sweep stays green.
+ * QEMU (Task 4): the model's AS datapath was written FROM the silicon truth
+ * table and all 31 cases MATCH under QEMU with checksums byte-identical to
+ * silicon's; run_qemu_pxp_composite.sh is the gate.  (Historical: Task 2's
+ * pre-model baseline had 30/31 MISMATCH -- with argb_override_00's honest
+ * coincidental MATCH proving the compare machinery.)
  *
  * Uses Serial1 (LPUART; QEMU captures it), like every sibling gate.
  */

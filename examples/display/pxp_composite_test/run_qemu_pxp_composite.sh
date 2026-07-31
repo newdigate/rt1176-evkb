@@ -53,3 +53,8 @@ grep -q "^ALPHA_OUT dst " "$OUT" || { echo "FAIL: ALPHA_OUT dump missing"; exit 
 [ -f "$DIR/pxp_composite.dbg" ] || { echo "FAIL: no guest-error log"; exit 1; }
 grep -q "guest" "$DIR/pxp_composite.dbg" && { echo "FAIL: guest errors"; exit 1; }
 echo "PASS: PXP compositing == the silicon-measured oracle across all 31 cases"
+# NEGATIVE-TEST RECORD (red-first, per the two-gate rule): sabotaging the
+# oracle's blend divisor (256 -> /255-rounded) makes this gate FAIL naming
+# the blend-path cases (argb_embedded first of 15) -- observed at Task 4 and
+# reproduced independently by the v8 final review.  The gradient case alone
+# covers all 256 alpha values, so any wrong blend formula fails immediately.
