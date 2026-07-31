@@ -23,9 +23,10 @@ echo "==== captured UART ===="; cat "$OUT"
 # framebuffer no display owns would still checksum perfectly.
 grep -q "PANEL_OK"          "$OUT" || { echo "FAIL: panel bring-up"; exit 1; }
 grep -q "LVGL_FLUSHED=PASS" "$OUT" || { echo "FAIL: no full refresh"; exit 1; }
-# The flushed AREA -- 720*1280*2 -- is the only evidence LVGL redrew the WHOLE
-# screen; a partial repaint and a scene edit both just change LVGL_SUM.
-grep -q "LVGL_BYTES=1843200" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; }
+# The flushed AREA -- 720*1280*4 at XRGB8888 (v7) -- is the only evidence LVGL
+# redrew the WHOLE screen; a partial repaint and a scene edit both just change
+# LVGL_SUM.
+grep -q "LVGL_BYTES=3686400" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; }
 # GOLDEN CHECKSUM -- FNV-1a over the whole 720x1280 framebuffer after LVGL's
 # software renderer drew the scene.  RECORDED, not derived; provenance below.
 # UNLIKE the RPi gate's golden, this one is CONFIRMED ON GLASS by a human
@@ -35,6 +36,9 @@ grep -q "LVGL_BYTES=1843200" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; 
 # runs AND a human eye on the glass, in the SAME commit.
 #
 # Provenance: recorded 2026-07-29 against vendored LVGL 9.4.0, lv_conf.h as of
-# that commit, montserrat 14/28.
-grep -q "LVGL_SUM=0xDF2A1A03" "$OUT" || { echo "FAIL: render checksum"; exit 1; }
+# that commit, montserrat 14/28, at RGB565 (v6).  RE-RECORDED 2026-07-31 for
+# v7 XRGB8888 (LV_COLOR_DEPTH=32, PANEL_BYTES_PER_PIXEL=4) plus the added
+# gradient-strip widget; stable across three consecutive QEMU runs, hardware
+# eye confirmation pending (see the v7 hardware task / transcript_hw_evkb.txt).
+grep -q "LVGL_SUM=0x10A8F894" "$OUT" || { echo "FAIL: render checksum"; exit 1; }
 echo "PASS: LVGL RK055 panel render verified"

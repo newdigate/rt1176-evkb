@@ -62,3 +62,75 @@ Reproduction
 
   Do NOT hold the VCOM during load or verify (DAP status 131). There is no
   standalone `LinkServer reset` in 26.6.137; a backgrounded `run` is the reset.
+
+
+======================================================================
+v7 section — XRGB8888, the banding before/after (2026-07-31)
+======================================================================
+
+Firmware:  evkb (branch lvgl-xrgb-v7, the migration committed with this
+           transcript per the re-record rule), LVGL 63ba9a9, MipiDisplay
+           4cdb46c, qemu2 0df62eb15a
+Flash:     LinkServer 26.6.137, VCOM-free load + verify for BOTH variants,
+           then reader attached and reset via SW4 (the hardened
+           rt1170-flash.sh order after the IOSerialFamily panics — never a
+           LinkServer op with the port held). LOAD/VERIFY exit 0 each time.
+Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200 via tools/rt1170-console.py
+
+RESULT: PASS. The before/after demonstration this milestone exists for:
+the SAME scene (now with a horizontal grey gradient strip) at RGB565 then
+XRGB8888, and the banding the operator saw in the first run is gone in
+the second.
+
+This section SUPERSEDES the v3 golden above: the scene changed (gradient
+strip) and the format changed (32 bpp), so the golden is re-recorded —
+0xDF2A1A03 is history, 0x10A8F894 is the pin, and this run is the eye
+evidence the re-record rule demands in the same commit.
+
+
+Run 1 — the "before": RGB565 demo variant (-DDEPTH_DEMO_565=ON)
+---------------------------------------------------------------
+
+ LVGL_RK055_PANEL_BEGIN
+PANEL_OK
+LVGL_FLUSHED=PASS
+LVGL_BYTES=1843200
+LVGL_SUM=0xFC928003
+UNDERRUNS=0/10
+LVGL_RK055_PANEL_DONE
+
+Operator, eye on the gradient strip, verbatim:
+
+    "yes, clear banding steps on the ramp"
+
+That is the 5/6-bit quantisation the milestone exists to remove: a smooth
+0..255 grey ramp collapsing to visible steps at 16 bpp. Note the demo's
+565 sum 0xFC928003 differs from the v3 golden 0xDF2A1A03 above because the
+scene gained the gradient strip; the demo variant owns no golden — it
+exists only for the eye.
+
+
+Run 2 — the "after": XRGB8888 build
+-----------------------------------
+
+ LVGL_RK055_PANEL_BEGIN
+PANEL_OK
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+LVGL_SUM=0x10A8F894
+UNDERRUNS=0/10
+LVGL_RK055_PANEL_DONE
+
+Operator, same strip, verbatim:
+
+    "yes, ramp is smooth now, rest of the scene looks unchanged"
+
+LVGL_SUM=0x10A8F894 is IDENTICAL to the QEMU golden (transcript_qemu.txt):
+QEMU and silicon byte-agree at 32 bpp — the renderer is deterministic CPU
+work at this depth too. LVGL_BYTES=3686400 = 720*1280*4: the whole screen
+at 4 B/px.
+
+UNDERRUNS=0/10: the spec §10.1 watchdog — the highest silicon risk of this
+milestone was the LCDIFv2 underrunning at doubled scanout fetch from
+contended SDRAM — sampled clean over 10 consecutive windows, on both
+variants.

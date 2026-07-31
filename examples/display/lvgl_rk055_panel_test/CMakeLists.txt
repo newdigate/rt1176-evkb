@@ -1,6 +1,19 @@
 cmake_minimum_required(VERSION 3.24)
 project(lvgl_rk055_panel_test)
 
+# v7: XRGB8888.  Directory-scope so the definitions reach the LVGL and
+# MipiDisplay objects created by the imports below, not just this target.
+# The link-time depth probes (lvgl_rt1176.h / lcdifv2.h) turn a definition
+# that fails to propagate into an undefined reference; the nm check in the
+# gate-transcript ritual is the belt-and-braces.
+# -DDEPTH_DEMO_565=ON builds the IDENTICAL scene at the default RGB565 --
+# the banding "before" for the v7 depth ritual.  Demo variant: no gate, no
+# golden.
+option(DEPTH_DEMO_565 "RGB565 banding-demo variant of the same scene" OFF)
+if(NOT DEPTH_DEMO_565)
+    add_compile_definitions(LV_COLOR_DEPTH=32 PANEL_BYTES_PER_PIXEL=4)
+endif()
+
 set(TEENSY_VERSION 117 CACHE STRING "")
 
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
