@@ -165,11 +165,11 @@ static inline uint32_t effective_alpha(uint8_t mode, uint8_t emb, uint8_t glob,
     return a;
 }
 
-/* MEASURED: pending (P2b).  Knob 3: AS-key hit result.  The AS_CTRL
- * [ENABLE_COLORKEY] field description says the PS pixel shows; RM 52.3.1.13
- * says "AS is passed".  Encoded: PS shows (the field-description reading -
- * an AS-key is a transparency key, which is the only reading that makes a
- * green-screen sprite work). */
+/* MEASURED: 2026-07-31 run 1 (P2b) -- CONFIRMED first try, all three AS-key
+ * cases MATCH.  Knob 3: AS-key hit result.  The AS_CTRL[ENABLE_COLORKEY]
+ * field description is correct: the PS pixel shows (a transparency key).
+ * RM 52.3.1.13's "AS is passed" is the typo -- transcript RESOLVED
+ * AMBIGUITIES item 4. */
 static inline uint32_t askey_hit_result(uint32_t ps24, uint32_t as24)
 {
     (void)as24;
