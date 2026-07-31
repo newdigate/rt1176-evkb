@@ -167,3 +167,63 @@ copy of the animation qualified for the accelerated path.  Frame sums and
 every counter byte-identical to v5 -- the handler changed no pixel.
 
 Operator, eye on the sweep, verbatim: "yes, still smooth"
+
+
+======================================================================
+v7 section — XRGB8888 at 4 B/px, the pins intact (2026-07-31)
+======================================================================
+
+Firmware:  evkb (branch lvgl-xrgb-v7, the migration committed with this
+           transcript per the re-record rule), LVGL 63ba9a9, MipiDisplay
+           4cdb46c, qemu2 0df62eb15a
+Flash:     LinkServer 26.6.137, VCOM-free load + verify, then reader
+           attached and reset via SW4 (the hardened rt1170-flash.sh order
+           after the IOSerialFamily panics — never a LinkServer op with
+           the port held). LOAD/VERIFY exit 0.
+Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200 via tools/rt1170-console.py
+
+RESULT: PASS — the 120-cycle animation on the accelerated 8888 sync path,
+every counter pin intact at double the bytes per frame. Frame sums are
+re-recorded for the format change with this run as the same-commit eye
+evidence.
+
+ LVGL_RK055_FLIP_BEGIN
+PANEL_OK
+MODE=DOUBLE_BUFFER
+FLIP_A_SUM=0x1C8E7D65 PANEL_A_SUM=0x00000000
+FLIP_A_HW=TAP_ABSENT (TAP_ID=0x00000000) -- verify by eye
+FLIP_B_SUM=0xB90DE065 PANEL_B_SUM=0x00000000
+FLIP_B_HW=TAP_ABSENT (TAP_ID=0x00000000) -- verify by eye
+DISTINCT=OK
+REFRESHES=120
+FLIPS=120
+VSYNCS=120
+VSYNC_ISRS=120
+VSYNC_TIMEOUTS=0
+PXP_COPIES=122
+PXP_FALLBACKS=0
+PXP_ERRORS=0
+FLIP_OK
+UNDERRUNS=0/10
+LVGL_RK055_FLIP_DONE
+
+Operator, eye on the sweep, verbatim: "smooth, no tearing, no artifacts"
+
+Notes:
+
+- Both frame sums (0x1C8E7D65 / 0xB90DE065) are byte-identical to the
+  QEMU run — the 32 bpp renderer is deterministic on both, same as every
+  prior depth.
+- PANEL_*_SUM read 0 with TAP_ID=0 and the firmware branched to
+  TAP_ABSENT: the QEMU-only scanout tap stayed QEMU-only, per the
+  standing asymmetry — on silicon the scanned-A-then-B witness is the
+  operator's eye on the smooth sweep.
+- REFRESHES=FLIPS=VSYNCS=VSYNC_ISRS=120, VSYNC_TIMEOUTS=0: the real ISR
+  retired every flip inside the frame budget with LVGL now writing 2x
+  the bytes per frame.
+- PXP_COPIES=122 / FALLBACKS=0 / ERRORS=0, identical to QEMU: the whole
+  animation ran on the accelerated 8888 sync path — the PXP moves 2x the
+  bytes and still every copy qualified and completed.
+- UNDERRUNS=0/10: the spec §10.1 watchdog — underrun at doubled scanout
+  fetch was this milestone's top silicon risk — clean under the heaviest
+  SDRAM contention of the three tests (render + PXP + scanout).
