@@ -91,13 +91,18 @@ PXP_COPY_BENCH_DONE
 ----------------------------------------
 
 1. THE HEIGHT >= 2 RULE HOLDS AT XRGB8888, MORE STRONGLY THAN AT 565.
-   Every multi-row 8888 case favors the PXP, 5.4x to 16.5x (case 3: 987 us
-   CPU vs 60 us PXP).  The single-row case (10: 719x1) -- the CPU's one win
-   at 565 (70 vs 105 us) -- is a dead TIE at 8888 (135 vs 135 us): doubling
+   Every multi-row 8888 case favors the PXP: from 3.4x at the pathological
+   1-px-wide column (case 11: 968 vs 285 us) through ~13.4x for the bulk
+   copies (cases 12-14) to 26.5x at 16x16 (case 1: 106 vs 4 us).  [The
+   first publication of this table misquoted the range as "5.4-16.5x" --
+   5.4x was an RGB565 figure; the numbers here are computed from the CASE
+   rows above.]  The single-row case (10: 719x1) -- the CPU's one win at
+   565 (70 vs 105 us) -- is a dead TIE at 8888 (135 vs 135 us): doubling
    the bytes doubled the CPU's row cost while the PXP's per-op cost stayed
-   flat.  The rule stays conservative (single-row chains to the CPU default)
-   and this transcript is what the handler's height>=2 comment cites for
-   BOTH formats.
+   flat.  The rule stays conservative (single-row chains to the CPU
+   default) and this transcript is what the handler's height>=2 comment
+   cites for BOTH formats.  (For reference, the 565 multi-row range is
+   2.0x -- the same 1x1280 column -- to 21x.)
 
 2. THE CPU FULL-SCREEN 8888 SYNC COPY COSTS 174.3 ms — 5.3x THE 33 ms FRAME
    BUDGET (vs 89.5 ms / 2.7x at 565).  The PXP does it in 13.0 ms, a 13.4x
