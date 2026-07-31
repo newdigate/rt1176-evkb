@@ -24,14 +24,17 @@ echo "==== captured UART ===="; cat "$OUT"
 
 grep -q "ALLOC_OK" "$OUT" || { echo "FAIL: extmem alloc"; exit 1; }
 grep -q "PXP_OK"   "$OUT" || { echo "FAIL: PXP bring-up"; exit 1; }
-# Every case must MATCH, by name -- a dropped case cannot hide behind a count.
-# Space-anchored i= so case 1's grep cannot be satisfied by cases 10-14.
-for i in $(seq 1 14); do
-  grep -q "^CASE i=$i " "$OUT" && grep "^CASE i=$i " "$OUT" | grep -q " MATCH " || { echo "FAIL: case $i did not match"; exit 1; }
+# Every case must MATCH, by name, in BOTH formats -- a dropped case or a
+# dropped format cannot hide behind a count.  Space-anchored so f=565 cannot
+# satisfy f=8888 and i=1 cannot alias i=10..14.
+for f in 565 8888; do
+  for i in $(seq 1 14); do
+    grep -q "^CASE i=$i f=$f " "$OUT" && grep "^CASE i=$i f=$f " "$OUT" | grep -q " MATCH " || { echo "FAIL: case f=$f i=$i did not match"; exit 1; }
+  done
 done
 grep -q "MISMATCH" "$OUT" && { echo "FAIL: at least one case mismatched"; exit 1; }
-# The count pin catches a matrix edit that forgot the loop above.
-grep -q "^CASES=14$" "$OUT" || { echo "FAIL: case count"; exit 1; }
+# The count pin catches a matrix edit that forgot the loops above.
+grep -q "^CASES=28$" "$OUT" || { echo "FAIL: case count"; exit 1; }
 grep -q "COPY_BENCH_OK" "$OUT" || { echo "FAIL: bench verdict withheld"; exit 1; }
 # Timings are NOT asserted anywhere: hardware-only, vacuous in QEMU -- the
 # NOTE token in the transcript says so and this comment is the gate's half.

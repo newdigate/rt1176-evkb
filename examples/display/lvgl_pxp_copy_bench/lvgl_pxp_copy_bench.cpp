@@ -1,21 +1,37 @@
-/* lvgl_pxp_copy_bench - CPU vs PXP for LVGL's cross-buffer sync copy (v6).
+/* lvgl_pxp_copy_bench - CPU vs PXP for LVGL's cross-buffer sync copy (v7).
  * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT
  *
- * TWO CLAIMS IN ONE EXAMPLE, per the two-gate rule:
- *   CORRECTNESS (QEMU-gated): for every case in the matrix, a PXP sub-rect
- *       copy produces a byte-identical destination to LVGL's own
- *       lv_draw_buf_copy.  The checksum covers the WHOLE destination buffer,
- *       so an out-of-bounds write is as red as a wrong pixel.  The offset-
- *       base arithmetic proven here is the arithmetic the future handler
- *       (spec 3) will use -- proven BEFORE that handler exists.
- *   TIMING (hardware-only): DWT cycle counts for both paths per case.  QEMU
- *       has no timing model; its numbers are printed but VACUOUS, and the
- *       transcript says so.  The hardware table is the v6 P2 decision input.
+ * TWO CLAIMS x TWO FORMATS, per the two-gate rule:
+ *   CORRECTNESS (QEMU-gated): for every one of the 14 geometry cases, in
+ *       BOTH RGB565 and XRGB8888, a PXP sub-rect copy produces exactly the
+ *       destination the hardware contract promises.  For RGB565 that is
+ *       byte-identity with LVGL's own lv_draw_buf_copy.  For XRGB8888 it is
+ *       RGB-identity with the X byte written as 0 -- the PXP outputs its
+ *       COMPUTED alpha, which is 0 with the alpha engine unconfigured; a
+ *       byte-preserving copy was the bench's original claim and SILICON
+ *       REFUTED IT (see the contract comment at the CPU reference below).
+ *       28 cases total; the gate pins the count so a dropped case OR a
+ *       dropped format cannot hide behind a passing sweep.  The offset-base
+ *       arithmetic proven here (byte-based, bpp-scaled) is the arithmetic
+ *       the future handler (spec 3, v7 dual-format) will use -- proven
+ *       BEFORE that handler exists.
+ *   TIMING (hardware-only): DWT cycle counts for both paths per case, per
+ *       format.  QEMU has no timing model; its numbers are printed but
+ *       VACUOUS, and the transcript says so.  The hardware table is the
+ *       v7 8888-crossover decision input.
  *
- * The matrix deliberately includes odd widths, odd x-offsets and edge-hugging
- * rects: PXPSurface has no origin field, so sub-rects are offset base
- * addresses -- exactly where pitch arithmetic goes wrong silently.
+ * The matrix deliberately includes odd widths, odd x-offsets and edge-
+ * hugging rects: PXPSurface has no origin field, so sub-rects are offset
+ * base addresses -- exactly where pitch arithmetic goes wrong silently.
+ *
+ * Both formats share ONE pair of buffers, allocated once at the 4 B/px
+ * (XRGB8888) maximum extent and reused for the 565 pass.  Fills and
+ * checksums always cover the WHOLE max-size allocation, in both formats --
+ * not just the bytes the current format's stride/height actually address.
+ * That is what keeps an out-of-bounds PXP write in the 565 half-empty case
+ * exactly as red as a wrong pixel: 565's real footprint is half the
+ * allocation, so any write past it still lands in checksummed bytes.
  *
  * Uses Serial1 (LPUART; QEMU captures it), like every sibling gate.
  */
@@ -24,8 +40,7 @@
 #include "PXP.h"
 
 static constexpr uint32_t BUF_W = 720, BUF_H = 1280;
-static constexpr uint32_t BUF_STRIDE = BUF_W * 2u;          /* unpadded RGB565 */
-static constexpr uint32_t BUF_BYTES  = BUF_STRIDE * BUF_H;
+static constexpr uint32_t BUF_BYTES_MAX = BUF_W * 4u * BUF_H;   /* 8888 extent */
 
 struct Case { uint16_t w, h, x, y; };
 /* The matrix (spec 9 Q1, fixed here): button-scale through full-screen, with
@@ -42,29 +57,38 @@ static constexpr Case CASES[] = {
 };
 static constexpr uint8_t NUM_CASES = sizeof(CASES) / sizeof(CASES[0]);
 
-static uint16_t *s_src, *s_dst;
+struct Fmt {
+    const char       *tag;      /* token field: f=<tag>  */
+    lv_color_format_t cf;
+    uint8_t           bpp;
+    uint32_t          seed_a, seed_b;   /* format-dependent fills: a copy    */
+};                                      /* routed at the wrong bpp cannot    */
+                                        /* checksum clean                    */
+static constexpr Fmt FMTS[] = {
+    { "565",  LV_COLOR_FORMAT_RGB565,   2u, 0xA53Cu,     0x0F1Eu     },
+    { "8888", LV_COLOR_FORMAT_XRGB8888, 4u, 0xC3A5F00Du, 0x1E2D3C4Bu },
+};
+
+static uint8_t *s_src, *s_dst;
 static lv_draw_buf_t s_src_db, s_dst_db;
 
-static uint16_t *alloc_buf() {
-    uint8_t *raw = (uint8_t *)extmem_malloc(BUF_BYTES + 64);
+static uint8_t *alloc_buf() {
+    uint8_t *raw = (uint8_t *)extmem_malloc(BUF_BYTES_MAX + 64);
     if (!raw) return nullptr;
-    return (uint16_t *)(((uintptr_t)raw + 63) & ~(uintptr_t)63);
+    return (uint8_t *)(((uintptr_t)raw + 63) & ~(uintptr_t)63);
 }
 
-/* Position-dependent fills (the GT911 blob-filler lesson: every byte pays
- * into the sum, so a misplaced or short copy always moves it). */
-static void fill_src() {
-    for (uint32_t i = 0; i < BUF_BYTES / 2; i++)
-        s_src[i] = (uint16_t)(0xA53Cu ^ (i * 2654435761u >> 16));
-}
-static void fill_dst() {
-    for (uint32_t i = 0; i < BUF_BYTES / 2; i++)
-        s_dst[i] = (uint16_t)(0x0F1Eu ^ (i * 40503u >> 8));
+/* Position-dependent AND format-dependent fills over the WHOLE max-size
+ * allocation (the GT911 blob-filler lesson, plus v7's format seed). */
+static void fill_buf(uint8_t *b, uint32_t seed) {
+    uint32_t *w = (uint32_t *)b;
+    for (uint32_t i = 0; i < BUF_BYTES_MAX / 4; i++)
+        w[i] = seed ^ (i * 2654435761u);
 }
 
-static uint32_t dst_sum() {                   /* FNV-1a over the WHOLE dest */
+static uint32_t dst_sum() {                 /* FNV-1a over the WHOLE dest */
     lvgl_sum_reset();
-    lvgl_sum_feed(s_dst, BUF_BYTES);
+    lvgl_sum_feed(s_dst, BUF_BYTES_MAX);
     return lvgl_sum_value();
 }
 
@@ -99,16 +123,6 @@ void setup()
     Serial1.println("ALLOC_OK");
 
     lvgl_rt1176_begin();   /* lv_init: the default draw-buf handlers exist */
-    /* lv_draw_buf_init(buf, w, h, cf, stride, data, data_size) -> lv_result_t
-     * (lv_draw_buf.h:259); LV_RESULT_OK on success. */
-    if (lv_draw_buf_init(&s_src_db, BUF_W, BUF_H, LV_COLOR_FORMAT_RGB565,
-                         BUF_STRIDE, s_src, BUF_BYTES) != LV_RESULT_OK ||
-        lv_draw_buf_init(&s_dst_db, BUF_W, BUF_H, LV_COLOR_FORMAT_RGB565,
-                         BUF_STRIDE, s_dst, BUF_BYTES) != LV_RESULT_OK) {
-        Serial1.println("DRAWBUF_FAIL");
-        Serial1.println("PXP_COPY_BENCH_DONE");
-        return;
-    }
 
     /* PXP bring-up exactly as pxp_blit_test does it: begin() performs the
      * RM 52.5 reset ritual internally; afterwards CTRL's SFTRST and CLKGATE
@@ -122,57 +136,101 @@ void setup()
     }
     Serial1.println("PXP_OK");
 
-    fill_src();
+    /* (The old one-shot fill_src()/fill_dst() are gone: fills are per-format
+     * now and happen inside the loop below.) */
     bool all_ok = true;
+    uint32_t printed = 0;
 
-    for (uint8_t i = 0; i < NUM_CASES; i++) {
-        const Case &c = CASES[i];
-        lv_area_t area;
-        area.x1 = c.x; area.y1 = c.y;
-        area.x2 = (int32_t)c.x + c.w - 1; area.y2 = (int32_t)c.y + c.h - 1;
-
-        /* --- CPU path: LVGL's own copy, default handlers ------------------ */
-        fill_dst();
-        uint32_t t0 = ARM_DWT_CYCCNT;
-        lv_draw_buf_copy(&s_dst_db, &area, &s_src_db, &area);
-        uint32_t cpu_cyc = ARM_DWT_CYCCNT - t0;
-        const uint32_t cpu = dst_sum();
-
-        /* --- PXP path: offset-base sub-rect surfaces ---------------------- */
-        fill_dst();
-        uint16_t *sp = s_src + (uint32_t)c.y * BUF_W + c.x;
-        uint16_t *dp = s_dst + (uint32_t)c.y * BUF_W + c.x;
-        PXPSurface ssrc(sp, c.w, c.h, PXP_RGB565, BUF_STRIDE);
-        PXPSurface sdst(dp, c.w, c.h, PXP_RGB565, BUF_STRIDE);
-        t0 = ARM_DWT_CYCCNT;
-        /* pxp_blit_test's idiom: PXP.blit(src, dst) is synchronous -- it is
-         * op().source(src).output(dst).run(), and run() waits (100 ms cap),
-         * so the cycle window covers program + enable + completion. */
-        const PXPError pe = PXP.blit(ssrc, sdst);
-        uint32_t pxp_cyc = ARM_DWT_CYCCNT - t0;
-        const uint32_t pxp = dst_sum();
-
-        if (pe != PXP_OK) {  /* per-case failure token, never a hang */
-            all_ok = false;
-            Serial1.printf("CASE i=%u r=%ux%u+%u+%u PXP_ERR=%s\n",
-                           (unsigned)(i + 1), c.w, c.h, c.x, c.y,
-                           pxp_err_name(pe));
-            (void)pxp_cyc;
-            continue;
+    for (const Fmt &F : FMTS) {
+        const uint32_t stride = BUF_W * F.bpp;
+        /* lv_draw_buf_init(buf, w, h, cf, stride, data, data_size) ->
+         * lv_result_t (lv_draw_buf.h:259); LV_RESULT_OK on success. */
+        if (lv_draw_buf_init(&s_src_db, BUF_W, BUF_H, F.cf, stride,
+                             s_src, stride * BUF_H) != LV_RESULT_OK ||
+            lv_draw_buf_init(&s_dst_db, BUF_W, BUF_H, F.cf, stride,
+                             s_dst, stride * BUF_H) != LV_RESULT_OK) {
+            Serial1.println("DRAWBUF_FAIL");
+            Serial1.println("PXP_COPY_BENCH_DONE");
+            return;
         }
+        fill_buf(s_src, F.seed_a);
 
-        const bool ok = (cpu == pxp);
-        all_ok = all_ok && ok;
-        Serial1.printf("CASE i=%u r=%ux%u+%u+%u CPU=0x%08lX PXP=0x%08lX %s cpu_us=%lu pxp_us=%lu\n",
-                       (unsigned)(i + 1), c.w, c.h, c.x, c.y,
-                       (unsigned long)cpu, (unsigned long)pxp,
-                       ok ? "MATCH" : "MISMATCH",
-                       (unsigned long)cycles_us(cpu_cyc),
-                       (unsigned long)cycles_us(pxp_cyc));
+        for (uint8_t i = 0; i < NUM_CASES; i++) {
+            const Case &c = CASES[i];
+            lv_area_t area;
+            area.x1 = c.x; area.y1 = c.y;
+            area.x2 = (int32_t)c.x + c.w - 1; area.y2 = (int32_t)c.y + c.h - 1;
+
+            /* --- CPU path: LVGL's own copy, default handlers -------------- */
+            fill_buf(s_dst, F.seed_b);
+            uint32_t t0 = ARM_DWT_CYCCNT;
+            lv_draw_buf_copy(&s_dst_db, &area, &s_src_db, &area);
+            uint32_t cpu_cyc = ARM_DWT_CYCCNT - t0;
+            /* v7 HARDWARE-MEASURED CONTRACT (the finding this bench forced):
+             * a PXP 32-bit copy is RGB-exact but writes the X byte as the
+             * pipeline's COMPUTED alpha, which is 0 with the alpha engine
+             * unconfigured -- EVKB DIAG dump: source X C3/5D/FF/19 all wrote
+             * back as 00, RGB bytes exact, for BOTH 32-bit OUT encodings
+             * (RM 52.3.1.22 pixel handling + OUT_CTRL[ALPHA_OUTPUT]=0
+             * "retain computed alpha").  The CPU reference therefore has its
+             * in-rect X bytes zeroed -- OUTSIDE the timed window, so cpu_us
+             * stays the pure lv_draw_buf_copy cost -- and MATCH asserts
+             * exactly what silicon does: RGB equal everywhere, X:=0 inside
+             * the rect, every byte outside the rect untouched.  The QEMU PXP
+             * model writes the same bytes (imxrt_pxp.c measured-alpha
+             * comment); a model OR silicon that preserved X goes red here. */
+            if (F.bpp == 4u) {
+                for (uint32_t ry = 0; ry < c.h; ry++) {
+                    uint32_t *row = (uint32_t *)(void *)
+                        (s_dst + ((uint32_t)c.y + ry) * stride
+                               + (uint32_t)c.x * 4u);
+                    for (uint32_t rx = 0; rx < c.w; rx++) {
+                        row[rx] &= 0x00FFFFFFu;
+                    }
+                }
+            }
+            const uint32_t cpu = dst_sum();
+
+            /* --- PXP path: offset-base sub-rect surfaces ------------------ */
+            fill_buf(s_dst, F.seed_b);
+            uint8_t *sp = s_src + (uint32_t)c.y * stride + (uint32_t)c.x * F.bpp;
+            uint8_t *dp = s_dst + (uint32_t)c.y * stride + (uint32_t)c.x * F.bpp;
+            const auto pxp_fmt = (F.bpp == 2u) ? PXP_RGB565 : PXP_XRGB8888;
+            /* stride 2880 (720*4) fits uint16_t -- same fact panel_config.h's
+             * 16-bit-pitch static assert relies on. */
+            PXPSurface ssrc(sp, c.w, c.h, pxp_fmt, (uint16_t)stride);
+            PXPSurface sdst(dp, c.w, c.h, pxp_fmt, (uint16_t)stride);
+            t0 = ARM_DWT_CYCCNT;
+            /* pxp_blit_test's idiom: PXP.blit(src, dst) is synchronous -- it
+             * is op().source(src).output(dst).run(), and run() waits (100 ms
+             * cap), so the cycle window covers program + enable + completion. */
+            const PXPError pe = PXP.blit(ssrc, sdst);
+            uint32_t pxp_cyc = ARM_DWT_CYCCNT - t0;
+            const uint32_t pxp = dst_sum();
+
+            if (pe != PXP_OK) {  /* per-case failure token, never a hang */
+                all_ok = false;
+                Serial1.printf("CASE i=%u f=%s r=%ux%u+%u+%u PXP_ERR=%s\n",
+                               (unsigned)(i + 1), F.tag, c.w, c.h, c.x, c.y,
+                               pxp_err_name(pe));
+                (void)pxp_cyc;
+                continue;
+            }
+
+            const bool ok = (cpu == pxp);
+            all_ok = all_ok && ok;
+            printed++;
+            Serial1.printf("CASE i=%u f=%s r=%ux%u+%u+%u CPU=0x%08lX PXP=0x%08lX %s cpu_us=%lu pxp_us=%lu\n",
+                           (unsigned)(i + 1), F.tag, c.w, c.h, c.x, c.y,
+                           (unsigned long)cpu, (unsigned long)pxp,
+                           ok ? "MATCH" : "MISMATCH",
+                           (unsigned long)cycles_us(cpu_cyc),
+                           (unsigned long)cycles_us(pxp_cyc));
+        }
     }
 
     Serial1.println("NOTE timings are hardware-only; QEMU numbers are vacuous");
-    Serial1.printf("CASES=%u\n", (unsigned)NUM_CASES);
+    Serial1.printf("CASES=%lu\n", (unsigned long)printed);
     if (all_ok) Serial1.println("COPY_BENCH_OK");
     Serial1.println("PXP_COPY_BENCH_DONE");
 }

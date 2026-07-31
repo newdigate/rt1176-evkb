@@ -55,6 +55,19 @@ static void build_scene()
     lv_obj_set_size(bar, 520, 32);
     lv_obj_align(bar, LV_ALIGN_CENTER, 0, 40);
     lv_bar_set_value(bar, 62, LV_ANIM_OFF);   /* fixed value: no animation */
+
+    /* v7 depth evidence: a full-width dark-to-light grey ramp.  Grey is the
+     * harshest banding case -- at RGB565 the 5-bit channels step ~31 times
+     * across 720 px; at XRGB8888 the ramp is smooth.  The DEPTH_DEMO_565
+     * variant builds THIS SAME code at 16 bpp for the before-eye. */
+    lv_obj_t *grad = lv_obj_create(scr);
+    lv_obj_remove_style_all(grad);
+    lv_obj_set_size(grad, 720, 120);
+    lv_obj_align(grad, LV_ALIGN_BOTTOM_MID, 0, -60);
+    lv_obj_set_style_bg_opa(grad, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(grad, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(grad, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(grad, LV_GRAD_DIR_HOR, LV_PART_MAIN);
 }
 
 void setup()
@@ -100,6 +113,13 @@ void setup()
     Serial1.printf("LVGL_BYTES=%lu\n",
                    (unsigned long)(lvgl_mipi_panel_flushed_px() * PANEL_BYTES_PER_PIXEL));
     Serial1.printf("LVGL_SUM=0x%08lX\n", (unsigned long)lvgl_sum_value());
+
+    /* v7: the doubled-scanout-bandwidth watchdog.  Vacuous in QEMU (the model
+     * never underruns) -- the hardware transcript is where 0/10 is evidence. */
+    Display.sampleUnderrun(10);
+    Serial1.printf("UNDERRUNS=%lu/%lu\n",
+                   (unsigned long)Display.underrunCount(),
+                   (unsigned long)Display.underrunFrames());
     Serial1.println("LVGL_RK055_PANEL_DONE");
 }
 

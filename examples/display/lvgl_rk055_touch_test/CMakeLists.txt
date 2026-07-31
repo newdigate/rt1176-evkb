@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
 project(lvgl_rk055_touch_test)
 
+# v7: XRGB8888 -- directory-scope so the definitions reach the LVGL and
+# MipiDisplay objects, not just this target; the link-time depth probes and
+# the nm ritual check propagation.
+add_compile_definitions(LV_COLOR_DEPTH=32 PANEL_BYTES_PER_PIXEL=4)
+
 set(TEENSY_VERSION 117 CACHE STRING "")
 
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)

@@ -206,3 +206,79 @@ syncs below the height/area rule) -- the threshold measured by the bench
 exactly what it was adopted to do, visibly, under a live finger.
 
 Operator, verbatim: "drag was smooth, no artifacts"
+
+
+======================================================================
+v7 section — XRGB8888 under a real finger (2026-07-31)
+======================================================================
+
+Firmware:  evkb (branch lvgl-xrgb-v7, the migration committed with this
+           transcript per the re-record rule), LVGL 63ba9a9, MipiDisplay
+           4cdb46c, TouchPanel d20499c, qemu2 0df62eb15a
+Flash:     LinkServer 26.6.137, VCOM-free load + verify, then reader
+           attached and reset via SW4 (the hardened rt1170-flash.sh order
+           after the IOSerialFamily panics — never a LinkServer op with
+           the port held). LOAD/VERIFY exit 0.
+Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200 via tools/rt1170-console.py
+
+RESULT: PASS — the full ritual (BTN1–5, the drag, HOLD/TRAP) on the 32 bpp
+path, LVGL_TOUCH_OK earned. The golden is re-recorded for the format change
+(0xE1559496 → 0x3244D69A) with this run as the same-commit eye evidence.
+
+Console capture, verbatim
+-------------------------
+
+ LVGL_RK055_TOUCH_BEGIN
+PANEL_OK
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+LVGL_SUM=0x3244D69A
+I2C_OK
+ADDR=0x5D
+GT911_OK
+CFG_OK RES=720x1280 POINTS=5
+TOUCH_PROMPT phase=A tap button 1 at=(108,128)
+BTN1=CHECKED
+TOUCH_PROMPT phase=A tap button 2 at=(612,128)
+BTN2=CHECKED
+TOUCH_PROMPT phase=A tap button 3 at=(108,1152)
+BTN3=CHECKED
+TOUCH_PROMPT phase=A tap button 4 at=(612,1152)
+BTN4=CHECKED
+TOUCH_PROMPT phase=A tap button 5 at=(360,640)
+BTN5=CHECKED
+TOUCH_PROMPT phase=B drag the amber handle to the right edge of its band, one continuous stroke
+DRAG_END x=566 moves=43
+TOUCH_PROMPT phase=C place a finger on HOLD, then a second on TRAP; lift the HOLD finger FIRST, then the other
+HOLD=CHECKED
+TRAP=UNCHECKED
+IDLE_POLLS=824
+POLL_FAILS=0
+BUFFERS=410
+FLIPS=80
+VSYNC_TIMEOUTS=0
+PXP_COPIES=25
+PXP_FALLBACKS=96
+PXP_ERRORS=0
+LVGL_TOUCH_OK
+UNDERRUNS=0/10
+LVGL_RK055_TOUCH_DONE
+
+Operator, verbatim: "done, all steps completed, drag was smooth, no
+artifacts"
+
+Notes:
+
+- LVGL_SUM=0x3244D69A is IDENTICAL to the QEMU golden: emulator and
+  silicon byte-agree on the 32 bpp render, same as every prior depth.
+- DRAG_END x=566 moves=43 is a real finger; the x=598 moves=9 values are
+  the QEMU script's, pinned only in transcript_qemu.txt — the standing
+  input-dependent asymmetry, unchanged.
+- PXP_COPIES=25 / PXP_FALLBACKS=96 / PXP_ERRORS=0: the live-finger split
+  across the height/area rule at 4 B/px. Input-dependent (QEMU's scripted
+  run splits 11/50); the pin is PXP_ERRORS=0, which held.
+- VSYNC_TIMEOUTS=0 across 80 ISR-fenced flips under live touch load at
+  the doubled frame size.
+- UNDERRUNS=0/10: the spec §10.1 watchdog — underrun at doubled scanout
+  fetch was this milestone's top silicon risk — clean through rendering,
+  PXP copies, and touch traffic all contending for SDRAM.
