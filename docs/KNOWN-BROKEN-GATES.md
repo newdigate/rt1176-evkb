@@ -170,3 +170,12 @@ silently never ran — build the example and re-run rather than accepting it.
 (`run_qemu_usb.sh`, `run_qemu_lwip.sh`, …) — over half the suite, never swept, so nothing was
 checking whether they still passed. Discovery is now `run_qemu*.sh`. If you are comparing against
 an older transcript, `28 passed` was that narrower set, not a regression.
+
+**2026-07-31 (v7, XRGB8888):** sweep re-measured on branch `lvgl-xrgb-v7` after the
+three RK055 LVGL examples migrated to XRGB8888 and the bench went dual-format
+(`CASES=28`): still **72 gates** (no gate added or removed; the bench re-pinned
+internally). The v7 bench's first silicon run exposed a QEMU PXP model divergence
+(byte-preserving 32-bit copies vs. silicon's X:=computed-alpha-0) — fixed
+stricter/more-faithful in qemu2 `0df62eb15a`; the bench oracle now asserts the
+measured contract. Expectation unchanged: 72/0/0 or the documented
+`cm4_audio_test` singleton, zero SKIPs.
