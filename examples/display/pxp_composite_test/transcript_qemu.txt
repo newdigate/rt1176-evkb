@@ -1,0 +1,60 @@
+PXP alpha-surface compositing -- QEMU gate transcript (v8 P3)
+==============================================================
+
+Date:    2026-07-31
+Machine: mimxrt1170-evk (custom QEMU, ~/Development/qemu2), boot-xip=on
+Model:   hw/dma/imxrt_pxp.c AS datapath, written FROM the silicon truth
+         table (transcript_hw_evkb.txt RESOLVED AMBIGUITIES).  The
+         oracle is frozen; all 31 cases MATCH first iteration.
+Gate:    ./run_qemu_pxp_composite.sh -- 31 s wall to PXP_COMPOSITE_DONE,
+         poll ceiling 50 s, QRUN_TIMEOUT=90.
+Note:    ALPHA_OUT under QEMU dumps X=00 words (silicon: nonzero computed
+         alpha, formula deliberately unmodelled -- presence-only check,
+         the stated asymmetry).  UNDERRUNS vacuous in QEMU, not asserted.
+
+Captured UART (green run)
+-------------------------
+PXP_COMPOSITE_BEGIN
+PANEL_OK
+PXP_OK
+ALLOC_OK
+CASE n=argb_embedded EXPECT=0x7EEC3A70 GOT=0x7EEC3A70 MATCH
+CASE n=argb_override_80 EXPECT=0xD36B4804 GOT=0xD36B4804 MATCH
+CASE n=argb_override_00 EXPECT=0x54C09FC5 GOT=0x54C09FC5 MATCH
+CASE n=argb_multiply_80 EXPECT=0x6AEBC7D8 GOT=0x6AEBC7D8 MATCH
+CASE n=argb_invert_embedded EXPECT=0x0DD03CA3 GOT=0x0DD03CA3 MATCH
+CASE n=argb_askey EXPECT=0x9086A399 GOT=0x9086A399 MATCH
+CASE n=argb_pskey EXPECT=0xA466596B GOT=0xA466596B MATCH
+CASE n=argb_bothkeys EXPECT=0x154090D7 GOT=0x154090D7 MATCH
+CASE n=rgba_embedded EXPECT=0x7EEC3A70 GOT=0x7EEC3A70 MATCH
+CASE n=rgba_askey EXPECT=0x9086A399 GOT=0x9086A399 MATCH
+CASE n=rgb565_override_80 EXPECT=0x38261219 GOT=0x38261219 MATCH
+CASE n=rgb565_askey EXPECT=0x9086A399 GOT=0x9086A399 MATCH
+CASE n=rgb565_pskey EXPECT=0x70F14B50 GOT=0x70F14B50 MATCH
+CASE n=rgb888x_override_80 EXPECT=0xD36B4804 GOT=0xD36B4804 MATCH
+CASE n=rgb565_embedded_opaque EXPECT=0xF490A651 GOT=0xF490A651 MATCH
+CASE n=rop_maskas EXPECT=0x24D39975 GOT=0x24D39975 MATCH
+CASE n=rop_masknotas EXPECT=0x52B55321 GOT=0x52B55321 MATCH
+CASE n=rop_maskasnot EXPECT=0x0C92F18D GOT=0x0C92F18D MATCH
+CASE n=rop_mergeas EXPECT=0x984103CD GOT=0x984103CD MATCH
+CASE n=rop_mergenotas EXPECT=0x5AF597DD GOT=0x5AF597DD MATCH
+CASE n=rop_mergeasnot EXPECT=0xBBECBD71 GOT=0xBBECBD71 MATCH
+CASE n=rop_notcopyas EXPECT=0x9BF76941 GOT=0x9BF76941 MATCH
+CASE n=rop_not EXPECT=0xEB7E7E7D GOT=0xEB7E7E7D MATCH
+CASE n=rop_notmaskas EXPECT=0xC44FDD85 GOT=0xC44FDD85 MATCH
+CASE n=rop_notmergeas EXPECT=0xC25336AD GOT=0xC25336AD MATCH
+CASE n=rop_xoras EXPECT=0x499E330D GOT=0x499E330D MATCH
+CASE n=rop_notxoras EXPECT=0x0949D395 GOT=0x0949D395 MATCH
+CASE n=argb_embedded_offs13_7 EXPECT=0x134601D2 GOT=0x134601D2 MATCH
+CASE n=argb_embedded_edge_br EXPECT=0x93C340F3 GOT=0x93C340F3 MATCH
+CASE n=override_center EXPECT=0x19771CAE GOT=0x19771CAE MATCH
+CASE n=gradient_embedded EXPECT=0x25CC17C8 GOT=0x25CC17C8 MATCH
+ALPHA_OUT dst 00316D74 00387180 003E758D 00457A99 004B7EA5 00528399 005887A8 005F8CB6
+FRAME=alpha_sprite
+FRAME=greenkey_sprite
+FRAME=fade
+FRAME=xor_rop
+UNDERRUNS=0/10
+CASES=31
+COMPOSITE_OK
+PXP_COMPOSITE_DONE
