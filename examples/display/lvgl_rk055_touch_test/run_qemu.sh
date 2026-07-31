@@ -26,7 +26,8 @@ echo "==== captured UART ===="; cat "$OUT"
 # --- the scene, before any touch --------------------------------------------
 grep -q "PANEL_OK"           "$OUT" || { echo "FAIL: panel bring-up"; exit 1; }
 grep -q "LVGL_FLUSHED=PASS"  "$OUT" || { echo "FAIL: no full refresh"; exit 1; }
-grep -q "LVGL_BYTES=1843200" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; }
+# 720*1280*4 at XRGB8888 (v7) -- the byte-size pin scales with bpp.
+grep -q "LVGL_BYTES=3686400" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; }
 # Pre-touch golden: taken BEFORE the indev exists (the model stalls its script
 # until the first ack, and nobody polls until the indev is created), so it is
 # static on QEMU and glass alike.  It asserts the scene BUILT correctly and
@@ -37,7 +38,11 @@ grep -q "LVGL_BYTES=1843200" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; 
 # (stable x2), not assumed.
 # Provenance: recorded 2026-07-30, LVGL 9.4.0, montserrat 14/28.  Re-record
 # rules as in lvgl_rk055_panel_test/run_qemu.sh.
-grep -q "LVGL_SUM=0xE1559496" "$OUT" || { echo "FAIL: scene checksum"; exit 1; }
+# RE-RECORDED 2026-07-31 for v7 XRGB8888 (LV_COLOR_DEPTH=32,
+# PANEL_BYTES_PER_PIXEL=4; scene pixels unchanged): stable across three
+# consecutive QEMU runs, hardware eye confirmation pending (v7 hardware task).
+# v6 value at RGB565 was 0xE1559496.
+grep -q "LVGL_SUM=0x3244D69A" "$OUT" || { echo "FAIL: scene checksum"; exit 1; }
 
 # --- touch bring-up (v2 owns the depth here; these are preconditions) --------
 grep -q "I2C_OK"    "$OUT" || { echo "FAIL: touch bring-up"; exit 1; }

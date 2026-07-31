@@ -369,6 +369,12 @@ void setup()
         lvgl_gt911_idle_polls() > 0 && lvgl_gt911_poll_fails() == 0) {
         Serial1.println("LVGL_TOUCH_OK");
     }
+    /* v7: the doubled-scanout-bandwidth watchdog.  Vacuous in QEMU (the model
+     * never underruns) -- the hardware transcript is where 0/10 is evidence. */
+    Display.sampleUnderrun(10);
+    Serial1.printf("UNDERRUNS=%lu/%lu\n",
+                   (unsigned long)Display.underrunCount(),
+                   (unsigned long)Display.underrunFrames());
     Serial1.println("LVGL_RK055_TOUCH_DONE");
 }
 
