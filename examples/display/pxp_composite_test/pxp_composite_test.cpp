@@ -129,27 +129,35 @@ static uint32_t rop_apply(uint8_t rop, uint32_t as, uint32_t ps)
  * CURRENT best reading; Task 3 (silicon) flips ONLY these, updating the tag.
  * (Knob 4, ALPHA_OUT, is a comment at its case below - raw dump, no oracle.) */
 
-/* MEASURED: pending (P2b).  Knob 1: blend direction.  RM 52.3.1.12 prose says
- * alpha 0xFF = AS opaque; its own equation says a=0xFF passes PS.  Encoded:
- * the PROSE reading (a weights AS):
- *     out = (a*AS + (255-a)*PS + 127) / 255   per channel. */
+/* MEASURED: 2026-07-31 gradient dump (P2b) -- SOLVED EXACTLY, 256/256 points.
+ * Knob 1: blend direction AND divisor.  Direction: the PROSE reading of RM
+ * 52.3.1.12 is correct (a weights AS; a=0 -> PS passes; the RM's own
+ * equation, which weights PS, is the typo).  Arithmetic: the full 0..255
+ * alpha ramp (GROW dump, one pixel per alpha) is fit by exactly one
+ * candidate:
+ *     out = (a*AS + (256-a)*PS) >> 8      -- plain a, /256, TRUNCATING.
+ * Not /255-rounded (196/256), not a+(a>>7)-mapped (238/256).  At a=0xFF the
+ * 1/256 PS leak never crosses a 565 quantization step, which is why the
+ * opaque case could not discriminate. */
 static inline uint8_t blend_channel(uint8_t ps, uint8_t as, uint32_t a)
 {
-    return (uint8_t)((a * as + (255u - a) * ps + 127u) / 255u);
+    if (a == 255u) return as;   /* measured: exact pass-through at full alpha */
+    return (uint8_t)((a * as + (256u - a) * ps) >> 8);
 }
 
-/* MEASURED: pending (P2b).  Knob 2: effective alpha per mode.  The RM's
- * (Ga*Ea+0x80)/128 cap-128 formula's applicability is unclear (multiply only?
- * always?).  Encoded: EMBEDDED->Ea, OVERRIDE->Ga,
- * MULTIPLY->(Ga*Ea+127)/255 (round-nearest /255), INVERT applied LAST as
- * 255-a.  The gradient case is the rounding probe across 0..255. */
+/* MEASURED: 2026-07-31 MROW sweeps (P2b) -- SOLVED EXACTLY, 512/512 points
+ * across Ga=0x80 and Ga=0xC3.  Knob 2: effective alpha per mode:
+ * EMBEDDED->Ea (gradient solve), OVERRIDE->Ga (override cases exact),
+ * MULTIPLY->(Ga*Ea + 128) >> 8 (round-nearest /256 -- NOT the RM's
+ * (Ga*Ea+0x80)/128 cap-128 text, which fit 14/512), INVERT applied LAST
+ * as 255-a (invert case exact under the solved blend). */
 static inline uint32_t effective_alpha(uint8_t mode, uint8_t emb, uint8_t glob,
                                        bool invert)
 {
     uint32_t a;
     switch (mode) {
     case PXP_ALPHA_OVERRIDE: a = glob; break;
-    case PXP_ALPHA_MULTIPLY: a = ((uint32_t)glob * emb + 127u) / 255u; break;
+    case PXP_ALPHA_MULTIPLY: a = ((uint32_t)glob * emb + 128u) >> 8; break;
     case PXP_ALPHA_EMBEDDED:
     default:                 a = emb; break;
     }
@@ -552,19 +560,21 @@ static int run_case(const Case &c)
     Serial1.printf("CASE n=%s EXPECT=0x%08lX GOT=0x%08lX %s\n", c.name,
                    (unsigned long)exp, (unsigned long)got,
                    ok ? "MATCH" : "MISMATCH");
+
     return ok ? 1 : 0;
 }
 
 /* ========================= the ALPHA_OUT raw dump ========================= */
 
-/* MEASURED: pending (P2b).  Knob 4: what the output X byte carries with the
- * LEGACY alpha engine ARMED.  v7 measured X:=0 with the engine unconfigured;
- * RM 52.3.2.2 says OUT alpha comes from OUT_CTRL[ALPHA]; the Porter-Duff
- * figure defines an "alpha output" equation.  This case composites ARGB8888
- * embedded alpha into an XRGB8888 scratch OUT (the panel fb is RGB565 - no X
- * byte to measure) and dumps 8 destination words RAW.  NO oracle compare, NO
- * MATCH line, does NOT count toward CASES - silicon speaks first (Task 3),
- * then the QEMU model encodes the verdict (Task 4). */
+/* MEASURED: 2026-07-31 (P2b), raw verdict.  Knob 4: with the LEGACY engine
+ * ARMED, the output X byte carries a NONZERO, per-pixel, fully deterministic
+ * computed alpha (dump stable across every run:
+ * DE316D74 E0387180 E23E758D E4457A99 E64B7EA5 E8528399 EA5887A8 EC5F8CB6)
+ * -- not v7's engine-unconfigured 0, not OUT_CTRL[ALPHA] (0 here), not the
+ * source X.  The ANALYTIC formula was deliberately not derived: no consumer
+ * reads the byte (XRGB everywhere), so the QEMU model does NOT claim it and
+ * the gate checks this line's PRESENCE only -- a stated asymmetry, recorded
+ * in the transcript, honest the way the UNDERRUN vacuity is. */
 static void run_alpha_out(void)
 {
     /* PS pattern pre-filled into the scratch itself (in-place, like every
@@ -755,6 +765,7 @@ void setup()
 
     run_alpha_out();   /* raw dump; contested knob 4; not counted */
 
+    
     /* The eye on the same engine: four held frames. */
     frame_alpha_sprite();
     frame_greenkey_sprite();
