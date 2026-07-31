@@ -1,66 +1,114 @@
-PXP vs CPU for LVGL's cross-buffer sync copy — hardware measurement (v6 P2)
-===========================================================================
+PXP vs CPU for LVGL's cross-buffer sync copy — hardware measurement (v7 dual-format)
+====================================================================================
 
-Date:      2026-07-30
+Date:      2026-07-31
 Board:     MIMXRT1170-EVKB RevC3 (panel not involved -- pure memory benchmark)
-Firmware:  examples/display/lvgl_pxp_copy_bench, evkb 5718315 (branch
-           lvgl-pxp-v6), PXP d-pinned per evkb.cmake, LVGL 8ede90c,
-           qemu2 f10de76d1e (the PXP clamp fix this bench's QEMU run forced)
-Flash:     LinkServer 26.6.137, VCOM-free load+verify, LOAD/VERIFY exit 0.
+Firmware:  examples/display/lvgl_pxp_copy_bench, branch lvgl-xrgb-v7 (the
+           dual-format matrix, 14 geometries x {565,8888}, with the refined
+           XRGB8888 oracle described below)
+Flash:     LinkServer 26.6.137, VCOM-free load+verify; reset via SW4 with the
+           reader attached (rt1170-flash.sh's hardened order -- no LinkServer
+           op ever overlaps a held VCOM after the IOSerialFamily panics).
 Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200
 
-RESULT: all 14 cases MATCH on silicon (the correctness claim re-proven on the
-real PXP), and the timing table below is the P2 decision input.
+RESULT: all 28 cases MATCH on silicon, twice in one sitting (two complete
+back-to-back runs captured; checksums identical across both).  The timing
+table below is the v7 8888 decision input.
 
-Console capture, verbatim
--------------------------
+★★ THE FINDING THIS RUN FORCED: the PXP does not preserve the X byte
+--------------------------------------------------------------------
+The bench's FIRST silicon run (same geometry matrix, byte-identity oracle)
+failed all 14 XRGB8888 cases while QEMU passed all 28 -- a genuine
+model/silicon divergence.  A DIAG dump isolated it:
+
+    DIAG src  C3A5F00D 5D9289BC FFCB036F 19039D1E
+    DIAG xrgb 00A5F00D 009289BC 00CB036F 00039D1E   (OUT format RGB888/0x04)
+    DIAG argb e=0 00A5F00D 009289BC 00CB036F 00039D1E (OUT format ARGB8888/0x00)
+
+RGB bytes copy exactly; the X byte is written as the pipeline's COMPUTED
+alpha, which is 0 with the alpha engine unconfigured (no AS surface,
+Porter-Duff off, OUT_CTRL[ALPHA_OUTPUT]=0 "retain computed alpha" -- RM
+52.3.1.22 pixel handling, 52.6.3 OUT_CTRL).  Both 32-bit OUT encodings
+behave identically.  Deterministic, architectural, not a library bug.
+
+Resolution, silicon-wins in both directions:
+  - The QEMU PXP model's byte-preserving raw copy was LESS faithful than
+    silicon: it now writes X=0 for 32-bit RGB outputs (imxrt_pxp.c), matching
+    the measurement (its format-conversion paths already wrote A=0), and
+    traps OUT_CTRL[ALPHA_OUTPUT]=1 loudly as unmodelled.
+  - The bench oracle now asserts EXACTLY the hardware contract: RGB565 cases
+    are byte-identity with lv_draw_buf_copy; XRGB8888 cases are RGB-identity
+    with X:=0 inside the copied rect (the CPU reference has its in-rect X
+    bytes zeroed, outside the timed window) and every byte outside the rect
+    untouched (whole-max-extent checksums, unchanged).  A model OR silicon
+    that PRESERVED X now goes red -- the assertion got more precise, not
+    weaker; the original byte-identity claim was simply false on silicon.
+  - Consumers are unaffected functionally: LVGL treats the byte as X, the
+    LCDIFv2 ignores it on scanout, and the DSI wire is 24-bit.  What matters
+    for the goldens is that QEMU and silicon now write the SAME bytes.
+
+Console capture, verbatim (run 1 of 2; run 2 identical checksums)
+-----------------------------------------------------------------
 
  PXP_COPY_BENCH_BEGIN
 ALLOC_OK
 PXP_OK
-CASE i=1 r=16x16+0+0 CPU=0x4C7924B5 PXP=0x4C7924B5 MATCH cpu_us=84 pxp_us=4
-CASE i=2 r=16x16+13+7 CPU=0x327C137F PXP=0x327C137F MATCH cpu_us=85 pxp_us=5
-CASE i=3 r=64x64+0+0 CPU=0x3573AAB1 PXP=0x3573AAB1 MATCH cpu_us=614 pxp_us=57
-CASE i=4 r=64x64+13+7 CPU=0x85CEA741 PXP=0x85CEA741 MATCH cpu_us=626 pxp_us=76
-CASE i=5 r=120x140+0+0 CPU=0x2CA133A3 PXP=0x2CA133A3 MATCH cpu_us=1790 pxp_us=233
-CASE i=6 r=120x140+599+1139 CPU=0x4D473031 PXP=0x4D473031 MATCH cpu_us=1837 pxp_us=312
-CASE i=7 r=200x160+8+48 CPU=0x0A082C62 PXP=0x0A082C62 MATCH cpu_us=3271 pxp_us=431
-CASE i=8 r=360x320+0+0 CPU=0x47C412AF PXP=0x47C412AF MATCH cpu_us=11152 pxp_us=1540
-CASE i=9 r=360x320+180+480 CPU=0x66C494CE PXP=0x66C494CE MATCH cpu_us=11176 pxp_us=2063
-CASE i=10 r=719x1+1+0 CPU=0x1F29262D PXP=0x1F29262D MATCH cpu_us=70 pxp_us=105
-CASE i=11 r=1x1280+719+0 CPU=0xB37610A8 PXP=0xB37610A8 MATCH cpu_us=536 pxp_us=269
-CASE i=12 r=720x640+0+320 CPU=0x6BD8C9EC PXP=0x6BD8C9EC MATCH cpu_us=44753 pxp_us=6150
-CASE i=13 r=720x640+0+640 CPU=0x081A077C PXP=0x081A077C MATCH cpu_us=44749 pxp_us=6145
-CASE i=14 r=720x1280+0+0 CPU=0xC5BFBE26 PXP=0xC5BFBE26 MATCH cpu_us=89499 pxp_us=12295
+CASE i=1 f=565 r=16x16+0+0 CPU=0xA57430D6 PXP=0xA57430D6 MATCH cpu_us=83 pxp_us=4
+CASE i=2 f=565 r=16x16+13+7 CPU=0x33EDA9DE PXP=0x33EDA9DE MATCH cpu_us=85 pxp_us=6
+CASE i=3 f=565 r=64x64+0+0 CPU=0xB56B891E PXP=0xB56B891E MATCH cpu_us=612 pxp_us=57
+CASE i=4 f=565 r=64x64+13+7 CPU=0x8F90ECBA PXP=0x8F90ECBA MATCH cpu_us=625 pxp_us=76
+CASE i=5 f=565 r=120x140+0+0 CPU=0x82F6A852 PXP=0x82F6A852 MATCH cpu_us=1787 pxp_us=234
+CASE i=6 f=565 r=120x140+599+1139 CPU=0xA7DE156E PXP=0xA7DE156E MATCH cpu_us=1835 pxp_us=311
+CASE i=7 f=565 r=200x160+8+48 CPU=0x5FE05E32 PXP=0x5FE05E32 MATCH cpu_us=3266 pxp_us=431
+CASE i=8 f=565 r=360x320+0+0 CPU=0x25E89642 PXP=0x25E89642 MATCH cpu_us=11151 pxp_us=1538
+CASE i=9 f=565 r=360x320+180+480 CPU=0xE69BE20A PXP=0xE69BE20A MATCH cpu_us=11174 pxp_us=2063
+CASE i=10 f=565 r=719x1+1+0 CPU=0xFF3A28B6 PXP=0xFF3A28B6 MATCH cpu_us=70 pxp_us=105
+CASE i=11 f=565 r=1x1280+719+0 CPU=0x5CA0CF36 PXP=0x5CA0CF36 MATCH cpu_us=535 pxp_us=269
+CASE i=12 f=565 r=720x640+0+320 CPU=0x65F58A8A PXP=0x65F58A8A MATCH cpu_us=44747 pxp_us=6148
+CASE i=13 f=565 r=720x640+0+640 CPU=0xAC5C9FAE PXP=0xAC5C9FAE MATCH cpu_us=44748 pxp_us=6149
+CASE i=14 f=565 r=720x1280+0+0 CPU=0x752C05AE PXP=0x752C05AE MATCH cpu_us=89498 pxp_us=12293
+CASE i=1 f=8888 r=16x16+0+0 CPU=0x2A38931D PXP=0x2A38931D MATCH cpu_us=106 pxp_us=4
+CASE i=2 f=8888 r=16x16+13+7 CPU=0x2011417F PXP=0x2011417F MATCH cpu_us=108 pxp_us=7
+CASE i=3 f=8888 r=64x64+0+0 CPU=0x833AFE23 PXP=0x833AFE23 MATCH cpu_us=987 pxp_us=60
+CASE i=4 f=8888 r=64x64+13+7 CPU=0x0435ABCF PXP=0x0435ABCF MATCH cpu_us=997 pxp_us=98
+CASE i=5 f=8888 r=120x140+0+0 CPU=0x7E413651 PXP=0x7E413651 MATCH cpu_us=3604 pxp_us=248
+CASE i=6 f=8888 r=120x140+599+1139 CPU=0x10E46FD3 PXP=0x10E46FD3 MATCH cpu_us=3612 pxp_us=411
+CASE i=7 f=8888 r=200x160+8+48 CPU=0xFB34B820 PXP=0xFB34B820 MATCH cpu_us=6474 pxp_us=457
+CASE i=8 f=8888 r=360x320+0+0 CPU=0xA4DBF02C PXP=0xA4DBF02C MATCH cpu_us=22367 pxp_us=1632
+CASE i=9 f=8888 r=360x320+180+480 CPU=0xD864F3CF PXP=0xD864F3CF MATCH cpu_us=22356 pxp_us=2714
+CASE i=10 f=8888 r=719x1+1+0 CPU=0xA8FFF0B6 PXP=0xA8FFF0B6 MATCH cpu_us=135 pxp_us=135
+CASE i=11 f=8888 r=1x1280+719+0 CPU=0x3AD2C177 PXP=0x3AD2C177 MATCH cpu_us=968 pxp_us=285
+CASE i=12 f=8888 r=720x640+0+320 CPU=0x7318D56C PXP=0x7318D56C MATCH cpu_us=87129 pxp_us=6507
+CASE i=13 f=8888 r=720x640+0+640 CPU=0x447FB701 PXP=0x447FB701 MATCH cpu_us=87129 pxp_us=6506
+CASE i=14 f=8888 r=720x1280+0+0 CPU=0x21B07D6D PXP=0x21B07D6D MATCH cpu_us=174257 pxp_us=13013
 NOTE timings are hardware-only; QEMU numbers are vacuous
-CASES=14
+CASES=28
 COPY_BENCH_OK
 PXP_COPY_BENCH_DONE
 
 
-★★ ANALYSIS — the P2 decision input
------------------------------------
+★★ ANALYSIS — the v7 8888 decision input
+----------------------------------------
 
-1. THE CPU FULL-SCREEN SYNC COPY COSTS 89.5 ms — 2.7x THE ENTIRE 33 ms FRAME
-   BUDGET.  Non-cacheable SDRAM memcpy runs at ~20 MB/s effective; the PXP
-   does the same copy in 12.3 ms (~150 MB/s), a 7.3x win.  Any full-screen
-   invalidation (screen transition, theme change) on the double-buffered path
-   currently pays the CPU number every frame it happens.
+1. THE HEIGHT >= 2 RULE HOLDS AT XRGB8888, MORE STRONGLY THAN AT 565.
+   Every multi-row 8888 case favors the PXP, 5.4x to 16.5x (case 3: 987 us
+   CPU vs 60 us PXP).  The single-row case (10: 719x1) -- the CPU's one win
+   at 565 (70 vs 105 us) -- is a dead TIE at 8888 (135 vs 135 us): doubling
+   the bytes doubled the CPU's row cost while the PXP's per-op cost stayed
+   flat.  The rule stays conservative (single-row chains to the CPU default)
+   and this transcript is what the handler's height>=2 comment cites for
+   BOTH formats.
 
-2. PXP WINS 13 OF 14 CASES, from 5.4x to 21x.  The realistic button-press
-   sync (case 5, 120x140) is 1.79 ms CPU vs 0.23 ms PXP.
+2. THE CPU FULL-SCREEN 8888 SYNC COPY COSTS 174.3 ms — 5.3x THE 33 ms FRAME
+   BUDGET (vs 89.5 ms / 2.7x at 565).  The PXP does it in 13.0 ms, a 13.4x
+   win.  At 32 bpp the PXP sync-copy acceleration is load-bearing, not an
+   optimization.
 
-3. THE ONE CPU WIN IS THE SINGLE-ROW CASE (10: 719x1 — 70 us vs 105 us).
-   The discriminator is NOT area: case 1 (256 px over 16 ROWS) wins 21x on
-   the PXP while case 10 (719 px in ONE row) loses.  The CPU's row-loop is
-   fast on one contiguous row and slow on many small rows; the PXP's cost is
-   near-flat per operation.  THE HONEST THRESHOLD IS HEIGHT >= 2 ROWS, not a
-   pixel-area floor.
+3. 565 numbers reproduce v6's within noise (full-screen 89.5 ms CPU /
+   12.3 ms PXP then and now) -- the dual-format rewrite did not disturb the
+   measured 565 behavior.
 
-4. Case 11 (1x1280 — 1280 rows of one pixel) still wins 2x on the PXP,
-   consistent with (3).
-
-Crossover, stated for the handler: accelerate when the copy spans >= 2 rows;
-single-row copies stay on the CPU default.  (The install API's threshold_px
-remains as a belt-and-braces floor; the height check is the load-bearing one
-and cites this transcript.)
+4. PXP throughput scales with byte volume and stays near-flat per op:
+   full-screen 8888 moves 2x the bytes of 565 in 13.0 vs 12.3 ms --
+   ~283 MB/s effective on the 32-bit path (3.686 MB in 13.0 ms), consistent
+   with v6's AXI figure once byte volume is accounted for.

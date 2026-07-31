@@ -4,13 +4,18 @@
  *
  * TWO CLAIMS x TWO FORMATS, per the two-gate rule:
  *   CORRECTNESS (QEMU-gated): for every one of the 14 geometry cases, in
- *       BOTH RGB565 and XRGB8888, a PXP sub-rect copy produces a byte-
- *       identical destination to LVGL's own lv_draw_buf_copy.  28 cases
- *       total; the gate pins the count so a dropped case OR a dropped
- *       format cannot hide behind a passing sweep.  The offset-base
- *       arithmetic proven here (now byte-based, bpp-scaled) is the
- *       arithmetic the future handler (spec 3, v7 dual-format) will use --
- *       proven BEFORE that handler exists.
+ *       BOTH RGB565 and XRGB8888, a PXP sub-rect copy produces exactly the
+ *       destination the hardware contract promises.  For RGB565 that is
+ *       byte-identity with LVGL's own lv_draw_buf_copy.  For XRGB8888 it is
+ *       RGB-identity with the X byte written as 0 -- the PXP outputs its
+ *       COMPUTED alpha, which is 0 with the alpha engine unconfigured; a
+ *       byte-preserving copy was the bench's original claim and SILICON
+ *       REFUTED IT (see the contract comment at the CPU reference below).
+ *       28 cases total; the gate pins the count so a dropped case OR a
+ *       dropped format cannot hide behind a passing sweep.  The offset-base
+ *       arithmetic proven here (byte-based, bpp-scaled) is the arithmetic
+ *       the future handler (spec 3, v7 dual-format) will use -- proven
+ *       BEFORE that handler exists.
  *   TIMING (hardware-only): DWT cycle counts for both paths per case, per
  *       format.  QEMU has no timing model; its numbers are printed but
  *       VACUOUS, and the transcript says so.  The hardware table is the
@@ -161,6 +166,29 @@ void setup()
             uint32_t t0 = ARM_DWT_CYCCNT;
             lv_draw_buf_copy(&s_dst_db, &area, &s_src_db, &area);
             uint32_t cpu_cyc = ARM_DWT_CYCCNT - t0;
+            /* v7 HARDWARE-MEASURED CONTRACT (the finding this bench forced):
+             * a PXP 32-bit copy is RGB-exact but writes the X byte as the
+             * pipeline's COMPUTED alpha, which is 0 with the alpha engine
+             * unconfigured -- EVKB DIAG dump: source X C3/5D/FF/19 all wrote
+             * back as 00, RGB bytes exact, for BOTH 32-bit OUT encodings
+             * (RM 52.3.1.22 pixel handling + OUT_CTRL[ALPHA_OUTPUT]=0
+             * "retain computed alpha").  The CPU reference therefore has its
+             * in-rect X bytes zeroed -- OUTSIDE the timed window, so cpu_us
+             * stays the pure lv_draw_buf_copy cost -- and MATCH asserts
+             * exactly what silicon does: RGB equal everywhere, X:=0 inside
+             * the rect, every byte outside the rect untouched.  The QEMU PXP
+             * model writes the same bytes (imxrt_pxp.c measured-alpha
+             * comment); a model OR silicon that preserved X goes red here. */
+            if (F.bpp == 4u) {
+                for (uint32_t ry = 0; ry < c.h; ry++) {
+                    uint32_t *row = (uint32_t *)(void *)
+                        (s_dst + ((uint32_t)c.y + ry) * stride
+                               + (uint32_t)c.x * 4u);
+                    for (uint32_t rx = 0; rx < c.w; rx++) {
+                        row[rx] &= 0x00FFFFFFu;
+                    }
+                }
+            }
             const uint32_t cpu = dst_sum();
 
             /* --- PXP path: offset-base sub-rect surfaces ------------------ */
