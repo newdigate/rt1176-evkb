@@ -95,9 +95,19 @@ at 32 bpp, composites 28.6-49.2x) never occur in the current workloads.
 
 Fill economics at 32 bpp: CPU wins or ties every measured size (full-frame:
 CPU faster by ~306 us; mid-bucket: a wash) except the 240-px-row anomaly.
-PRICING ASSUMPTION under review: the in-bucket fill_240x160 row contradicts
-the width-120 extrapolation; fill_200x160 and fill_120x120 rows added to
-settle it by measurement (this addendum).  The hardware numbers for the two
+PRICING ASSUMPTION -- RESOLVED BY MEASUREMENT (2026-08-01 addendum, two
+consecutive silicon runs, values identical):
+    DRAW n=fill_200x160 CPU_us=484 PXP_us=510 OK   (the touch widgets' geometry)
+    DRAW n=fill_120x120 CPU_us=111 PXP_us=118 OK   (the flip box's geometry)
+Both census geometries are CPU-WON at 32 bpp: the width-120 extrapolation was
+correct and fill_240x160 is an isolated row-width anomaly.  The projection's
+"~0" mid-bucket pricing was, if anything, generous to the PXP; the sign does
+NOT flip and THE DECLINE STANDS ON MEASURED IN-BUCKET ROWS.  The same runs
+also recovered the two 32x32 timing rows lost to capture gaps earlier:
+    DRAW n=fill_32x32 CPU_us=11-16 PXP_us=16 OK
+    DRAW n=blit_32x32 CPU_us=482 PXP_us=35 OK
+(DRAWS=15, DRAW_BENCH_OK, both runs; 565-build addendum rows measured in QEMU
+only -- the projection's depth is 32 bpp and the 565 verdicts are unchanged.)  The hardware numbers for the two
 new rows land with the next silicon run.
 
 Projected per 120-frame run, routing every fill to the PXP:
