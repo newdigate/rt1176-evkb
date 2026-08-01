@@ -12,8 +12,11 @@ gate_init
 # (no timing model) and are NOT asserted -- the hardware table (P2) is the
 # timing claim, exactly like every sibling bench.
 #
-# Poll ceiling 6 s per build (24 x 0.25): measured 3.0-4.0 s wall to
-# PXP_DRAW_BENCH_DONE across both builds + 50%.  QRUN_TIMEOUT=30 is the
+# Poll ceiling 30 s per build (120 x 0.25): measured 3.0-4.0 s wall to
+# PXP_DRAW_BENCH_DONE, but the original 6 s (+50%) ceiling produced a real
+# 1-in-6 timeout on comp_720x1280 under transient host load (v9 Task-1
+# review) -- polls are free on green runs, so the margin is now ~8x, the
+# load-tolerance lesson KNOWN-BROKEN-GATES teaches.  QRUN_TIMEOUT=60 is the
 # hard per-run backstop.
 
 FILL_NAMES="fill_32x32 fill_120x40 fill_240x160 fill_400x300 fill_720x80 \
@@ -28,12 +31,12 @@ run_build() {
     _elf="$1"; _out="$2"; _dbg="$3"; _depth="$4"; _draws="$5"
     shift 5
     rm -f "$_out" "$_dbg"
-    QRUN_TIMEOUT=30 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on \
+    QRUN_TIMEOUT=60 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on \
         -kernel "$_elf" -display none -serial file:"$_out" \
         -d guest_errors -D "$_dbg" &
     _p=$!; gate_pid $_p
     i=0
-    while [ $i -lt 24 ]; do
+    while [ $i -lt 120 ]; do
         [ -f "$_out" ] && grep -q "PXP_DRAW_BENCH_DONE" "$_out" 2>/dev/null && break
         sleep 0.25
         i=$((i+1))
