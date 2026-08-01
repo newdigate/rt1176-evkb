@@ -122,3 +122,12 @@ no artifacts reported.  The eye saw the same engine the oracle checked: the
 ritual frames are composited by the identical measured datapath the 31 cases
 just proved, on the same glass.
 
+
+★★ Idle-AS regression proof on silicon (v8 final review, finding 8)
+-------------------------------------------------------------------
+2026-07-31/2026-08-01: pxp_blit_test (pre-v8, Phase 1) rebuilt against the
+review-fixed library (PXP 5658e34 -- idle-AS register set written on EVERY
+op) and run on the EVKB: PXP_ALL=PASS twice consecutively, every checksum
+(FILL/BLIT/SUBRECT/ROT90/180/270/HFLIP/VFLIP/ASYNC/SDRAM) byte-identical
+across both runs and to the committed expectations.  The idle-AS discipline
+is invisible to single-source ops on real silicon, not just in QEMU.
