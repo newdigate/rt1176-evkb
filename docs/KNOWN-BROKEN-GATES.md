@@ -179,3 +179,10 @@ internally). The v7 bench's first silicon run exposed a QEMU PXP model divergenc
 stricter/more-faithful in qemu2 `0df62eb15a`; the bench oracle now asserts the
 measured contract. Expectation unchanged: 72/0/0 or the documented
 `cm4_audio_test` singleton, zero SKIPs.
+
+**2026-07-31 (v8, PXP compositing):** `pxp_composite_test` joins the sweep: **72 → 73
+gates**. Its oracle's blend/colorkey/ROP semantics are SILICON-MEASURED (the RM
+contradicts itself twice; the transcript's RESOLVED AMBIGUITIES section is the
+authority), and the QEMU AS datapath (qemu2 `4333c645ff`) was written FROM that
+measurement — P2-before-P3, inverted deliberately after v7's X-byte finding.
+Expectation: 73/0/0 or the documented `cm4_audio_test` singleton, zero SKIPs.

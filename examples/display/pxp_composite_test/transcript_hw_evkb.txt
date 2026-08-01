@@ -1,0 +1,133 @@
+PXP alpha-surface compositing + color keying — the silicon truth table (v8 P2b)
+===============================================================================
+
+Date:      2026-07-31
+Board:     MIMXRT1170-EVKB RevC3 + RK055HDMIPI4MA0 (cases composite into the
+           live framebuffer; the glass shows every case and the four ritual
+           frames)
+Firmware:  examples/display/pxp_composite_test, branch pxp-composite-v8
+Flash:     LinkServer 26.6.137, VCOM-free load+verify, reset via SW4 with the
+           reader attached (the hardened rt1170-flash.sh order).
+Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200
+
+RESULT: all 31 cases MATCH on silicon, twice consecutively (stable x2; the
+second capture lost one line to a serial reconnect gap but the firmware's own
+CASES=31 + COMPOSITE_OK counted all 31, and every commonly-captured line is
+byte-identical across the two runs).  UNDERRUNS=0/10 both runs.
+
+★★ RESOLVED AMBIGUITIES — the measured verdicts on the RM's contradictions
+--------------------------------------------------------------------------
+Measured across six instrumented runs (DIAG pixel triples, a 256-point
+alpha-gradient sweep, and two 256-point MULTIPLY sweeps at Ga=0x80/0xC3):
+
+1. BLEND DIRECTION (RM 52.3.1.12 prose vs its own equation): the PROSE is
+   correct — alpha weights the AS (a=0 -> PS passes, a=0xFF -> AS passes).
+   The RM's equation, which weights PS, is the typo.
+
+2. BLEND ARITHMETIC: out = (a*AS + (256-a)*PS) >> 8 — plain a, divisor 256,
+   TRUNCATING — with EXACT AS pass-through at a==0xFF (the RM's "will not be
+   blended" sentence is literal).  Fit 256/256 gradient points; /255-rounded
+   fit 196/256; a+(a>>7)-mapped fit 238/256.  The pass-through special case
+   was exposed by the opaque-565 and AS-key cases (their GOTs are byte-exact
+   pure AS, which the /256 leak cannot produce).
+
+3. EFFECTIVE ALPHA PER MODE: EMBEDDED -> Ea; OVERRIDE -> Ga;
+   MULTIPLY -> (Ga*Ea + 128) >> 8 (round-nearest /256; fit 512/512 across two
+   global alphas — the RM's (Ga*Ea+0x80)/128 cap-128 text fit 14/512);
+   INVERT -> applied last as 255-a.
+
+4. AS-KEY RESULT (AS_CTRL field description vs RM 52.3.1.13): the FIELD
+   DESCRIPTION is correct — an AS-key hit makes the overlay pixel transparent
+   (PS shows).  52.3.1.13's "AS is passed" is the typo.  PS-key hit -> AS
+   passes UNBLENDED (verified byte-exact); both-keys hit -> PS_BACKGROUND.
+   All 12 ROPs match the RM table as transcribed, first try, both runs.
+
+5. OUTPUT X BYTE with the legacy engine ARMED (XRGB8888 OUT): a NONZERO
+   per-pixel computed alpha, fully deterministic (identical dump in every
+   run).  The analytic formula was deliberately not derived: no consumer
+   reads the byte.  The QEMU model does NOT claim it and the gate checks the
+   ALPHA_OUT line's presence only — a stated asymmetry, like UNDERRUN vacuity.
+
+Console capture, verbatim (run 1 of 2)
+--------------------------------------
+PXP_COMPOSITE_BEGIN
+PANEL_OK
+PXP_OK
+ALLOC_OK
+CASE n=argb_embedded EXPECT=0x7EEC3A70 GOT=0x7EEC3A70 MATCH
+CASE n=argb_override_80 EXPECT=0xD36B4804 GOT=0xD36B4804 MATCH
+CASE n=argb_override_00 EXPECT=0x54C09FC5 GOT=0x54C09FC5 MATCH
+CASE n=argb_multiply_80 EXPECT=0x6AEBC7D8 GOT=0x6AEBC7D8 MATCH
+CASE n=argb_invert_embedded EXPECT=0x0DD03CA3 GOT=0x0DD03CA3 MATCH
+CASE n=argb_askey EXPECT=0x9086A399 GOT=0x9086A399 MATCH
+CASE n=argb_pskey EXPECT=0xA466596B GOT=0xA466596B MATCH
+CASE n=argb_bothkeys EXPECT=0x154090D7 GOT=0x154090D7 MATCH
+CASE n=rgba_embedded EXPECT=0x7EEC3A70 GOT=0x7EEC3A70 MATCH
+CASE n=rgba_askey EXPECT=0x9086A399 GOT=0x9086A399 MATCH
+CASE n=rgb565_override_80 EXPECT=0x38261219 GOT=0x38261219 MATCH
+CASE n=rgb565_askey EXPECT=0x9086A399 GOT=0x9086A399 MATCH
+CASE n=rgb565_pskey EXPECT=0x70F14B50 GOT=0x70F14B50 MATCH
+CASE n=rgb888x_override_80 EXPECT=0xD36B4804 GOT=0xD36B4804 MATCH
+CASE n=rgb565_embedded_opaque EXPECT=0xF490A651 GOT=0xF490A651 MATCH
+CASE n=rop_maskas EXPECT=0x24D39975 GOT=0x24D39975 MATCH
+CASE n=rop_masknotas EXPECT=0x52B55321 GOT=0x52B55321 MATCH
+CASE n=rop_maskasnot EXPECT=0x0C92F18D GOT=0x0C92F18D MATCH
+CASE n=rop_mergeas EXPECT=0x984103CD GOT=0x984103CD MATCH
+CASE n=rop_mergenotas EXPECT=0x5AF597DD GOT=0x5AF597DD MATCH
+CASE n=rop_mergeasnot EXPECT=0xBBECBD71 GOT=0xBBECBD71 MATCH
+CASE n=rop_notcopyas EXPECT=0x9BF76941 GOT=0x9BF76941 MATCH
+CASE n=rop_not EXPECT=0xEB7E7E7D GOT=0xEB7E7E7D MATCH
+CASE n=rop_notmaskas EXPECT=0xC44FDD85 GOT=0xC44FDD85 MATCH
+CASE n=rop_notmergeas EXPECT=0xC25336AD GOT=0xC25336AD MATCH
+CASE n=rop_xoras EXPECT=0x499E330D GOT=0x499E330D MATCH
+CASE n=rop_notxoras EXPECT=0x0949D395 GOT=0x0949D395 MATCH
+CASE n=argb_embedded_offs13_7 EXPECT=0x134601D2 GOT=0x134601D2 MATCH
+CASE n=argb_embedded_edge_br EXPECT=0x93C340F3 GOT=0x93C340F3 MATCH
+CASE n=override_center EXPECT=0x19771CAE GOT=0x19771CAE MATCH
+CASE n=gradient_embedded EXPECT=0x25CC17C8 GOT=0x25CC17C8 MATCH
+ALPHA_OUT dst DE316D74 E0387180 E23E758D E4457A99 E64B7EA5 E8528399 EA5887A8 EC5F8CB6
+FRAME=alpha_sprite
+FRAME=greenkey_sprite
+FRAME=fade
+FRAME=xor_rop
+UNDERRUNS=0/10
+CASES=31
+COMPOSITE_OK
+PXP_COMPOSITE_DONE
+PXP_COMPOSITE_BEGIN
+PANEL_OK
+PXP_OK
+ALLOC_OK
+CASE n=argb_embedded EXPECT=0x7EEC3A70 GOT=0x7EEC3A70 MATCH
+CASE n=argb_override_80 EXPECT=0xD36B4804 GOT=0xD36B4804 MATCH
+
+(Run 2: byte-identical on every commonly-captured line; one CASE line lost to
+a console reconnect gap; CASES=31 + COMPOSITE_OK + identical ALPHA_OUT dump.)
+
+★★ The on-glass ritual (Task 5, 2026-07-31)
+-------------------------------------------
+Final committed firmware (3ee1f44) re-flashed via the hardened flow; SW4 by
+the operator.  Console: all 31 cases MATCH again (COMPOSITE_OK, CASES=31),
+identical checksums to the stable-x2 record above; UNDERRUNS=0/10; the four
+frames held 6 s each:
+
+    FRAME=alpha_sprite      soft-edged ARGB8888 sprite, radial alpha falloff
+    FRAME=greenkey_sprite   RGB565 sprite on solid green, AS-keyed
+    FRAME=fade              override-alpha sweep 0 -> 255, then held
+    FRAME=xor_rop           XOR ROP block
+
+Operator verdict, verbatim: "the 4 cases look fine" -- the alpha edge, the
+keyed silhouette, the fade and the XOR inversion all as designed, no fringe,
+no artifacts reported.  The eye saw the same engine the oracle checked: the
+ritual frames are composited by the identical measured datapath the 31 cases
+just proved, on the same glass.
+
+
+★★ Idle-AS regression proof on silicon (v8 final review, finding 8)
+-------------------------------------------------------------------
+2026-07-31/2026-08-01: pxp_blit_test (pre-v8, Phase 1) rebuilt against the
+review-fixed library (PXP 5658e34 -- idle-AS register set written on EVERY
+op) and run on the EVKB: PXP_ALL=PASS twice consecutively, every checksum
+(FILL/BLIT/SUBRECT/ROT90/180/270/HFLIP/VFLIP/ASYNC/SDRAM) byte-identical
+across both runs and to the committed expectations.  The idle-AS discipline
+is invisible to single-source ops on real silicon, not just in QEMU.

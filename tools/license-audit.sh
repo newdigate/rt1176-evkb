@@ -168,6 +168,7 @@ examples/display/lvgl_rk055_flip_test:lvgl_rk055_flip_test \
 examples/display/lvgl_rk055_panel_test:lvgl_rk055_panel_test \
 examples/display/lvgl_rk055_touch_test:lvgl_rk055_touch_test \
 examples/display/lvgl_rpi_panel_test:lvgl_rpi_panel_test \
+examples/display/pxp_composite_test:pxp_composite_test \
 examples/display/lvgl_smoke_test:lvgl_smoke_test examples/display/pxp_blit_test:pxp_blit_test \
 examples/display/pxp_decimate_test:pxp_decimate_test examples/display/pxp_yuv_test:pxp_yuv_test \
 examples/display/rk055_panel_test:rk055_panel_test \

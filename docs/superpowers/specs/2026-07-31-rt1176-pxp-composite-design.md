@@ -218,3 +218,20 @@ red-first. No new dependencies, no vendored binaries.
    output-stage rects) — read the RM's ULC/LRC coordinate space definitions
    before writing the validator.
 5. The gate's poll ceiling from measured runtime.
+
+---
+
+> **AS SHIPPED (Task-3 re-sync): the measured verdicts.** The silicon-first P2
+> resolved every contested rule, several against the RM's text: blend =
+> `(a*AS + (256-a)*PS) >> 8` (plain a, /256, truncating) with **exact AS
+> pass-through at a==0xFF** — the RM's prose direction was right, its equation
+> the typo; multiply effective alpha = `(Ga*Ea + 128) >> 8` (round-nearest
+> /256 — the RM's `(Ga*Ea+0x80)/128` cap-128 formula fit 14/512 measured
+> points); AS-key hit → PS shows (the field description was right, §52.3.1.13
+> the typo); PS-key hit → AS unblended; both → PS_BACKGROUND; all 12 ROPs as
+> tabulated.  The output X byte with the engine armed is a nonzero per-pixel
+> computed alpha whose formula was deliberately left underived (no consumer;
+> the gate checks the ALPHA_OUT line's presence only — a stated asymmetry).
+> The case count pinned at **31** (§5's ~45–50 estimate over-counted; the
+> enumerated behavior×format cells yield 31 with nothing dropped).  Full
+> record: `examples/display/pxp_composite_test/transcript_hw_evkb.txt`.
