@@ -24,7 +24,7 @@ teensy_target_link_libraries(usb_host_hid_test cores)
 # (dead code, dropped by --gc-sections) -- same pattern as SPI-SD in the SD fs gate.
 set(USBHOST ${EVKB_USBHOST_T36_DIR})
 target_sources(usb_host_hid_test.elf PRIVATE
-    ${USBHOST}/ehci.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
+    ${USBHOST}/ehci.cpp ${USBHOST}/ehci_iso.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
     ${USBHOST}/memory.cpp ${USBHOST}/hid.cpp ${USBHOST}/keyboard.cpp ${USBHOST}/mouse.cpp
     ${USBHOST}/bluetooth.cpp)
 

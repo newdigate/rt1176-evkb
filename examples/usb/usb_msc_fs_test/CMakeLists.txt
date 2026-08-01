@@ -18,7 +18,7 @@ teensy_target_link_libraries(usb_msc_fs_test cores SdFat SPI)
 
 set(USBHOST ${EVKB_USBHOST_T36_DIR})
 target_sources(usb_msc_fs_test.elf PRIVATE
-    ${USBHOST}/ehci.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
+    ${USBHOST}/ehci.cpp ${USBHOST}/ehci_iso.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
     ${USBHOST}/memory.cpp ${USBHOST}/MassStorageDriver.cpp
     ${USBHOST}/USBFilesystemFormatter.cpp)
 target_include_directories(usb_msc_fs_test.elf PRIVATE
