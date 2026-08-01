@@ -245,5 +245,9 @@ red-first. No new dependencies; the SDK draw unit stays excluded.
 > shipped as genuine `lv_draw_sw_blend` (SW_PATH=lvgl, no proxy); §6's
 > "goldens unchanged at 32 bpp" is WRONG for fills/blits (the engines'
 > X-byte conventions differ: LVGL 0xFF vs PXP 0) — any future adoption at
-> 32 bpp re-records goldens; case counts pinned 19/13. Conditional P3+ was
-> never built. Full record: `examples/display/pxp_draw_bench/transcript_hw_evkb.txt`.
+> 32 bpp re-records goldens; case counts pinned 19/13. Two further scope notes: the census records
+> type x bucket (the promised per-format axis was dropped -- both scenes are
+> single-format, so it had no discriminating power today), and the QEMU half
+> of the inert-proof was run at Task 2 and independently reproduced by the
+> final review (captures uncommitted; the silicon transcripts carry the
+> durable evidence). Conditional P3+ was never built. Full record: `examples/display/pxp_draw_bench/transcript_hw_evkb.txt`.

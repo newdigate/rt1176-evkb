@@ -231,8 +231,11 @@ Notes:
 
 v9 census run (2026-08-01, -DDRAW_CENSUS=ON build)
 --------------------------------------------------
-The counter-only census draw unit installed; INERT ON SILICON: golden and
-every pin identical to the normal build (operator: animation 'looks good' under the census build).
+The counter-only census draw unit installed; INERT ON SILICON: every pin and both
+buffer sums identical to the normal build; operator: animation 'looks good'
+under the census build.  (The byte-identical-UART proof incl. the golden is
+QEMU-side -- reproduced independently in the v9 final review; silicon
+evidence = pins + sums + the eye, per the standing tap asymmetry.)
 CENSUS type=FILL bucket=38400 n=120
 CENSUS type=FILL bucket=921600 n=122
 CENSUS type=BORDER bucket=38400 n=120
