@@ -48,6 +48,9 @@
 #include "lvgl_mipi_panel.h"
 #include "lvgl_gt911_indev.h"
 #include "lvgl_pxp_copy.h"
+#ifdef DRAW_CENSUS
+#include "lvgl_pxp_draw_census.h"   /* v9: counter-only, provably inert */
+#endif
 
 // D9 = GPIO_AD_01 = touch reset; D6 = GPIO_AD_00 = touch interrupt (owned by
 // begin(); v3 never attaches an interrupt to it -- the two v2 INT findings
@@ -285,6 +288,13 @@ void setup()
 
     Display.fillScreen(0x0000);
     lvgl_rt1176_begin();
+#ifdef DRAW_CENSUS
+    /* v9 census variant: registers a draw unit that counts every task and
+     * takes none.  Every token below -- including the pre-touch golden --
+     * must stay byte-identical to the normal build -- that identity IS the
+     * inert-proof. */
+    lvgl_pxp_draw_census_install();
+#endif
     /* v6: PXP-backed sync copy.  The handler's load-bearing rule is height
      * >= 2 rows (the bench's one CPU win was single-row -- see
      * lvgl_pxp_copy_bench/transcript_hw_evkb.txt ANALYSIS point 3); 1024 px
@@ -375,6 +385,11 @@ void setup()
     Serial1.printf("UNDERRUNS=%lu/%lu\n",
                    (unsigned long)Display.underrunCount(),
                    (unsigned long)Display.underrunFrames());
+#ifdef DRAW_CENSUS
+    /* After every token the gate pins, before DONE: the histogram is
+     * ADDITIVE output, never a replacement. */
+    lvgl_pxp_draw_census_print();
+#endif
     Serial1.println("LVGL_RK055_TOUCH_DONE");
 }
 

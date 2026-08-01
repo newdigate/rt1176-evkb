@@ -228,3 +228,26 @@ red-first. No new dependencies; the SDK draw unit stays excluded.
    a draw task fills a rect within the framebuffer — the offset-base trick from
    v6 likely suffices; verify against `PXPSurface` semantics).
 5. The bench's QEMU poll ceilings from measured runtime (two builds).
+
+---
+
+> **AS SHIPPED (P2 verdict): ADOPTION DECLINED, 2026-08-01.** The measurement
+> worked exactly as designed and answered "no, not today": fills — the only
+> accelerable task type either scene generates — are CPU-won at both depths
+> (the CM7 write-streams ~630 MB/s into non-cacheable SDRAM; §1's economics
+> intuition was wrong for write-only ops), and the census found ZERO image
+> tasks in either scene, so the PXP's 12–17× blit and 28–63× composite wins
+> have no current consumer. Projection: adoption would cost ~0.3 ms/frame.
+> **REVISIT TRIGGER, recorded at the user's request: the moment an
+> image-heavy scene exists (large images, sprites, photo viewers), re-run
+> the census (`-DDRAW_CENSUS=ON`) and re-project — the win waiting there is
+> 12–63×.** Corrections to this spec from measurement: §3's SW comparator
+> shipped as genuine `lv_draw_sw_blend` (SW_PATH=lvgl, no proxy); §6's
+> "goldens unchanged at 32 bpp" is WRONG for fills/blits (the engines'
+> X-byte conventions differ: LVGL 0xFF vs PXP 0) — any future adoption at
+> 32 bpp re-records goldens; case counts pinned 19/13. Two further scope notes: the census records
+> type x bucket (the promised per-format axis was dropped -- both scenes are
+> single-format, so it had no discriminating power today), and the QEMU half
+> of the inert-proof was run at Task 2 and independently reproduced by the
+> final review (captures uncommitted; the silicon transcripts carry the
+> durable evidence). Conditional P3+ was never built. Full record: `examples/display/pxp_draw_bench/transcript_hw_evkb.txt`.

@@ -1,0 +1,127 @@
+PXP vs LVGL-SW for draw-unit ops — hardware measurement (v9 P2)
+===============================================================
+
+Date:      2026-08-01
+Board:     MIMXRT1170-EVKB RevC3 + RK055 (cases render to the live panel)
+Firmware:  examples/display/pxp_draw_bench, branch lvgl-pxp-draw-v9
+Flash:     hardened VCOM-free load+verify, SW4 resets with the reader attached
+Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200
+SW path:   SW_PATH=lvgl -- the comparator is LVGL's own lv_draw_sw_blend(),
+           NOT a proxy loop (the fabricated-task probe succeeded).
+
+RESULT: all cases OK on silicon at both depths (DRAWS=19 at 565, DRAWS=13 at
+32 bpp, DRAW_BENCH_OK both).  The 32-bpp capture lost the two 32x32 timing
+rows to console reconnect gaps across two otherwise-identical runs (verdict
+tokens complete both times); their magnitudes are bracketed by neighbours and
+irrelevant to the projection.
+
+RGB565 build, verbatim
+----------------------
+DEPTH=16 SW_PATH=lvgl SW_SMOKE=OK
+DRAW n=fill_32x32 CPU_us=8 PXP_us=11 OK
+DRAW n=fill_120x40 CPU_us=18 PXP_us=27 OK
+DRAW n=fill_240x160 CPU_us=480 PXP_us=367 OK
+DRAW n=fill_400x300 CPU_us=378 PXP_us=795 OK
+DRAW n=fill_720x80 CPU_us=186 PXP_us=375 OK
+DRAW n=fill_720x1280 CPU_us=2906 PXP_us=5895 OK
+DRAW n=blit_32x32 CPU_us=241 PXP_us=23 OK
+DRAW n=blit_120x40 CPU_us=612 PXP_us=75 OK
+DRAW n=blit_240x160 CPU_us=4893 PXP_us=813 OK
+DRAW n=blit_400x300 CPU_us=14324 PXP_us=1873 OK
+DRAW n=blit_720x80 CPU_us=6633 PXP_us=884 OK
+DRAW n=blit_720x1280 CPU_us=105633 PXP_us=14093 OK
+COMP ENGINE_DELTA=1 on all six comp cases
+DRAW n=comp_32x32 CPU_us=971 PXP_us=34 OK
+DRAW n=comp_120x40 CPU_us=4598 PXP_us=97 OK
+DRAW n=comp_240x160 CPU_us=36679 PXP_us=1236 OK
+DRAW n=comp_400x300 CPU_us=114532 PXP_us=2330 OK
+DRAW n=comp_720x80 CPU_us=54971 PXP_us=1140 OK
+DRAW n=comp_720x1280 CPU_us=879963 PXP_us=18149 OK
+DRAW n=overhead_16x2 CPU_us=0 PXP_us=2 OK
+DRAWS=19  DRAW_BENCH_OK
+
+XRGB8888 build (merged from two captures; verdicts complete in each)
+--------------------------------------------------------------------
+DEPTH=32 SW_PATH=lvgl SW_SMOKE=OK
+DRAW n=fill_32x32 (timing lost to capture; OK)
+DRAW n=fill_120x40 CPU_us=37 PXP_us=40 OK
+DRAW n=fill_240x160 CPU_us=1152 PXP_us=615 OK
+DRAW n=fill_400x300 CPU_us=915 PXP_us=989 OK
+DRAW n=fill_720x80 CPU_us=440 PXP_us=471 OK
+DRAW n=fill_720x1280 CPU_us=7027 PXP_us=7333 OK
+DRAW n=blit_32x32 (timing lost to capture; OK)
+DRAW n=blit_120x40 CPU_us=1578 PXP_us=92 OK
+DRAW n=blit_240x160 CPU_us=11493 PXP_us=1292 OK
+DRAW n=blit_400x300 CPU_us=34651 PXP_us=2160 OK
+DRAW n=blit_720x80 CPU_us=16225 PXP_us=1087 OK
+DRAW n=blit_720x1280 CPU_us=259775 PXP_us=17265 OK
+DRAW n=overhead_16x2 CPU_us=0 PXP_us=2 OK
+DRAWS=13  DRAW_BENCH_OK
+
+★★ ANALYSIS — the raw-op facts
+------------------------------
+1. FILLS: THE CPU WINS OR TIES ALMOST EVERYWHERE.  A fill is write-only, and
+   the CM7's store pipeline streams ~630 MB/s into non-cacheable SDRAM at
+   565 (2906 us full-screen) and ~525 MB/s at 32 bpp (7027 us) -- the v6
+   ~20 MB/s figure was for READ+WRITE copies, not writes.  The PXP fill runs
+   ~310/500 MB/s.  One anomaly both depths: the 240-px-wide row (fill_240x160)
+   is CPU-slow (480/1152 us) and PXP-won -- a row-width effect worth knowing,
+   not a general PXP fill win.
+2. BLITS: PXP wins 6.0-10.5x at 565 (min blit_240x160 4893/813, max
+   blit_32x32 241/23) and 8.9-17.2x at 32 bpp (min blit_240x160 11493/1292,
+   max blit_120x40 1578/92).  Ranges recomputed from the table rows above --
+   final-review correction (the earlier 7.5x/12x floors skipped the
+   240-px-wide rows).
+3. COMPOSITES (565): PXP wins 28.6-49.2x (max = comp_400x300, 114532/2330).
+   CORRECTION (final review): the previously stated "63x" was comp_720x1280's
+   CPU divided by the BLIT_720x1280 PXP row (879963/14093) -- a row mix-up;
+   the true full-screen composite ratio is 879963/18149 = 48.5x.  The
+   full-screen SW alpha blend costs 880 ms; the PXP does it in 18.1 ms.
+   ENGINE_DELTA=1 LSB on every case (the two engines' rounding differs by
+   design; each path asserted vs its own oracle).
+4. Bare-op overhead: ~2-3 us program+enable+wait -- negligible against any
+   task the evaluate gate would accept.
+5. 32-bpp X-byte: the engines differ (LVGL writes 0xFF, PXP writes 0) --
+   fills/blits routed to PXP at 32 bpp WOULD move framebuffer goldens (this
+   corrects spec §6's "goldens unchanged" assumption; carried to the stop).
+
+★★ THE PROJECTION (v9 P2 — the stop's decision input)
+-----------------------------------------------------
+Census (hardware, both scenes at 32 bpp): the ONLY accelerable task type
+present is FILL (flip: 120@38400-bucket + 122@full-frame; touch: 208 + 128).
+BORDER, BOX_SHADOW and LABEL have no PXP op.  NEITHER SCENE GENERATES A
+SINGLE IMAGE TASK — the ops where the PXP is spectacular (blits 8.9-17.2x
+at 32 bpp, composites 28.6-49.2x) never occur in the current workloads.
+
+Fill economics at 32 bpp: CPU wins or ties every measured size (full-frame:
+CPU faster by ~306 us; mid-bucket: a wash) except the 240-px-row anomaly.
+PRICING ASSUMPTION -- RESOLVED BY MEASUREMENT (2026-08-01 addendum, two
+consecutive silicon runs, values identical):
+    DRAW n=fill_200x160 CPU_us=484 PXP_us=510 OK   (the touch widgets' geometry)
+    DRAW n=fill_120x120 CPU_us=111 PXP_us=118 OK   (the flip box's geometry)
+Both census geometries are CPU-WON at 32 bpp: the width-120 extrapolation was
+correct and fill_240x160 is an isolated row-width anomaly.  The projection's
+"~0" mid-bucket pricing was, if anything, generous to the PXP; the sign does
+NOT flip and THE DECLINE STANDS ON MEASURED IN-BUCKET ROWS.  The same runs
+also recovered the two 32x32 timing rows lost to capture gaps earlier:
+    DRAW n=fill_32x32 CPU_us=11-16 PXP_us=16 OK
+    DRAW n=blit_32x32 CPU_us=482 PXP_us=35 OK
+(DRAWS=15, DRAW_BENCH_OK, both runs; 565-build addendum rows measured in QEMU
+only -- the projection's depth is 32 bpp and the 565 verdicts are unchanged.)  The hardware numbers for the two
+new rows land with the next silicon run.
+
+Projected per 120-frame run, routing every fill to the PXP:
+  flip:  122 x (-306 us) + 120 x (~0) - 362 tasks x 1.03 us eval  ~= -38 ms
+  touch: 128 x (-306 us) + 208 x (~0) - 661 x 1.03 us             ~= -40 ms
+i.e. ADOPTION WOULD MAKE BOTH CURRENT SCENES ~0.3 ms/frame SLOWER.
+
+Caveats (spec §5, restated): the scenes are simple and fill-dominated by
+construction; a census cannot see tasks LVGL merges or skips; ladder sizes
+bracket real task sizes.  None of these caveats changes the sign: there is
+nothing for the PXP to win at in these scenes today.
+
+RECOMMENDATION: DECLINE adoption now (the spec's legitimate "not worth it"
+outcome).  The bench, census probe and tables stand as the instrument; the
+moment an image-heavy scene exists (icons, sprites, photos — where 8.9-49x
+awaits), re-run the census and revisit.  The 32-bpp X-byte golden implication
+(engines differ: 0xFF vs 0) is on record for that future decision.

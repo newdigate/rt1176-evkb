@@ -29,6 +29,9 @@
 #include "lvgl_rt1176.h"
 #include "lvgl_mipi_panel.h"
 #include "lvgl_pxp_copy.h"
+#ifdef DRAW_CENSUS
+#include "lvgl_pxp_draw_census.h"   /* v9: counter-only, provably inert */
+#endif
 
 /* The HX8394 tap window (QEMU-only; reads as 0 on silicon).  Address and
  * TAP_ID protocol: transcribed from rk055_panel_test.cpp -- same oracle,
@@ -103,6 +106,12 @@ void setup()
     Display.fillScreen(0x0000);
 
     lvgl_rt1176_begin();
+#ifdef DRAW_CENSUS
+    /* v9 census variant: registers a draw unit that counts every task and
+     * takes none.  Every token below must stay byte-identical to the normal
+     * build -- that identity IS the inert-proof. */
+    lvgl_pxp_draw_census_install();
+#endif
     /* v6: PXP-backed sync copy.  The handler's load-bearing rule is height
      * >= 2 rows (the bench's one CPU win was single-row -- see
      * lvgl_pxp_copy_bench/transcript_hw_evkb.txt ANALYSIS point 3); 1024 px
@@ -204,6 +213,11 @@ void setup()
     Serial1.printf("UNDERRUNS=%lu/%lu\n",
                    (unsigned long)Display.underrunCount(),
                    (unsigned long)Display.underrunFrames());
+#ifdef DRAW_CENSUS
+    /* After every token the gate pins, before DONE: the histogram is
+     * ADDITIVE output, never a replacement. */
+    lvgl_pxp_draw_census_print();
+#endif
     Serial1.println("LVGL_RK055_FLIP_DONE");
 }
 

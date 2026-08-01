@@ -34,3 +34,16 @@ option(FLIP_DEMO_SINGLE "single-buffer tearing demo variant" OFF)
 if(FLIP_DEMO_SINGLE)
     target_compile_definitions(lvgl_rk055_flip_test.elf PRIVATE FLIP_DEMO_SINGLE=1)
 endif()
+
+# -DDRAW_CENSUS=ON installs the v9 counter-only draw-unit census probe
+# (port/lvgl_pxp_draw_census.cpp): every draw task is classified by
+# type x area-bucket, none is ever taken.  The census source joins the build
+# ONLY under this option so the shipped binary stays byte-comparable; the
+# QEMU gate never runs this variant -- the v9 inert-proof runs it manually
+# and asserts every pinned token and golden of the normal gate unchanged.
+option(DRAW_CENSUS "install the v9 counter-only draw-unit census probe" OFF)
+if(DRAW_CENSUS)
+    target_compile_definitions(lvgl_rk055_flip_test.elf PRIVATE DRAW_CENSUS=1)
+    target_sources(lvgl_rk055_flip_test.elf
+                   PRIVATE ${_lvgl_dir}/port/lvgl_pxp_draw_census.cpp)
+endif()
