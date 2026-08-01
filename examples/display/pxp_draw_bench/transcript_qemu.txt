@@ -1,0 +1,103 @@
+PXP draw bench -- QEMU gate transcript (v9 P1)
+==============================================
+
+Date:    2026-08-01
+Machine: mimxrt1170-evk (custom QEMU, ~/Development/qemu2), boot-xip=on
+Gate:    ./run_qemu_pxp_draw.sh -- BOTH depth ELFs sequentially
+         (build/ = RGB565, build-32/ = XRGB8888 via -DDRAW_BENCH_32=ON);
+         measured 3.0-4.0 s wall each to PXP_DRAW_BENCH_DONE, poll ceiling
+         6 s per build (+50%), QRUN_TIMEOUT=30.
+SW path: SW_PATH=lvgl -- the comparator is lv_draw_sw_blend() itself,
+         LVGL's real blend entry, driven through a fabricated minimal
+         lv_draw_task_t/lv_layer_t/lv_draw_buf_t (no display object; the
+         entry reads only t->clip_area and t->target_layer).  The
+         fabricated-task probe SUCCEEDED first try -- the pre-approved
+         proxy fallback was NOT needed.  SW_SMOKE=OK is the 4x4 plumbing
+         proof, asserted per build.
+Note:    CPU_us/PXP_us are VACUOUS under QEMU (no timing model) -- printed,
+         never asserted; the hardware table (P2) is the timing claim.
+         ENGINE_DELTA is the measured two-engine composite divergence in
+         565 channel LSBs (LVGL blend rounding != silicon /256-truncate);
+         its VALUE is reported, not pinned -- under QEMU both engines
+         follow their measured/shipped arithmetic and the observed max
+         divergence was 1 LSB on every composite case.
+Counts:  DRAWS=19 (565: 6 fills + 6 blits + 6 comps + overhead_16x2) and
+         DRAWS=13 (32 bpp: no composites -- declined by construction,
+         spec 1.4), both pinned by the gate; the 32-bpp capture is also
+         asserted to contain NO comp_* case at all.
+Negative tests (red-first, recorded in the gate's comment block):
+         (1) composite-oracle sabotage (256u-a -> 255u-a): all six comp_*
+         BAD, gate RED at "case comp_32x32 not OK"; (2) fill-expected
+         sabotage (red mask 0xF8 -> 0xF0): fill_120x40, fill_240x160,
+         overhead_16x2 BAD, gate RED at "case fill_120x40 not OK".  Both
+         hand-reverted; green x2 after each.
+
+Captured UART -- RGB565 build (green run)
+-----------------------------------------
+PXP_DRAW_BENCH_BEGIN
+DEPTH=16
+SW_PATH=lvgl
+PANEL_OK
+PXP_OK
+ALLOC_OK
+SW_SMOKE=OK
+DRAW n=fill_32x32 CPU_us=97 PXP_us=915 OK
+DRAW n=fill_120x40 CPU_us=15 PXP_us=352 OK
+DRAW n=fill_240x160 CPU_us=292 PXP_us=2609 OK
+DRAW n=fill_400x300 CPU_us=161 PXP_us=8896 OK
+DRAW n=fill_720x80 CPU_us=44 PXP_us=6042 OK
+DRAW n=fill_720x1280 CPU_us=936 PXP_us=61112 OK
+DRAW n=blit_32x32 CPU_us=532 PXP_us=435 OK
+DRAW n=blit_120x40 CPU_us=66 PXP_us=610 OK
+DRAW n=blit_240x160 CPU_us=256 PXP_us=4268 OK
+DRAW n=blit_400x300 CPU_us=605 PXP_us=13534 OK
+DRAW n=blit_720x80 CPU_us=236 PXP_us=6264 OK
+DRAW n=blit_720x1280 CPU_us=3668 PXP_us=100440 OK
+COMP n=comp_32x32 ENGINE_DELTA=1
+DRAW n=comp_32x32 CPU_us=397 PXP_us=504 OK
+COMP n=comp_120x40 ENGINE_DELTA=1
+DRAW n=comp_120x40 CPU_us=323 PXP_us=821 OK
+COMP n=comp_240x160 ENGINE_DELTA=1
+DRAW n=comp_240x160 CPU_us=2400 PXP_us=6111 OK
+COMP n=comp_400x300 ENGINE_DELTA=1
+DRAW n=comp_400x300 CPU_us=7789 PXP_us=19148 OK
+COMP n=comp_720x80 ENGINE_DELTA=1
+DRAW n=comp_720x80 CPU_us=3555 PXP_us=9671 OK
+COMP n=comp_720x1280 ENGINE_DELTA=1
+DRAW n=comp_720x1280 CPU_us=57151 PXP_us=146018 OK
+DRAW n=overhead_16x2 CPU_us=13 PXP_us=43 OK
+NOTE timings are hardware-only; QEMU numbers are vacuous
+DRAWS=19
+DRAW_BENCH_OK
+PXP_DRAW_BENCH_DONE
+
+Captured UART -- XRGB8888 build (green run)
+-------------------------------------------
+PXP_DRAW_BENCH_BEGIN
+DEPTH=32
+SW_PATH=lvgl
+PANEL_OK
+PXP_OK
+ALLOC_OK
+SW_SMOKE=OK
+DRAW n=fill_32x32 CPU_us=114 PXP_us=963 OK
+DRAW n=fill_120x40 CPU_us=21 PXP_us=356 OK
+DRAW n=fill_240x160 CPU_us=572 PXP_us=2621 OK
+DRAW n=fill_400x300 CPU_us=262 PXP_us=8211 OK
+DRAW n=fill_720x80 CPU_us=59 PXP_us=4128 OK
+DRAW n=fill_720x1280 CPU_us=1519 PXP_us=63495 OK
+DRAW n=blit_32x32 CPU_us=797 PXP_us=523 OK
+DRAW n=blit_120x40 CPU_us=70 PXP_us=767 OK
+DRAW n=blit_240x160 CPU_us=420 PXP_us=5026 OK
+DRAW n=blit_400x300 CPU_us=1367 PXP_us=13595 OK
+DRAW n=blit_720x80 CPU_us=450 PXP_us=6593 OK
+DRAW n=blit_720x1280 CPU_us=7486 PXP_us=99274 OK
+DRAW n=overhead_16x2 CPU_us=13 PXP_us=27 OK
+NOTE timings are hardware-only; QEMU numbers are vacuous
+DRAWS=13
+DRAW_BENCH_OK
+PXP_DRAW_BENCH_DONE
+
+Gate verdict
+------------
+PASS: PXP draw bench -- both depths, all cases OK, counts pinned 19/13
