@@ -67,11 +67,18 @@ DRAWS=13  DRAW_BENCH_OK
    ~310/500 MB/s.  One anomaly both depths: the 240-px-wide row (fill_240x160)
    is CPU-slow (480/1152 us) and PXP-won -- a row-width effect worth knowing,
    not a general PXP fill win.
-2. BLITS: PXP wins 7.5-10.5x at 565 and 12-17x at 32 bpp (CPU reads dominate).
-3. COMPOSITES (565): PXP wins 28-63x.  The full-screen SW alpha blend costs
-   880 ms; the PXP does it in 18.1 ms.  ENGINE_DELTA=1 LSB on every case (the
-   two engines' rounding differs by design; each path asserted vs its own
-   oracle).
+2. BLITS: PXP wins 6.0-10.5x at 565 (min blit_240x160 4893/813, max
+   blit_32x32 241/23) and 8.9-17.2x at 32 bpp (min blit_240x160 11493/1292,
+   max blit_120x40 1578/92).  Ranges recomputed from the table rows above --
+   final-review correction (the earlier 7.5x/12x floors skipped the
+   240-px-wide rows).
+3. COMPOSITES (565): PXP wins 28.6-49.2x (max = comp_400x300, 114532/2330).
+   CORRECTION (final review): the previously stated "63x" was comp_720x1280's
+   CPU divided by the BLIT_720x1280 PXP row (879963/14093) -- a row mix-up;
+   the true full-screen composite ratio is 879963/18149 = 48.5x.  The
+   full-screen SW alpha blend costs 880 ms; the PXP does it in 18.1 ms.
+   ENGINE_DELTA=1 LSB on every case (the two engines' rounding differs by
+   design; each path asserted vs its own oracle).
 4. Bare-op overhead: ~2-3 us program+enable+wait -- negligible against any
    task the evaluate gate would accept.
 5. 32-bpp X-byte: the engines differ (LVGL writes 0xFF, PXP writes 0) --
@@ -83,11 +90,15 @@ DRAWS=13  DRAW_BENCH_OK
 Census (hardware, both scenes at 32 bpp): the ONLY accelerable task type
 present is FILL (flip: 120@38400-bucket + 122@full-frame; touch: 208 + 128).
 BORDER, BOX_SHADOW and LABEL have no PXP op.  NEITHER SCENE GENERATES A
-SINGLE IMAGE TASK — the ops where the PXP is spectacular (blits 12-17x,
-composites 28-63x) never occur in the current workloads.
+SINGLE IMAGE TASK — the ops where the PXP is spectacular (blits 8.9-17.2x
+at 32 bpp, composites 28.6-49.2x) never occur in the current workloads.
 
 Fill economics at 32 bpp: CPU wins or ties every measured size (full-frame:
 CPU faster by ~306 us; mid-bucket: a wash) except the 240-px-row anomaly.
+PRICING ASSUMPTION under review: the in-bucket fill_240x160 row contradicts
+the width-120 extrapolation; fill_200x160 and fill_120x120 rows added to
+settle it by measurement (this addendum).  The hardware numbers for the two
+new rows land with the next silicon run.
 
 Projected per 120-frame run, routing every fill to the PXP:
   flip:  122 x (-306 us) + 120 x (~0) - 362 tasks x 1.03 us eval  ~= -38 ms
@@ -101,6 +112,6 @@ nothing for the PXP to win at in these scenes today.
 
 RECOMMENDATION: DECLINE adoption now (the spec's legitimate "not worth it"
 outcome).  The bench, census probe and tables stand as the instrument; the
-moment an image-heavy scene exists (icons, sprites, photos — where 12-63x
+moment an image-heavy scene exists (icons, sprites, photos — where 8.9-49x
 awaits), re-run the census and revisit.  The 32-bpp X-byte golden implication
 (engines differ: 0xFF vs 0) is on record for that future decision.

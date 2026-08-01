@@ -49,9 +49,18 @@
  *       the number that determines every crossover.
  *
  * Tokens: DRAW n=<name> CPU_us=<t> PXP_us=<t> OK|BAD per case;
- * DRAWS=<emitted> pinned per depth build (565: 19 = 6 fills + 6 blits +
- * 6 comps + overhead; 32 bpp: 13); DRAW_BENCH_OK; every early-out prints
+ * DRAWS=<emitted> pinned per depth build (565: 21 = 8 fills + 6 blits +
+ * 6 comps + overhead; 32 bpp: 15); DRAW_BENCH_OK; every early-out prints
  * PXP_DRAW_BENCH_DONE (the v8 discipline: the run never hangs silently).
+ *
+ * FILL-ONLY ADDENDUM (v9 final review): two extra fill rows at the CENSUS
+ * geometries -- fill_200x160 (the touch scene's real widget rect) and
+ * fill_120x120 (the flip scene's box).  The P2 projection priced the
+ * 38400-px bucket's fills by extrapolating the width-120 row, but the only
+ * measured in-bucket row (fill_240x160) contradicts that extrapolation --
+ * these rows settle the mid-bucket fill price by MEASUREMENT instead.
+ * Fill-only deliberately: the open question is fill pricing (the census
+ * scenes generate no image tasks), so no blit/comp equivalents.
  *
  * Uses Serial1 (LPUART; QEMU captures it), like every sibling gate.
  */
@@ -100,10 +109,17 @@ static constexpr uint32_t FILL_RGBS[NUM_SIZES] = {
 static constexpr Rect     OVERHEAD_RECT = { 16, 2, 13, 7 };
 static constexpr uint32_t OVERHEAD_RGB  = 0x00FF4000u;
 
+/* The census-geometry fill rows (final-review addendum, fill-only -- see the
+ * header): the touch widgets' 200x160 and the flip box's 120x120, at an odd
+ * offset and an edge-hugging corner respectively (the v6 discipline). */
+static constexpr Rect     FILL_EXTRA[2]      = { {200, 160, 37, 741},
+                                                 {120, 120, 600, 1160} };
+static constexpr uint32_t FILL_EXTRA_RGBS[2] = { 0x0060A8D0u, 0x00D06010u };
+
 #if LV_COLOR_DEPTH == 16
-static constexpr uint32_t PINNED_DRAWS = 19;   /* 6 fills + 6 blits + 6 comps + overhead */
+static constexpr uint32_t PINNED_DRAWS = 21;   /* 8 fills + 6 blits + 6 comps + overhead */
 #else
-static constexpr uint32_t PINNED_DRAWS = 13;   /* 6 fills + 6 blits + overhead           */
+static constexpr uint32_t PINNED_DRAWS = 15;   /* 8 fills + 6 blits + overhead           */
 #endif
 
 /* ===================== expected-constant helpers ==========================
@@ -695,6 +711,11 @@ void setup()
         snprintf(name, sizeof(name), "fill_%ux%u",
                  (unsigned)LADDER[i].w, (unsigned)LADDER[i].h);
         run_fill_case(LADDER[i], FILL_RGBS[i], name);
+    }
+    for (uint32_t i = 0; i < 2; i++) {   /* the census-geometry fill rows */
+        snprintf(name, sizeof(name), "fill_%ux%u",
+                 (unsigned)FILL_EXTRA[i].w, (unsigned)FILL_EXTRA[i].h);
+        run_fill_case(FILL_EXTRA[i], FILL_EXTRA_RGBS[i], name);
     }
     for (uint32_t i = 0; i < NUM_SIZES; i++) {
         snprintf(name, sizeof(name), "blit_%ux%u",

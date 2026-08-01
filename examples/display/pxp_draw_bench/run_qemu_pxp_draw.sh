@@ -19,8 +19,11 @@ gate_init
 # load-tolerance lesson KNOWN-BROKEN-GATES teaches.  QRUN_TIMEOUT=60 is the
 # hard per-run backstop.
 
+# fill_200x160 / fill_120x120: the census-geometry fill-only rows (final-
+# review addendum -- the touch widgets' and flip box's real rects; they
+# settle the mid-bucket fill price the projection had extrapolated).
 FILL_NAMES="fill_32x32 fill_120x40 fill_240x160 fill_400x300 fill_720x80 \
-            fill_720x1280"
+            fill_720x1280 fill_200x160 fill_120x120"
 BLIT_NAMES="blit_32x32 blit_120x40 blit_240x160 blit_400x300 blit_720x80 \
             blit_720x1280"
 COMP_NAMES="comp_32x32 comp_120x40 comp_240x160 comp_400x300 comp_720x80 \
@@ -77,7 +80,7 @@ run_build() {
 
 # --- build 1: RGB565 (default) -- fills + blits + composites + overhead ----
 run_build "$DIR/build/pxp_draw_bench.elf" "$DIR/pxp_draw_565.uart" \
-          "$DIR/pxp_draw_565.dbg" 16 19 \
+          "$DIR/pxp_draw_565.dbg" 16 21 \
           $FILL_NAMES $BLIT_NAMES $COMP_NAMES overhead_16x2
 # The two-engine composite divergence must be REPORTED per case (a measured
 # fact; its value is not pinned -- LVGL's rounding != silicon's truncate).
@@ -88,7 +91,7 @@ done
 
 # --- build 2: XRGB8888 -- fills + blits + overhead; NO composites ----------
 run_build "$DIR/build-32/pxp_draw_bench.elf" "$DIR/pxp_draw_32.uart" \
-          "$DIR/pxp_draw_32.dbg" 32 13 \
+          "$DIR/pxp_draw_32.dbg" 32 15 \
           $FILL_NAMES $BLIT_NAMES overhead_16x2
 # Composites are DECLINED at 32 bpp by construction (spec 1.4: the output X
 # byte would carry silicon's underived computed alpha) -- their ABSENCE is
@@ -96,7 +99,7 @@ run_build "$DIR/build-32/pxp_draw_bench.elf" "$DIR/pxp_draw_32.uart" \
 grep -q "n=comp_" "$DIR/pxp_draw_32.uart" \
     && { echo "FAIL(32): composite cases present in the 32-bpp build"; exit 1; }
 
-echo "PASS: PXP draw bench -- both depths, all cases OK, counts pinned 19/13"
+echo "PASS: PXP draw bench -- both depths, all cases OK, counts pinned 21/15"
 # NEGATIVE-TEST RECORD (red-first, per the two-gate rule), both observed
 # 2026-08-01 on the 565 build and hand-reverted before the committed greens:
 #  1. composite-oracle sabotage: o_blend_channel's (256u - a) -> (255u - a)
