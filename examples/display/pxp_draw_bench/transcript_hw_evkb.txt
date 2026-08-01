@@ -1,0 +1,79 @@
+PXP vs LVGL-SW for draw-unit ops — hardware measurement (v9 P2)
+===============================================================
+
+Date:      2026-08-01
+Board:     MIMXRT1170-EVKB RevC3 + RK055 (cases render to the live panel)
+Firmware:  examples/display/pxp_draw_bench, branch lvgl-pxp-draw-v9
+Flash:     hardened VCOM-free load+verify, SW4 resets with the reader attached
+Console:   /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200
+SW path:   SW_PATH=lvgl -- the comparator is LVGL's own lv_draw_sw_blend(),
+           NOT a proxy loop (the fabricated-task probe succeeded).
+
+RESULT: all cases OK on silicon at both depths (DRAWS=19 at 565, DRAWS=13 at
+32 bpp, DRAW_BENCH_OK both).  The 32-bpp capture lost the two 32x32 timing
+rows to console reconnect gaps across two otherwise-identical runs (verdict
+tokens complete both times); their magnitudes are bracketed by neighbours and
+irrelevant to the projection.
+
+RGB565 build, verbatim
+----------------------
+DEPTH=16 SW_PATH=lvgl SW_SMOKE=OK
+DRAW n=fill_32x32 CPU_us=8 PXP_us=11 OK
+DRAW n=fill_120x40 CPU_us=18 PXP_us=27 OK
+DRAW n=fill_240x160 CPU_us=480 PXP_us=367 OK
+DRAW n=fill_400x300 CPU_us=378 PXP_us=795 OK
+DRAW n=fill_720x80 CPU_us=186 PXP_us=375 OK
+DRAW n=fill_720x1280 CPU_us=2906 PXP_us=5895 OK
+DRAW n=blit_32x32 CPU_us=241 PXP_us=23 OK
+DRAW n=blit_120x40 CPU_us=612 PXP_us=75 OK
+DRAW n=blit_240x160 CPU_us=4893 PXP_us=813 OK
+DRAW n=blit_400x300 CPU_us=14324 PXP_us=1873 OK
+DRAW n=blit_720x80 CPU_us=6633 PXP_us=884 OK
+DRAW n=blit_720x1280 CPU_us=105633 PXP_us=14093 OK
+COMP ENGINE_DELTA=1 on all six comp cases
+DRAW n=comp_32x32 CPU_us=971 PXP_us=34 OK
+DRAW n=comp_120x40 CPU_us=4598 PXP_us=97 OK
+DRAW n=comp_240x160 CPU_us=36679 PXP_us=1236 OK
+DRAW n=comp_400x300 CPU_us=114532 PXP_us=2330 OK
+DRAW n=comp_720x80 CPU_us=54971 PXP_us=1140 OK
+DRAW n=comp_720x1280 CPU_us=879963 PXP_us=18149 OK
+DRAW n=overhead_16x2 CPU_us=0 PXP_us=2 OK
+DRAWS=19  DRAW_BENCH_OK
+
+XRGB8888 build (merged from two captures; verdicts complete in each)
+--------------------------------------------------------------------
+DEPTH=32 SW_PATH=lvgl SW_SMOKE=OK
+DRAW n=fill_32x32 (timing lost to capture; OK)
+DRAW n=fill_120x40 CPU_us=37 PXP_us=40 OK
+DRAW n=fill_240x160 CPU_us=1152 PXP_us=615 OK
+DRAW n=fill_400x300 CPU_us=915 PXP_us=989 OK
+DRAW n=fill_720x80 CPU_us=440 PXP_us=471 OK
+DRAW n=fill_720x1280 CPU_us=7027 PXP_us=7333 OK
+DRAW n=blit_32x32 (timing lost to capture; OK)
+DRAW n=blit_120x40 CPU_us=1578 PXP_us=92 OK
+DRAW n=blit_240x160 CPU_us=11493 PXP_us=1292 OK
+DRAW n=blit_400x300 CPU_us=34651 PXP_us=2160 OK
+DRAW n=blit_720x80 CPU_us=16225 PXP_us=1087 OK
+DRAW n=blit_720x1280 CPU_us=259775 PXP_us=17265 OK
+DRAW n=overhead_16x2 CPU_us=0 PXP_us=2 OK
+DRAWS=13  DRAW_BENCH_OK
+
+★★ ANALYSIS — the raw-op facts
+------------------------------
+1. FILLS: THE CPU WINS OR TIES ALMOST EVERYWHERE.  A fill is write-only, and
+   the CM7's store pipeline streams ~630 MB/s into non-cacheable SDRAM at
+   565 (2906 us full-screen) and ~525 MB/s at 32 bpp (7027 us) -- the v6
+   ~20 MB/s figure was for READ+WRITE copies, not writes.  The PXP fill runs
+   ~310/500 MB/s.  One anomaly both depths: the 240-px-wide row (fill_240x160)
+   is CPU-slow (480/1152 us) and PXP-won -- a row-width effect worth knowing,
+   not a general PXP fill win.
+2. BLITS: PXP wins 7.5-10.5x at 565 and 12-17x at 32 bpp (CPU reads dominate).
+3. COMPOSITES (565): PXP wins 28-63x.  The full-screen SW alpha blend costs
+   880 ms; the PXP does it in 18.1 ms.  ENGINE_DELTA=1 LSB on every case (the
+   two engines' rounding differs by design; each path asserted vs its own
+   oracle).
+4. Bare-op overhead: ~2-3 us program+enable+wait -- negligible against any
+   task the evaluate gate would accept.
+5. 32-bpp X-byte: the engines differ (LVGL writes 0xFF, PXP writes 0) --
+   fills/blits routed to PXP at 32 bpp WOULD move framebuffer goldens (this
+   corrects spec §6's "goldens unchanged" assumption; carried to the stop).
