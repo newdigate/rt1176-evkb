@@ -282,3 +282,16 @@ Notes:
 - UNDERRUNS=0/10: the spec §10.1 watchdog — underrun at doubled scanout
   fetch was this milestone's top silicon risk — clean through rendering,
   PXP copies, and touch traffic all contending for SDRAM.
+
+
+v9 census run (2026-08-01, -DDRAW_CENSUS=ON build)
+--------------------------------------------------
+The counter-only census draw unit installed; INERT ON SILICON: golden and
+every pin identical to the normal build (operator ritual completed; all pins green under the census build).
+CENSUS type=FILL bucket=38400 n=208
+CENSUS type=FILL bucket=921600 n=128
+CENSUS type=BORDER bucket=38400 n=67
+CENSUS type=BOX_SHADOW bucket=38400 n=141
+CENSUS type=LABEL bucket=1024 n=117
+CENSUS_TASKS=661  CENSUS_EVAL_NS=1026
+(live-finger ritual: DRAG_END x=612 moves=22; PXP_ERRORS=0; UNDERRUNS=0/10)
