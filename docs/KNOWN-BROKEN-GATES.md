@@ -186,3 +186,11 @@ contradicts itself twice; the transcript's RESOLVED AMBIGUITIES section is the
 authority), and the QEMU AS datapath (qemu2 `4333c645ff`) was written FROM that
 measurement — P2-before-P3, inverted deliberately after v7's X-byte finding.
 Expectation: 73/0/0 or the documented `cm4_audio_test` singleton, zero SKIPs.
+
+**2026-08-01 (v9, draw-unit economics):** `pxp_draw_bench` joins the sweep: **73 → 74
+gates**. The milestone's verdict: draw-unit ADOPTION DECLINED — hardware showed fills
+are CPU-won (write-streaming ~630 MB/s beats the PXP), and the census proved neither
+LVGL scene generates image tasks, the op class where the PXP wins 12–63×. The bench +
+census probe (-DDRAW_CENSUS) stand as the instrument; REVISIT when an image-heavy
+scene (large images/sprites/photos) enters the tree. Expectation: 74/0/0 or the
+documented `cm4_audio_test` singleton, zero SKIPs.
