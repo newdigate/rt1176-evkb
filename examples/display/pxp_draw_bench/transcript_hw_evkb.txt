@@ -77,3 +77,30 @@ DRAWS=13  DRAW_BENCH_OK
 5. 32-bpp X-byte: the engines differ (LVGL writes 0xFF, PXP writes 0) --
    fills/blits routed to PXP at 32 bpp WOULD move framebuffer goldens (this
    corrects spec §6's "goldens unchanged" assumption; carried to the stop).
+
+★★ THE PROJECTION (v9 P2 — the stop's decision input)
+-----------------------------------------------------
+Census (hardware, both scenes at 32 bpp): the ONLY accelerable task type
+present is FILL (flip: 120@38400-bucket + 122@full-frame; touch: 208 + 128).
+BORDER, BOX_SHADOW and LABEL have no PXP op.  NEITHER SCENE GENERATES A
+SINGLE IMAGE TASK — the ops where the PXP is spectacular (blits 12-17x,
+composites 28-63x) never occur in the current workloads.
+
+Fill economics at 32 bpp: CPU wins or ties every measured size (full-frame:
+CPU faster by ~306 us; mid-bucket: a wash) except the 240-px-row anomaly.
+
+Projected per 120-frame run, routing every fill to the PXP:
+  flip:  122 x (-306 us) + 120 x (~0) - 362 tasks x 1.03 us eval  ~= -38 ms
+  touch: 128 x (-306 us) + 208 x (~0) - 661 x 1.03 us             ~= -40 ms
+i.e. ADOPTION WOULD MAKE BOTH CURRENT SCENES ~0.3 ms/frame SLOWER.
+
+Caveats (spec §5, restated): the scenes are simple and fill-dominated by
+construction; a census cannot see tasks LVGL merges or skips; ladder sizes
+bracket real task sizes.  None of these caveats changes the sign: there is
+nothing for the PXP to win at in these scenes today.
+
+RECOMMENDATION: DECLINE adoption now (the spec's legitimate "not worth it"
+outcome).  The bench, census probe and tables stand as the instrument; the
+moment an image-heavy scene exists (icons, sprites, photos — where 12-63x
+awaits), re-run the census and revisit.  The 32-bpp X-byte golden implication
+(engines differ: 0xFF vs 0) is on record for that future decision.
