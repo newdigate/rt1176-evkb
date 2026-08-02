@@ -1,0 +1,281 @@
+From 56033e1669cf23d929a748d09d9883540d66a720 Mon Sep 17 00:00:00 2001
+From: Newdigate <nicnewdigate@gmail.com>
+Date: Sun, 2 Aug 2026 18:57:18 +0100
+Subject: [PATCH 1/2] decouple: xscope probes for OUT buffer under/overflow and
+ fill
+
+Instrumentation only -- no existing logic is changed. Added while chasing a
+periodic glitch on a UAC1 asynchronous stream, to get the device's own view
+of its OUT buffer instead of inferring it from recorded analogue audio.
+
+xscope_int() rather than debug_printf(): it writes to a hardware-buffered
+probe instead of doing I/O, so it is safe in the decoupler's real-time path.
+A printf here would perturb the very timing being measured and could
+manufacture the glitches it was meant to find.
+
+Requires -DXSCOPE. -fxscope alone defines only _XSCOPE_PROBES_INCLUDE_FILE,
+so without it every probe silently compiles to a no-op and the VCD comes out
+empty.
+
+Two known weaknesses, unresolved:
+
+  - The fill probe emits space_left, a raw pointer difference carrying a
+    special case that flips sign as the ring wraps. It is not a fill level,
+    and a drift fit over it gives a slope of 0.222 where calibrated
+    arithmetic demands 1.000. It should emit (wrptr - rdptr) wrapped into
+    the buffer size.
+  - Both outUnderflow = 1 sites are stream-reset points, not runtime
+    dry-outs, so that probe fires once at startup and says nothing about
+    steady state. The overflow probe is at a genuine runtime event.
+
+Probe ids are hardcoded 0/1/2 across this file and main.xc, and would
+silently mismatch if xscope_register were reordered.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ lib_xua/src/core/buffer/decouple/decouple.xc | 34 ++++++++++++++++++++
+ lib_xua/src/core/main.xc                     |  7 +++-
+ 2 files changed, 40 insertions(+), 1 deletion(-)
+
+diff --git a/lib_xua/src/core/buffer/decouple/decouple.xc b/lib_xua/src/core/buffer/decouple/decouple.xc
+index d3f55c9..f9e6c51 100644
+--- a/lib_xua/src/core/buffer/decouple/decouple.xc
++++ b/lib_xua/src/core/buffer/decouple/decouple.xc
+@@ -109,9 +109,29 @@ int g_aud_to_host_fill_level;
+ 
+ int aud_data_remaining_to_device = 0;
+ 
++#ifdef XSCOPE
++#include <xscope.h>
++#define XUA_PROBE_UNDERFLOW()  xscope_int(0, ++g_outUnderflowCount)
++#define XUA_PROBE_OVERFLOW()   xscope_int(1, ++g_outOverflowCount)
++#define XUA_PROBE_FILL(v)      xscope_int(2, (unsigned)(v))
++#else
++#define XUA_PROBE_UNDERFLOW()  (g_outUnderflowCount++)
++#define XUA_PROBE_OVERFLOW()   (g_outOverflowCount++)
++#define XUA_PROBE_FILL(v)      ((void)(v))
++#endif
++
+ /* Audio over/under flow flags */
+ unsigned outUnderflow = 1;
+ unsigned outOverflow = 0;
++
++/* Instrumentation: how often the OUT buffer has actually run dry or filled up.
++ * The flags above are state, not events, so they cannot answer "how often".
++ * xscope_int() writes to a hardware-buffered probe rather than doing I/O, so
++ * it is safe in this real-time path in a way debug_printf would not be --
++ * printing from here would perturb the very timing being measured. */
++unsigned g_outUnderflowCount = 0;
++unsigned g_outOverflowCount = 0;
++unsigned g_fillProbeDiv = 0;
+ unsigned inUnderflow = 1;
+ 
+ int aud_req_in_count = 0;
+@@ -833,6 +853,7 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+ #if (NUM_USB_CHAN_OUT > 0)
+                     /* Reset OUT buffer state */
+                     outUnderflow = 1;
++                    XUA_PROBE_UNDERFLOW();
+                     SET_SHARED_GLOBAL(g_aud_from_host_rdptr, aud_from_host_fifo_start);
+                     SET_SHARED_GLOBAL(g_aud_from_host_wrptr, aud_from_host_fifo_start);
+                     SET_SHARED_GLOBAL(aud_data_remaining_to_device, 0);
+@@ -923,6 +944,7 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+                 unpackState = 0;
+ 
+                 outUnderflow = 1;
++                XUA_PROBE_UNDERFLOW();
+                 if(outOverflow)
+                 {
+                     /* If we were previously in overflow we wont have marked as ready */
+@@ -1019,6 +1041,17 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+                 space_left = aud_from_host_fifo_end - g_aud_from_host_wrptr;
+             }
+ 
++            /* Instrumentation: free space in the OUT FIFO, every 10th packet
++             * (100 Hz). This is the device's own view of whether the host is
++             * over- or under-feeding, and unlike the over/underflow flags it
++             * is continuous -- drift shows up long before it forces a
++             * correction. Costs one compare in the per-frame path. */
++            if(++g_fillProbeDiv >= 10)
++            {
++                g_fillProbeDiv = 0;
++                XUA_PROBE_FILL(space_left);
++            }
++
+ #if (XUD_USB_ISO_MAX_TXNS_PER_MICROFRAME > 1)
+             if (space_left <= 0 || space_left >= REQD_BUF_SIZE_ERR_HANDLING_HIBW_OUT)
+ #else
+@@ -1032,6 +1065,7 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+             {
+                 /* Enter OUT over flow state */
+                 outOverflow = 1;
++                XUA_PROBE_OVERFLOW();
+ 
+ #ifdef DEBUG_LEDS
+                 led(c_led);
+diff --git a/lib_xua/src/core/main.xc b/lib_xua/src/core/main.xc
+index 3ceb259..d525492 100644
+--- a/lib_xua/src/core/main.xc
++++ b/lib_xua/src/core/main.xc
+@@ -245,7 +245,12 @@ void thread_speed()
+ #ifdef XSCOPE
+ void xscope_user_init()
+ {
+-    xscope_register(0, 0, "", 0, "");
++    /* Two probes for the OUT decoupler buffer. Named so `xrun --xscope`
++     * output identifies them without cross-referencing probe ids. */
++    xscope_register(3,
++                    XSCOPE_CONTINUOUS, "out_underflow", XSCOPE_UINT, "count",
++                    XSCOPE_CONTINUOUS, "out_overflow",  XSCOPE_UINT, "count",
++                    XSCOPE_CONTINUOUS, "out_fifo_free", XSCOPE_UINT, "bytes");
+ 
+     xscope_config_io(XSCOPE_IO_BASIC);
+ }
+-- 
+2.39.1
+
+
+From 26d13baba4e412653a887945ee4fc8e02cc6b74c Mon Sep 17 00:00:00 2001
+From: Newdigate <nicnewdigate@gmail.com>
+Date: Sun, 2 Aug 2026 19:42:37 +0100
+Subject: [PATCH 2/2] decouple: fix the fill probe, count runtime dry-outs
+
+The fill probe emitted space_left, a pointer difference whose meaning
+flips at the ring wrap -- a drift fit over it gave slope 0.222 where
+calibrated arithmetic demands 1.000. Emit true occupancy instead:
+(wrptr - rdptr) wrapped into BUFF_SIZE_OUT, sampled at the same 100 Hz
+cadence. Validated on hardware immediately after: at a locked host trim
+of +150 ppm the fill ramps at +41.17 B/s with r2 0.96-0.99 across six
+consecutive overflow cycles -- a clean linear instrument.
+
+The out_underflow probe covered only the two literal outUnderflow = 1
+sites, which are stream-reset points. The FIFO can also run dry
+mid-stream through the computed assignment in handle_audio_request();
+that was the un-instrumented path, and it is the audible glitch when the
+host under-feeds: from there the device inserts OUT_BUFFER_PREFILL bytes
+of silence before resuming. Count it in a dedicated g_outDryoutCount --
+incremented at interrupt level where an xscope call would not be safe,
+emitted by the decoupler at the fill cadence as probe 3 (out_dryout).
+
+Probe ids 0..2 keep their meaning; out_fifo_free is renamed
+out_fifo_fill since the quantity changed. Ids are position-defined by
+xscope_register order in main.xc -- append only.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ lib_xua/src/core/buffer/decouple/decouple.xc | 42 ++++++++++++++++++--
+ lib_xua/src/core/main.xc                     | 12 ++++--
+ 2 files changed, 47 insertions(+), 7 deletions(-)
+
+diff --git a/lib_xua/src/core/buffer/decouple/decouple.xc b/lib_xua/src/core/buffer/decouple/decouple.xc
+index f9e6c51..0b74412 100644
+--- a/lib_xua/src/core/buffer/decouple/decouple.xc
++++ b/lib_xua/src/core/buffer/decouple/decouple.xc
+@@ -114,10 +114,12 @@ int aud_data_remaining_to_device = 0;
+ #define XUA_PROBE_UNDERFLOW()  xscope_int(0, ++g_outUnderflowCount)
+ #define XUA_PROBE_OVERFLOW()   xscope_int(1, ++g_outOverflowCount)
+ #define XUA_PROBE_FILL(v)      xscope_int(2, (unsigned)(v))
++#define XUA_PROBE_DRYOUT()     xscope_int(3, g_outDryoutCount)
+ #else
+ #define XUA_PROBE_UNDERFLOW()  (g_outUnderflowCount++)
+ #define XUA_PROBE_OVERFLOW()   (g_outOverflowCount++)
+ #define XUA_PROBE_FILL(v)      ((void)(v))
++#define XUA_PROBE_DRYOUT()     ((void)0)
+ #endif
+ 
+ /* Audio over/under flow flags */
+@@ -132,6 +134,15 @@ unsigned outOverflow = 0;
+ unsigned g_outUnderflowCount = 0;
+ unsigned g_outOverflowCount = 0;
+ unsigned g_fillProbeDiv = 0;
++
++/* Runtime dry-outs of the OUT FIFO, distinct from g_outUnderflowCount: the
++ * literal `outUnderflow = 1` sites are stream-reset points, but the FIFO can
++ * also run dry mid-stream via the computed assignment in
++ * handle_audio_request(). That path executes at interrupt level feeding I2S,
++ * so it must not call xscope itself; it increments this counter and the
++ * decoupler emits the value from its own context at the fill-probe cadence.
++ * Single writer (the interrupt side), single reader -- no atomicity needed. */
++unsigned g_outDryoutCount = 0;
+ unsigned inUnderflow = 1;
+ 
+ int aud_req_in_count = 0;
+@@ -646,6 +657,15 @@ __builtin_unreachable();
+ 
+             g_aud_from_host_rdptr+=4;
+         }
++        else
++        {
++            /* Instrumentation: the FIFO ran dry mid-stream. From here the
++             * device plays OUT_BUFFER_PREFILL bytes of silence before
++             * resuming -- an audible gap. Counter only: this runs at
++             * interrupt level, so the xscope emission happens in the
++             * decoupler loop, not here. */
++            g_outDryoutCount++;
++        }
+     }
+ }
+ 
+@@ -1041,15 +1061,31 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+                 space_left = aud_from_host_fifo_end - g_aud_from_host_wrptr;
+             }
+ 
+-            /* Instrumentation: free space in the OUT FIFO, every 10th packet
++            /* Instrumentation: OUT FIFO fill in bytes, every 10th packet
+              * (100 Hz). This is the device's own view of whether the host is
+              * over- or under-feeding, and unlike the over/underflow flags it
+              * is continuous -- drift shows up long before it forces a
+-             * correction. Costs one compare in the per-frame path. */
++             * correction.
++             *
++             * Deliberately NOT space_left: that is a pointer difference
++             * carrying a special case that flips its meaning as the ring
++             * wraps, and a drift fit over it produced a slope of 0.222 where
++             * calibrated arithmetic demands 1.000. Fill is the plain
++             * occupancy (wrptr - rdptr) wrapped into the buffer size. rdptr
++             * was sampled at entry, so the value is noisy by up to one packet
++             * of concurrent consumption -- harmless for a fit over seconds.
++             *
++             * The dry-out count rides along at the same cadence: it is
++             * incremented at interrupt level in handle_audio_request(), where
++             * an xscope call would not be safe, and only emitted here. */
+             if(++g_fillProbeDiv >= 10)
+             {
+                 g_fillProbeDiv = 0;
+-                XUA_PROBE_FILL(space_left);
++                int fill_bytes = aud_from_host_wrptr - aud_from_host_rdptr;
++                if (fill_bytes < 0)
++                    fill_bytes += BUFF_SIZE_OUT;
++                XUA_PROBE_FILL(fill_bytes);
++                XUA_PROBE_DRYOUT();
+             }
+ 
+ #if (XUD_USB_ISO_MAX_TXNS_PER_MICROFRAME > 1)
+diff --git a/lib_xua/src/core/main.xc b/lib_xua/src/core/main.xc
+index d525492..371a933 100644
+--- a/lib_xua/src/core/main.xc
++++ b/lib_xua/src/core/main.xc
+@@ -245,12 +245,16 @@ void thread_speed()
+ #ifdef XSCOPE
+ void xscope_user_init()
+ {
+-    /* Two probes for the OUT decoupler buffer. Named so `xrun --xscope`
+-     * output identifies them without cross-referencing probe ids. */
+-    xscope_register(3,
++    /* Probes for the OUT decoupler buffer. Named so `xrun --xscope`
++     * output identifies them without cross-referencing probe ids. Order
++     * defines the ids (0..3) hardcoded in decouple.xc -- append only.
++     * out_fifo_fill replaced out_fifo_free: the free-space value carried a
++     * wrap special case that made drift fits meaningless. */
++    xscope_register(4,
+                     XSCOPE_CONTINUOUS, "out_underflow", XSCOPE_UINT, "count",
+                     XSCOPE_CONTINUOUS, "out_overflow",  XSCOPE_UINT, "count",
+-                    XSCOPE_CONTINUOUS, "out_fifo_free", XSCOPE_UINT, "bytes");
++                    XSCOPE_CONTINUOUS, "out_fifo_fill", XSCOPE_UINT, "bytes",
++                    XSCOPE_CONTINUOUS, "out_dryout",    XSCOPE_UINT, "count");
+ 
+     xscope_config_io(XSCOPE_IO_BASIC);
+ }
+-- 
+2.39.1
+

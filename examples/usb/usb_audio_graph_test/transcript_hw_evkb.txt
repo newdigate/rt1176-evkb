@@ -1,0 +1,94 @@
+usb_audio_graph_test — hardware evidence, MIMXRT1170-EVKB + XMOS xcore-200 MC
+=============================================================================
+Bench: EVKB USB1 host port -> XMOS MC200 (sw_usb_audio app_usb_aud_xk_216_mc,
+config 1AMi2o2xxxxxx, UAC1 FS, stereo 16-bit, asynchronous, feedback EP 0x82
+bRefresh=4), MC200 line out -> RME Fireface UFX ch1/2. Device instrumented
+with xscope probes in lib_xua's decoupler (lib_xua-decouple-instrumentation
+.patch beside this file): OUT-FIFO fill (bytes, 100 Hz), stream-reset
+underflow count, overflow count, runtime dry-out count.
+
+The periodic click: root cause, measured 2026-08-02
+---------------------------------------------------
+The device's converter runs on its own crystal. Un-fed-back, the host/device
+rate difference accumulates in the device's OUT FIFO until lib_xua
+block-corrects: under-feed -> the decoupler runs dry mid-stream (the
+previously un-instrumented `outUnderflow = (rdptr == wrptr)` path in
+handle_audio_request) and inserts OUT_BUFFER_PREFILL bytes of silence;
+over-feed -> XUD stops being given buffers and packets are dropped until the
+FIFO drains to half. Either correction is the audible click; period =
+correction quantum / drift rate.
+
+Locked-bias drift sweep (tools/driftrun.sh, 120 s per point, one flash per
+point, open loop):
+
+    bias(ppm)  drift(ppm)  runtime events            residual vs fit
+       -250      -162.9    5 dry-outs                -0.08
+       -150       -63.7    2 dry-outs                 0.03
+        -83         2.7    none                       0.04
+          0        85.0    none (climb phase)         0.09
+        150       233.5    3 overflows                -0.04
+        250       332.6    5 overflows                -0.03
+
+    slope 0.9909 (ppm-equivalent scale; the broken probe this replaced
+    measured 0.222), residual rms 0.06 ppm, zero crossing = device true
+    rate = -85.7 ppm relative to host nominal. Fill drift is linear at
+    r^2 0.95-0.99 in every segment of every point; consecutive drain
+    segments within a point agree to 0.1%.
+
+The earlier analogue A/B that seemed to rule rate mismatch out was measuring
+its own capture chain: the chain's floor was ~17 events/s while the real
+glitch rate at these offsets is 0.005-0.06/s. The device-side probes have no
+floor: at bias -83 (2.7 ppm from true) 125 s ran with zero runtime events;
+at every other point events appeared at quantum/drift cadence.
+
+The fix: read the feedback endpoint
+-----------------------------------
+USBAudioOut now arms two iso-IN siTDs on the feedback endpoint (found via
+bSynchAddress; the endpoint's own usage bits say "data" and cannot identify
+it), 16 frames apart on the 32-slot periodic list = one read per 16 ms,
+matching bRefresh=4. Each 3-byte 10.14 report is decoded to millihertz,
+gated for plausibility (+-2% of nominal), EMA-averaged (1/8 per report --
+the device dithers the raw report between adjacent values; slew-chasing the
+raw value converges to a dither rail, measured as a +4.8 ppm sizing bias
+before the EMA), and the packet-sizing accumulator slews toward the average
+at ~90 ppm/s.
+
+Closed-loop verification 2026-08-02 (25 min soak, device-side VCD):
+    duration 1521.7 s, fill slope +0.025 B/s (+0.1 ppm equivalent)
+    fill envelope 776..980 bytes (204 B total wander, +-2 packets of jitter)
+    runtime corrections: ZERO (dry-out count froze at the t=0.05 s stream
+    start transient; overflow never fired; underflow only the stream-start
+    reset). Open loop at bias 0 the same interval predicts ~22 block
+    corrections; the sweep measured one every ~25 s at the biases the click
+    was originally reported against.
+    heartbeat over the whole soak: err/s=0, pkts/s=1000, fbpkts 62.6/s
+    sustained, fberr=0, fresh=1, sizing within ~1.5 ppm of the feedback EMA.
+
+Analogue capture during the soak (12 min, MC200 line out -> RME ch1/2,
+glitchdetect.py, selftest 9/9 first): 4.35 events/s, |mag| median 10.8
+samples -- the same magnitude distribution as the 2026-08-02 loopback
+control (2.23/s, median 10.9), i.e. the capture chain's own floor. No
+same-session loopback control was possible (no re-cabling on an unattended
+bench), so per this bench's measurement rules the analogue number is only
+corroboration: nothing above the floor. The block-correction signature this
+chain would need to resolve (0.04/s at the offsets in use) sits far below
+its floor in both rate and magnitude, which is precisely why the device-side
+probes were built.
+
+Cross-checks:
+  - Feedback EMA reads -83 ppm where the open-loop sweep intercept said
+    -85.7 ppm (independent instruments, hours apart, temperature moves the
+    crystal): the decoder is measuring the same physical quantity as the
+    drift fit.
+  - fbpkts climbs at 62/s (= 2 descriptors / 32 ms each), fberr=0.
+  - fbrej counts a reproducible ~113-report burst at stream start (device's
+    measurement engine not yet running -> zero/implausible reports, gated
+    out by design), then stays static.
+
+Historical note
+---------------
+An earlier swept-bias analogue measurement produced a convincing V at
+-56 ppm; it did not survive a controlled A/B, and the sweep's sawtooth
+confounded bias with time. The -85.7 ppm above comes from locked-bias
+points with per-point provenance and 0.06 ppm residuals, and the feedback
+endpoint independently reports the same rate. -56 was noise.

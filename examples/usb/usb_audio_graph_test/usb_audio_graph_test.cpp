@@ -26,11 +26,12 @@
 //     the build entirely. Same USB transport, same device, same rate.
 // 0 = the normal graph path.
 //
-// Measured phase discontinuities of 3-9 per second do NOT track the rate bias
-// (A/B across 306 ppm: 0.6 sigma), so the rate-mismatch explanation is out.
-// This splits the remaining system in half: if the glitches survive with the
-// graph gone, the cause is the transport or the device; if they vanish, it is
-// the graph or the adapter.
+// (Historical note: the analogue A/B that seemed to rule rate mismatch out
+// measured 3-9 events/s against a capture chain whose own floor was that
+// size. Rate mismatch WAS the cause -- see the bias sweep note below -- but
+// its real event rate was ~0.2/s, invisible under that floor. The bisection
+// stands for what it did prove: the glitch needs neither the graph nor the
+// adapter.)
 #define DRIVE_FROM_TONE 1
 
 USBHost myusb;
@@ -60,56 +61,55 @@ static bool driver_active[NDRIVERS] = { false, false };
 static uint32_t last_beat, beat_seq, last_packets, last_errs;
 static bool stream_started;
 
-// --- rate bias sweep ---------------------------------------------------
+// --- rate trim / drift measurement --------------------------------------
 //
 // The device is asynchronous: its converter runs on its own crystal, so the
 // rate we size packets for is only nominally right. The host-side FIFO cannot
 // reveal the error -- the pacing loop holds it flat by construction -- so the
-// difference accumulates in the DEVICE's buffer until it drops or repeats
-// samples, which is the periodic click.
+// difference accumulates in the DEVICE's buffer until it block-corrects:
+// under-feed and lib_xua's decoupler runs dry mid-stream, then inserts
+// OUT_BUFFER_PREFILL bytes of silence before resuming; over-feed and it
+// drops packets until the FIFO drains to half. Either correction is the
+// periodic click. Both paths were finally seen directly on 2026-08-02 with
+// xscope probes in the device's decoupler (the patch is committed alongside
+// this example): a locked-bias sweep measured drift-vs-trim with slope 0.99
+// and 0.06 ppm rms residuals, putting THIS unit's converter at -85.7 ppm
+// relative to host nominal, glitch periods matching quantum/drift at every
+// point tested.
 //
-// Sweep the trim and listen. The step where the clicks stop, or slow down
-// most, is where the device's converter actually is. That measurement is
-// worth having independently of the feedback endpoint: when feedback support
-// lands, it gives a target to check the decoder against.
+// (An earlier analogue A/B seemed to rule rate mismatch out; its capture
+// chain had a 17 events/s floor of its own, and the real glitch rate at
+// these offsets is ~0.005-0.06/s. tools/driftrun.sh + tools/vcdfill.py are
+// the trustworthy instrument.)
 //
-// 20 s dwell is chosen against an observed click roughly every 5 s, so a
-// correct step is four missed clicks -- clearly audible, not a coin flip.
+// The number wanders with temperature and differs per unit, which is why the
+// permanent fix is the feedback endpoint: the device reports its measured
+// rate every 2^bRefresh ms and USBAudioOut sizes packets from it
+// (followFeedback). The trim below remains as the open-loop fallback and as
+// the knob driftrun.sh sweeps to validate the whole chain.
 //
-// -56 ppm came from fitting anomaly-rate against bias over a swept recording,
-// and it looked convincing: a clean V, and the drift arithmetic agreed to the
-// decimal (at -250 ppm the error from true is 194 ppm = 8.6 samples/s, and the
-// measured excess over the floor was 8.6/s).
-//
-// IT DID NOT REPRODUCE. A properly controlled A/B -- alternating -56 and +250
-// every 30 s inside ONE recording, so both arms share the capture chain's
-// state -- found 17.36 vs 17.99 events/s, a difference of 0.63 +- 0.43 (1.5
-// sigma) where the drift model predicts 13.5. No effect.
-//
-// The likely flaw in the swept measurement: the sweep is a sawtooth, so -250
-// and +250 are ADJACENT IN TIME at the wrap. "Elevated at both extremes" is
-// therefore indistinguishable from "elevated once per 420 s cycle", which any
-// slow periodic disturbance in the capture chain would produce. The V was real
-// in the data and still meant nothing about bias.
-//
-// So -56 is an unconfirmed guess, kept only as a placeholder. Do not treat it
-// as a measurement. The capture chain's own noise floor also moved from ~7 to
-// ~17 events/s between sessions, which is why absolute rates cannot be
-// compared across recordings and why this instrument is not trustworthy at
-// this resolution. Reading the feedback endpoint measures the device's buffer
-// directly and sidesteps the analogue path entirely.
-//
-// With BIAS_SWEEP 0 the trim is locked there instead of swept.
+// BIAS_MODE_LOCKED comes from the build (tools/driftrun.sh passes
+// -DBIAS_LOCKED_PPM=<ppm> via CMake): it locks the trim for one drift
+// measurement point, overriding the A/B machinery below, and opens the loop
+// (a drift measurement is meaningless with feedback steering the rate).
 #define BIAS_SWEEP 0
-static const int32_t  BIAS_LOCKED   = -56;
+#ifndef BIAS_LOCKED_PPM
+#define BIAS_LOCKED_PPM (0)
+#endif
+static const int32_t  BIAS_LOCKED   = BIAS_LOCKED_PPM;
 
 // A/B mode. Absolute anomaly rates CANNOT be compared between recordings: the
 // capture interface is itself asynchronous, so CoreAudio's resampler adds a
 // per-session noise floor of its own that has nothing to do with this device.
 // Alternating two bias values inside ONE recording removes that entirely --
 // both halves share the same capture state, so any difference is the device.
-#define BIAS_AB 1
-static const int32_t  BIAS_A        = -56;    // measured optimum
+// Off by default now that feedback closes the loop; -DBIAS_AB=1 revives the
+// experiment (open the loop with BIAS_MODE_LOCKED or followFeedback(false)
+// if the point is to hear the difference).
+#ifndef BIAS_AB
+#define BIAS_AB 0
+#endif
+static const int32_t  BIAS_A        = -86;    // sweep-measured device rate
 static const int32_t  BIAS_B        = 250;    // known bad, for contrast
 static const uint32_t AB_DWELL_MS   = 30000;
 static bool ab_on_a = true;
@@ -134,6 +134,13 @@ void setup() {
     Serial1.begin(115200);
     while (!Serial1) {}
     Serial1.println("GRAPH-TEST: start");
+#ifdef BIAS_MODE_LOCKED
+    // Locked-bias drift measurement: open the loop, or the feedback servo
+    // would null out the very drift being measured.
+    audioOut.followFeedback(false);
+#else
+    audioOut.followFeedback(true);
+#endif
 #if DRIVE_FROM_TONE
     Serial1.println("GRAPH-TEST: MODE = driver tone generator (graph bypassed)");
     // AudioOutputUSBHost would normally do this; without it the driver would
@@ -174,6 +181,18 @@ void loop() {
         // internal generator.
         Serial1.printf("GRAPH-TEST: device ready, alt=%d, usb rate=%lu Hz\n",
                        audioOut.alternateSetting(), (unsigned long)audioOut.rate());
+        // The async feedback pairing, from bSynchAddress in the descriptors.
+        // EP 0 here means the device advertises none and the loop stays open.
+        {
+            const UAC1Topology &t = audioOut.topology();
+            for (uint8_t i = 0; i < t.alt_count; i++) {
+                if (t.alts[i].alternate_setting != (uint8_t)audioOut.alternateSetting())
+                    continue;
+                Serial1.printf("GRAPH-TEST: feedback ep=0x%02X refresh=2^%u ms, follow=%d\n",
+                               t.alts[i].feedback_endpoint, t.alts[i].feedback_refresh,
+                               (int)audioOut.followingFeedback());
+            }
+        }
         if (audioOut.rate() != (uint32_t)AUDIO_SAMPLE_RATE_EXACT) {
             Serial1.println("GRAPH-TEST: WARNING rate mismatch -- playback will be off pitch");
         }
@@ -239,6 +258,18 @@ void loop() {
                            (unsigned long)audioOut.bufferErrors(),
                            (unsigned long)audioOut.shortSends());
             last_errs = e;
+            // fb= is the device's own report of its converter rate in mHz;
+            // sizing= is what packets are actually cut to after the slew.
+            // With the loop closed the two converge and the device-side
+            // buffer stays flat -- the drift sweep's -85.7 ppm should read
+            // back here as fb=44096218-ish.
+            Serial1.printf(" fb=%lu sizing=%lu fbpkts=%lu fbrej=%lu fberr=%lu fresh=%d",
+                           (unsigned long)audioOut.feedbackRateMilliHz(),
+                           (unsigned long)audioOut.sizingRateMilliHz(),
+                           (unsigned long)audioOut.feedbackPackets(),
+                           (unsigned long)audioOut.feedbackRejects(),
+                           (unsigned long)audioOut.feedbackErrors(),
+                           (int)audioOut.feedbackFresh());
             Serial1.printf(" bias=%+ldppm pkts/s=%lu fifo=%lu/%lu dropped=%lu underruns=%lu",
                            (long)audioOut.rateBiasPpm(),
                            (unsigned long)(p - last_packets),

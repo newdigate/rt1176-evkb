@@ -13,6 +13,18 @@ evkb_library_dir(Audio EVKB_AUDIO_DIR)
 teensy_add_executable(usb_audio_graph_test usb_audio_graph_test.cpp)
 teensy_target_link_libraries(usb_audio_graph_test cores)
 
+# --- rate-bias override for the drift harness ---------------------------------
+# tools/driftrun.sh rebuilds per sweep point with a locked trim:
+#   cmake -B build -DBIAS_LOCKED_PPM=-83 && cmake --build build
+# Locking here (rather than editing the source) keeps every point's provenance
+# in the build command, and BIAS_MODE_LOCKED forces the sweep/AB machinery off
+# so a stale cache cannot leave two mechanisms fighting over the trim.
+set(BIAS_LOCKED_PPM "" CACHE STRING "Lock the host rate trim to this ppm; empty = source default")
+if(NOT BIAS_LOCKED_PPM STREQUAL "")
+    target_compile_definitions(usb_audio_graph_test.elf PRIVATE
+        BIAS_LOCKED_PPM=${BIAS_LOCKED_PPM} BIAS_MODE_LOCKED=1)
+endif()
+
 # --- USBHost_t36 (UAC1 output) ------------------------------------------------
 # Same source set as usb_audio_uac1_test: transport core plus the UAC1 driver.
 set(USBHOST ${EVKB_USBHOST_T36_DIR})
@@ -20,7 +32,7 @@ target_sources(usb_audio_graph_test.elf PRIVATE
     ${USBHOST}/ehci.cpp ${USBHOST}/ehci_iso.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
     ${USBHOST}/memory.cpp
     ${USBHOST}/usb_audio.cpp ${USBHOST}/usb_audio_parse.cpp
-    ${USBHOST}/usb_audio_fifo.cpp)
+    ${USBHOST}/usb_audio_fifo.cpp ${USBHOST}/usb_audio_feedback.cpp)
 
 # --- Audio graph --------------------------------------------------------------
 # Only the nodes this graph actually uses, rather than import_evkb_audio_full():
