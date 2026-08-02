@@ -496,14 +496,16 @@ static void test_pack(void)
 	int16_t src[4] = {0x1234, (int16_t)0xFEDC, 0x7FFF, (int16_t)0x8000};
 	uint8_t dst[64];
 
-	// 2 stereo frames into 8ch 24-in-4: sample<<8 little-endian, 6 zeros.
+	// 2 stereo frames into 8ch 24-in-4, LEFT-JUSTIFIED within the subslot
+	// (USB Audio Data Formats 2.0 section 2.3.1): pad bytes at the low end,
+	// the sign is the sample's own high byte.
 	uint32_t n = uac_pack16(dst, src, 2, 2, 8, 4);
 	CHECK_EQ(n, 64);
-	CHECK_EQ(dst[0], 0x00); CHECK_EQ(dst[1], 0x34); CHECK_EQ(dst[2], 0x12); CHECK_EQ(dst[3], 0x00);
-	CHECK_EQ(dst[4], 0x00); CHECK_EQ(dst[5], 0xDC); CHECK_EQ(dst[6], 0xFE); CHECK_EQ(dst[7], 0xFF);
+	CHECK_EQ(dst[0], 0x00); CHECK_EQ(dst[1], 0x00); CHECK_EQ(dst[2], 0x34); CHECK_EQ(dst[3], 0x12);
+	CHECK_EQ(dst[4], 0x00); CHECK_EQ(dst[5], 0x00); CHECK_EQ(dst[6], 0xDC); CHECK_EQ(dst[7], 0xFE);
 	for (int i = 8; i < 32; i++) CHECK_EQ(dst[i], 0);   // channels 3..8 zero
-	CHECK_EQ(dst[33], 0xFF); CHECK_EQ(dst[34], 0x7F);   // frame 2 left
-	CHECK_EQ(dst[37], 0x00); CHECK_EQ(dst[38], 0x80);   // frame 2 right
+	CHECK_EQ(dst[34], 0xFF); CHECK_EQ(dst[35], 0x7F);   // frame 2 left
+	CHECK_EQ(dst[38], 0x00); CHECK_EQ(dst[39], 0x80);   // frame 2 right
 
 	// 24-in-3 and native 16-in-2
 	n = uac_pack16(dst, src, 1, 2, 2, 3);
@@ -518,9 +520,12 @@ static void test_pack(void)
 ```
 
 - [ ] **Step 5: Implement `uac_pack16`** in `usb_audio_parse.cpp` (header decl:
-"Pack 16-bit interleaved frames into a device subslot layout; returns bytes
-written, 0 for unsupported subslot sizes. live channels are duplicated from
-src in order; device channels beyond ch_live are zero-filled."):
+"Pack 16-bit interleaved frames into a device subslot layout, sample
+LEFT-JUSTIFIED within the subslot per USB Audio Data Formats 2.0 section
+2.3.1 -- padding at the least-significant end, so a negative sample's sign
+is simply its own high byte. Returns bytes written, 0 for unsupported
+subslot sizes / nulls / ch_live > ch_total. Device channels beyond ch_live
+are zero-filled."):
 
 ```c
 uint32_t uac_pack16(uint8_t *dst, const int16_t *src, uint32_t frames,
@@ -531,11 +536,12 @@ uint32_t uac_pack16(uint8_t *dst, const int16_t *src, uint32_t frames,
 	for (uint32_t f = 0; f < frames; f++) {
 		for (uint8_t c = 0; c < ch_total; c++) {
 			int32_t s = (c < ch_live) ? src[f * ch_live + c] : 0;
-			uint32_t v = (uint32_t)(s << 8);        // 16 -> 24 in the top bits
+			uint8_t lo = (uint8_t)s;
+			uint8_t hi = (uint8_t)((uint16_t)s >> 8);
 			switch (subslot) {
-			case 2: *p++ = (uint8_t)s; *p++ = (uint8_t)((uint16_t)s >> 8); break;
-			case 3: *p++ = (uint8_t)v; *p++ = (uint8_t)(v >> 8); *p++ = (uint8_t)(v >> 16); break;
-			case 4: *p++ = (uint8_t)v; *p++ = (uint8_t)(v >> 8); *p++ = (uint8_t)(v >> 16); *p++ = 0; break;
+			case 2: *p++ = lo; *p++ = hi; break;
+			case 3: *p++ = 0; *p++ = lo; *p++ = hi; break;
+			case 4: *p++ = 0; *p++ = 0; *p++ = lo; *p++ = hi; break;
 			}
 		}
 	}
