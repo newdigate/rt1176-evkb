@@ -59,6 +59,45 @@ static bool stream_started;
 //
 // 20 s dwell is chosen against an observed click roughly every 5 s, so a
 // correct step is four missed clicks -- clearly audible, not a coin flip.
+//
+// -56 ppm came from fitting anomaly-rate against bias over a swept recording,
+// and it looked convincing: a clean V, and the drift arithmetic agreed to the
+// decimal (at -250 ppm the error from true is 194 ppm = 8.6 samples/s, and the
+// measured excess over the floor was 8.6/s).
+//
+// IT DID NOT REPRODUCE. A properly controlled A/B -- alternating -56 and +250
+// every 30 s inside ONE recording, so both arms share the capture chain's
+// state -- found 17.36 vs 17.99 events/s, a difference of 0.63 +- 0.43 (1.5
+// sigma) where the drift model predicts 13.5. No effect.
+//
+// The likely flaw in the swept measurement: the sweep is a sawtooth, so -250
+// and +250 are ADJACENT IN TIME at the wrap. "Elevated at both extremes" is
+// therefore indistinguishable from "elevated once per 420 s cycle", which any
+// slow periodic disturbance in the capture chain would produce. The V was real
+// in the data and still meant nothing about bias.
+//
+// So -56 is an unconfirmed guess, kept only as a placeholder. Do not treat it
+// as a measurement. The capture chain's own noise floor also moved from ~7 to
+// ~17 events/s between sessions, which is why absolute rates cannot be
+// compared across recordings and why this instrument is not trustworthy at
+// this resolution. Reading the feedback endpoint measures the device's buffer
+// directly and sidesteps the analogue path entirely.
+//
+// With BIAS_SWEEP 0 the trim is locked there instead of swept.
+#define BIAS_SWEEP 0
+static const int32_t  BIAS_LOCKED   = -56;
+
+// A/B mode. Absolute anomaly rates CANNOT be compared between recordings: the
+// capture interface is itself asynchronous, so CoreAudio's resampler adds a
+// per-session noise floor of its own that has nothing to do with this device.
+// Alternating two bias values inside ONE recording removes that entirely --
+// both halves share the same capture state, so any difference is the device.
+#define BIAS_AB 1
+static const int32_t  BIAS_A        = -56;    // measured optimum
+static const int32_t  BIAS_B        = 250;    // known bad, for contrast
+static const uint32_t AB_DWELL_MS   = 30000;
+static bool ab_on_a = true;
+
 static const int32_t  BIAS_MIN      = -250;
 static const int32_t  BIAS_MAX      =  250;
 static const int32_t  BIAS_STEP     =   25;
@@ -122,7 +161,7 @@ void loop() {
                                                   : "GRAPH-TEST: STREAM START FAILED");
         stream_started = true;
         last_packets = 0;
-        bias_ppm = BIAS_MIN;
+        bias_ppm = BIAS_SWEEP ? BIAS_MIN : (BIAS_AB ? BIAS_A : BIAS_LOCKED);
         audioOut.setRateBias(bias_ppm);
         bias_changed_at = millis();
         announce_bias();
@@ -132,9 +171,19 @@ void loop() {
 
     uint32_t now = millis();
 
-    if (stream_started && (uint32_t)(now - bias_changed_at) >= BIAS_DWELL_MS) {
+    if (BIAS_SWEEP && stream_started
+        && (uint32_t)(now - bias_changed_at) >= BIAS_DWELL_MS) {
         bias_ppm += BIAS_STEP;
         if (bias_ppm > BIAS_MAX) bias_ppm = BIAS_MIN;   // wrap and sweep again
+        audioOut.setRateBias(bias_ppm);
+        bias_changed_at = now;
+        announce_bias();
+    }
+
+    if (BIAS_AB && !BIAS_SWEEP && stream_started
+        && (uint32_t)(now - bias_changed_at) >= AB_DWELL_MS) {
+        ab_on_a = !ab_on_a;
+        bias_ppm = ab_on_a ? BIAS_A : BIAS_B;
         audioOut.setRateBias(bias_ppm);
         bias_changed_at = now;
         announce_bias();
