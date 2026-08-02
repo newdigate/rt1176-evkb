@@ -117,6 +117,7 @@ static void report(bool repeat)
 	               repeat ? " (repeat of last capture)" : "");
 
 	bool audio_seen = false, async_seen = false, feedback_seen = false;
+	bool implicit_fb_seen = false;
 	uint8_t cur_class = 0, cur_sub = 0;
 	uint32_t i = 0;
 
@@ -156,6 +157,11 @@ static void report(bool repeat)
 			if (cur_class == 0x01 && (attr & 0x03) == 0x01) {
 				if (((attr >> 2) & 0x03) == 1) async_seen = true;
 				if (((attr >> 4) & 0x03) == 1) feedback_seen = true;
+				// Implicit feedback is a feedback mechanism too: the rate is
+				// carried by the IN stream's packet sizes rather than by a
+				// dedicated endpoint. Counting only usage==FEEDBACK reported
+				// such devices as having no feedback at all.
+				if (((attr >> 4) & 0x03) == 2) implicit_fb_seen = true;
 			}
 		}
 		i += len;
@@ -165,9 +171,11 @@ static void report(bool repeat)
 	if (!audio_seen) {
 		Serial1.println("SURVEY: VERDICT not an audio device");
 	} else if (async_seen && feedback_seen) {
-		Serial1.println("SURVEY: VERDICT ASYNCHRONOUS with a feedback endpoint -- usable for async work");
+		Serial1.println("SURVEY: VERDICT ASYNCHRONOUS with an explicit feedback endpoint -- usable for async work");
+	} else if (async_seen && implicit_fb_seen) {
+		Serial1.println("SURVEY: VERDICT ASYNCHRONOUS with implicit feedback -- usable for async work, but the rate must be recovered from IN packet sizes");
 	} else if (async_seen) {
-		Serial1.println("SURVEY: VERDICT asynchronous but no feedback endpoint found");
+		Serial1.println("SURVEY: VERDICT asynchronous, no feedback mechanism of either kind found");
 	} else {
 		Serial1.println("SURVEY: VERDICT adaptive/synchronous only -- cannot exercise async");
 	}
