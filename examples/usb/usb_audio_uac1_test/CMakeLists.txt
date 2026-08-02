@@ -25,7 +25,8 @@ set(USBHOST ${EVKB_USBHOST_T36_DIR})
 target_sources(usb_audio_uac1_test.elf PRIVATE
     ${USBHOST}/ehci.cpp ${USBHOST}/ehci_iso.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
     ${USBHOST}/memory.cpp
-    ${USBHOST}/usb_audio.cpp ${USBHOST}/usb_audio_parse.cpp)
+    ${USBHOST}/usb_audio.cpp ${USBHOST}/usb_audio_parse.cpp
+    ${USBHOST}/usb_audio_fifo.cpp)
 
 # USBHost_t36.h unconditionally does `#include <FS.h>` (resolves from the core)
 # AND `#include <SdFat.h>`.  SdFat.h uses relative internal includes, so its
