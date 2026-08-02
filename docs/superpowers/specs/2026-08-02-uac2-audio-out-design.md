@@ -53,11 +53,14 @@ the UAC1 fallback behaviour.
    units-per-frame; a µframe variant (units 8 000 000 in mHz) is arithmetic,
    not architecture.
 8. UAC2 restructures the control plane: sample rate is a Clock Source entity
-   CUR/RANGE request pair via the AC interface, not an endpoint SET_CUR; the
-   AS interface descriptor names its `bClockSourceID`; format lives in a
-   UAC2-specific FORMAT_TYPE I (subslot/resolution, no rate table); IADs are
-   mandatory. HS feedback is 4 bytes, Q16.16 **samples per microframe**, on
-   an iso IN endpoint whose cadence is its own `bInterval`.
+   CUR/RANGE request pair via the AC interface, not an endpoint SET_CUR. The
+   clock is found through the terminal chain: the streaming interface's
+   AS_GENERAL names `bTerminalLink`, and that terminal's `bCSourceID` (in the
+   AC interface) names the Clock Source — so even a minimal parse walks AC
+   terminals and clock entities. Format lives in a UAC2-specific FORMAT_TYPE I
+   (subslot/resolution, no rate table); IADs are mandatory. HS feedback is
+   4 bytes, Q16.16 **samples per microframe**, on an iso IN endpoint whose
+   cadence is its own `bInterval`.
 
 ## 2. Scope
 
