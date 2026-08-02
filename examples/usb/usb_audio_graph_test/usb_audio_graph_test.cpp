@@ -44,6 +44,37 @@ static bool driver_active[NDRIVERS] = { false, false };
 static uint32_t last_beat, beat_seq, last_packets;
 static bool stream_started;
 
+// --- rate bias sweep ---------------------------------------------------
+//
+// The device is asynchronous: its converter runs on its own crystal, so the
+// rate we size packets for is only nominally right. The host-side FIFO cannot
+// reveal the error -- the pacing loop holds it flat by construction -- so the
+// difference accumulates in the DEVICE's buffer until it drops or repeats
+// samples, which is the periodic click.
+//
+// Sweep the trim and listen. The step where the clicks stop, or slow down
+// most, is where the device's converter actually is. That measurement is
+// worth having independently of the feedback endpoint: when feedback support
+// lands, it gives a target to check the decoder against.
+//
+// 20 s dwell is chosen against an observed click roughly every 5 s, so a
+// correct step is four missed clicks -- clearly audible, not a coin flip.
+static const int32_t  BIAS_MIN      = -250;
+static const int32_t  BIAS_MAX      =  250;
+static const int32_t  BIAS_STEP     =   25;
+static const uint32_t BIAS_DWELL_MS = 20000;
+
+static int32_t  bias_ppm = BIAS_MIN;
+static uint32_t bias_changed_at;
+
+static void announce_bias(void)
+{
+    uint32_t mhz = audioOut.effectiveRateMilliHz();
+    Serial1.printf("GRAPH-TEST: BIAS %+ld ppm -> sizing packets for %lu.%03lu Hz\n",
+                   (long)bias_ppm, (unsigned long)(mhz / 1000),
+                   (unsigned long)(mhz % 1000));
+}
+
 void setup() {
     Serial1.begin(115200);
     while (!Serial1) {}
@@ -91,11 +122,24 @@ void loop() {
                                                   : "GRAPH-TEST: STREAM START FAILED");
         stream_started = true;
         last_packets = 0;
+        bias_ppm = BIAS_MIN;
+        audioOut.setRateBias(bias_ppm);
+        bias_changed_at = millis();
+        announce_bias();
     }
 
     audioOut.service();
 
     uint32_t now = millis();
+
+    if (stream_started && (uint32_t)(now - bias_changed_at) >= BIAS_DWELL_MS) {
+        bias_ppm += BIAS_STEP;
+        if (bias_ppm > BIAS_MAX) bias_ppm = BIAS_MIN;   // wrap and sweep again
+        audioOut.setRateBias(bias_ppm);
+        bias_changed_at = now;
+        announce_bias();
+    }
+
     if ((uint32_t)(now - last_beat) >= 1000u) {
         last_beat = now;
         // The rate is in the heartbeat, not just the one-shot startup line:
@@ -111,7 +155,8 @@ void loop() {
             uint32_t p = audioOut.packetsSent();
             // fifo= is the clock. It should hover near the target; a trend
             // means the graph and the device disagree on rate.
-            Serial1.printf(" pkts/s=%lu fifo=%lu/%lu dropped=%lu underruns=%lu",
+            Serial1.printf(" bias=%+ldppm pkts/s=%lu fifo=%lu/%lu dropped=%lu underruns=%lu",
+                           (long)audioOut.rateBiasPpm(),
                            (unsigned long)(p - last_packets),
                            (unsigned long)audioOut.queued(),
                            (unsigned long)AudioOutputUSBHost::FIFO_TARGET_SAMPLES,
