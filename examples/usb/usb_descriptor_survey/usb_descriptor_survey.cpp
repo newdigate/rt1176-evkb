@@ -30,6 +30,15 @@ static uint32_t desc_len;
 static uint16_t desc_vid, desc_pid;
 static volatile bool desc_pending;
 
+// The report prints once, at enumeration -- which is a second or two after
+// reset, before the flash script's console has finished attaching to the VCOM.
+// That loses exactly the output the firmware exists to produce. So keep the
+// last capture and re-print it periodically; a repeat is labelled as one so it
+// is never mistaken for a second device.
+static bool     desc_valid;
+static uint32_t last_report;
+static const uint32_t REPORT_REPEAT_MS = 15000;
+
 class USBDescriptorSurvey : public USBDriver {
 public:
 	USBDescriptorSurvey(USBHost &host) { init(); }
@@ -99,10 +108,13 @@ static const char *class_name(uint8_t c) {
 // Walks the descriptor set by bLength. Deliberately class-version agnostic:
 // it reports what it finds rather than requiring UAC1, so a UAC2 device is
 // identified as UAC2 instead of vanishing.
-static void report(void)
+static void report(bool repeat)
 {
-	Serial1.printf("SURVEY: device %04X:%04X, %lu descriptor bytes\n",
-	               desc_vid, desc_pid, (unsigned long)desc_len);
+	// Nothing calls disconnect() -- claim() never binds -- so a repeat only
+	// means "this is what was last plugged in", not "it is still there".
+	Serial1.printf("SURVEY: device %04X:%04X, %lu descriptor bytes%s\n",
+	               desc_vid, desc_pid, (unsigned long)desc_len,
+	               repeat ? " (repeat of last capture)" : "");
 
 	bool audio_seen = false, async_seen = false, feedback_seen = false;
 	uint8_t cur_class = 0, cur_sub = 0;
@@ -183,12 +195,17 @@ void setup() {
 void loop() {
 	myusb.Task();
 
-	if (desc_pending) {
-		report();
-		desc_pending = false;
-	}
-
 	uint32_t now = millis();
+
+	if (desc_pending) {
+		report(false);
+		desc_pending = false;
+		desc_valid   = true;
+		last_report  = now;
+	} else if (desc_valid && (uint32_t)(now - last_report) >= REPORT_REPEAT_MS) {
+		report(true);
+		last_report = now;
+	}
 	if ((uint32_t)(now - last_beat) >= 2000u) {
 		last_beat = now;
 		Serial1.printf("SURVEY: waiting seq=%lu up=%lus\n",
