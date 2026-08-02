@@ -19,6 +19,20 @@
 // disagree about the sample rate, which is exactly what the feedback endpoint
 // exists to fix and what this firmware does not yet read.
 
+// --- bisection switch ---------------------------------------------------
+//
+// 1 = drive the FIFO from USBAudioOut's own tone generator, with the Audio
+//     library graph, AudioOutputUSBHost and its occupancy pacing removed from
+//     the build entirely. Same USB transport, same device, same rate.
+// 0 = the normal graph path.
+//
+// Measured phase discontinuities of 3-9 per second do NOT track the rate bias
+// (A/B across 306 ppm: 0.6 sigma), so the rate-mismatch explanation is out.
+// This splits the remaining system in half: if the glitches survive with the
+// graph gone, the cause is the transport or the device; if they vanish, it is
+// the graph or the adapter.
+#define DRIVE_FROM_TONE 1
+
 USBHost myusb;
 DMAMEM USBHub hub1(myusb);
 DMAMEM USBAudioOut audioOut(myusb);
@@ -27,6 +41,7 @@ DMAMEM USBAudioOut audioOut(myusb);
 // audioOut.format() to force the USB rate to match the graph rate, and
 // format() only takes effect before the device attaches -- so audioOut must
 // already exist here.
+#if !DRIVE_FROM_TONE
 AudioOutputUSBHost usbSink(audioOut);
 
 AudioSynthWaveformSine sine;
@@ -35,6 +50,7 @@ AudioSynthWaveformSine sine;
 // handles the shared block correctly.
 AudioConnection patchLeft(sine, 0, usbSink, 0);
 AudioConnection patchRight(sine, 0, usbSink, 1);
+#endif
 
 static const char *driver_names[] = { "Hub", "AudioOut" };
 static const unsigned NDRIVERS = 2;
@@ -118,15 +134,19 @@ void setup() {
     Serial1.begin(115200);
     while (!Serial1) {}
     Serial1.println("GRAPH-TEST: start");
-    Serial1.printf("GRAPH-TEST: graph rate=%u Hz, block=%d frames, fifo target=%lu samples\n",
+#if DRIVE_FROM_TONE
+    Serial1.println("GRAPH-TEST: MODE = driver tone generator (graph bypassed)");
+    // AudioOutputUSBHost would normally do this; without it the driver would
+    // stay at its 48 kHz default and the test would not be comparable.
+    audioOut.format((uint32_t)AUDIO_SAMPLE_RATE_EXACT, 2, 16);
+#else
+    Serial1.printf("GRAPH-TEST: MODE = audio graph; rate=%u Hz, block=%d frames, fifo target=%lu\n",
                    (unsigned)AUDIO_SAMPLE_RATE_EXACT, AUDIO_BLOCK_SAMPLES,
                    (unsigned long)AudioOutputUSBHost::FIFO_TARGET_SAMPLES);
-
-    // Enough blocks for the graph plus the sink's own queues.
     AudioMemory(24);
-
     sine.frequency(440.0f);
     sine.amplitude(0.5f);
+#endif
 
     myusb.begin();
     last_beat = millis();
@@ -157,7 +177,10 @@ void loop() {
         if (audioOut.rate() != (uint32_t)AUDIO_SAMPLE_RATE_EXACT) {
             Serial1.println("GRAPH-TEST: WARNING rate mismatch -- playback will be off pitch");
         }
-        Serial1.println(audioOut.beginStreaming() ? "GRAPH-TEST: streaming started, 440 Hz from the graph"
+#if DRIVE_FROM_TONE
+        audioOut.tone(440);
+#endif
+        Serial1.println(audioOut.beginStreaming() ? "GRAPH-TEST: streaming started, 440 Hz"
                                                   : "GRAPH-TEST: STREAM START FAILED");
         stream_started = true;
         last_packets = 0;
@@ -209,11 +232,19 @@ void loop() {
                            (unsigned long)(p - last_packets),
                            (unsigned long)audioOut.queued(),
                            (unsigned long)AudioOutputUSBHost::FIFO_TARGET_SAMPLES,
+#if DRIVE_FROM_TONE
+                           0UL,
+#else
                            (unsigned long)usbSink.dropped(),
+#endif
                            (unsigned long)audioOut.underruns());
             last_packets = p;
         }
+#if DRIVE_FROM_TONE
+        Serial1.println(" mode=tone");
+#else
         Serial1.printf(" cpu=%u%% mem=%u\n", (unsigned)AudioProcessorUsage(),
                        (unsigned)AudioMemoryUsage());
+#endif
     }
 }
