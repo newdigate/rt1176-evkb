@@ -57,7 +57,7 @@ static const unsigned NDRIVERS = 2;
 static USBDriver *drivers[] = { &hub1, &audioOut };
 static bool driver_active[NDRIVERS] = { false, false };
 
-static uint32_t last_beat, beat_seq, last_packets;
+static uint32_t last_beat, beat_seq, last_packets, last_errs;
 static bool stream_started;
 
 // --- rate bias sweep ---------------------------------------------------
@@ -227,6 +227,18 @@ void loop() {
             uint32_t p = audioOut.packetsSent();
             // fifo= is the clock. It should hover near the target; a trend
             // means the graph and the device disagree on rate.
+            // Transport errors per second is the number to watch: the audio
+            // measurement says packets are going missing at about 4.4/s, and
+            // a failed split transaction leaves the descriptor inactive just
+            // like a good one, so pkts/s cannot show it.
+            uint32_t e = audioOut.transportErrors();
+            Serial1.printf(" err/s=%lu (xact=%lu babble=%lu buf=%lu short=%lu)",
+                           (unsigned long)(e - last_errs),
+                           (unsigned long)audioOut.xactErrors(),
+                           (unsigned long)audioOut.babbleErrors(),
+                           (unsigned long)audioOut.bufferErrors(),
+                           (unsigned long)audioOut.shortSends());
+            last_errs = e;
             Serial1.printf(" bias=%+ldppm pkts/s=%lu fifo=%lu/%lu dropped=%lu underruns=%lu",
                            (long)audioOut.rateBiasPpm(),
                            (unsigned long)(p - last_packets),
