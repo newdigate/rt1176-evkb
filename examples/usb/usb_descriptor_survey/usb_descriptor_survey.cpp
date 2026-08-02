@@ -150,13 +150,24 @@ static void report(bool repeat)
 
 		} else if (t == 0x05 && len >= 7) {          // ENDPOINT
 			uint8_t attr = b[3];
-			Serial1.printf("SURVEY:    ep 0x%02X %-3s %-9s sync=%-12s usage=%-11s mps=%d\n",
+			Serial1.printf("SURVEY:    ep 0x%02X %-3s %-9s sync=%-12s usage=%-11s mps=%d",
 			               b[2], (b[2] & 0x80) ? "IN" : "OUT",
 			               xfer_name(attr), sync_name(attr), usage_name(attr),
 			               (uint16_t)b[4] | ((uint16_t)b[5] << 8));
+			// bLength 9 is the audio endpoint descriptor: it adds bRefresh and
+			// bSynchAddress, which the 7-byte standard descriptor lacks.
+			if (len >= 9) {
+				Serial1.printf(" refresh=%d synchAddr=0x%02X", b[7], b[8]);
+			}
+			Serial1.println();
 			if (cur_class == 0x01 && (attr & 0x03) == 0x01) {
 				if (((attr >> 2) & 0x03) == 1) async_seen = true;
 				if (((attr >> 4) & 0x03) == 1) feedback_seen = true;
+				// The authoritative way to find a feedback endpoint. lib_xua
+				// leaves the feedback endpoint's own usage bits at 00 (data),
+				// so testing usage type alone reports "no feedback" on a device
+				// that plainly has one -- it is named right here instead.
+				if (len >= 9 && b[8] != 0) feedback_seen = true;
 				// Implicit feedback is a feedback mechanism too: the rate is
 				// carried by the IN stream's packet sizes rather than by a
 				// dedicated endpoint. Counting only usage==FEEDBACK reported
