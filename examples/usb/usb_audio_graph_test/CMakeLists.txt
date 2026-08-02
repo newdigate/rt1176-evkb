@@ -1,0 +1,49 @@
+cmake_minimum_required(VERSION 3.24)
+project(usb_audio_graph_test)
+
+set(TEENSY_VERSION 117 CACHE STRING "")
+
+include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
+evkb_library_dir(EEPROM EVKB_EEPROM_DIR)
+evkb_library_dir(SPI EVKB_SPI_DIR)
+evkb_library_dir(SdFat EVKB_SDFAT_DIR)
+evkb_library_dir(USBHost_t36 EVKB_USBHOST_T36_DIR)
+evkb_library_dir(Audio EVKB_AUDIO_DIR)
+
+teensy_add_executable(usb_audio_graph_test usb_audio_graph_test.cpp)
+teensy_target_link_libraries(usb_audio_graph_test cores)
+
+# --- USBHost_t36 (UAC1 output) ------------------------------------------------
+# Same source set as usb_audio_uac1_test: transport core plus the UAC1 driver.
+set(USBHOST ${EVKB_USBHOST_T36_DIR})
+target_sources(usb_audio_graph_test.elf PRIVATE
+    ${USBHOST}/ehci.cpp ${USBHOST}/ehci_iso.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
+    ${USBHOST}/memory.cpp
+    ${USBHOST}/usb_audio.cpp ${USBHOST}/usb_audio_parse.cpp
+    ${USBHOST}/usb_audio_fifo.cpp)
+
+# --- Audio graph --------------------------------------------------------------
+# Only the nodes this graph actually uses, rather than import_evkb_audio_full():
+# the sine source and the USB host sink. AudioStream itself lives in the core,
+# so it arrives with `cores` above.
+#
+# memcpy_audio.S is deliberately absent -- it is needed by output_i2s.cpp's
+# interleave path, and nothing here pulls that in. AudioOutputUSBHost
+# interleaves in plain C, precisely so this graph has no I2S dependency.
+target_sources(usb_audio_graph_test.elf PRIVATE
+    ${EVKB_AUDIO_DIR}/synth_sine.cpp
+    ${EVKB_AUDIO_DIR}/data_waveforms.c
+    ${EVKB_AUDIO_DIR}/output_usbhost.cpp)
+
+# USBHost_t36.h unconditionally includes <FS.h> (from the core) and <SdFat.h>.
+# Include dirs only -- no SdFat/SPI sources are compiled or linked, since only
+# the excluded MassStorageDriver.cpp references those symbols.
+target_include_directories(usb_audio_graph_test.elf PRIVATE
+    ${USBHOST} ${USBHOST}/utility
+    ${EVKB_AUDIO_DIR}
+    ${EVKB_SDFAT_DIR}/src
+    ${EVKB_SPI_DIR}
+    ${EVKB_EEPROM_DIR})
+
+target_link_libraries(usb_audio_graph_test.elf stdc++)
+target_link_libraries(usb_audio_graph_test.elf m)
