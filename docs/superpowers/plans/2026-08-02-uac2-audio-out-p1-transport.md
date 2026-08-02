@@ -222,7 +222,7 @@ static void test_fill_out(void)
 	CHECK_EQ(n->bufptr[0] & 0x7F, 3);              // device address
 	CHECK_EQ((n->bufptr[0] >> 8) & 0x0F, 1);       // endpoint
 	CHECK_EQ(n->bufptr[1] & 0x7FF, 208);           // max packet size
-	CHECK_EQ((n->bufptr[2] >> 11) & 1, 0);         // direction OUT
+	CHECK_EQ((n->bufptr[1] >> 11) & 1, 0);         // direction OUT (I/O bit is bufptr[1] bit 11)
 	CHECK_EQ(n->bufptr[2] & 3, 1);                 // Multi = 1
 	// page pointers are consecutive 4K pages of one contiguous buffer
 	CHECK_EQ(n->bufptr[0] & 0xFFFFF000u, ((uint32_t)(uintptr_t)itd_buf) & 0xFFFFF000u);
@@ -298,7 +298,8 @@ bool itd_fill_out(itd_t *node, uint8_t dev_addr, uint8_t endpoint,
 	for (int i = 0; i < 7; i++) node->bufptr[i] = page0 + (uint32_t)i * 4096u;
 	node->bufptr[0] |= ((uint32_t)endpoint << 8) | dev_addr;
 	node->bufptr[1] |= max_packet;
-	node->bufptr[2] |= 1u;              // Multi = 1, direction OUT (bit 11 = 0)
+	node->bufptr[2] |= 1u;              // Multi = 1. Direction is bufptr[1]
+	                                    // bit 11; stays 0 = OUT here.
 	return true;
 }
 ```
