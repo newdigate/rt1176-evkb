@@ -262,9 +262,10 @@ void loop() {
         // The rate is in the heartbeat, not just the one-shot startup line:
         // the flash script's console attaches a second or two after reset, so
         // anything printed once at boot is routinely lost.
-        Serial1.printf("GRAPH-TEST: HEARTBEAT seq=%lu up=%lus audio=%s alt=%d graph=%uHz usb=%luHz%s",
+        Serial1.printf("GRAPH-TEST: HEARTBEAT seq=%lu up=%lus audio=%s uac2=%d alt=%d graph=%uHz usb=%luHz%s",
                        (unsigned long)++beat_seq, (unsigned long)(now / 1000u),
-                       audioOut.ready() ? "ready" : "none", audioOut.alternateSetting(),
+                       audioOut.ready() ? "ready" : "none", (int)audioOut.isUAC2(),
+                       audioOut.alternateSetting(),
                        (unsigned)AUDIO_SAMPLE_RATE_EXACT, (unsigned long)audioOut.rate(),
                        (audioOut.ready() && audioOut.rate() != (uint32_t)AUDIO_SAMPLE_RATE_EXACT)
                            ? " RATE-MISMATCH" : "");

@@ -92,3 +92,42 @@ An earlier swept-bias analogue measurement produced a convincing V at
 confounded bias with time. The -85.7 ppm above comes from locked-bias
 points with per-point provenance and 0.06 ppm residuals, and the feedback
 endpoint independently reports the same rate. -56 was noise.
+
+UAC2 P1 transport gate, 2026-08-03 (open loop by design)
+---------------------------------------------------------
+Witness: MC200 reflashed to sw_usb_audio 2AMi8o8xxxxxx (UAC2, high speed,
+8ch in/out, 24-bit-in-4 subslots, built with -DXSCOPE and WITHOUT the
+16-bit resolution override; the lib_xua decoupler probes carry over
+unchanged). Live config descriptors captured via lastConfig() ->
+test/fixtures/xmos_uac2_2ami8o8.bin (372 B): IAD, bcdADC 0x0200, clock
+chain terminal(2) -> single-input selector(0x28) -> source(0x29), 24-bit
+alt 1 with OUT ep 0x01 advertising wMaxPacketSize 800 (sized for 192 kHz)
++ feedback IN ep 0x82, 16-bit alt 2.
+
+Host path exercised: uac2_parse_config (fixture-TDD, 69 checks incl. a
+0..372 truncation sweep), clock-first control (Clock Source CUR 44100 ->
+SET_INTERFACE alt 1), iTD ring (32 descriptors x 8 microframe
+transactions, 224 B/uframe ceiling, min(advertised,224) MPS), stereo
+16-bit tone packed left-justified into 24-in-4 subslots across 8 channels
+(6 zero-filled).
+
+Gate run, 184 s device-side VCD + console:
+    heartbeat: audio=ready uac2=1 alt=1, pkts/s=1000 sustained,
+    err/s=0 (xact=0 babble=0 buf=0 short=0) throughout
+    fill probe at its 100 Hz cadence, xscope missing marks 0
+    steady-state fill slope +119.3 B/s; at this stream's 32 B/frame that
+    is +84.6 ppm -- the same converter offset the UAC1 sweep measured
+    (-85.7 ppm) and the UAC1 feedback EMA reported (-83..-86), now seen
+    through an entirely different transport, descriptor path and packing
+    (vcdfill's printed ppm column assumes 4 B frames; divide its B/s by
+    1.4112 for this stream)
+    overflow block-corrections every ~9.6 s steady state (16 events,
+    76.6..220.4 s), exactly the quantum/drift periodicity an open loop
+    predicts; start-of-window under/dry-out transients coincide with a
+    mid-run host reflash and do not recur
+Two fix cycles were part of this gate: a print-inside-claim() fixture
+scaffold that killed enumeration outright (replaced by the memcpy
+lastConfig() capture), and a sizing-rate seed ordered after the ring
+arming so first start ran at rate 0 (913d87d). Closed loop at HS is P3;
+this phase's deliverable is the transport, and the numbers above are its
+signature.
