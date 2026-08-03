@@ -120,12 +120,16 @@ the UAC1 fallback behaviour.
 
 ## 4. Memory and sizing (the one genuinely new budget)
 
-Per-frame payload buffer = 8 µframes × alt's `wMaxPacketSize`. For the 8ch
-24-in-4 witness at 44.1 kHz that is 8 × 192 = 1536 B per slot, × 32 slots ≈
-48 KB USBHOST_DMAMEM (OCRAM; fine, but declared, not discovered). Stereo
-third-party DACs are an order of magnitude smaller. `MAX_FRAME_BYTES_HS =
-1536` is the ceiling; alts needing more are rejected at claim (the 16/18-ch
-configs). iTD pool: 40 nodes × 64 B, mirroring the siTD pool's headroom
+Per-frame payload buffer = 8 µframes × a fixed per-µframe ceiling
+(`MAX_UFRAME_BYTES = 224`, covering 48 kHz × 8ch × 4 B), so 1792 B per slot
+× 32 slots ≈ 57 KB in the sketch-placed DMAMEM object (OCRAM; fine, but
+declared, not discovered). The guard is against the NEGOTIATED rate's
+per-µframe need, not the alt's advertised `wMaxPacketSize` — the live
+witness advertises 800 B (sized for 192 kHz) on the very alt we drive at
+44.1 kHz with ≤192 B µframes, so an advertised-MPS ceiling would reject the
+witness itself; rates/alts whose need exceeds the ceiling are refused at
+stream start. Stereo third-party DACs are an order of magnitude smaller.
+iTD pool: 40 nodes × 64 B hardware area, mirroring the siTD pool's headroom
 rationale.
 
 ## 5. Error handling

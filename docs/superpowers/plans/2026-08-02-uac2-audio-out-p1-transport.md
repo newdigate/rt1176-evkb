@@ -769,10 +769,12 @@ uint8_t rate4_buf[4];` and accessor `bool isUAC2() const { return is_uac2; }`.
 - [ ] **Step 2:** `claim()`: replace the hard `bcd_adc != 0x0100` rejection:
 
 ```c
-	if (!uac1_parse_config(descriptors, len, &topo)) return false;
 	is_uac2 = false;
-	if (topo.bcd_adc == 0x0200 || !topo.alt_count) {
-		// UAC1 walk cannot read UAC2 formats; reparse with the UAC2 walk.
+	if (!uac1_parse_config(descriptors, len, &topo) || topo.bcd_adc == 0x0200) {
+		// Not parseable as UAC1 (or the header says 2.0): try the UAC2 walk.
+		// NOTE an earlier revision of this snippet returned false when the
+		// UAC1 walk failed, which made this branch unreachable for devices
+		// the UAC1 parser rejects outright -- caught at implementation.
 		if (!uac2_parse_config(descriptors, len, &topo)) return false;
 		if (dev->speed != 2) return false;   // HS only (spec: FS UAC2 out of scope)
 		is_uac2 = true;
