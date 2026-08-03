@@ -173,9 +173,11 @@ boot, before the host was reset into the closed-loop build:
 Console over the whole closed window (1715 heartbeats, every one
 audio=ready): err/s=0 and pkts/s=1000 on every line, fbrej=0, fberr=0,
 fbpkts +62.3/s sustained (106k good decodes), fresh=1 from the first
-seconds, sizing tracking fb to tens of mHz after a convergence walk
-that completed within ~30 s of boot (slew is ~90 ppm/s across an
-~86 ppm gap plus EMA warm-up).
+seconds, sizing already tracking fb to tens of mHz at the first
+post-boot observation (30 s after reset -- an observation ceiling, not
+the convergence time: the slew is ~90 ppm/s across an ~86 ppm gap and
+the EMA seeds from the first good decode, so the walk itself completes
+within ~2 s of stream start, as the plan predicted).
 
 Ending the collector (SIGINT) resets the xcore, and the last five
 heartbeats caught the fallback path live: fb reads began erroring at
