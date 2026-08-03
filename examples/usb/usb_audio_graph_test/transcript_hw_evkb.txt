@@ -253,9 +253,46 @@ freezing; normal operation unchanged (alt=1 ctrl=0/0/0, 1000 pkt/s).
 What the fix does NOT do, now measurable rather than mysterious: after
 this event the device stops answering control transfers at all. A fresh
 attach gets a fresh budget and still fails four more times
-(ctrl=0/8/0). The driver is behaving correctly; the control path is
-unusable until something re-enumerates it, and only a host reset has
-been observed to recover. Tracked separately.
+(ctrl=0/8/0).
+
+Followed up the same day; four candidate causes were each refuted by
+measurement, and the answer is device-side, not host-side.
+
+  - enumeration_error resuming enumeration on a live device: inert.
+    enumeration_transmit has no case for the completed state (10), so it
+    queues nothing. Read, not assumed.
+  - Transfer_t pool leak on disconnect: refuted twice. delete_Pipe frees
+    both the followup lists and the QH chain, and the queue-fail counter
+    stays 0 through four attempts.
+  - "Just retry longer": refuted, and harmful. Raised the budget to 40
+    and the pool ran dry at attempt 5 (ctrl=0/5/1). A request that hangs
+    holds its three Transfer_t entries until the pipe is deleted, so
+    every retry permanently consumes entries from a pool shared with
+    every other driver. Small and bounded is the only safe policy; the
+    committed three is right.
+  - The self-heal stream retargeting the new device: refuted as the
+    cause. Gating the ring on a selected alternate setting took pkts/s
+    from 1000 to 0 across the window and the wedge persisted unchanged.
+    The gate was kept anyway (d370e80) because streaming to a device in
+    alt 0 is wrong regardless.
+
+What it actually is: a device-side startup race. xrun reloads the
+firmware over JTAG while the device is enumerated; its USB stack answers
+standard requests (enumeration completes, descriptors read, claim
+succeeds) before the audio task is ready to answer CLASS requests, so
+the clock SET_CUR is never answered. Every xrun recreates the race,
+which is why repeated xruns never recover it. A host reset does recover
+it because it re-enumerates a device that has by then settled -- proven
+by resetting the host with the wedged device untouched: same device,
+immediately audio=ready uac2=1 alt=1 ctrl=0/0/0, 1000 pkt/s, feedback
+loop closed.
+
+So this is a property of hot-reloading firmware onto a streaming device,
+not a host driver defect, and no core change is warranted -- which
+matters, because the core's control path is shared by every driver. The
+driver's part (never freezing on a completion that cannot arrive) is
+fixed and gated; the operational rule is that after an xrun reload the
+host needs a reset, or the device a replug, once it has settled.
 
 Two bench findings recorded for follow-up (tracked tasks, out of this
 gate's scope): a device that attaches and re-enumerates within seconds
