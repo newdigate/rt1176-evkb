@@ -41,7 +41,17 @@
   error → `fb_errors`, length-check → decode → gate → EMA, else `fb_rejects`,
   re-fill in place (descriptors stay linked for the stream's lifetime).
 - `disconnect()` deliberately does **not** clear feedback state (self-heal
-  contract, documented in the function) — `fb_itd` inherits this for free.
+  contract). The Task 4 review disproved this plan's original "fb_itd
+  inherits this for free" claim: the framework nulls `device` after
+  disconnect and clears `is_uac2`, so the HS branch went dead during
+  absence and the FS path survived its null `device->address` dereference
+  only because address 0 is ITCM on this chip. The landed contract is a
+  review fix: service() pauses while `device` is null (state frozen, not
+  aged; resumes on re-claim), and disconnect()'s comment now documents
+  that honestly. Two pre-existing gaps were explicitly deferred to
+  follow-up tasks: the different-class/alt re-attach never re-arms
+  (is_streaming wedge), and partial fb-arm failure + fill ACTIVE-first
+  write ordering (hardening).
 - The example `examples/usb/usb_audio_graph_test/` already prints every P3
   observable in its heartbeat (`fb= sizing= fbpkts= fbrej= fberr= fresh=`) and
   its source comment even predicts "back here as fb=44096218-ish". **No
