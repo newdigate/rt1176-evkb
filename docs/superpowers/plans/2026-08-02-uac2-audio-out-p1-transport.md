@@ -677,8 +677,12 @@ static void test_reject_truncated(void)
 // Walk by bLength like uac1_parse_config. Collect:
 //  - AC HEADER (CS_INTERFACE 0x24 subtype 0x01): bcdADC at offset 3..4;
 //    reject unless 0x0200.
-//  - CLOCK_SOURCE (subtype 0x0A): record first id (bClockID at offset 3);
-//    reject the claim later if a terminal names a different entity type.
+//  - CLOCK_SOURCE (subtype 0x0A): record ids (bClockID at offset 3).
+//  - CLOCK_SELECTOR (subtype 0x0B): if bNrInPins (offset 4) == 1, map the
+//    selector id to its single baCSourceID (offset 5) -- the MC200 witness
+//    routes terminal -> selector(1 pin) -> source, and rejecting selectors
+//    outright rejects the witness itself. Multi-input selectors and
+//    multipliers stay rejected. Rate CUR targets the RESOLVED source id.
 //  - INPUT_TERMINAL (subtype 0x02): map bTerminalID -> bCSourceID
 //    (offsets 3 and 7).
 //  - Standard INTERFACE (0x04): track current interface/alt; an AS
