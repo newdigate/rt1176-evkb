@@ -186,6 +186,41 @@ exactly the 62/s poll rate (fberr 25 -> 275), fresh dropped within
 slewed back toward nominal -- staleness behaving as designed, observed
 rather than assumed.
 
+Device-swap re-arm, hardware A/B 2026-08-03
+--------------------------------------------
+The P3 review predicted statically that once any stream had started, a
+re-claim needing the other transport would never re-arm (disconnect()
+leaves is_streaming set; beginStreaming() opened by returning true on
+it). Reproduced and fixed on silicon by swapping the MC200 between its
+two personalities with xrun -- no host reset -- and watching pkts/s.
+The personality change is un-fakeable in the log: the device's PID
+changes, 20B1:000E (2AMi8o8, UAC2/HS) vs 20B1:000F (1AMi2o2, UAC1/FS).
+
+    pre-fix host (build-prefix, driver at 090eadb~1), HS -> FS swap:
+        before  audio=ready uac2=1 alt=1  pkts/s=1000
+        after   audio=ready uac2=0 alt=1  pkts/s=0      <- wedged
+    The claim and the whole control sequence SUCCEED (alt is valid, the
+    transport flag is right); only the descriptors are never rebuilt, so
+    the driver reports a healthy stream while transmitting nothing. That
+    is the signature the fix had to remove, and it is why the bug
+    survived P1 and P3: nothing in the API says anything is wrong.
+
+    fixed host (090eadb), HS -> FS swap:
+        after   audio=ready uac2=0 alt=1  pkts/s=1000 err/s=0
+                underruns=0, sustained over minutes, and the FS feedback
+                loop re-armed with it: fbpkts +62/s, fbrej=2, fberr=0,
+                fresh=1, sizing tracking fb again.
+    fixed host, FS -> HS swap (the reverse, also wedged pre-fix):
+        "device ready, alt=1" then "streaming started" logged, and
+        seq=47 audio=ready uac2=1 alt=1 err/s=0 fresh=1 -- one second
+        after seq=22 audio=ready uac2=0 alt=1. service() dispatches on
+        is_uac2, so a host walking the HS branch at 1000 pkts/s is proof
+        the iTD ring was rebuilt; an un-rebuilt host reads pkts/s=0.
+
+The reverse-direction window stayed short because the swap-back landed
+in the separate re-enumeration wedge below; the rebuild itself is what
+the heartbeat above records.
+
 Two bench findings recorded for follow-up (tracked tasks, out of this
 gate's scope): a device that attaches and re-enumerates within seconds
 (xrun's load sequence does this) wedges the SECOND claim's control
