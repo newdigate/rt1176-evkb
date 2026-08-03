@@ -841,10 +841,15 @@ cd ~/Development/rt1170/evkb && git add examples/usb/usb_audio_graph_test/CMakeL
 ```
 
 - [ ] **Step 2:** `beginStreaming()`: branch on `is_uac2` into a
-`beginStreamingHS()` (private) that mirrors the FS body: check
-`alt->max_packet_size <= MAX_UFRAME_BYTES` (else return false — claim-time
-rejection lands with P2; the double guard is cheap), `itd_pool_init()` was done
-in init(); allocate 32 iTDs, fill each slot:
+`beginStreamingHS()` (private) that mirrors the FS body. Guard on the
+NEGOTIATED RATE's per-microframe need, not the advertised ceiling: the live
+witness advertises wMaxPacketSize 800 on its 24-bit alt (sized for 192 kHz),
+and at 44.1 kHz we use at most 6 samples x 32 B = 192 B of it. Reject when
+`(req_rate / 8000 + 1) * req_channels_device * subslot_out > MAX_UFRAME_BYTES`;
+pass `min(alt->max_packet_size, MAX_UFRAME_BYTES)` as itd_fill_out's
+max_packet so the descriptor's MPS field stays consistent with the buffer
+slice. `itd_pool_init()` must be added to init() beside sitd_pool_init();
+allocate 32 iTDs, fill each slot:
 
 ```c
 	frame_accum = 0;
