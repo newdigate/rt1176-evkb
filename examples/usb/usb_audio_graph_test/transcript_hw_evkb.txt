@@ -131,3 +131,67 @@ lastConfig() capture), and a sizing-rate seed ordered after the ring
 arming so first start ran at rate 0 (913d87d). Closed loop at HS is P3;
 this phase's deliverable is the transport, and the numbers above are its
 signature.
+
+UAC2 P3 feedback gate, 2026-08-03 (loop closed at high speed)
+-------------------------------------------------------------
+Host: itd_fill_in on feedback EP 0x82 (4 B Q16.16 samples/microframe,
+wMaxPacketSize 4, bInterval 4 = 1 ms refresh, polled by two iTDs 16
+frames apart = 16 ms), uac2_feedback_to_mhz with uint32 saturation,
+feeding the unchanged UAC1 gate/EMA/slew servo. Same witness firmware
+and decoupler probes as P1.
+
+Step A, observe-only (BIAS_LOCKED_PPM=0: measurement armed, servo off),
+488 s of console: fbpkts 0 -> 30830 at a constant 63/s, fbrej=0,
+fberr=0, fresh=1, raw fb dithering 44096196..44096330 mHz =
+-86.3..-83.2 ppm -- the same crystal the UAC1 sweep intercept put at
+-85.7, the UAC1 feedback EMA at -83..-86, and P1's open-loop fill drift
+at +84.6 host-relative. Fourth instrument, same number, before the
+servo was allowed to steer. sizing stayed pinned at 44100000 throughout.
+The device then dropped off USB (flaky since a host-Mac power cycle this
+session) and the log recorded a bonus verification: for the following
+two hours every feedback counter and fresh=1 sat frozen with zero error
+accumulation -- the review-added service() pause guard (device nulled by
+the framework after disconnect) doing exactly what its comment says,
+where the pre-review code would have spent those hours re-arming reads
+through a null pointer (readable on this chip only because address 0 is
+ITCM).
+
+Step B/C, closed loop, one VCD (1849.5 s, xscope_missing_marks 0) that
+happens to carry its own A/B because the collector attached at device
+boot, before the host was reset into the closed-loop build:
+    act 1 (device up, host still the previous wedged session, open
+    loop): fill slope +118.3 B/s = +83.8 ppm (/1.4112 for this stream's
+    1411.2 B/s), overflow block-corrections every ~9.6 s, 12 of them --
+    P1's open-loop signature reproduced to the decimal.
+    act 2 (host reset at ~134 s, clean claim, servo on): ONE segment,
+    134..1849.5 s = 28.6 min, slope +0.220 B/s = +0.156 ppm
+    equivalent, ZERO block-corrections (no overflow ever; dryouts only
+    in the 134..151 s stream-start transient). The UAC1 closed-loop
+    soak measured +0.1 ppm; the identical servo behind a completely
+    different transport, descriptor path and packing lands at the same
+    place.
+Console over the whole closed window (1715 heartbeats, every one
+audio=ready): err/s=0 and pkts/s=1000 on every line, fbrej=0, fberr=0,
+fbpkts +62.3/s sustained (106k good decodes), fresh=1 from the first
+seconds, sizing tracking fb to tens of mHz after a convergence walk
+that completed within ~30 s of boot (slew is ~90 ppm/s across an
+~86 ppm gap plus EMA warm-up).
+
+Ending the collector (SIGINT) resets the xcore, and the last five
+heartbeats caught the fallback path live: fb reads began erroring at
+exactly the 62/s poll rate (fberr 25 -> 275), fresh dropped within
+250 ms (FB_FRESH_FRAMES=250 at ~1000 retired frames/s), and sizing
+slewed back toward nominal -- staleness behaving as designed, observed
+rather than assumed.
+
+Two bench findings recorded for follow-up (tracked tasks, out of this
+gate's scope): a device that attaches and re-enumerates within seconds
+(xrun's load sequence does this) wedges the SECOND claim's control
+sequence -- alt stays -1, the self-heal path zombie-streams the old
+ring at nominal into the device's alt 0, and the unopened feedback EP's
+zero-length reads are counted (fbrej at the 63/s poll rate) and never
+applied, sizing pinned at nominal: the reject path proven live, twice,
+by an enumeration bug (suspected Transfer_t pool leak from the aborted
+in-flight control transfer). And JTAG-alive does not imply USB-alive:
+the flash-booted witness survived the Mac power cycle with its USB
+wedged; xrun restarting the same image brought it back.
