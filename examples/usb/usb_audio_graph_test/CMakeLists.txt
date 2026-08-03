@@ -25,6 +25,14 @@ if(NOT BIAS_LOCKED_PPM STREQUAL "")
         BIAS_LOCKED_PPM=${BIAS_LOCKED_PPM} BIAS_MODE_LOCKED=1)
 endif()
 
+# Print the last-claimed device's raw config descriptors once, from loop()
+# context (fixture capture for the UAC2 parser; see the DUMP_CONFIG block in
+# the sketch). Default off so driftrun's console greps stay stable.
+option(DUMP_CONFIG "Hex-dump the last device's configuration descriptors" OFF)
+if(DUMP_CONFIG)
+    target_compile_definitions(usb_audio_graph_test.elf PRIVATE DUMP_CONFIG=1)
+endif()
+
 # --- USBHost_t36 (UAC1 output) ------------------------------------------------
 # Same source set as usb_audio_uac1_test: transport core plus the UAC1 driver.
 set(USBHOST ${EVKB_USBHOST_T36_DIR})

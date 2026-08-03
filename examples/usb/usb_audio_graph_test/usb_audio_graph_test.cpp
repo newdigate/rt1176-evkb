@@ -231,6 +231,30 @@ void loop() {
         announce_bias();
     }
 
+#ifdef DUMP_CONFIG
+    // Fixture capture: print the raw configuration descriptors of whatever
+    // device claim() last saw, once, from loop() context. The driver only
+    // memcpys during enumeration -- printing from there kills the
+    // enumeration itself (measured 2026-08-03, cost half a bench night).
+    {
+        static bool dumped;
+        uint16_t dlen;
+        const uint8_t *d = audioOut.lastConfig(&dlen);
+        // Deliberately late: the console attaches a second or two after
+        // reset, and a dump printed at first enumeration lands in that gap.
+        if (!dumped && dlen && now > 15000) {
+            dumped = true;
+            Serial1.printf("\nCONFIG-DUMP len=%u truncated=%d\n",
+                           (unsigned)dlen, (int)audioOut.configWasTruncated());
+            for (uint16_t i = 0; i < dlen; i++) {
+                Serial1.printf("%02x", d[i]);
+                if ((i & 31) == 31) Serial1.println();
+            }
+            Serial1.println("\nCONFIG-DUMP-END");
+        }
+    }
+#endif
+
     if ((uint32_t)(now - last_beat) >= 1000u) {
         last_beat = now;
         // The rate is in the heartbeat, not just the one-shot startup line:
