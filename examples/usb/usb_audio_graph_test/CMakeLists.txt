@@ -41,7 +41,7 @@ target_sources(usb_audio_graph_test.elf PRIVATE
     ${USBHOST}/memory.cpp
     ${USBHOST}/usb_audio.cpp ${USBHOST}/usb_audio_parse.cpp
     ${USBHOST}/usb_audio_fifo.cpp ${USBHOST}/usb_audio_feedback.cpp
-    ${USBHOST}/usb_audio2_parse.cpp)
+    ${USBHOST}/usb_audio2_parse.cpp ${USBHOST}/usb_audio_ctrl.cpp)
 
 # --- Audio graph --------------------------------------------------------------
 # Only the nodes this graph actually uses, rather than import_evkb_audio_full():

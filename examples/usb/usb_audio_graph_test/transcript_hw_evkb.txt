@@ -221,6 +221,42 @@ The reverse-direction window stayed short because the swap-back landed
 in the separate re-enumeration wedge below; the rebuild itself is what
 the heartbeat above records.
 
+Control-sequence wedge: root cause found, 2026-08-03
+-----------------------------------------------------
+The re-enumeration wedge noted below was chased with the driver's
+ctrl_state exposed in the heartbeat (ctrl=<state>/<timeouts>/<queue
+fails>). Reproduced by xrun-ing the witness firmware while the host
+streamed: the second claim sat at CTRL_SET_CLOCK for 71 consecutive
+seconds, alt never valid.
+
+Cause is in the core, not the device. A driver learns about a control
+transfer ONLY when it completes cleanly: followup_Transfer (ehci.cpp)
+calls the pipe callback for a qTD with neither active nor error bits,
+while an errored transfer is routed to the pipe's
+error_callback_function -- permanently the core's enumeration_error
+(enumeration.cpp:135), which retries enumeration and never tells the
+driver that issued the request. enumeration.cpp:220 is the only path to
+driver->control() and it is on the clean side. A stalled request
+therefore freezes a driver's sequence with nothing able to release it.
+
+The Transfer_t-leak hypothesis was refuted twice: disconnect_Device ->
+delete_Pipe already frees both the followup lists and the QH chain, and
+on the bench the queue-fail counter stayed 0 while four attempts (12
+allocations) passed through a ~9-entry pool -- which also proves the
+transfers are freed between attempts rather than held.
+
+Fixed by not depending on that callback: each step stamps a deadline and
+a watchdog in service() reissues on expiry, bounded, then gives up with
+counters showing why. ctrl_state now returns to idle instead of
+freezing; normal operation unchanged (alt=1 ctrl=0/0/0, 1000 pkt/s).
+
+What the fix does NOT do, now measurable rather than mysterious: after
+this event the device stops answering control transfers at all. A fresh
+attach gets a fresh budget and still fails four more times
+(ctrl=0/8/0). The driver is behaving correctly; the control path is
+unusable until something re-enumerates it, and only a host reset has
+been observed to recover. Tracked separately.
+
 Two bench findings recorded for follow-up (tracked tasks, out of this
 gate's scope): a device that attaches and re-enumerates within seconds
 (xrun's load sequence does this) wedges the SECOND claim's control
