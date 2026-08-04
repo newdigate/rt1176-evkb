@@ -1,0 +1,119 @@
+uacv — macOS as a UAC1 host, 2026-08-04
+========================================
+Second host personality, second class. MC200 reflashed by xrun to
+1AMi2o2xxxxxx (UAC1, full speed); USB device port on the Mac; XTAG attached
+for xscope. 300.5 s capture, 3.9 MB, 3006 blocks, zero missing marks.
+
+The personality change is un-fakeable in the enumeration:
+    PID 20b1:000f (was 000e)      Speed: Up to 12 Mb/s (was 480)
+    CoreAudio: "XMOS xCORE-200 MC (UAC1.0)", 2 in / 2 out, 48000 Hz
+
+macOS chose the format. It picked 48 kHz -- an INTEGER frames-per-packet rate,
+where the fractional-sample law collapses to a single legal size -- and, more
+interestingly, 24-bit in 3-BYTE subslots, not the 16-bit this config is
+usually described as running.
+
+
+The finding: an uninstrumented path forged a PASS, and the vacuity guard
+caught it
+-----------------------------------------------------------------------------
+    or_acc 0x00000000    and_acc 0xFFFFFFFF    nonsilent_frames 0
+
+The observer instrumented the 4-byte subslot path (_send_sample_4) and the
+16-bit path (case 2). It did NOT instrument case 3, the 3-byte packed path --
+which is the one macOS selected.
+
+An uninstrumented path does not read as "no data". It reads as or_acc == 0,
+which is precisely the signature of a silent stream. R3 tests
+(or_acc & 0xFF) == 0 and would have reported
+
+    PASS  low byte never non-zero: samples are left-justified
+
+from code that never executed. A conformance verdict manufactured out of an
+absence, about a host that was in fact sending 300,600 packets of real audio.
+
+What stopped it was the non-silent-frame witness:
+
+    SKIP  only 0 non-silent frames (need 10000); a silent stream would pass
+          this check for the wrong reason
+
+The design argued for that witness against SILENT AUDIO. The actual failure
+was an uninstrumented code path -- a mode nobody anticipated -- and it
+produces an identical signature, so the guard caught it regardless. That is
+the strongest evidence so far that the "never let an absence read as a PASS"
+rule is worth its cost.
+
+Fixed in lib_xua b424b0e0; case 3 now accumulates like the other two.
+
+
+The manifest-contradiction guard also did real work
+----------------------------------------------------
+The first run of this capture was judged with subslot_bytes=2, taken from the
+config's usual description rather than from the device:
+
+    INVALID  declares 2 channels x 2 B = 4 B per audio frame, but packet sizes
+             [282] are not whole multiples of 4 B, and the device counted no
+             non-multiple packets. The observed sizes imply a frame of 6 B.
+             No verdict about the host can be trusted until the two agree
+
+Exit 2, not exit 1: an operator error is not a host failure. The guard named
+the right number (6 B) and the right reason. Corrected manifest -> valid run.
+
+
+Verdicts, corrected manifest
+-----------------------------
+    5 PASS, 0 FAIL, 2 SKIP, 1 WARN      exit 0
+
+    R1  PASS  feedback polled 18782 times (62.5/s)
+    R2  PASS  no packets arrived during alt 0
+    R3  SKIP  uninstrumented path -- see above
+    R4a PASS  all packets within the declared 294 B
+    R4b PASS  all packets whole multiples of 6 B
+    R7  SKIP  passive mode
+    W2  WARN  sizes outside the single legal size [288]: {282: 552}
+    W1  PASS  residual -0.001 ppm
+    W3  PASS  host tracks feedback over 18782 polls
+
+
+macOS honours the device's declared feedback rate in both classes
+------------------------------------------------------------------
+    UAC2/HS   bInterval 4 -> 1 ms     macOS polled 1000.0/s
+    UAC1/FS   bRefresh  4 -> 16 ms    macOS polled   62.5/s
+
+Two different declarations, two exactly matching poll rates. The RT1176 host
+polls 62.5/s in both cases, which at high speed is sixteen times slower than
+the device asks for.
+
+
+W2 at an integer sample rate: honest, but it will always fire
+--------------------------------------------------------------
+At 48 kHz, frames-per-packet is exactly 48.0, so floor and ceiling coincide
+and legal_packet_sizes is the single value {288}. macOS sent 282 B (47 frames)
+552 times out of 300,600 -- 0.18% -- and W2 warned, with accurate arithmetic:
+one frame of deviation.
+
+But an asynchronous host MUST vary packet size to track feedback; that is what
+the feedback endpoint is for. At an integer rate there is no second legal size
+for it to vary INTO, so any conforming async host trips W2 there. The warning
+is not wrong -- the variation is real and does consume FIFO headroom -- but it
+is unavoidable rather than diagnostic, and a reader should know that before
+treating it as a finding about macOS.
+
+Not changing the rule on one capture. Recorded so the next person does not
+mistake it for a defect.
+
+
+class_req_bitmap 0x4 is correct here, not a gap
+------------------------------------------------
+Only bit 2 (SET_INTERFACE) is set; the clock bits are clear. UAC1 sets sample
+rate through an endpoint control, not a Clock Source unit, and the observer's
+hook is on the UAC2 clock unit. Reading this as a missing class request would
+be wrong.
+
+
+Still open
+-----------
+  - R3 has never actually run on a UAC1 capture; the fix is committed but
+    unproven on silicon. A re-capture would settle it.
+  - Cooperative mode still never run against any host.
+  - metrics prints "overflows ?".

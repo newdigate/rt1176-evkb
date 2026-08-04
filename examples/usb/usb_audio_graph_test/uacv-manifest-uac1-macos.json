@@ -1,0 +1,10 @@
+{
+  "audio_class": 1,
+  "speed": "FS",
+  "channels": 2,
+  "subslot_bytes": 3,
+  "sample_rate_hz": 48000,
+  "max_packet_size_bytes": 294,
+  "mode": "passive",
+  "host_note": "macOS CoreAudio, XMOS xCORE-200 MC (UAC1.0) PID 20b1:000f at 12 Mb/s, 48 kHz stereo, 24-bit in 3-byte subslots (macOS chose this, not 16-bit)"
+}
