@@ -19,7 +19,17 @@ detail, and `read_blocks` returning `(time, Block)` pairs is unchanged
 either way, so callers never see it.
 
 Counters are free-running uint32 and may wrap. This module does NOT unwrap
-them -- deciding what a wrap means is the judge's job, not the reader's.
+them -- deciding what a wrap means is the judge's job, not the reader's. It
+does provide `delta32`, because taking a difference in the module's own
+arithmetic is a layout concern; interpreting that difference is not.
+
+Emission rule, binding on the observer as well as on `synth_vcd`: a timestamp
+must never be empty. Once a device stops re-sending idle counters, a state
+block identical to its predecessor would emit a bare `#t` line and the sample
+would disappear from the capture entirely -- and a wholly stationary block is
+exactly what a stalled host looks like, so the samples that vanish are the
+ones that matter most. When nothing else changed, emit word 0 alone as a
+heartbeat.
 """
 from dataclasses import dataclass, field
 
@@ -60,8 +70,19 @@ HIST_SLOTS = 8
 PROBE_BASE = 4  # ids 0..3 are reserved for the existing decoupler probes
 
 
-def _probe_name(i):
+def _signal_name(i):
     return f"uacv_w{i:02d}"
+
+
+def delta32(prev, cur):
+    """Advance of a free-running uint32 counter from `prev` to `cur`.
+
+    The mask is the whole point: an unmasked subtraction turns a counter that
+    wrapped by one into -4294967295 rather than 1. It lives here because the
+    width is this module's fact, not the judge's -- what the advance *means*
+    is still the judge's call.
+    """
+    return (cur - prev) & MASK32
 
 
 @dataclass
@@ -94,14 +115,30 @@ class Block:
     size_hist_size: list = field(default_factory=lambda: [0] * HIST_SLOTS)
     size_hist_count: list = field(default_factory=lambda: [0] * HIST_SLOTS)
 
+    def __post_init__(self):
+        for name in ("size_hist_size", "size_hist_count"):
+            v = getattr(self, name)
+            if len(v) != HIST_SLOTS:
+                raise ValueError(
+                    f"{name} must have {HIST_SLOTS} entries, got {len(v)}")
+
     def sizes(self):
         """Populated histogram slots as {packet size in bytes: count}.
 
         A zero size means the slot was never claimed, so it is dropped rather
         than reported as a zero-byte packet class.
+
+        Counts for a repeated size are summed. The device claims slots without
+        collisions by construction, so this is defence against a malformed
+        capture, not expected input -- but overwriting would silently lose
+        packets, and a judge cross-checking sum(sizes().values()) against
+        pkt_count would see an unexplainable shortfall.
         """
-        return {s: c for s, c in zip(self.size_hist_size, self.size_hist_count)
-                if s != 0}
+        d = {}
+        for s, c in zip(self.size_hist_size, self.size_hist_count):
+            if s != 0:
+                d[s] = d.get(s, 0) + c
+        return d
 
     def to_words(self):
         w = [0] * BLOCK_WORDS
@@ -147,19 +184,26 @@ def synth_vcd(path, timed_blocks, timescale_ps=1000000):
         "$timescale", f" {_timescale_text(timescale_ps)}", "$end",
     ]
     for i in range(BLOCK_WORDS):
-        lines.append(f"$var wire 32 {ids[i]} {_probe_name(i)} $end")
+        lines.append(f"$var wire 32 {ids[i]} {_signal_name(i)} $end")
     lines.append("$enddefinitions $end")
 
     prev = None
     for t, blk in timed_blocks:
         words = blk.to_words()
+        # Standard VCD semantics: emit only what moved. The reader carries the
+        # rest forward, which is also what a real xscope capture looks like
+        # once the device stops re-sending idle counters.
+        changed = [i for i, v in enumerate(words)
+                   if prev is None or prev[i] != v]
+        if not changed:
+            # Heartbeat -- see the emission rule in the module docstring. A
+            # block identical to its predecessor would otherwise emit a bare
+            # "#t" line and vanish from the capture, which is precisely what
+            # a stalled host produces for its entire duration.
+            changed = [0]
         lines.append(f"#{round(t / tick_s)}")
-        for i, v in enumerate(words):
-            # Standard VCD semantics: emit only what moved. The reader carries
-            # the rest forward, which is also what a real xscope capture looks
-            # like once the device stops re-sending idle counters.
-            if prev is None or prev[i] != v:
-                lines.append(f"b{v:b} {ids[i]}")
+        for i in changed:
+            lines.append(f"b{words[i]:b} {ids[i]}")
         prev = words
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -204,15 +248,17 @@ def read_blocks(path):
 
     Words that did not change at a timestamp carry their previous value
     forward. One Block is produced per timestamp at which at least one state
-    word changed -- a timestamp that only carried, say, a lost-sample marker
-    adds no new state and is skipped.
+    word was WRITTEN -- written, not changed: under the heartbeat rule a
+    stationary block rewrites word 0 with the value it already had, and that
+    sample must still be reported. A timestamp that carried only a lost-sample
+    marker writes no state word and is skipped.
 
-    Raises ValueError if the capture has no $timescale, or if it does not
-    declare all 36 `uacv_w*` signals.
+    Raises ValueError if the capture has no $timescale, if it does not declare
+    all 36 `uacv_w*` signals, or if its first timestamp does not write all 36.
     """
     with open(path) as f:
         lines = f.read().split("\n")
-    tick_s, names, i = _parse_header(lines)
+    tick_s, names, first_data_line = _parse_header(lines)
 
     # Map by name, not by probe id: the id is an emission detail, the name is
     # the contract.
@@ -227,8 +273,8 @@ def read_blocks(path):
     # never-declared word from a genuinely zero one, and would read the
     # plausible-looking zero as real data.
     declared = set(word_of.values())
-    missing = [i for i in range(BLOCK_WORDS) if i not in declared]
-    unknown = sorted(i for i in declared if i >= BLOCK_WORDS)
+    missing = [w for w in range(BLOCK_WORDS) if w not in declared]
+    unknown = sorted(w for w in declared if w >= BLOCK_WORDS)
     if missing or unknown:
         raise ValueError(
             f"capture declares {len(declared)} of {BLOCK_WORDS} uacv_w* "
@@ -238,23 +284,46 @@ def read_blocks(path):
     out = []
     state = [0] * BLOCK_WORDS
     t = 0
-    dirty = False
-    for ln in lines[i:]:
+    written = set()   # word indices written at the timestamp being read
+    checked_first = False
+
+    def flush():
+        # Declaring all 36 signals does not mean all 36 arrived: a capture that
+        # lost its opening samples would hand the judge and_acc = 0, the exact
+        # stuck-at-zero fault the all-ones default exists to catch, dressed up
+        # as real data. Demand a complete first block instead of seeding the
+        # state with defaults -- seeding would set magic to MAGIC and defeat
+        # the wire-format check that reads it.
+        nonlocal checked_first
+        if not written:
+            return
+        if not checked_first:
+            absent = [w for w in range(BLOCK_WORDS) if w not in written]
+            if absent:
+                raise ValueError(
+                    f"first timestamp writes {len(written)} of {BLOCK_WORDS} "
+                    f"words; missing word indices {absent}")
+            checked_first = True
+        out.append((t * tick_s, Block.from_words(state)))
+
+    for ln in lines[first_data_line:]:
         ln = ln.strip()
         if not ln:
             continue
         if ln[0] == "#":
-            if dirty:
-                out.append((t * tick_s, Block.from_words(state)))
+            flush()
             t = int(ln[1:])
-            dirty = False
+            written = set()
         elif ln[0] == "b":
+            # Only the b-form is handled: every uacv_w* $var is 32 bits wide,
+            # and the VCD spec permits the scalar form only for 1-bit vars, so
+            # a state word can never legally appear as one. (count_missing_marks
+            # accepts both because a marker may be declared 1-bit.)
             val_s, sid = ln[1:].split()
             if sid in word_of:
                 state[word_of[sid]] = int(val_s, 2) & MASK32
-                dirty = True
-    if dirty:
-        out.append((t * tick_s, Block.from_words(state)))
+                written.add(word_of[sid])
+    flush()
     return out
 
 
@@ -265,21 +334,30 @@ def count_missing_marks(path):
     Any non-zero count means samples were dropped between the device and the
     host, so every counter in the capture is a LOWER BOUND -- a judge must not
     read a clean count as proof the device behaved.
+
+    Only non-zero records count. A zero record says no data was missing at
+    that instant, and counting it would make a clean capture look untrustworthy
+    -- it would also disagree with tools/vcdfill.py, which filters the same
+    probe the same way.
     """
     with open(path) as f:
         lines = f.read().split("\n")
-    _, names, i = _parse_header(lines)
+    _, names, first_data_line = _parse_header(lines)
     sids = {sid for sid, name in names.items() if name == "Missing_Data"}
     if not sids:
         return 0
     n = 0
-    for ln in lines[i:]:
+    for ln in lines[first_data_line:]:
         ln = ln.strip()
         if not ln or ln[0] == "#":
             continue
+        # Both forms: the marker's width is xscope's choice, and a 1-bit $var
+        # is emitted scalar. "1" in the value is the non-zero test that also
+        # survives x/z bits without raising.
         if ln[0] == "b":
-            if ln[1:].split()[1] in sids:
+            val_s, sid = ln[1:].split()
+            if sid in sids and "1" in val_s:
                 n += 1
-        elif ln[1:] in sids:  # scalar change, e.g. "1!"
+        elif ln[1:] in sids and ln[0] == "1":
             n += 1
     return n
