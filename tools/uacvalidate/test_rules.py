@@ -212,5 +212,50 @@ class TestCounterWrap(unittest.TestCase):
         self.assertEqual(v.evidence["feedback_polls"], 0x20)
 
 
+class TestW1ResidualDrift(unittest.TestCase):
+    def test_pass_on_a_closed_loop(self):
+        v = rules.w1_residual_drift(series(Block(), healthy()), MAN,
+                                    fill_slope_bytes_per_s=0.220,
+                                    correction_quantum_bytes=1024)
+        self.assertEqual(v.level, PASS)
+
+    def test_warn_on_a_biased_servo(self):
+        """+4.8 ppm: the dither-chasing servo. 1411200 B/s * 4.8e-6 = 6.77 B/s."""
+        v = rules.w1_residual_drift(series(Block(), healthy()), MAN,
+                                    fill_slope_bytes_per_s=6.77,
+                                    correction_quantum_bytes=1024)
+        self.assertEqual(v.level, WARN)
+        self.assertIn("ppm", v.consequence)
+        self.assertIn("s", v.consequence)
+
+    def test_skip_without_a_slope(self):
+        v = rules.w1_residual_drift(series(Block(), healthy()), MAN,
+                                    fill_slope_bytes_per_s=None,
+                                    correction_quantum_bytes=1024)
+        self.assertEqual(v.level, SKIP)
+
+    def test_ppm_uses_the_stream_byte_rate_not_four_bytes_per_frame(self):
+        ppm = rules.slope_to_ppm(6.77, MAN)
+        self.assertAlmostEqual(ppm, 4.80, places=1)
+
+
+class TestW3FeedbackTracking(unittest.TestCase):
+    def test_pass_when_sizing_tracks_feedback(self):
+        v = rules.w3_feedback_tracked(series(Block(), healthy()), MAN,
+                                      fill_slope_bytes_per_s=0.220)
+        self.assertEqual(v.level, PASS)
+
+    def test_warn_when_host_polls_but_ignores(self):
+        v = rules.w3_feedback_tracked(series(Block(), healthy()), MAN,
+                                      fill_slope_bytes_per_s=118.3)
+        self.assertEqual(v.level, WARN)
+
+    def test_skip_when_feedback_never_polled(self):
+        v = rules.w3_feedback_tracked(
+            series(Block(), healthy(fb_poll_count=0)), MAN,
+            fill_slope_bytes_per_s=118.3)
+        self.assertEqual(v.level, SKIP)
+
+
 if __name__ == "__main__":
     unittest.main()

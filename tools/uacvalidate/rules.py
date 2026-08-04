@@ -251,6 +251,91 @@ def w2_packet_size_shape(blocks, man):
                    f"{sorted(legal)}", evidence=ev)
 
 
+# A residual this small is indistinguishable from measurement noise over any
+# practical soak: at 1.4 MB/s it is under 2 B/s, inside one packet of jitter.
+DRIFT_NOISE_FLOOR_PPM = 1.0
+
+
+def slope_to_ppm(slope_bytes_per_s, man):
+    """Convert an OUT-FIFO fill slope to a rate error in ppm.
+
+    vcdfill.py's printed ppm column assumes 4 bytes per frame. This does not:
+    it uses the manifest's actual byte rate, which is why an 8ch 24-in-4
+    stream does not need the 1.4112 correction factor applied by hand.
+    """
+    return slope_bytes_per_s / man.nominal_bytes_per_second * 1e6
+
+
+def w1_residual_drift(blocks, man, fill_slope_bytes_per_s,
+                      correction_quantum_bytes):
+    ev = {"fill_slope_bytes_per_s": fill_slope_bytes_per_s,
+          "correction_quantum_bytes": correction_quantum_bytes}
+    if fill_slope_bytes_per_s is None:
+        return Verdict("W1", SKIP, "no fill-probe slope available",
+                       missing_witness="probe 2 (out_fifo_fill) in the capture",
+                       evidence=ev)
+    ppm = slope_to_ppm(fill_slope_bytes_per_s, man)
+    ev["residual_ppm"] = round(ppm, 3)
+    if abs(ppm) <= DRIFT_NOISE_FLOOR_PPM:
+        return Verdict("W1", PASS,
+                       f"residual rate error {ppm:+.3f} ppm, at the noise floor",
+                       evidence=ev)
+    seconds = correction_quantum_bytes / abs(fill_slope_bytes_per_s)
+    ev["seconds_between_corrections"] = round(seconds, 1)
+    return Verdict(
+        "W1", WARN,
+        f"residual rate error {ppm:+.2f} ppm after the feedback loop",
+        consequence=(
+            # The ppm is restated here rather than left to the summary: the
+            # consequence has to stand on its own. report.render prints it on
+            # its own line, --json exposes the field on its own, and a WARN
+            # whose arithmetic does not name the quantity it was derived from
+            # cannot be checked by the reader. The plan's draft omitted it and
+            # its own test caught that.
+            f"a {ppm:+.2f} ppm residual against the device's "
+            f"{correction_quantum_bytes} B correction quantum: at "
+            f"{fill_slope_bytes_per_s:+.3f} B/s this host will force a "
+            f"block correction -- silence insertion or dropped packets, "
+            f"audible either way -- every {seconds:.0f} s "
+            f"({seconds / 60:.1f} min)."),
+        evidence=ev)
+
+
+def w3_feedback_tracked(blocks, man, fill_slope_bytes_per_s):
+    a, b = _span(blocks)
+    polls = delta(a.fb_poll_count, b.fb_poll_count)
+    ev = {"feedback_polls": polls, "device_fb_value": f"0x{b.fb_value:08X}",
+          "fill_slope_bytes_per_s": fill_slope_bytes_per_s}
+    if polls == 0:
+        return Verdict(
+            "W3", SKIP,
+            "host never polled feedback, so there is no tracking to assess "
+            "(R1 covers this)",
+            missing_witness="any feedback poll", evidence=ev)
+    if fill_slope_bytes_per_s is None:
+        return Verdict("W3", SKIP, "no fill-probe slope available",
+                       missing_witness="probe 2 (out_fifo_fill) in the capture",
+                       evidence=ev)
+    ppm = slope_to_ppm(fill_slope_bytes_per_s, man)
+    ev["residual_ppm"] = round(ppm, 3)
+    if abs(ppm) <= DRIFT_NOISE_FLOOR_PPM:
+        return Verdict("W3", PASS,
+                       f"host tracks the device's feedback: residual "
+                       f"{ppm:+.3f} ppm over {polls} polls", evidence=ev)
+    return Verdict(
+        "W3", WARN,
+        f"host polled feedback {polls} times but still runs {ppm:+.2f} ppm off",
+        consequence=(
+            f"the device is reporting its rate and the host is reading it, yet "
+            f"a {ppm:+.2f} ppm residual remains -- the servo is receiving the "
+            f"information and not acting on it correctly. A servo that chases "
+            f"the raw dithered report rather than its mean produces exactly "
+            f"this signature."),
+        evidence=ev)
+
+
+# W1 and W3 are NOT in ALL_RULES: like r1_feedback_polled they take extra
+# arguments, and the CLI invokes them directly.
 # r1_feedback_polled is NOT here: it takes the fill slope so its consequence
 # can quantify the glitch cadence, so the CLI calls it directly alongside W1
 # and W3. Everything in ALL_RULES has the uniform (blocks, manifest) signature.
