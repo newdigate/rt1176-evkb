@@ -196,20 +196,49 @@ mis-set expectation silently reinterpret data — the failure that produced the
 `SKIP` always states the missing witness. Exit code is non-zero on any FAIL,
 so this is gate-able like the QEMU runners.
 
-| Id | Assertion | Level | Evidence | Citation |
+One table, with an explicit level column. Two tables split by level would imply
+that an `R` id always means FAIL, which stopped being true once the clauses
+were read.
+
+| Id | Assertion / observation | Level | Evidence | Citation or consequence |
 |---|---|---|---|---|
-| R1 | Host polled the feedback endpoint at least once while streaming | FAIL | fb-poll count, alt state | UAC2 §3.16.2.2 **verified**; USB 2.0 §5.12.4.2 `[UNVERIFIED]` |
+| R1 | Host never polled the feedback endpoint while streaming | **WARN** | fb-poll count, alt state | **No clause obliges the host.** Consequence: unbounded drift ⟹ block correction every T s |
 | R2 | No packets arrived while the OUT interface was in alt 0 | FAIL | packet count vs alt state | UAC2 §3.16.2, §4.9.1 partial; USB 2.0 §9.4.10 `[UNVERIFIED]` |
 | R3 | Samples left-justified in the subslot | FAIL | `orAcc`/`andAcc`, non-silent count | Audio Data Formats 2.0 §2.3.1 `[DOC MISSING]` |
-| R4a | No packet exceeds `wMaxPacketSize` | FAIL | size histogram, manifest | USB 2.0 §5.6.3 `[UNVERIFIED]` |
+| R4a | No packet exceeds `wMaxPacketSize` | FAIL | size histogram, manifest | USB 2.0 §5.6.3 **partly verified** — see below |
 | R4b | Every packet is a whole number of audio frames | FAIL | not-multiple count, short-discarded count | UAC2 frame structure `[UNVERIFIED]` |
 | R7 | Sample continuity — no drops or duplications (*cooperative only*) | FAIL | pattern-error count, first-error index | weakest citation in the set — see below |
+| W1 | Residual rate error from fill slope | WARN | fill slope, correction quantum | "+X ppm ⟹ this device block-corrects every T s" |
+| W2 | Packet sizes outside `{floor, ceil}` of the nominal frame count | WARN | size histogram | extra FIFO wander ⟹ headroom consumed |
+| W3 | Host polls feedback but does not track it | WARN | fb value, fill slope | the residual produced, and its consequence |
 
-| Id | Observation | Level | Consequence stated |
-|---|---|---|---|
-| W1 | Residual rate error from fill slope | WARN | "+X ppm ⟹ this device block-corrects every T s", from the measured correction quantum |
-| W2 | Packet sizes outside `{floor, ceil}` of the nominal frame count | WARN | extra FIFO wander ⟹ headroom consumed |
-| W3 | Host's packet sizing does not track the device's reported feedback | WARN | the residual produced, and its consequence |
+### R1 is a WARN, not a FAIL — and this is the headline finding
+
+The founding defect of this whole investigation turns out not to be a spec
+violation. USB 2.0 §5.12.4.2, read directly:
+
+> An asynchronous sink **must provide** explicit feedback to the host […]
+> This **allows** the host to continuously adjust the number of samples sent
+> to the sink so that neither underflow or overflow of the data buffer
+> occurs. Likewise, an adaptive source **must receive** explicit feedback
+> from the host […]
+
+Every `must`/`shall` in the whole of §5.12.4 involving the host is one of
+those two sentences, and both place the obligation on the **device**. The
+second concerns an *adaptive source* — the IN direction, not the async-sink
+OUT case this tool validates. Nothing requires a host to read an asynchronous
+sink's feedback endpoint.
+
+So a host that ignores feedback entirely is **conformant and ruinous**, which
+is exactly what the WARN level exists to express. The consequence arithmetic
+is already available and already validated: the device's crystal offset
+against host nominal, divided into the correction quantum, gives
+seconds-to-glitch — the same arithmetic the locked-bias sweep confirmed at
+slope 0.9909 across six points.
+
+This is the clearest possible vindication of the spec-literal rule and of
+refusing to cite from memory. An earlier draft of this design asserted R1 as
+a hard FAIL citing §5.12.4.2. Reading §5.12.4.2 reversed it.
 
 W3 makes defect #2 directly computable: the device emits its own feedback
 value, so the judge compares what the device asked for against what the host
@@ -253,23 +282,39 @@ from an unknown build is not evidence.
 
 ## Citation status
 
-The two documents on disk do not contain the clauses this tool must cite.
-
 - `docs/usb_20g.pdf` is **not** the USB 2.0 specification. `pdfinfo` reports
   `usb2tech_ovr.PDF`, 6 pages, Acrobat PDFWriter 4.0, October 1999 — a
-  technology overview. §5.12.4.2 is not in it.
+  technology overview.
+- **The real USB 2.0 specification was already on this machine**, inside
+  `~/Downloads/usb_20_20250603.zip` at
+  `usb_20_20250603/usb_20_20240927/usb_20_20240927/usb_20.pdf`. USB-IF ships
+  the core spec as a ZIP of the specification plus its ECNs and errata, never
+  as a standalone `usb_20.pdf` download, which is why searching for that
+  filename on usb.org finds nothing.
 - `docs/Audio2_with_Errata_and_ECN_through_Apr_2_2025.pdf` is the correct
-  Audio 2.0 class document, but it delegates both rules this tool needs.
-  §3.16.2.2 refers feedback-pipe formatting to USB 2.0 §5.12.4.2 and §9.6.6 —
-  confirming the pointer, while the normative text lives elsewhere. §3.16.2.3
-  hands audio data formats to a separate document, which is where the
-  left-justification rule lives.
+  Audio 2.0 class document, but §3.16.2.3 hands audio data formats to a
+  separate document — which is where the left-justification rule lives.
 
-**Two documents to fetch, both free from usb.org: `usb_20.pdf` and
-`frmts20.pdf` (USB Audio Data Formats 2.0).** Until they are on disk, every
-citation is written `[UNVERIFIED]` or `[DOC MISSING]` and no FAIL text states
-a clause as fact. A validator that mis-cites is worse than one that does not
-cite.
+### Verified against the primary document
+
+| Clause | Status |
+|---|---|
+| USB 2.0 §5.12.4.2 "Feedback" | **Verified — and it reverses R1.** Obligation is on the sink, not the host. See the R1 section above. |
+| USB 2.0 §5.6.3 "Isochronous Transfer Packet Size Constraints" | **Partly verified.** Confirms the endpoint declares a maximum payload, that system software reserves bus time for exactly that, and the absolute limits (1,023 B FS, 1,024 B HS). The explicit "a host must not exceed the declared `wMaxPacketSize`" wording still needs pinning before R4a's FAIL text quotes it. |
+
+### Still missing
+
+**Audio Data Formats 2.0** — the source of R3's left-justification rule.
+USB-IF does not publish it as a standalone `frmts20.pdf`; it ships inside the
+Audio 2.0 bundle on the "Audio Devices Rev. 2.0 and Adopters Agreement" page,
+typically as `Frmts20 final.pdf`. (Formats **1.0** *is* standalone, at
+`usb.org/sites/default/files/frmts10.pdf`, but it does not govern UAC2
+subslots.) Until it is on disk, R3 keeps `[DOC MISSING]` and its FAIL text
+does not quote a clause.
+
+The rule stands: no FAIL states a clause as fact until the clause has been
+read. R1 is the proof of why — it was asserted as a FAIL from memory, and the
+primary document said otherwise.
 
 ## Modes
 
