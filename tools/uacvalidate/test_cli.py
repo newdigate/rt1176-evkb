@@ -322,6 +322,23 @@ class TestCaptureInvalidations(CliCase):
         self.assertEqual(levels["W2"], "WARN")
         self.assertEqual(levels["R4a"], "PASS")
 
+    def test_scale_is_not_gated_on_the_device_frame_count(self):
+        """Divisibility defers to the device's own non-multiple count; scale
+        must not. The two tests answer different questions -- 'does the
+        declared frame divide these packets' versus 'is the declared stream
+        the same size as this one' -- and the device's frame accounting speaks
+        only to the first.
+
+        Here the host genuinely sent 17 non-multiple packets AND the manifest
+        is 4x wrong. R4b's FAIL is real but unreportable: it was computed
+        against a format declaration the capture contradicts, so the run is
+        INVALID and the operator fixes the manifest before anyone accuses this
+        host of anything."""
+        self.write_manifest(channels=2, max_packet_size_bytes=1536)
+        rc, doc = self.run_json(self.vcd(healthy_pair(pkt_not_multiple=17)))
+        self.assertEqual(rc, 2)
+        self.assert_only_capture_verdict(doc)
+
     def test_scale_is_not_judged_on_a_partial_histogram(self):
         """An overflowed histogram means the recorded packets are not the
         whole population, so their mean is not the stream's mean. Accusing the

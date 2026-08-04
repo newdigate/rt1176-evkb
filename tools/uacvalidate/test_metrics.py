@@ -98,6 +98,18 @@ class TestStreamMetrics(unittest.TestCase):
         self.assertIn("62.5/s", d["feedback polls"])
         self.assertIn("0x000B0000", d["device feedback value"])
 
+    def test_the_feedback_value_says_it_is_undecoded(self):
+        """The raw hex has to announce itself as raw.
+
+        Decoding needs the 10.14-at-FS vs 16.16-at-HS choice AND the shift
+        lib_xua applies, which no capture has confirmed. A bare hex word with
+        no marker invites a reader to assume it was decoded and found
+        uninteresting, or invites a later contributor to "helpfully" convert
+        it to Hz using a guess. The marker is the deferral, made visible."""
+        d = as_dict(metrics.collect(pair(), MAN))
+        self.assertIn("raw", d["device feedback value"])
+        self.assertIn("undecided", d["device feedback value"])
+
     def test_alt_transitions_are_listed_with_timestamps(self):
         blocks = [(0.0, Block(alt_out=0)), (1.0, Block(alt_out=1)),
                   (2.0, Block(alt_out=1)), (3.0, Block(alt_out=0))]
