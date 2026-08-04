@@ -69,6 +69,14 @@ The first emission must write all 37 words. The reader refuses a capture whose
 first timestamp is incomplete, rather than zero-filling: a partial block is a
 different wire format, not a partial reading of this one.
 
+**The observer writes all 37 words on every emission.** Do not delta-encode on
+the device: it makes each block self-contained, satisfies the heartbeat rule
+trivially, and keeps the repeated-word-index grouping exact, at a bandwidth
+cost already accounted for below. Delta encoding exists only in the judge's
+*synthetic* generator, where it is a property being tested rather than a
+transport optimisation — which is why the heartbeat rule is written in general
+terms above rather than as "always write 37".
+
 ## Emission format: SCALAR — decided by measurement, 2026-08-04
 
 37 scalar probes at ids 4..40, one per word, named `uacv_w00` … `uacv_w36`.
