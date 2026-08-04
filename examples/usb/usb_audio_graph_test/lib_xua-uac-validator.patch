@@ -1,0 +1,1226 @@
+From 56033e1669cf23d929a748d09d9883540d66a720 Mon Sep 17 00:00:00 2001
+From: Newdigate <nicnewdigate@gmail.com>
+Date: Sun, 2 Aug 2026 18:57:18 +0100
+Subject: [PATCH 1/7] decouple: xscope probes for OUT buffer under/overflow and
+ fill
+
+Instrumentation only -- no existing logic is changed. Added while chasing a
+periodic glitch on a UAC1 asynchronous stream, to get the device's own view
+of its OUT buffer instead of inferring it from recorded analogue audio.
+
+xscope_int() rather than debug_printf(): it writes to a hardware-buffered
+probe instead of doing I/O, so it is safe in the decoupler's real-time path.
+A printf here would perturb the very timing being measured and could
+manufacture the glitches it was meant to find.
+
+Requires -DXSCOPE. -fxscope alone defines only _XSCOPE_PROBES_INCLUDE_FILE,
+so without it every probe silently compiles to a no-op and the VCD comes out
+empty.
+
+Two known weaknesses, unresolved:
+
+  - The fill probe emits space_left, a raw pointer difference carrying a
+    special case that flips sign as the ring wraps. It is not a fill level,
+    and a drift fit over it gives a slope of 0.222 where calibrated
+    arithmetic demands 1.000. It should emit (wrptr - rdptr) wrapped into
+    the buffer size.
+  - Both outUnderflow = 1 sites are stream-reset points, not runtime
+    dry-outs, so that probe fires once at startup and says nothing about
+    steady state. The overflow probe is at a genuine runtime event.
+
+Probe ids are hardcoded 0/1/2 across this file and main.xc, and would
+silently mismatch if xscope_register were reordered.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ lib_xua/src/core/buffer/decouple/decouple.xc | 34 ++++++++++++++++++++
+ lib_xua/src/core/main.xc                     |  7 +++-
+ 2 files changed, 40 insertions(+), 1 deletion(-)
+
+diff --git a/lib_xua/src/core/buffer/decouple/decouple.xc b/lib_xua/src/core/buffer/decouple/decouple.xc
+index d3f55c9b..f9e6c517 100644
+--- a/lib_xua/src/core/buffer/decouple/decouple.xc
++++ b/lib_xua/src/core/buffer/decouple/decouple.xc
+@@ -109,9 +109,29 @@ int g_aud_to_host_fill_level;
+ 
+ int aud_data_remaining_to_device = 0;
+ 
++#ifdef XSCOPE
++#include <xscope.h>
++#define XUA_PROBE_UNDERFLOW()  xscope_int(0, ++g_outUnderflowCount)
++#define XUA_PROBE_OVERFLOW()   xscope_int(1, ++g_outOverflowCount)
++#define XUA_PROBE_FILL(v)      xscope_int(2, (unsigned)(v))
++#else
++#define XUA_PROBE_UNDERFLOW()  (g_outUnderflowCount++)
++#define XUA_PROBE_OVERFLOW()   (g_outOverflowCount++)
++#define XUA_PROBE_FILL(v)      ((void)(v))
++#endif
++
+ /* Audio over/under flow flags */
+ unsigned outUnderflow = 1;
+ unsigned outOverflow = 0;
++
++/* Instrumentation: how often the OUT buffer has actually run dry or filled up.
++ * The flags above are state, not events, so they cannot answer "how often".
++ * xscope_int() writes to a hardware-buffered probe rather than doing I/O, so
++ * it is safe in this real-time path in a way debug_printf would not be --
++ * printing from here would perturb the very timing being measured. */
++unsigned g_outUnderflowCount = 0;
++unsigned g_outOverflowCount = 0;
++unsigned g_fillProbeDiv = 0;
+ unsigned inUnderflow = 1;
+ 
+ int aud_req_in_count = 0;
+@@ -833,6 +853,7 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+ #if (NUM_USB_CHAN_OUT > 0)
+                     /* Reset OUT buffer state */
+                     outUnderflow = 1;
++                    XUA_PROBE_UNDERFLOW();
+                     SET_SHARED_GLOBAL(g_aud_from_host_rdptr, aud_from_host_fifo_start);
+                     SET_SHARED_GLOBAL(g_aud_from_host_wrptr, aud_from_host_fifo_start);
+                     SET_SHARED_GLOBAL(aud_data_remaining_to_device, 0);
+@@ -923,6 +944,7 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+                 unpackState = 0;
+ 
+                 outUnderflow = 1;
++                XUA_PROBE_UNDERFLOW();
+                 if(outOverflow)
+                 {
+                     /* If we were previously in overflow we wont have marked as ready */
+@@ -1019,6 +1041,17 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+                 space_left = aud_from_host_fifo_end - g_aud_from_host_wrptr;
+             }
+ 
++            /* Instrumentation: free space in the OUT FIFO, every 10th packet
++             * (100 Hz). This is the device's own view of whether the host is
++             * over- or under-feeding, and unlike the over/underflow flags it
++             * is continuous -- drift shows up long before it forces a
++             * correction. Costs one compare in the per-frame path. */
++            if(++g_fillProbeDiv >= 10)
++            {
++                g_fillProbeDiv = 0;
++                XUA_PROBE_FILL(space_left);
++            }
++
+ #if (XUD_USB_ISO_MAX_TXNS_PER_MICROFRAME > 1)
+             if (space_left <= 0 || space_left >= REQD_BUF_SIZE_ERR_HANDLING_HIBW_OUT)
+ #else
+@@ -1032,6 +1065,7 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+             {
+                 /* Enter OUT over flow state */
+                 outOverflow = 1;
++                XUA_PROBE_OVERFLOW();
+ 
+ #ifdef DEBUG_LEDS
+                 led(c_led);
+diff --git a/lib_xua/src/core/main.xc b/lib_xua/src/core/main.xc
+index 3ceb2596..d5254927 100644
+--- a/lib_xua/src/core/main.xc
++++ b/lib_xua/src/core/main.xc
+@@ -245,7 +245,12 @@ void thread_speed()
+ #ifdef XSCOPE
+ void xscope_user_init()
+ {
+-    xscope_register(0, 0, "", 0, "");
++    /* Two probes for the OUT decoupler buffer. Named so `xrun --xscope`
++     * output identifies them without cross-referencing probe ids. */
++    xscope_register(3,
++                    XSCOPE_CONTINUOUS, "out_underflow", XSCOPE_UINT, "count",
++                    XSCOPE_CONTINUOUS, "out_overflow",  XSCOPE_UINT, "count",
++                    XSCOPE_CONTINUOUS, "out_fifo_free", XSCOPE_UINT, "bytes");
+ 
+     xscope_config_io(XSCOPE_IO_BASIC);
+ }
+-- 
+2.39.1
+
+
+From 26d13baba4e412653a887945ee4fc8e02cc6b74c Mon Sep 17 00:00:00 2001
+From: Newdigate <nicnewdigate@gmail.com>
+Date: Sun, 2 Aug 2026 19:42:37 +0100
+Subject: [PATCH 2/7] decouple: fix the fill probe, count runtime dry-outs
+
+The fill probe emitted space_left, a pointer difference whose meaning
+flips at the ring wrap -- a drift fit over it gave slope 0.222 where
+calibrated arithmetic demands 1.000. Emit true occupancy instead:
+(wrptr - rdptr) wrapped into BUFF_SIZE_OUT, sampled at the same 100 Hz
+cadence. Validated on hardware immediately after: at a locked host trim
+of +150 ppm the fill ramps at +41.17 B/s with r2 0.96-0.99 across six
+consecutive overflow cycles -- a clean linear instrument.
+
+The out_underflow probe covered only the two literal outUnderflow = 1
+sites, which are stream-reset points. The FIFO can also run dry
+mid-stream through the computed assignment in handle_audio_request();
+that was the un-instrumented path, and it is the audible glitch when the
+host under-feeds: from there the device inserts OUT_BUFFER_PREFILL bytes
+of silence before resuming. Count it in a dedicated g_outDryoutCount --
+incremented at interrupt level where an xscope call would not be safe,
+emitted by the decoupler at the fill cadence as probe 3 (out_dryout).
+
+Probe ids 0..2 keep their meaning; out_fifo_free is renamed
+out_fifo_fill since the quantity changed. Ids are position-defined by
+xscope_register order in main.xc -- append only.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ lib_xua/src/core/buffer/decouple/decouple.xc | 42 ++++++++++++++++++--
+ lib_xua/src/core/main.xc                     | 12 ++++--
+ 2 files changed, 47 insertions(+), 7 deletions(-)
+
+diff --git a/lib_xua/src/core/buffer/decouple/decouple.xc b/lib_xua/src/core/buffer/decouple/decouple.xc
+index f9e6c517..0b744127 100644
+--- a/lib_xua/src/core/buffer/decouple/decouple.xc
++++ b/lib_xua/src/core/buffer/decouple/decouple.xc
+@@ -114,10 +114,12 @@ int aud_data_remaining_to_device = 0;
+ #define XUA_PROBE_UNDERFLOW()  xscope_int(0, ++g_outUnderflowCount)
+ #define XUA_PROBE_OVERFLOW()   xscope_int(1, ++g_outOverflowCount)
+ #define XUA_PROBE_FILL(v)      xscope_int(2, (unsigned)(v))
++#define XUA_PROBE_DRYOUT()     xscope_int(3, g_outDryoutCount)
+ #else
+ #define XUA_PROBE_UNDERFLOW()  (g_outUnderflowCount++)
+ #define XUA_PROBE_OVERFLOW()   (g_outOverflowCount++)
+ #define XUA_PROBE_FILL(v)      ((void)(v))
++#define XUA_PROBE_DRYOUT()     ((void)0)
+ #endif
+ 
+ /* Audio over/under flow flags */
+@@ -132,6 +134,15 @@ unsigned outOverflow = 0;
+ unsigned g_outUnderflowCount = 0;
+ unsigned g_outOverflowCount = 0;
+ unsigned g_fillProbeDiv = 0;
++
++/* Runtime dry-outs of the OUT FIFO, distinct from g_outUnderflowCount: the
++ * literal `outUnderflow = 1` sites are stream-reset points, but the FIFO can
++ * also run dry mid-stream via the computed assignment in
++ * handle_audio_request(). That path executes at interrupt level feeding I2S,
++ * so it must not call xscope itself; it increments this counter and the
++ * decoupler emits the value from its own context at the fill-probe cadence.
++ * Single writer (the interrupt side), single reader -- no atomicity needed. */
++unsigned g_outDryoutCount = 0;
+ unsigned inUnderflow = 1;
+ 
+ int aud_req_in_count = 0;
+@@ -646,6 +657,15 @@ __builtin_unreachable();
+ 
+             g_aud_from_host_rdptr+=4;
+         }
++        else
++        {
++            /* Instrumentation: the FIFO ran dry mid-stream. From here the
++             * device plays OUT_BUFFER_PREFILL bytes of silence before
++             * resuming -- an audible gap. Counter only: this runs at
++             * interrupt level, so the xscope emission happens in the
++             * decoupler loop, not here. */
++            g_outDryoutCount++;
++        }
+     }
+ }
+ 
+@@ -1041,15 +1061,31 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+                 space_left = aud_from_host_fifo_end - g_aud_from_host_wrptr;
+             }
+ 
+-            /* Instrumentation: free space in the OUT FIFO, every 10th packet
++            /* Instrumentation: OUT FIFO fill in bytes, every 10th packet
+              * (100 Hz). This is the device's own view of whether the host is
+              * over- or under-feeding, and unlike the over/underflow flags it
+              * is continuous -- drift shows up long before it forces a
+-             * correction. Costs one compare in the per-frame path. */
++             * correction.
++             *
++             * Deliberately NOT space_left: that is a pointer difference
++             * carrying a special case that flips its meaning as the ring
++             * wraps, and a drift fit over it produced a slope of 0.222 where
++             * calibrated arithmetic demands 1.000. Fill is the plain
++             * occupancy (wrptr - rdptr) wrapped into the buffer size. rdptr
++             * was sampled at entry, so the value is noisy by up to one packet
++             * of concurrent consumption -- harmless for a fit over seconds.
++             *
++             * The dry-out count rides along at the same cadence: it is
++             * incremented at interrupt level in handle_audio_request(), where
++             * an xscope call would not be safe, and only emitted here. */
+             if(++g_fillProbeDiv >= 10)
+             {
+                 g_fillProbeDiv = 0;
+-                XUA_PROBE_FILL(space_left);
++                int fill_bytes = aud_from_host_wrptr - aud_from_host_rdptr;
++                if (fill_bytes < 0)
++                    fill_bytes += BUFF_SIZE_OUT;
++                XUA_PROBE_FILL(fill_bytes);
++                XUA_PROBE_DRYOUT();
+             }
+ 
+ #if (XUD_USB_ISO_MAX_TXNS_PER_MICROFRAME > 1)
+diff --git a/lib_xua/src/core/main.xc b/lib_xua/src/core/main.xc
+index d5254927..371a9334 100644
+--- a/lib_xua/src/core/main.xc
++++ b/lib_xua/src/core/main.xc
+@@ -245,12 +245,16 @@ void thread_speed()
+ #ifdef XSCOPE
+ void xscope_user_init()
+ {
+-    /* Two probes for the OUT decoupler buffer. Named so `xrun --xscope`
+-     * output identifies them without cross-referencing probe ids. */
+-    xscope_register(3,
++    /* Probes for the OUT decoupler buffer. Named so `xrun --xscope`
++     * output identifies them without cross-referencing probe ids. Order
++     * defines the ids (0..3) hardcoded in decouple.xc -- append only.
++     * out_fifo_fill replaced out_fifo_free: the free-space value carried a
++     * wrap special case that made drift fits meaningless. */
++    xscope_register(4,
+                     XSCOPE_CONTINUOUS, "out_underflow", XSCOPE_UINT, "count",
+                     XSCOPE_CONTINUOUS, "out_overflow",  XSCOPE_UINT, "count",
+-                    XSCOPE_CONTINUOUS, "out_fifo_free", XSCOPE_UINT, "bytes");
++                    XSCOPE_CONTINUOUS, "out_fifo_fill", XSCOPE_UINT, "bytes",
++                    XSCOPE_CONTINUOUS, "out_dryout",    XSCOPE_UINT, "count");
+ 
+     xscope_config_io(XSCOPE_IO_BASIC);
+ }
+-- 
+2.39.1
+
+
+From 1019aeb12e9d61b9e37d7c9906cfb9cf6e9e1ecb Mon Sep 17 00:00:00 2001
+From: Newdigate <nicnewdigate@gmail.com>
+Date: Tue, 4 Aug 2026 17:55:28 +0100
+Subject: [PATCH 3/7] decouple: validator packet counters, size histogram,
+ byte-lane accumulators
+
+Counts accepted packets and their sizes, packets shorter than one audio frame,
+and packets that are not a whole number of frames. The latter two are paths
+lib_xua already handles defensively and never reports -- decouple.xc discards
+short packets silently, and the tail handling in handle_audio_request carries
+a comment naming a bad driver. Making that existing silent tolerance audible
+is a large part of what this instrument is for.
+
+The byte-lane accumulators sit inside _send_sample_4 because that is the only
+place the raw subslot bytes exist: the 3-byte path masks with 0xffffff00 and
+UserBufferManagement runs on the other tile after unpacking, so an app-level
+hook cannot see justification at all. Two ALU ops per sample, 0.7 M ops/s at
+8ch x 44.1 kHz against roughly 62 MIPS for this core.
+
+nonsilent_frames is a vacuity witness rather than a metric. On a silent stream
+or_acc stays 0 and the justification test would pass for the wrong reason,
+declaring a right-justifying host conformant -- so the judge refuses to rule
+until enough non-silent frames have gone by. It is latched at
+handle_audio_request entry, which runs once per audio frame, so the count is
+comparable across channel counts.
+
+Reduction only: no thresholds, no verdicts, no spec clauses in this file.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ lib_xua/src/core/buffer/decouple/decouple.xc | 99 ++++++++++++++++++++
+ 1 file changed, 99 insertions(+)
+
+diff --git a/lib_xua/src/core/buffer/decouple/decouple.xc b/lib_xua/src/core/buffer/decouple/decouple.xc
+index 0b744127..099d2ff0 100644
+--- a/lib_xua/src/core/buffer/decouple/decouple.xc
++++ b/lib_xua/src/core/buffer/decouple/decouple.xc
+@@ -143,6 +143,36 @@ unsigned g_fillProbeDiv = 0;
+  * decoupler emits the value from its own context at the fill-probe cadence.
+  * Single writer (the interrupt side), single reader -- no atomicity needed. */
+ unsigned g_outDryoutCount = 0;
++
++/* UAC host-validator reductions. The device reduces; it never judges -- there
++ * are no thresholds, no verdicts and no spec clauses anywhere in this file.
++ * Field meanings are normative in docs/uac-validator-wire-format.md in the
++ * evkb repo; the word indices below refer to that table.
++ *
++ * Single writer (this core) except where noted, single reader (the emission
++ * at the fill cadence). */
++unsigned g_uacvPktCount = 0;            /* word 2  */
++unsigned g_uacvPktShortDiscarded = 0;   /* word 3  */
++unsigned g_uacvPktNotMultiple = 0;      /* word 4  */
++unsigned g_uacvHistSize[8] = {0,0,0,0,0,0,0,0};   /* words 20..27 */
++unsigned g_uacvHistCount[8] = {0,0,0,0,0,0,0,0};  /* words 28..35 */
++unsigned g_uacvHistOverflow = 0;        /* word 19 */
++
++/* Byte-lane occupancy. or_acc says which bit positions were EVER set, and_acc
++ * which were ALWAYS set. Together they identify subslot justification without
++ * knowing anything about the audio content:
++ *   (or_acc & 0xFF) == 0              -> low byte never used -> left-justified
++ *   (or_acc >> 24) == (and_acc >> 24) -> top byte constant   -> right-justified
++ *
++ * nonsilent_frames is the vacuity witness. On a silent stream or_acc stays 0
++ * and the justification test would pass for the WRONG REASON, declaring a
++ * right-justifying host conformant. The judge refuses to rule without enough
++ * non-silent frames. */
++unsigned g_uacvOrAcc = 0;               /* word 5  */
++unsigned g_uacvAndAcc = 0xFFFFFFFF;     /* word 6  */
++unsigned g_uacvNonsilentFrames = 0;     /* word 7  */
++unsigned g_uacvFrameNonzero = 0;        /* per-frame latch, not emitted */
++
+ unsigned inUnderflow = 1;
+ 
+ int aud_req_in_count = 0;
+@@ -161,12 +191,44 @@ unsigned g_input_stream_active = 0;
+ unsigned g_any_stream_active_old = 0;
+ unsigned g_any_stream_active_current = 0;
+ 
++/* Record one observed packet size. Eight slots is generous: a conformant host
++ * uses at most two distinct sizes, the fractional-sample floor and ceiling. A
++ * host needing more than eight is itself a finding, which is why the overflow
++ * is counted rather than silently folded into a neighbouring slot -- the judge
++ * refuses to rule on packet size at all while any packet went unaccounted. */
++static inline void uacvRecordSize(unsigned size)
++{
++    for(int i = 0; i < 8; i++)
++    {
++        if(g_uacvHistSize[i] == size)
++        {
++            g_uacvHistCount[i]++;
++            return;
++        }
++        if(g_uacvHistSize[i] == 0)
++        {
++            g_uacvHistSize[i] = size;
++            g_uacvHistCount[i] = 1;
++            return;
++        }
++    }
++    g_uacvHistOverflow++;
++}
++
+ static inline void _send_sample_4(chanend c_mix_out, int ch)
+ {
+     int sample;
+     read_via_xc_ptr(sample, g_aud_from_host_rdptr);
+     g_aud_from_host_rdptr+=4;
+ 
++    /* Validator: accumulate byte-lane occupancy before anything downstream can
++     * normalise it away. This is the ONLY place the raw subslot bytes exist --
++     * the 3-byte path masks with 0xffffff00, and UserBufferManagement runs on
++     * the other tile, after unpacking. Two ALU ops per sample. */
++    g_uacvOrAcc |= (unsigned)sample;
++    g_uacvAndAcc &= (unsigned)sample;
++    if(sample) g_uacvFrameNonzero = 1;
++
+ #if (OUTPUT_VOLUME_CONTROL == 1) && (!OUT_VOLUME_IN_MIXER)
+     int mult;
+     int h;
+@@ -237,6 +299,18 @@ void handle_audio_request(chanend c_mix_out)
+     /* Input word that triggered interrupt and handshake back */
+     unsigned underflowSample = inuint(c_mix_out);
+ 
++    /* Validator: this function emits exactly one audio frame per call, so
++     * latching at entry counts the frame the PREVIOUS call assembled. Counting
++     * frames rather than samples is what makes the witness comparable across
++     * channel counts -- and it is a witness, not a metric: the judge refuses to
++     * rule on subslot justification until enough non-silent frames have gone
++     * by, because a silent stream would pass that test for the wrong reason. */
++    if(g_uacvFrameNonzero)
++    {
++        g_uacvNonsilentFrames++;
++        g_uacvFrameNonzero = 0;
++    }
++
+     // OUT
+ #if (NUM_USB_CHAN_OUT == 0)
+     outuint(c_mix_out, underflowSample);
+@@ -287,6 +361,15 @@ __builtin_unreachable();
+                     g_aud_from_host_rdptr+=2;
+                     sample <<= 16;
+ 
++                    /* Validator: same byte-lane accumulation as the 24-in-4
++                     * path. A 2-byte subslot has no spare lane, so the judge
++                     * SKIPs the justification rule here -- but the vacuity
++                     * witness still has to be counted, or a UAC1 capture could
++                     * not tell silence from signal either. */
++                    g_uacvOrAcc |= (unsigned)sample;
++                    g_uacvAndAcc &= (unsigned)sample;
++                    if(sample) g_uacvFrameNonzero = 1;
++
+ #if (OUTPUT_VOLUME_CONTROL == 1) && (!OUT_VOLUME_IN_MIXER)
+                     unsafe
+                     {
+@@ -1039,6 +1122,16 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+             /* Ignore bad small packets */
+             if((datalength >= (g_numUsbChan_Out * g_curSubSlot_Out)) && (released_buffer == aud_from_host_wrptr))
+             {
++                /* Validator: this packet was accepted. Record its size, and
++                 * whether it is a whole number of audio frames -- lib_xua
++                 * tolerates a non-multiple silently (see the tail handling in
++                 * handle_audio_request, whose comment names a bad driver),
++                 * which is exactly the kind of quiet tolerance this tool
++                 * exists to make audible. */
++                g_uacvPktCount++;
++                uacvRecordSize((unsigned)datalength);
++                if(datalength % (g_numUsbChan_Out * g_curSubSlot_Out))
++                    g_uacvPktNotMultiple++;
+ 
+                 /* Move the write pointer of the fifo on - round up to nearest word */
+                 aud_from_host_wrptr = aud_from_host_wrptr + ((datalength+3)&~0x3) + 4;
+@@ -1050,6 +1143,12 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+                 }
+                 SET_SHARED_GLOBAL(g_aud_from_host_wrptr, aud_from_host_wrptr);
+             }
++            else if(datalength < (g_numUsbChan_Out * g_curSubSlot_Out))
++            {
++                /* Validator: shorter than one audio frame. lib_xua discards
++                 * these silently -- count them so the judge can say so. */
++                g_uacvPktShortDiscarded++;
++            }
+ 
+             /* if we have enough space left then send a new buffer pointer
+              * back to the buffer thread */
+-- 
+2.39.1
+
+
+From 47cd7277616559106a358cc8c41ea5d15d58a6f3 Mon Sep 17 00:00:00 2001
+From: Newdigate <nicnewdigate@gmail.com>
+Date: Tue, 4 Aug 2026 17:57:01 +0100
+Subject: [PATCH 4/7] ep_buffer: count feedback polls, publish the feedback
+ value
+
+Completions, not arms. An endpoint this device armed and the host never read
+must not be indistinguishable from one the host is reading -- and this counter
+is the entire evidence for the defect that started the investigation, visible
+nowhere else in the system. The host side cannot report it (a host that
+ignores the endpoint has nothing to report), and no analogue measurement can
+reach it.
+
+Publishing the value the device is asking for lets the judge compare request
+against delivery, which turns servo quality from an inference into a
+measurement: a host that polls the endpoint and still drifts is a different
+finding from one that never polls, and only this pairing separates them.
+
+Published raw. The FS and HS branches scale the value differently and no
+capture yet exists to check a decode against, so guessing the encoding would
+print a confident wrong sample rate beside a correct one.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ lib_xua/src/core/buffer/ep/ep_buffer.xc | 26 +++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/lib_xua/src/core/buffer/ep/ep_buffer.xc b/lib_xua/src/core/buffer/ep/ep_buffer.xc
+index 5967d9cf..f1d4c077 100644
+--- a/lib_xua/src/core/buffer/ep/ep_buffer.xc
++++ b/lib_xua/src/core/buffer/ep/ep_buffer.xc
+@@ -37,6 +37,13 @@ unsigned g_speed = (XUA_USB_BUS_SPEED == 2) ? (DEFAULT_FREQ/8000) << 16 : (DEFAU
+ unsigned g_streamChangeOngoing = 0; /* Not cleared until audio has completed it's SR change. This can be used for logic that needs to know audio has completed the command */
+ unsigned g_feedbackValid = 0;
+ 
++/* UAC host-validator reductions owned by this core. Emitted by the decoupler
++ * at the fill cadence; both live on XUA_XUD_TILE_NUM so a plain shared global
++ * is sound, single writer to single reader. See
++ * docs/uac-validator-wire-format.md in the evkb repo for word meanings. */
++unsigned g_uacvFbPollCount = 0;   /* word 8 */
++unsigned g_uacvFbValue = 0;       /* word 9 */
++
+ #if (XUA_SPDIF_RX_EN || XUA_ADAT_RX_EN)
+ /* When digital Rx enabled we enable an interrupt EP to inform host about changes in clock validity */
+ /* Interrupt EP report data */
+@@ -695,6 +702,16 @@ void XUA_Buffer_Ep(
+                             {
+                                 (fb_clocks, unsigned[])[0] = clocks >> 2;
+                             }
++
++                            /* Validator: mirror what this device is ASKING the
++                             * host for, so the judge can compare the request
++                             * against what the host actually sent. That turns
++                             * servo quality from an inference into a
++                             * measurement. Published raw: the FS and HS
++                             * branches above scale differently, and guessing
++                             * the encoding would print a confident wrong
++                             * sample rate. */
++                            g_uacvFbValue = (fb_clocks, unsigned[])[0];
+                         }
+                         clockcounter = 0;
+                     }
+@@ -788,6 +805,15 @@ void XUA_Buffer_Ep(
+             {
+                 XUD_BusSpeed_t busSpeed;
+ 
++                /* Validator: the host completed an IN on the feedback
++                 * endpoint. Counting COMPLETIONS rather than arms is
++                 * deliberate -- an endpoint this device armed and the host
++                 * never read must not be indistinguishable from one the host
++                 * is reading. This counter is the whole evidence for the
++                 * defect that started the investigation, and it is visible
++                 * nowhere else in the system. */
++                g_uacvFbPollCount++;
++
+                 GET_SHARED_GLOBAL(busSpeed, g_curUsbSpeed);
+ 
+                 if (busSpeed == XUD_SPEED_HS)
+-- 
+2.39.1
+
+
+From acd425ca44538e2bf530f10e2d342408387b086f Mon Sep 17 00:00:00 2001
+From: Newdigate <nicnewdigate@gmail.com>
+Date: Tue, 4 Aug 2026 17:59:59 +0100
+Subject: [PATCH 5/7] endpoint0: validator alt state and class-request bitmap
+
+Alt transitions plus a set-on-first-arrival bitmap for the three class
+requests that constitute a configuration sequence. No timestamps of their own:
+the block is emitted at 100 Hz and xscope stamps each emission, locating a
+change to within 10 ms, which is ample for a rule asking WHETHER packets
+arrived during alt 0 rather than exactly when the switch happened.
+
+The clock hook sits on the Clock Source unit's sample-frequency control,
+because that is the request a host must issue to select a rate. A host that
+claims the device and never reaches it is the fourth defect this tool was
+built for -- and it is reportable only as a metric, never a FAIL, since
+nothing in the spec obliges a host to configure a device it has claimed.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ lib_xua/src/core/endpoint0/xua_endpoint0.c    | 30 ++++++++++++++++---
+ lib_xua/src/core/endpoint0/xua_ep0_uacreqs.xc | 24 +++++++++++++++
+ 2 files changed, 50 insertions(+), 4 deletions(-)
+
+diff --git a/lib_xua/src/core/endpoint0/xua_endpoint0.c b/lib_xua/src/core/endpoint0/xua_endpoint0.c
+index d0977536..e2845920 100755
+--- a/lib_xua/src/core/endpoint0/xua_endpoint0.c
++++ b/lib_xua/src/core/endpoint0/xua_endpoint0.c
+@@ -116,6 +116,22 @@ extern unsigned char g_interfaceAlt[];
+ unsigned g_curStreamAlt_Out = 0;
+ unsigned g_curStreamAlt_In = 0;
+ 
++/* UAC host-validator reductions owned by EP0. Emitted by the decoupler at the
++ * fill cadence; EP0, the EP buffer and the decoupler all live on
++ * XUA_XUD_TILE_NUM, so plain shared globals are sound. Alt transitions carry
++ * no timestamp of their own -- the block is emitted at 100 Hz and xscope
++ * timestamps each emission, locating a change to within 10 ms, which is ample
++ * for a rule asking WHETHER packets arrived during alt 0 rather than exactly
++ * when the switch happened. See docs/uac-validator-wire-format.md in evkb. */
++unsigned g_uacvAltOut = 0;            /* word 10 */
++unsigned g_uacvAltTransitions = 0;    /* word 11 */
++unsigned g_uacvClassReqBitmap = 0;    /* word 12 */
++unsigned g_uacvHostActive = 0;        /* word 13 */
++
++#define UACV_REQ_CLOCK_SET_CUR   (1u << 0)
++#define UACV_REQ_CLOCK_GET_CUR   (1u << 1)
++#define UACV_REQ_SET_INTERFACE   (1u << 2)
++
+ /* Global variable for current USB bus speed (i.e. FS/HS) */
+ XUD_BusSpeed_t g_curUsbSpeed = XUA_USB_BUS_SPEED;
+ 
+@@ -580,6 +596,10 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+                 /* Over-riding USB_StandardRequests implementation */
+                 if(sp.bRequest == USB_SET_INTERFACE)
+                 {
++                    /* Validator: set on first arrival, never cleared. The
++                     * question a stalled configuration sequence poses is "did
++                     * the host ever do this", not "how often". */
++                    g_uacvClassReqBitmap |= UACV_REQ_SET_INTERFACE;
+                     switch (sp.wIndex)
+                     {
+                         /* Check for audio stream from host start/stop */
+@@ -597,6 +617,8 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+                                     {
+                                         assert((c_aud_ctl != null) && msg("Format change not supported when c_aud_ctl is null"));
+                                         g_curStreamAlt_Out = newStreamAlt_Out;
++                                        g_uacvAltOut = newStreamAlt_Out;
++                                        g_uacvAltTransitions++;
+ 
+                                         /* Send format of data onto buffering */
+                                         if(g_curStreamAlt_Out > 0)
+@@ -743,7 +765,7 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+                         {
+                             dfu_usb_set_configured_state();
+                             /* Consider host active with valid driver at this point */
+-                            UserHostActive(1);
++                            g_uacvHostActive = 1; UserHostActive(1);
+                         }
+ 
+                         /* We want to run USB_StandardsRequests() implementation also. Don't modify result
+@@ -1144,7 +1166,7 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+             if(g_currentConfig)
+             {
+                 dfu_usb_clear_configured_state();
+-                UserHostActive(0);
++                g_uacvHostActive = 0; UserHostActive(0);
+                 g_currentConfig = 0;
+             }
+ 
+@@ -1183,7 +1205,7 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+                 /* Device moving from CONFIGURED to SUSPENDED state */
+                 if(g_currentConfig)
+                 {
+-                    UserHostActive(0);
++                    g_uacvHostActive = 0; UserHostActive(0);
+                 }
+ 
+                 // Perform user-defined suspend behaviour
+@@ -1200,7 +1222,7 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+ 
+                 /* Device moving from SUSPENDED to CONFIGURED state - call user call back */
+                 if(g_currentConfig == 1)
+-                    UserHostActive(1);
++                    g_uacvHostActive = 1; UserHostActive(1);
+             }
+             /* Acknowledge back to XUD letting it know we've handled suspend/resume */
+             XUD_AckBusState(ep0_out, &ep0_in); // This should set ep_info[i]
+diff --git a/lib_xua/src/core/endpoint0/xua_ep0_uacreqs.xc b/lib_xua/src/core/endpoint0/xua_ep0_uacreqs.xc
+index cdbf5d1f..61ed896e 100644
+--- a/lib_xua/src/core/endpoint0/xua_ep0_uacreqs.xc
++++ b/lib_xua/src/core/endpoint0/xua_ep0_uacreqs.xc
+@@ -7,6 +7,13 @@
+ 
+ #include "xua.h"
+ 
++/* Owned by xua_endpoint0.c; same tile, single writer, read by the decoupler's
++ * block emission. Declared here so the clock-request hook below can set it. */
++extern unsigned g_uacvClassReqBitmap;
++#define UACV_REQ_CLOCK_SET_CUR   (1u << 0)
++#define UACV_REQ_CLOCK_GET_CUR   (1u << 1)
++
++
+ #if XUA_USB_EN
+ #include <xs1.h>
+ #include "xud_device.h"
+@@ -333,6 +340,23 @@ int AudioClassRequests_2(XUD_ep ep0_out, XUD_ep ep0_in, USB_SetupPacket_t &sp, c
+                         /* Sample Frequency control */
+                         case CS_SAM_FREQ_CONTROL:
+                         {
++                            /* Validator: record that the host addressed the
++                             * clock at all. Set on first arrival and never
++                             * cleared -- an incomplete configuration sequence
++                             * asks "did the host ever do this", not "how
++                             * often". Hooked at the Clock Source unit's sample
++                             * frequency control specifically, because that is
++                             * the request a host must issue to select a rate;
++                             * a host that claims the device and never gets
++                             * here is the fourth defect this tool was built
++                             * for, and it is reportable only as a metric since
++                             * nothing in the spec obliges a host to configure
++                             * a device it has claimed. */
++                            if(sp.bmRequestType.Direction == USB_BM_REQTYPE_DIRECTION_H2D)
++                                g_uacvClassReqBitmap |= UACV_REQ_CLOCK_SET_CUR;
++                            else
++                                g_uacvClassReqBitmap |= UACV_REQ_CLOCK_GET_CUR;
++
+                             /* Direction: Host-to-device */
+                             if(sp.bmRequestType.Direction == USB_BM_REQTYPE_DIRECTION_H2D)
+                             {
+-- 
+2.39.1
+
+
+From 4e587df2b45f6178b84ad010d9643bdd3b2a2085 Mon Sep 17 00:00:00 2001
+From: Newdigate <nicnewdigate@gmail.com>
+Date: Tue, 4 Aug 2026 18:06:44 +0100
+Subject: [PATCH 6/7] decouple: cooperative pattern check, and emit the 37-word
+ state block
+
+Two things finish the observer.
+
+The cooperative sample-continuity check compiles out entirely unless
+UACV_COOPERATIVE=1, so the default passive build pays nothing in the
+real-time path -- measured: tile[1] text 31732 passive, 33988 cooperative,
+and the passive figure is unchanged from before this commit. Resync after
+eight consecutive mismatches, one audio frame at 8 channels, so a single
+dropped packet costs one error rather than an unbounded stream. Lock COUNT
+is tracked separately from resync count: a host whose playback path is not
+bit-exact accumulates resyncs while its lock count barely moves, and that
+difference is the only thing that lets the judge tell "never locked" from
+"locked once then lost samples". Collapse them and the tool starts accusing
+conformant hosts of dropping packets.
+
+The block emits all 37 words on every fill-cadence tick, deliberately rather
+than delta-encoded: each block is then self-contained, and the judge's
+repeated-word-index grouping stays exact -- it reassembles a block by watching
+word 0 come round again, which it must, because a bench spike measured
+consecutive xscope_int calls landing ~180 ns apart rather than sharing a
+timestamp.
+
+SCALAR emission rather than xscope_bytes, also decided by that spike: byte
+probe payloads land inside VCD $comment blocks, which every standard parser
+skips and every waveform viewer ignores. Probe names are uacv_w00..uacv_w36
+and must stay exact -- the judge resolves signals by name, never by probe id.
+
+XC forbids a plain shared mutable global across parallel tasks, so the six
+values owned by the EP-buffer and EP0 cores move through the dp-relative
+accessors this codebase already uses for cross-task state.
+
+Both images build with constraints passing: 2AMi8o8 tile[0] 33380 tile[1]
+57012, 1AMi2o2 tile[0] 33380 tile[1] 56148.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ lib_xua/src/core/buffer/decouple/decouple.xc  | 142 ++++++++++++++++++
+ lib_xua/src/core/buffer/ep/ep_buffer.xc       |   8 +-
+ lib_xua/src/core/endpoint0/xua_endpoint0.c    |  22 ++-
+ lib_xua/src/core/endpoint0/xua_ep0_uacreqs.xc |  19 ++-
+ lib_xua/src/core/main.xc                      |  41 ++++-
+ 5 files changed, 215 insertions(+), 17 deletions(-)
+
+diff --git a/lib_xua/src/core/buffer/decouple/decouple.xc b/lib_xua/src/core/buffer/decouple/decouple.xc
+index 099d2ff0..44a6add0 100644
+--- a/lib_xua/src/core/buffer/decouple/decouple.xc
++++ b/lib_xua/src/core/buffer/decouple/decouple.xc
+@@ -173,6 +173,91 @@ unsigned g_uacvAndAcc = 0xFFFFFFFF;     /* word 6  */
+ unsigned g_uacvNonsilentFrames = 0;     /* word 7  */
+ unsigned g_uacvFrameNonzero = 0;        /* per-frame latch, not emitted */
+ 
++/* Cooperative mode: the host plays a known LFSR sequence and every sample is
++ * checked against it. Compiled out entirely unless UACV_COOPERATIVE=1, so the
++ * default passive build pays nothing in the real-time path.
++ *
++ * pat_sync_count is NOT pat_resync_count. A resync is giving up and hunting
++ * again, after 8 consecutive mismatches; a sync is a successful lock. A host
++ * whose playback path is not bit-exact accumulates resyncs while its sync
++ * count barely moves, and that difference is the only thing separating "never
++ * locked" (not bit-exact) from "locked once then lost samples" (real packet
++ * loss). Collapse them into one increment and the judge goes back to accusing
++ * conformant hosts of dropping packets. */
++unsigned g_uacvPatErrCount = 0;         /* word 14 */
++unsigned g_uacvPatResyncCount = 0;      /* word 15 */
++unsigned g_uacvPatFirstErrIdx = 0;      /* word 16 */
++unsigned g_uacvPatFirstExpected = 0;    /* word 17 */
++unsigned g_uacvPatFirstActual = 0;      /* word 18 */
++unsigned g_uacvPatSyncCount = 0;        /* word 36 */
++
++/* Owned by ep_buffer.xc and xua_endpoint0.c. All three live on
++ * XUA_XUD_TILE_NUM, so plain shared globals are sound: one writer each, and
++ * this file's emission is the only reader. */
++extern unsigned g_uacvFbPollCount;
++extern unsigned g_uacvFbValue;
++extern unsigned g_uacvAltOut;
++extern unsigned g_uacvAltTransitions;
++extern unsigned g_uacvClassReqBitmap;
++extern unsigned g_uacvHostActive;
++
++#if (UACV_COOPERATIVE == 1)
++#define UACV_LFSR_SEED    0xACE1u
++#define UACV_RESYNC_AFTER 8
++static unsigned g_uacvLfsr = UACV_LFSR_SEED;
++static unsigned g_uacvPatSynced = 0;
++static unsigned g_uacvPatRun = 0;       /* consecutive mismatches */
++static unsigned g_uacvSampleIdx = 0;
++
++/* Galois LFSR, left-justified into the subslot so it survives the same packing
++ * the audio does. The host generates the identical sequence. */
++static inline unsigned uacvNextExpected(void)
++{
++    unsigned lsb = g_uacvLfsr & 1u;
++    g_uacvLfsr >>= 1;
++    if(lsb) g_uacvLfsr ^= 0xB4BCD35Cu;
++    return g_uacvLfsr << 8;
++}
++
++static inline void uacvCheckSample(unsigned s)
++{
++    unsigned expected;
++    g_uacvSampleIdx++;
++    if(!g_uacvPatSynced)
++    {
++        if((s & 0xFFFFFF00u) == ((UACV_LFSR_SEED << 8) & 0xFFFFFF00u))
++        {
++            g_uacvLfsr = UACV_LFSR_SEED;
++            g_uacvPatSynced = 1;
++            g_uacvPatRun = 0;
++            g_uacvPatSyncCount++;
++        }
++        return;
++    }
++    expected = uacvNextExpected();
++    if((s & 0xFFFFFF00u) == (expected & 0xFFFFFF00u))
++    {
++        g_uacvPatRun = 0;
++        return;
++    }
++    g_uacvPatErrCount++;
++    if(g_uacvPatFirstErrIdx == 0)
++    {
++        g_uacvPatFirstErrIdx   = g_uacvSampleIdx;
++        g_uacvPatFirstExpected = expected;
++        g_uacvPatFirstActual   = s;
++    }
++    if(++g_uacvPatRun >= UACV_RESYNC_AFTER)
++    {
++        g_uacvPatSynced = 0;
++        g_uacvPatRun = 0;
++        g_uacvPatResyncCount++;
++    }
++}
++#else
++static inline void uacvCheckSample(unsigned s) { (void)s; }
++#endif
++
+ unsigned inUnderflow = 1;
+ 
+ int aud_req_in_count = 0;
+@@ -215,6 +300,60 @@ static inline void uacvRecordSize(unsigned size)
+     g_uacvHistOverflow++;
+ }
+ 
++#ifdef XSCOPE
++#define UACV_MAGIC   0x55414356  /* 'UACV' */
++#define UACV_VERSION 1
++#define UACV_WORDS   37
++#define UACV_PROBE_BASE 4
++
++/* Emit the whole state block. All 37 words every time, deliberately: it makes
++ * each block self-contained, and it keeps the judge's repeated-word-index
++ * grouping exact -- the judge reassembles a block by watching for word 0 to
++ * come round again, since consecutive xscope_int() calls do not share a VCD
++ * timestamp (measured at ~180 ns apart, so a block spans ~6.7 us against a
++ * 10 ms period).
++ *
++ * SCALAR rather than xscope_bytes(): a bench spike showed byte-probe payloads
++ * land inside VCD $comment blocks, which every standard parser skips and every
++ * waveform viewer ignores. Scalar probes stay a real VCD you can open and
++ * look at.
++ *
++ * Probe names must match the judge's uacv_wNN exactly -- it resolves signals
++ * by name, never by probe id. */
++static inline void uacvEmitBlock(void)
++{
++    unsigned w[UACV_WORDS];
++    w[0]  = UACV_MAGIC;              w[1]  = UACV_VERSION;
++    w[2]  = g_uacvPktCount;          w[3]  = g_uacvPktShortDiscarded;
++    w[4]  = g_uacvPktNotMultiple;    w[5]  = g_uacvOrAcc;
++    w[6]  = g_uacvAndAcc;            w[7]  = g_uacvNonsilentFrames;
++    /* These six are written by the EP-buffer and EP0 cores. XC forbids a plain
++     * shared mutable global across parallel tasks, so read them through the
++     * same dp-relative accessors the rest of this file already uses for
++     * cross-task state. */
++    GET_SHARED_GLOBAL(w[8],  g_uacvFbPollCount);
++    GET_SHARED_GLOBAL(w[9],  g_uacvFbValue);
++    GET_SHARED_GLOBAL(w[10], g_uacvAltOut);
++    GET_SHARED_GLOBAL(w[11], g_uacvAltTransitions);
++    GET_SHARED_GLOBAL(w[12], g_uacvClassReqBitmap);
++    GET_SHARED_GLOBAL(w[13], g_uacvHostActive);
++    w[14] = g_uacvPatErrCount;       w[15] = g_uacvPatResyncCount;
++    w[16] = g_uacvPatFirstErrIdx;    w[17] = g_uacvPatFirstExpected;
++    w[18] = g_uacvPatFirstActual;    w[19] = g_uacvHistOverflow;
++    for(int i = 0; i < 8; i++)
++    {
++        w[20 + i] = g_uacvHistSize[i];
++        w[28 + i] = g_uacvHistCount[i];
++    }
++    w[36] = g_uacvPatSyncCount;
++
++    for(int i = 0; i < UACV_WORDS; i++)
++        xscope_int(UACV_PROBE_BASE + i, w[i]);
++}
++#else
++static inline void uacvEmitBlock(void) {}
++#endif
++
+ static inline void _send_sample_4(chanend c_mix_out, int ch)
+ {
+     int sample;
+@@ -228,6 +367,7 @@ static inline void _send_sample_4(chanend c_mix_out, int ch)
+     g_uacvOrAcc |= (unsigned)sample;
+     g_uacvAndAcc &= (unsigned)sample;
+     if(sample) g_uacvFrameNonzero = 1;
++    uacvCheckSample((unsigned)sample);
+ 
+ #if (OUTPUT_VOLUME_CONTROL == 1) && (!OUT_VOLUME_IN_MIXER)
+     int mult;
+@@ -369,6 +509,7 @@ __builtin_unreachable();
+                     g_uacvOrAcc |= (unsigned)sample;
+                     g_uacvAndAcc &= (unsigned)sample;
+                     if(sample) g_uacvFrameNonzero = 1;
++                    uacvCheckSample((unsigned)sample);
+ 
+ #if (OUTPUT_VOLUME_CONTROL == 1) && (!OUT_VOLUME_IN_MIXER)
+                     unsafe
+@@ -1185,6 +1326,7 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+                     fill_bytes += BUFF_SIZE_OUT;
+                 XUA_PROBE_FILL(fill_bytes);
+                 XUA_PROBE_DRYOUT();
++                uacvEmitBlock();
+             }
+ 
+ #if (XUD_USB_ISO_MAX_TXNS_PER_MICROFRAME > 1)
+diff --git a/lib_xua/src/core/buffer/ep/ep_buffer.xc b/lib_xua/src/core/buffer/ep/ep_buffer.xc
+index f1d4c077..ae2ed098 100644
+--- a/lib_xua/src/core/buffer/ep/ep_buffer.xc
++++ b/lib_xua/src/core/buffer/ep/ep_buffer.xc
+@@ -711,7 +711,7 @@ void XUA_Buffer_Ep(
+                              * branches above scale differently, and guessing
+                              * the encoding would print a confident wrong
+                              * sample rate. */
+-                            g_uacvFbValue = (fb_clocks, unsigned[])[0];
++                            SET_SHARED_GLOBAL(g_uacvFbValue, (fb_clocks, unsigned[])[0]);
+                         }
+                         clockcounter = 0;
+                     }
+@@ -812,7 +812,11 @@ void XUA_Buffer_Ep(
+                  * is reading. This counter is the whole evidence for the
+                  * defect that started the investigation, and it is visible
+                  * nowhere else in the system. */
+-                g_uacvFbPollCount++;
++                {
++                    unsigned n;
++                    GET_SHARED_GLOBAL(n, g_uacvFbPollCount);
++                    SET_SHARED_GLOBAL(g_uacvFbPollCount, n + 1);
++                }
+ 
+                 GET_SHARED_GLOBAL(busSpeed, g_curUsbSpeed);
+ 
+diff --git a/lib_xua/src/core/endpoint0/xua_endpoint0.c b/lib_xua/src/core/endpoint0/xua_endpoint0.c
+index e2845920..fc5efb98 100755
+--- a/lib_xua/src/core/endpoint0/xua_endpoint0.c
++++ b/lib_xua/src/core/endpoint0/xua_endpoint0.c
+@@ -599,7 +599,11 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+                     /* Validator: set on first arrival, never cleared. The
+                      * question a stalled configuration sequence poses is "did
+                      * the host ever do this", not "how often". */
+-                    g_uacvClassReqBitmap |= UACV_REQ_SET_INTERFACE;
++                    {
++                        unsigned m;
++                        GET_SHARED_GLOBAL(m, g_uacvClassReqBitmap);
++                        SET_SHARED_GLOBAL(g_uacvClassReqBitmap, m | UACV_REQ_SET_INTERFACE);
++                    }
+                     switch (sp.wIndex)
+                     {
+                         /* Check for audio stream from host start/stop */
+@@ -617,8 +621,12 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+                                     {
+                                         assert((c_aud_ctl != null) && msg("Format change not supported when c_aud_ctl is null"));
+                                         g_curStreamAlt_Out = newStreamAlt_Out;
+-                                        g_uacvAltOut = newStreamAlt_Out;
+-                                        g_uacvAltTransitions++;
++                                        {
++                                            unsigned n;
++                                            SET_SHARED_GLOBAL(g_uacvAltOut, newStreamAlt_Out);
++                                            GET_SHARED_GLOBAL(n, g_uacvAltTransitions);
++                                            SET_SHARED_GLOBAL(g_uacvAltTransitions, n + 1);
++                                        }
+ 
+                                         /* Send format of data onto buffering */
+                                         if(g_curStreamAlt_Out > 0)
+@@ -765,7 +773,7 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+                         {
+                             dfu_usb_set_configured_state();
+                             /* Consider host active with valid driver at this point */
+-                            g_uacvHostActive = 1; UserHostActive(1);
++                            SET_SHARED_GLOBAL(g_uacvHostActive, 1); UserHostActive(1);
+                         }
+ 
+                         /* We want to run USB_StandardsRequests() implementation also. Don't modify result
+@@ -1166,7 +1174,7 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+             if(g_currentConfig)
+             {
+                 dfu_usb_clear_configured_state();
+-                g_uacvHostActive = 0; UserHostActive(0);
++                SET_SHARED_GLOBAL(g_uacvHostActive, 0); UserHostActive(0);
+                 g_currentConfig = 0;
+             }
+ 
+@@ -1205,7 +1213,7 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+                 /* Device moving from CONFIGURED to SUSPENDED state */
+                 if(g_currentConfig)
+                 {
+-                    g_uacvHostActive = 0; UserHostActive(0);
++                    SET_SHARED_GLOBAL(g_uacvHostActive, 0); UserHostActive(0);
+                 }
+ 
+                 // Perform user-defined suspend behaviour
+@@ -1222,7 +1230,7 @@ void XUA_Endpoint0_loop(XUD_Result_t result, USB_SetupPacket_t sp, chanend c_ep0
+ 
+                 /* Device moving from SUSPENDED to CONFIGURED state - call user call back */
+                 if(g_currentConfig == 1)
+-                    g_uacvHostActive = 1; UserHostActive(1);
++                    SET_SHARED_GLOBAL(g_uacvHostActive, 1); UserHostActive(1);
+             }
+             /* Acknowledge back to XUD letting it know we've handled suspend/resume */
+             XUD_AckBusState(ep0_out, &ep0_in); // This should set ep_info[i]
+diff --git a/lib_xua/src/core/endpoint0/xua_ep0_uacreqs.xc b/lib_xua/src/core/endpoint0/xua_ep0_uacreqs.xc
+index 61ed896e..9b1d3076 100644
+--- a/lib_xua/src/core/endpoint0/xua_ep0_uacreqs.xc
++++ b/lib_xua/src/core/endpoint0/xua_ep0_uacreqs.xc
+@@ -7,8 +7,10 @@
+ 
+ #include "xua.h"
+ 
+-/* Owned by xua_endpoint0.c; same tile, single writer, read by the decoupler's
+- * block emission. Declared here so the clock-request hook below can set it. */
++/* Owned by xua_endpoint0.c; same tile, read by the decoupler's block emission.
++ * XC forbids a plain shared mutable global across parallel tasks, so this is
++ * accessed through the dp-relative accessors in xc_ptr.h. */
++#include "xc_ptr.h"
+ extern unsigned g_uacvClassReqBitmap;
+ #define UACV_REQ_CLOCK_SET_CUR   (1u << 0)
+ #define UACV_REQ_CLOCK_GET_CUR   (1u << 1)
+@@ -352,10 +354,15 @@ int AudioClassRequests_2(XUD_ep ep0_out, XUD_ep ep0_in, USB_SetupPacket_t &sp, c
+                              * for, and it is reportable only as a metric since
+                              * nothing in the spec obliges a host to configure
+                              * a device it has claimed. */
+-                            if(sp.bmRequestType.Direction == USB_BM_REQTYPE_DIRECTION_H2D)
+-                                g_uacvClassReqBitmap |= UACV_REQ_CLOCK_SET_CUR;
+-                            else
+-                                g_uacvClassReqBitmap |= UACV_REQ_CLOCK_GET_CUR;
++                            {
++                                unsigned m;
++                                GET_SHARED_GLOBAL(m, g_uacvClassReqBitmap);
++                                if(sp.bmRequestType.Direction == USB_BM_REQTYPE_DIRECTION_H2D)
++                                    m |= UACV_REQ_CLOCK_SET_CUR;
++                                else
++                                    m |= UACV_REQ_CLOCK_GET_CUR;
++                                SET_SHARED_GLOBAL(g_uacvClassReqBitmap, m);
++                            }
+ 
+                             /* Direction: Host-to-device */
+                             if(sp.bmRequestType.Direction == USB_BM_REQTYPE_DIRECTION_H2D)
+diff --git a/lib_xua/src/core/main.xc b/lib_xua/src/core/main.xc
+index 371a9334..8317612d 100644
+--- a/lib_xua/src/core/main.xc
++++ b/lib_xua/src/core/main.xc
+@@ -250,11 +250,48 @@ void xscope_user_init()
+      * defines the ids (0..3) hardcoded in decouple.xc -- append only.
+      * out_fifo_fill replaced out_fifo_free: the free-space value carried a
+      * wrap special case that made drift fits meaningless. */
+-    xscope_register(4,
++    xscope_register(41,
+                     XSCOPE_CONTINUOUS, "out_underflow", XSCOPE_UINT, "count",
+                     XSCOPE_CONTINUOUS, "out_overflow",  XSCOPE_UINT, "count",
+                     XSCOPE_CONTINUOUS, "out_fifo_fill", XSCOPE_UINT, "bytes",
+-                    XSCOPE_CONTINUOUS, "out_dryout",    XSCOPE_UINT, "count");
++                    XSCOPE_CONTINUOUS, "out_dryout",    XSCOPE_UINT, "count",
++                    XSCOPE_CONTINUOUS, "uacv_w00",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w01",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w02",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w03",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w04",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w05",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w06",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w07",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w08",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w09",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w10",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w11",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w12",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w13",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w14",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w15",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w16",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w17",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w18",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w19",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w20",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w21",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w22",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w23",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w24",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w25",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w26",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w27",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w28",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w29",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w30",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w31",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w32",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w33",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w34",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w35",     XSCOPE_UINT, "value",
++                    XSCOPE_CONTINUOUS, "uacv_w36",     XSCOPE_UINT, "value");
+ 
+     xscope_config_io(XSCOPE_IO_BASIC);
+ }
+-- 
+2.39.1
+
+
+From 00ad1ed542bac48c9a53e9a79bd18d092e231ffd Mon Sep 17 00:00:00 2001
+From: Newdigate <nicnewdigate@gmail.com>
+Date: Tue, 4 Aug 2026 18:42:53 +0100
+Subject: [PATCH 7/7] observer: fix fb_value on the fixed-frequency path, cut
+ the block cadence
+
+Both defects came from the first silicon run, and neither was visible from
+synthetic data.
+
+fb_value read 0x0 for a whole capture while the host reported fb=44096292 and
+a closed loop. Two code paths write fb_clocks[0] -- one under the
+variable-frequency guard, one under its #else -- and only the first was
+hooked, while this build takes the second. A counter wired to a path the build
+does not execute reads exactly like a device with nothing to say, which is the
+most dangerous shape a broken instrument can take. Both paths now mirror.
+
+The block cadence divides the fill cadence by ten. The 100 Hz figure in the
+design assumed 1000 packets/s; at high speed the OUT endpoint is released once
+per 125 us microframe, so the fill probe runs near 800 Hz and 37 words at that
+rate is ~30,000 xscope events/s. That measurably dropped data: 10 missing
+marks over 220 s and a 158 MB capture, which the judge correctly refused to
+report on.
+
+The block carries counters, not a waveform, so a tenth of the rate costs
+nothing any rule consumes -- the most timing-sensitive of them asks whether
+packets arrived during alt 0, not exactly when the switch happened. The fill
+probe keeps its own cadence untouched, because that one IS a waveform and the
+drift fit needs every point.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ lib_xua/src/core/buffer/decouple/decouple.xc | 21 +++++++++++++++++++-
+ lib_xua/src/core/buffer/ep/ep_buffer.xc      | 10 ++++++++++
+ 2 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/lib_xua/src/core/buffer/decouple/decouple.xc b/lib_xua/src/core/buffer/decouple/decouple.xc
+index 44a6add0..e7808d2f 100644
+--- a/lib_xua/src/core/buffer/decouple/decouple.xc
++++ b/lib_xua/src/core/buffer/decouple/decouple.xc
+@@ -157,6 +157,7 @@ unsigned g_uacvPktNotMultiple = 0;      /* word 4  */
+ unsigned g_uacvHistSize[8] = {0,0,0,0,0,0,0,0};   /* words 20..27 */
+ unsigned g_uacvHistCount[8] = {0,0,0,0,0,0,0,0};  /* words 28..35 */
+ unsigned g_uacvHistOverflow = 0;        /* word 19 */
++unsigned g_uacvBlockDiv = 0;            /* block cadence divider */
+ 
+ /* Byte-lane occupancy. or_acc says which bit positions were EVER set, and_acc
+  * which were ALWAYS set. Together they identify subslot justification without
+@@ -1321,12 +1322,30 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+             if(++g_fillProbeDiv >= 10)
+             {
+                 g_fillProbeDiv = 0;
++                /* Block cadence is a tenth of the fill cadence. At high speed
++                 * the OUT endpoint is released once per 125 us MICROFRAME, so
++                 * the fill probe runs at ~800 Hz, not the ~100 Hz a
++                 * frame-rate assumption predicts -- and 37 words at 800 Hz is
++                 * ~30,000 xscope events/s, which measurably dropped data on
++                 * the first silicon run (10 missing marks, 158 MB capture,
++                 * report correctly INVALID).
++                 *
++                 * The block carries counters, not a waveform, so a tenth of
++                 * the rate costs nothing any rule cares about: the coarsest
++                 * consumer asks whether packets arrived during alt 0, not
++                 * exactly when the switch happened. The fill probe itself
++                 * keeps its own cadence, because that one IS a waveform and
++                 * the drift fit needs the points. */
++                if(++g_uacvBlockDiv >= 10)
++                {
++                    g_uacvBlockDiv = 0;
++                    uacvEmitBlock();
++                }
+                 int fill_bytes = aud_from_host_wrptr - aud_from_host_rdptr;
+                 if (fill_bytes < 0)
+                     fill_bytes += BUFF_SIZE_OUT;
+                 XUA_PROBE_FILL(fill_bytes);
+                 XUA_PROBE_DRYOUT();
+-                uacvEmitBlock();
+             }
+ 
+ #if (XUD_USB_ISO_MAX_TXNS_PER_MICROFRAME > 1)
+diff --git a/lib_xua/src/core/buffer/ep/ep_buffer.xc b/lib_xua/src/core/buffer/ep/ep_buffer.xc
+index ae2ed098..d44dd58e 100644
+--- a/lib_xua/src/core/buffer/ep/ep_buffer.xc
++++ b/lib_xua/src/core/buffer/ep/ep_buffer.xc
+@@ -772,6 +772,16 @@ void XUA_Buffer_Ep(
+                             {
+                                 fb_clocks[0] = clocks >> 2;
+                             }
++
++                            /* Validator: same mirror as the variable-frequency
++                             * branch above. Both are needed -- the first
++                             * silicon run reported fb_value stuck at 0 for a
++                             * whole capture because only that branch was
++                             * hooked and this fixed-frequency build takes
++                             * this one. A counter that is wired to a path the
++                             * build does not execute reads exactly like a
++                             * device with nothing to say. */
++                            SET_SHARED_GLOBAL(g_uacvFbValue, fb_clocks[0]);
+                         }
+ #ifdef FB_TOLERANCE_TEST
+                         else
+-- 
+2.39.1
+
