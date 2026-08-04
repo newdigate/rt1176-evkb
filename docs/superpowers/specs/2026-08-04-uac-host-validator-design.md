@@ -185,10 +185,18 @@ below.
 ### The run manifest
 
 The operator declares per run: class, speed, channel count, subslot bytes,
-sample rate, mode, and a free-text note about the host under test. The judge
-reads expectations from this, **never from the trace**. Inference would let a
-mis-set expectation silently reinterpret data — the failure that produced the
-0.222-slope probe.
+sample rate, **the endpoint's `wMaxPacketSize` in bytes**, mode, and a
+free-text note about the host under test. The judge reads expectations from
+this, **never from the trace**. Inference would let a mis-set expectation
+silently reinterpret data — the failure that produced the 0.222-slope probe.
+
+`max_packet_size_bytes` is declared rather than derived, and the distinction
+matters: the first implementation computed R4a's ceiling from the
+fractional-sample law instead, which made R4a fire a **cited FAIL** on legal
+asynchronous packet-size variation — the very behaviour W2 exists to warn
+about without accusing. The endpoint's declared maximum and the
+fractional-sample ceiling are different numbers with different meanings, and
+only the descriptor carries the former.
 
 ## Rules
 
@@ -205,7 +213,7 @@ were read.
 | R1 | Host never polled the feedback endpoint while streaming | **WARN** | fb-poll count, alt state | **No clause obliges the host.** Consequence: unbounded drift ⟹ block correction every T s |
 | R2 | No packets arrived while the OUT interface was in alt 0 | FAIL | packet count vs alt state | UAC2 §3.16.2, §4.9.1 partial; USB 2.0 §9.4.10 `[UNVERIFIED]` |
 | R3 | Samples left-justified in the subslot | FAIL | `orAcc`/`andAcc`, non-silent count | Audio Data Formats 2.0 §2.3.1 `[DOC MISSING]` |
-| R4a | No packet exceeds `wMaxPacketSize` | FAIL | size histogram, manifest | USB 2.0 §5.6.3 **partly verified** — see below |
+| R4a | No packet exceeds `wMaxPacketSize` | FAIL | size histogram, manifest's declared `max_packet_size_bytes` | USB 2.0 §5.6.3 **partly verified** — see below |
 | R4b | Every packet is a whole number of audio frames | FAIL | not-multiple count, short-discarded count | UAC2 frame structure `[UNVERIFIED]` |
 | R7 | Sample continuity — no drops or duplications (*cooperative only*) | FAIL | pattern-error count, first-error index | weakest citation in the set — see below |
 | W1 | Residual rate error from fill slope | WARN | fill slope, correction quantum | "+X ppm ⟹ this device block-corrects every T s" |
@@ -266,12 +274,27 @@ Fill envelope and slope; correction counts from probes 0–3; packet rate;
 feedback poll rate and value; alt transitions with timestamps; the
 class-request map and host-active history (defect #4, reported as INFO).
 
-### Two things that invalidate a whole report
+Metrics are not optional garnish. Defect #4 — a host that claimed the device
+and never completed the class configuration sequence — is reportable *only*
+here, because under a spec-literal rule set it is not a violation: nothing
+obliges a host to configure a device it has claimed. If the metrics section is
+omitted, `class_req_bitmap`, `host_active` and `alt_transitions` are decoded
+and then read by nothing, and one of the six founding defects becomes
+invisible to the tool built to find it.
+
+### Three things that invalidate a whole report
 
 - **`xscope_missing_marks > 0`** — xscope dropped data, so every count is a
   lower bound. `INVALID`, not `PASS`.
+- **Wrong magic or version** — the observer and the judge disagree about the
+  wire format. Magic catches a *different* format; version catches a *revised*
+  one, where the words still parse but no longer mean what the judge thinks.
 - **Manifest contradiction** — declared format disagrees with what the trace
   implies. `INVALID`, both numbers printed.
+
+All three exit 2, never 1. This is not a formality: an operator typo in the
+manifest that exits 1 reads as "this host failed a rule", which is a false
+accusation against a host that may be perfectly conformant.
 
 ### Report shape
 
