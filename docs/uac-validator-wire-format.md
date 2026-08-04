@@ -110,6 +110,13 @@ pattern words (14–18) stay zero through any passive-mode run, and the worry wa
 that `xrun` would omit them and the reader would refuse a good capture. **It
 does not omit them.** The all-37-declared check is safe.
 
+Confirmed a second time against the *real* observer rather than the spike:
+`docs/uac-validator-idle-header.vcd` is a capture of the finished 41-probe
+build with no host attached, and it declares all 37 `uacv_w*` signals while
+containing **no value lines at all** — because with no host, no packet arrives,
+so the fill-cadence emission never runs. Header completeness and emission are
+independent, which is precisely the property the completeness check relies on.
+
 **3. The VCD identifier *is* the probe id** — `0`, `1`, `2`, `3`, `4`, `5`,
 `255` — not an arbitrary code. The judge's synthetic generator uses
 `chr(33 + i)` instead, so identifiers differ between synthetic and real
