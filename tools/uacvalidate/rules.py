@@ -312,7 +312,7 @@ def w1_residual_drift(blocks, man, fill_slope_bytes_per_s,
           "correction_quantum_bytes": correction_quantum_bytes}
     if fill_slope_bytes_per_s is None:
         return Verdict("W1", SKIP, "no fill-probe slope available",
-                       missing_witness="probe 2 (out_fifo_fill) in the capture",
+                       missing_witness="the out_fifo_fill trace in the capture",
                        evidence=ev)
     ppm = slope_to_ppm(fill_slope_bytes_per_s, man)
     ev["residual_ppm"] = round(ppm, 3)
@@ -354,7 +354,7 @@ def w3_feedback_tracked(blocks, man, fill_slope_bytes_per_s):
             missing_witness="any feedback poll", evidence=ev)
     if fill_slope_bytes_per_s is None:
         return Verdict("W3", SKIP, "no fill-probe slope available",
-                       missing_witness="probe 2 (out_fifo_fill) in the capture",
+                       missing_witness="the out_fifo_fill trace in the capture",
                        evidence=ev)
     ppm = slope_to_ppm(fill_slope_bytes_per_s, man)
     ev["residual_ppm"] = round(ppm, 3)
