@@ -94,12 +94,13 @@ def _manifest_contradiction(first, last, man):
 
     The mean is used rather than "does any single size land near the declared
     floor/ceiling pair", which was the first form proposed. That form
-    invalidates a legitimately lumpy host: 40/48-frame sizing against a 44/45
-    nominal puts every observed size outside a one-frame band, so a host doing
-    exactly what W2 exists to warn about -- permitted, costly, not a violation
-    -- would be reported as an unreadable capture instead. Its mean is 1408 B
-    against a predicted 1411.2 B, comfortably inside tolerance, because the
-    average is the quantity physics pins and the individual sizes are not.
+    invalidates a legitimately lumpy host: at high speed, 4/7-frame sizing
+    against a 5.5125-frame nominal puts every observed size outside a one-frame
+    band, so a host doing exactly what W2 exists to warn about -- permitted,
+    costly, not a violation -- would be reported as an unreadable capture
+    instead. Its mean is 176 B against a predicted 176.4 B, comfortably inside
+    tolerance, because the average is the quantity physics pins and the
+    individual sizes are not.
 
     Where the tool cannot tell "the manifest is wrong" from "the host is
     wrong" -- a host genuinely sending 4x oversized packets looks identical to

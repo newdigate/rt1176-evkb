@@ -6,19 +6,23 @@ from verdict import PASS, FAIL, WARN, SKIP
 import rules
 
 
-# max_packet_size_bytes deliberately exceeds max(legal_packet_sizes) = 1440.
-# That headroom is what separates R4a from W2: a host sizing at 48 frames
-# (1536 B) is inside the endpoint's declared limit -- no FAIL -- while still
-# being lumpier than the 44/45 nominal, which is a W2 WARN.
+# High speed: 8000 OUT transactions per second, so 44100/8000 = 5.5125 audio
+# frames per packet and legal_packet_sizes is {160, 192}.
+#
+# max_packet_size_bytes deliberately exceeds max(legal_packet_sizes) = 192, and
+# 800 B is the value the real endpoint descriptor advertises. That headroom is
+# what separates R4a from W2: a host sizing at 7 frames (224 B) is inside the
+# endpoint's declared limit -- no FAIL -- while still being lumpier than the
+# 5/6-frame nominal, which is a W2 WARN.
 MAN = Manifest.from_dict({
     "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
     "sample_rate_hz": 44100, "mode": "passive", "host_note": "test",
-    "max_packet_size_bytes": 1536,
+    "max_packet_size_bytes": 800,
 })
 MAN_COOP = Manifest.from_dict({
     "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
     "sample_rate_hz": 44100, "mode": "cooperative", "host_note": "test",
-    "max_packet_size_bytes": 1536,
+    "max_packet_size_bytes": 800,
 })
 
 
@@ -30,7 +34,10 @@ def series(first, last, duration=120.0):
 def healthy(**over):
     """A block from a conformant host after 120 s of 8ch 24-in-4 at 44.1 kHz."""
     base = dict(
-        pkt_count=120000, pkt_short_discarded=0, pkt_not_multiple=0,
+        # 8000 packets/s x 120 s. The size split is the one the microframe
+        # arithmetic forces: 5.5125 frames per packet means 48.75% at 5 frames
+        # (160 B) and 51.25% at 6 (192 B), so the mean is exactly 176.4 B.
+        pkt_count=960000, pkt_short_discarded=0, pkt_not_multiple=0,
         or_acc=0xFFFFFF00, and_acc=0x00000000, nonsilent_frames=5292000,
         fb_poll_count=7500, fb_value=0x000B0000, alt_out=1, alt_transitions=1,
         class_req_bitmap=0x5, host_active=1,
@@ -38,8 +45,8 @@ def healthy(**over):
         # Ignored outside cooperative mode, but a conformant host in
         # cooperative mode has exactly this, so it belongs in the baseline.
         pat_sync_count=1,
-        size_hist_size=[44 * 32, 45 * 32, 0, 0, 0, 0, 0, 0],
-        size_hist_count=[108000, 12000, 0, 0, 0, 0, 0, 0],
+        size_hist_size=[5 * 32, 6 * 32, 0, 0, 0, 0, 0, 0],
+        size_hist_count=[468000, 492000, 0, 0, 0, 0, 0, 0],
     )
     base.update(over)
     return Block(**base)
@@ -190,8 +197,8 @@ class TestR4aMaxPacketSize(unittest.TestCase):
         self.assertEqual(v.level, PASS)
 
     def test_fail_when_a_packet_is_oversized(self):
-        big = healthy(size_hist_size=[44 * 32, 45 * 32, 9999, 0, 0, 0, 0, 0],
-                      size_hist_count=[100000, 12000, 3, 0, 0, 0, 0, 0])
+        big = healthy(size_hist_size=[5 * 32, 6 * 32, 9999, 0, 0, 0, 0, 0],
+                      size_hist_count=[468000, 492000, 3, 0, 0, 0, 0, 0])
         v = rules.r4a_max_packet_size(series(Block(), big), MAN)
         self.assertEqual(v.level, FAIL)
         self.assertTrue(v.citation)
@@ -201,32 +208,33 @@ class TestR4aMaxPacketSize(unittest.TestCase):
         self.assertEqual(v.level, SKIP)
 
     def test_bound_is_the_descriptor_not_the_fractional_ceiling(self):
-        """A host sizing at 40/48 frames is lumpy, and lumpiness is not
+        """A host sizing at 4/7 frames is lumpy, and lumpiness is not
         forbidden by anything citable -- with an async feedback loop the host
-        is entitled to vary packet size. 1536 B is inside the endpoint's
-        declared wMaxPacketSize, so R4a must PASS and leave the complaint to
-        W2. Against max(legal_packet_sizes) = 1440 this same fixture produced
-        a cited FAIL against a conformant host."""
-        lumpy = healthy(size_hist_size=[40 * 32, 48 * 32, 0, 0, 0, 0, 0, 0],
-                        size_hist_count=[60000, 60000, 0, 0, 0, 0, 0, 0])
-        self.assertGreater(48 * 32, max(MAN.legal_packet_sizes))
+        is entitled to vary packet size. 224 B is inside the endpoint's
+        declared wMaxPacketSize of 800 B, so R4a must PASS and leave the
+        complaint to W2. Against max(legal_packet_sizes) = 192 this same
+        fixture produced a cited FAIL against a conformant host."""
+        lumpy = healthy(size_hist_size=[4 * 32, 7 * 32, 0, 0, 0, 0, 0, 0],
+                        size_hist_count=[480000, 480000, 0, 0, 0, 0, 0, 0])
+        self.assertGreater(7 * 32, max(MAN.legal_packet_sizes))
         self.assertEqual(rules.r4a_max_packet_size(series(Block(), lumpy),
                                                    MAN).level, PASS)
         self.assertEqual(rules.w2_packet_size_shape(series(Block(), lumpy),
                                                     MAN).level, WARN)
 
     def test_no_fail_on_variation_at_an_integer_sample_rate(self):
-        """48 kHz makes legal_packet_sizes a one-element set, so the old bound
-        fired on ANY second size -- against an endpoint whose wMaxPacketSize
-        exists to declare exactly that headroom. The sizes here straddle the
-        single nominal size and stay inside the descriptor's limit."""
+        """48 kHz makes legal_packet_sizes a one-element set -- exactly 6
+        frames per microframe packet -- so the old bound fired on ANY second
+        size, against an endpoint whose wMaxPacketSize exists to declare
+        exactly that headroom. The sizes here straddle the single nominal size
+        and stay inside the descriptor's limit."""
         m = Manifest.from_dict({
             "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
             "sample_rate_hz": 48000, "mode": "passive", "host_note": "t",
-            "max_packet_size_bytes": 1600})
+            "max_packet_size_bytes": 800})
         self.assertEqual(len(m.legal_packet_sizes), 1)
-        b = healthy(size_hist_size=[47 * 32, 48 * 32, 49 * 32, 0, 0, 0, 0, 0],
-                    size_hist_count=[40000, 40000, 40000, 0, 0, 0, 0, 0])
+        b = healthy(size_hist_size=[5 * 32, 6 * 32, 7 * 32, 0, 0, 0, 0, 0],
+                    size_hist_count=[320000, 320000, 320000, 0, 0, 0, 0, 0])
         self.assertEqual(rules.r4a_max_packet_size(series(Block(), b), m).level,
                          PASS)
 
@@ -260,8 +268,8 @@ class TestR4aMaxPacketSize(unittest.TestCase):
         histogram could not record cannot un-observe it. Degrading this to
         SKIP would let a host hide a real violation by producing enough
         distinct sizes to overflow the table."""
-        big = healthy(size_hist_size=[44 * 32, 9999, 0, 0, 0, 0, 0, 0],
-                      size_hist_count=[100000, 3, 0, 0, 0, 0, 0, 0],
+        big = healthy(size_hist_size=[5 * 32, 9999, 0, 0, 0, 0, 0, 0],
+                      size_hist_count=[960000, 3, 0, 0, 0, 0, 0, 0],
                       size_hist_overflow=9000)
         v = rules.r4a_max_packet_size(series(Block(), big), MAN)
         self.assertEqual(v.level, FAIL)
@@ -373,8 +381,10 @@ class TestW2PacketSizeLumpiness(unittest.TestCase):
         self.assertEqual(v.level, PASS)
 
     def test_warn_on_lumpy_sizes(self):
-        lumpy = healthy(size_hist_size=[40 * 32, 48 * 32, 0, 0, 0, 0, 0, 0],
-                        size_hist_count=[60000, 60000, 0, 0, 0, 0, 0, 0])
+        """4 and 7 frames against a 5/6-frame nominal: neither size is in
+        legal_packet_sizes and the excursion is well over a frame either way."""
+        lumpy = healthy(size_hist_size=[4 * 32, 7 * 32, 0, 0, 0, 0, 0, 0],
+                        size_hist_count=[480000, 480000, 0, 0, 0, 0, 0, 0])
         v = rules.w2_packet_size_shape(series(Block(), lumpy), MAN)
         self.assertEqual(v.level, WARN)
         self.assertTrue(v.consequence)

@@ -76,14 +76,28 @@ class Manifest:
 
     @property
     def packets_per_second(self):
-        """OUT data packets per second.
+        """OUT data packets per second, as the DEVICE counts them.
 
-        One per USB frame at full speed. At high speed lib_xua's iso OUT
-        endpoint is serviced once per frame as well on this device, not once
-        per microframe -- the transcript's sustained pkts/s=1000 at HS is the
-        measurement behind this.
+        One per 1 ms frame at full speed; one per 125 us microframe at high
+        speed. The distinction is not academic and an earlier version of this
+        property got it wrong, returning 1000 for both.
+
+        The trap: the RT1176 host's heartbeat reports pkts/s=1000 at high
+        speed, and that number is real -- but it counts iTD completions, which
+        are frames. Each frame carries eight microframe transactions, and the
+        decoupler releases a buffer per transaction, so the device sees 8000.
+
+        Silicon settled it. A 220 s capture at 44.1 kHz, 8ch, 4-byte subslots
+        recorded packet sizes of exactly 160 and 192 bytes -- 5 and 6 audio
+        frames -- in the ratio 828230:869079, i.e. 48.8% fives. 44100/8000 is
+        5.5125, which predicts 48.75%. Sizes of 1408/1440 B would have meant
+        1000 packets/s; they were never observed.
+
+        Getting this wrong is not a small error: it scales
+        legal_packet_sizes by eight, so R4a and W2 would both judge a
+        conformant host against sizes it could never send.
         """
-        return 1000
+        return 8000 if self.speed == "HS" else 1000
 
     @property
     def nominal_frames_per_packet(self):

@@ -25,13 +25,18 @@ from wireformat import Block, synth_vcd, MAGIC, VERSION
 
 MANIFEST = {"audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
             "sample_rate_hz": 44100, "mode": "passive", "host_note": "synthetic",
-            "max_packet_size_bytes": 1536}
+            "max_packet_size_bytes": 800}
 
+# High speed is 8000 OUT transactions per second, so a 120 s capture carries
+# 960000 packets of 44100/8000 = 5.5125 audio frames -- 160 B and 192 B, split
+# 48.75:51.25, for a mean of exactly 176.4 B. 800 B is the endpoint's declared
+# wMaxPacketSize, well clear of the 192 B fractional ceiling so that R4a
+# (over the descriptor) and W2 (lumpier than nominal) stay distinguishable.
 HEALTHY = dict(
-    pkt_count=120000, or_acc=0xFFFFFF00, and_acc=0, nonsilent_frames=5292000,
+    pkt_count=960000, or_acc=0xFFFFFF00, and_acc=0, nonsilent_frames=5292000,
     fb_poll_count=7500, alt_out=1, class_req_bitmap=5,
-    size_hist_size=[44 * 32, 45 * 32, 0, 0, 0, 0, 0, 0],
-    size_hist_count=[108000, 12000, 0, 0, 0, 0, 0, 0])
+    size_hist_size=[5 * 32, 6 * 32, 0, 0, 0, 0, 0, 0],
+    size_hist_count=[468000, 492000, 0, 0, 0, 0, 0, 0])
 
 TICK_S = 1e-6   # synth_vcd's default timescale_ps=1000000 -> 1 us per tick
 
@@ -252,47 +257,48 @@ class TestCaptureInvalidations(CliCase):
 
     def test_manifest_contradicting_the_trace_invalidates(self):
         """The spec's second invalidating condition. A 12 B declared frame
-        does not divide the 1408/1440 B packets on the wire, and the device --
-        which knows the real frame size -- counted no non-multiple packets, so
-        it is the declaration that is wrong.
+        does not divide the 160 B packets on the wire, and the device -- which
+        knows the real frame size -- counted no non-multiple packets, so it is
+        the declaration that is wrong.
 
-        Left to the rules this is a cited FAIL: R4a compares 1440 B against a
+        Left to the rules this is a cited FAIL: R4a compares 192 B against a
         wMaxPacketSize the operator derived from the same wrong channel count.
         Accusing a conformant host of a spec violation because of an operator
         typo is the worst output this tool can produce."""
-        self.write_manifest(channels=3, max_packet_size_bytes=540)
+        self.write_manifest(channels=3, max_packet_size_bytes=300)
         rc, doc = self.run_json(self.vcd(healthy_pair()))
         self.assertEqual(rc, 2)
         self.assert_only_capture_verdict(doc)
         summary = doc["verdicts"][0]["summary"]
         self.assertIn("12 B", summary)      # what the manifest declared
         self.assertIn("32 B", summary)      # what the trace implies
-        self.assertIn("1408", summary)      # the sizes that do not divide
+        self.assertIn("160", summary)       # the sizes that do not divide
 
     def test_the_operator_typo_that_started_this_is_invalid_not_a_fail(self):
         """`channels: 2` on an 8-channel stream -- the case the review cited.
 
-        Divisibility cannot see it: 8 B divides 1408 B cleanly. The scale test
-        can, because the manifest PREDICTS a mean packet of 352.8 B and the
-        capture shows 1411.2 B. Comparing a declared prediction against an
-        observation is not inferring the format from the trace; it is the
+        Divisibility cannot see it: 8 B divides 160 B and 192 B cleanly. The
+        scale test can, because the manifest PREDICTS a mean packet of 44.1 B
+        and the capture shows 176.4 B. Comparing a declared prediction against
+        an observation is not inferring the format from the trace; it is the
         entire reason the manifest exists.
 
         Before this it exited 1 -- 'this host failed a rule' -- for an
         operator typo."""
-        self.write_manifest(channels=2, max_packet_size_bytes=1536)
+        self.write_manifest(channels=2, max_packet_size_bytes=800)
         rc, doc = self.run_json(self.vcd(healthy_pair()))
         self.assertEqual(rc, 2)
         self.assert_only_capture_verdict(doc)
         summary = doc["verdicts"][0]["summary"]
-        self.assertIn("352.8 B", summary)    # predicted
-        self.assertIn("1411.2 B", summary)   # observed
+        self.assertIn("44.1 B", summary)     # predicted
+        self.assertIn("176.4 B", summary)    # observed
         self.assertIn("4.00x", summary)      # and the ratio, spelled out
 
     def test_scale_catches_a_wrong_subslot_width(self):
         """16-bit subslots declared for a 32-bit stream. Divisibility misses
-        this too -- 16 divides 1408 -- and it is the same class of error."""
-        self.write_manifest(subslot_bytes=2, max_packet_size_bytes=1536)
+        this too -- 16 divides both 160 and 192 -- and it is the same class of
+        error."""
+        self.write_manifest(subslot_bytes=2, max_packet_size_bytes=800)
         rc, _ = self.run_json(self.vcd(healthy_pair()))
         self.assertEqual(rc, 2)
 
@@ -304,18 +310,18 @@ class TestCaptureInvalidations(CliCase):
     def test_a_lumpy_host_is_warned_about_not_invalidated(self):
         """The counterexample that decides the FORM of the scale test.
 
-        40/48-frame sizing against a 44/45 nominal puts every observed size
+        4/7-frame sizing against a 5/6-frame nominal puts every observed size
         outside a one-frame band of the declared floor/ceiling pair, so a test
         asking "does any single size land near the prediction" reports this
         capture as unreadable. But this host is doing exactly what W2 exists
         to describe -- permitted by the spec, costly, not a violation -- and
         calling it INVALID would delete W2's reason to exist.
 
-        Its MEAN is 1408 B against a predicted 1411.2 B. The average is the
+        Its MEAN is 176 B against a predicted 176.4 B. The average is the
         quantity the stream's own arithmetic pins; the individual sizes are
         not."""
-        lumpy = healthy_pair(size_hist_size=[40 * 32, 48 * 32, 0, 0, 0, 0, 0, 0],
-                             size_hist_count=[60000, 60000, 0, 0, 0, 0, 0, 0])
+        lumpy = healthy_pair(size_hist_size=[4 * 32, 7 * 32, 0, 0, 0, 0, 0, 0],
+                             size_hist_count=[480000, 480000, 0, 0, 0, 0, 0, 0])
         rc, doc = self.run_json(self.vcd(lumpy))
         self.assertEqual(rc, 0)
         levels = {v["rule_id"]: v["level"] for v in doc["verdicts"]}
@@ -334,7 +340,7 @@ class TestCaptureInvalidations(CliCase):
         against a format declaration the capture contradicts, so the run is
         INVALID and the operator fixes the manifest before anyone accuses this
         host of anything."""
-        self.write_manifest(channels=2, max_packet_size_bytes=1536)
+        self.write_manifest(channels=2, max_packet_size_bytes=800)
         rc, doc = self.run_json(self.vcd(healthy_pair(pkt_not_multiple=17)))
         self.assertEqual(rc, 2)
         self.assert_only_capture_verdict(doc)
@@ -356,12 +362,14 @@ class TestCaptureInvalidations(CliCase):
         tolerance is the whole difference between catching a 4x typo and
         invalidating every capture with ordinary packet-size wander."""
         # Both sizes are whole 32 B frames, so only the scale test is in play:
-        # 1440 B is 28.8 B from the 1411.2 B prediction, 1472 B is 60.8 B.
-        near = healthy_pair(size_hist_size=[1440, 0, 0, 0, 0, 0, 0, 0],
-                            size_hist_count=[120000, 0, 0, 0, 0, 0, 0, 0])
+        # 192 B is 15.6 B from the 176.4 B prediction, 224 B is 47.6 B. The
+        # nominal falls mid-frame at 5.5125, so those are the two multiples of
+        # the frame that straddle the one-frame tolerance.
+        near = healthy_pair(size_hist_size=[192, 0, 0, 0, 0, 0, 0, 0],
+                            size_hist_count=[960000, 0, 0, 0, 0, 0, 0, 0])
         self.assertEqual(self.run_json(self.vcd(near, "near.vcd"))[0], 0)
-        far = healthy_pair(size_hist_size=[1472, 0, 0, 0, 0, 0, 0, 0],
-                           size_hist_count=[120000, 0, 0, 0, 0, 0, 0, 0])
+        far = healthy_pair(size_hist_size=[224, 0, 0, 0, 0, 0, 0, 0],
+                           size_hist_count=[960000, 0, 0, 0, 0, 0, 0, 0])
         self.assertEqual(self.run_json(self.vcd(far, "far.vcd"))[0], 2)
 
     def test_a_consistent_manifest_is_not_flagged(self):
@@ -383,8 +391,8 @@ class TestCaptureInvalidations(CliCase):
         fixture used channels=3, which is also a scale error, so the scale
         test fired and the case it meant to cover was never exercised."""
         odd = healthy_pair(pkt_not_multiple=17,
-                           size_hist_size=[1409, 1441, 0, 0, 0, 0, 0, 0],
-                           size_hist_count=[108000, 12000, 0, 0, 0, 0, 0, 0])
+                           size_hist_size=[161, 193, 0, 0, 0, 0, 0, 0],
+                           size_hist_count=[468000, 492000, 0, 0, 0, 0, 0, 0])
         rc, doc = self.run_json(self.vcd(odd))
         self.assertEqual(rc, 1)
         levels = {v["rule_id"]: v["level"] for v in doc["verdicts"]}
@@ -497,7 +505,7 @@ class TestInvalidationsPreemptTheRules(CliCase):
         self.assertEqual(self.ran, [])
 
     def test_no_rule_runs_on_a_contradicting_manifest(self):
-        self.write_manifest(channels=3, max_packet_size_bytes=540)
+        self.write_manifest(channels=3, max_packet_size_bytes=300)
         self.run_json(self.vcd(healthy_pair()))
         self.assertEqual(self.ran, [])
 

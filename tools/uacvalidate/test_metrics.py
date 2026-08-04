@@ -25,14 +25,16 @@ import report
 MAN = Manifest.from_dict({
     "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
     "sample_rate_hz": 44100, "mode": "passive", "host_note": "test",
-    "max_packet_size_bytes": 1536,
+    "max_packet_size_bytes": 800,
 })
 
+# High speed, so 8000 packets/s: 960000 over the 120 s these fixtures span,
+# split 468000/492000 between the 5-frame (160 B) and 6-frame (192 B) sizes.
 HEALTHY = dict(
-    pkt_count=120000, fb_poll_count=7500, fb_value=0x000B0000, alt_out=1,
+    pkt_count=960000, fb_poll_count=7500, fb_value=0x000B0000, alt_out=1,
     alt_transitions=1, class_req_bitmap=0x5, host_active=1,
-    size_hist_size=[44 * 32, 45 * 32, 0, 0, 0, 0, 0, 0],
-    size_hist_count=[108000, 12000, 0, 0, 0, 0, 0, 0])
+    size_hist_size=[5 * 32, 6 * 32, 0, 0, 0, 0, 0, 0],
+    size_hist_count=[468000, 492000, 0, 0, 0, 0, 0, 0])
 
 
 def pair(**over):
@@ -67,9 +69,9 @@ class TestShape(unittest.TestCase):
 class TestStreamMetrics(unittest.TestCase):
     def test_packet_rate_is_measured_against_nominal(self):
         d = as_dict(metrics.collect(pair(), MAN))
-        self.assertIn("120000", d["packets"])
-        self.assertIn("1000.0/s", d["packets"])
-        self.assertIn("nominal 1000/s", d["packets"])
+        self.assertIn("960000", d["packets"])
+        self.assertIn("8000.0/s", d["packets"])
+        self.assertIn("nominal 8000/s", d["packets"])
 
     def test_single_block_capture_has_no_rate_and_does_not_divide_by_zero(self):
         """One block spans no time, so there is no packet delta and no rate to
@@ -81,8 +83,8 @@ class TestStreamMetrics(unittest.TestCase):
 
     def test_packet_sizes_are_listed_with_counts(self):
         d = as_dict(metrics.collect(pair(), MAN))
-        self.assertIn("1408 B x108000", d["packet sizes"])
-        self.assertIn("1440 B x12000", d["packet sizes"])
+        self.assertIn("160 B x468000", d["packet sizes"])
+        self.assertIn("192 B x492000", d["packet sizes"])
 
     def test_histogram_overflow_is_reported_beside_the_sizes(self):
         """The note has to survive alongside real sizes, which is where the
@@ -90,7 +92,7 @@ class TestStreamMetrics(unittest.TestCase):
         the empty branch, so it appeared only when there was nothing to
         qualify."""
         d = as_dict(metrics.collect(pair(size_hist_overflow=9000), MAN))
-        self.assertIn("1408 B", d["packet sizes"])
+        self.assertIn("160 B", d["packet sizes"])
         self.assertIn("9000 beyond the histogram", d["packet sizes"])
 
     def test_feedback_poll_rate_and_raw_value(self):
@@ -222,11 +224,11 @@ class TestMetricsAreUnjudged(unittest.TestCase):
         self.assertIn("no class request", out)
 
     def test_rendered_below_the_rules_and_above_the_summary(self):
-        rows = [("packets", "120000")]
+        rows = [("packets", "960000")]
         out = report.render({}, [Verdict("R1", PASS, "the rule line")], rows)
         lines = out.splitlines()
         rule_at = next(i for i, l in enumerate(lines) if "the rule line" in l)
-        metric_at = next(i for i, l in enumerate(lines) if "120000" in l)
+        metric_at = next(i for i, l in enumerate(lines) if "960000" in l)
         summary_at = next(i for i, l in enumerate(lines) if "PASS," in l)
         self.assertLess(rule_at, metric_at)
         self.assertLess(metric_at, summary_at)
