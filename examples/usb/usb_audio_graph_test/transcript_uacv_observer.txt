@@ -1,0 +1,130 @@
+uacv observer — first silicon, 2026-08-04
+=========================================
+Bench: MC200 running sw_usb_audio 2AMi8o8xxxxxx (UAC2/HS, 8ch, 24-in-4) built
+from lib_xua branch instrumentation/uac-host-validator @ 4e587df2, collected
+by xrun --xscope-file over XTAG-3 3LajHPG5. Host: MIMXRT1170-EVKB running
+usb_audio_graph_test against USBHost_t36 master (d370e80).
+
+Capture obs3: collector up 18:19:45, host loaded 18:20:00, SIGINT 18:23:25.
+220 s of collector, ~180 s of streaming. 158 MB VCD, 169,284 blocks.
+
+Host's own account during the run:
+    audio=ready uac2=1 alt=1 ctrl=0/0/0 err/s=0 pkts/s=1000
+    fb=44096292 sizing=44096292 fbpkts=4925 fbrej=0 fberr=0 fresh=1
+    dropped=0 underruns=0
+i.e. a healthy closed-loop stream, which is what makes the findings below
+findings about the *instrument* rather than about the host.
+
+
+What the observer got right
+---------------------------
+    magic 0x55414356, version 1          block framing intact end to end
+    pkt_short_discarded 0
+    pkt_not_multiple 0
+    or_acc 0xFFFF0000, and_acc 0          low byte never set -> left-justified
+    nonsilent_frames 9,355,305            42,524/s against a 44,100 Hz stream
+                                          that started after the collector
+    alt_out 1, alt_transitions 2
+    class_req_bitmap 0x5                  SET_INTERFACE + clock SET_CUR
+    host_active 1
+    fb_poll_count 13,261                  60.3/s, against ~62/s expected
+
+The nonsilent_frames rate is the strongest single check here: it is pinned to
+the sample clock and nothing else, and it landed within 4% of 44.1 kHz with
+the shortfall entirely explained by the stream starting late.
+
+
+Finding 1: the judge's packets-per-second was wrong, and the device said so
+--------------------------------------------------------------------------
+    sizes {160: 828230, 192: 869079}      hist_overflow 0
+    pkt_count 1,697,309 over ~220 s       ~7,715/s
+
+160 and 192 bytes are 5 and 6 audio frames of 32 B. That is one packet per
+125 us MICROFRAME, 8000/s -- not one per 1 ms frame at 1000/s, which would
+have produced 1408/1440 B and was never observed.
+
+The split is 828230:869079, 48.8% fives. 44100/8000 = 5.5125 predicts 48.75%.
+
+Manifest.packets_per_second returned 1000 for both speeds, and its docstring
+defended that by citing the host's own heartbeat, which reports pkts/s=1000 at
+high speed. That number is real but it counts iTD *frame* completions; each
+frame carries eight microframe transactions and the decoupler releases a
+buffer per transaction. Host and device were both right and counting
+different things.
+
+Consequence had it shipped: legal_packet_sizes off by 8x, so R4a and W2 would
+both have judged a conformant host against sizes it could never send. Fixed;
+the fixtures now follow the silicon.
+
+This is the tool doing precisely what it was built for, to its own author.
+Every earlier check of that value was against a synthetic capture generated
+from the same wrong assumption.
+
+
+Finding 2: fb_value is never written -- an observer bug
+-------------------------------------------------------
+    fb_value 0x0     for the whole run, while the host reported fb=44096292
+
+The device is computing feedback correctly -- the host reads it, the loop is
+closed, sizing tracks fb to tens of millihertz. But g_uacvFbValue stayed zero,
+so the hook in ep_buffer.xc sits on a path this build does not execute. W3
+cannot compare request against delivery until this is fixed, and the judge
+currently has no way to notice: it would read a stuck zero as a real value.
+
+Not yet fixed. The likely cause is the #if guard around the block the hook
+was placed in; needs the FS and HS branches checked against which one this
+config compiles.
+
+
+Finding 3: xscope VCD timestamps do not match wall clock
+--------------------------------------------------------
+    VCD span 2792.707 s      wall clock 220 s      ratio 12.69
+    169,284 blocks           769 blocks/s by wall clock
+                             (8000 packets/s / 10 = 800 expected -- agrees)
+    timescale declared 10.000000 ns, timestamps monotonic, no wraps
+
+Block count against wall clock is self-consistent and matches the emission
+divider exactly. Against VCD time it is not. So the timestamps are inflated
+by ~12.7x relative to the declared 10 ns tick.
+
+Counter-based rules are unaffected -- R1, R2, R3, R4a, R4b, R7 and W2 all
+read deltas, not rates. W1 and W3 are affected: both derive a slope in bytes
+per second, so both would report ppm figures 12.7x too small.
+
+Open. Do not "fix" this by scaling by 12.69 -- that number is one measurement
+on one run and the underlying unit is not yet understood. Calibrate against a
+quantity pinned to a physical clock: nonsilent_frames increments at exactly
+the sample rate, so it can carry the conversion without any assumption about
+what xscope thinks a tick is.
+
+
+Finding 4: 100 Hz emission drops xscope data
+--------------------------------------------
+    xscope missing marks: 10        -> report INVALID, exit 2
+
+The wire-format document predicted this and named the lever before the run:
+37 words x 800 blocks/s is ~30,000 events/s, well above the ~3,700/s the
+100 Hz figure assumed -- because that figure assumed 1000 packets/s, i.e.
+finding 1 again. The 158 MB capture is the same error measured in bytes.
+
+The judge refused to report anything, which is correct and is the whole point
+of the guard: every counter in a capture with missing marks is a lower bound.
+It did not quietly produce nine plausible verdicts.
+
+Next run drops the block cadence to one per hundredth packet (~80 Hz at HS,
+or lower) and leaves the fill probe alone.
+
+
+What this run does and does not establish
+-----------------------------------------
+Established on silicon: the block framing, the header declaring all 37
+uacv_w* signals whether or not a probe ever fires, name-based signal
+resolution against real probe-id identifiers, packet and size reduction,
+byte-lane accumulation, the vacuity witness, alt and class-request tracking,
+feedback poll counting, and the judge's refusal to rule on a degraded capture.
+
+Not established: fb_value (finding 2), any rate-derived verdict (finding 3),
+a clean end-to-end PASS report (finding 4), and the whole of cooperative mode.
+
+No verdict has yet been produced from real hardware. The first thing this
+instrument did on silicon was find a defect in itself.
