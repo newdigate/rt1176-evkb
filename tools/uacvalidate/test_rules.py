@@ -28,6 +28,10 @@ def healthy(**over):
         or_acc=0xFFFFFF00, and_acc=0x00000000, nonsilent_frames=5292000,
         fb_poll_count=7500, fb_value=0x000B0000, alt_out=1, alt_transitions=1,
         class_req_bitmap=0x5, host_active=1,
+        # Locked once and held: what a bit-exact playback path looks like.
+        # Ignored outside cooperative mode, but a conformant host in
+        # cooperative mode has exactly this, so it belongs in the baseline.
+        pat_sync_count=1,
         size_hist_size=[44 * 32, 45 * 32, 0, 0, 0, 0, 0, 0],
         size_hist_count=[108000, 12000, 0, 0, 0, 0, 0, 0],
     )
@@ -189,23 +193,59 @@ class TestR7Continuity(unittest.TestCase):
         self.assertEqual(v.level, SKIP)
         self.assertIn("OUT packet", v.missing_witness)
 
-    def test_skip_when_the_pattern_never_synchronised(self):
-        """Packets arrived and the pattern reported no errors -- but nothing
-        non-silent ever went through it, so 'no errors' is the vacuous kind.
-        This is R7's equivalent of the R3 silence guard: without it a host that
-        never played the pattern collects a PASS for sample continuity."""
+    def test_skip_not_fail_when_the_pattern_never_locked(self):
+        """The false-accusation case. A host with OS volume or resampling in
+        the path plays loud audio and never holds lock, so it piles up pattern
+        errors that look exactly like dropped packets. Reporting those as
+        discontinuities would blame a conformant host. The error count here is
+        large on purpose: nothing but the lock count distinguishes this from a
+        genuinely broken host."""
         v = rules.r7_sample_continuity(
-            series(Block(), healthy(nonsilent_frames=0)), MAN_COOP)
+            series(Block(), healthy(pat_sync_count=0, pat_err_count=8000,
+                                    pat_resync_count=1000,
+                                    pat_first_err_idx=32)), MAN_COOP)
         self.assertEqual(v.level, SKIP)
-        self.assertIn("bit-exact", v.missing_witness)
+        self.assertIn("never locked", v.missing_witness)
 
-    def test_never_synced_is_distinguished_from_diverged(self):
+    def test_skip_not_fail_when_lock_was_lost_and_regained(self):
+        """Same accusation, softer symptom: lock achieved, then lost and
+        retaken repeatedly. Consistent with a playback path that is not
+        bit-exact rather than with discrete packet loss -- and we cannot tell
+        from relock alone whether the host is ALSO dropping packets, which is
+        why this is a SKIP naming its witness and not a WARN doing arithmetic
+        over an unknown."""
         v = rules.r7_sample_continuity(
-            series(Block(), healthy(pat_err_count=0, pat_resync_count=0,
-                                    nonsilent_frames=5292000, pat_first_err_idx=0,
-                                    pat_first_expected=0, pat_first_actual=0,
-                                    pkt_count=120000)), MAN_COOP)
+            series(Block(), healthy(pat_sync_count=7, pat_err_count=4000,
+                                    pat_resync_count=6)), MAN_COOP)
+        self.assertEqual(v.level, SKIP)
+        self.assertIn("relocked", v.missing_witness)
+
+    def test_lock_count_is_absolute_not_a_window_delta(self):
+        """A capture opened mid-stream, after lock was already achieved: the
+        lock count is 1 in every block, so its delta is 0 across the whole
+        capture. Reading it as a delta -- consistent with every other counter
+        in this module, and wrong -- would report a healthy soak as never
+        having locked. 'Has the pattern held lock in this run' is a property
+        of the run, not of the window."""
+        blocks = [(0.0, healthy(pat_sync_count=1, pkt_count=0)),
+                  (120.0, healthy(pat_sync_count=1))]
+        v = rules.r7_sample_continuity(blocks, MAN_COOP)
         self.assertEqual(v.level, PASS)
+
+    def test_never_locked_is_distinguished_from_locked_then_diverged(self):
+        """The distinction the spec requires and the old proxy could not draw.
+        Identical error counts; only the lock count differs, and it decides
+        whether the host is accused or excused."""
+        never = rules.r7_sample_continuity(
+            series(Block(), healthy(pat_sync_count=0, pat_err_count=9,
+                                    pat_first_err_idx=41207)), MAN_COOP)
+        diverged = rules.r7_sample_continuity(
+            series(Block(), healthy(pat_sync_count=1, pat_err_count=9,
+                                    pat_first_err_idx=41207)), MAN_COOP)
+        self.assertEqual(never.level, SKIP)
+        self.assertEqual(diverged.level, FAIL)
+        self.assertEqual(never.evidence["pattern_syncs"], 0)
+        self.assertEqual(diverged.evidence["pattern_syncs"], 1)
 
 
 class TestW2PacketSizeLumpiness(unittest.TestCase):

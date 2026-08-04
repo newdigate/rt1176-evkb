@@ -84,8 +84,8 @@ class TestSynthRoundTrip(unittest.TestCase):
         self.assertEqual(got[-1][1].and_acc, 0xDEADBEEF)
         self.assertAlmostEqual(got[50][0], 0.5, places=6)
         # And the writer must be emitting deltas, not a full block each time:
-        # 36 words at t=0 plus one changed word per later timestamp, nowhere
-        # near the 3600 lines a re-send-everything writer would produce.
+        # one whole block at t=0 plus one changed word per later timestamp,
+        # nowhere near the 3700 lines a re-send-everything writer would produce.
         b_lines = [ln for ln in body.split("\n") if ln.startswith("b")]
         self.assertEqual(len(b_lines), BLOCK_WORDS + 99)
 
@@ -103,18 +103,21 @@ class TestBlockWords(unittest.TestCase):
                   class_req_bitmap=11, host_active=12, pat_err_count=13,
                   pat_resync_count=14, pat_first_err_idx=15,
                   pat_first_expected=16, pat_first_actual=17,
-                  size_hist_overflow=18,
+                  size_hist_overflow=18, pat_sync_count=19,
                   size_hist_size=list(range(20, 28)),
                   size_hist_count=list(range(28, 36)))
         w = b.to_words()
-        self.assertEqual(len(w), 36)
+        self.assertEqual(len(w), BLOCK_WORDS)
         self.assertEqual(w[2], 1)
         self.assertEqual(w[20:28], list(range(20, 28)))
+        # pat_sync_count sits after the histograms, not among the other pat_*
+        # fields: the dataclass groups it for readability, the wire does not.
+        self.assertEqual(w[36], 19)
         self.assertEqual(Block.from_words(w), b)
 
     def test_from_words_rejects_wrong_length(self):
         with self.assertRaises(ValueError):
-            Block.from_words([0] * 35)
+            Block.from_words([0] * (BLOCK_WORDS - 1))
 
     def test_to_words_masks_to_32_bits(self):
         self.assertEqual(Block(pkt_count=-1).to_words()[2], 0xFFFFFFFF)
@@ -290,16 +293,18 @@ class TestTruncatedCapture(unittest.TestCase):
             text = _synth_text(path, [(0.0, Block())])
             _rewrite(path, text.replace(
                 "$enddefinitions $end",
-                "$var wire 32 ~ uacv_w36 $end\n$enddefinitions $end"))
+                f"$var wire 32 ~ uacv_w{BLOCK_WORDS} $end\n"
+                f"$enddefinitions $end"))
             with self.assertRaises(ValueError) as cm:
                 read_blocks(path)
         msg = str(cm.exception)
         self.assertIn("unknown word indices", msg)
-        self.assertIn("36", msg)
+        self.assertIn(str(BLOCK_WORDS), msg)
 
     def test_incomplete_first_timestamp_is_refused(self):
-        # All 36 declared, but the opening sample of word 35 never arrived.
-        # Reporting it as 0 would hand a rule a value the device never sent.
+        # Every word declared, but the opening sample of the last one never
+        # arrived. Reporting it as 0 would hand a rule a value the device
+        # never sent.
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "t.vcd")
             text = _synth_text(path, [(0.0, Block(pkt_count=1)),
@@ -311,8 +316,8 @@ class TestTruncatedCapture(unittest.TestCase):
             with self.assertRaises(ValueError) as cm:
                 read_blocks(path)
         msg = str(cm.exception)
-        self.assertIn(f"35 of {BLOCK_WORDS}", msg)
-        self.assertIn("[35]", msg)
+        self.assertIn(f"{BLOCK_WORDS - 1} of {BLOCK_WORDS}", msg)
+        self.assertIn(f"[{BLOCK_WORDS - 1}]", msg)
 
     def test_oversized_value_in_capture_is_masked(self):
         # A 33-bit value cannot come from a conforming observer, but if one

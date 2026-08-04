@@ -1,6 +1,6 @@
 """Wire format shared by the UAC validator's device observer and its judge.
 
-The observer (XC, in a separate XMOS-licensed repo) emits a 36-word state
+The observer (XC, in a separate XMOS-licensed repo) emits a 37-word state
 block at 100 Hz over xscope; `xrun --xscope-file` captures it to a VCD. This
 module is the contract between the two sides: it owns the word layout, the
 VCD emission format, and the reader. Field *meanings* are normative in
@@ -12,8 +12,8 @@ to two hand-written copies that can drift apart.
 attached, and so both directions of the contract are exercised by the same
 `SCALAR_LAYOUT` table.
 
-The block currently ships as 36 scalar xscope probes (probe id 4+i, VCD
-signal names `uacv_w00`..`uacv_w35`). A bench spike may replace that with a
+The block currently ships as 37 scalar xscope probes (probe id 4+i, VCD
+signal names `uacv_w00`..`uacv_w36`). A bench spike may replace that with a
 single `xscope_bytes` probe carrying all 144 bytes; that is an emission
 detail, and `read_blocks` returning `(time, Block)` pairs is unchanged
 either way, so callers never see it.
@@ -35,11 +35,18 @@ from dataclasses import dataclass, field
 
 MAGIC = 0x55414356  # 'UACV'
 VERSION = 1
-BLOCK_WORDS = 36
+BLOCK_WORDS = 37
 
 MASK32 = 0xFFFFFFFF
 
-# Word index -> attribute, for the scalar (non-histogram) head of the block.
+# Word index -> attribute, for the scalar (non-histogram) words of the block.
+#
+# NOT a contiguous head any more: words 0-19 are scalars, 20-35 are the two
+# histogram arrays, and word 36 is a scalar again. `pat_sync_count` was added
+# after the histograms were already placed, and appending it was the only
+# change that did not renumber every histogram slot -- an existing capture's
+# word 20 still means what it meant. Read the indices from this dict; do not
+# assume "scalars are 0..19", which was true before word 36 existed.
 SCALAR_LAYOUT = {
     0: "magic",
     1: "version",
@@ -61,6 +68,8 @@ SCALAR_LAYOUT = {
     17: "pat_first_expected",
     18: "pat_first_actual",
     19: "size_hist_overflow",
+    # Word 36, after the histograms -- see the note above.
+    36: "pat_sync_count",
 }
 
 HIST_SIZE_BASE = 20
@@ -108,6 +117,17 @@ class Block:
     host_active: int = 0
     pat_err_count: int = 0
     pat_resync_count: int = 0
+    # Times the pattern achieved lock. Grouped with the other pat_* fields for
+    # readability although its word index is the block's last -- the layout is
+    # SCALAR_LAYOUT's business, not this declaration's.
+    #
+    # This is the witness that lets the judge tell "the host's playback path is
+    # not bit-exact" from "the host dropped packets". Without it, a host whose
+    # OS applies volume or resampling never holds lock, relocks endlessly, and
+    # accumulates a large pat_err_count that is indistinguishable from genuine
+    # discontinuities -- so the judge would accuse a conformant host of losing
+    # audio. 0 means never locked; more than 1 means lock was lost and regained.
+    pat_sync_count: int = 0
     pat_first_err_idx: int = 0
     pat_first_expected: int = 0
     pat_first_actual: int = 0
@@ -254,7 +274,8 @@ def read_blocks(path):
     marker writes no state word and is skipped.
 
     Raises ValueError if the capture has no $timescale, if it does not declare
-    all 36 `uacv_w*` signals, or if its first timestamp does not write all 36.
+    every `uacv_w*` signal in the block, or if its first timestamp does not
+    write all of them.
     """
     with open(path) as f:
         lines = f.read().split("\n")
@@ -288,7 +309,7 @@ def read_blocks(path):
     checked_first = False
 
     def flush():
-        # Declaring all 36 signals does not mean all 36 arrived: a capture that
+        # Declaring every signal does not mean every one arrived: a capture that
         # lost its opening samples would hand the judge and_acc = 0, the exact
         # stuck-at-zero fault the all-ones default exists to catch, dressed up
         # as real data. Demand a complete first block instead of seeding the

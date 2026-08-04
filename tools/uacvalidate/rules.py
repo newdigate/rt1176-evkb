@@ -187,10 +187,39 @@ def r4b_whole_frames(blocks, man):
 
 
 def r7_sample_continuity(blocks, man):
+    """Sample continuity, gated on the pattern actually having held lock.
+
+    The lock count is the witness that stops this rule making a false
+    accusation. A host whose playback path is not bit-exact -- OS volume,
+    mixing, resampling -- plays full-scale audio and never holds lock: it
+    matches by chance, mismatches, relocks, forever. Its pattern-error count
+    is enormous and looks exactly like a host dropping packets. Reporting that
+    as "N sample discontinuities" would blame a conformant host for something
+    it did not do, which is the worst output this tool can produce; the design
+    spec keeps an unusable capture at exit 2 rather than 1 for the same reason.
+
+    So: no lock, or lock lost and regained, means continuity cannot be judged,
+    and the rule says so instead of guessing. Both stay SKIP rather than WARN
+    -- repeated relock does not tell us whether the host is ALSO dropping
+    packets, and a SKIP that names its missing witness is honest where a WARN
+    would be arithmetic over an unknown.
+
+    An earlier draft keyed the never-locked case on a low non-silent frame
+    count. That detected silence, not failure to lock -- the non-bit-exact
+    host it was meant to catch is loud -- so it left the false accusation in
+    place. Word 36 exists because a proxy could not do this job.
+    """
     a, b = _span(blocks)
     errs = delta(a.pat_err_count, b.pat_err_count)
     resyncs = delta(a.pat_resync_count, b.pat_resync_count)
-    ev = {"pattern_errors": errs, "resyncs": resyncs,
+    # Absolute, not a delta, and deliberately unlike every other counter here:
+    # "how many times has the pattern held lock in this run" is a property of
+    # the run, not of the window between two blocks. A capture that opens
+    # mid-stream, after lock was achieved, has a lock delta of zero across
+    # every block in it -- taking the difference would report a healthy soak as
+    # never having locked.
+    syncs = b.pat_sync_count
+    ev = {"pattern_errors": errs, "resyncs": resyncs, "pattern_syncs": syncs,
           "first_error_index": b.pat_first_err_idx,
           "first_expected": f"0x{b.pat_first_expected:08X}",
           "first_actual": f"0x{b.pat_first_actual:08X}"}
@@ -201,14 +230,25 @@ def r7_sample_continuity(blocks, man):
     if _packets(blocks) == 0:
         return Verdict("R7", SKIP, "no packets observed",
                        missing_witness="any OUT packet", evidence=ev)
-    if errs == 0 and resyncs == 0 and b.pat_first_err_idx == 0 \
-            and delta(a.nonsilent_frames, b.nonsilent_frames) < MIN_NONSILENT_FRAMES:
+    if syncs == 0:
         return Verdict(
             "R7", SKIP,
-            "the pattern never synchronised: the host's playback path is not "
+            "the pattern never locked: the host's playback path is not "
             "bit-exact (volume control, mixing or resampling), so continuity "
             "cannot be judged",
-            missing_witness="a bit-exact playback path", evidence=ev)
+            missing_witness="a bit-exact playback path: the pattern never "
+                            "locked",
+            evidence=ev)
+    if syncs > 1:
+        return Verdict(
+            "R7", SKIP,
+            f"the pattern lost and regained lock {syncs} times, which is "
+            f"consistent with a playback path that is not bit-exact rather "
+            f"than with discrete packet loss; the {errs} pattern errors "
+            f"cannot be attributed to the host",
+            missing_witness=f"a playback path that holds lock: the pattern "
+                            f"relocked {syncs} times",
+            evidence=ev)
     if errs:
         return Verdict(
             "R7", FAIL,
