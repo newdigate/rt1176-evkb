@@ -1,0 +1,103 @@
+uacv matched-soak baseline — 2 hosts x 2 classes, 2026-08-04
+=============================================================
+Purpose: establish a baseline good enough to tune the RT1176 host against
+macOS. Four soaks of 21-26 minutes each, same witness images (observer
+b424b0e0), same collector, same judge, all with zero xscope missing marks.
+
+Captures archived outside git (125 MB each at high speed) at
+~/Development/rt1170/uacv-captures/. Witness images preserved beside them:
+    uac1_16bit_witness.xe   md5 e6403eff1def13c98781aa85b2e13c4f
+    uac2_witness.xe         md5 5feb5b623f0e4cb004823b1cd49af876
+
+
+The table
+---------
+                    polls/s   device asks   matched   steady envelope   W1
+  RT1176 UAC1/FS      62.5       62.5         yes         196 B      +0.238 ppm
+  RT1176 UAC2/HS      62.5      1000.0        NO         1216 B      +0.114 ppm
+  macOS  UAC1/FS      62.5       62.5         yes         104 B      +0.000 ppm
+  macOS  UAC2/HS     1000.0     1000.0        yes         204 B      +0.000 ppm
+
+"steady envelope" excludes a 30 s settling window; "device asks" is the
+endpoint's own declaration -- bRefresh=4 (16 ms) at full speed, bInterval=4
+(1 ms) at high speed.
+
+All four are conformant. 0 FAIL anywhere.
+
+
+Finding 1: the wander tracks poll rate, not speed, packet rate or servo
+------------------------------------------------------------------------
+Three cells poll as often as the device asks and land at 104, 196 and 204 B.
+The one cell that polls a sixteenth as often opens to 1216 B -- six times
+wider -- and dips to 92 B, the only cell that approaches dry-out.
+
+The obvious confound is dead. macOS runs the same 8000 packets/s high-speed
+regime as our failing cell and holds 204 B, so the wander is not inherent to
+high speed, not the packet rate, and not the servo design. Our own host holds
+196 B at full speed with the same EMA and slew constants. The single variable
+that separates 1216 B from ~200 B is whether the host polls at the rate the
+device declares.
+
+This is a controlled result across two hosts and two classes, not an
+inference from one capture.
+
+
+Finding 2: a second, smaller gap that poll rate does NOT explain
+-----------------------------------------------------------------
+At full speed both hosts poll 62.5/s -- exactly matched -- and macOS still
+holds 104 B against our 196 B, with +0.000 ppm against our +0.238 ppm.
+
+So roughly 2x remains after poll rate is equalised. That residue is servo
+quality (filter horizon, slew policy, packet-size choice), and it is worth
+about half what the poll-rate gap is worth. It should be attacked second, and
+only with a measurement that isolates it.
+
+
+Finding 3: W2 at an integer sample rate is an artefact, confirmed twice
+------------------------------------------------------------------------
+macOS WARNed in both UAC1 runs, at 48 kHz, sending one-frame-short packets
+0.18% of the time (282 B where 288 B is nominal at 3-byte subslots; 188 B
+where 192 B is nominal at 2-byte). Our host at 44.1 kHz PASSED, because a
+fractional rate gives two legal sizes and there is somewhere to vary INTO.
+
+At an integer rate the fractional-sample law yields a single legal size while
+an asynchronous host must still vary to track feedback, so every conforming
+async host trips W2 there. Reproduced across two different subslot formats and
+two different witness builds. The warning is honest but unavoidable; it is not
+a finding about macOS.
+
+
+Finding 4: the -3.39 ppm reported earlier was a short-window artefact
+----------------------------------------------------------------------
+A 58 s UAC1 capture had put our host at -3.39 ppm and it was recorded as
+provisional. Over 21 minutes it is +0.238 ppm. Measuring before tuning was the
+right call: the servo it would have sent us to "fix" was never broken.
+
+
+What this licenses
+-------------------
+1. Raise the UAC2 feedback poll rate. FB_SLOTS is 2, sixteen frames apart.
+   ITD_POOL_SIZE is 40 and the OUT ring uses 32, so the ceiling without
+   growing the pool is 8 slots = 250 polls/s -- 4x, not the 16x needed to
+   match macOS. Whether 250/s closes a 6x envelope gap is the next
+   measurement, and it is cheap.
+
+2. Move the EMA alpha with the poll rate. At 62.5/s and alpha 1/8 the horizon
+   is ~128 ms. Quadrupling the rate at the same alpha quarters the horizon and
+   walks back toward the dither-chasing bug that cost +4.8 ppm and days of
+   bench time. Holding the horizon while averaging 4x more reports is the
+   change that should reduce noise on the estimate.
+
+3. Do NOT touch the UAC1 servo yet. It is +0.238 ppm over 21 minutes and its
+   envelope is already inside 200 B.
+
+4. Finish cooperative mode before tightening any loop. R7 is the only check
+   that would notice a change that starts losing samples, and it has never run
+   against any host.
+
+Method note for whoever repeats this: judge from a manifest read off the
+capture, not off the config's description. The macOS UAC1 soak negotiated
+2-byte subslots against the 16-bit witness where the earlier run negotiated
+3-byte against the 24-bit one; assuming either would have produced a wrong
+frame size and an INVALID report -- which is how the guard is supposed to
+behave, but it costs a soak.
