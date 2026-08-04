@@ -213,7 +213,7 @@ class Manifest:
 cd ~/Development/rt1170/evkb/tools/uacvalidate && python3 -m unittest test_manifest -v
 ```
 
-Expected: 9 tests, all PASS.
+Expected: 10 tests, all PASS.
 
 - [ ] **Step 5: Commit**
 
