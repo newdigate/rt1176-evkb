@@ -31,8 +31,8 @@
 |---|---|
 | `docs/uac-validator-wire-format.md` | Normative field-by-field definition of the state block. The contract between observer and judge. |
 | `tools/uacvalidate/__init__.py` | Package marker. |
-| `tools/uacvalidate/trace.py` | `Block` dataclass, `read_blocks()` reader, `synth_vcd()` generator. Owns both emission formats. |
-| `tools/uacvalidate/test_trace.py` | Tests for reader and generator. |
+| `tools/uacvalidate/wireformat.py` | `Block` dataclass, `read_blocks()` reader, `synth_vcd()` generator. Owns both emission formats. |
+| `tools/uacvalidate/test_wireformat.py` | Tests for reader and generator. |
 | `lib_xua/src/core/buffer/decouple/decouple.xc` *(xmos repo)* | Packet, size-histogram, byte-lane and pattern reductions; block emission. |
 | `lib_xua/src/core/buffer/ep/ep_buffer.xc` *(xmos repo)* | Feedback poll count and feedback value. |
 | `lib_xua/src/core/endpoint0/xua_endpoint0.c` *(xmos repo)* | Alt setting, alt transitions, class-request bitmap, host-active. |
@@ -76,7 +76,7 @@ All counters are free-running uint32 and may wrap. The reader does not unwrap; P
 
 ## Task 1: The emission-format spike
 
-Decides whether the block ships as one `xscope_bytes` probe or 36 scalar probes. No code from later tasks depends on the outcome — `trace.py` hides it — but the observer's emit function does.
+Decides whether the block ships as one `xscope_bytes` probe or 36 scalar probes. No code from later tasks depends on the outcome — `wireformat.py` hides it — but the observer's emit function does.
 
 **Files:**
 - Create: `~/Development/xmos/lib_xua/spike_bytes_probe.md` (scratch notes, not committed)
@@ -200,19 +200,19 @@ Plan 2 depends only on this. Written before the observer so the judge is never b
 
 **Files:**
 - Create: `tools/uacvalidate/__init__.py`
-- Create: `tools/uacvalidate/trace.py`
-- Test: `tools/uacvalidate/test_trace.py`
+- Create: `tools/uacvalidate/wireformat.py`
+- Test: `tools/uacvalidate/test_wireformat.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tools/uacvalidate/test_trace.py`:
+Create `tools/uacvalidate/test_wireformat.py`:
 
 ```python
 import os
 import tempfile
 import unittest
 
-from trace import Block, synth_vcd, read_blocks
+from wireformat import Block, synth_vcd, read_blocks
 
 
 class TestSynthRoundTrip(unittest.TestCase):
@@ -262,7 +262,7 @@ if __name__ == "__main__":
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-cd ~/Development/rt1170/evkb/tools/uacvalidate && python3 -m unittest test_trace -v
+cd ~/Development/rt1170/evkb/tools/uacvalidate && python3 -m unittest test_wireformat -v
 ```
 
 Expected: FAIL — `ModuleNotFoundError: No module named 'trace'` or `ImportError: cannot import name 'Block'`.
@@ -271,7 +271,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'trace'` or `ImportErro
 
 Create `tools/uacvalidate/__init__.py` as an empty file.
 
-Create `tools/uacvalidate/trace.py`:
+Create `tools/uacvalidate/wireformat.py`:
 
 ```python
 """State-block wire format: the contract between the lib_xua observer and
@@ -371,7 +371,7 @@ class Block:
 PROBE_BASE = 4
 
 
-def _probe_name(word_index):
+def _signal_name(word_index):
     return f"uacv_w{word_index:02d}"
 
 
@@ -388,7 +388,7 @@ def synth_vcd(path, timed_blocks, timescale_ps=1000000):
         f.write("$timescale\n  1 us\n$end\n")
         f.write("$scope module xscope $end\n")
         for i in range(BLOCK_WORDS):
-            f.write(f"$var wire 32 {ids[i]} {_probe_name(i)} $end\n")
+            f.write(f"$var wire 32 {ids[i]} {_signal_name(i)} $end\n")
         f.write("$upscope $end\n")
         f.write("$enddefinitions $end\n")
         prev = None
@@ -484,7 +484,7 @@ def count_missing_marks(path):
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd ~/Development/rt1170/evkb/tools/uacvalidate && python3 -m unittest test_trace -v
+cd ~/Development/rt1170/evkb/tools/uacvalidate && python3 -m unittest test_wireformat -v
 ```
 
 Expected: 4 tests, all PASS.
@@ -500,6 +500,45 @@ The generator exists so the judge can be built and tested with no hardware
 attached, and so both sides of the contract are exercised by the same
 layout table rather than by two hand-written copies that can drift."
 ```
+
+---
+
+### Task 3 amendments from review
+
+The code above is the first draft. Review found one data-loss bug and six
+surviving mutations; these amendments are part of the task, not follow-on work.
+
+1. **The module is `wireformat.py`, not `trace.py`.** `trace` is a stdlib
+   module name; inside this directory ours shadows it for everything, including
+   coverage tooling, and from the repo root a bare `from trace import ...`
+   silently resolves to the stdlib one. Five later modules would have copied
+   that import.
+2. **Every timestamp must be non-empty.** `synth_vcd` emits only changed words,
+   so a block identical to its predecessor emitted nothing and the reader
+   dropped the timestamp entirely. A wholly stationary block set is precisely
+   what a **stalled host** looks like, so the judge could not distinguish a
+   stalled host from a dead observer from a capture gap. Emit word 0 alone when
+   nothing else changed — this keeps the delta-encoding property and the exact
+   `BLOCK_WORDS + 99` line-count assertion intact. **The observer must obey the
+   same rule.**
+3. **The first timestamp must write all 36 words**, else raise. Declaring a
+   word is not the same as emitting it, and a capture that loses its opening
+   samples otherwise reports `and_acc = 0` — the stuck-at-zero fault the
+   `0xFFFFFFFF` default exists to catch, handed to a rule as real data. Do
+   **not** fix this by seeding reader state from `Block()` defaults: that would
+   default `magic` to `MAGIC` and defeat the CLI's wire-format guard.
+4. **`sizes()` accumulates duplicate slots** rather than overwriting, so a
+   malformed histogram cannot silently lose packets from
+   `sum(sizes().values())`.
+5. **`delta32(prev, cur)` lives here**, not in `rules.py`. `MASK32` is here and
+   the format defines counters as free-running uint32, so the subtraction
+   belongs with the format; three downstream modules would otherwise each
+   reimplement it.
+6. **`count_missing_marks` counts only non-zero records**, matching
+   `vcdfill.py:112`. Two modules in one repo giving different answers about the
+   same probe would make a judge distrust a clean capture.
+7. Rename `_probe_name` → `_signal_name`; rename the header-end index `i` to
+   `first_data_line`; add a `__post_init__` length check on the histogram lists.
 
 ---
 
@@ -1120,7 +1159,7 @@ In `main.xc`, extend `xscope_register`. **RECORD format:**
                     XSCOPE_CONTINUOUS, "uacv_block",    XSCOPE_UINT, "bytes");
 ```
 
-**SCALAR format:** register 40 probes — the four existing ones followed by `uacv_w00` through `uacv_w35`, each `XSCOPE_CONTINUOUS, XSCOPE_UINT, "value"`. The names must match `trace.py`'s `_probe_name()` exactly, or the reader will not find them.
+**SCALAR format:** register 40 probes — the four existing ones followed by `uacv_w00` through `uacv_w35`, each `XSCOPE_CONTINUOUS, XSCOPE_UINT, "value"`. The names must match `wireformat.py`'s `_signal_name()` exactly, or the reader will not find them.
 
 - [ ] **Step 5: Build and confirm the existing probes still work**
 
@@ -1189,7 +1228,7 @@ Let it stream for two minutes, then **Ctrl-C** the `xrun` (SIGINT — never `kil
 ```bash
 cd ~/Development/rt1170/evkb/tools/uacvalidate
 python3 -c "
-from trace import read_blocks, MAGIC
+from wireformat import read_blocks, MAGIC
 bs = read_blocks('$HOME/uacv_obs.vcd')
 print('blocks:', len(bs))
 t, b = bs[-1]
@@ -1243,7 +1282,7 @@ zero for the whole of any passive-mode run.
 
 - [ ] **Step 5: Investigate any mismatch before proceeding**
 
-If `magic` is wrong, the emission format and the reader disagree — re-check the probe names against `trace.py`'s `_probe_name()`. If `pkt_count` is roughly 8× or 1/8 of expected, the packet counter is on the wrong path. **Do not weaken the expectation to make it match.** Silicon wins; the observer is what is wrong.
+If `magic` is wrong, the emission format and the reader disagree — re-check the probe names against `wireformat.py`'s `_signal_name()`. If `pkt_count` is roughly 8× or 1/8 of expected, the packet counter is on the wrong path. **Do not weaken the expectation to make it match.** Silicon wins; the observer is what is wrong.
 
 - [ ] **Step 6: Write the transcript**
 
@@ -1318,7 +1357,7 @@ cd ~/Development/xmos/lib_xua && git push -u origin instrumentation/uac-host-val
 ## Done when
 
 - The spike has selected an emission format and `docs/uac-validator-wire-format.md` records both the choice and the rejection.
-- `python3 -m unittest test_trace -v` passes.
+- `python3 -m unittest test_wireformat -v` passes.
 - The observer builds for `2AMi8o8xxxxxx` with probes 0–3 unchanged.
 - A 120 s silicon capture parses, `magic` is correct, and every field matches the expected table in Task 9.
 - `lib_xua-uac-validator.patch` applies clean to `3e755c57`.

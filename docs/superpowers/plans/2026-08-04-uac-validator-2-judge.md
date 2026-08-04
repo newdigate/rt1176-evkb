@@ -4,11 +4,11 @@
 
 **Goal:** Turn a captured VCD plus a run manifest into a conformance report with PASS / FAIL / WARN / SKIP verdicts, cited or consequence-backed.
 
-**Architecture:** Pure Python, stdlib only. Reads `Block` objects through Plan 1's `trace.py`, so nothing here depends on which probe mechanism the observer uses. Rules are independent functions with a uniform signature, registered in a list — adding a rule never edits an existing one. No RT1176 knowledge anywhere: input is a VCD and a manifest, output is a report.
+**Architecture:** Pure Python, stdlib only. Reads `Block` objects through Plan 1's `wireformat.py`, so nothing here depends on which probe mechanism the observer uses. Rules are independent functions with a uniform signature, registered in a list — adding a rule never edits an existing one. No RT1176 knowledge anywhere: input is a VCD and a manifest, output is a report.
 
 **Tech Stack:** Python 3, stdlib only (`dataclasses`, `unittest`, `json`, `argparse`).
 
-**Depends on:** Plan 1 Task 3 (`trace.py` with `Block`, `synth_vcd`, `read_blocks`). Hardware is **not** required — every test here runs against synthetic VCDs.
+**Depends on:** Plan 1 Task 3 (`wireformat.py` with `Block`, `synth_vcd`, `read_blocks`). Hardware is **not** required — every test here runs against synthetic VCDs.
 
 **Design spec:** `docs/superpowers/specs/2026-08-04-uac-host-validator-design.md`
 
@@ -330,7 +330,7 @@ Create `tools/uacvalidate/test_rules.py`:
 ```python
 import unittest
 
-from trace import Block
+from wireformat import Block
 from manifest import Manifest
 from verdict import PASS, FAIL, WARN, SKIP
 import rules
@@ -525,11 +525,21 @@ class TestW2PacketSizeLumpiness(unittest.TestCase):
 
 
 class TestCounterWrap(unittest.TestCase):
+    """delta32 itself is tested in test_wireformat; these pin that the rules
+    module actually routes counter arithmetic through it. A sample counter at
+    8ch x 44.1 kHz wraps in about 3.4 hours, inside the soak durations this
+    bench already runs, so a rule doing bare subtraction would report a
+    catastrophic negative rather than a small positive."""
+
     def test_delta_handles_uint32_wrap(self):
         self.assertEqual(rules.delta(0xFFFFFFF0, 0x10), 0x20)
 
-    def test_delta_normal(self):
-        self.assertEqual(rules.delta(100, 350), 250)
+    def test_rule_counter_survives_a_wrap(self):
+        blocks = series(Block(alt_out=1, fb_poll_count=0xFFFFFFF0),
+                        healthy(fb_poll_count=0x10))
+        v = rules.r1_feedback_polled(blocks, MAN)
+        self.assertEqual(v.level, PASS)
+        self.assertEqual(v.evidence["feedback_polls"], 0x20)
 
 
 if __name__ == "__main__":
@@ -561,8 +571,10 @@ than one that does not cite, so the marker travels with the text into the
 report rather than being quietly dropped.
 """
 from verdict import Verdict, PASS, FAIL, WARN, SKIP
-
-UINT32 = 1 << 32
+# delta32 lives in wireformat because MASK32 does: computing a difference in
+# the wire format's own arithmetic belongs with the format. Deciding what a
+# wrap MEANS is this module's job; doing the subtraction is not.
+from wireformat import delta32 as delta
 
 # Below this many non-silent frames the byte-lane accumulators have not seen
 # enough signal to distinguish justification from silence. 10,000 frames is
@@ -584,15 +596,6 @@ CITE_R4A = "USB 2.0 section 5.6.3 [UNVERIFIED]"
 CITE_R4B = "UAC 2.0 audio frame structure [UNVERIFIED]"
 CITE_R7 = ("no clause in hand -- see the design spec; this citation is the "
            "weakest in the set and may demote R7 to WARN [UNVERIFIED]")
-
-
-def delta(first, last):
-    """Counter difference across a uint32 wrap.
-
-    A sample counter at 8ch x 44.1 kHz wraps in about 3.4 hours, which is
-    inside the soak durations this bench already runs.
-    """
-    return (last - first) % UINT32
 
 
 def _span(blocks):
@@ -1220,7 +1223,7 @@ import sys
 import rules
 import report
 from manifest import Manifest
-from trace import read_blocks, count_missing_marks, MAGIC
+from wireformat import read_blocks, count_missing_marks, MAGIC
 from verdict import Verdict, INVALID
 from vcdfill import parse as parse_fill, fit_slope
 
@@ -1355,7 +1358,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ```bash
 cd ~/Development/rt1170/evkb/tools/uacvalidate
 python3 -c "
-from trace import Block, synth_vcd
+from wireformat import Block, synth_vcd
 h = dict(pkt_count=120000, or_acc=0xFFFFFF00, and_acc=0, nonsilent_frames=5292000,
          fb_poll_count=7500, alt_out=1, class_req_bitmap=5,
          size_hist_size=[44*32,45*32,0,0,0,0,0,0],

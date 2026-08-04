@@ -504,7 +504,7 @@ and a constant top byte, and `nonsilent_frames` comfortably above 10,000.
 cd ~/Development/rt1170/evkb/tools/uacvalidate
 python3 -c "
 import json
-from trace import read_blocks
+from wireformat import read_blocks
 bs = read_blocks('corpus/captures/D_right_justified.vcd')
 _, b = bs[-1]
 print('or_acc  0x%08X' % b.or_acc)
