@@ -491,15 +491,31 @@ class TestTimeBaseGuard(unittest.TestCase):
         """Healthy counters, timestamps inflated ~12.7x as silicon showed."""
         return [(0.0, Block(alt_out=1)), (1524.0, healthy())]
 
-    def test_consistent_when_packets_match_the_span(self):
-        ok, vcd_s, implied_s = rules.time_base_consistent(
+    def test_consistent_when_the_packet_rate_matches_the_declaration(self):
+        ok, observed, nominal = rules.time_base_consistent(
             series(Block(alt_out=1), healthy()), MAN)
         self.assertTrue(ok)
-        self.assertAlmostEqual(implied_s, 120.0, places=3)
+        self.assertAlmostEqual(observed, 8000.0, places=3)
+        self.assertEqual(nominal, 8000.0)
 
     def test_inconsistent_when_timestamps_are_stretched(self):
-        ok, vcd_s, implied_s = rules.time_base_consistent(self._stretched(), MAN)
+        ok, observed, nominal = rules.time_base_consistent(self._stretched(), MAN)
         self.assertFalse(ok)
+        self.assertLess(observed, nominal / 10)
+
+    def test_a_wind_down_tail_does_not_trip_the_guard(self):
+        """macOS found this: a capture that streams cleanly and then stops
+        before the collector does has a tail that skews the TOTALS while every
+        streaming interval is perfect. Comparing totals SKIPped W1/W3 on a
+        capture taken by this bench's own documented procedure, which
+        deliberately outlives the host. The median is blind to the tail."""
+        blocks = [(i * 0.0125, Block(alt_out=1, pkt_count=i * 100))
+                  for i in range(200)]                      # 8000/s, clean
+        last_t, last_b = blocks[-1]
+        blocks += [(last_t + 40.0, Block(alt_out=1, pkt_count=last_b.pkt_count + 800))]
+        ok, observed, nominal = rules.time_base_consistent(blocks, MAN)
+        self.assertTrue(ok, f"tail tripped the guard: {observed}/s vs {nominal}/s")
+        self.assertAlmostEqual(observed, 8000.0, delta=1.0)
 
     def test_w1_skips_rather_than_reporting_a_wrong_ppm(self):
         v = rules.w1_residual_drift(self._stretched(), MAN,

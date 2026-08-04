@@ -355,32 +355,50 @@ TIME_BASE_TOLERANCE = 0.25
 
 
 def time_base_consistent(blocks, man):
-    """(ok, vcd_seconds, implied_seconds).
+    """(ok, observed_rate, nominal_rate).
 
-    ok is False when the capture's own timestamps disagree with what its
-    packet count implies, or when there are too few packets to judge.
+    Compares the MEDIAN per-interval packet rate against the declared one,
+    not the totals. The distinction matters and a real capture found it: a
+    genuinely broken time base stretches every interval uniformly, whereas a
+    capture that simply stops streaming before the collector does has a
+    wind-down tail that skews the totals while every streaming interval is
+    perfect. The median is blind to the tail and sensitive to the stretch,
+    which is the discrimination this guard exists to make.
+
+    Comparing totals instead would SKIP W1/W3 on every capture taken by this
+    bench's own documented procedure, since that procedure deliberately
+    outlives the host.
     """
-    vcd_s = _duration(blocks)
-    packets = _packets(blocks)
-    implied_s = packets / float(man.packets_per_second)
-    if packets < man.packets_per_second:      # under a second of stream
-        return False, vcd_s, implied_s
-    if implied_s <= 0 or vcd_s <= 0:
-        return False, vcd_s, implied_s
-    ratio = vcd_s / implied_s
-    return (abs(ratio - 1.0) <= TIME_BASE_TOLERANCE), vcd_s, implied_s
+    nominal = float(man.packets_per_second)
+    rates = []
+    for (ta, a), (tb, b) in zip(blocks, blocks[1:]):
+        dt = tb - ta
+        if dt <= 0:
+            continue
+        rates.append(delta(a.pkt_count, b.pkt_count) / dt)
+    # One interval is enough: a two-block span has no tail to be robust
+    # against, and the median of one is that interval's rate. Requiring more
+    # would SKIP every short capture for want of a problem it cannot have.
+    if not rates:
+        return False, 0.0, nominal
+    rates.sort()
+    observed = rates[len(rates) // 2]
+    if observed <= 0:
+        return False, observed, nominal
+    return (abs(observed / nominal - 1.0) <= TIME_BASE_TOLERANCE), observed, nominal
 
 
 def _time_base_skip(rule_id, blocks, man, ev):
     """Shared SKIP for the two rate-derived rules. None when the base is sound."""
-    ok, vcd_s, implied_s = time_base_consistent(blocks, man)
+    ok, observed, nominal = time_base_consistent(blocks, man)
     if ok:
         return None
-    ev = dict(ev, vcd_seconds=round(vcd_s, 3), implied_seconds=round(implied_s, 3))
+    ev = dict(ev, observed_packets_per_s=round(observed, 1),
+              declared_packets_per_s=nominal)
     return Verdict(
         rule_id, SKIP,
-        f"capture timestamps span {vcd_s:.1f} s but its {_packets(blocks)} packets "
-        f"at {man.packets_per_second}/s imply {implied_s:.1f} s",
+        f"capture's own clock disagrees with its counters: packets arrive at a "
+        f"median {observed:.0f}/s against a declared {nominal:.0f}/s",
         missing_witness=("a trustworthy time base: this rule divides by elapsed "
                          "time, and the capture's two clocks disagree"),
         evidence=ev)
