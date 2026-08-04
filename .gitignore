@@ -17,3 +17,11 @@ tap.raw
 
 # superpowers brainstorming companion (transient mockups)
 .superpowers/
+
+# Specification PDFs (USB-IF, NXP, ...). Kept out of git for the same reason
+# the parent rt1170/ directory is: they are large and copyrighted. The USB-IF
+# ones carry "A LICENSE IS HEREBY GRANTED TO REPRODUCE THIS SPECIFICATION FOR
+# INTERNAL USE ONLY" on their notice page, so publishing them in a public
+# repo would breach the licence they were downloaded under. Cite clause
+# numbers in code and docs; keep the documents local.
+docs/*.pdf

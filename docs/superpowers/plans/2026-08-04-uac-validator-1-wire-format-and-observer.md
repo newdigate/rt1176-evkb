@@ -1219,6 +1219,28 @@ Expected, for a healthy current-master host streaming 8ch 24-in-4 at 44.1 kHz fo
 | `alt_out` | 1 | |
 | `class_req_bitmap` | `0x5` or `0x7` | SET_INTERFACE + clock SET_CUR |
 
+- [ ] **Step 4b: Confirm xscope declares all 36 signals**
+
+`read_blocks` refuses a capture that does not declare all 36 `uacv_w*` signals,
+on the grounds that a partial block is a different wire format rather than a
+partial reading. That check rests on an assumption no one has tested on
+hardware: **that `xrun --xscope-file` declares a `$var` for every registered
+probe, including probes whose value never changed during the run.**
+
+```bash
+grep -c "uacv_w" $HOME/uacv_obs.vcd
+```
+
+Expected: 36 `$var` declarations. If xscope omits never-firing probes, this
+capture will be refused with a message naming the missing indices — loud and
+unambiguous, but it means the completeness check needs relaxing to "every
+declared index is in range, and word 0 is present" rather than "all 36
+declared". Decide it here, on evidence, and record the outcome in
+`docs/uac-validator-wire-format.md`.
+
+Note this is most likely to bite on the *pattern* words (14–18), which stay
+zero for the whole of any passive-mode run.
+
 - [ ] **Step 5: Investigate any mismatch before proceeding**
 
 If `magic` is wrong, the emission format and the reader disagree — re-check the probe names against `trace.py`'s `_probe_name()`. If `pkt_count` is roughly 8× or 1/8 of expected, the packet counter is on the wrong path. **Do not weaken the expectation to make it match.** Silicon wins; the observer is what is wrong.
