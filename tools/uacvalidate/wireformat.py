@@ -78,6 +78,37 @@ HIST_SLOTS = 8
 
 PROBE_BASE = 4  # ids 0..3 are reserved for the existing decoupler probes
 
+# How long one block's worth of word-writes may take to arrive.
+#
+# The block does NOT arrive at a single VCD timestamp. As 37 scalar probes it
+# is 37 separate xscope_int() calls, which land microseconds apart and get
+# microseconds-apart timestamps; a reader demanding one timestamp per block
+# would reject every real scalar capture with "first timestamp writes 1 of 37
+# words". So writes are grouped into a block by two rules:
+#
+#   1. Re-writing a word index the open group already carries closes it. This
+#      is exact and needs no threshold: a block writes each word at most once,
+#      so the repeat IS the next block beginning. Against a real scalar
+#      capture, where every block re-sends all 37 words, this rule alone
+#      separates every block correctly.
+#   2. Otherwise a write more than `emit_window_s` after the group's first
+#      write closes it. This covers the delta-encoded shape -- consecutive
+#      blocks touching disjoint sets of words, where rule 1 never fires.
+#
+# The window must sit above the time one block takes to emit and below the
+# emission period. At the observer's 100 Hz the period is 10 ms and 37
+# xscope_int calls span microseconds, so 1 ms clears the burst by three orders
+# of magnitude and the period by one.
+#
+# The ambiguity this cannot resolve, stated rather than hidden: a block that
+# takes longer than the window to emit splits into two, and two blocks closer
+# together than the window merge -- unless rule 1 catches them, which for a
+# full 37-word block it always does. Both failures are visible (a split block
+# fails the first-block completeness check; merged blocks under-count) rather
+# than silent. It is a parameter because the margin is the observer's
+# property, not this module's.
+EMISSION_WINDOW_S = 0.001
+
 
 def _signal_name(i):
     return f"uacv_w{i:02d}"
@@ -263,19 +294,20 @@ def _parse_header(lines):
     return tick_s, names, i
 
 
-def read_blocks(path):
+def read_blocks(path, emit_window_s=EMISSION_WINDOW_S):
     """Parse a capture into `[(time_seconds, Block)]`, in capture order.
 
-    Words that did not change at a timestamp carry their previous value
-    forward. One Block is produced per timestamp at which at least one state
-    word was WRITTEN -- written, not changed: under the heartbeat rule a
-    stationary block rewrites word 0 with the value it already had, and that
-    sample must still be reported. A timestamp that carried only a lost-sample
-    marker writes no state word and is skipped.
+    Words that did not change carry their previous value forward. One Block is
+    produced per emission group -- see EMISSION_WINDOW_S for how writes are
+    grouped -- timestamped at the group's first write. Groups are formed from
+    words WRITTEN, not changed: under the heartbeat rule a stationary block
+    rewrites word 0 with the value it already had, and that sample must still
+    be reported. A timestamp carrying only a lost-sample marker writes no
+    state word and contributes to no group.
 
     Raises ValueError if the capture has no $timescale, if it does not declare
-    every `uacv_w*` signal in the block, or if its first timestamp does not
-    write all of them.
+    every `uacv_w*` signal in the block, or if its first group does not write
+    all of them.
     """
     with open(path) as f:
         lines = f.read().split("\n")
@@ -305,7 +337,8 @@ def read_blocks(path):
     out = []
     state = [0] * BLOCK_WORDS
     t = 0
-    written = set()   # word indices written at the timestamp being read
+    written = set()    # word indices written in the open emission group
+    group_t = None     # seconds at that group's first write
     checked_first = False
 
     def flush():
@@ -325,16 +358,19 @@ def read_blocks(path):
                     f"first timestamp writes {len(written)} of {BLOCK_WORDS} "
                     f"words; missing word indices {absent}")
             checked_first = True
-        out.append((t * tick_s, Block.from_words(state)))
+        out.append((group_t, Block.from_words(state)))
 
     for ln in lines[first_data_line:]:
         ln = ln.strip()
         if not ln:
             continue
         if ln[0] == "#":
-            flush()
             t = int(ln[1:])
-            written = set()
+            # Rule 2: the open group has run past its emission window.
+            if written and t * tick_s - group_t > emit_window_s:
+                flush()
+                written = set()
+                group_t = None
         elif ln[0] == "b":
             # Only the b-form is handled: every uacv_w* $var is 32 bits wide,
             # and the VCD spec permits the scalar form only for 1-bit vars, so
@@ -342,8 +378,16 @@ def read_blocks(path):
             # accepts both because a marker may be declared 1-bit.)
             val_s, sid = ln[1:].split()
             if sid in word_of:
-                state[word_of[sid]] = int(val_s, 2) & MASK32
-                written.add(word_of[sid])
+                w = word_of[sid]
+                # Rule 1: a word arriving twice is the next block starting.
+                if w in written:
+                    flush()
+                    written = set()
+                    group_t = None
+                if group_t is None:
+                    group_t = t * tick_s
+                state[w] = int(val_s, 2) & MASK32
+                written.add(w)
     flush()
     return out
 

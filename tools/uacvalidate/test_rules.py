@@ -6,13 +6,19 @@ from verdict import PASS, FAIL, WARN, SKIP
 import rules
 
 
+# max_packet_size_bytes deliberately exceeds max(legal_packet_sizes) = 1440.
+# That headroom is what separates R4a from W2: a host sizing at 48 frames
+# (1536 B) is inside the endpoint's declared limit -- no FAIL -- while still
+# being lumpier than the 44/45 nominal, which is a W2 WARN.
 MAN = Manifest.from_dict({
     "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
     "sample_rate_hz": 44100, "mode": "passive", "host_note": "test",
+    "max_packet_size_bytes": 1536,
 })
 MAN_COOP = Manifest.from_dict({
     "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
     "sample_rate_hz": 44100, "mode": "cooperative", "host_note": "test",
+    "max_packet_size_bytes": 1536,
 })
 
 
@@ -127,7 +133,8 @@ class TestR3Justification(unittest.TestCase):
         to justify."""
         m = Manifest.from_dict({
             "audio_class": 1, "speed": "FS", "channels": 2, "subslot_bytes": 2,
-            "sample_rate_hz": 44100, "mode": "passive", "host_note": "t"})
+            "sample_rate_hz": 44100, "mode": "passive", "host_note": "t",
+            "max_packet_size_bytes": 192})
         v = rules.r3_left_justified(series(Block(), healthy()), m)
         self.assertEqual(v.level, SKIP)
 

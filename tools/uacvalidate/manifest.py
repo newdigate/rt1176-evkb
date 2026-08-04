@@ -10,7 +10,7 @@ import math
 from dataclasses import dataclass
 
 REQUIRED = ("audio_class", "speed", "channels", "subslot_bytes",
-            "sample_rate_hz", "mode", "host_note")
+            "sample_rate_hz", "mode", "host_note", "max_packet_size_bytes")
 MODES = ("passive", "cooperative")
 SPEEDS = ("FS", "HS")
 
@@ -28,6 +28,16 @@ class Manifest:
     sample_rate_hz: int
     mode: str
     host_note: str
+    # The endpoint's declared wMaxPacketSize, read off the descriptor by the
+    # operator. It is NOT derivable from the other fields, which is exactly
+    # why it belongs here: the fractional-sample ceiling
+    # (max(legal_packet_sizes)) is a different number with a different
+    # meaning, and an earlier R4a compared against that one. With an
+    # asynchronous feedback loop a host is entitled to vary packet size, so
+    # the fractional ceiling FAILed conformant hosts -- and at an integer
+    # sample rate, where legal_packet_sizes has one element, it FAILed on any
+    # variation at all. Only the descriptor carries the endpoint's real limit.
+    max_packet_size_bytes: int
 
     @classmethod
     def from_dict(cls, d):
@@ -44,7 +54,8 @@ class Manifest:
             raise ManifestError(
                 "audio_class 1 at HS: the UAC1 image on this bench is full speed. "
                 "A manifest that says otherwise would misread every packet size.")
-        for k in ("channels", "subslot_bytes", "sample_rate_hz"):
+        for k in ("channels", "subslot_bytes", "sample_rate_hz",
+                  "max_packet_size_bytes"):
             # bool is a subclass of int, and `true` is a JSON literal: a typo
             # putting it where a channel count belongs would otherwise pass
             # validation as 1 and yield a plausible frame size. The manifest
@@ -80,14 +91,19 @@ class Manifest:
 
     @property
     def legal_packet_sizes(self):
-        """Sizes a conformant host may send: floor and ceiling of the
+        """Sizes a well-behaved host sends: floor and ceiling of the
         fractional frames-per-packet, in bytes.
 
-        A set, and at an integer rate it collapses to ONE element -- 48 kHz is
-        exactly 48 frames per packet, so a conformant host has exactly one
-        legal size and any second size is a violation. That is the intended
-        result, not a degenerate one: do not "fix" this into always returning
-        two sizes, which would make the 48 kHz check unfalsifiable.
+        Read by W2 only, and W2 is a WARN. These are not a legality bound --
+        with an asynchronous feedback loop the host is entitled to vary packet
+        size, and nothing citable forbids it. R4a's bound is the endpoint's
+        declared `max_packet_size_bytes`, which is a different number.
+
+        A set, and at an integer rate it collapses to ONE element: 48 kHz is
+        exactly 48 frames per packet, so any second size is worth warning
+        about. That is the intended result, not a degenerate one -- do not
+        "fix" it into always returning two sizes, which would make the 48 kHz
+        warning unreachable.
         """
         n = self.nominal_frames_per_packet
         lo, hi = math.floor(n), math.ceil(n)

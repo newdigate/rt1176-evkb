@@ -93,10 +93,28 @@ def r1_feedback_polled(blocks, man, correction_quantum_bytes=1024,
 
 
 def r2_no_streaming_in_alt0(blocks, man):
+    """Packets arriving while the OUT interface is in alt 0.
+
+    An interval counts only when BOTH its endpoints are in alt 0.
+
+    The packet delta between two blocks covers the whole interval between
+    them, but the alt reading is a point sample at each end. Attributing the
+    delta to the alt at the END of the interval books every packet that
+    legitimately arrived before an alt 1 -> alt 0 transition as an alt-0
+    packet -- so a host that merely stops, pauses, or changes rate, which is
+    precisely what alt_transitions exists to record, collects a cited FAIL for
+    conformant behaviour.
+
+    Requiring both endpoints discards at most one sample period of real
+    evidence at each edge, 10 ms at the observer's 100 Hz. The defect this
+    rule is looking for -- a host streaming to an interface that reserves no
+    bandwidth and exposes no endpoint -- runs for seconds, so it survives that
+    loss intact. A false FAIL would not survive contact with a user.
+    """
     in_alt0 = 0
     prev = None
     for _, b in blocks:
-        if prev is not None and b.alt_out == 0:
+        if prev is not None and prev.alt_out == 0 and b.alt_out == 0:
             in_alt0 += delta(prev.pkt_count, b.pkt_count)
         prev = b
     ev = {"packets_while_alt0": in_alt0, "total_packets": _packets(blocks)}
@@ -147,22 +165,53 @@ def r3_left_justified(blocks, man):
 
 
 def r4a_max_packet_size(blocks, man):
+    """No packet exceeds the endpoint's declared wMaxPacketSize.
+
+    The bound is the manifest's `max_packet_size_bytes`, read off the
+    descriptor -- NOT max(legal_packet_sizes), which is the fractional-sample
+    ceiling. Those are different numbers with different meanings and an
+    earlier version of this rule used the wrong one. With an asynchronous
+    feedback loop a host is entitled to vary packet size, so comparing against
+    the fractional ceiling issued a cited FAIL for legal behaviour, and at an
+    integer sample rate -- where legal_packet_sizes has exactly one element --
+    it fired on any variation whatsoever, against an endpoint whose
+    wMaxPacketSize exists to declare precisely that headroom. Lumpy sizing is
+    W2's business, and W2 is a WARN.
+
+    A FAIL survives histogram overflow but a PASS does not. An oversized
+    packet in a visible slot is positive evidence of a violation; overflow
+    does not weaken it. A clean sweep of the visible slots, with packets in
+    sizes the histogram could not record, is the absence of evidence, and
+    reporting that as PASS would be the vacuity this package exists to refuse
+    -- W2 already treats the same field as load-bearing.
+    """
     _, b = _span(blocks)
     sizes = b.sizes()
-    ceiling = max(man.legal_packet_sizes)
-    ev = {"sizes": sizes, "ceiling_bytes": ceiling,
+    ceiling = man.max_packet_size_bytes
+    ev = {"sizes": sizes, "wMaxPacketSize_bytes": ceiling,
           "hist_overflow": b.size_hist_overflow}
-    if not sizes:
-        return Verdict("R4a", SKIP, "no packets observed",
-                       missing_witness="any OUT packet", evidence=ev)
     over = {s: c for s, c in sizes.items() if s > ceiling}
     if over:
         return Verdict(
             "R4a", FAIL,
-            f"packet sizes exceed the endpoint's maximum of {ceiling} B: {over}",
+            f"packet sizes exceed the endpoint's declared wMaxPacketSize of "
+            f"{ceiling} B: {over}",
             citation=CITE_R4A, evidence=ev)
+    if b.size_hist_overflow:
+        return Verdict(
+            "R4a", SKIP,
+            f"{b.size_hist_overflow} packets arrived in sizes beyond the "
+            f"{len(b.size_hist_size)} histogram slots, so their sizes are "
+            f"unknown; the {len(sizes)} recorded sizes are all within "
+            f"{ceiling} B, which is not evidence that the unrecorded ones were",
+            missing_witness=f"the sizes of {b.size_hist_overflow} packets that "
+                            f"fell outside the histogram",
+            evidence=ev)
+    if not sizes:
+        return Verdict("R4a", SKIP, "no packets observed",
+                       missing_witness="any OUT packet", evidence=ev)
     return Verdict("R4a", PASS,
-                   f"all packets within {ceiling} B", evidence=ev)
+                   f"all packets within the declared {ceiling} B", evidence=ev)
 
 
 def r4b_whole_frames(blocks, man):

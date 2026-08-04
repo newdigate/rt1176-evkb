@@ -20,11 +20,12 @@ import unittest
 from contextlib import redirect_stdout, redirect_stderr
 
 import cli
-from wireformat import Block, synth_vcd, MAGIC
+from wireformat import Block, synth_vcd, MAGIC, VERSION
 
 
 MANIFEST = {"audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
-            "sample_rate_hz": 44100, "mode": "passive", "host_note": "synthetic"}
+            "sample_rate_hz": 44100, "mode": "passive", "host_note": "synthetic",
+            "max_packet_size_bytes": 1536}
 
 HEALTHY = dict(
     pkt_count=120000, or_acc=0xFFFFFF00, and_acc=0, nonsilent_frames=5292000,

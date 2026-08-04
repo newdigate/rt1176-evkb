@@ -32,6 +32,12 @@ NAMES = {}   # VCD id -> signal name, read from $var; both set by parse()
 FILL_SIGNAL_NAME = "out_fifo_fill"
 FILL_SIGNAL_ID = "2"
 
+# The four decoupler probes, in xscope_register order. Probes 0, 1 and 3 are
+# the block-correction counters: a report that shows drift without showing how
+# many corrections it already cost is only half the picture.
+PROBE_IDS = {"out_underflow": "0", "out_overflow": "1",
+             FILL_SIGNAL_NAME: FILL_SIGNAL_ID, "out_dryout": "3"}
+
 # Segmentation thresholds. A block correction (dry-out silence insertion or
 # overflow packet-dropping) moves the fill level by hundreds of bytes in one
 # sample; an overflow additionally gaps the emissions, because emission rides
@@ -132,8 +138,8 @@ def segments(points):
             and s[-1][0] - s[0][0] >= MIN_SEGMENT_SECONDS]
 
 
-def fill_points(sigs):
-    """The OUT-FIFO fill trace as [(t_s, v)], or [] if the capture has none.
+def probe_points(sigs, name):
+    """One decoupler probe's samples as [(t_s, v)], or [] if absent.
 
     Resolved by signal NAME first. The id fallback is refused for a capture
     that declares uacv_w* state words, because those come from
@@ -143,20 +149,27 @@ def fill_points(sigs):
     slope to a state counter would produce a confident, meaningless number:
     exactly the 0.222-slope failure the validator's manifest rule exists to
     prevent. Returning nothing makes the validator report SKIP, which is the
-    honest answer for a capture that has no fill probe in it.
+    honest answer for a capture that has no probe of that name in it.
     """
     if TICK is None:
         return []
     sid = None
-    for s, name in NAMES.items():
-        if name == FILL_SIGNAL_NAME:
+    for s, n in NAMES.items():
+        if n == name:
             sid = s
             break
     if sid is None:
         if any(n.startswith("uacv_w") for n in NAMES.values()):
             return []
-        sid = FILL_SIGNAL_ID
+        sid = PROBE_IDS.get(name)
+        if sid is None:
+            return []
     return [(t * TICK, v) for t, v in sigs.get(sid, [])]
+
+
+def fill_points(sigs):
+    """The OUT-FIFO fill trace as [(t_s, v)], or [] if the capture has none."""
+    return probe_points(sigs, FILL_SIGNAL_NAME)
 
 
 def longest_segment(sigs):

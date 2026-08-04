@@ -34,12 +34,18 @@ def exit_code(verdicts):
     return 0
 
 
-def render(header, verdicts):
+def render(header, verdicts, metrics=()):
     """The report as text.
 
-    `header` is read with .get throughout: the two capture-level INVALID
-    paths render before the header is fully populated, and a KeyError there
-    would replace the reason the capture was rejected with a traceback.
+    `header` is read with .get throughout: the capture-level INVALID paths
+    render before the header is fully populated, and a KeyError there would
+    replace the reason the capture was rejected with a traceback.
+
+    `metrics` is an ordered sequence of (label, value) strings printed below
+    the rules and above the summary. They carry no level, no citation, and no
+    weight in exit_code -- which does not even see them. That separation is
+    the point: they are observations a reader interprets, not findings the
+    tool is prepared to defend with a clause.
     """
     lines = []
     lines.append("UAC host conformance report")
@@ -62,6 +68,13 @@ def render(header, verdicts):
         if v.evidence:
             ev = ", ".join(f"{k}={val}" for k, val in v.evidence.items())
             lines.append(f"           evidence: {ev}")
+        lines.append("")
+
+    if metrics:
+        lines.append("metrics (INFO -- no verdict, no effect on exit code)")
+        width = max(len(str(k)) for k, _ in metrics)
+        for k, v in metrics:
+            lines.append(f"  {str(k):<{width}} : {v}")
         lines.append("")
 
     counts = {lvl: sum(1 for v in verdicts if v.level == lvl)

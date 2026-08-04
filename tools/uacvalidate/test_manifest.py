@@ -11,6 +11,11 @@ VALID = {
     "sample_rate_hz": 44100,
     "mode": "passive",
     "host_note": "RT1176 EVKB, master",
+    # The endpoint's declared wMaxPacketSize, with headroom above the
+    # fractional ceiling of 1440 B. The headroom is deliberate: it is what
+    # separates R4a (did the host exceed the descriptor's limit -- FAIL) from
+    # W2 (was the sizing lumpier than nominal -- WARN).
+    "max_packet_size_bytes": 1536,
 }
 
 
@@ -65,6 +70,27 @@ class TestManifest(unittest.TestCase):
         with self.assertRaises(ManifestError):
             Manifest.from_dict(dict(VALID, audio_class=1, speed="HS"))
 
+    def test_max_packet_size_is_required_and_carried(self):
+        """It comes off the endpoint descriptor and is derivable from nothing
+        else in the manifest. R4a's whole assertion rests on it, so a run that
+        forgets it must fail at parse rather than fall back to some computed
+        number -- falling back is how R4a came to compare against the
+        fractional ceiling and FAIL conformant hosts."""
+        self.assertEqual(Manifest.from_dict(VALID).max_packet_size_bytes, 1536)
+        d = dict(VALID)
+        del d["max_packet_size_bytes"]
+        with self.assertRaises(ManifestError) as cm:
+            Manifest.from_dict(d)
+        self.assertIn("max_packet_size_bytes", str(cm.exception))
+
+    def test_max_packet_size_is_not_the_fractional_ceiling(self):
+        """Pinned as a distinction, not an equality. If someone later
+        "simplifies" the field away by deriving it from legal_packet_sizes,
+        this is the test that says no."""
+        m = Manifest.from_dict(VALID)
+        self.assertNotEqual(m.max_packet_size_bytes, max(m.legal_packet_sizes))
+        self.assertGreater(m.max_packet_size_bytes, max(m.legal_packet_sizes))
+
     # The four below were added because deleting the corresponding branch from
     # from_dict left the suite green. An unexercised validation branch is worse
     # than no branch: it reads as protection that was never demonstrated, and
@@ -80,7 +106,8 @@ class TestManifest(unittest.TestCase):
             Manifest.from_dict(dict(VALID, audio_class=3))
 
     def test_rejects_non_positive_dimension(self):
-        for k in ("channels", "subslot_bytes", "sample_rate_hz"):
+        for k in ("channels", "subslot_bytes", "sample_rate_hz",
+                  "max_packet_size_bytes"):
             with self.subTest(field=k), self.assertRaises(ManifestError):
                 Manifest.from_dict(dict(VALID, **{k: 0}))
 
@@ -89,14 +116,16 @@ class TestManifest(unittest.TestCase):
         in the manifest would otherwise validate as 1 and produce a plausible
         frame size -- a silently wrong verdict about a USB host, which is the
         exact quiet misreading the manifest exists to prevent."""
-        for k in ("channels", "subslot_bytes", "sample_rate_hz"):
+        for k in ("channels", "subslot_bytes", "sample_rate_hz",
+                  "max_packet_size_bytes"):
             with self.subTest(field=k), self.assertRaises(ManifestError):
                 Manifest.from_dict(dict(VALID, **{k: True}))
 
     def test_rejects_non_integer_dimension(self):
         """A string sample rate would otherwise reach nominal_frames_per_packet
         and raise there, far from the field that was wrong."""
-        for k in ("channels", "subslot_bytes", "sample_rate_hz"):
+        for k in ("channels", "subslot_bytes", "sample_rate_hz",
+                  "max_packet_size_bytes"):
             with self.subTest(field=k), self.assertRaises(ManifestError):
                 Manifest.from_dict(dict(VALID, **{k: str(VALID[k])}))
 
