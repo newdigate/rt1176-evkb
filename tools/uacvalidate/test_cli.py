@@ -57,6 +57,28 @@ def _split(text):
     return head, body
 
 
+def add_missing_marks(path, n=3):
+    """Splice xscope lost-sample markers into a synthesised capture.
+
+    Spliced rather than generated: synth_vcd models a healthy device, and
+    teaching it to fake an xscope failure would be inventing a second,
+    unverifiable emitter.
+    """
+    with open(path) as f:
+        head, body = _split(f.read())
+    head.insert(-1, "$var wire 1 MD Missing_Data $end")
+    last = max(body)
+    for i in range(n):
+        body.setdefault(last + 1 + i, []).append("1MD")
+    out = list(head)
+    for t in sorted(body):
+        out.append(f"#{t}")
+        out.extend(body[t])
+    with open(path, "w") as f:
+        f.write("\n".join(out) + "\n")
+    return path
+
+
 class CliCase(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -187,20 +209,7 @@ class TestCaptureInvalidations(CliCase):
         self.assertEqual(doc["verdicts"][0]["level"], "INVALID")
 
     def with_missing_marks(self, n=3):
-        p = self.vcd(healthy_pair())
-        with open(p) as f:
-            head, body = _split(f.read())
-        head.insert(-1, "$var wire 1 MD Missing_Data $end")
-        last = max(body)
-        for i in range(n):
-            body.setdefault(last + 1 + i, []).append("1MD")
-        out = list(head)
-        for t in sorted(body):
-            out.append(f"#{t}")
-            out.extend(body[t])
-        with open(p, "w") as f:
-            f.write("\n".join(out) + "\n")
-        return p
+        return add_missing_marks(self.vcd(healthy_pair()), n)
 
     def test_missing_marks_invalidate_before_any_rule(self):
         rc, doc = self.run_json(self.with_missing_marks(3))
@@ -323,6 +332,72 @@ class TestCaptureInvalidations(CliCase):
         rc, out, err = self.run_cli(self.vcd(healthy_pair()))
         self.assertEqual(rc, 2)
         self.assertIn("manifest", err)
+
+
+class TestInvalidationsPreemptTheRules(CliCase):
+    """That no rule RUNS, asserted directly rather than inferred from output.
+
+    The output-based tests above cannot see the difference between "the
+    invalidation ran first" and "the rules ran and their verdicts were
+    thrown away", because both print the same page. Moving the manifest
+    contradiction check to after the rule sweep survived the entire suite for
+    exactly that reason.
+
+    The distinction is not cosmetic. Rules run on a capture already known to
+    be untrustworthy: on contradictory data a rule can raise, and an exception
+    escaping main() exits 1 -- which is this tool saying the host failed. It
+    also wastes the guarantee the spec asks for, that an invalidated report
+    contains no reasoning about the host at all.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.ran = []
+        import rules as rules_mod
+        from verdict import Verdict, PASS
+
+        def spy(rule_id):
+            def f(*a, **kw):
+                self.ran.append(rule_id)
+                return Verdict(rule_id, PASS, "stub")
+            return f
+
+        saved = (rules_mod.ALL_RULES, rules_mod.r1_feedback_polled,
+                 rules_mod.w1_residual_drift, rules_mod.w3_feedback_tracked)
+        rules_mod.ALL_RULES = [spy("R2"), spy("R3"), spy("R4a"), spy("R4b"),
+                               spy("R7"), spy("W2")]
+        rules_mod.r1_feedback_polled = spy("R1")
+        rules_mod.w1_residual_drift = spy("W1")
+        rules_mod.w3_feedback_tracked = spy("W3")
+
+        def restore():
+            (rules_mod.ALL_RULES, rules_mod.r1_feedback_polled,
+             rules_mod.w1_residual_drift, rules_mod.w3_feedback_tracked) = saved
+        self.addCleanup(restore)
+
+    def test_the_spy_actually_fires_on_a_healthy_capture(self):
+        """Guards the three tests below from passing vacuously: if the patch
+        did not take, "no rule ran" would be true of every run."""
+        self.run_json(self.vcd(healthy_pair()))
+        self.assertEqual(sorted(self.ran),
+                         ["R1", "R2", "R3", "R4a", "R4b", "R7", "W1", "W2", "W3"])
+
+    def test_no_rule_runs_on_a_wrong_magic(self):
+        self.run_json(self.vcd(healthy_pair(magic=0xDEADBEEF)))
+        self.assertEqual(self.ran, [])
+
+    def test_no_rule_runs_on_a_wrong_version(self):
+        self.run_json(self.vcd(healthy_pair(version=99)))
+        self.assertEqual(self.ran, [])
+
+    def test_no_rule_runs_when_xscope_dropped_data(self):
+        self.run_json(add_missing_marks(self.vcd(healthy_pair()), 3))
+        self.assertEqual(self.ran, [])
+
+    def test_no_rule_runs_on_a_contradicting_manifest(self):
+        self.write_manifest(channels=3, max_packet_size_bytes=540)
+        self.run_json(self.vcd(healthy_pair()))
+        self.assertEqual(self.ran, [])
 
 
 class TestMetricsReachTheReport(CliCase):
