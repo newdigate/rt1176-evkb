@@ -4,7 +4,7 @@
 
 **Goal:** Define the state-block wire format, implement the `lib_xua` observer that emits it, and prove on silicon that a real capture parses.
 
-**Architecture:** The device reduces; it never judges. Reductions accumulate in shared globals on `XUA_XUD_TILE_NUM` (decoupler, EP buffer and EP0 all live there) and are emitted as one atomic 36-word state block at the decoupler's existing 100 Hz cadence. A Python module in `evkb` owns the format definition, a synthetic generator, and a reader — so Plan 2 codes against a stable `Block` type regardless of which probe mechanism the spike selects.
+**Architecture:** The device reduces; it never judges. Reductions accumulate in shared globals on `XUA_XUD_TILE_NUM` (decoupler, EP buffer and EP0 all live there) and are emitted as one atomic 37-word state block at the decoupler's existing 100 Hz cadence. A Python module in `evkb` owns the format definition, a synthetic generator, and a reader — so Plan 2 codes against a stable `Block` type regardless of which probe mechanism the spike selects.
 
 **Tech Stack:** XC (XMOS XTC 15.3.1), xscope; Python 3 (stdlib only) for the format module.
 
@@ -43,7 +43,7 @@
 
 ## The state block
 
-36 words, little-endian uint32, emitted at 100 Hz. This layout is normative; every task below refers to it by word index.
+37 words, little-endian uint32, emitted at 100 Hz. This layout is normative; every task below refers to it by word index.
 
 | Word | Name | Meaning |
 |---|---|---|
@@ -69,6 +69,7 @@
 | 19 | `size_hist_overflow` | distinct packet sizes seen beyond the 8 slots |
 | 20–27 | `size_hist_size[0..7]` | observed packet size in bytes, 0 = slot unused |
 | 28–35 | `size_hist_count[0..7]` | count for the matching slot |
+| 36 | `pat_sync_count` | times the cooperative pattern achieved lock |
 
 All counters are free-running uint32 and may wrap. The reader does not unwrap; Plan 2's rules handle wrap.
 
@@ -76,7 +77,7 @@ All counters are free-running uint32 and may wrap. The reader does not unwrap; P
 
 ## Task 1: The emission-format spike
 
-Decides whether the block ships as one `xscope_bytes` probe or 36 scalar probes. No code from later tasks depends on the outcome — `wireformat.py` hides it — but the observer's emit function does.
+Decides whether the block ships as one `xscope_bytes` probe or 37 scalar probes. No code from later tasks depends on the outcome — `wireformat.py` hides it — but the observer's emit function does.
 
 **Files:**
 - Create: `~/Development/xmos/lib_xua/spike_bytes_probe.md` (scratch notes, not committed)
@@ -151,7 +152,7 @@ Record in `spike_bytes_probe.md`:
 
 Write the outcome into `docs/uac-validator-wire-format.md` (Task 2) as either:
 - **RECORD format selected** — `xscope_bytes` on probe id 4, block emitted whole; or
-- **SCALAR format selected** — 36 scalar probes at ids 4..39, one per word.
+- **SCALAR format selected** — 37 scalar probes at ids 4..40, one per word.
 
 - [ ] **Step 7: Revert the spike**
 
@@ -174,7 +175,7 @@ Expected: no modified files. The spike is a measurement, not a commit.
 Create `docs/uac-validator-wire-format.md` containing, in order:
 
 1. A one-paragraph statement that this is the normative contract between the `lib_xua` observer and the `uacvalidate` judge, and that the observer computes no verdicts.
-2. The 36-word table exactly as given in this plan's "The state block" section above — copy it verbatim.
+2. The 37-word table exactly as given in this plan's "The state block" section above — copy it verbatim.
 3. The emission format selected by the Task 1 spike, stated as the selected one plus a note recording that the other was considered and why it lost.
 4. The emission cadence: 100 Hz, from the decoupler's existing `g_fillProbeDiv >= 10` divider, so one block per ten OUT packets.
 5. A statement that probe ids 0–3 are unchanged and that new ids are append-only.
@@ -277,7 +278,7 @@ Create `tools/uacvalidate/wireformat.py`:
 """State-block wire format: the contract between the lib_xua observer and
 the judge.
 
-The observer emits 36 little-endian uint32 words at 100 Hz. This module owns
+The observer emits 37 little-endian uint32 words at 100 Hz. This module owns
 the layout, a reader that recovers blocks from an xscope VCD, and a generator
 that writes synthetic VCDs so the judge can be tested without hardware.
 
@@ -287,7 +288,7 @@ from dataclasses import dataclass, field, fields
 
 MAGIC = 0x55414356  # 'UACV'
 VERSION = 1
-BLOCK_WORDS = 36
+BLOCK_WORDS = 37
 
 # Word index -> attribute name. Words 20..35 are the two histogram arrays and
 # are handled separately.
@@ -521,7 +522,7 @@ surviving mutations; these amendments are part of the task, not follow-on work.
    nothing else changed — this keeps the delta-encoding property and the exact
    `BLOCK_WORDS + 99` line-count assertion intact. **The observer must obey the
    same rule.**
-3. **The first timestamp must write all 36 words**, else raise. Declaring a
+3. **The first timestamp must write all 37 words**, else raise. Declaring a
    word is not the same as emitting it, and a capture that loses its opening
    samples otherwise reports `and_acc = 0` — the stuck-at-zero fault the
    `0xFFFFFFFF` default exists to catch, handed to a rule as real data. Do
@@ -957,13 +958,18 @@ Near the other validator globals in `decouple.xc`, add:
  * dropped packet costs one error rather than an unbounded stream of them.
  *
  * A pattern that NEVER syncs is a finding about the host, not a broken tool:
- * it means the playback path is not bit-exact. The judge distinguishes that
- * from "synced then diverged" using the resync count. */
+ * it means the playback path is not bit-exact. `g_uacvPatSyncCount` is what
+ * lets the judge tell that apart from "locked once, then lost samples" and
+ * from "keeps losing and regaining lock" -- without it all three look alike
+ * and the judge accuses a conformant host of dropping packets.
+ *
+ * These are declared HERE and only here; Task 8 references them as externs. */
 unsigned g_uacvPatErrCount = 0;
 unsigned g_uacvPatResyncCount = 0;
 unsigned g_uacvPatFirstErrIdx = 0;
 unsigned g_uacvPatFirstExpected = 0;
 unsigned g_uacvPatFirstActual = 0;
+unsigned g_uacvPatSyncCount = 0;
 
 #if (UACV_COOPERATIVE == 1)
 #define UACV_LFSR_SEED   0xACE1u
@@ -995,6 +1001,13 @@ static inline void uacvCheckSample(unsigned s)
             g_uacvLfsr = UACV_LFSR_SEED;
             g_uacvPatSynced = 1;
             g_uacvPatRun = 0;
+            /* Count locks, not just "am I locked". The judge needs to tell a
+             * host that never locked (playback path is not bit-exact) from one
+             * that locked once and then lost samples (genuine packet loss)
+             * from one that keeps losing and regaining lock (also not
+             * bit-exact). Without this counter all three look alike, and the
+             * judge accuses a conformant host of dropping packets. */
+            g_uacvPatSyncCount++;
         }
         return;
     }
@@ -1085,13 +1098,14 @@ extern unsigned g_uacvAltTransitions;
 extern unsigned g_uacvClassReqBitmap;
 extern unsigned g_uacvHostActive;
 
-/* Cooperative-mode pattern state. Zero in passive mode; Plan 2's rules report
- * SKIP when the mode in the manifest says passive. */
-unsigned g_uacvPatErrCount = 0;
-unsigned g_uacvPatResyncCount = 0;
-unsigned g_uacvPatFirstErrIdx = 0;
-unsigned g_uacvPatFirstExpected = 0;
-unsigned g_uacvPatFirstActual = 0;
+/* Cooperative-mode pattern state, defined in Task 7b. Zero in passive mode;
+ * Plan 2's rules report SKIP when the manifest says passive. */
+extern unsigned g_uacvPatErrCount;
+extern unsigned g_uacvPatResyncCount;
+extern unsigned g_uacvPatFirstErrIdx;
+extern unsigned g_uacvPatFirstExpected;
+extern unsigned g_uacvPatFirstActual;
+extern unsigned g_uacvPatSyncCount;
 ```
 
 - [ ] **Step 2: Write the emit function**
@@ -1104,7 +1118,7 @@ RECORD format:
 #ifdef XSCOPE
 #define UACV_MAGIC   0x55414356  /* 'UACV' */
 #define UACV_VERSION 1
-#define UACV_WORDS   36
+#define UACV_WORDS   37
 
 static inline void uacvEmitBlock(void)
 {
@@ -1119,6 +1133,7 @@ static inline void uacvEmitBlock(void)
     w[14] = g_uacvPatErrCount;       w[15] = g_uacvPatResyncCount;
     w[16] = g_uacvPatFirstErrIdx;    w[17] = g_uacvPatFirstExpected;
     w[18] = g_uacvPatFirstActual;    w[19] = g_uacvHistOverflow;
+    w[36] = g_uacvPatSyncCount;
     for(int i = 0; i < 8; i++)
     {
         w[20 + i] = g_uacvHistSize[i];
@@ -1159,7 +1174,7 @@ In `main.xc`, extend `xscope_register`. **RECORD format:**
                     XSCOPE_CONTINUOUS, "uacv_block",    XSCOPE_UINT, "bytes");
 ```
 
-**SCALAR format:** register 40 probes — the four existing ones followed by `uacv_w00` through `uacv_w35`, each `XSCOPE_CONTINUOUS, XSCOPE_UINT, "value"`. The names must match `wireformat.py`'s `_signal_name()` exactly, or the reader will not find them.
+**SCALAR format:** register 41 probes — the four existing ones followed by `uacv_w00` through `uacv_w36`, each `XSCOPE_CONTINUOUS, XSCOPE_UINT, "value"`. The names must match `wireformat.py`'s `_signal_name()` exactly, or the reader will not find them.
 
 - [ ] **Step 5: Build and confirm the existing probes still work**
 
@@ -1178,7 +1193,7 @@ cd ~/Development/xmos/lib_xua
 git add lib_xua/src/core/buffer/decouple/decouple.xc lib_xua/src/core/main.xc
 git commit -m "decouple: emit the validator state block at the fill cadence
 
-One atomic 36-word block per ten OUT packets, riding the divider that
+One atomic 37-word block per ten OUT packets, riding the divider that
 already exists for the fill probe. Atomicity matters because the judge
 reasons across quantities -- fill slope against packet sizes against
 feedback value -- and separately-timestamped probes would have to be aligned
@@ -1258,9 +1273,9 @@ Expected, for a healthy current-master host streaming 8ch 24-in-4 at 44.1 kHz fo
 | `alt_out` | 1 | |
 | `class_req_bitmap` | `0x5` or `0x7` | SET_INTERFACE + clock SET_CUR |
 
-- [ ] **Step 4b: Confirm xscope declares all 36 signals**
+- [ ] **Step 4b: Confirm xscope declares all 37 signals**
 
-`read_blocks` refuses a capture that does not declare all 36 `uacv_w*` signals,
+`read_blocks` refuses a capture that does not declare all 37 `uacv_w*` signals,
 on the grounds that a partial block is a different wire format rather than a
 partial reading. That check rests on an assumption no one has tested on
 hardware: **that `xrun --xscope-file` declares a `$var` for every registered
@@ -1270,10 +1285,10 @@ probe, including probes whose value never changed during the run.**
 grep -c "uacv_w" $HOME/uacv_obs.vcd
 ```
 
-Expected: 36 `$var` declarations. If xscope omits never-firing probes, this
+Expected: 37 `$var` declarations. If xscope omits never-firing probes, this
 capture will be refused with a message naming the missing indices — loud and
 unambiguous, but it means the completeness check needs relaxing to "every
-declared index is in range, and word 0 is present" rather than "all 36
+declared index is in range, and word 0 is present" rather than "all 37
 declared". Decide it here, on evidence, and record the outcome in
 `docs/uac-validator-wire-format.md`.
 

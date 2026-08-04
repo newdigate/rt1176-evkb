@@ -1397,7 +1397,11 @@ nothing about the host."
 cd ~/Development/rt1170/evkb/tools/uacvalidate && python3 -m unittest discover -p "test_*.py" -v
 ```
 
-Expected: 4 + 9 + 33 + 10 = 56 tests, all PASS.
+Expected: every test in the package passes. Do **not** treat a specific
+total as the gate — the count has already drifted several times as mutation
+testing added tests, and a stale number invites either ignoring it or
+"fixing" the suite to match. The gate is `OK`, plus the per-file counts
+reported for the record.
 
 - [ ] **Step 2: Commit if anything needed fixing**
 
