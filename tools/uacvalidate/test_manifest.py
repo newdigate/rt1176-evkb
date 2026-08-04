@@ -39,6 +39,14 @@ class TestManifest(unittest.TestCase):
         m = Manifest.from_dict(VALID)
         self.assertEqual(m.legal_packet_sizes, {44 * 32, 45 * 32})
 
+    def test_legal_packet_sizes_collapse_to_one_at_integer_rate(self):
+        """48 kHz is exactly 48 frames per packet, so a conformant host has
+        exactly one legal size. The one-element set is the point: a second size
+        at this rate is a violation, and a property that always returned two
+        would make that check unfalsifiable."""
+        m = Manifest.from_dict(dict(VALID, sample_rate_hz=48000))
+        self.assertEqual(m.legal_packet_sizes, {48 * 32})
+
     def test_nominal_bytes_per_second(self):
         m = Manifest.from_dict(VALID)
         self.assertAlmostEqual(m.nominal_bytes_per_second, 44100 * 32, places=3)
@@ -75,6 +83,15 @@ class TestManifest(unittest.TestCase):
         for k in ("channels", "subslot_bytes", "sample_rate_hz"):
             with self.subTest(field=k), self.assertRaises(ManifestError):
                 Manifest.from_dict(dict(VALID, **{k: 0}))
+
+    def test_rejects_bool_dimension(self):
+        """bool is a subclass of int and `true` is a JSON literal, so a typo
+        in the manifest would otherwise validate as 1 and produce a plausible
+        frame size -- a silently wrong verdict about a USB host, which is the
+        exact quiet misreading the manifest exists to prevent."""
+        for k in ("channels", "subslot_bytes", "sample_rate_hz"):
+            with self.subTest(field=k), self.assertRaises(ManifestError):
+                Manifest.from_dict(dict(VALID, **{k: True}))
 
     def test_rejects_non_integer_dimension(self):
         """A string sample rate would otherwise reach nominal_frames_per_packet

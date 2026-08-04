@@ -45,7 +45,12 @@ class Manifest:
                 "audio_class 1 at HS: the UAC1 image on this bench is full speed. "
                 "A manifest that says otherwise would misread every packet size.")
         for k in ("channels", "subslot_bytes", "sample_rate_hz"):
-            if not isinstance(d[k], int) or d[k] <= 0:
+            # bool is a subclass of int, and `true` is a JSON literal: a typo
+            # putting it where a channel count belongs would otherwise pass
+            # validation as 1 and yield a plausible frame size. The manifest
+            # exists so a wrong expectation fails loudly rather than quietly
+            # reinterpreting the capture.
+            if not isinstance(d[k], int) or isinstance(d[k], bool) or d[k] <= 0:
                 raise ManifestError(f"{k} must be a positive integer, got {d[k]!r}")
         return cls(**{k: d[k] for k in REQUIRED})
 
@@ -76,7 +81,14 @@ class Manifest:
     @property
     def legal_packet_sizes(self):
         """Sizes a conformant host may send: floor and ceiling of the
-        fractional frames-per-packet, in bytes."""
+        fractional frames-per-packet, in bytes.
+
+        A set, and at an integer rate it collapses to ONE element -- 48 kHz is
+        exactly 48 frames per packet, so a conformant host has exactly one
+        legal size and any second size is a violation. That is the intended
+        result, not a degenerate one: do not "fix" this into always returning
+        two sizes, which would make the 48 kHz check unfalsifiable.
+        """
         n = self.nominal_frames_per_packet
         lo, hi = math.floor(n), math.ceil(n)
         return {lo * self.frame_bytes, hi * self.frame_bytes}
