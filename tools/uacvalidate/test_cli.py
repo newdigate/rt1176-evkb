@@ -223,6 +223,62 @@ class TestCaptureInvalidations(CliCase):
         self.assertIn("DEADBEEF", doc["verdicts"][0]["summary"])
         self.assertIn(f"{MAGIC:08X}", doc["verdicts"][0]["summary"])
 
+    def test_wrong_version_invalidates_before_any_rule(self):
+        """The more dangerous of the two wire-format checks, because a
+        revised block still parses. Same magic, renumbered words: every rule
+        would read the wrong counter and report a confident verdict about the
+        wrong quantity."""
+        vcd = self.vcd(healthy_pair(version=99))
+        rc, doc = self.run_json(vcd)
+        self.assertEqual(rc, 2)
+        self.assert_only_capture_verdict(doc)
+        self.assertIn("99", doc["verdicts"][0]["summary"])
+        self.assertIn(str(VERSION), doc["verdicts"][0]["summary"])
+
+    def test_wrong_version_text_report_names_no_rule(self):
+        rc, out, _ = self.run_cli(self.vcd(healthy_pair(version=99)))
+        self.assertEqual(rc, 2)
+        for rid in self.RULE_IDS:
+            self.assertNotIn(f"] {rid} ", out)
+
+    def test_manifest_contradicting_the_trace_invalidates(self):
+        """The spec's second invalidating condition. A 12 B declared frame
+        does not divide the 1408/1440 B packets on the wire, and the device --
+        which knows the real frame size -- counted no non-multiple packets, so
+        it is the declaration that is wrong.
+
+        Left to the rules this is a cited FAIL: R4a compares 1440 B against a
+        wMaxPacketSize the operator derived from the same wrong channel count.
+        Accusing a conformant host of a spec violation because of an operator
+        typo is the worst output this tool can produce."""
+        self.write_manifest(channels=3, max_packet_size_bytes=540)
+        rc, doc = self.run_json(self.vcd(healthy_pair()))
+        self.assertEqual(rc, 2)
+        self.assert_only_capture_verdict(doc)
+        summary = doc["verdicts"][0]["summary"]
+        self.assertIn("12 B", summary)      # what the manifest declared
+        self.assertIn("32 B", summary)      # what the trace implies
+        self.assertIn("1408", summary)      # the sizes that do not divide
+
+    def test_a_consistent_manifest_is_not_flagged(self):
+        """The check must not fire on the healthy capture, or it invalidates
+        every run. A rejection that rejects everything passes the test above
+        while making the tool useless."""
+        rc, doc = self.run_json(self.vcd(healthy_pair()))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("CAPTURE", [v["rule_id"] for v in doc["verdicts"]])
+
+    def test_the_device_own_non_multiple_count_is_r4b_not_a_contradiction(self):
+        """When the DEVICE also counted non-multiple packets, the host really
+        did send them and R4b owns the finding. Swallowing that as a manifest
+        contradiction would convert a genuine host defect into 'your manifest
+        is wrong' and let the host off."""
+        self.write_manifest(channels=3, max_packet_size_bytes=1536)
+        rc, doc = self.run_json(self.vcd(healthy_pair(pkt_not_multiple=17)))
+        self.assertEqual(rc, 1)
+        levels = {v["rule_id"]: v["level"] for v in doc["verdicts"]}
+        self.assertEqual(levels["R4b"], "FAIL")
+
     def test_wrong_magic_text_report_names_no_rule(self):
         rc, out, _ = self.run_cli(self.vcd(healthy_pair(magic=0xDEADBEEF)))
         self.assertEqual(rc, 2)
@@ -267,6 +323,36 @@ class TestCaptureInvalidations(CliCase):
         rc, out, err = self.run_cli(self.vcd(healthy_pair()))
         self.assertEqual(rc, 2)
         self.assertIn("manifest", err)
+
+
+class TestMetricsReachTheReport(CliCase):
+    def test_metrics_are_printed_and_do_not_move_the_exit_code(self):
+        rc, out, _ = self.run_cli(
+            self.vcd(healthy_pair(class_req_bitmap=0, host_active=1)))
+        self.assertEqual(rc, 0)
+        self.assertIn("metrics", out)
+        self.assertIn("no class request", out)
+
+    def test_metrics_appear_in_json(self):
+        _, doc = self.run_json(self.vcd(healthy_pair()))
+        labels = [k for k, _ in doc["metrics"]]
+        self.assertIn("packets", labels)
+        self.assertIn("class requests", labels)
+
+    def test_probe_derived_metrics_come_from_the_capture(self):
+        vcd = self.vcd_with_fill(healthy_pair(), 6.77)
+        _, doc = self.run_json(vcd)
+        d = dict((k, v) for k, v in doc["metrics"])
+        self.assertIn("min 2000 B", d["OUT FIFO fill"])
+        self.assertIn("+4.80 ppm", d["fill slope"])
+
+    def test_no_metrics_on_an_invalidated_capture(self):
+        """An INVALID capture's counters are the reason it was rejected.
+        Printing metrics derived from them under the rejection would offer the
+        reader exactly the numbers the verdict just said not to trust."""
+        rc, out, _ = self.run_cli(self.vcd(healthy_pair(magic=0xDEADBEEF)))
+        self.assertEqual(rc, 2)
+        self.assertNotIn("metrics", out)
 
 
 class TestFillProbeWiring(CliCase):
