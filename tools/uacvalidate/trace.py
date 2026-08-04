@@ -202,10 +202,13 @@ def _parse_header(lines):
 def read_blocks(path):
     """Parse a capture into `[(time_seconds, Block)]`, in capture order.
 
-    Words absent from the file read as zero, and words that did not change at
-    a timestamp carry their previous value forward. One Block is produced per
-    timestamp at which at least one state word changed -- a timestamp that
-    only carried, say, a lost-sample marker adds no new state and is skipped.
+    Words that did not change at a timestamp carry their previous value
+    forward. One Block is produced per timestamp at which at least one state
+    word changed -- a timestamp that only carried, say, a lost-sample marker
+    adds no new state and is skipped.
+
+    Raises ValueError if the capture has no $timescale, or if it does not
+    declare all 36 `uacv_w*` signals.
     """
     with open(path) as f:
         lines = f.read().split("\n")
@@ -217,6 +220,20 @@ def read_blocks(path):
     for sid, name in names.items():
         if name.startswith("uacv_w"):
             word_of[sid] = int(name[len("uacv_w"):])
+
+    # A capture that does not declare the whole block is not a partial reading
+    # of this wire format, it is a different wire format. Refuse it rather than
+    # carry zeros forward for the absent words: a downstream rule cannot tell a
+    # never-declared word from a genuinely zero one, and would read the
+    # plausible-looking zero as real data.
+    declared = set(word_of.values())
+    missing = [i for i in range(BLOCK_WORDS) if i not in declared]
+    unknown = sorted(i for i in declared if i >= BLOCK_WORDS)
+    if missing or unknown:
+        raise ValueError(
+            f"capture declares {len(declared)} of {BLOCK_WORDS} uacv_w* "
+            f"signals; missing word indices {missing}"
+            + (f", unknown word indices {unknown}" if unknown else ""))
 
     out = []
     state = [0] * BLOCK_WORDS
