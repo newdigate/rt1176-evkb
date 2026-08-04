@@ -2,7 +2,9 @@ import os
 import tempfile
 import unittest
 
-from wireformat import (BLOCK_WORDS, Block, count_missing_marks, delta32,
+from wireformat import (BLOCK_WORDS, HIST_COUNT_BASE, HIST_SIZE_BASE,
+                        HIST_SLOTS, MAGIC, PROBE_BASE, SCALAR_LAYOUT, VERSION,
+                        Block, _signal_name, count_missing_marks, delta32,
                         read_blocks, synth_vcd)
 
 
@@ -330,6 +332,206 @@ class TestTruncatedCapture(unittest.TestCase):
                                         f"b{wide} {_vcd_id(2)}\n"))
             got = read_blocks(path)
         self.assertEqual(got[0][1].pkt_count, 5)
+
+
+
+class TestScalarEmission(unittest.TestCase):
+    """The shape the block is most likely to actually ship in.
+
+    37 scalar probes means 37 separate xscope_int() calls, which do not share
+    a VCD timestamp -- they land microseconds apart. A reader demanding one
+    timestamp per block rejects every such capture with "first timestamp
+    writes 1 of 37 words", i.e. exit 2 against silicon, and the Plan 1 spike
+    that would have chosen between scalar and xscope_bytes has not run.
+    """
+
+    def _spread(self, path, blocks, stride_ticks=1, gap_ticks=10000):
+        """Rewrite a synthesised capture so each block's words arrive one per
+        timestamp, `stride_ticks` apart, blocks `gap_ticks` apart."""
+        # Split on line starts, not on "#": chr(35) is word 2's VCD
+        # identifier, so a "#" appears at the END of a real data line too.
+        lines = _synth_text(path, blocks).split("\n")
+        cut = lines.index("$enddefinitions $end") + 1
+        out, t = lines[:cut], 0
+        for ln in lines[cut:]:
+            if not ln:
+                continue
+            if ln[0] == "#":
+                if len(out) > cut:          # no leading gap before block one
+                    t += gap_ticks
+                continue
+            out.append(f"#{t}")
+            out.append(ln)
+            t += stride_ticks
+        _rewrite(path, "\n".join(out) + "\n")
+        return path
+
+    def test_one_block_spread_over_37_timestamps_reads_as_one_block(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = self._spread(os.path.join(d, "t.vcd"),
+                                [(0.0, Block(pkt_count=8000, alt_out=1))])
+            got = read_blocks(path)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0][1].pkt_count, 8000)
+        self.assertEqual(got[0][1].alt_out, 1)
+        # Timestamped at the group's FIRST write: the block describes the
+        # instant the observer began emitting it, not the instant it finished.
+        self.assertAlmostEqual(got[0][0], 0.0, places=9)
+
+    def test_consecutive_spread_blocks_stay_separate(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = self._spread(os.path.join(d, "t.vcd"),
+                                [(0.0, Block(pkt_count=1)),
+                                 (0.01, Block(pkt_count=2)),
+                                 (0.02, Block(pkt_count=3))])
+            got = read_blocks(path)
+        self.assertEqual([b.pkt_count for _, b in got], [1, 2, 3])
+
+    def test_the_repeat_rule_separates_blocks_inside_one_window(self):
+        """Two full blocks 100 us apart -- inside the 1 ms window, so the
+        window alone would merge them into one. A real scalar capture re-sends
+        every word each block, so the repeated word index is an exact block
+        boundary needing no threshold. This is the case rule 1 exists for."""
+        with tempfile.TemporaryDirectory() as d:
+            path = self._spread(os.path.join(d, "t.vcd"),
+                                [(0.0, Block(pkt_count=1)),
+                                 (0.01, Block(pkt_count=2))],
+                                stride_ticks=1, gap_ticks=100)
+            got = read_blocks(path)
+        self.assertEqual([b.pkt_count for _, b in got], [1, 2])
+        self.assertLess(got[1][0] - got[0][0], 0.001)
+
+    def test_the_window_separates_delta_blocks_with_disjoint_words(self):
+        """The case rule 1 cannot catch: after a complete opening block, two
+        later blocks each change a different single word, so no index ever
+        repeats. Only the window tells them apart."""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.vcd")
+            text = _synth_text(path, [(0.0, Block())])
+            text += (f"#20000\nb1 {_vcd_id(2)}\n"
+                     f"#40000\nb1 {_vcd_id(8)}\n")
+            _rewrite(path, text)
+            got = read_blocks(path)
+        self.assertEqual(len(got), 3)
+        self.assertEqual([b.pkt_count for _, b in got], [0, 1, 1])
+        self.assertEqual([b.fb_poll_count for _, b in got], [0, 0, 1])
+
+    def test_writes_inside_the_window_merge_and_this_is_documented(self):
+        """The acknowledged ambiguity, pinned as behaviour rather than left to
+        be discovered. Two disjoint single-word changes 100 us apart merge
+        into one block. Visible as an under-count, never as wrong values, and
+        no observer emitting at 100 Hz can produce it."""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.vcd")
+            text = _synth_text(path, [(0.0, Block())])
+            text += (f"#20000\nb1 {_vcd_id(2)}\n"
+                     f"#20100\nb1 {_vcd_id(8)}\n")
+            _rewrite(path, text)
+            got = read_blocks(path)
+        self.assertEqual(len(got), 2)
+        self.assertEqual(got[1][1].pkt_count, 1)
+        self.assertEqual(got[1][1].fb_poll_count, 1)
+
+    def test_the_window_is_a_parameter(self):
+        """The margin is the observer's property. An observer emitting at
+        1 kHz needs it lowered, and that must not require editing the reader."""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.vcd")
+            text = _synth_text(path, [(0.0, Block())])
+            text += (f"#20000\nb1 {_vcd_id(2)}\n"
+                     f"#20100\nb1 {_vcd_id(8)}\n")
+            _rewrite(path, text)
+            self.assertEqual(len(read_blocks(path, emit_window_s=0.00005)), 3)
+
+    def test_a_spread_first_block_still_has_to_be_complete(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = self._spread(os.path.join(d, "t.vcd"),
+                                [(0.0, Block(pkt_count=1)),
+                                 (0.01, Block(pkt_count=2))])
+            with open(path) as f:
+                text = f.read()
+            lost = [l for l in text.split("\n")
+                    if l.endswith(" " + _vcd_id(BLOCK_WORDS - 1))]
+            _rewrite(path, text.replace(lost[0] + "\n", ""))
+            with self.assertRaises(ValueError) as cm:
+                read_blocks(path)
+        self.assertIn(f"{BLOCK_WORDS - 1} of {BLOCK_WORDS}", str(cm.exception))
+
+
+class TestWireFormatConstantsArePinned(unittest.TestCase):
+    """The literal values, asserted against literals.
+
+    Every other test in this package uses the symbols on both sides of the
+    contract, so MAGIC, VERSION, BLOCK_WORDS and the whole index table can be
+    changed with the suite staying green. The other side of this contract is
+    XC source in a separate, XMOS-licensed repo which hardcodes these numbers
+    and which no test here can reach.
+
+    CHANGING ANY VALUE BELOW REQUIRES A MATCHING OBSERVER CHANGE. If a test
+    here fails, the fix is not to update the expectation -- it is to decide
+    whether the observer is being changed with it, and to bump VERSION so
+    captures from the old observer are rejected rather than misread.
+    """
+
+    def test_magic_is_the_ascii_uacv(self):
+        self.assertEqual(MAGIC, 0x55414356)
+        self.assertEqual(MAGIC.to_bytes(4, "big"), b"UACV")
+
+    def test_version_is_one(self):
+        self.assertEqual(VERSION, 1)
+
+    def test_block_is_37_words(self):
+        self.assertEqual(BLOCK_WORDS, 37)
+
+    def test_histogram_geometry(self):
+        self.assertEqual(HIST_SIZE_BASE, 20)
+        self.assertEqual(HIST_COUNT_BASE, 28)
+        self.assertEqual(HIST_SLOTS, 8)
+        # The two arrays must tile words 20..35 exactly, leaving word 36 for
+        # pat_sync_count and nothing unaccounted for in between.
+        self.assertEqual(HIST_SIZE_BASE + HIST_SLOTS, HIST_COUNT_BASE)
+        self.assertEqual(HIST_COUNT_BASE + HIST_SLOTS, BLOCK_WORDS - 1)
+
+    def test_probe_base_is_four(self):
+        # ids 0..3 belong to the decoupler probes vcdfill reads.
+        self.assertEqual(PROBE_BASE, 4)
+
+    def test_scalar_layout_is_exactly_this_table(self):
+        self.assertEqual(SCALAR_LAYOUT, {
+            0: "magic",
+            1: "version",
+            2: "pkt_count",
+            3: "pkt_short_discarded",
+            4: "pkt_not_multiple",
+            5: "or_acc",
+            6: "and_acc",
+            7: "nonsilent_frames",
+            8: "fb_poll_count",
+            9: "fb_value",
+            10: "alt_out",
+            11: "alt_transitions",
+            12: "class_req_bitmap",
+            13: "host_active",
+            14: "pat_err_count",
+            15: "pat_resync_count",
+            16: "pat_first_err_idx",
+            17: "pat_first_expected",
+            18: "pat_first_actual",
+            19: "size_hist_overflow",
+            36: "pat_sync_count",
+        })
+
+    def test_every_word_index_is_claimed_exactly_once(self):
+        claimed = sorted(SCALAR_LAYOUT)
+        claimed += list(range(HIST_SIZE_BASE, HIST_SIZE_BASE + HIST_SLOTS))
+        claimed += list(range(HIST_COUNT_BASE, HIST_COUNT_BASE + HIST_SLOTS))
+        self.assertEqual(sorted(claimed), list(range(BLOCK_WORDS)))
+
+    def test_signal_names_are_zero_padded_two_digit(self):
+        # The observer builds these strings; a widened index would silently
+        # stop matching read_blocks' uacv_w prefix parse.
+        self.assertEqual(_signal_name(0), "uacv_w00")
+        self.assertEqual(_signal_name(36), "uacv_w36")
 
 
 if __name__ == "__main__":
