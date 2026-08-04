@@ -57,6 +57,19 @@ class TestR1FeedbackPolled(unittest.TestCase):
         self.assertEqual(v.level, SKIP)
         self.assertIn("stream", v.missing_witness.lower())
 
+    def test_unpolled_warning_quantifies_the_glitch_cadence_when_a_slope_exists(self):
+        """The whole point of handing R1 the fill slope: with one, the WARN
+        names a glitch cadence instead of saying 'unbounded'. Without this the
+        quantified branch is never entered by any test and could be deleted
+        without a red line -- 1024 B / 6.77 B/s is a correction every 151 s."""
+        v = rules.r1_feedback_polled(
+            series(Block(alt_out=1), healthy(fb_poll_count=0)), MAN,
+            correction_quantum_bytes=1024, fill_slope_bytes_per_s=6.77)
+        self.assertEqual(v.level, WARN)
+        self.assertFalse(v.citation)
+        self.assertIn("+4.80 ppm", v.consequence)
+        self.assertIn("every 151 s", v.consequence)
+
 
 class TestR2NoStreamingInAlt0(unittest.TestCase):
     def test_pass_when_packets_only_in_alt_1(self):
@@ -168,6 +181,24 @@ class TestR7Continuity(unittest.TestCase):
         self.assertEqual(v.level, FAIL)
         self.assertIn("41207", v.summary)
 
+    def test_skip_when_cooperative_but_no_packets(self):
+        """Distinct from the never-synchronised SKIP below, and the assertion
+        is on the witness rather than the level: both branches report SKIP, so
+        a test checking only the level would pass with either one deleted."""
+        v = rules.r7_sample_continuity(series(Block(), Block()), MAN_COOP)
+        self.assertEqual(v.level, SKIP)
+        self.assertIn("OUT packet", v.missing_witness)
+
+    def test_skip_when_the_pattern_never_synchronised(self):
+        """Packets arrived and the pattern reported no errors -- but nothing
+        non-silent ever went through it, so 'no errors' is the vacuous kind.
+        This is R7's equivalent of the R3 silence guard: without it a host that
+        never played the pattern collects a PASS for sample continuity."""
+        v = rules.r7_sample_continuity(
+            series(Block(), healthy(nonsilent_frames=0)), MAN_COOP)
+        self.assertEqual(v.level, SKIP)
+        self.assertIn("bit-exact", v.missing_witness)
+
     def test_never_synced_is_distinguished_from_diverged(self):
         v = rules.r7_sample_continuity(
             series(Block(), healthy(pat_err_count=0, pat_resync_count=0,
@@ -238,6 +269,18 @@ class TestW1ResidualDrift(unittest.TestCase):
         ppm = rules.slope_to_ppm(6.77, MAN)
         self.assertAlmostEqual(ppm, 4.80, places=1)
 
+    def test_seconds_to_glitch_is_quantum_divided_by_slope(self):
+        """The consequence arithmetic itself, not just its shape. 1024 B of
+        correction quantum drained at 6.77 B/s is a glitch every 151 s;
+        multiplying instead of dividing gives 6932 s, which is equally
+        plausible-looking prose and off by a factor of 45."""
+        v = rules.w1_residual_drift(series(Block(), healthy()), MAN,
+                                    fill_slope_bytes_per_s=6.77,
+                                    correction_quantum_bytes=1024)
+        self.assertAlmostEqual(v.evidence["seconds_between_corrections"],
+                               151.3, places=1)
+        self.assertIn("every 151 s", v.consequence)
+
 
 class TestW3FeedbackTracking(unittest.TestCase):
     def test_pass_when_sizing_tracks_feedback(self):
@@ -255,6 +298,17 @@ class TestW3FeedbackTracking(unittest.TestCase):
             series(Block(), healthy(fb_poll_count=0)), MAN,
             fill_slope_bytes_per_s=118.3)
         self.assertEqual(v.level, SKIP)
+        self.assertIn("feedback poll", v.missing_witness)
+
+    def test_skip_when_polled_but_no_slope_to_compare_against(self):
+        """The second SKIP: the host did poll, so R1's ground is covered, but
+        with no fill probe there is no drift to hold the polling against.
+        Without this the branch falls through to slope_to_ppm(None) -- and an
+        absent instrument must be a SKIP, never a reading of zero."""
+        v = rules.w3_feedback_tracked(series(Block(), healthy()), MAN,
+                                      fill_slope_bytes_per_s=None)
+        self.assertEqual(v.level, SKIP)
+        self.assertIn("fill", v.missing_witness.lower())
 
 
 if __name__ == "__main__":
