@@ -98,6 +98,51 @@ class TestR2NoStreamingInAlt0(unittest.TestCase):
             [(0.0, Block(alt_out=0)), (10.0, Block(alt_out=0))], MAN)
         self.assertEqual(v.level, SKIP)
 
+    # The transition cases. No fixture above changes alt_out at all, so
+    # attributing an interval's packets to the alt at either end gives the
+    # same answer for every one of them -- which is why the end-attributing
+    # version survived the suite while issuing cited FAILs against hosts that
+    # merely stopped streaming.
+
+    def test_pass_when_a_stream_stops_cleanly(self):
+        """alt 1 -> alt 0 with packets in the final interval, which is what a
+        host stopping, pausing or changing rate looks like: the packets
+        arrived while the interface was still in alt 1 and the transition
+        happened afterwards. Attributing them to the interval's END alt books
+        conformant traffic as alt-0 traffic and FAILs a host for stopping."""
+        blocks = [(0.0, Block(alt_out=1, pkt_count=0)),
+                  (10.0, Block(alt_out=1, pkt_count=10000)),
+                  (10.01, Block(alt_out=0, pkt_count=10010))]
+        v = rules.r2_no_streaming_in_alt0(blocks, MAN)
+        self.assertEqual(v.level, PASS)
+        self.assertEqual(v.evidence["packets_while_alt0"], 0)
+
+    def test_pass_when_a_stream_starts(self):
+        """The mirror image: alt 0 -> alt 1. Nothing arrived before the
+        interface came up, and the first interval must not be charged for the
+        packets that arrived after it did."""
+        blocks = [(0.0, Block(alt_out=0, pkt_count=0)),
+                  (0.01, Block(alt_out=1, pkt_count=5)),
+                  (10.0, Block(alt_out=1, pkt_count=10000))]
+        v = rules.r2_no_streaming_in_alt0(blocks, MAN)
+        self.assertEqual(v.level, PASS)
+
+    def test_fail_survives_the_transition_windows(self):
+        """The real defect runs for seconds, so discarding one 10 ms sample
+        period at each edge cannot hide it. If tightening the attribution had
+        cost the rule its teeth, this is where it would show."""
+        blocks = ([(0.0, Block(alt_out=1, pkt_count=0)),
+                   (10.0, Block(alt_out=1, pkt_count=10000))]
+                  + [(10.0 + i, Block(alt_out=0, pkt_count=10000 + i * 1000))
+                     for i in range(1, 6)]
+                  + [(16.0, Block(alt_out=1, pkt_count=15500))])
+        v = rules.r2_no_streaming_in_alt0(blocks, MAN)
+        self.assertEqual(v.level, FAIL)
+        self.assertTrue(v.citation)
+        # Four fully-enclosed alt-0 intervals of 1000 packets each; the two
+        # transition intervals are excluded by design.
+        self.assertEqual(v.evidence["packets_while_alt0"], 4000)
+
 
 class TestR3Justification(unittest.TestCase):
     def test_pass_when_left_justified(self):
@@ -154,6 +199,73 @@ class TestR4aMaxPacketSize(unittest.TestCase):
     def test_skip_when_no_packets(self):
         v = rules.r4a_max_packet_size(series(Block(), Block()), MAN)
         self.assertEqual(v.level, SKIP)
+
+    def test_bound_is_the_descriptor_not_the_fractional_ceiling(self):
+        """A host sizing at 40/48 frames is lumpy, and lumpiness is not
+        forbidden by anything citable -- with an async feedback loop the host
+        is entitled to vary packet size. 1536 B is inside the endpoint's
+        declared wMaxPacketSize, so R4a must PASS and leave the complaint to
+        W2. Against max(legal_packet_sizes) = 1440 this same fixture produced
+        a cited FAIL against a conformant host."""
+        lumpy = healthy(size_hist_size=[40 * 32, 48 * 32, 0, 0, 0, 0, 0, 0],
+                        size_hist_count=[60000, 60000, 0, 0, 0, 0, 0, 0])
+        self.assertGreater(48 * 32, max(MAN.legal_packet_sizes))
+        self.assertEqual(rules.r4a_max_packet_size(series(Block(), lumpy),
+                                                   MAN).level, PASS)
+        self.assertEqual(rules.w2_packet_size_shape(series(Block(), lumpy),
+                                                    MAN).level, WARN)
+
+    def test_no_fail_on_variation_at_an_integer_sample_rate(self):
+        """48 kHz makes legal_packet_sizes a one-element set, so the old bound
+        fired on ANY second size -- against an endpoint whose wMaxPacketSize
+        exists to declare exactly that headroom. The sizes here straddle the
+        single nominal size and stay inside the descriptor's limit."""
+        m = Manifest.from_dict({
+            "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
+            "sample_rate_hz": 48000, "mode": "passive", "host_note": "t",
+            "max_packet_size_bytes": 1600})
+        self.assertEqual(len(m.legal_packet_sizes), 1)
+        b = healthy(size_hist_size=[47 * 32, 48 * 32, 49 * 32, 0, 0, 0, 0, 0],
+                    size_hist_count=[40000, 40000, 40000, 0, 0, 0, 0, 0])
+        self.assertEqual(rules.r4a_max_packet_size(series(Block(), b), m).level,
+                         PASS)
+
+    def test_fail_at_one_byte_over_the_declared_maximum(self):
+        b = healthy(size_hist_size=[MAN.max_packet_size_bytes + 1, 0, 0, 0,
+                                    0, 0, 0, 0],
+                    size_hist_count=[1, 0, 0, 0, 0, 0, 0, 0])
+        self.assertEqual(rules.r4a_max_packet_size(series(Block(), b), MAN).level,
+                         FAIL)
+
+    def test_pass_at_exactly_the_declared_maximum(self):
+        b = healthy(size_hist_size=[MAN.max_packet_size_bytes, 0, 0, 0,
+                                    0, 0, 0, 0],
+                    size_hist_count=[1, 0, 0, 0, 0, 0, 0, 0])
+        self.assertEqual(rules.r4a_max_packet_size(series(Block(), b), MAN).level,
+                         PASS)
+
+    def test_skip_rather_than_pass_when_the_histogram_overflowed(self):
+        """9,000 packets of unknown size and a clean sweep of the eight
+        recorded ones. Reading that as PASS is the absence of evidence
+        rendered as evidence of absence -- the exact lie the SKIP level
+        exists for, and W2 already treats this same field as load-bearing."""
+        v = rules.r4a_max_packet_size(
+            series(Block(), healthy(size_hist_overflow=9000)), MAN)
+        self.assertEqual(v.level, SKIP)
+        self.assertIn("9000", v.missing_witness)
+
+    def test_fail_outranks_histogram_overflow(self):
+        """Overflow undermines a PASS, not a FAIL. An oversized packet in a
+        visible slot is positive evidence of a violation, and the packets the
+        histogram could not record cannot un-observe it. Degrading this to
+        SKIP would let a host hide a real violation by producing enough
+        distinct sizes to overflow the table."""
+        big = healthy(size_hist_size=[44 * 32, 9999, 0, 0, 0, 0, 0, 0],
+                      size_hist_count=[100000, 3, 0, 0, 0, 0, 0, 0],
+                      size_hist_overflow=9000)
+        v = rules.r4a_max_packet_size(series(Block(), big), MAN)
+        self.assertEqual(v.level, FAIL)
+        self.assertTrue(v.citation)
 
 
 class TestR4bWholeFrames(unittest.TestCase):
