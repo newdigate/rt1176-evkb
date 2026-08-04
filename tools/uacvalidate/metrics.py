@@ -89,10 +89,26 @@ def collect(blocks, man, fill_sigs=None, slope_bytes_per_s=None,
     polls = delta(a.fb_poll_count, b.fb_poll_count)
     out.append(("feedback polls",
                 f"{polls}" + (f" ({polls / per_s:.1f}/s)" if per_s else "")))
-    # Printed raw. Decoding it needs the 10.14-vs-16.16 choice, which depends
-    # on speed and on the device's own convention; guessing wrong here would
-    # print a confident wrong sample rate beside a correct one.
-    out.append(("device feedback value", f"0x{b.fb_value:08X} (raw)"))
+    # DELIBERATELY UNDECODED, and this is a recorded decision rather than an
+    # oversight. The explicit-feedback value is a fixed-point frames-per-frame
+    # figure in one of two encodings:
+    #
+    #   FS (UAC1): 10.14, right-justified in three bytes.
+    #   HS (UAC2): 16.16, in four bytes.
+    #
+    # `man.speed` is the field that selects between them, so this IS decidable
+    # from the manifest in principle. What is not yet known is where the
+    # device puts the value inside the word it publishes: the relevant path in
+    # lib_xua's ep_buffer.xc shifts it differently at FS and at HS, and no
+    # capture exists to check a decode against. Decoding on that basis would
+    # print a confident sample rate in Hz that could be wrong by a power of
+    # two, sitting beside metrics that are right.
+    #
+    # Metrics carry no verdict, so raw hex costs nothing and a wrong Hz figure
+    # costs trust. Decode this once the first real capture confirms the
+    # device's convention -- and add a test pinning both encodings when you do.
+    out.append(("device feedback value", f"0x{b.fb_value:08X} (raw; encoding "
+                                         f"undecided, see metrics.py)"))
 
     out.append(("alt setting",
                 f"{b.alt_out} now, {delta(a.alt_transitions, b.alt_transitions)} "

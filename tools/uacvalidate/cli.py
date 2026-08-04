@@ -72,38 +72,79 @@ def _emit(header, verdicts, as_json, metrics=()):
 def _manifest_contradiction(first, last, man):
     """Message describing a manifest/trace disagreement, or "" if consistent.
 
-    The test is divisibility. Every OUT packet is a whole number of audio
-    frames, so every observed packet size must be a multiple of the declared
-    frame. The device counts non-multiple packets itself, against the frame
-    size it actually knows -- so when the device says zero and the declared
-    frame does not divide the sizes on the wire, it is the declaration that is
-    wrong, not the host.
+    Two independent tests, one exact and one approximate. Both compare a
+    DECLARED prediction against an observation, which is what the manifest is
+    for; neither infers the format from the trace.
 
-    It is a partial net, deliberately so rather than by oversight: a declared
-    frame that happens to divide the real one passes here (declaring 2
-    channels for an 8-channel stream gives 8 B, which divides 32 B). Catching
-    that would mean inferring the format from the trace, which is the thing
-    the manifest exists to stop. The gcd is printed alongside so a reader can
-    see the frame the trace implies and make the call.
+    1. Divisibility (exact). Every OUT packet is a whole number of audio
+       frames, so every observed size must be a multiple of the declared
+       frame. The device counts non-multiple packets itself, against the frame
+       size it actually knows -- so when the device says zero and the declared
+       frame does not divide the sizes on the wire, the declaration is wrong.
+       Catches a declared frame that does not divide the real one.
+
+    2. Scale (approximate). `sample_rate_hz` and `frame_bytes` PREDICT a mean
+       packet size. A host sustaining the declared stream must average it --
+       that is forced by the arithmetic, not by any spec clause, since any
+       other mean drains or floods the FIFO within seconds. So a mean more
+       than one frame away from the prediction means the two sides are not
+       describing the same stream. Catches every scale error divisibility
+       misses: declaring 2 channels where there are 8, or 16-bit subslots
+       where they are 32, or half the sample rate.
+
+    The mean is used rather than "does any single size land near the declared
+    floor/ceiling pair", which was the first form proposed. That form
+    invalidates a legitimately lumpy host: 40/48-frame sizing against a 44/45
+    nominal puts every observed size outside a one-frame band, so a host doing
+    exactly what W2 exists to warn about -- permitted, costly, not a violation
+    -- would be reported as an unreadable capture instead. Its mean is 1408 B
+    against a predicted 1411.2 B, comfortably inside tolerance, because the
+    average is the quantity physics pins and the individual sizes are not.
+
+    Where the tool cannot tell "the manifest is wrong" from "the host is
+    wrong" -- a host genuinely sending 4x oversized packets looks identical to
+    a 4x manifest typo -- INVALID is the answer, not FAIL. Printing both
+    numbers hands a human the two facts; exit 1 would assert something the
+    tool does not know. Same asymmetry that separates exit 2 from exit 1.
     """
     sizes = last.sizes()
     if not sizes:
         return ""
+
     bad = sorted(s for s in sizes if s % man.frame_bytes)
-    if not bad:
-        return ""
-    if delta32(first.pkt_not_multiple, last.pkt_not_multiple):
-        # The device saw non-multiple packets too. Then the host really did
-        # send them and this is R4b's FAIL to issue, not a manifest error.
-        return ""
-    implied = math.gcd(*sizes) if len(sizes) > 1 else next(iter(sizes))
-    return (f"manifest contradicts the trace: it declares "
-            f"{man.channels} channels x {man.subslot_bytes} B = "
-            f"{man.frame_bytes} B per audio frame, but packet sizes {bad} are "
-            f"not whole multiples of {man.frame_bytes} B, and the device "
-            f"counted no non-multiple packets. The observed sizes imply a "
-            f"frame of {implied} B. No verdict about the host can be trusted "
-            f"until the two agree")
+    # The device saw non-multiple packets too, so the host really did send
+    # them: R4b's FAIL to issue, not a manifest error. Gates test 1 only --
+    # the device's frame accounting says nothing about scale.
+    if bad and not delta32(first.pkt_not_multiple, last.pkt_not_multiple):
+        implied = math.gcd(*sizes) if len(sizes) > 1 else next(iter(sizes))
+        return (f"manifest contradicts the trace: it declares "
+                f"{man.channels} channels x {man.subslot_bytes} B = "
+                f"{man.frame_bytes} B per audio frame, but packet sizes {bad} "
+                f"are not whole multiples of {man.frame_bytes} B, and the "
+                f"device counted no non-multiple packets. The observed sizes "
+                f"imply a frame of {implied} B. No verdict about the host can "
+                f"be trusted until the two agree")
+
+    total = sum(sizes.values())
+    # An overflowed histogram means the recorded packets are not the whole
+    # population, so their mean is not the stream's mean. R4a already SKIPs
+    # there; this must not accuse on the strength of a partial sample.
+    if total and not last.size_hist_overflow:
+        observed = sum(s * c for s, c in sizes.items()) / total
+        predicted = man.nominal_frames_per_packet * man.frame_bytes
+        if abs(observed - predicted) > man.frame_bytes:
+            return (f"manifest contradicts the trace: {man.sample_rate_hz} Hz "
+                    f"x {man.channels} channels x {man.subslot_bytes} B "
+                    f"predicts a mean packet of {predicted:.1f} B "
+                    f"({man.nominal_frames_per_packet:.2f} frames of "
+                    f"{man.frame_bytes} B), but the capture's mean packet is "
+                    f"{observed:.1f} B over {total} packets, sizes "
+                    f"{sorted(sizes)}. Either the declared format is wrong or "
+                    f"this host is sending packets "
+                    f"{observed / predicted:.2f}x nominal; nothing in the "
+                    f"capture distinguishes the two, so no verdict about the "
+                    f"host can be trusted until the manifest is confirmed")
+    return ""
 
 
 def main(argv=None):
