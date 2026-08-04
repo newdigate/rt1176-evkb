@@ -117,3 +117,51 @@ Still open
     unproven on silicon. A re-capture would settle it.
   - Cooperative mode still never run against any host.
   - metrics prints "overflows ?".
+
+
+The RT1176 host does not claim the UAC1/FS device from cold, 2026-08-04
+=======================================================================
+Attempting the fourth cell of the matrix -- RT1176 host, UAC1 class -- produced
+no capture at all, and the reason is a finding about the host rather than a
+bench problem.
+
+    UAC1 image (1AMi2o2xxxxxx) on J47/USB_OTG2:
+        host heartbeat, continuously over ~110 s and three resets
+        (two by hand at the board, one attempted over LinkServer):
+            audio=none  uac2=0  alt=-1  ctrl=0/0/0
+        capture: 1322 bytes -- header only, not one packet
+
+    UAC2 image (2AMi8o8xxxxxx), same cable, same connector, same host
+    binary, eight minutes later:
+        capture: 2.7 MB, and the judge returns
+            8 PASS, 0 FAIL, 1 SKIP     W1 +0.120 ppm
+
+The control rules out the cabling, the connector, the host build, the observer
+and the collector. The single variable is the device's class personality.
+
+`ctrl=0/0/0` is the sharp part. That counter reports outstanding control
+transfers, timeouts and queue failures. All three are zero, so the host never
+issued a control request at all -- this is not the control-sequence wedge
+documented earlier in this file, which showed a non-zero state stuck at
+CTRL_SET_CLOCK. The host never began a claim.
+
+Worth noting what the existing evidence did and did not establish. The
+device-swap A/B in transcript_hw_evkb.txt shows the host handling the FS
+personality after an HS -> FS swap, with `audio=ready uac2=0 alt=1
+pkts/s=1000`. That is a RE-claim, from a driver that had already claimed the
+HS device and rebuilt its descriptors. It was never evidence that the host
+claims a UAC1 device from a cold start, and today it did not.
+
+macOS claimed the identical device and image without difficulty (see above:
+5 PASS, 300,600 packets), so the device presents a working UAC1 configuration.
+
+The validator cannot report this defect, and that is not a gap in it. A host
+that never claims sends no packets, so there is nothing to reduce and nothing
+to judge; the judge says INVALID, "no validator state blocks found", exit 2 --
+correctly refusing to describe a host it never observed. The evidence for this
+finding is the host's own heartbeat next to a control capture, which is
+exactly the pairing the two-gate rule asks for.
+
+Not chased further tonight. Recorded as a candidate defect in USBHost_t36's
+UAC1 claim path with a reproduction that takes eight minutes: load the UAC1
+image, watch audio=none; load the UAC2 image, watch it stream.
