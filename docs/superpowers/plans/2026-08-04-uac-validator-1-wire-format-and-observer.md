@@ -62,7 +62,7 @@
 | 12 | `class_req_bitmap` | bit0 clock SET_CUR, bit1 clock GET_CUR, bit2 SET_INTERFACE |
 | 13 | `host_active` | 0 or 1 |
 | 14 | `pat_err_count` | cooperative mode only |
-| 15 | `pat_resync_count` | cooperative mode only |
+| 15 | `pat_resync_count` | cooperative mode only — see the note below |
 | 16 | `pat_first_err_idx` | cooperative mode only |
 | 17 | `pat_first_expected` | cooperative mode only |
 | 18 | `pat_first_actual` | cooperative mode only |
@@ -72,6 +72,23 @@
 | 36 | `pat_sync_count` | times the cooperative pattern achieved lock |
 
 All counters are free-running uint32 and may wrap. The reader does not unwrap; Plan 2's rules handle wrap.
+
+**`pat_resync_count` and `pat_sync_count` are not the same counter and must not
+be implemented as one increment.** A *resync* is the decision to give up and
+start hunting again — it fires after 8 consecutive mismatches. A *sync* is a
+successful lock — it fires only when the seed value is actually matched. A host
+whose playback path is not bit-exact accumulates resyncs while its sync count
+may barely move. If the observer increments both at the same site, R7 loses its
+ability to tell "never locked" from "locked once then lost samples", and the
+judge goes back to accusing conformant hosts of dropping packets — the exact
+bug word 36 was added to fix.
+
+**R7 reads `pat_sync_count` absolutely, not as a window delta**, unlike every
+other counter the judge consumes. A capture opened mid-stream, after lock was
+achieved, shows the same value in every block, so its delta is zero throughout
+and a delta reading would report a healthy soak as never having locked.
+"Did the pattern hold lock during this run" is a property of the run, not of
+the window.
 
 ---
 
@@ -313,6 +330,10 @@ SCALAR_LAYOUT = {
     17: "pat_first_expected",
     18: "pat_first_actual",
     19: "size_hist_overflow",
+    # Word 36 sits AFTER the two histogram arrays, so the scalar words are no
+    # longer a contiguous head. Appending here rather than renumbering keeps
+    # every other index stable.
+    36: "pat_sync_count",
 }
 HIST_SIZE_BASE = 20
 HIST_COUNT_BASE = 28
@@ -341,6 +362,7 @@ class Block:
     pat_first_expected: int = 0
     pat_first_actual: int = 0
     size_hist_overflow: int = 0
+    pat_sync_count: int = 0
     size_hist_size: list = field(default_factory=lambda: [0] * HIST_SLOTS)
     size_hist_count: list = field(default_factory=lambda: [0] * HIST_SLOTS)
 
