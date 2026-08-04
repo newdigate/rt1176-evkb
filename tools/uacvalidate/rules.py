@@ -342,6 +342,50 @@ def w2_packet_size_shape(blocks, man):
 
 # A residual this small is indistinguishable from measurement noise over any
 # practical soak: at 1.4 MB/s it is under 2 B/s, inside one packet of jitter.
+# A capture's timestamps and its counters are two independent clocks. If they
+# disagree, any rule that divides by elapsed time is reporting a number it
+# cannot support -- and a wrong ppm figure is worse than none, because it looks
+# like a measurement.
+#
+# The cross-check uses packets rather than frames: pkt_count / packets_per_sec
+# is the streaming duration regardless of how much of the audio was silent,
+# whereas nonsilent_frames is only a lower bound. It doubles as a second net
+# under a mis-declared packet rate, which silicon has already caught once.
+TIME_BASE_TOLERANCE = 0.25
+
+
+def time_base_consistent(blocks, man):
+    """(ok, vcd_seconds, implied_seconds).
+
+    ok is False when the capture's own timestamps disagree with what its
+    packet count implies, or when there are too few packets to judge.
+    """
+    vcd_s = _duration(blocks)
+    packets = _packets(blocks)
+    implied_s = packets / float(man.packets_per_second)
+    if packets < man.packets_per_second:      # under a second of stream
+        return False, vcd_s, implied_s
+    if implied_s <= 0 or vcd_s <= 0:
+        return False, vcd_s, implied_s
+    ratio = vcd_s / implied_s
+    return (abs(ratio - 1.0) <= TIME_BASE_TOLERANCE), vcd_s, implied_s
+
+
+def _time_base_skip(rule_id, blocks, man, ev):
+    """Shared SKIP for the two rate-derived rules. None when the base is sound."""
+    ok, vcd_s, implied_s = time_base_consistent(blocks, man)
+    if ok:
+        return None
+    ev = dict(ev, vcd_seconds=round(vcd_s, 3), implied_seconds=round(implied_s, 3))
+    return Verdict(
+        rule_id, SKIP,
+        f"capture timestamps span {vcd_s:.1f} s but its {_packets(blocks)} packets "
+        f"at {man.packets_per_second}/s imply {implied_s:.1f} s",
+        missing_witness=("a trustworthy time base: this rule divides by elapsed "
+                         "time, and the capture's two clocks disagree"),
+        evidence=ev)
+
+
 DRIFT_NOISE_FLOOR_PPM = 1.0
 
 
@@ -363,6 +407,9 @@ def w1_residual_drift(blocks, man, fill_slope_bytes_per_s,
         return Verdict("W1", SKIP, "no fill-probe slope available",
                        missing_witness="the out_fifo_fill trace in the capture",
                        evidence=ev)
+    stale = _time_base_skip("W1", blocks, man, ev)
+    if stale is not None:
+        return stale
     ppm = slope_to_ppm(fill_slope_bytes_per_s, man)
     ev["residual_ppm"] = round(ppm, 3)
     if abs(ppm) <= DRIFT_NOISE_FLOOR_PPM:
@@ -405,6 +452,9 @@ def w3_feedback_tracked(blocks, man, fill_slope_bytes_per_s):
         return Verdict("W3", SKIP, "no fill-probe slope available",
                        missing_witness="the out_fifo_fill trace in the capture",
                        evidence=ev)
+    stale = _time_base_skip("W3", blocks, man, ev)
+    if stale is not None:
+        return stale
     ppm = slope_to_ppm(fill_slope_bytes_per_s, man)
     ev["residual_ppm"] = round(ppm, 3)
     if abs(ppm) <= DRIFT_NOISE_FLOOR_PPM:

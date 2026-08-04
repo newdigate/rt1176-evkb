@@ -480,5 +480,58 @@ class TestW3FeedbackTracking(unittest.TestCase):
         self.assertIn("fill", v.missing_witness.lower())
 
 
+class TestTimeBaseGuard(unittest.TestCase):
+    """The capture's timestamps and its counters are independent clocks. When
+    they disagree, a rule that divides by elapsed time is stating a number it
+    cannot support -- and a wrong ppm reads as a measurement, which is worse
+    than an honest SKIP. Real hardware produced exactly this: a 220 s capture
+    whose VCD timestamps spanned 2792 s."""
+
+    def _stretched(self):
+        """Healthy counters, timestamps inflated ~12.7x as silicon showed."""
+        return [(0.0, Block(alt_out=1)), (1524.0, healthy())]
+
+    def test_consistent_when_packets_match_the_span(self):
+        ok, vcd_s, implied_s = rules.time_base_consistent(
+            series(Block(alt_out=1), healthy()), MAN)
+        self.assertTrue(ok)
+        self.assertAlmostEqual(implied_s, 120.0, places=3)
+
+    def test_inconsistent_when_timestamps_are_stretched(self):
+        ok, vcd_s, implied_s = rules.time_base_consistent(self._stretched(), MAN)
+        self.assertFalse(ok)
+
+    def test_w1_skips_rather_than_reporting_a_wrong_ppm(self):
+        v = rules.w1_residual_drift(self._stretched(), MAN,
+                                    fill_slope_bytes_per_s=6.77,
+                                    correction_quantum_bytes=1024)
+        self.assertEqual(v.level, SKIP)
+        self.assertIn("time base", v.missing_witness)
+
+    def test_w3_skips_on_a_bad_time_base(self):
+        v = rules.w3_feedback_tracked(self._stretched(), MAN,
+                                      fill_slope_bytes_per_s=118.3)
+        self.assertEqual(v.level, SKIP)
+        self.assertIn("time base", v.missing_witness)
+
+    def test_w1_still_warns_when_the_time_base_is_sound(self):
+        v = rules.w1_residual_drift(series(Block(alt_out=1), healthy()), MAN,
+                                    fill_slope_bytes_per_s=6.77,
+                                    correction_quantum_bytes=1024)
+        self.assertEqual(v.level, WARN)
+
+    def test_a_mis_declared_packet_rate_also_trips_the_guard(self):
+        """The guard is a second net under the defect silicon already found:
+        declaring 1000 packets/s for a stream the device counts at 8000."""
+        wrong = Manifest.from_dict({
+            "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
+            "sample_rate_hz": 44100, "max_packet_size_bytes": 800,
+            "mode": "passive", "host_note": "wrong rate"})
+        object.__setattr__(wrong, "speed", "FS")   # forces packets_per_second 1000
+        ok, _, _ = rules.time_base_consistent(
+            series(Block(alt_out=1), healthy()), wrong)
+        self.assertFalse(ok)
+
+
 if __name__ == "__main__":
     unittest.main()
