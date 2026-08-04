@@ -1,7 +1,7 @@
 From 56033e1669cf23d929a748d09d9883540d66a720 Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Sun, 2 Aug 2026 18:57:18 +0100
-Subject: [PATCH 1/7] decouple: xscope probes for OUT buffer under/overflow and
+Subject: [PATCH 1/8] decouple: xscope probes for OUT buffer under/overflow and
  fill
 
 Instrumentation only -- no existing logic is changed. Added while chasing a
@@ -138,7 +138,7 @@ index 3ceb2596..d5254927 100644
 From 26d13baba4e412653a887945ee4fc8e02cc6b74c Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Sun, 2 Aug 2026 19:42:37 +0100
-Subject: [PATCH 2/7] decouple: fix the fill probe, count runtime dry-outs
+Subject: [PATCH 2/8] decouple: fix the fill probe, count runtime dry-outs
 
 The fill probe emitted space_left, a pointer difference whose meaning
 flips at the ring wrap -- a drift fit over it gave slope 0.222 where
@@ -283,7 +283,7 @@ index d5254927..371a9334 100644
 From 1019aeb12e9d61b9e37d7c9906cfb9cf6e9e1ecb Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Tue, 4 Aug 2026 17:55:28 +0100
-Subject: [PATCH 3/7] decouple: validator packet counters, size histogram,
+Subject: [PATCH 3/8] decouple: validator packet counters, size histogram,
  byte-lane accumulators
 
 Counts accepted packets and their sizes, packets shorter than one audio frame,
@@ -471,7 +471,7 @@ index 0b744127..099d2ff0 100644
 From 47cd7277616559106a358cc8c41ea5d15d58a6f3 Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Tue, 4 Aug 2026 17:57:01 +0100
-Subject: [PATCH 4/7] ep_buffer: count feedback polls, publish the feedback
+Subject: [PATCH 4/8] ep_buffer: count feedback polls, publish the feedback
  value
 
 Completions, not arms. An endpoint this device armed and the host never read
@@ -553,7 +553,7 @@ index 5967d9cf..f1d4c077 100644
 From acd425ca44538e2bf530f10e2d342408387b086f Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Tue, 4 Aug 2026 17:59:59 +0100
-Subject: [PATCH 5/7] endpoint0: validator alt state and class-request bitmap
+Subject: [PATCH 5/8] endpoint0: validator alt state and class-request bitmap
 
 Alt transitions plus a set-on-first-arrival bitmap for the three class
 requests that constitute a configuration sequence. No timestamps of their own:
@@ -705,7 +705,7 @@ index cdbf5d1f..61ed896e 100644
 From 4e587df2b45f6178b84ad010d9643bdd3b2a2085 Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Tue, 4 Aug 2026 18:06:44 +0100
-Subject: [PATCH 6/7] decouple: cooperative pattern check, and emit the 37-word
+Subject: [PATCH 6/8] decouple: cooperative pattern check, and emit the 37-word
  state block
 
 Two things finish the observer.
@@ -1124,7 +1124,7 @@ index 371a9334..8317612d 100644
 From 00ad1ed542bac48c9a53e9a79bd18d092e231ffd Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Tue, 4 Aug 2026 18:42:53 +0100
-Subject: [PATCH 7/7] observer: fix fb_value on the fixed-frequency path, cut
+Subject: [PATCH 7/8] observer: fix fb_value on the fixed-frequency path, cut
  the block cadence
 
 Both defects came from the first silicon run, and neither was visible from
@@ -1221,6 +1221,63 @@ index ae2ed098..d44dd58e 100644
                          }
  #ifdef FB_TOLERANCE_TEST
                          else
+-- 
+2.39.1
+
+
+From b424b0e0d243f756027b08b724e9abe26ef1333a Mon Sep 17 00:00:00 2001
+From: Newdigate <nicnewdigate@gmail.com>
+Date: Tue, 4 Aug 2026 20:45:34 +0100
+Subject: [PATCH 8/8] decouple: instrument the 3-byte subslot path -- it
+ silently faked a PASS
+
+macOS picked 24-bit-in-3-byte subslots on the very first UAC1 capture, which
+runs the one sample path that had no byte-lane accumulation. The 4-byte and
+16-bit paths were instrumented; case 3 was not.
+
+The failure mode is the dangerous one. An uninstrumented path does not read as
+"no data" -- it reads as or_acc == 0, which is exactly the signature of a
+silent stream, so R3's (or_acc & 0xFF) == 0 test would have returned PASS,
+"samples are left-justified", from code that never executed. A conformance
+verdict manufactured out of an absence.
+
+What stopped it was the non-silent-frame witness: nonsilent_frames stayed 0,
+so the judge reported SKIP with "a silent stream would pass this check for the
+wrong reason". The design justified that guard against silent audio; the real
+failure was an uninstrumented code path, which nobody predicted and which
+produces an identical signature. It was caught anyway.
+
+Both images rebuilt, constraints passing.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ lib_xua/src/core/buffer/decouple/decouple.xc | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/lib_xua/src/core/buffer/decouple/decouple.xc b/lib_xua/src/core/buffer/decouple/decouple.xc
+index e7808d2f..a3e2fb73 100644
+--- a/lib_xua/src/core/buffer/decouple/decouple.xc
++++ b/lib_xua/src/core/buffer/decouple/decouple.xc
+@@ -574,6 +574,19 @@ __builtin_unreachable();
+                     }
+                     unpackState++;
+ 
++                    /* Validator: the 3-byte subslot path needs the same
++                     * byte-lane accumulation as the 4-byte and 16-bit ones.
++                     * Omitting it did not read as "no data" -- it read as
++                     * or_acc == 0, which is the signature of a SILENT stream,
++                     * and R3's left-justification test would have returned
++                     * PASS from a path that never ran. macOS picked this
++                     * format on the very first UAC1 capture; only the
++                     * non-silent-frame witness stopped the false PASS. */
++                    g_uacvOrAcc |= (unsigned)sample;
++                    g_uacvAndAcc &= (unsigned)sample;
++                    if(sample) g_uacvFrameNonzero = 1;
++                    uacvCheckSample((unsigned)sample);
++
+ #if (OUTPUT_VOLUME_CONTROL == 1) && (!OUT_VOLUME_IN_MIXER)
+                     unsafe
+                     {
 -- 
 2.39.1
 
