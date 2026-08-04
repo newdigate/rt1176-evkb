@@ -21,11 +21,35 @@ Usage: vcdfill.py file.vcd [--plot out.png] [--json]
 import sys, json
 
 TICK = None  # seconds per VCD tick, read from $timescale
+NAMES = {}   # VCD id -> signal name, read from $var; both set by parse()
+
+# The fill probe, by the two ways it can be identified. The name is the
+# contract and the id is the historical accident: xscope assigns ids in
+# xscope_register order, so "2" is out_fifo_fill only for as long as nobody
+# prepends a probe. Callers added for the validator resolve by name and fall
+# back to the id; analyse() keeps using the id alone so its behaviour on
+# captures predating this change is bit-identical.
+FILL_SIGNAL_NAME = "out_fifo_fill"
+FILL_SIGNAL_ID = "2"
+
+# Segmentation thresholds. A block correction (dry-out silence insertion or
+# overflow packet-dropping) moves the fill level by hundreds of bytes in one
+# sample; an overflow additionally gaps the emissions, because emission rides
+# on packet arrival. Either is a discontinuity, and a fit spanning one measures
+# the correction rather than the drift it is supposed to reveal.
+SEGMENT_STEP_BYTES = 300
+SEGMENT_GAP_S = 0.5
+# A segment shorter than this cannot carry a meaningful slope: 8 points is
+# fit_slope's own minimum, and 2 s of a ~100 Hz probe is the shortest window in
+# which the drift exceeds the sample-to-sample jitter.
+MIN_SEGMENT_POINTS = 8
+MIN_SEGMENT_SECONDS = 2.0
 
 
 def parse(path):
-    global TICK
+    global TICK, NAMES
     sigs = {}      # id -> list[(t_ticks, value)]
+    names = {}     # id -> signal name
     t = 0
     with open(path) as f:
         lines = f.read().split("\n")
@@ -42,10 +66,13 @@ def parse(path):
             parts = ln.split()
             sid = parts[3]
             sigs[sid] = []
+            if len(parts) > 4:
+                names[sid] = parts[4]
         if ln == "$enddefinitions $end":
             i += 1
             break
         i += 1
+    NAMES = names
     for ln in lines[i:]:
         if not ln:
             continue
@@ -73,6 +100,101 @@ def fit_slope(pts):
     syy = sum((p[1] - sy) ** 2 for p in pts)
     r2 = (sxy * sxy) / (sxx * syy) if syy > 0 else 1.0
     return (b, r2, n)
+
+
+def segments(points):
+    """Split [(t_s, v)] at block corrections; return the fittable pieces.
+
+    THE segmenter for this module -- extracted from analyse(), which used to
+    inline it, so that the per-segment table it prints and the single slope
+    fit_fill_slope() hands the validator are cut the same way. Two segmenters
+    could disagree, and then vcdfill's own report and the validator's W1
+    verdict would be measuring different things while both calling it "the
+    drift".
+
+    Pieces too short to fit are dropped here rather than by the caller: a
+    two-sample fragment between two corrections has a slope, and it is noise.
+    """
+    if not points:
+        return []
+    segs = []
+    cur = [points[0]]
+    for prev, nxt in zip(points, points[1:]):
+        dv = nxt[1] - prev[1]
+        dt = nxt[0] - prev[0]
+        if abs(dv) > SEGMENT_STEP_BYTES or dt > SEGMENT_GAP_S:
+            segs.append(cur)
+            cur = []
+        cur.append(nxt)
+    segs.append(cur)
+    return [s for s in segs
+            if len(s) >= MIN_SEGMENT_POINTS
+            and s[-1][0] - s[0][0] >= MIN_SEGMENT_SECONDS]
+
+
+def fill_points(sigs):
+    """The OUT-FIFO fill trace as [(t_s, v)], or [] if the capture has none.
+
+    Resolved by signal NAME first. The id fallback is refused for a capture
+    that declares uacv_w* state words, because those come from
+    uacvalidate/wireformat.py's synth_vcd, whose VCD identifiers are printable
+    characters starting at '!' -- identifier "2" there is chr(50), which is
+    state word 17 (pat_first_expected), not FIFO occupancy. Fitting a drift
+    slope to a state counter would produce a confident, meaningless number:
+    exactly the 0.222-slope failure the validator's manifest rule exists to
+    prevent. Returning nothing makes the validator report SKIP, which is the
+    honest answer for a capture that has no fill probe in it.
+    """
+    if TICK is None:
+        return []
+    sid = None
+    for s, name in NAMES.items():
+        if name == FILL_SIGNAL_NAME:
+            sid = s
+            break
+    if sid is None:
+        if any(n.startswith("uacv_w") for n in NAMES.values()):
+            return []
+        sid = FILL_SIGNAL_ID
+    return [(t * TICK, v) for t, v in sigs.get(sid, [])]
+
+
+def longest_segment(sigs):
+    """The longest correction-free stretch of the fill trace, or None.
+
+    Longest by duration, not by point count: emission is not perfectly
+    periodic, and the fit's confidence comes from the time base it spans.
+    """
+    segs = segments(fill_points(sigs))
+    if not segs:
+        return None
+    return max(segs, key=lambda s: s[-1][0] - s[0][0])
+
+
+def fit_fill_slope(sigs):
+    """Least-squares slope of the OUT-FIFO fill trace, in bytes/second.
+
+    Fitted over the longest segment between block corrections: a correction is
+    a discontinuity, and fitting across one measures the correction rather than
+    the drift.
+
+    Returns None when there is nothing fittable -- no fill probe in the
+    capture, or every segment too short. The caller reports that as SKIP, not
+    as zero drift: an absent instrument is not a reading of zero, and the
+    difference is the whole point of the validator's SKIP level. A genuine
+    0.0 from a real fit is a PASS at the noise floor and must stay
+    distinguishable from it.
+
+    Named apart from fit_slope() above, which is the generic OLS primitive over
+    a point list and returns (slope, r2, n). Both are public and both are used;
+    this one takes parse()'s signal dict and answers the one question the
+    validator asks.
+    """
+    seg = longest_segment(sigs)
+    if seg is None:
+        return None
+    r = fit_slope(seg)
+    return None if r is None else r[0]
 
 
 def analyse(path, want_json=False, plot=None):
@@ -112,23 +234,9 @@ def analyse(path, want_json=False, plot=None):
     out["xscope_missing_marks"] = len([1 for _, v in md if v])
 
     # segment the fill trace at discontinuities and emission gaps
-    segs = []
-    cur = [fill[0]]
-    for prev, nxt in zip(fill, fill[1:]):
-        dv = nxt[1] - prev[1]
-        dt = nxt[0] - prev[0]
-        if abs(dv) > 300 or dt > 0.5:
-            segs.append(cur)
-            cur = []
-        cur.append(nxt)
-    segs.append(cur)
     seg_rows = []
-    for s in segs:
-        if len(s) < 8:
-            continue
+    for s in segments(fill):
         dur = s[-1][0] - s[0][0]
-        if dur < 2.0:
-            continue
         r = fit_slope(s)
         if not r:
             continue
