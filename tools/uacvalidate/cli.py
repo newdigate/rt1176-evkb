@@ -106,7 +106,17 @@ def main(argv=None):
     # Missing marks are counted from the VCD directly rather than from
     # vcdfill's return value, which is keyed by VCD identifier and does not
     # surface the Missing_Data signal by name.
-    fill = parse_fill(args.vcd)
+    #
+    # The decoupler probes are optional cargo, so a capture whose probe
+    # section is malformed still yields a judgeable state block: the fit is
+    # abandoned and W1/W3 report SKIP with the missing witness they already
+    # name. What must NOT happen is the exception escaping -- that exits 1,
+    # and exit 1 means "this host failed a rule".
+    try:
+        fill = parse_fill(args.vcd)
+    except (OSError, ValueError, KeyError, IndexError):
+        fill = {}
+
     missing = count_missing_marks(args.vcd)
     header["missing_marks"] = missing
 
@@ -130,7 +140,10 @@ def main(argv=None):
 
     verdicts = [rule(blocks, man) for rule in rules.ALL_RULES]
 
-    slope = fit_fill_slope(fill)
+    try:
+        slope = fit_fill_slope(fill)
+    except (ValueError, TypeError, ZeroDivisionError):
+        slope = None
     # R1 leads: whether the host reads feedback at all frames how W1 and W3
     # should be read. It takes the slope so its consequence can name a glitch
     # cadence rather than just saying "unbounded".

@@ -326,6 +326,21 @@ class TestFillProbeWiring(CliCase):
         self.assertEqual(w1["level"], "PASS")
         self.assertEqual(w1["evidence"]["fill_slope_bytes_per_s"], 0.0)
 
+    def test_a_malformed_probe_section_skips_rather_than_crashing(self):
+        """The decoupler probes are optional cargo alongside the state block.
+        A capture whose probe section is malformed -- here, values written to
+        an identifier that was never declared -- is still judgeable on its
+        counters, so the drift rules SKIP and the rest of the report stands.
+        Letting the parse error escape would exit 1, and exit 1 means the host
+        failed a rule."""
+        p = self.vcd(healthy_pair())
+        with open(p, "a") as f:
+            f.write("#200000000\nb101 UNDECLARED\n")
+        rc, doc = self.run_json(p)
+        self.assertEqual(rc, 0)
+        w1 = [v for v in doc["verdicts"] if v["rule_id"] == "W1"][0]
+        self.assertEqual(w1["level"], "SKIP")
+
     def test_no_fill_probe_skips_rather_than_reading_zero(self):
         _, doc = self.run_json(self.vcd(healthy_pair()))
         for rid in ("W1", "W3"):
