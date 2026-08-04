@@ -1,6 +1,6 @@
 usb_audio_graph_test — hardware evidence, MIMXRT1170-EVKB + XMOS xcore-200 MC
 =============================================================================
-Bench: EVKB USB1 host port -> XMOS MC200 (sw_usb_audio app_usb_aud_xk_216_mc,
+Bench: EVKB host port J47 / USB_OTG2 (USBPHY2) -> XMOS MC200 (sw_usb_audio app_usb_aud_xk_216_mc,
 config 1AMi2o2xxxxxx, UAC1 FS, stereo 16-bit, asynchronous, feedback EP 0x82
 bRefresh=4), MC200 line out -> RME Fireface UFX ch1/2. Device instrumented
 with xscope probes in lib_xua's decoupler (lib_xua-decouple-instrumentation
