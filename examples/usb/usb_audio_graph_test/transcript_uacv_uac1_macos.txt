@@ -165,3 +165,91 @@ exactly the pairing the two-gate rule asks for.
 Not chased further tonight. Recorded as a candidate defect in USBHost_t36's
 UAC1 claim path with a reproduction that takes eight minutes: load the UAC1
 image, watch audio=none; load the UAC2 image, watch it stream.
+
+
+RETRACTION: the section above is wrong. The host was right to decline.
+=======================================================================
+The finding recorded above -- "the RT1176 host never claims the UAC1/FS device
+from cold", filed as a candidate defect in USBHost_t36 -- is WITHDRAWN. The
+host behaved correctly and the fault was mine, in how I built the witness.
+
+What actually happened. The example asks for an exact format:
+
+    usb_audio_graph_test.cpp:148   audioOut.format(44100, 2, 16)
+
+and uac1_find_alt() requires an exact match on channels, bit resolution and
+rate support, returning -1 otherwise. claim() then returns false BEFORE
+issuing any control transfer -- which is precisely the ctrl=0/0/0 I read as
+suspicious. It was not a host that failed to start a claim; it was a host
+correctly declining a device that did not offer the format it wanted.
+
+My rebuild of 1AMi2o2xxxxxx omitted the 16-bit resolution override the
+original witness was built with. Without it the image advertises 24-bit, which
+is why macOS negotiated 3-byte subslots on it. The host asks for 16-bit, the
+device offered none, so no alt matched.
+
+Proven by rebuilding with the override and changing nothing else -- same host
+binary, same cable, same connector, same collector:
+
+    24-bit build:  audio=none, ctrl=0/0/0, 1322 bytes, no packets
+    16-bit build:  streams immediately; 5 PASS, 0 FAIL, 2 WARN, 2 SKIP
+
+The behaviour is not merely defensible, it is documented intent. claim() in
+usb_audio.cpp carries the comment "P1 targets the witness's 24-bit alt
+explicitly ... Broader alt negotiation is P2." Alt negotiation is deferred
+scope, stated in the source I had already read.
+
+Why the control experiment did not save me. Swapping to the UAC2 image proved
+the cabling, connector, host build and collector were all fine, and I treated
+that as isolating the fault to the host's UAC1 path. It did not: it isolated
+the fault to the difference between the two IMAGES, and I had built one of
+them wrong. A control rules out what it varies, not what it holds fixed, and
+I held the witness build fixed in my thinking while it was the thing that had
+changed.
+
+This is the failure mode the whole tool exists to prevent, committed by hand
+in prose: an absence of packets read as a defect in the party that was not at
+fault. The judge itself never made the claim -- it returned INVALID, "no
+validator state blocks found", exit 2, and refused to describe a host it had
+not observed. The false accusation was entirely mine, in a commit message.
+
+Required build flags for the UAC1 witness, so this does not recur:
+
+    -DAUDIO_CLASS=1
+    -DSTREAM_FORMAT_OUTPUT_1_RESOLUTION_BITS=16
+    -DSTREAM_FORMAT_INPUT_1_RESOLUTION_BITS=16
+
+(The sw_usb_audio checkout has been restored to pristine; these belong on the
+build command, not as edits scattered through a third-party tree.)
+
+
+EVKB as a UAC1 host, with the witness built correctly
+------------------------------------------------------
+    58.0 s, 581 blocks, zero missing marks
+    5 PASS, 0 FAIL, 2 WARN, 2 SKIP        exit 0
+
+    R1  PASS  feedback polled 3625 times (62.5/s)
+    R2  PASS  no packets arrived during alt 0
+    R3  SKIP  2-byte subslot has no spare lane
+    R4a PASS  all packets within the declared 196 B
+    R4b PASS  all packets whole multiples of 4 B
+    R7  SKIP  passive mode
+    W2  PASS  sizes are the expected pair [176, 180]
+    W1  WARN  residual -3.39 ppm after the feedback loop
+    W3  WARN  polled 3625 times but still runs -3.39 ppm off
+
+R3's SKIP here is the STRUCTURAL one -- "no spare lane" -- not the vacuity
+SKIP that the macOS UAC1 run produced. Both branches have now run on silicon,
+for different reasons, which is what they were built to distinguish.
+
+W1/W3 at -3.39 ppm is the first non-trivial drift verdict this tool has
+produced, and it is provisional: the window is only 58 s and the UAC1 servo
+may not have converged. It should not be compared with the +0.126 ppm from the
+UAC2 soak until a longer capture exists.
+
+
+Matrix, complete
+-----------------
+                    UAC2 / HS              UAC1 / FS
+    RT1176 EVKB     8 PASS  +0.126 ppm     5 PASS 2 WARN  -3.39 ppm (58 s)
+    macOS           8 PASS  +0.000 ppm     5 PASS 1 WARN  -0.001 ppm

@@ -1,0 +1,10 @@
+{
+  "audio_class": 1,
+  "speed": "FS",
+  "channels": 2,
+  "subslot_bytes": 2,
+  "sample_rate_hz": 44100,
+  "max_packet_size_bytes": 196,
+  "mode": "passive",
+  "host_note": "MIMXRT1170-EVKB via J47/USB_OTG2, USBHost_t36 master (d370e80); witness 1AMi2o2xxxxxx built WITH the 16-bit resolution override"
+}
