@@ -247,5 +247,48 @@ class TestMetricsAreUnjudged(unittest.TestCase):
         self.assertNotIn("metrics", report.render({}, [Verdict("R1", PASS, "ok")]))
 
 
+class TestSteadyStateEnvelope(unittest.TestCase):
+    """The whole-capture envelope includes the stream-start transient, which
+    makes soaks of different lengths incomparable and makes a startup dip read
+    as a control-loop problem. The steady figure is the one an A/B compares."""
+
+    def _fill(self, startup_vals, steady_vals):
+        """Fill points: startup inside the settling window, steady after it."""
+        pts = [(i * 0.1, v) for i, v in enumerate(startup_vals)]
+        t0 = metrics.STEADY_SKIP_S + 1.0
+        pts += [(t0 + i * 0.1, v) for i, v in enumerate(steady_vals)]
+        return pts
+
+    def test_startup_excursion_is_excluded(self):
+        fill = self._fill([100] + [1200] * 50, [900] * 200)
+        steady = metrics._steady_state(fill)
+        sv = [v for _, v in steady]
+        self.assertEqual(min(sv), 900)
+        self.assertEqual(max(sv), 900)
+        self.assertNotIn(100, sv)
+        self.assertNotIn(1200, sv)
+
+    def test_whole_capture_still_sees_the_transient(self):
+        fill = self._fill([100] + [1200] * 50, [900] * 200)
+        vals = [v for _, v in fill]
+        self.assertEqual(min(vals), 100)
+        self.assertEqual(max(vals), 1200)
+
+    def test_none_when_too_few_samples_survive(self):
+        fill = self._fill([900] * 50, [900] * 10)
+        self.assertIsNone(metrics._steady_state(fill))
+
+    def test_skips_by_time_not_sample_count(self):
+        """A full-speed capture emits ~10 blocks/s against ~80 at high speed.
+        Skipping a fixed COUNT would drop 3 s of one and 30 s of the other."""
+        slow = [(i * 0.1, 900) for i in range(int(metrics.STEADY_SKIP_S * 10) + 200)]
+        kept = metrics._steady_state(slow)
+        self.assertIsNotNone(kept)
+        self.assertGreaterEqual(kept[0][0], metrics.STEADY_SKIP_S)
+
+    def test_empty_input(self):
+        self.assertIsNone(metrics._steady_state([]))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -27,6 +27,29 @@ from wireformat import delta32 as delta
 MAX_EVENTS_LISTED = 8
 
 
+# The fill trace opens with a stream-start transient: the device prefills and
+# the host's servo has not converged, so the first seconds swing far wider than
+# steady state ever does. Reporting min/max over the whole capture makes two
+# soaks of different lengths incomparable and makes a startup dip look like a
+# control-loop problem -- exactly the mistake a baseline meant for A/B tuning
+# must not bake in.
+#
+# Skipped by TIME, not by sample count, so captures at different block cadences
+# (about 80 Hz at high speed, 10 Hz at full speed) drop the same physical
+# settling window.
+STEADY_SKIP_S = 30.0
+STEADY_MIN_SAMPLES = 100
+
+
+def _steady_state(points):
+    """Fill points after the settling window, or None if too few remain."""
+    if not points:
+        return None
+    t0 = points[0][0]
+    kept = [(t, v) for t, v in points if t - t0 >= STEADY_SKIP_S]
+    return kept if len(kept) >= STEADY_MIN_SAMPLES else None
+
+
 def _fmt_events(events):
     if not events:
         return "none"
@@ -135,6 +158,18 @@ def collect(blocks, man, fill_sigs=None, slope_bytes_per_s=None,
         out.append(("OUT FIFO fill",
                     f"min {min(vals)} B, max {max(vals)} B, mean "
                     f"{sum(vals) / len(vals):.0f} B over {len(vals)} samples"))
+        steady = _steady_state(fill)
+        if steady is not None:
+            sv = [v for _, v in steady]
+            out.append(("OUT FIFO fill (steady)",
+                        f"min {min(sv)} B, max {max(sv)} B, envelope "
+                        f"{max(sv) - min(sv)} B, mean {sum(sv) / len(sv):.0f} B "
+                        f"over {len(sv)} samples from "
+                        f"{steady[0][0] - fill[0][0]:.0f} s in"))
+        else:
+            out.append(("OUT FIFO fill (steady)",
+                        f"not computed: fewer than {STEADY_MIN_SAMPLES} samples "
+                        f"after the {STEADY_SKIP_S:.0f} s settling window"))
     else:
         out.append(("OUT FIFO fill", "no fill probe in this capture"))
 
