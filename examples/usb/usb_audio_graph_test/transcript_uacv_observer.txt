@@ -128,3 +128,64 @@ a clean end-to-end PASS report (finding 4), and the whole of cooperative mode.
 
 No verdict has yet been produced from real hardware. The first thing this
 instrument did on silicon was find a defect in itself.
+
+
+Second run, both fixes in: first verdict from silicon, 2026-08-04
+=================================================================
+Observer 00ad1ed5 (fb_value hooked on both paths, block cadence divided by a
+further ten). Capture obs4: collector 18:43:20, host from ~18:44:18, SIGINT
+18:47:41. 25 MB VCD, 19,067 blocks -- against 158 MB and 169,284 for the same
+duration before.
+
+    8 PASS, 0 FAIL, 1 SKIP        exit 0        xscope missing marks 0
+
+    R1  PASS  feedback polled 14896 times (62.5/s)
+    R2  PASS  no packets arrived during alt 0            1,906,600 packets
+    R3  PASS  low byte never non-zero: left-justified    or_acc 0xFFFF0000
+    R4a PASS  all packets within the declared 800 B
+    R4b PASS  all packets whole multiples of 32 B
+    R7  SKIP  passive mode: no test pattern sent
+    W2  PASS  sizes are the expected pair [160, 192]     930408 / 976292
+    W1  PASS  residual +0.126 ppm, at the noise floor
+    W3  PASS  host tracks feedback over 14896 polls
+
+W1's +0.126 ppm is the fourth independent instrument to land on this bench's
+closed-loop residual: the UAC1 soak measured +0.1 ppm and the UAC2 P3 soak
++0.156 ppm, both by host-side accounting, and this is a device-side fill fit
+read through a rebuilt pipeline. fb_value now reads 0x00058310 instead of the
+stuck zero.
+
+
+Finding 3 was finding 4 all along
+----------------------------------
+The 12.7x timestamp stretch did not need calibrating. It disappeared when the
+emission rate came down:
+
+    VCD span         238.34 s
+    packets / 8000   238.32 s
+    nonsilent/44100  238.30 s
+
+Three clocks -- xscope's timestamps, the device's packet counter, and the
+device's audio-frame counter -- agreeing to 0.04 s, where before the first
+disagreed with the other two by a factor of 12.7.
+
+So the stretch was a symptom of xscope overload, not a separate defect: at
+~30,000 events/s the timestamps were distorted along with the 10 dropped
+marks. Two observations that looked independent had one cause, and the honest
+SKIP guard bought the time to find that out instead of encoding a 12.69
+correction factor that would have been wrong the moment the rate changed.
+
+The time-base guard stays. It cost nothing on a healthy capture -- W1 and W3
+both PASS here -- and it is what stands between a future overloaded run and a
+confidently wrong ppm.
+
+
+Still open
+----------
+  - metrics reports "overflows ?" -- the overflow probe is not being read
+    where dry-outs and underflows are. Cosmetic in this run (both counts are
+    stream-start transients) but it is a missing witness in a line that
+    otherwise reads as complete.
+  - fb_value encoding still undecided, deliberately: printed raw.
+  - Cooperative mode has never run on hardware.
+  - UAC1/FS image not yet captured; this is the HS path only.
