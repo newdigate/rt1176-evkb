@@ -1,0 +1,87 @@
+uacv — macOS CoreAudio as the host under test, 2026-08-04
+==========================================================
+The first host this tool has judged that I did not write.
+
+Bench: MC200 (sw_usb_audio 2AMi8o8xxxxxx, observer 00ad1ed5) with its USB
+device port on the Mac instead of the EVKB; XTAG-3 3LajHPG5 still attached for
+xscope. macOS selected as its own output device by the operator; pink noise at
+-18 dBFS played with ffmpeg. 173.5 s capture, 13 MB, zero missing marks.
+
+macOS negotiated the format, not us: alt 1, 8 channels, 4-byte subslots,
+44100 Hz. The device's own packet sizes confirm it independently -- the gcd of
+{160, 192} is 32 B, which is 8 channels at 4 bytes.
+
+    6 PASS, 0 FAIL, 1 SKIP (R7, passive mode)      exit 0
+
+macOS passes every check it can be judged on.
+
+
+Two independent implementations, same device, same rules
+--------------------------------------------------------
+                        RT1176 (mine)      macOS CoreAudio
+    verdicts            8 PASS 0 FAIL      8 PASS 0 FAIL
+    packet rate         8000.3/s           8000.3/s
+    packet sizes        {160, 192}         {160, 192}
+    feedback polls      62.5/s             1000.0/s
+    residual drift      +0.126 ppm         +0.000 ppm
+    OUT FIFO envelope   360..1012 B        744..1112 B
+                        (652 B wander)     (368 B wander)
+
+macOS polls the feedback endpoint SIXTEEN times more often -- 1000/s, which is
+exactly the 1 ms the endpoint's bInterval=4 asks for, against this host's
+62.5/s from two iTDs sixteen frames apart. Both satisfy R1, which only asks
+whether the host reads feedback at all.
+
+The consequence is visible in the same report: macOS holds the device's OUT
+FIFO inside a 368 B envelope where this host wanders 652 B, and its residual
+drift is below the measurement floor where this host sits at +0.126 ppm. Both
+are conformant and both are good; one is measurably tighter, and the report
+shows the mechanism next to the outcome.
+
+That comparison is the thing the tool was built to make possible, and it took
+one capture against a host nobody instrumented.
+
+
+macOS also found a bug in the tool
+-----------------------------------
+W1 and W3 first came back SKIP:
+
+    capture timestamps span 173.5 s but its 1044600 packets at 8000/s
+    imply 130.6 s
+
+A false SKIP. The stream ran at a rock-steady 8000.3 packets/s for 119 s and
+then wound down when the collector outlived it -- which is what this bench's
+documented procedure REQUIRES, collector first and last. The time-base guard
+compared whole-capture totals, so any capture taken correctly would lose its
+two rate-derived rules.
+
+Fixed by comparing the median per-interval packet rate instead: a broken time
+base stretches every interval uniformly, a tail distorts only the last few.
+Both hosts then report 8 PASS with the EVKB capture unchanged, so it is a fix
+rather than a loosening.
+
+Worth noting what did NOT happen: the guard failed safe. It withheld two
+verdicts rather than publishing two wrong ppm figures, and the wrong figures
+would have been wrong in the flattering direction for macOS.
+
+
+Per-segment evidence
+--------------------
+    segment    pkt/s    fbpoll/s   nonsilent/s   alt
+      0.0 s   8000.3     1000.0       43295.2     1
+     10.9 s   8000.3     1000.0       44075.9     1
+     ...      8000.3     1000.0       ~44076      1
+    108.7 s   8000.3     1000.0       44076.7     1
+    119.6 s   1614.9      201.9        8897.5     1   <- wind-down tail
+
+nonsilent_frames tracks 44,076/s against a 44,100 Hz clock, from a counter
+pinned to nothing but the sample rate.
+
+
+Still not established
+---------------------
+  - Cooperative mode has never run against any host.
+  - metrics prints "overflows ?" where dry-outs and underflows resolve.
+  - The whole-capture "packets 6020.1/s" metric line averages across the tail
+    and reads lower than the streaming rate; the per-interval median is the
+    honest number and only the guard uses it so far.
