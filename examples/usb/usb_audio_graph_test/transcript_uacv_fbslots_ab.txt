@@ -1,0 +1,55 @@
+UAC2 feedback poll rate A/B: FB_SLOTS_HS 2 -> 8 -- 2026-08-05
+==============================================================
+
+The change the matched-soak baseline was built to license (USBHost_t36
+f3f8817, pin bumped): the HS feedback reader goes from 2 iTD slots 16
+frames apart (62.5 polls/s) to 8 slots 4 frames apart (250 polls/s) -- the
+ceiling without growing the pool (ITD_POOL_SIZE 40 - 32-slot OUT ring = 8;
+arming feedback now drains the pool to exactly zero). The EMA divisor
+scales with the poll rate (uac1_fb_average now takes it explicitly: 8 at
+62.5/s, 32 at 250/s) so both configurations hold the same ~128 ms filter
+horizon -- 4x more reports into the same filter, never a shorter filter,
+which is the guard against re-creating the +4.8 ppm dither-chasing bias.
+FS reader unchanged (matched already; siTD pool has no room regardless).
+
+Both soaks: EVKB host, UAC2/HS 8ch, 44.1 kHz, 20-minute window, judged on
+repaired time. The A side is the corrected 2026-08-04 baseline; the B side
+ran in pattern mode so R7 checked every sample while the loop was tighter.
+
+                        A: 62.5 polls/s      B: 250 polls/s
+  steady FIFO envelope  916 B (392-1308)     296 B (780-1076)
+  W1 residual           +0.113 ppm           -0.025 ppm
+  dry-outs              (not comparable)     0
+  R7                    (passive; never ran) PASS: 0 errors, 1 lock,
+                                             56,430,447 nonsilent frames
+  polls (R1)            62.3/s               250.0/s exactly, 0 rejects
+
+Findings:
+- 3.1x tighter. 296 B lands in the matched-cell band (macOS UAC2 holds
+  204 B at 1000 polls/s): a 4x poll increase closed most of the measured
+  4.5x gap. The residue vs macOS (~1.5x) is the same order as the FS
+  servo-quality residue (196 vs 104 B), consistent with the baseline's
+  second-order finding.
+- The steady MINIMUM rose 392 -> 780 B: the excursions the old rate
+  allowed were downward, toward dry-out, and they are gone.
+- R7 green across the whole soak is the point of doing cooperative mode
+  first: the tightened loop provably dropped nothing. Console showed the
+  EMA target steady at +-1 mHz between heartbeats where the old rate
+  wandered ~100 mHz.
+- fb=44096214 -> the crystal still reads -86 ppm; W1 -0.025 ppm says the
+  servo tracks it to the noise floor. No further rate-loop work is
+  licensed by this data.
+- wrap repairs: 174 phantom periods in this capture (the artifact scales
+  with capture size); missing marks 0, packets 8000.6/s on repaired time.
+
+Captures: uacv-captures/soak_evkb_uac2_250.vcd (143 MB), judged with
+uacv-manifest-uac2-coop.json against witness uac2_coop_witness.xe
+(md5 9662db08).
+
+Remaining from the tuning plan, in order of licensed value:
+1. The ~1.5x envelope residue vs macOS at matched-ish polling -- servo
+   quality (filter horizon shape, slew policy, packet-size choice), attack
+   with an isolating measurement, not by turning knobs.
+2. UAC1/FS: leave alone (+0.24 ppm, 196 B, matched).
+3. 1000 polls/s would need ITD_POOL_SIZE growth; nothing in this data says
+   the last 1.5x is worth 24 more descriptors.
