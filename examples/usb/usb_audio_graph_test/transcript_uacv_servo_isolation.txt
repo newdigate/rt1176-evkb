@@ -1,0 +1,74 @@
+Servo-quality isolation: where the last 1.5x envelope residue lives
+====================================================================
+2026-08-05. Zero bench time -- entirely offline analysis of the four
+archived 20-minute soaks (tools/fillbands.py, tools/fbdrift.py, both on
+wrap-repaired time). The question: with poll rate fixed, what mechanism
+separates our 296 B UAC2 envelope from macOS's 204 B?
+
+Step 1 -- timescale decomposition of the fill trace (fillbands.py)
+------------------------------------------------------------------
+The fill level integrates the instantaneous host-vs-device rate error, so
+each wander timescale names a mechanism.
+
+  UAC2 (44.1k/8ch both hosts -- clean comparison), rms per band:
+                        EVKB 250/s     macOS 1000/s
+    <0.1s  (quantization)  53.0 B         51.8 B      identical
+    0.1-1s (fast servo)    19.7 B         19.2 B      identical
+    1-10s  (slow servo)     2.4 B          2.6 B      identical
+    >10s   (drift)         33.6 B          0.9 B      <-- ALL of it
+    p2p of >10s band        127 B            6 B
+
+Packet-size choice: exonerated. Fast servo response: exonerated. The
+entire residue is slow drift, >10 s timescales, where macOS holds the
+device's FIFO essentially flat for 20 minutes.
+
+Step 2 -- does the drift track the device's own reports? (fbdrift.py)
+---------------------------------------------------------------------
+The state block carries fb_value, the device's raw Q16.16 report. The
+device dithers between 2 adjacent raw values (quantum 122 mHz = 2.8 ppm at
+44.1k); the information is in the dither's duty cycle. Reconstruct what an
+EMA servo would have integrated, and correlate the predicted fill drift
+with the observed one:
+
+  EVKB 250/s:  predicted p2p 110 B, correlation +0.91  <-- explained
+               and INVARIANT across 128 ms / 500 ms / 1 s / 4 s horizons
+  macOS 1000/s: predicted 21 B, correlation +0.05      <-- immune
+
+Two conclusions fall out:
+1. The drift is the servo faithfully integrating its SAMPLED view of the
+   report dither. Polling 250/s sees every 4th report; the beat between
+   the device's dither pattern and the 4 ms poll phase aliases into a
+   slowly-wandering duty estimate (0.022 ppm p2p in 10 s means), and the
+   fill integrates it. corr +0.91 is the fingerprint.
+2. NO filter horizon fixes this -- the prediction barely moves from
+   128 ms to 4 s, because the aliased wander is slower than any sane
+   filter. The 128 ms invariant is the right guard against the OLD bug
+   (dither-chasing) and irrelevant to this one.
+
+macOS reads every report (1000/s = the device's refresh rate) so the duty
+cycle enters its average exactly; nothing to alias. Its fill is flat.
+
+FS pair: NOT comparable -- macOS's FS soak negotiated 48 kHz (integer
+rate, constant packets) against our 44.1k, and the block cadence
+subsamples the FS reports ~6:1 so the reconstructed host view is itself
+aliased; correlations came back weak/negative (-0.41), i.e. inconclusive
+by construction. FS remains matched, +0.24 ppm, 196 B: leave it alone.
+
+What this licenses (and what it does not)
+-----------------------------------------
+- LICENSED: poll the HS feedback endpoint at the device's own refresh
+  rate, 1000/s, eliminating the subsample aliasing. Cost: ITD_POOL_SIZE
+  40 -> 64 (32 fb slots... no: 32 ring + 32 fb slots at 1-frame spacing),
+  i.e. +24 iTDs (~2 KB DMAMEM), plus EMA div 128 to hold the 128 ms
+  horizon at the new rate. Predicted from the data: slow band collapses
+  toward macOS's <10 B and total envelope lands ~200 B.
+- NOT licensed: longer filter horizons (measured invariant), slew changes
+  (fast bands already identical), packet-size work (quantization band
+  already identical), any FS change (confounded comparison, and FS is
+  fine).
+
+Instruments promoted to tools/: fillbands.py (band decomposition),
+fbdrift.py (report-drift correlation). Both ride on vcdfill's wrap-
+repaired, name-resolved parsing. Caveat recorded in fbdrift --fs: the
+FS analysis view is aliased and stays inconclusive unless the block
+cadence is raised.
