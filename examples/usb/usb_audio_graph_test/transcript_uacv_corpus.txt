@@ -1,0 +1,135 @@
+The verification corpus -- grading the validator against hosts whose
+defects were measured before it existed
+======================================================================
+2026-08-05. Plan 3. Reports and case definitions live in
+tools/uacvalidate/corpus/; captures are archived outside the repo with
+sha256 in corpus/captures/CHECKSUMS.
+
+READ THIS FIRST: R1 IS A WARN, NOT A FAIL
+------------------------------------------
+Two of the cases below are hosts that never read the device's feedback
+endpoint -- the founding defect of this whole investigation. The validator
+reports them as WARN, and that is deliberate. USB 2.0 section 5.12.4.2 says
+an asynchronous sink MUST PROVIDE feedback and that this ALLOWS the host to
+adjust; every must/shall in 5.12.4 involving the host puts the obligation on
+the DEVICE, and the one host-facing "must" concerns an adaptive SOURCE, the
+other direction. A host that ignores an async sink's feedback endpoint is
+therefore CONFORMANT. An early draft of these rules asserted it as a FAIL
+citing that exact clause, from memory; reading the clause reversed it. The
+tool says WARN and shows the arithmetic -- a block correction every 8 s at
++85 ppm -- rather than overclaiming a violation it cannot support.
+
+RESULTS
+-------
+  A  99cd466~1   UAC1/FS, before the feedback read           OK
+     R1 WARN feedback_polls=0; W1 WARN +85.39 ppm; R3 SKIP (structural);
+     R2/R4a/R4b PASS. Ground truth: open loop drifts +85.0 ppm.
+
+  B  1732ed3~1   UAC2/HS, before the HS feedback loop        OK
+     R1 WARN feedback_polls=0; W1 WARN +85.41 ppm; R2/R3 PASS.
+     Ground truth (P1 open-loop gate, a different instrument, months
+     earlier): +84.6 ppm, overflow corrections every ~9.6 s. Measured here:
+     32 overflows in 310.8 s = one per 9.7 s.
+
+  C  d370e80~1   before the alt-0 streaming gate             OK
+     R2 FAIL: 1566900 packets arrived while the OUT interface was in alt 0
+     -- every packet in the capture. Host console corroborates from the
+     other end: audio=none alt=-1 pkts/s=1000, the driver reporting nothing
+     claimed while transmitting a thousand packets a second.
+
+  D  35b0cce~1   right-justified subslots          UN-STAGEABLE
+     The plan called this its important discovery -- proof R3 needed no
+     injected defect. Falsified. That host's claim() opens with a
+     bcd_adc != 0x0100 reject: UAC1 only. It cannot claim a UAC2 device, so
+     the right-justifying uac_pack16 was unreachable on hardware. Attempted:
+     180 s at audio=none alt=-1 pkts/s=0, capture empty, judge INVALID
+     (correctly -- nothing was tested). History settles it: the fix 35b0cce
+     is commit 588, UAC2 claim support 01c1cdd is 593. The bug was fixed
+     five commits BEFORE the code became reachable; no commit in this tree
+     has both. Recorded with evidence, expectations left as derived.
+
+  D2 master + defects/r3-right-justify.patch                 OK
+     R3 FAIL with or_acc=0x0000FFFF -- low two bytes carrying data, top two
+     never set, the mirror image of a healthy host's 0xFFFF0000 -- over
+     8414928 non-silent frames. The injection is the exact inverse of
+     35b0cce's fix. This is the check no other instrument on this bench can
+     perform: a right-justified stream is merely quiet.
+
+  E  090eadb~1   device-swap wedge                           OK
+     Host behaviour reproduced exactly: through 140 s of phase 2 the console
+     read audio=ready alt=1 pkts/s=0 with the FIFO frozen at 3854 -- claim
+     and control state surviving while nothing is transmitted, matching the
+     recorded audio=ready uac2=0 alt=1 pkts/s=0.
+     The tool reports capture-level INVALID rather than the per-rule SKIPs
+     the plan predicted, and the reason is a FINDING: uacvEmitBlock sits
+     inside the decoupler's packet-arrival path, so a host that transmits
+     nothing yields a capture with zero state blocks -- indistinguishable
+     from a dead collector. INVALID is the honest answer to that input, but
+     it means the validator can only decline to rule here, never attribute.
+     The expectation was corrected to what the tool does AND strengthened:
+     expect_no_pass asserts that no rule may PASS on a capture where nothing
+     was transmitted, whatever shape the tool uses to say so.
+
+  Z1 master      clean host, UAC1/FS                         OK
+     7 PASS, 0 FAIL, 2 SKIP. R1 PASS 62.5 polls/s, W1 PASS +0.075 ppm,
+     W2 PASS on the 176/180 pair, R3 SKIP structural.
+  Z2 master      clean host, UAC2/HS                         OK
+     8 PASS, 0 FAIL, 1 SKIP, W1 -0.052 ppm. Judged from the 20-minute
+     1000 polls/s soak rather than spending bench time twice.
+
+The negative controls matter as much as the positives: every rule that
+fired against a defective host comes back clean at master, so the corpus
+proves the tool can say PASS as well as FAIL.
+
+WHAT THE CORPUS CAUGHT THAT WAS NOT THE VALIDATOR
+--------------------------------------------------
+1. SETTLE-WINDOW CONTAMINATION (fixed). Every other script on this bench
+   starts the collector, waits, then flashes -- safe only because the
+   resident firmware IS the thing under test. Here it is the previous
+   case's host. Case B's first run recorded 36577 feedback polls from a
+   host with no feedback reader compiled in: 36577 / 1000 polls/s = 36.6 s,
+   exactly the settle window, during which master's build was still
+   running. W1 then fitted that host's flat closed-loop stretch and
+   reported +0.095 ppm for an open-loop host -- a plausible, quotable,
+   wrong number. Both runners now flash BEFORE the collector exists.
+
+2. CONSOLE-INDUCED XSCOPE DROPS (fixed). Holding the VCOM for a whole
+   300 s capture cost one missing mark, which correctly invalidates the
+   report since every counter becomes a lower bound. The console reader is
+   now bounded to 30 s.
+
+3. AN UNVERIFIABLE CHANGE, WITHDRAWN. 3e66161 had applied the HS ring's
+   wire-order priming to the FS ring "by the same reasoning", with no way
+   to verify it (R7 needs a cooperative witness; the UAC1 witness cannot
+   carry a 24-bit pattern in a 2-byte subslot). It is now reverted --
+   USBHost_t36 bef7c9f -- because an unverifiable change to a working path
+   is not worth carrying. FS keeps its 32 ms start-of-stream seam, which is
+   inaudible and which nothing on this bench can currently see.
+
+   Honesty note: the revert was first committed claiming that change had
+   BROKEN FS on silicon. Re-testing disproved it -- the symptom persisted
+   after the revert, and the repo's own UAC1 firmware streams fine at
+   master on the same witness (pkts/s=999, feedback healthy). The message
+   was corrected. There is no FS driver regression.
+
+OPEN
+----
+* The corpus host streams FS at every historical corpus commit and HS at
+  master, but on FS AT MASTER it claims, returns true from beginStreaming,
+  and transmits nothing. The shipping firmware does not, so this is a
+  harness question, not a driver one. The clean-FS control therefore uses
+  usb_audio_graph_test -- arguably the better control anyway. Unexplained;
+  recorded in cases.json rather than papered over.
+* Case E's blind spot: emit the state block on a timer independent of
+  packet arrival, so "device up, host silent" becomes a positive
+  observation. That changes the wire format's emission rule, not its
+  layout.
+* Not yet done from Plan 3: the injected W3 defect (servo chasing raw
+  dither, expected R1 PASS + W3 WARN near +4.8 ppm) and the injected R4a /
+  R4b defects. R4b is a one-line partial-frame injection. R4a looks
+  structurally blocked on this bench: MAX_UFRAME_BYTES caps a microframe at
+  224 B against the witness's advertised 800 B, so the driver cannot
+  oversize a packet without also raising its own geometry, and XUD may
+  refuse the traffic before the decoupler could count it. If that holds,
+  R4a is unprovable here and should be recorded as such rather than the
+  rule weakened.

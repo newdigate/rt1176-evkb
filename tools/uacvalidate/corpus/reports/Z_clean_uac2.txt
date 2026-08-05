@@ -1,0 +1,53 @@
+UAC host conformance report
+============================================================
+host under test : USBHost_t36 master (1f13bda) -- clean-host regression, UAC2/HS, judged from the 20-minute 1000 polls/s soak
+capture         : /Users/nicholasnewdigate/Development/rt1170/uacv-captures/soak_evkb_uac2_1000.vcd
+duration        : 1279.8 s
+xscope missing  : 0
+wrap repairs    : 167 phantom 42.95 s period(s) removed from the time base
+observer build  : b424b0e0
+
+[PASS   ] R1    feedback polled 1239890 times (968.8/s)
+           evidence: feedback_polls=1239890, duration_s=1279.79
+
+[PASS   ] R2    no packets arrived during alt 0
+           evidence: packets_while_alt0=0, total_packets=10239100
+
+[PASS   ] R3    low byte never non-zero: samples are left-justified
+           evidence: or_acc=0xFFFFFF00, and_acc=0x00000000, nonsilent_frames=56438159
+
+[PASS   ] R4a   all packets within the declared 800 B
+           evidence: sizes={160: 4996491, 192: 5242709}, wMaxPacketSize_bytes=800, hist_overflow=0
+
+[PASS   ] R4b   all packets are whole multiples of 32 B
+           evidence: not_multiple=0, short_discarded=0, frame_bytes=32, total_packets=10239100
+
+[SKIP   ] R7    continuity needs a known test pattern
+           missing: passive mode: no test pattern sent
+           evidence: pattern_errors=0, resyncs=0, pattern_syncs=1, first_error_index=0, first_expected=0x00000000, first_actual=0x00000000
+
+[PASS   ] W2    packet sizes are the expected floor/ceiling pair [160, 192]
+           evidence: sizes={160: 4996491, 192: 5242709}, expected=[160, 192], hist_overflow=0
+
+[PASS   ] W1    residual rate error -0.052 ppm, at the noise floor
+           evidence: fill_slope_bytes_per_s=-0.07376830137781105, correction_quantum_bytes=1024, residual_ppm=-0.052
+
+[PASS   ] W3    host tracks the device's feedback: residual -0.052 ppm over 1239890 polls
+           evidence: feedback_polls=1239890, device_fb_value=0x00058310, fill_slope_bytes_per_s=-0.07376830137781105, residual_ppm=-0.052
+
+metrics (INFO -- no verdict, no effect on exit code)
+  duration               : 1279.79 s over 102392 state blocks
+  packets                : 10239100 (8000.6/s, nominal 8000/s)
+  packet sizes           : 160 B x4996491, 192 B x5242709
+  feedback polls         : 1239890 (968.8/s)
+  device feedback value  : 0x00058310 (raw; encoding undecided, see metrics.py)
+  alt setting            : 1 now, 0 transitions; changes: none
+  class requests         : 0x5 (bits [0, 2])
+  host active            : 1 now; changes: none
+  OUT FIFO fill          : min 712 B, max 980 B, mean 893 B over 1023923 samples
+  OUT FIFO fill (steady) : min 712 B, max 980 B, envelope 268 B, mean 892 B over 999921 samples from 30 s in
+  fill slope             : -0.074 B/s (-0.05 ppm)
+  block corrections      : dry-outs 0, overflows ?, underflows 1
+
+------------------------------------------------------------
+8 PASS, 0 FAIL, 1 SKIP

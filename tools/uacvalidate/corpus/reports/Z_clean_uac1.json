@@ -1,0 +1,191 @@
+{
+  "header": {
+    "vcd": "/Users/nicholasnewdigate/Development/rt1170/uacv-captures/corpus/Z_clean_uac1.vcd",
+    "duration_s": 310.17677646,
+    "missing_marks": 0,
+    "wrap_repairs": 0,
+    "observer_sha": "b424b0e0",
+    "host_note": "MIMXRT1170-EVKB, USBHost_t36 master -- clean-host regression, UAC1/FS, usb_audio_graph_test firmware"
+  },
+  "verdicts": [
+    {
+      "rule_id": "R1",
+      "level": "PASS",
+      "summary": "feedback polled 19388 times (62.5/s)",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "feedback_polls": 19388,
+        "duration_s": 310.18
+      }
+    },
+    {
+      "rule_id": "R2",
+      "level": "PASS",
+      "summary": "no packets arrived during alt 0",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "packets_while_alt0": 0,
+        "total_packets": 310200
+      }
+    },
+    {
+      "rule_id": "R3",
+      "level": "SKIP",
+      "summary": "2-byte subslot has no spare lane",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "a subslot wider than the sample",
+      "evidence": {
+        "or_acc": "0xFFFF0000",
+        "and_acc": "0x00000000",
+        "nonsilent_frames": 13678211
+      }
+    },
+    {
+      "rule_id": "R4a",
+      "level": "PASS",
+      "summary": "all packets within the declared 196 B",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "sizes": {
+          "176": 280439,
+          "180": 29861
+        },
+        "wMaxPacketSize_bytes": 196,
+        "hist_overflow": 0
+      }
+    },
+    {
+      "rule_id": "R4b",
+      "level": "PASS",
+      "summary": "all packets are whole multiples of 4 B",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "not_multiple": 0,
+        "short_discarded": 0,
+        "frame_bytes": 4,
+        "total_packets": 310200
+      }
+    },
+    {
+      "rule_id": "R7",
+      "level": "SKIP",
+      "summary": "continuity needs a known test pattern",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "passive mode: no test pattern sent",
+      "evidence": {
+        "pattern_errors": 0,
+        "resyncs": 0,
+        "pattern_syncs": 0,
+        "first_error_index": 0,
+        "first_expected": "0x00000000",
+        "first_actual": "0x00000000"
+      }
+    },
+    {
+      "rule_id": "W2",
+      "level": "PASS",
+      "summary": "packet sizes are the expected floor/ceiling pair [176, 180]",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "sizes": {
+          "176": 280439,
+          "180": 29861
+        },
+        "expected": [
+          176,
+          180
+        ],
+        "hist_overflow": 0
+      }
+    },
+    {
+      "rule_id": "W1",
+      "level": "PASS",
+      "summary": "residual rate error +0.075 ppm, at the noise floor",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "fill_slope_bytes_per_s": 0.01322057246745621,
+        "correction_quantum_bytes": 1024,
+        "residual_ppm": 0.075
+      }
+    },
+    {
+      "rule_id": "W3",
+      "level": "PASS",
+      "summary": "host tracks the device's feedback: residual +0.075 ppm over 19388 polls",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "feedback_polls": 19388,
+        "device_fb_value": "0x000B0630",
+        "fill_slope_bytes_per_s": 0.01322057246745621,
+        "residual_ppm": 0.075
+      }
+    }
+  ],
+  "metrics": [
+    [
+      "duration",
+      "310.18 s over 3103 state blocks"
+    ],
+    [
+      "packets",
+      "310200 (1000.1/s, nominal 1000/s)"
+    ],
+    [
+      "packet sizes",
+      "176 B x280439, 180 B x29861"
+    ],
+    [
+      "feedback polls",
+      "19388 (62.5/s)"
+    ],
+    [
+      "device feedback value",
+      "0x000B0630 (raw; encoding undecided, see metrics.py)"
+    ],
+    [
+      "alt setting",
+      "1 now, 0 transitions; changes: none"
+    ],
+    [
+      "class requests",
+      "0x4 (bits [2])"
+    ],
+    [
+      "host active",
+      "1 now; changes: none"
+    ],
+    [
+      "OUT FIFO fill",
+      "min 772 B, max 944 B, mean 905 B over 31039 samples"
+    ],
+    [
+      "OUT FIFO fill (steady)",
+      "min 804 B, max 944 B, envelope 140 B, mean 905 B over 28038 samples from 30 s in"
+    ],
+    [
+      "fill slope",
+      "+0.013 B/s (+0.07 ppm)"
+    ],
+    [
+      "block corrections",
+      "dry-outs 0, overflows ?, underflows 1"
+    ]
+  ]
+}

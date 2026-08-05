@@ -176,7 +176,7 @@
         "sample_rate_hz": 44100,
         "max_packet_size_bytes": 196,
         "mode": "passive",
-        "host_note": "USBHost_t36 master -- clean-host regression, UAC1/FS"
+        "host_note": "MIMXRT1170-EVKB, USBHost_t36 master -- clean-host regression, UAC1/FS, usb_audio_graph_test firmware"
       },
       "duration_s": 300,
       "expect": {
@@ -189,7 +189,9 @@
         "W3": "PASS"
       },
       "expect_reasoning": "The negative control. Every rule that fired against a defective host must come back clean here, or the corpus proves only that the tool can say FAIL. W1 PASS means inside DRIFT_NOISE_FLOOR_PPM (1.0); the closed-loop UAC1 soaks measured +0.10 and +0.24 ppm. R3 SKIP is structural, as in case A. Run fresh at master rather than reusing yesterday's UAC1 soak because today's ring-priming fix (3e66161) touched the FS path.",
-      "ground_truth": "UAC1 closed-loop soaks: +0.1 ppm (2026-08-04) and +0.238 ppm (21 min)."
+      "ground_truth": "UAC1 closed-loop soaks: +0.1 ppm (2026-08-04) and +0.238 ppm (21 min).",
+      "host_firmware": "examples/usb/usb_audio_graph_test (master), NOT corpus/host",
+      "host_firmware_reason": "The corpus host streams FS at every historical corpus commit (case A: 1000 pkts/s) and streams HS at master (case D2: 8000 pkts/s), but on FS AT MASTER it claims the device, returns true from beginStreaming(), and then transmits nothing -- packets_sent flat, FIFO frozen full, no underruns, no transport errors. The repo's own UAC1 firmware on the identical witness at the same commit streams at pkts/s=999 with feedback polling healthy, so this is NOT a driver regression; it is something about the minimal host's interaction with master's FS path. OPEN QUESTION, recorded rather than papered over. It does not affect the historical cases, which all ran the corpus host successfully at their own commits; it only means the clean-FS control must use the shipping firmware -- which is arguably the better control anyway."
     },
     {
       "id": "Z_clean_uac2",
