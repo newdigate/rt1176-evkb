@@ -1,0 +1,82 @@
+{
+  "comment": "Each case is a host with an independently characterised defect. The evidence predating this tool is in examples/usb/usb_audio_graph_test/transcript_hw_evkb.txt. Manifests carry max_packet_size_bytes because the judge requires it (added after this plan was written). Every case builds tools/uacvalidate/corpus/host, NOT the usb_audio_graph_test example: the example calls driver APIs that did not exist at these commits and cannot compile against them.",
+  "cases": [
+    {
+      "id": "A_uac1_no_feedback",
+      "repo": "USBHost_t36",
+      "commit": "99cd466~1",
+      "witness_config": "1AMi2o2xxxxxx",
+      "witness_note": "MUST be the 16-bit build (-DSTREAM_FORMAT_OUTPUT_1_RESOLUTION_BITS=16 -DSTREAM_FORMAT_INPUT_1_RESOLUTION_BITS=16). A 24-bit UAC1 witness makes uac1_find_alt miss and the host never claims -- that mis-read cost a published false accusation, retracted in 42a4a3b.",
+      "manifest": {
+        "audio_class": 1, "speed": "FS", "channels": 2, "subslot_bytes": 2,
+        "sample_rate_hz": 44100, "max_packet_size_bytes": 196, "mode": "passive",
+        "host_note": "USBHost_t36 99cd466~1 -- before the UAC1 feedback read"
+      },
+      "duration_s": 300,
+      "expect": {"R1": "WARN", "W1": "WARN", "R2": "PASS", "R4b": "PASS",
+                 "R3": "SKIP"},
+      "expect_evidence": {"R1": {"feedback_polls": 0}},
+      "expect_reasoning": "W1 WARN, not PASS or FAIL: W1 is PASS only within DRIFT_NOISE_FLOOR_PPM (1.0) and has no FAIL level at all, and an open loop at 85 ppm is 85x the floor. The fit lands because corrections come at the quantum/drift cadence -- seconds apart, far longer than vcdfill's 2 s minimum segment. R3 SKIP is structural: a 2-byte subslot has no spare lane to justify within.",
+      "ground_truth": "transcript_hw_evkb.txt: open loop at bias 0 drifts +85.0 ppm; block corrections at quantum/drift cadence."
+    },
+    {
+      "id": "B_uac2_no_feedback",
+      "repo": "USBHost_t36",
+      "commit": "1732ed3~1",
+      "witness_config": "2AMi8o8xxxxxx",
+      "manifest": {
+        "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
+        "sample_rate_hz": 44100, "max_packet_size_bytes": 800, "mode": "passive",
+        "host_note": "USBHost_t36 1732ed3~1 -- before the HS feedback loop"
+      },
+      "duration_s": 300,
+      "expect": {"R1": "WARN", "W1": "WARN", "R2": "PASS", "R3": "PASS"},
+      "expect_evidence": {"R1": {"feedback_polls": 0}},
+      "expect_reasoning": "W1 WARN for the same reason as case A. The 9.6 s correction cadence in the ground truth is what makes the fit possible at all: segments that long clear vcdfill's 2 s / 8 point minimum with room to spare, so a SKIP here would mean the fill probe is missing, not that the drift is unmeasurable.",
+      "ground_truth": "transcript_hw_evkb.txt UAC2 P1: fill slope +119.3 B/s = +84.6 ppm, overflow corrections every ~9.6 s."
+    },
+    {
+      "id": "C_streams_in_alt0",
+      "repo": "USBHost_t36",
+      "commit": "d370e80~1",
+      "witness_config": "2AMi8o8xxxxxx",
+      "manifest": {
+        "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
+        "sample_rate_hz": 44100, "max_packet_size_bytes": 800, "mode": "passive",
+        "host_note": "USBHost_t36 d370e80~1 -- before the alt-0 streaming gate"
+      },
+      "duration_s": 180,
+      "expect": {"R2": "FAIL"},
+      "ground_truth": "transcript_hw_evkb.txt: the self-heal path zombie-streams the old ring at nominal into the device's alt 0."
+    },
+    {
+      "id": "D_right_justified",
+      "repo": "USBHost_t36",
+      "commit": "35b0cce~1",
+      "witness_config": "2AMi8o8xxxxxx",
+      "manifest": {
+        "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
+        "sample_rate_hz": 44100, "max_packet_size_bytes": 800, "mode": "passive",
+        "host_note": "USBHost_t36 35b0cce~1 -- before subslot left-justification"
+      },
+      "duration_s": 180,
+      "expect": {"R3": "FAIL"},
+      "ground_truth": "35b0cce is the fix commit: 'UAC2: left-justify samples within subslots; run test_pack in the gate'."
+    },
+    {
+      "id": "E_device_swap_wedge",
+      "repo": "USBHost_t36",
+      "commit": "090eadb~1",
+      "witness_config": "2AMi8o8xxxxxx",
+      "manifest": {
+        "audio_class": 2, "speed": "HS", "channels": 8, "subslot_bytes": 4,
+        "sample_rate_hz": 44100, "max_packet_size_bytes": 800, "mode": "passive",
+        "host_note": "USBHost_t36 090eadb~1 -- device-swap wedge, after an FS->HS swap"
+      },
+      "duration_s": 120,
+      "requires_device_swap": true,
+      "expect": {"R2": "SKIP", "R3": "SKIP", "R4a": "SKIP", "R4b": "SKIP"},
+      "ground_truth": "transcript_hw_evkb.txt: 'audio=ready uac2=0 alt=1 pkts/s=0' -- the claim and control sequence succeed while nothing is transmitted."
+    }
+  ]
+}
