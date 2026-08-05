@@ -66,7 +66,7 @@ _evkb_lib(ethernet       ${_dev}/Ethernet             https://github.com/newdiga
 _evkb_lib(nativeethernet ${_dev}/NativeEthernet       https://github.com/newdigate/NativeEthernet  7f5d881d5da80540177caea760d895780478b128 .)
 _evkb_lib(fnet           ${_dev}/FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
 _evkb_lib(lwip           ${_dev}/lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
-_evkb_lib(USBHost_t36    ${_dev}/USBHost_t36          https://github.com/newdigate/USBHost_t36     bef7c9fe1a1ee90f0dc551da5d3954d9408daefd .)
+_evkb_lib(USBHost_t36    ${_dev}/USBHost_t36          https://github.com/newdigate/USBHost_t36     f91c7f50a18065826037c4eacddd7f15ac669606 .)
 _evkb_lib(LVGL           ${_dev}/LVGL                 https://github.com/newdigate/LVGL            6fa16a733d3d2a30b18f7ec15a2ad3791b02c66f .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
 _evkb_lib(EEPROM         ${_dev}/EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 _evkb_lib(Bounce2        ${_dev}/Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)

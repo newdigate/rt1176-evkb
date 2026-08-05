@@ -59,11 +59,27 @@ Nothing on this bench triggers it: the dongle's IN endpoint lives on a
 different interface (interface 2), which is never the selected alt, and the
 MC200's alt carries OUT plus a real feedback endpoint.
 
-The fix is to classify by `bmAttributes` rather than direction. USB 2.0
-Table 9-13, bits 5:4 are usage type: `00` = data endpoint, `10` = feedback
-endpoint, `01` = implicit-feedback data endpoint. A feedback endpoint is
-`(attr & 0x30) == 0x20`. Direction alone was never sufficient; it only worked
-because every device tried so far had at most one IN endpoint per alt.
+The fix classifies by `bmAttributes` as well as direction. USB 2.0 section
+9.6.6 (read from the primary document, page 298 of the 2024-09-27 revision),
+bits 5..4 Usage Type: `00` = Data endpoint, `01` = Feedback endpoint,
+`10` = Implicit feedback Data endpoint, `11` = Reserved. So an explicit
+feedback endpoint is `(attr & 0x30) == 0x10`.
+
+**Corrected 2026-08-05, after implementing it.** An earlier draft of this
+section said `10` was feedback and `01` implicit — wrong, from memory, and the
+tests caught the consequence immediately. Worse, usage type alone is ALSO
+insufficient: the XMOS UAC1 witness declares its feedback endpoint 0x82 with
+`bmAttributes 0x01`, usage type `00` = "data" (fixture
+`xmos_uac1_async_feedback.bin`), so believing the usage bits alone loses that
+device's feedback entirely. The UAC2 witness by contrast declares `0x11`,
+usage `01`, correctly.
+
+The rule that survives contact with real hardware needs both authorities:
+`bSynchAddress` on the data endpoint names the feedback endpoint, and the
+usage bits are a fallback for a device that declares `01` but names nothing.
+An IN endpoint that is neither — plain audio, usage `00` or `10` — is what a
+full-duplex device puts there, and is what direction-only classification used
+to swallow.
 
 This is a small, self-contained change with a fixture already available: the
 dongle's 244 descriptor bytes, captured this session, are a real third-party
