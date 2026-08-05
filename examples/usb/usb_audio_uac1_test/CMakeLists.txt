@@ -21,12 +21,20 @@ teensy_target_link_libraries(usb_audio_uac1_test cores)
 # digitizer/SerEMU/USBFilesystemFormatter.  bluetooth.cpp is NOT needed here --
 # unlike keyboard.cpp/mouse.cpp, usb_audio.cpp hard-references no
 # BluetoothController symbols.
+#
+# usb_audio_feedback / usb_audio2_parse / usb_audio_ctrl are not optional even
+# for a UAC1-only sketch: usb_audio.cpp references all three unconditionally.
+# They arrived with the feedback work (USBHost_t36 99cd466) and this list was
+# not extended, so the example stopped linking then and stayed that way until
+# 2026-08-05 -- nothing builds it but a person, and no gate covers it, because
+# QEMU has no UAC device model to enumerate.
 set(USBHOST ${EVKB_USBHOST_T36_DIR})
 target_sources(usb_audio_uac1_test.elf PRIVATE
     ${USBHOST}/ehci.cpp ${USBHOST}/ehci_iso.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
     ${USBHOST}/memory.cpp
     ${USBHOST}/usb_audio.cpp ${USBHOST}/usb_audio_parse.cpp
-    ${USBHOST}/usb_audio_fifo.cpp)
+    ${USBHOST}/usb_audio_fifo.cpp ${USBHOST}/usb_audio_feedback.cpp
+    ${USBHOST}/usb_audio2_parse.cpp ${USBHOST}/usb_audio_ctrl.cpp)
 
 # USBHost_t36.h unconditionally does `#include <FS.h>` (resolves from the core)
 # AND `#include <SdFat.h>`.  SdFat.h uses relative internal includes, so its
