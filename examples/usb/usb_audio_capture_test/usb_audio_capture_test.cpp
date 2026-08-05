@@ -235,12 +235,25 @@ void loop() {
 		last_packets = pkts;
 		last_bytes = bytes;
 
+		// cfg= is the diagnostic that separates two states this sketch could
+		// not previously tell apart, and the ambiguity cost a bench session:
+		// claim() memcpys every device's descriptors into lastConfig()
+		// WHETHER OR NOT it claims them, so
+		//   cfg=0    -> nothing has enumerated at all (cable, VBUS, device)
+		//   cfg=N>0, ready=0/0 -> a device WAS offered and this driver
+		//                        refused it (wrong class, or no alt matching
+		//                        the requested format)
+		// Without it, a refused claim is silent and looks exactly like an
+		// empty port -- the driver's attach print only fires once a claim
+		// has already succeeded.
+		uint16_t cfglen = 0;
+		audio.lastConfig(&cfglen);
 		Serial1.printf("CAPTURE-TEST: HEARTBEAT seq=%lu up=%lus rec=%d ready=%d/%d "
-		               "ctrl=%u/%lu/%lu",
+		               "ctrl=%u/%lu/%lu cfg=%u",
 		               (unsigned long)seq, (unsigned long)((now - started_at) / 1000),
 		               (int)audio.recording(), (int)audio.ready(), (int)audio.readyIn(),
 		               audio.controlState(), (unsigned long)audio.controlTimeouts(),
-		               (unsigned long)audio.controlQueueFails());
+		               (unsigned long)audio.controlQueueFails(), cfglen);
 
 		if (audio.recording() && dt) {
 			// The load-bearing number. bytes/s divided by (channels x

@@ -1,8 +1,43 @@
 # USB audio INPUT on the RT1176 host, and full duplex — design
 
-Status: proposed, 2026-08-05. Nothing here is built yet except the parser
-defect in §2, which is a bug in shipping code and should be fixed whether or
-not the rest proceeds.
+Status: proposed, 2026-08-05.
+
+**Progress, updated 2026-08-05 (later the same day).**
+
+- **Stage A — done.** The §2 parser defect is fixed, with the correction
+  recorded in §2 itself: usage type `01` is feedback, not `10`, and usage
+  bits alone are insufficient because the XMOS UAC1 witness declares its
+  feedback endpoint with usage `00`. (USBHost_t36 `f91c7f5`.)
+- **Stage B — built, host-tested, NOT yet run on silicon.** Parser input
+  support for both class versions, `uac_unpack16`, `itd_fill_in_frame`, the
+  driver's capture ring/FIFO/API, and `examples/usb/usb_audio_capture_test`
+  with a QEMU gate. (USBHost_t36 `5e74985`, `80bf95f`, `f9d7e8d`, `198c1c1`;
+  evkb `eed8104`.) The bench blocked the silicon run: the EVKB's MCU-Link
+  VCOM began re-enumerating continuously with the probe idle, so no console
+  could be read. The image is flashed and verified on the board.
+- **Stage C — not started.**
+
+Two things the implementation found that this document had wrong or missing:
+
+1. **§2 understated the parser gap.** Stage A fixed feedback classification
+   in both parsers, but only the UAC1 parser learned to *collect* the input
+   interface. `uac2_parse_config` still reported `in_alt_count == 0` for the
+   MC200 — the very device Stage B records from. An IN stream's alt links to
+   an **OUTPUT_TERMINAL**, not an INPUT_TERMINAL (for capture the USB side is
+   the sink), and the two descriptors put `bCSourceID` at different offsets,
+   so the clock chain did not resolve either. Both fixed in `80bf95f`.
+2. **§4's premise is now measured rather than assumed.** The MC200 drives
+   capture and playback from one clock entity (0x29, through a single-input
+   selector), which is what will let Stage C size both directions from one
+   rate estimate. That is recorded as `in_clock_source_id` *separately* from
+   `clock_source_id` rather than assumed equal — it is a fact about this
+   device, not a property of the class, and a device with two clocks would
+   need the input rate set on its own entity.
+
+Also worth recording against §7: the capture endpoint declares `bmAttributes
+0x05` — **asynchronous**. The device free-runs its converter and nothing the
+host does paces it, so §4's clock-ownership problem is visible in the
+topology rather than only in this document.
 
 ## The argument
 
@@ -189,20 +224,34 @@ mechanism, in the opposite direction.
 
 ## 7. Open decisions needing sign-off
 
-1. **One driver or two?** `USBAudioOut` currently owns claim, control
-   sequencing and the topology. Input could be a second driver (clean
-   separation, but two drivers claiming one device is awkward under the
-   framework's claim model) or a mode of the existing one (simpler claim,
-   larger class). Recommendation: extend the existing driver, because the
-   control sequence and clock handling are shared and a duplex device is one
-   device.
+1. **One driver or two?** ~~Recommendation: extend the existing driver.~~
+   **Settled at implementation: one driver, and not on balance — the claim
+   model decides it.** `claim(type=0)` takes the WHOLE device, so a
+   `USBAudioIn` beside `USBAudioOut` would never be *offered* a device the
+   other had already claimed; the framework provides no way for two drivers
+   to share one. The trade-off framing above was wrong to present this as a
+   preference. The class name is now half wrong and stays that way: renaming
+   churns every example and gate for no behavioural gain.
 2. **Stage B before C, or straight to C?** Recommendation: B first. It proves
    transport and budget without touching the clock ownership that currently
    works.
 3. **Does the IN payload ring size from the negotiated format** (saves tens of
    KB on a 1-channel dongle) **or the worst case** (simpler, always correct)?
-   Recommendation: negotiated, with the same begin-time guard the OUT path
-   uses (`worst > MAX_UFRAME_BYTES` → refuse).
+   ~~Recommendation: negotiated.~~ **Done: negotiated**, with the begin-time
+   guard as described, plus one the OUT path did not need — an alt whose
+   advertised `wMaxPacketSize` is *smaller* than its own format requires is
+   refused, because arming for the smaller value would report the shortfall
+   as babble and blame the wire for a contradiction in the descriptors.
+
+4. **New, and it cost a bug before it was noticed.** The capture ring needs
+   an explicit per-slot "armed" flag; it cannot be inferred from the
+   descriptor. The first draft identified a never-armed priming slot by
+   reading the siTD's total-bytes field, reasoning that a disarmed slot
+   leaves it zero — it does, and so does a *completed full read*, because
+   `bytes_left` **is** that field after the controller decrements it. The two
+   are indistinguishable, and the margin slots would have drained a stride of
+   uninitialised buffer into the recording on the first pass, looking exactly
+   like audio.
 
 ## 8. Risks
 

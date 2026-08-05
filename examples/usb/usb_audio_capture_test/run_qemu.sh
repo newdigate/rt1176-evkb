@@ -47,8 +47,12 @@ grep -q "seq=2 " "$OUT" || { echo "FAIL: loop did not survive to a second heartb
 # No device in QEMU: recording off, neither direction ready, and -- the real
 # assertion -- the control sequence idle with nothing timing out. A missing
 # token here must fail by name and not read as proof of the good outcome.
-grep -q "rec=0 ready=0/0 ctrl=0/0/0" "$OUT" \
-    || { echo "FAIL: expected 'rec=0 ready=0/0 ctrl=0/0/0' with no device attached"; exit 1; }
+# cfg=0 too: QEMU offers no device to claim(), so the descriptor capture must
+# be empty. This is what separates "nothing enumerated" from "a device was
+# offered and refused" -- on the bench the two were indistinguishable until
+# this field existed.
+grep -q "rec=0 ready=0/0 ctrl=0/0/0 cfg=0" "$OUT" \
+    || { echo "FAIL: expected 'rec=0 ready=0/0 ctrl=0/0/0 cfg=0' with no device attached"; exit 1; }
 
 # And no capture statistics at all, because nothing was captured. This is the
 # vacuity guard: the heartbeat only prints pkts/s when recording() is true, so
