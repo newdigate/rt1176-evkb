@@ -222,6 +222,53 @@
       },
       "expect_reasoning": "Reuses today's 1000 polls/s A/B soak rather than spending bench time on a second clean UAC2 run: same commit, same witness, same procedure, 20 minutes instead of 5. Provenance is in reuses_capture.",
       "ground_truth": "transcript_uacv_1000polls_ab.txt: 9 PASS 0 FAIL, W1 -0.052 ppm, envelope 268 B."
+    },
+    {
+      "id": "H_partial_frame",
+      "repo": "USBHost_t36",
+      "commit": "master",
+      "defect_patch": "defects/r4b-partial-frame.patch",
+      "witness_config": "2AMi8o8xxxxxx",
+      "manifest": {
+        "audio_class": 2,
+        "speed": "HS",
+        "channels": 8,
+        "subslot_bytes": 4,
+        "sample_rate_hz": 44100,
+        "max_packet_size_bytes": 800,
+        "mode": "passive",
+        "host_note": "USBHost_t36 master + defects/r4b-partial-frame.patch -- one extra byte per microframe"
+      },
+      "duration_s": 120,
+      "expect": {
+        "R4b": "FAIL"
+      },
+      "expect_reasoning": "R4b FAIL on not_multiple: 193 B is 6 audio frames of 32 B plus a stray byte. R4a should still PASS -- 193 is far inside the declared 800 B -- which is the point of having two rules: oversize and misaligned are different defects and only one is present.",
+      "ground_truth": "No host in this tree ever sent a partial frame, so R4b would otherwise ship having never fired on hardware. The device already tolerates this silently (decouple.xc, under a comment naming a bad driver); the injection makes that tolerance audible."
+    },
+    {
+      "id": "F_dither_chasing",
+      "repo": "USBHost_t36",
+      "commit": "master",
+      "defect_patch": "defects/w3-no-ema.patch",
+      "witness_config": "2AMi8o8xxxxxx",
+      "manifest": {
+        "audio_class": 2,
+        "speed": "HS",
+        "channels": 8,
+        "subslot_bytes": 4,
+        "sample_rate_hz": 44100,
+        "max_packet_size_bytes": 800,
+        "mode": "passive",
+        "host_note": "USBHost_t36 master + defects/w3-no-ema.patch -- servo chases the raw report"
+      },
+      "duration_s": 600,
+      "expect": {
+        "R1": "PASS",
+        "W3": "WARN"
+      },
+      "expect_reasoning": "The signature is the PAIRING: R1 PASS because the host is polling diligently, W3 WARN because it drifts anyway. R1 alone cannot see this defect, and that is precisely why W3 exists. W3 WARN means the residual exceeds DRIFT_NOISE_FLOOR_PPM (1.0); the shipping servo measures -0.05 ppm on the same bench. MAGNITUDE IS NOT PREDICTED: the historical +4.8 ppm was FS at 62.5 polls/s and this runs HS at 1000 polls/s. If the residual comes back inside the floor, that is a finding about raw-chasing at full poll rate, not a reason to move the floor.",
+      "ground_truth": "The EMA was never a standalone commit, so there is no parent to check out. Raw-chasing measured +4.8 ppm of sizing bias on this bench during the UAC1 feedback work -- a buffer excursion every ~45 min."
     }
   ]
 }

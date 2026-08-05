@@ -1,0 +1,10 @@
+{
+  "audio_class": 2,
+  "speed": "HS",
+  "channels": 8,
+  "subslot_bytes": 4,
+  "sample_rate_hz": 44100,
+  "max_packet_size_bytes": 800,
+  "mode": "passive",
+  "host_note": "USBHost_t36 master + defects/r4b-partial-frame.patch -- one extra byte per microframe"
+}

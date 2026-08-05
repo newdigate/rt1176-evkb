@@ -1,0 +1,42 @@
+# INJECTED DEFECT -- NEVER APPLY TO A SHIPPING BUILD.
+#
+# Makes the high-speed servo consume the RAW feedback report instead of the
+# exponential moving average: fb_avg_mhz = mhz, with no filtering.
+#
+# A device expresses a rate between two representable values by dithering its
+# report between them -- on this witness, between raw 361232 and 361240, which
+# are 8 LSB or about 22 ppm apart -- and the information is in the DUTY CYCLE.
+# A rate-limited follower of the raw reports cannot recover that duty cycle;
+# it converges toward the majority state instead. On this bench that was
+# measured at +4.8 ppm of sizing bias, a buffer excursion every ~45 minutes.
+#
+# Why injected rather than historical: the EMA was never a standalone commit,
+# so there is no parent to check out. Without this, W3 would ship having never
+# fired on hardware.
+#
+# The signature to look for is R1 PASS together with W3 WARN: the host IS
+# reading the feedback endpoint, diligently, and still drifts. That pairing is
+# exactly what W3 exists to name and what R1 alone cannot see.
+#
+# NOTE the historical +4.8 ppm was measured at 62.5 polls/s on the FS path.
+# This injection runs at the shipping 1000 polls/s HS reader, so the magnitude
+# is not predicted here -- only the levels are.
+#
+# Apply:  git apply tools/uacvalidate/defects/w3-no-ema.patch
+# Revert: git checkout -- usb_audio.cpp
+diff --git a/usb_audio.cpp b/usb_audio.cpp
+index 79731fc..0286e75 100644
+--- a/usb_audio.cpp
++++ b/usb_audio.cpp
+@@ -756,8 +756,9 @@ void USBAudioOut::service()
+ 					// as FS (raw-chasing measured +4.8 ppm on
+ 					// this bench). The divisor holds the 128 ms
+ 					// horizon at this reader's 250 polls/s.
+-					fb_avg_mhz = uac1_fb_average(fb_avg_mhz, mhz,
+-					                             FB_EMA_DIV_HS);
++					/* INJECTED DEFECT: chase the raw report,
++					 * no averaging at all. */
++					fb_avg_mhz = mhz;
+ 					fb_frames_since = 0;
+ 					fb_packets++;
+ 				} else {

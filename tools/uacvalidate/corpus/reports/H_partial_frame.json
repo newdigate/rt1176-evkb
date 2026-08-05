@@ -1,0 +1,191 @@
+{
+  "header": {
+    "vcd": "/Users/nicholasnewdigate/Development/rt1170/uacv-captures/corpus/H_partial_frame.vcd",
+    "duration_s": 130.55272663999997,
+    "missing_marks": 0,
+    "wrap_repairs": 3,
+    "observer_sha": "b424b0e0",
+    "host_note": "USBHost_t36 master + defects/r4b-partial-frame.patch -- one extra byte per microframe"
+  },
+  "verdicts": [
+    {
+      "rule_id": "R1",
+      "level": "PASS",
+      "summary": "feedback polled 126481 times (968.8/s)",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "feedback_polls": 126481,
+        "duration_s": 130.55
+      }
+    },
+    {
+      "rule_id": "R2",
+      "level": "PASS",
+      "summary": "no packets arrived during alt 0",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "packets_while_alt0": 0,
+        "total_packets": 1044500
+      }
+    },
+    {
+      "rule_id": "R3",
+      "level": "PASS",
+      "summary": "low byte never non-zero: samples are left-justified",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "or_acc": "0xFFFF0000",
+        "and_acc": "0x00000000",
+        "nonsilent_frames": 5757157
+      }
+    },
+    {
+      "rule_id": "R4a",
+      "level": "PASS",
+      "summary": "all packets within the declared 800 B",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "sizes": {
+          "161": 509737,
+          "193": 534863
+        },
+        "wMaxPacketSize_bytes": 800,
+        "hist_overflow": 0
+      }
+    },
+    {
+      "rule_id": "R4b",
+      "level": "FAIL",
+      "summary": "1044500 packets were not a whole number of 32 B audio frames, and 0 were shorter than one frame and silently discarded by the device",
+      "citation": "UAC 2.0 audio frame structure [UNVERIFIED]",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "not_multiple": 1044500,
+        "short_discarded": 0,
+        "frame_bytes": 32,
+        "total_packets": 1044500
+      }
+    },
+    {
+      "rule_id": "R7",
+      "level": "SKIP",
+      "summary": "continuity needs a known test pattern",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "passive mode: no test pattern sent",
+      "evidence": {
+        "pattern_errors": 0,
+        "resyncs": 0,
+        "pattern_syncs": 0,
+        "first_error_index": 0,
+        "first_expected": "0x00000000",
+        "first_actual": "0x00000000"
+      }
+    },
+    {
+      "rule_id": "W2",
+      "level": "WARN",
+      "summary": "packet sizes outside the fractional-sample floor/ceiling [160, 192]: {161: 509737, 193: 534863}",
+      "citation": "",
+      "consequence": "worst deviation is 0.5 audio frames from nominal, so the device's OUT FIFO must carry that much extra headroom on top of drift wander. Permitted by the spec with an asynchronous feedback loop, but it consumes margin that exists to absorb rate error.",
+      "missing_witness": "",
+      "evidence": {
+        "sizes": {
+          "161": 509737,
+          "193": 534863
+        },
+        "expected": [
+          160,
+          192
+        ],
+        "hist_overflow": 0
+      }
+    },
+    {
+      "rule_id": "W1",
+      "level": "PASS",
+      "summary": "residual rate error +0.106 ppm, at the noise floor",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "fill_slope_bytes_per_s": 0.14980802192518,
+        "correction_quantum_bytes": 1024,
+        "residual_ppm": 0.106
+      }
+    },
+    {
+      "rule_id": "W3",
+      "level": "PASS",
+      "summary": "host tracks the device's feedback: residual +0.106 ppm over 126481 polls",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "feedback_polls": 126481,
+        "device_fb_value": "0x00058310",
+        "fill_slope_bytes_per_s": 0.14980802192518,
+        "residual_ppm": 0.106
+      }
+    }
+  ],
+  "metrics": [
+    [
+      "duration",
+      "130.55 s over 10446 state blocks"
+    ],
+    [
+      "packets",
+      "1044500 (8000.6/s, nominal 8000/s)"
+    ],
+    [
+      "packet sizes",
+      "161 B x509737, 193 B x534863"
+    ],
+    [
+      "feedback polls",
+      "126481 (968.8/s)"
+    ],
+    [
+      "device feedback value",
+      "0x00058310 (raw; encoding undecided, see metrics.py)"
+    ],
+    [
+      "alt setting",
+      "1 now, 0 transitions; changes: none"
+    ],
+    [
+      "class requests",
+      "0x5 (bits [0, 2])"
+    ],
+    [
+      "host active",
+      "1 now; changes: none"
+    ],
+    [
+      "OUT FIFO fill",
+      "min 872 B, max 1004 B, mean 953 B over 104469 samples"
+    ],
+    [
+      "OUT FIFO fill (steady)",
+      "min 904 B, max 1004 B, envelope 100 B, mean 955 B over 80467 samples from 30 s in"
+    ],
+    [
+      "fill slope",
+      "+0.150 B/s (+0.11 ppm)"
+    ],
+    [
+      "block corrections",
+      "dry-outs 0, overflows ?, underflows 1"
+    ]
+  ]
+}

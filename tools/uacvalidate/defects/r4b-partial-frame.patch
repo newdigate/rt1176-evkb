@@ -1,0 +1,32 @@
+# INJECTED DEFECT -- NEVER APPLY TO A SHIPPING BUILD.
+#
+# Adds one byte to every high-speed microframe, so the packet is no longer a
+# whole number of audio frames: at 8 channels x 4-byte subslots the frame is
+# 32 B, and 193 or 161 bytes is 6 or 5 frames plus a stray byte. UAC 2.0
+# requires a packet to carry whole audio frames; a partial one shifts every
+# later sample and the device has no way to resync.
+#
+# Why injected rather than historical: no host in this tree ever sent a
+# partial frame, so R4b would otherwise ship having never fired on hardware.
+# The device side already tolerates this silently -- decouple.xc handles the
+# case under a comment naming a bad driver -- and the injection is what makes
+# that silent tolerance audible for the first time.
+#
+# uac_pack16 still writes only whole frames (193 / 32 = 6), so the trailing
+# byte is stale buffer content. That is deliberate: the defect under test is
+# the LENGTH on the wire, not the payload.
+#
+# Apply:  git apply tools/uacvalidate/defects/r4b-partial-frame.patch
+# Revert: git checkout -- usb_audio.cpp
+diff --git a/usb_audio.cpp b/usb_audio.cpp
+index 79731fc..e183634 100644
+--- a/usb_audio.cpp
++++ b/usb_audio.cpp
+@@ -288,6 +288,7 @@ void USBAudioOut::fillFrameHS(uint32_t slot)
+ 	for (int k = 0; k < 8; k++) {
+ 		uint16_t bytes = uac2_uframe_bytes_mhz(&frame_accum, fb_sizing_mhz,
+ 		                                       ch_total_out, subslot_out);
++		bytes += 1;   /* INJECTED DEFECT: partial audio frame on the wire */
+ 		if (off + bytes > sizeof(ring_buf_hs[0])) bytes = 0;  // cannot happen past the begin guard; belt+braces
+ 		uframe_len[slot][k] = bytes;
+ 		if (bytes == 0) continue;
