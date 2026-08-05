@@ -1,0 +1,55 @@
+UAC host conformance report
+============================================================
+host under test : USBHost_t36 1732ed3~1 -- before the HS feedback loop
+capture         : /Users/nicholasnewdigate/Development/rt1170/uacv-captures/corpus/B_uac2_no_feedback.vcd
+duration        : 310.8 s
+xscope missing  : 0
+observer build  : b424b0e0
+
+[WARN   ] R1    host never polled the feedback endpoint in 310.8 s of streaming
+           consequence: the device is reporting its rate and no one is listening. Open loop, the measured drift is +85.41 ppm, so this host forces a block correction -- silence insertion or dropped packets, audible either way -- every 8 s. The device is entitled to do this: the spec obliges it to publish its rate, not the host to read it.
+           evidence: feedback_polls=0, duration_s=310.79
+
+[PASS   ] R2    no packets arrived during alt 0
+           evidence: packets_while_alt0=0, total_packets=2486300
+
+[PASS   ] R3    low byte never non-zero: samples are left-justified
+           evidence: or_acc=0xFFFF0000, and_acc=0x00000000, nonsilent_frames=13705263
+
+[PASS   ] R4a   all packets within the declared 800 B
+           evidence: sizes={160: 1212110, 192: 1274289}, wMaxPacketSize_bytes=800, hist_overflow=0
+
+[PASS   ] R4b   all packets are whole multiples of 32 B
+           evidence: not_multiple=0, short_discarded=0, frame_bytes=32, total_packets=2486300
+
+[SKIP   ] R7    continuity needs a known test pattern
+           missing: passive mode: no test pattern sent
+           evidence: pattern_errors=0, resyncs=0, pattern_syncs=0, first_error_index=0, first_expected=0x00000000, first_actual=0x00000000
+
+[PASS   ] W2    packet sizes are the expected floor/ceiling pair [160, 192]
+           evidence: sizes={160: 1212110, 192: 1274289}, expected=[160, 192], hist_overflow=0
+
+[WARN   ] W1    residual rate error +85.41 ppm after the feedback loop
+           consequence: a +85.41 ppm residual against the device's 1024 B correction quantum: at +120.538 B/s this host will force a block correction -- silence insertion or dropped packets, audible either way -- every 8 s (0.1 min).
+           evidence: fill_slope_bytes_per_s=120.53754281825861, correction_quantum_bytes=1024, residual_ppm=85.415, seconds_between_corrections=8.5
+
+[SKIP   ] W3    host never polled feedback, so there is no tracking to assess (R1 covers this)
+           missing: any feedback poll
+           evidence: feedback_polls=0, device_fb_value=0x00058310, fill_slope_bytes_per_s=120.53754281825861
+
+metrics (INFO -- no verdict, no effect on exit code)
+  duration               : 310.79 s over 24864 state blocks
+  packets                : 2486300 (7999.9/s, nominal 8000/s)
+  packet sizes           : 160 B x1212110, 192 B x1274289
+  feedback polls         : 0 (0.0/s)
+  device feedback value  : 0x00058310 (raw; encoding undecided, see metrics.py)
+  alt setting            : 1 now, 0 transitions; changes: none
+  class requests         : 0x5 (bits [0, 2])
+  host active            : 1 now; changes: none
+  OUT FIFO fill          : min 360 B, max 3304 B, mean 2587 B over 248649 samples
+  OUT FIFO fill (steady) : min 1892 B, max 3304 B, envelope 1412 B, mean 2633 B over 224649 samples from 30 s in
+  fill slope             : +120.538 B/s (+85.41 ppm)
+  block corrections      : dry-outs 1, overflows 32, underflows 1
+
+------------------------------------------------------------
+5 PASS, 0 FAIL, 2 WARN, 2 SKIP
