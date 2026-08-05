@@ -1,0 +1,97 @@
+UAC validator: first cooperative-mode (R7) runs -- 2026-08-05
+==============================================================
+
+Bench: MC200 (XMOS xcore-200 MC) on EVKB J47/USB_OTG2, XTAG 3LajHPG5.
+Device: 2AMi8o8xxxxxx witness built with UACV_COOPERATIVE=1 from lib_xua
+        branch instrumentation/uac-host-validator tip b424b0e0
+        (archived: uacv-captures/images/uac2_coop_witness.xe, md5 9662db08;
+        taps constant present in this image and absent from the passive one).
+Host:   usb_audio_graph_test build-coop (-DUACV_PATTERN=ON), USBHost_t36
+        pattern mode. The tone generator stays on as the FIFO producer; the
+        packing path swaps the payload for the validator LFSR, paced by the
+        same FIFO reads so an underrun still corrupts the pattern.
+
+R7 had never run against any host -- every prior capture was passive mode,
+where it is a permanent SKIP. These are its first verdicts.
+
+Run 1 -- USBHost_t36 b0cdbd7: R7 SKIP, and a real host defect found
+-------------------------------------------------------------------
+  pattern_errors=112  resyncs=14  pattern_syncs=14  first_error_index=11289
+
+The fingerprint decoded:
+  11289 = 1411 frames x 8 channels + 1, and 1411 frames at 44.1 kHz is
+  exactly the 32 ms ring revolution. beginStreaming filled ring slots 0..31
+  in INDEX order, but the controller starts transmitting at its current
+  frame position -- the first revolution plays rotated, the device locks
+  when slot 0's seed arrives mid-revolution, and the first refill lands a
+  payload seam exactly one revolution after stream start. 8 errors, resync.
+  The 13 further "locks" are chance seed-matches while hunting (expected
+  ~1/40 s of hunting, observed 13 in ~480 s), each costing exactly 8 errors:
+  14 x 8 = 112. After the seam, ZERO discontinuities for 8.5 minutes --
+  steady-state delivery was already bit-exact; only the stitch was wrong.
+  For real audio this is 32 ms of chunk-scrambled playback at every stream
+  start, inaudible on this bench for the driver's entire life.
+
+Run 2 -- first fix attempt (wire-order priming, all 32 armed): still SKIP
+-------------------------------------------------------------------------
+  pattern_errors=112  resyncs=14  pattern_syncs=14  first_error_index=11289
+
+Identical fingerprint, different mechanism: priming in wire order from
+start = current+2 puts the ring's last two chunks into the slots BEHIND the
+start position, and those transmit FIRST. The final chunk plays before the
+seed; one revolution later its slot sits already-completed, transmits
+nothing, and the stream skips a chunk. Both defects put exactly one
+revolution between lock and discontinuity, hence the same index -- the
+index alone cannot distinguish them, which is worth remembering.
+
+Run 3 -- inert priming margin (USBHost_t36 3e66161): R7 PASS
+------------------------------------------------------------
+  pattern_errors=0  resyncs=0  pattern_syncs=1
+  9 PASS, 0 FAIL, 0 SKIP -- first fully-green report from any host.
+  519.9 s, 4,159,600 packets, 22,927,813 nonsilent frames (~183M samples
+  checked), W1 -0.039 ppm, steady envelope 264 B, dry-outs 0 (run 1 had 1
+  -- the seam's downstream artifact, gone with it).
+
+The fix: the two slots behind the start position link DISARMED and carry
+nothing on revolution one; ring_next starts at them so service() hands them
+the next chunks within microseconds, a revolution before their frames.
+service() also now harvests in wire order with early exit, removing the
+latency-triggered variant of the same rotation (a 0..31 index scan refills
+out of order whenever completions straddle the ring's wrap). Same fix
+applied to the FS siTD ring by the same reasoning; no pattern coverage
+exists for FS until a UAC1 cooperative witness is built (the 16-bit subslot
+cannot carry the 24-bit sequence the current device check compares).
+
+Capture-chain finding: phantom 32-bit timestamp wraps
+-----------------------------------------------------
+Run 1's report claimed 1765.5 s for a 560 s wall-clock capture. Not a
+stretch: 29 discrete forward jumps of exactly 2^32 ticks of the 100 MHz
+reference (42.94967296 s), each with the packet counter frozen across it
+and the 12.5 ms block cadence resuming as if nothing happened. The capture
+chain double-counts its own timestamp wrap. Both baseline UAC2 soaks carry
+the same signature (6 and 5 jumps); both FS captures are clean.
+
+The judge now repairs these (uacvalidate commit b87001e): the signature is
+exact arithmetic, unlike the 12.7x uniform stretch of 2026-08-04 which had
+no quantum and was rightly withheld rather than calibrated. Repairs are
+counted in the report header. The median-rate time-base guard was blind to
+this BY DESIGN and correctly so -- within every interval the clock is
+honest.
+
+Baseline corrections (soak of 2026-08-04, re-judged on repaired time):
+  EVKB UAC2:  duration 1315.1 s (was 1572.8), W1 +0.113 ppm (was +0.114),
+              steady envelope 916 B min 392 / max 1308 (was 1216 B min 92).
+              The min-92 "near dry-out" was a startup transient the warped
+              steady-window failed to exclude; true steady floor is 392 B.
+  macOS UAC2: duration 1260.6 s, polls 1000.0/s, W1 +0.000 ppm, envelope
+              204 B -- all unchanged in substance.
+  The poll-rate finding stands with corrected magnitude: the one unmatched
+  cell holds 916 B against 204/196/104 B for the matched three -- ~4.5x,
+  not the ~6x previously stated.
+
+Witness discipline note: run 1's numbers were only diagnosable because the
+pattern generator ships with a device-mirror unit test (sync-on-seed,
+advance-and-compare) proving the host emits exactly the sequence the device
+checks -- without it, "the wire is not carrying the pattern" and "the host
+reordered the pattern" are indistinguishable, and run 1 would have read as
+a tool bug.

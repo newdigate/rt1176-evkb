@@ -1,0 +1,10 @@
+{
+  "audio_class": 2,
+  "speed": "HS",
+  "channels": 8,
+  "subslot_bytes": 4,
+  "sample_rate_hz": 44100,
+  "max_packet_size_bytes": 800,
+  "mode": "cooperative",
+  "host_note": "MIMXRT1170-EVKB, USBHost_t36 b0cdbd7 (pattern mode), witness MC200 2AMi8o8xxxxxx UACV_COOPERATIVE=1 (uac2_coop_witness.xe md5 9662db08) -- host sends the validator LFSR via UACV_PATTERN=ON build"
+}

@@ -34,6 +34,17 @@
 // adapter.)
 #define DRIVE_FROM_TONE 1
 
+// Cooperative mode for the UAC host validator (R7, sample continuity). The
+// tone generator keeps running as the FIFO producer -- it is what paces the
+// packing path -- but the payload on the wire becomes the validator's LFSR
+// sequence, which a device built with UACV_COOPERATIVE=1 regenerates and
+// checks sample by sample. Set via -DUACV_PATTERN=ON at configure time.
+// WARNING: the pattern is full-scale noise at the device's outputs; turn
+// the amplifier down before this build streams.
+#ifndef UACV_PATTERN
+#define UACV_PATTERN 0
+#endif
+
 USBHost myusb;
 DMAMEM USBHub hub1(myusb);
 DMAMEM USBAudioOut audioOut(myusb);
@@ -199,6 +210,10 @@ void loop() {
 #if DRIVE_FROM_TONE
         audioOut.tone(440);
 #endif
+#if UACV_PATTERN
+        audioOut.patternMode(true);
+        Serial1.println("GRAPH-TEST: UACV pattern mode -- payload is the validator LFSR");
+#endif
         Serial1.println(audioOut.beginStreaming() ? "GRAPH-TEST: streaming started, 440 Hz"
                                                   : "GRAPH-TEST: STREAM START FAILED");
         stream_started = true;
@@ -318,7 +333,16 @@ void loop() {
             last_packets = p;
         }
 #if DRIVE_FROM_TONE
+#if UACV_PATTERN
+        // patfb counts frames the pattern could not be packed into (16-bit
+        // subslot geometry): non-zero means the wire is NOT carrying the
+        // pattern and the judge's R7 will report never-locked. Watch it here
+        // rather than diagnosing a mystery SKIP after a 20-minute soak.
+        Serial1.printf(" mode=pattern patfb=%lu\n",
+                       (unsigned long)audioOut.patternFallbacks());
+#else
         Serial1.println(" mode=tone");
+#endif
 #else
         Serial1.printf(" cpu=%u%% mem=%u\n", (unsigned)AudioProcessorUsage(),
                        (unsigned)AudioMemoryUsage());

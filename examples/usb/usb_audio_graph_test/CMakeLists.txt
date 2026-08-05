@@ -33,6 +33,15 @@ if(DUMP_CONFIG)
     target_compile_definitions(usb_audio_graph_test.elf PRIVATE DUMP_CONFIG=1)
 endif()
 
+# Cooperative mode for the UAC host validator: the payload becomes the
+# validator's LFSR sequence so a UACV_COOPERATIVE=1 device build can judge
+# sample continuity (rule R7). Off by default -- the pattern is full-scale
+# noise at the device's outputs.
+option(UACV_PATTERN "Send the UAC validator LFSR pattern instead of audio" OFF)
+if(UACV_PATTERN)
+    target_compile_definitions(usb_audio_graph_test.elf PRIVATE UACV_PATTERN=1)
+endif()
+
 # --- USBHost_t36 (UAC1 output) ------------------------------------------------
 # Same source set as usb_audio_uac1_test: transport core plus the UAC1 driver.
 set(USBHOST ${EVKB_USBHOST_T36_DIR})
