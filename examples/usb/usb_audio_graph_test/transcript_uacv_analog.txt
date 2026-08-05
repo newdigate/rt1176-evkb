@@ -1,0 +1,99 @@
+Analogue cross-check: block corrections made audible
+=====================================================
+2026-08-05. The device-side validator watches the USB wire. This watches what
+leaves the DAC -- MC200 analogue out 1,2 into RME Fireface UFX in 1,2,
+captured with xrec (~/Development/exclusive-audio-record) in Core Audio hog
+mode: exclusive, no OS mixing, unresampled. Analysis:
+tools/analogglitch.py. WAVs archived in uacv-captures/analog/.
+
+Not bit-exact and never claimed to be -- it is an analogue cable and a
+separate ADC clock. It measures three things the USB-side instrument
+structurally cannot: whether audio actually comes out, whether it comes out
+undistorted, and whether the device's block corrections are physically real.
+
+THE CONTROL COMES FIRST
+-----------------------
+This tool's predecessor (USBHost_t36 tools/glitchdetect.py) measured
+~4.12 events/s and nearly all of it was the measurement chain. Its own
+docstring records the cost: "a whole afternoon of conclusions was drawn from
+those numbers before the control was run." The real glitch rate at these
+offsets is 0.005-0.06/s, two orders of magnitude below that floor.
+
+Hog mode changes the picture completely. Recording the KNOWN-CLEAN host
+(master, 1000 polls/s, device-side 0 dry-outs over a 20-minute soak):
+
+    119 s interior: 0 events. Phase noise 0.021-0.414 millisamples rms.
+
+Twenty-one MICROsamples of phase noise. A single-sample discontinuity would
+stand roughly 48,000x above it. That headroom is what makes everything below
+meaningful, and it is the whole reason this is worth doing now when it was
+not before. xrec also self-reports capture integrity: PRISTINE on every run
+here -- no overloads, gaps or drops in the recorder itself.
+
+FAITHFULNESS
+------------
+The driver's built-in test tone is a 440 Hz triangle. Recorded, channel 1:
+
+    rms -7.15 dBFS, peak -2.40 dBFS; channel 2 within 0.04 dB
+    h3 -19.43 dB, h5 -27.76 dB, h7 -34.65 dB
+    ideal triangle (1/n^2): -19.08, -27.96, -33.80
+    even harmonics: h2 -91 dB, h4 -104 dB, h6 -111 dB
+
+Odd harmonics within 0.9 dB of the ideal across three of them, evens 90+ dB
+down. The waveform survives host -> USB -> device -> DAC -> cable -> ADC
+intact. Nothing in the audio path is mangling the stream.
+
+THE A/B -- CORRECTIONS ARE PHYSICALLY REAL
+-------------------------------------------
+Duration-matched, 120 s recorded each, same witness, same tone, same cable.
+
+  closed loop   master, 1000 polls/s      0 events
+  open loop     1732ed3~1, no feedback   13 events, one per 9.2 s,
+                                          jumps ~29.0 samples (a few ~33.7)
+
+Against the device-side counters, which know nothing about the DAC:
+
+  same open-loop run, xscope:   18 overflows / 170.7 s = one per 9.5 s
+  corpus case B, earlier run:   32 overflows / 310.8 s = one per 9.7 s
+
+9.2, 9.5, 9.7 seconds. Three measurements, two of them from an instrument on
+the other side of a DAC and an analogue cable.
+
+The jump SIZE is the second agreement and the better one, because it is
+calibrated rather than statistical. The device's correction quantum is 1024 B,
+which at 8 channels x 4-byte subslots is 32 audio frames. The measured phase
+steps cluster at ~29 samples. The narrowband filter smears a step over its
+impulse response, so ~29-34 around a true 32 is what this estimator should
+report -- and it reports exactly that, thirteen times, with no other
+population.
+
+So the "block correction" that has been an abstraction in every report this
+tool has ever produced is a real, measurable, ~32-sample discontinuity in the
+audio, arriving every ~9.4 seconds, on a host that reads no feedback. The
+closed-loop host produces none.
+
+WHAT THIS DOES NOT MEASURE
+--------------------------
+Pitch is not a rate instrument here. The recorded fundamental measures the
+ratio of two clocks -- the device's DAC and the RME's ADC -- and neither is a
+reference. Worse, it is not stable across runs: two closed-loop recordings
+five minutes apart read 439.9973 and 439.9807 Hz, a 38 ppm spread with zero
+glitches in either. Whatever drifts (device crystal warming, the RME, or
+both) is larger than the effects worth measuring, so no rate claim should
+rest on it.
+
+The open-loop recording reads 440.0223 Hz, +94 ppm above the closed-loop run.
+That one IS explicable: 13 corrections x ~30 dropped samples over 119 s is
+~74 ppm of removed audio, which a linear phase fit absorbs as an apparent
+pitch rise. Consistent in sign and order, but built on the same unstable
+baseline, so it is corroboration and not measurement.
+
+BENCH NOTE
+----------
+Recording and xscope-capturing simultaneously is at the edge of what this Mac
+will do. The open-loop run's device-side capture was clean; the closed-loop
+run's came back with 2 missing marks and a correctly INVALID report, xrec's
+hog-mode USB traffic competing with the XTAG stream -- the same contention
+that cost a mark when the console was held for a whole capture. The WAV is
+unaffected in both cases. If both sides must be trusted in one run, expect to
+repeat it; if only the analogue side matters, drop the xscope capture.
