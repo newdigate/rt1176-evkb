@@ -271,6 +271,32 @@
       "ground_truth": "The EMA was never a standalone commit, so there is no parent to check out. Raw-chasing measured +4.8 ppm of sizing bias on this bench during the UAC1 feedback work -- a buffer excursion every ~45 min.",
       "attempt_1": "FAILED TO REPRODUCE, and the reason is the finding. Removing the EMA alone, leaving the shipping 1000 polls/s reader, gave +0.389 ppm over 600 s -- 7x the shipping servo's -0.052 ppm but inside the 1 ppm floor, so W3 correctly PASSed. At one poll per frame the slew limiter (4 mHz/frame) IS the low-pass filter: each raw report is superseded before sizing can travel toward a rail. The historical +4.8 ppm was measured at 62.5 polls/s, where a report persists 16 frames and the asymmetry becomes bias. The INJECTION was wrong, not the expectation -- so the patch now reproduces the historical configuration (raw report AND 62.5 polls/s) rather than the expectation being softened.",
       "finding": "The EMA's protective value shrinks as the poll rate approaches the device's report rate. Not a licence to drop it: the horizon invariant still guards the 62.5 polls/s FS reader, which has no such margin."
+    },
+    {
+      "id": "G_oversize",
+      "repo": "USBHost_t36",
+      "commit": "master",
+      "defect_patch": "defects/r4a-oversize.patch",
+      "witness_config": "2AMi8o8xxxxxx",
+      "manifest": {
+        "audio_class": 2,
+        "speed": "HS",
+        "channels": 8,
+        "subslot_bytes": 4,
+        "sample_rate_hz": 44100,
+        "max_packet_size_bytes": 800,
+        "mode": "passive",
+        "host_note": "USBHost_t36 master + defects/r4a-oversize.patch -- microframe 0 carries 832 B against an advertised 800"
+      },
+      "duration_s": 120,
+      "expect": {
+        "R4a": "FAIL"
+      },
+      "expect_reasoning": "R4a FAIL if the oversize packet reaches the device's size histogram. It may not: a packet beyond wMaxPacketSize is a babble condition, and XUD may refuse or truncate it before lib_xua's decoupler counts anything. If the histogram never shows 832 the rule is UNPROVABLE ON THIS BENCH, which is a fact about the device stack, not a reason to weaken R4a. Recorded either way. R4b should stay PASS: 832 is 26 whole 32 B audio frames, so only the size rule has cause to fire.",
+      "ground_truth": "No host in this tree ever oversized a packet. This is the last rule with no hardware proof.",
+      "attempt_1": "832 B EVERY frame. Two predictions falsified at once. (a) R4a is NOT structurally blocked: the prediction was that XUD would refuse a packet beyond wMaxPacketSize as babble before the decoupler could count it. False -- the histogram came back sizes [160, 192, 832], the device accepted and counted it. (b) But R4a never ran, because the manifest-contradiction guard fired first: mean packet 340.3 B against a 176.4 B prediction, 1.93x, and a mis-declared format is indistinguishable from an oversizing host in the mean, so the whole report was invalidated. The guard is correct -- it exists so a wrong manifest cannot produce a cited FAIL against a conformant host. The consequence is that R4a can only rule on oversize RARE or SMALL enough to keep the mean within one audio frame of prediction. The INJECTION was retuned, not the guard.",
+      "finding": "Two of the judge's safety mechanisms can pre-empt each other: the capture-level manifest guard runs before any rule, so a host whose defect is large enough to move the mean packet size gets an INVALID report rather than a cited FAIL naming the defect. Honest, but it means gross oversize is reported as 'cannot judge' rather than 'this host oversizes'. Worth revisiting only with a way to tell the two causes apart -- the capture alone cannot.",
+      "result_note": "R4a FAIL on 1308 packets of 832 B out of 1041200. R4b stayed PASS, so the two size rules are proven distinct in both directions (H proved the converse: misaligned but not oversized). UNREQUESTED BONUS FINDING: R3 also FAILed, or_acc=0xFFFF00E0 -- the low byte carrying data means the oversize packet knocked the device's subslot unpacking out of alignment, since the device's OUT geometry is sized for wMaxPacketSize. Collateral damage from the size defect, caught independently by a rule that knows nothing about packet size, and evidence the defect is materially harmful rather than merely nonconformant. W1/W3 SKIPped for want of a fittable segment: 86 dry-outs chopped the fill trace, which is the segmentation guard refusing to fit across corrections."
     }
   ]
 }

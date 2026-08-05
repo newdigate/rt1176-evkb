@@ -1,0 +1,191 @@
+{
+  "header": {
+    "vcd": "/Users/nicholasnewdigate/Development/rt1170/uacv-captures/corpus/G_oversize.vcd",
+    "duration_s": 130.79320952,
+    "missing_marks": 0,
+    "wrap_repairs": 0,
+    "observer_sha": "b424b0e0",
+    "host_note": "USBHost_t36 master + defects/r4a-oversize.patch -- microframe 0 carries 832 B against an advertised 800"
+  },
+  "verdicts": [
+    {
+      "rule_id": "R1",
+      "level": "PASS",
+      "summary": "feedback polled 126715 times (968.8/s)",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "feedback_polls": 126715,
+        "duration_s": 130.79
+      }
+    },
+    {
+      "rule_id": "R2",
+      "level": "PASS",
+      "summary": "no packets arrived during alt 0",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "packets_while_alt0": 0,
+        "total_packets": 1041200
+      }
+    },
+    {
+      "rule_id": "R3",
+      "level": "FAIL",
+      "summary": "low byte of the subslot carries data (or_acc=0xFFFF00E0), so samples are not left-justified",
+      "citation": "USB Audio Data Formats 2.0 section 2.3.1 [DOC MISSING]",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "or_acc": "0xFFFF00E0",
+        "and_acc": "0x00000000",
+        "nonsilent_frames": 5731784
+      }
+    },
+    {
+      "rule_id": "R4a",
+      "level": "FAIL",
+      "summary": "packet sizes exceed the endpoint's declared wMaxPacketSize of 800 B: {832: 1308}",
+      "citation": "USB 2.0 section 5.6.3 [UNVERIFIED]",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "sizes": {
+          "160": 507486,
+          "192": 532506,
+          "832": 1308
+        },
+        "wMaxPacketSize_bytes": 800,
+        "hist_overflow": 0
+      }
+    },
+    {
+      "rule_id": "R4b",
+      "level": "PASS",
+      "summary": "all packets are whole multiples of 32 B",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "not_multiple": 0,
+        "short_discarded": 0,
+        "frame_bytes": 32,
+        "total_packets": 1041200
+      }
+    },
+    {
+      "rule_id": "R7",
+      "level": "SKIP",
+      "summary": "continuity needs a known test pattern",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "passive mode: no test pattern sent",
+      "evidence": {
+        "pattern_errors": 0,
+        "resyncs": 0,
+        "pattern_syncs": 0,
+        "first_error_index": 0,
+        "first_expected": "0x00000000",
+        "first_actual": "0x00000000"
+      }
+    },
+    {
+      "rule_id": "W2",
+      "level": "WARN",
+      "summary": "packet sizes outside the fractional-sample floor/ceiling [160, 192]: {832: 1308}",
+      "citation": "",
+      "consequence": "worst deviation is 20.5 audio frames from nominal, so the device's OUT FIFO must carry that much extra headroom on top of drift wander. Permitted by the spec with an asynchronous feedback loop, but it consumes margin that exists to absorb rate error.",
+      "missing_witness": "",
+      "evidence": {
+        "sizes": {
+          "160": 507486,
+          "192": 532506,
+          "832": 1308
+        },
+        "expected": [
+          160,
+          192
+        ],
+        "hist_overflow": 0
+      }
+    },
+    {
+      "rule_id": "W1",
+      "level": "SKIP",
+      "summary": "no fill-probe slope available",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "the out_fifo_fill trace in the capture",
+      "evidence": {
+        "fill_slope_bytes_per_s": null,
+        "correction_quantum_bytes": 1024
+      }
+    },
+    {
+      "rule_id": "W3",
+      "level": "SKIP",
+      "summary": "no fill-probe slope available",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "the out_fifo_fill trace in the capture",
+      "evidence": {
+        "feedback_polls": 126715,
+        "device_fb_value": "0x00058318",
+        "fill_slope_bytes_per_s": null
+      }
+    }
+  ],
+  "metrics": [
+    [
+      "duration",
+      "130.79 s over 10413 state blocks"
+    ],
+    [
+      "packets",
+      "1041200 (7960.7/s, nominal 8000/s)"
+    ],
+    [
+      "packet sizes",
+      "160 B x507486, 192 B x532506, 832 B x1308"
+    ],
+    [
+      "feedback polls",
+      "126715 (968.8/s)"
+    ],
+    [
+      "device feedback value",
+      "0x00058318 (raw; encoding undecided, see metrics.py)"
+    ],
+    [
+      "alt setting",
+      "1 now, 0 transitions; changes: none"
+    ],
+    [
+      "class requests",
+      "0x5 (bits [0, 2])"
+    ],
+    [
+      "host active",
+      "1 now; changes: none"
+    ],
+    [
+      "OUT FIFO fill",
+      "min 60 B, max 3040 B, mean 1086 B over 104134 samples"
+    ],
+    [
+      "OUT FIFO fill (steady)",
+      "min 60 B, max 2308 B, envelope 2248 B, mean 1066 B over 80251 samples from 30 s in"
+    ],
+    [
+      "fill slope",
+      "not fitted (no fill probe, or no segment long enough between corrections)"
+    ],
+    [
+      "block corrections",
+      "dry-outs 86, overflows 1, underflows 1"
+    ]
+  ]
+}

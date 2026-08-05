@@ -1,0 +1,57 @@
+UAC host conformance report
+============================================================
+host under test : USBHost_t36 master + defects/r4a-oversize.patch -- microframe 0 carries 832 B against an advertised 800
+capture         : /Users/nicholasnewdigate/Development/rt1170/uacv-captures/corpus/G_oversize.vcd
+duration        : 130.8 s
+xscope missing  : 0
+observer build  : b424b0e0
+
+[PASS   ] R1    feedback polled 126715 times (968.8/s)
+           evidence: feedback_polls=126715, duration_s=130.79
+
+[PASS   ] R2    no packets arrived during alt 0
+           evidence: packets_while_alt0=0, total_packets=1041200
+
+[FAIL   ] R3    low byte of the subslot carries data (or_acc=0xFFFF00E0), so samples are not left-justified
+           cites: USB Audio Data Formats 2.0 section 2.3.1 [DOC MISSING]
+           evidence: or_acc=0xFFFF00E0, and_acc=0x00000000, nonsilent_frames=5731784
+
+[FAIL   ] R4a   packet sizes exceed the endpoint's declared wMaxPacketSize of 800 B: {832: 1308}
+           cites: USB 2.0 section 5.6.3 [UNVERIFIED]
+           evidence: sizes={160: 507486, 192: 532506, 832: 1308}, wMaxPacketSize_bytes=800, hist_overflow=0
+
+[PASS   ] R4b   all packets are whole multiples of 32 B
+           evidence: not_multiple=0, short_discarded=0, frame_bytes=32, total_packets=1041200
+
+[SKIP   ] R7    continuity needs a known test pattern
+           missing: passive mode: no test pattern sent
+           evidence: pattern_errors=0, resyncs=0, pattern_syncs=0, first_error_index=0, first_expected=0x00000000, first_actual=0x00000000
+
+[WARN   ] W2    packet sizes outside the fractional-sample floor/ceiling [160, 192]: {832: 1308}
+           consequence: worst deviation is 20.5 audio frames from nominal, so the device's OUT FIFO must carry that much extra headroom on top of drift wander. Permitted by the spec with an asynchronous feedback loop, but it consumes margin that exists to absorb rate error.
+           evidence: sizes={160: 507486, 192: 532506, 832: 1308}, expected=[160, 192], hist_overflow=0
+
+[SKIP   ] W1    no fill-probe slope available
+           missing: the out_fifo_fill trace in the capture
+           evidence: fill_slope_bytes_per_s=None, correction_quantum_bytes=1024
+
+[SKIP   ] W3    no fill-probe slope available
+           missing: the out_fifo_fill trace in the capture
+           evidence: feedback_polls=126715, device_fb_value=0x00058318, fill_slope_bytes_per_s=None
+
+metrics (INFO -- no verdict, no effect on exit code)
+  duration               : 130.79 s over 10413 state blocks
+  packets                : 1041200 (7960.7/s, nominal 8000/s)
+  packet sizes           : 160 B x507486, 192 B x532506, 832 B x1308
+  feedback polls         : 126715 (968.8/s)
+  device feedback value  : 0x00058318 (raw; encoding undecided, see metrics.py)
+  alt setting            : 1 now, 0 transitions; changes: none
+  class requests         : 0x5 (bits [0, 2])
+  host active            : 1 now; changes: none
+  OUT FIFO fill          : min 60 B, max 3040 B, mean 1086 B over 104134 samples
+  OUT FIFO fill (steady) : min 60 B, max 2308 B, envelope 2248 B, mean 1066 B over 80251 samples from 30 s in
+  fill slope             : not fitted (no fill probe, or no segment long enough between corrections)
+  block corrections      : dry-outs 86, overflows 1, underflows 1
+
+------------------------------------------------------------
+3 PASS, 2 FAIL, 1 WARN, 3 SKIP

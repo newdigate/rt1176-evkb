@@ -118,6 +118,37 @@ INJECTED DEFECTS (rules with no reachable historical negative)
      it -- the horizon invariant still guards the 62.5 polls/s FS reader,
      which has no such margin.
 
+  G  r4a-oversize.patch                                      OK
+     R4a FAIL: 1308 packets of 832 B against an advertised 800. R4b stayed
+     PASS -- 832 is 26 whole 32 B frames -- so G and H prove the two size
+     rules distinct in both directions.
+
+     TWO PREDICTIONS FALSIFIED getting here, both mine. (a) R4a was called
+     structurally blocked, on the theory that a packet beyond wMaxPacketSize
+     is a babble condition XUD would refuse before the decoupler could count
+     it. False: the first attempt put 832 straight into the device's size
+     histogram. The device stack accepts and counts it. (b) That attempt
+     still never reached R4a, because the manifest-contradiction guard fired
+     first -- mean packet 340.3 B against a 176.4 B prediction, 1.93x -- and
+     a mis-declared format is indistinguishable from an oversizing host in
+     the mean. The guard is right; the consequence is that R4a can only rule
+     on oversize RARE or SMALL enough to keep the mean within one audio
+     frame of prediction. The INJECTION was retuned (1 frame in 100, and
+     rate-neutral), not the guard.
+
+     Worth knowing: two of the judge's safety mechanisms can pre-empt each
+     other. A host whose defect is gross enough to move the mean packet size
+     gets "cannot judge" rather than a cited FAIL naming the defect. Honest,
+     but blunt -- and only fixable with a way to tell the two causes apart,
+     which the capture alone does not carry.
+
+     UNREQUESTED FINDING: R3 also FAILed on this capture,
+     or_acc=0xFFFF00E0. The low byte carrying data means the oversize packet
+     knocked the device's subslot unpacking out of alignment -- its OUT
+     geometry is sized for wMaxPacketSize. Collateral damage caught by a
+     rule that knows nothing about packet size, and evidence the defect is
+     materially harmful rather than merely nonconformant.
+
 WHAT THE CORPUS CAUGHT THAT WAS NOT THE VALIDATOR
 --------------------------------------------------
 1. SETTLE-WINDOW CONTAMINATION (fixed). Every other script on this bench
@@ -161,9 +192,6 @@ OPEN
   packet arrival, so "device up, host silent" becomes a positive
   observation. That changes the wire format's emission rule, not its
   layout.
-* R4a is the last rule with no hardware proof, and it looks structurally
-  blocked on this bench: MAX_UFRAME_BYTES caps a microframe at 224 B against
-  the witness's advertised 800 B, so the driver cannot oversize a packet
-  without also raising its own geometry, and XUD may refuse the traffic
-  before the decoupler could count it. If that holds, R4a is unprovable here
-  and should be recorded as such rather than the rule weakened.
+* Nothing outstanding on rule coverage: every rule has now fired on
+  hardware. What remains open is the corpus-host FS anomaly above and case
+  E's instrument blind spot.

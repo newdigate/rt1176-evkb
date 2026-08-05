@@ -1,0 +1,85 @@
+# INJECTED DEFECT -- NEVER APPLY TO A SHIPPING BUILD.
+#
+# One microframe in every 100 frames carries 832 B against the witness
+# endpoint's advertised wMaxPacketSize of 800 B, to make R4a fire on
+# hardware. alt_mps_hs is overridden to 1024 because itd_fill_out refuses
+# len > max_packet and the descriptor could not otherwise be built.
+#
+# TWO FINDINGS FROM BUILDING THIS, both recorded because they were both
+# predicted wrong (2026-08-05):
+#
+# 1. R4a IS reachable on this bench. The prediction was that a packet beyond
+#    wMaxPacketSize is a babble condition XUD would refuse before lib_xua's
+#    decoupler could count it, making R4a unprovable here. False: an
+#    aggressive first version (832 B every frame) put 832 straight into the
+#    device's size histogram -- sizes came back [160, 192, 832]. The device
+#    stack accepts and counts it.
+#
+# 2. But that version never reached R4a, because the judge's
+#    manifest-contradiction guard fired first: the mean packet size was 1.93x
+#    the declared prediction, and a mis-declared format and an oversizing
+#    host are indistinguishable in the mean, so the report was invalidated
+#    wholesale. The guard is right to do that -- it exists so a wrong
+#    manifest cannot produce a cited FAIL against a conformant host -- but it
+#    means R4a can only rule on oversize that is RARE or SMALL enough to
+#    leave the mean inside one audio frame of the prediction. That
+#    interaction between two safety mechanisms is worth knowing about.
+#
+# Hence this version: rare (1 frame in 100) and rate-neutral (832 + three
+# normal microframes ~= 1408 B against a nominal 1411), so the mean moves by
+# under 1 B and R4a gets to speak. 832 is 26 whole 32 B audio frames, so R4b
+# stays clean and only the size rule has cause to fire.
+#
+# Apply:  git apply tools/uacvalidate/defects/r4a-oversize.patch
+# Revert: git checkout -- usb_audio.cpp
+diff --git a/usb_audio.cpp b/usb_audio.cpp
+index 79731fc..eca05ac 100644
+--- a/usb_audio.cpp
++++ b/usb_audio.cpp
+@@ -284,10 +284,33 @@ void USBAudioOut::fillFrame(uint8_t *dst, uint16_t bytes)
+ // transaction on the wire.
+ void USBAudioOut::fillFrameHS(uint32_t slot)
+ {
++	/* INJECTED DEFECT: see the sizing block below. */
++	static uint32_t injected_frame_count = 0;
++	const bool oversize_frame = ((++injected_frame_count % 100u) == 0u);
+ 	uint32_t off = 0;
+ 	for (int k = 0; k < 8; k++) {
+ 		uint16_t bytes = uac2_uframe_bytes_mhz(&frame_accum, fb_sizing_mhz,
+ 		                                       ch_total_out, subslot_out);
++		/* INJECTED DEFECT: one microframe in every 100 frames carries
++		 * 832 B against the witness's advertised 800 B wMaxPacketSize.
++		 *
++		 * RARE and RATE-NEUTRAL on purpose. An aggressive version (832 B
++		 * every frame) was tried first and never reached R4a: the judge's
++		 * manifest-contradiction guard saw the mean packet at 1.93x the
++		 * declared prediction and invalidated the whole report, because a
++		 * mis-declared format and an oversizing host look identical in the
++		 * mean. Here the offending frame carries 832 + 3 normal
++		 * microframes ~= 1408 B against a nominal 1411, so the mean moves
++		 * by under 1 B -- well inside the guard's one-audio-frame
++		 * tolerance -- and R4a gets to rule.
++		 *
++		 * 832 is 26 whole 32 B audio frames, so R4b has no cause to fire
++		 * and R4a is isolated. Frame total stays inside the existing
++		 * 8 x MAX_UFRAME_BYTES slot buffer. */
++		if (oversize_frame) {
++			if (k == 0)      bytes = 832;
++			else if (k >= 4) bytes = 0;
++		}
+ 		if (off + bytes > sizeof(ring_buf_hs[0])) bytes = 0;  // cannot happen past the begin guard; belt+braces
+ 		uframe_len[slot][k] = bytes;
+ 		if (bytes == 0) continue;
+@@ -519,8 +542,10 @@ bool USBAudioOut::beginStreamingHS(const UAC1AltSetting *alt)
+ 	uint32_t worst = (req_rate / 8000u + 1u) * (uint32_t)ch_total_out * subslot_out;
+ 	if (worst > MAX_UFRAME_BYTES) return false;
+ 	if (ch_total_out < 2 || subslot_out < 2 || subslot_out > 4) return false;
+-	alt_mps_hs = alt->max_packet_size < MAX_UFRAME_BYTES
+-	           ? alt->max_packet_size : MAX_UFRAME_BYTES;
++	/* INJECTED DEFECT: itd_fill_out refuses len > max_packet, so the
++	 * oversize microframe below is unschedulable without this. 1024 is the
++	 * EHCI per-transaction ceiling. */
++	alt_mps_hs = 1024;
+ 
+ 	// Reset the rate brain before arming. This block must run BEFORE the
+ 	// arming loop: fillFrameHS() sizes its microframes from fb_sizing_mhz,
