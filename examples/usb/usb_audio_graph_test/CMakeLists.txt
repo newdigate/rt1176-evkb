@@ -37,6 +37,14 @@ endif()
 # validator's LFSR sequence so a UACV_COOPERATIVE=1 device build can judge
 # sample continuity (rule R7). Off by default -- the pattern is full-scale
 # noise at the device's outputs.
+# Negotiate a different rate with the device. 44100 needs fractional packet
+# sizing (176/180 alternating); 48000 is exactly 48 samples per 1 ms frame and
+# so a constant 192 B. Tone mode only -- the audio graph has no resampler.
+set(USB_RATE_HZ "" CACHE STRING "USB sample rate to negotiate; empty = the graph's rate")
+if(NOT USB_RATE_HZ STREQUAL "")
+    target_compile_definitions(usb_audio_graph_test.elf PRIVATE USB_RATE_HZ=${USB_RATE_HZ})
+endif()
+
 option(UACV_PATTERN "Send the UAC validator LFSR pattern instead of audio" OFF)
 if(UACV_PATTERN)
     target_compile_definitions(usb_audio_graph_test.elf PRIVATE UACV_PATTERN=1)

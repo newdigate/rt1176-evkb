@@ -34,6 +34,32 @@
 // adapter.)
 #define DRIVE_FROM_TONE 1
 
+// --- USB sample rate -----------------------------------------------------
+//
+// The rate NEGOTIATED with the device, which is not automatically the rate
+// the Audio library runs at. Default is the graph's rate; -DUSB_RATE_HZ=48000
+// asks the device for 48 kHz instead.
+//
+// Why that is worth a knob: 44100 is not a whole number of samples per 1 ms
+// frame, so the packet sizer alternates 176/180 bytes nine frames to one,
+// and every packet boundary carries a fractional-sample remainder. 48000 is
+// exactly 48 samples per frame, so packets are a constant 192 bytes and that
+// entire mechanism disappears. It does NOT fix rate drift -- an open-loop
+// host and a device with its own crystal still diverge, and that is what
+// forces block corrections -- so this distinguishes the two causes rather
+// than curing either.
+#ifndef USB_RATE_HZ
+#define USB_RATE_HZ ((uint32_t)AUDIO_SAMPLE_RATE_EXACT)
+#endif
+#if !DRIVE_FROM_TONE
+// Not a #if: AUDIO_SAMPLE_RATE_EXACT is a float literal and the preprocessor
+// cannot compare it. static_assert can, and fires at compile time all the same.
+static_assert((double)(USB_RATE_HZ) == (double)AUDIO_SAMPLE_RATE_EXACT,
+              "USB_RATE_HZ may only differ from the graph rate in tone mode: "
+              "the graph produces samples at AUDIO_SAMPLE_RATE_EXACT and "
+              "nothing in this path resamples them.");
+#endif
+
 // Cooperative mode for the UAC host validator (R7, sample continuity). The
 // tone generator keeps running as the FIFO producer -- it is what paces the
 // packing path -- but the payload on the wire becomes the validator's LFSR
@@ -156,7 +182,7 @@ void setup() {
     Serial1.println("GRAPH-TEST: MODE = driver tone generator (graph bypassed)");
     // AudioOutputUSBHost would normally do this; without it the driver would
     // stay at its 48 kHz default and the test would not be comparable.
-    audioOut.format((uint32_t)AUDIO_SAMPLE_RATE_EXACT, 2, 16);
+    audioOut.format(USB_RATE_HZ, 2, 16);
 #else
     Serial1.printf("GRAPH-TEST: MODE = audio graph; rate=%u Hz, block=%d frames, fifo target=%lu\n",
                    (unsigned)AUDIO_SAMPLE_RATE_EXACT, AUDIO_BLOCK_SAMPLES,
@@ -204,7 +230,7 @@ void loop() {
                                (int)audioOut.followingFeedback());
             }
         }
-        if (audioOut.rate() != (uint32_t)AUDIO_SAMPLE_RATE_EXACT) {
+        if (audioOut.rate() != USB_RATE_HZ) {
             Serial1.println("GRAPH-TEST: WARNING rate mismatch -- playback will be off pitch");
         }
 #if DRIVE_FROM_TONE
@@ -288,8 +314,8 @@ void loop() {
                        (unsigned)audioOut.controlState(),
                        (unsigned long)audioOut.controlTimeouts(),
                        (unsigned long)audioOut.controlQueueFails(),
-                       (unsigned)AUDIO_SAMPLE_RATE_EXACT, (unsigned long)audioOut.rate(),
-                       (audioOut.ready() && audioOut.rate() != (uint32_t)AUDIO_SAMPLE_RATE_EXACT)
+                       (unsigned)USB_RATE_HZ, (unsigned long)audioOut.rate(),
+                       (audioOut.ready() && audioOut.rate() != USB_RATE_HZ)
                            ? " RATE-MISMATCH" : "");
         if (audioOut.streaming()) {
             uint32_t p = audioOut.packetsSent();
