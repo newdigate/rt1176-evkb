@@ -1,11 +1,11 @@
 {
   "header": {
-    "vcd": "/Users/nicholasnewdigate/Development/rt1170/uacv-captures/corpus/E_device_swap_wedge.vcd",
-    "duration_s": 136.05221490999998,
+    "vcd": "/Users/nicholasnewdigate/Development/rt1170/uacv-captures/corpus/S_silent_host.vcd",
+    "duration_s": 55.990890220000004,
     "missing_marks": 0,
-    "wrap_repairs": 1,
+    "wrap_repairs": 0,
     "observer_sha": "0a27a960",
-    "host_note": "USBHost_t36 090eadb~1 -- device-swap wedge, after an FS->HS swap"
+    "host_note": "USBHost_t36 35b0cce~1 -- UAC1-only claim(), so it never claims the UAC2 witness: device up, host silent"
   },
   "verdicts": [
     {
@@ -17,62 +17,59 @@
       "missing_witness": "an active stream (alt > 0)",
       "evidence": {
         "feedback_polls": 0,
-        "duration_s": 136.05
+        "duration_s": 55.99
       }
     },
     {
       "rule_id": "R2",
-      "level": "FAIL",
-      "summary": "1087005 packets arrived while the OUT interface was in alt 0, which reserves no bandwidth and exposes no endpoint",
-      "citation": "UAC 2.0 sections 3.16.2 and 4.9.1 [partial]; USB 2.0 section 9.4.10 [UNVERIFIED]",
+      "level": "SKIP",
+      "summary": "no packets arrived at all",
+      "citation": "",
       "consequence": "",
-      "missing_witness": "",
+      "missing_witness": "any OUT packet",
       "evidence": {
-        "packets_while_alt0": 1087005,
-        "total_packets": 1087005
+        "packets_while_alt0": 0,
+        "total_packets": 0
       }
     },
     {
       "rule_id": "R3",
-      "level": "PASS",
-      "summary": "low byte never non-zero: samples are left-justified",
+      "level": "SKIP",
+      "summary": "only 0 non-silent frames (need 10000); a silent stream would pass this check for the wrong reason",
       "citation": "",
       "consequence": "",
-      "missing_witness": "",
+      "missing_witness": "sufficient signal in the stream",
       "evidence": {
-        "or_acc": "0xFFFF0000",
-        "and_acc": "0x00000000",
-        "nonsilent_frames": 5991822
+        "or_acc": "0x00000000",
+        "and_acc": "0xFFFFFFFF",
+        "nonsilent_frames": 0
       }
     },
     {
       "rule_id": "R4a",
-      "level": "PASS",
-      "summary": "all packets within the declared 800 B",
+      "level": "SKIP",
+      "summary": "no packets observed",
       "citation": "",
       "consequence": "",
-      "missing_witness": "",
+      "missing_witness": "any OUT packet",
       "evidence": {
-        "sizes": {
-          "192": 557094,
-          "160": 529911
-        },
+        "sizes": {},
         "wMaxPacketSize_bytes": 800,
         "hist_overflow": 0
       }
     },
     {
       "rule_id": "R4b",
-      "level": "PASS",
-      "summary": "all packets are whole multiples of 32 B",
+      "level": "SKIP",
+      "summary": "no packets observed",
       "citation": "",
       "consequence": "",
-      "missing_witness": "",
+      "missing_witness": "any OUT packet",
       "evidence": {
         "not_multiple": 0,
         "short_discarded": 0,
         "frame_bytes": 32,
-        "total_packets": 1087005
+        "total_packets": 0
       }
     },
     {
@@ -93,16 +90,13 @@
     },
     {
       "rule_id": "W2",
-      "level": "PASS",
-      "summary": "packet sizes are the expected floor/ceiling pair [160, 192]",
+      "level": "SKIP",
+      "summary": "no packets observed",
       "citation": "",
       "consequence": "",
-      "missing_witness": "",
+      "missing_witness": "any OUT packet",
       "evidence": {
-        "sizes": {
-          "192": 557094,
-          "160": 529911
-        },
+        "sizes": {},
         "expected": [
           160,
           192
@@ -112,16 +106,14 @@
     },
     {
       "rule_id": "W1",
-      "level": "WARN",
-      "summary": "residual rate error +85.26 ppm after the feedback loop",
+      "level": "SKIP",
+      "summary": "no fill-probe slope available",
       "citation": "",
-      "consequence": "a +85.26 ppm residual against the device's 1024 B correction quantum: at +120.321 B/s this host will force a block correction -- silence insertion or dropped packets, audible either way -- every 9 s (0.1 min).",
-      "missing_witness": "",
+      "consequence": "",
+      "missing_witness": "the out_fifo_fill trace in the capture",
       "evidence": {
-        "fill_slope_bytes_per_s": 120.32130130400057,
-        "correction_quantum_bytes": 1024,
-        "residual_ppm": 85.262,
-        "seconds_between_corrections": 8.5
+        "fill_slope_bytes_per_s": null,
+        "correction_quantum_bytes": 1024
       }
     },
     {
@@ -134,22 +126,22 @@
       "evidence": {
         "feedback_polls": 0,
         "device_fb_value": "0x00058318",
-        "fill_slope_bytes_per_s": 120.32130130400057
+        "fill_slope_bytes_per_s": null
       }
     }
   ],
   "metrics": [
     [
       "duration",
-      "136.05 s over 13606 state blocks"
+      "55.99 s over 5600 state blocks"
     ],
     [
       "packets",
-      "1087005 (7989.6/s, nominal 8000/s)"
+      "0 (0.0/s, nominal 8000/s)"
     ],
     [
       "packet sizes",
-      "160 B x529911, 192 B x557094"
+      "none recorded"
     ],
     [
       "feedback polls",
@@ -165,7 +157,7 @@
     ],
     [
       "class requests",
-      "0x1 (bits [0])"
+      "0x0 (none arrived) -- host was active but completed no class request"
     ],
     [
       "host active",
@@ -173,19 +165,15 @@
     ],
     [
       "OUT FIFO fill",
-      "min 556 B, max 3268 B, mean 2469 B over 108703 samples"
-    ],
-    [
-      "OUT FIFO fill (steady)",
-      "min 1824 B, max 3268 B, envelope 1444 B, mean 2549 B over 84702 samples from 30 s in"
+      "no fill probe in this capture"
     ],
     [
       "fill slope",
-      "+120.321 B/s (+85.26 ppm)"
+      "not fitted (no fill probe, or no segment long enough between corrections)"
     ],
     [
       "block corrections",
-      "dry-outs 1, overflows 13, underflows ?"
+      "dry-outs ?, overflows ?, underflows ? (no probes in this capture)"
     ]
   ]
 }

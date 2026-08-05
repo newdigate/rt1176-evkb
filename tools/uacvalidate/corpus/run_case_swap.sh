@@ -49,7 +49,7 @@ PY
 
 image_for() {
   case "$1" in
-    2AMi8o8xxxxxx) echo "$IMAGES/uac2_passive_b424b0e0.xe" ;;
+    2AMi8o8xxxxxx) echo "$IMAGES/uac2_passive_0a27a960.xe" ;;
     1AMi2o2xxxxxx) echo "$IMAGES/uac1_16bit_witness.xe" ;;
     *) echo "" ;;
   esac

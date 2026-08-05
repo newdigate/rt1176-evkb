@@ -60,15 +60,37 @@ RESULTS
      read audio=ready alt=1 pkts/s=0 with the FIFO frozen at 3854 -- claim
      and control state surviving while nothing is transmitted, matching the
      recorded audio=ready uac2=0 alt=1 pkts/s=0.
-     The tool reports capture-level INVALID rather than the per-rule SKIPs
-     the plan predicted, and the reason is a FINDING: uacvEmitBlock sits
-     inside the decoupler's packet-arrival path, so a host that transmits
-     nothing yields a capture with zero state blocks -- indistinguishable
-     from a dead collector. INVALID is the honest answer to that input, but
-     it means the validator can only decline to rule here, never attribute.
-     The expectation was corrected to what the tool does AND strengthened:
-     expect_no_pass asserts that no rule may PASS on a capture where nothing
-     was transmitted, whatever shape the tool uses to say so.
+     FIXED. The first run reported capture-level INVALID rather than the
+     per-rule SKIPs the plan predicted, because uacvEmitBlock sat inside the
+     decoupler's packet-arrival path: a host that transmits nothing yielded a
+     capture with zero state blocks, indistinguishable from a dead collector.
+     lib_xua 0a27a960 moves emission to a polled timer in the decoupler's own
+     (free-running) loop, so the block is sampled on wall-clock time. A
+     silent host now produces blocks with pkt_count stationary, the rules run,
+     and they SKIP with named witnesses. Expectations returned to what the
+     plan originally asked for.
+
+     THE CASE IS NONDETERMINISTIC and that is recorded rather than smoothed:
+     090eadb~1 predates both the device-swap rebuild and the alt-0 gate, so
+     after a swap this host either goes silent OR zombie-streams the stale
+     ring into alt 0 (the re-run did the latter -- 1087005 packets at alt 0,
+     a correct R2 FAIL, which is case C's finding from the same lineage).
+     Repeat the run rather than rewriting the expectation. S_silent_host
+     exists so the emission fix has a guard that does not depend on the coin
+     flip.
+
+  S  35b0cce~1   device up, host never claims                OK
+     The deterministic regression test for the emission rule. This host's
+     claim() is UAC1-only, so against the UAC2 witness it provably never
+     claims and never transmits. Measured after the fix: 5600 blocks over
+     56.0 s = 100.0 Hz exactly, pkt_count stationary at 0, host_active=1,
+     and every rule SKIPping with a named missing witness -- 'no packets
+     arrived at all', 'any OUT packet'. Zero PASS verdicts.
+
+     Asserting R2 == SKIP rather than merely 'no PASS' is what pins the fix:
+     a rule can only SKIP if it RAN, and it can only run if the capture held
+     state blocks. Before the fix the same scenario produced 1322 bytes of
+     header and an INVALID report, so this expectation was unmeetable.
 
   Z1 master      clean host, UAC1/FS                         OK
      7 PASS, 0 FAIL, 2 SKIP. R1 PASS 62.5 polls/s, W1 PASS +0.075 ppm,
@@ -188,10 +210,9 @@ OPEN
   harness question, not a driver one. The clean-FS control therefore uses
   usb_audio_graph_test -- arguably the better control anyway. Unexplained;
   recorded in cases.json rather than papered over.
-* Case E's blind spot: emit the state block on a timer independent of
-  packet arrival, so "device up, host silent" becomes a positive
-  observation. That changes the wire format's emission rule, not its
-  layout.
+* (CLOSED) Case E's blind spot -- fixed in lib_xua 0a27a960, guarded by
+  S_silent_host. Emission is now traffic-independent at a constant 100 Hz;
+  the wire format's layout is unchanged, so the judge needed no change.
 * Nothing outstanding on rule coverage: every rule has now fired on
   hardware. What remains open is the corpus-host FS anomaly above and case
   E's instrument blind spot.

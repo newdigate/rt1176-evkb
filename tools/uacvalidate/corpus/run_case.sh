@@ -67,7 +67,7 @@ PY
 ) || exit 2
 
 case "$WITNESS" in
-  2AMi8o8xxxxxx) XE="$IMAGES/uac2_passive_b424b0e0.xe" ;;
+  2AMi8o8xxxxxx) XE="$IMAGES/uac2_passive_0a27a960.xe" ;;
   # The 16-bit build, and only that one: a 24-bit UAC1 witness makes
   # uac1_find_alt miss, the host never claims, and the capture looks exactly
   # like a host that never tried. That mis-read cost a published retraction.

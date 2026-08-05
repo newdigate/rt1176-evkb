@@ -1,7 +1,7 @@
 From 56033e1669cf23d929a748d09d9883540d66a720 Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Sun, 2 Aug 2026 18:57:18 +0100
-Subject: [PATCH 1/8] decouple: xscope probes for OUT buffer under/overflow and
+Subject: [PATCH 1/9] decouple: xscope probes for OUT buffer under/overflow and
  fill
 
 Instrumentation only -- no existing logic is changed. Added while chasing a
@@ -138,7 +138,7 @@ index 3ceb2596..d5254927 100644
 From 26d13baba4e412653a887945ee4fc8e02cc6b74c Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Sun, 2 Aug 2026 19:42:37 +0100
-Subject: [PATCH 2/8] decouple: fix the fill probe, count runtime dry-outs
+Subject: [PATCH 2/9] decouple: fix the fill probe, count runtime dry-outs
 
 The fill probe emitted space_left, a pointer difference whose meaning
 flips at the ring wrap -- a drift fit over it gave slope 0.222 where
@@ -283,7 +283,7 @@ index d5254927..371a9334 100644
 From 1019aeb12e9d61b9e37d7c9906cfb9cf6e9e1ecb Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Tue, 4 Aug 2026 17:55:28 +0100
-Subject: [PATCH 3/8] decouple: validator packet counters, size histogram,
+Subject: [PATCH 3/9] decouple: validator packet counters, size histogram,
  byte-lane accumulators
 
 Counts accepted packets and their sizes, packets shorter than one audio frame,
@@ -471,7 +471,7 @@ index 0b744127..099d2ff0 100644
 From 47cd7277616559106a358cc8c41ea5d15d58a6f3 Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Tue, 4 Aug 2026 17:57:01 +0100
-Subject: [PATCH 4/8] ep_buffer: count feedback polls, publish the feedback
+Subject: [PATCH 4/9] ep_buffer: count feedback polls, publish the feedback
  value
 
 Completions, not arms. An endpoint this device armed and the host never read
@@ -553,7 +553,7 @@ index 5967d9cf..f1d4c077 100644
 From acd425ca44538e2bf530f10e2d342408387b086f Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Tue, 4 Aug 2026 17:59:59 +0100
-Subject: [PATCH 5/8] endpoint0: validator alt state and class-request bitmap
+Subject: [PATCH 5/9] endpoint0: validator alt state and class-request bitmap
 
 Alt transitions plus a set-on-first-arrival bitmap for the three class
 requests that constitute a configuration sequence. No timestamps of their own:
@@ -705,7 +705,7 @@ index cdbf5d1f..61ed896e 100644
 From 4e587df2b45f6178b84ad010d9643bdd3b2a2085 Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Tue, 4 Aug 2026 18:06:44 +0100
-Subject: [PATCH 6/8] decouple: cooperative pattern check, and emit the 37-word
+Subject: [PATCH 6/9] decouple: cooperative pattern check, and emit the 37-word
  state block
 
 Two things finish the observer.
@@ -1124,7 +1124,7 @@ index 371a9334..8317612d 100644
 From 00ad1ed542bac48c9a53e9a79bd18d092e231ffd Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Tue, 4 Aug 2026 18:42:53 +0100
-Subject: [PATCH 7/8] observer: fix fb_value on the fixed-frequency path, cut
+Subject: [PATCH 7/9] observer: fix fb_value on the fixed-frequency path, cut
  the block cadence
 
 Both defects came from the first silicon run, and neither was visible from
@@ -1228,7 +1228,7 @@ index ae2ed098..d44dd58e 100644
 From b424b0e0d243f756027b08b724e9abe26ef1333a Mon Sep 17 00:00:00 2001
 From: Newdigate <nicnewdigate@gmail.com>
 Date: Tue, 4 Aug 2026 20:45:34 +0100
-Subject: [PATCH 8/8] decouple: instrument the 3-byte subslot path -- it
+Subject: [PATCH 8/9] decouple: instrument the 3-byte subslot path -- it
  silently faked a PASS
 
 macOS picked 24-bit-in-3-byte subslots on the very first UAC1 capture, which
@@ -1278,6 +1278,162 @@ index e7808d2f..a3e2fb73 100644
  #if (OUTPUT_VOLUME_CONTROL == 1) && (!OUT_VOLUME_IN_MIXER)
                      unsafe
                      {
+-- 
+2.39.1
+
+
+From 0a27a960477b45ba33f295a25510bdbe84ed87fe Mon Sep 17 00:00:00 2001
+From: Newdigate <nicnewdigate@gmail.com>
+Date: Wed, 5 Aug 2026 15:27:23 +0100
+Subject: [PATCH 9/9] decouple: emit the validator state block on a timer, not
+ on packet arrival
+
+The block is a set of COUNTERS, so it must be sampled on wall-clock time.
+Riding on packet arrival meant a host that claims the device and then
+transmits nothing produced a capture with ZERO state blocks -- and a capture
+with zero blocks is indistinguishable, to the judge, from a collector that
+died or a device that never ran the observer. It reported a capture-level
+INVALID and could not attribute the defect to the host.
+
+That host is real: corpus case E (USBHost_t36 090eadb~1 after a device swap)
+reports audio=ready alt=1 pkts/s=0 with its FIFO frozen -- claim and control
+state surviving while nothing is sent. The host-side evidence existed and the
+device-side evidence did not.
+
+Now emission is a polled timer in the decoupler's own loop. That loop is
+free-running -- XUA_CHAN_BUFF_CTRL is opt-in and off here, so nothing blocks
+it -- which is why the timer ticks with the bus idle, and why the block can
+stay in the task that owns its counters instead of being read across tasks
+under XC's parallel-usage rules.
+
+Event-rate arithmetic, since that budget has bitten before: 37 words at
+100 Hz is 3,700 xscope events/s, plus the fill probe's two events at ~800 Hz
+high-speed = 1,600, so ~5,300/s against the ~30,000/s that measurably
+dropped data (10 missing marks) on the first silicon run. The deadline is
+re-based on now rather than advanced by a period, so a loop stalled longer
+than one interval resumes at the next tick instead of firing a burst of
+catch-up blocks into the link that is already the bottleneck.
+
+The fill probe stays packet-driven: that one IS a waveform and the drift fit
+needs its points where the packets are. A capture with no packets has no fill
+trace, and W1/W3 correctly SKIP for want of one.
+
+Wire format unchanged -- 37 words, same layout, same heartbeat rule. This is
+an emission-rule change only, so the judge needs no layout change.
+---
+ lib_xua/src/core/buffer/decouple/decouple.xc | 71 ++++++++++++++------
+ 1 file changed, 51 insertions(+), 20 deletions(-)
+
+diff --git a/lib_xua/src/core/buffer/decouple/decouple.xc b/lib_xua/src/core/buffer/decouple/decouple.xc
+index a3e2fb73..262c6b2c 100644
+--- a/lib_xua/src/core/buffer/decouple/decouple.xc
++++ b/lib_xua/src/core/buffer/decouple/decouple.xc
+@@ -157,7 +157,6 @@ unsigned g_uacvPktNotMultiple = 0;      /* word 4  */
+ unsigned g_uacvHistSize[8] = {0,0,0,0,0,0,0,0};   /* words 20..27 */
+ unsigned g_uacvHistCount[8] = {0,0,0,0,0,0,0,0};  /* words 28..35 */
+ unsigned g_uacvHistOverflow = 0;        /* word 19 */
+-unsigned g_uacvBlockDiv = 0;            /* block cadence divider */
+ 
+ /* Byte-lane occupancy. or_acc says which bit positions were EVER set, and_acc
+  * which were ALWAYS set. Together they identify subslot justification without
+@@ -307,6 +306,17 @@ static inline void uacvRecordSize(unsigned size)
+ #define UACV_WORDS   37
+ #define UACV_PROBE_BASE 4
+ 
++/* 100 Hz, in 100 MHz reference ticks. Event-rate arithmetic, because this is
++ * the budget that has bitten before: 37 words at 100 Hz is 3,700 xscope
++ * events/s, on top of the fill probe's two events at ~800 Hz high-speed =
++ * 1,600. About 5,300/s total, against the ~30,000/s that measurably dropped
++ * data (10 missing marks) on the first silicon run. It is also LOWER than
++ * the previous high-speed block rate implied (8000 packets/s / 10 / 10 = 80
++ * Hz emitted 2,960 events/s only while traffic flowed); the difference is
++ * that this rate is now constant and traffic-independent, which is the whole
++ * point. */
++#define UACV_EMIT_TICKS (100000000 / 100)
++
+ /* Emit the whole state block. All 37 words every time, deliberately: it makes
+  * each block self-contained, and it keeps the judge's repeated-word-index
+  * grouping exact -- the judge reassembles a block by watching for word 0 to
+@@ -981,6 +991,25 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+     int aud_to_host_flag = 0;
+ #endif
+ 
++    /* Validator state-block emission clock. The block is a set of COUNTERS,
++     * so it must be sampled on wall-clock time rather than on packet
++     * arrival: a host that claims the device and then transmits nothing is a
++     * real and interesting finding, and if emission rides on packets that
++     * host produces a capture with zero blocks -- indistinguishable, to the
++     * judge, from a collector that died. It reported INVALID and could not
++     * attribute the defect (corpus case E, 2026-08-05).
++     *
++     * This loop is a free-running poll loop -- XUA_CHAN_BUFF_CTRL is opt-in
++     * and off here, so nothing blocks it -- which is why a polled timer in
++     * this task ticks even with the bus idle, and why the block can stay
++     * where its counters live instead of being read across tasks. */
++#ifdef XSCOPE
++    timer uacvEmitTmr;
++    unsigned uacvNextEmit;
++    uacvEmitTmr :> uacvNextEmit;
++    uacvNextEmit += UACV_EMIT_TICKS;
++#endif
++
+     int t = array_to_xc_ptr(outAudioBuff);
+ 
+     aud_from_host_fifo_start = t;
+@@ -1078,6 +1107,23 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+         {
+             asm("#decouple-default");
+ 
++#ifdef XSCOPE
++            /* Emit on the clock, not on traffic. Re-based on `now` rather
++             * than advanced by a period, so a loop stalled longer than one
++             * interval resumes at the next tick instead of firing a burst of
++             * catch-up blocks into an xscope link that is already the
++             * bottleneck. Counters do not care about the jitter. */
++            {
++                unsigned uacvNow;
++                uacvEmitTmr :> uacvNow;
++                if((int)(uacvNow - uacvNextEmit) >= 0)
++                {
++                    uacvNextEmit = uacvNow + UACV_EMIT_TICKS;
++                    uacvEmitBlock();
++                }
++            }
++#endif
++
+             /* Check for freq change or other update */
+ 
+             GET_SHARED_GLOBAL(cmd, g_streamChange_flag);
+@@ -1335,25 +1381,10 @@ void XUA_Buffer_Decouple(chanend c_mix_out
+             if(++g_fillProbeDiv >= 10)
+             {
+                 g_fillProbeDiv = 0;
+-                /* Block cadence is a tenth of the fill cadence. At high speed
+-                 * the OUT endpoint is released once per 125 us MICROFRAME, so
+-                 * the fill probe runs at ~800 Hz, not the ~100 Hz a
+-                 * frame-rate assumption predicts -- and 37 words at 800 Hz is
+-                 * ~30,000 xscope events/s, which measurably dropped data on
+-                 * the first silicon run (10 missing marks, 158 MB capture,
+-                 * report correctly INVALID).
+-                 *
+-                 * The block carries counters, not a waveform, so a tenth of
+-                 * the rate costs nothing any rule cares about: the coarsest
+-                 * consumer asks whether packets arrived during alt 0, not
+-                 * exactly when the switch happened. The fill probe itself
+-                 * keeps its own cadence, because that one IS a waveform and
+-                 * the drift fit needs the points. */
+-                if(++g_uacvBlockDiv >= 10)
+-                {
+-                    g_uacvBlockDiv = 0;
+-                    uacvEmitBlock();
+-                }
++                /* The fill probe stays packet-driven, unlike the state
++                 * block: this one IS a waveform and the drift fit needs its
++                 * points where the packets are. A capture with no packets has
++                 * no fill trace, and W1/W3 correctly SKIP for want of one. */
+                 int fill_bytes = aud_from_host_wrptr - aud_from_host_rdptr;
+                 if (fill_bytes < 0)
+                     fill_bytes += BUFF_SIZE_OUT;
 -- 
 2.39.1
 
