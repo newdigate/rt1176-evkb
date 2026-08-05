@@ -268,7 +268,9 @@
         "W3": "WARN"
       },
       "expect_reasoning": "The signature is the PAIRING: R1 PASS because the host is polling diligently, W3 WARN because it drifts anyway. R1 alone cannot see this defect, and that is precisely why W3 exists. W3 WARN means the residual exceeds DRIFT_NOISE_FLOOR_PPM (1.0); the shipping servo measures -0.05 ppm on the same bench. MAGNITUDE IS NOT PREDICTED: the historical +4.8 ppm was FS at 62.5 polls/s and this runs HS at 1000 polls/s. If the residual comes back inside the floor, that is a finding about raw-chasing at full poll rate, not a reason to move the floor.",
-      "ground_truth": "The EMA was never a standalone commit, so there is no parent to check out. Raw-chasing measured +4.8 ppm of sizing bias on this bench during the UAC1 feedback work -- a buffer excursion every ~45 min."
+      "ground_truth": "The EMA was never a standalone commit, so there is no parent to check out. Raw-chasing measured +4.8 ppm of sizing bias on this bench during the UAC1 feedback work -- a buffer excursion every ~45 min.",
+      "attempt_1": "FAILED TO REPRODUCE, and the reason is the finding. Removing the EMA alone, leaving the shipping 1000 polls/s reader, gave +0.389 ppm over 600 s -- 7x the shipping servo's -0.052 ppm but inside the 1 ppm floor, so W3 correctly PASSed. At one poll per frame the slew limiter (4 mHz/frame) IS the low-pass filter: each raw report is superseded before sizing can travel toward a rail. The historical +4.8 ppm was measured at 62.5 polls/s, where a report persists 16 frames and the asymmetry becomes bias. The INJECTION was wrong, not the expectation -- so the patch now reproduces the historical configuration (raw report AND 62.5 polls/s) rather than the expectation being softened.",
+      "finding": "The EMA's protective value shrinks as the poll rate approaches the device's report rate. Not a licence to drop it: the horizon invariant still guards the 62.5 polls/s FS reader, which has no such margin."
     }
   ]
 }

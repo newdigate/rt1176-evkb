@@ -1,34 +1,58 @@
 # INJECTED DEFECT -- NEVER APPLY TO A SHIPPING BUILD.
 #
-# Makes the high-speed servo consume the RAW feedback report instead of the
-# exponential moving average: fb_avg_mhz = mhz, with no filtering.
+# Reproduces the historical dither-chasing servo, in the configuration where
+# it was actually measured: raw feedback report consumed with NO averaging
+# (fb_avg_mhz = mhz), at 62.5 polls/s (FB_SLOTS_HS 2, spaced 16 frames).
 #
 # A device expresses a rate between two representable values by dithering its
-# report between them -- on this witness, between raw 361232 and 361240, which
-# are 8 LSB or about 22 ppm apart -- and the information is in the DUTY CYCLE.
-# A rate-limited follower of the raw reports cannot recover that duty cycle;
-# it converges toward the majority state instead. On this bench that was
-# measured at +4.8 ppm of sizing bias, a buffer excursion every ~45 minutes.
+# report between them -- on this witness raw 361232 vs 361240, 8 LSB or about
+# 22 ppm apart -- and the information is in the DUTY CYCLE. A rate-limited
+# follower of the raw reports cannot recover that duty cycle; it walks toward
+# the majority state instead. Measured at +4.8 ppm of sizing bias on this
+# bench during the UAC1 feedback work, a buffer excursion every ~45 minutes.
 #
 # Why injected rather than historical: the EMA was never a standalone commit,
-# so there is no parent to check out. Without this, W3 would ship having never
-# fired on hardware.
+# so there is no parent to check out. Without this, W3 would ship having
+# never fired on hardware.
+#
+# WHY THE POLL RATE IS PART OF THE DEFECT -- measured 2026-08-05. A first
+# version of this patch removed the EMA alone and left the shipping 1000
+# polls/s reader in place. Over 600 s it produced +0.389 ppm: seven times the
+# shipping servo's -0.052 ppm, but comfortably inside the 1 ppm noise floor,
+# so W3 correctly PASSed and the defect did not reproduce. The reason is that
+# at one poll per frame the slew limiter (4 mHz per frame) is itself the
+# low-pass filter: each raw report is superseded before the sizing rate can
+# travel far toward either rail. At 62.5 polls/s a report persists for 16
+# frames, the slew has time to reach a rail, and the asymmetry becomes bias.
+#
+# That is worth knowing on its own: the EMA's protective value shrinks as the
+# poll rate approaches the device's report rate. It is not a licence to drop
+# the EMA -- the horizon invariant still guards the 62.5 polls/s FS reader,
+# which has no such margin.
 #
 # The signature to look for is R1 PASS together with W3 WARN: the host IS
-# reading the feedback endpoint, diligently, and still drifts. That pairing is
-# exactly what W3 exists to name and what R1 alone cannot see.
-#
-# NOTE the historical +4.8 ppm was measured at 62.5 polls/s on the FS path.
-# This injection runs at the shipping 1000 polls/s HS reader, so the magnitude
-# is not predicted here -- only the levels are.
+# reading the feedback endpoint and still drifts. That pairing is exactly what
+# W3 exists to name and what R1 alone cannot see.
 #
 # Apply:  git apply tools/uacvalidate/defects/w3-no-ema.patch
-# Revert: git checkout -- usb_audio.cpp
+# Revert: git checkout -- usb_audio.cpp usb_audio.h
 diff --git a/usb_audio.cpp b/usb_audio.cpp
-index 79731fc..0286e75 100644
+index 79731fc..5dbbbd2 100644
 --- a/usb_audio.cpp
 +++ b/usb_audio.cpp
-@@ -756,8 +756,9 @@ void USBAudioOut::service()
+@@ -611,9 +611,8 @@ bool USBAudioOut::beginStreamingHS(const UAC1AltSetting *alt)
+ 				stopFeedback();
+ 				break;
+ 			}
+-			// One slot per frame: each recurs every 32 ms, together
+-			// 1000 polls/s -- every report the device publishes.
+-			uint16_t frame = (uint16_t)k;
++			/* INJECTED: 16 frames apart, the historical spacing. */
++			uint16_t frame = (uint16_t)(k * 16);
+ 			itd_link(periodic_frame_slot(frame), fb_itd[k], frame);
+ 		}
+ 	}
+@@ -756,8 +755,9 @@ void USBAudioOut::service()
  					// as FS (raw-chasing measured +4.8 ppm on
  					// this bench). The divisor holds the 128 ms
  					// horizon at this reader's 250 polls/s.
@@ -40,3 +64,16 @@ index 79731fc..0286e75 100644
  					fb_frames_since = 0;
  					fb_packets++;
  				} else {
+diff --git a/usb_audio.h b/usb_audio.h
+index 273bf4c..278afb7 100644
+--- a/usb_audio.h
++++ b/usb_audio.h
+@@ -368,7 +368,7 @@ private:
+     // 4, and anything else that arrives is counted as a reject rather
+     // than a buffer error.
+     static const uint32_t FB_SLOTS = 2;          // FS reader
+-    static const uint32_t FB_SLOTS_HS = 32;      // HS reader: every frame
++    static const uint32_t FB_SLOTS_HS = 2;       /* INJECTED: 62.5 polls/s */
+     static const uint32_t FB_SLOTS_MAX = 32;     // array sizing
+     static const uint32_t FB_EMA_DIV = 8;        // 1/8 at 62.5 polls/s
+     static const uint32_t FB_EMA_DIV_HS = 128;   // 1/128 at 1000 polls/s

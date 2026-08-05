@@ -81,6 +81,43 @@ The negative controls matter as much as the positives: every rule that
 fired against a defective host comes back clean at master, so the corpus
 proves the tool can say PASS as well as FAIL.
 
+INJECTED DEFECTS (rules with no reachable historical negative)
+---------------------------------------------------------------
+  D2 r3-right-justify.patch                                  OK
+     R3 FAIL, or_acc=0x0000FFFF. See above.
+
+  H  r4b-partial-frame.patch                                 OK
+     One extra byte per microframe. R4b FAIL on all 1044500 packets, sizes
+     161 and 193 B in the histogram. R4a stayed PASS -- 193 B is far inside
+     the declared 800 -- which is why oversize and misalignment are two
+     rules and not one. W2 independently WARNed that the sizes are off the
+     fractional-sample pair, a second signal from a rule that knows nothing
+     about frame alignment.
+
+  F  w3-no-ema.patch                                         OK
+     R1 PASS with W3 WARN at +10.03 ppm: the host polling 38166 times and
+     drifting anyway. The report names the mechanism -- "a servo that chases
+     the raw dithered report rather than its mean produces exactly this
+     signature" -- which is the pairing W3 exists for and which R1 alone
+     cannot see.
+
+     ATTEMPT 1 DID NOT REPRODUCE, and that is a finding. Removing the EMA
+     alone, leaving the shipping 1000 polls/s reader, gave +0.389 ppm over
+     600 s: seven times the shipping servo's -0.052 ppm, but inside the
+     1 ppm floor, so W3 correctly PASSed. At one poll per frame the slew
+     limiter (4 mHz/frame) is itself the low-pass filter -- each raw report
+     is superseded before sizing can travel toward a rail. The historical
+     +4.8 ppm was measured at 62.5 polls/s, where a report persists 16
+     frames and the asymmetry becomes bias. So the INJECTION was wrong, not
+     the expectation: the patch now reproduces the historical configuration
+     rather than the threshold being moved. The failed attempt is kept in
+     cases.json.
+
+     Worth carrying forward: the EMA's protective value shrinks as the poll
+     rate approaches the device's report rate. That is NOT a licence to drop
+     it -- the horizon invariant still guards the 62.5 polls/s FS reader,
+     which has no such margin.
+
 WHAT THE CORPUS CAUGHT THAT WAS NOT THE VALIDATOR
 --------------------------------------------------
 1. SETTLE-WINDOW CONTAMINATION (fixed). Every other script on this bench
@@ -124,12 +161,9 @@ OPEN
   packet arrival, so "device up, host silent" becomes a positive
   observation. That changes the wire format's emission rule, not its
   layout.
-* Not yet done from Plan 3: the injected W3 defect (servo chasing raw
-  dither, expected R1 PASS + W3 WARN near +4.8 ppm) and the injected R4a /
-  R4b defects. R4b is a one-line partial-frame injection. R4a looks
-  structurally blocked on this bench: MAX_UFRAME_BYTES caps a microframe at
-  224 B against the witness's advertised 800 B, so the driver cannot
-  oversize a packet without also raising its own geometry, and XUD may
-  refuse the traffic before the decoupler could count it. If that holds,
-  R4a is unprovable here and should be recorded as such rather than the
-  rule weakened.
+* R4a is the last rule with no hardware proof, and it looks structurally
+  blocked on this bench: MAX_UFRAME_BYTES caps a microframe at 224 B against
+  the witness's advertised 800 B, so the driver cannot oversize a packet
+  without also raising its own geometry, and XUD may refuse the traffic
+  before the decoupler could count it. If that holds, R4a is unprovable here
+  and should be recorded as such rather than the rule weakened.
