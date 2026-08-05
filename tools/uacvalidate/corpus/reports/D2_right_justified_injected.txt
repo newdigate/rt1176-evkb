@@ -1,0 +1,54 @@
+UAC host conformance report
+============================================================
+host under test : USBHost_t36 master + defects/r3-right-justify.patch -- samples right-justified within the 4-byte subslot
+capture         : /Users/nicholasnewdigate/Development/rt1170/uacv-captures/corpus/D2_right_justified_injected.vcd
+duration        : 190.8 s
+xscope missing  : 0
+wrap repairs    : 4 phantom 42.95 s period(s) removed from the time base
+observer build  : b424b0e0
+
+[PASS   ] R1    feedback polled 184875 times (968.8/s)
+           evidence: feedback_polls=184875, duration_s=190.82
+
+[PASS   ] R2    no packets arrived during alt 0
+           evidence: packets_while_alt0=0, total_packets=1526700
+
+[FAIL   ] R3    top byte constant while the low byte carries data: samples are right-justified in the subslot
+           cites: USB Audio Data Formats 2.0 section 2.3.1 [DOC MISSING]
+           evidence: or_acc=0x0000FFFF, and_acc=0x00000000, nonsilent_frames=8414928
+
+[PASS   ] R4a   all packets within the declared 800 B
+           evidence: sizes={192: 781761, 160: 745039}, wMaxPacketSize_bytes=800, hist_overflow=0
+
+[PASS   ] R4b   all packets are whole multiples of 32 B
+           evidence: not_multiple=0, short_discarded=0, frame_bytes=32, total_packets=1526700
+
+[SKIP   ] R7    continuity needs a known test pattern
+           missing: passive mode: no test pattern sent
+           evidence: pattern_errors=0, resyncs=0, pattern_syncs=0, first_error_index=0, first_expected=0x00000000, first_actual=0x00000000
+
+[PASS   ] W2    packet sizes are the expected floor/ceiling pair [160, 192]
+           evidence: sizes={192: 781761, 160: 745039}, expected=[160, 192], hist_overflow=0
+
+[PASS   ] W1    residual rate error +0.068 ppm, at the noise floor
+           evidence: fill_slope_bytes_per_s=0.09582690447966997, correction_quantum_bytes=1024, residual_ppm=0.068
+
+[PASS   ] W3    host tracks the device's feedback: residual +0.068 ppm over 184875 polls
+           evidence: feedback_polls=184875, device_fb_value=0x00058310, fill_slope_bytes_per_s=0.09582690447966997, residual_ppm=0.068
+
+metrics (INFO -- no verdict, no effect on exit code)
+  duration               : 190.82 s over 15268 state blocks
+  packets                : 1526700 (8000.5/s, nominal 8000/s)
+  packet sizes           : 160 B x745039, 192 B x781761
+  feedback polls         : 184875 (968.8/s)
+  device feedback value  : 0x00058310 (raw; encoding undecided, see metrics.py)
+  alt setting            : 1 now, 0 transitions; changes: none
+  class requests         : 0x5 (bits [0, 2])
+  host active            : 1 now; changes: none
+  OUT FIFO fill          : min 548 B, max 1144 B, mean 893 B over 152687 samples
+  OUT FIFO fill (steady) : min 548 B, max 1144 B, envelope 596 B, mean 863 B over 128686 samples from 30 s in
+  fill slope             : +0.096 B/s (+0.07 ppm)
+  block corrections      : dry-outs 1, overflows ?, underflows 1
+
+------------------------------------------------------------
+7 PASS, 1 FAIL, 1 SKIP

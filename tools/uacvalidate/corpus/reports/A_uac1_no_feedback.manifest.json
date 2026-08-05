@@ -1,0 +1,10 @@
+{
+  "audio_class": 1,
+  "speed": "FS",
+  "channels": 2,
+  "subslot_bytes": 2,
+  "sample_rate_hz": 44100,
+  "max_packet_size_bytes": 196,
+  "mode": "passive",
+  "host_note": "USBHost_t36 99cd466~1 -- before the UAC1 feedback read"
+}

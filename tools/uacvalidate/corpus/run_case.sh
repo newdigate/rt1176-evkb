@@ -53,13 +53,16 @@ XTAG=3LajHPG5
 
 mkdir -p "$ARCHIVE" "$HERE/reports"
 
-read -r COMMIT WITNESS DURATION < <(python3 - "$HERE/cases.json" "$CASE_ID" <<'PY'
+read -r COMMIT WITNESS DURATION PATCH < <(python3 - "$HERE/cases.json" "$CASE_ID" <<'PY'
 import json, sys
 cases = json.load(open(sys.argv[1]))["cases"]
 c = next((x for x in cases if x["id"] == sys.argv[2]), None)
 if c is None:
     sys.exit(f"no such case: {sys.argv[2]}")
-print(c["commit"], c["witness_config"], c["duration_s"])
+if c.get("skipped_reason"):
+    sys.exit(f"case is recorded un-stageable: {c['skipped_reason'][:120]}...")
+print(c["commit"], c["witness_config"], c["duration_s"],
+      c.get("defect_patch", "-"))
 PY
 ) || exit 2
 
@@ -87,6 +90,18 @@ echo "=== $CASE_ID: $COMMIT, witness $WITNESS, ${DURATION}s ==="
 echo "[$(date +%T)] checking out $COMMIT and building the corpus host"
 git -C "$USBHOST" checkout -q --detach "$COMMIT" || exit 2
 git -C "$USBHOST" log --oneline -1
+
+# Injected defects, for rules with no reachable historical negative. Applied
+# to a detached checkout and reverted before this script returns; the trap
+# fires on any exit path, because a defect patch left in the working tree
+# would silently poison every later build on this bench.
+if [ "$PATCH" != "-" ]; then
+    echo "[$(date +%T)] applying injected defect: $PATCH"
+    git -C "$USBHOST" apply "$HERE/../$PATCH" \
+      || { echo "PATCH FAILED TO APPLY" >&2; git -C "$USBHOST" checkout -q master; exit 2; }
+    trap 'git -C "$USBHOST" checkout -- . 2>/dev/null; git -C "$USBHOST" checkout -q master 2>/dev/null' EXIT
+    git -C "$USBHOST" diff --stat
+fi
 rm -rf "$HERE/host/build-corpus"
 ( cd "$HERE/host" && cmake -B build-corpus \
     -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake >/dev/null 2>&1 \
@@ -138,7 +153,7 @@ echo "[$(date +%T)] capture closed: $(stat -f%z "$VCD.vcd" 2>/dev/null || echo 0
 echo "[$(date +%T)] host said:"
 grep -E "HEARTBEAT|ready|STREAM" "$VCD.console.log" 2>/dev/null | tail -3
 
-git -C "$USBHOST" checkout -q master
+git -C "$USBHOST" checkout -- . 2>/dev/null; git -C "$USBHOST" checkout -q master
 echo "[$(date +%T)] USBHost_t36 back on $(git -C "$USBHOST" rev-parse --abbrev-ref HEAD)"
 
 OBS=$(git -C "$HOME/Development/xmos/lib_xua" rev-parse --short HEAD 2>/dev/null || echo unknown)

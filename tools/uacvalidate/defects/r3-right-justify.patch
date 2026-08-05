@@ -1,0 +1,34 @@
+# INJECTED DEFECT -- NEVER APPLY TO A SHIPPING BUILD.
+#
+# Right-justifies 16-bit samples within a 4-byte subslot: uac_pack16's
+# case-4 arm emits {lo,hi,0,0} where USB Audio Data Formats 2.0 section
+# 2.3.1 requires {0,0,lo,hi}. This is the exact inverse of the fix in
+# commit 35b0cce.
+#
+# Why injected rather than historical: 35b0cce~1 really does contain the
+# right-justifying packer, but that host's claim() is UAC1-only
+# (bcd_adc != 0x0100 -> reject), so the code was unreachable on hardware.
+# UAC2 claim support landed five commits AFTER the fix. No commit in this
+# tree has both a claimable UAC2 host and the unfixed packer, which is why
+# corpus case D is recorded un-stageable and this patch exists instead.
+#
+# Effect on the wire: the sample's low byte varies instead of being a
+# constant zero, so the device's or_acc accumulates a non-zero low byte --
+# the single boolean R3 rests on. Audibly this is a quiet stream, nothing
+# more, which is precisely why no other instrument on this bench finds it.
+#
+# Apply:  git apply tools/uacvalidate/defects/r3-right-justify.patch
+# Revert: git checkout -- usb_audio_parse.cpp
+diff --git a/usb_audio_parse.cpp b/usb_audio_parse.cpp
+index 58aacc2..ee3690f 100644
+--- a/usb_audio_parse.cpp
++++ b/usb_audio_parse.cpp
+@@ -239,7 +239,7 @@ uint32_t uac_pack16(uint8_t *dst, const int16_t *src, uint32_t frames,
+ 			switch (subslot) {
+ 			case 2: *p++ = lo; *p++ = hi; break;
+ 			case 3: *p++ = 0; *p++ = lo; *p++ = hi; break;
+-			case 4: *p++ = 0; *p++ = 0; *p++ = lo; *p++ = hi; break;
++			case 4: *p++ = lo; *p++ = hi; *p++ = 0; *p++ = 0; break;
+ 			}
+ 		}
+ 	}

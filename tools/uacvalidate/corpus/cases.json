@@ -107,7 +107,9 @@
       "expect": {
         "R3": "FAIL"
       },
-      "ground_truth": "35b0cce is the fix commit: 'UAC2: left-justify samples within subslots; run test_pack in the gate'."
+      "ground_truth": "35b0cce is the fix commit: 'UAC2: left-justify samples within subslots; run test_pack in the gate'.",
+      "skipped_reason": "UN-STAGEABLE, and the plan's premise for this case is falsified. At 35b0cce~1 the driver's claim() begins `if (topo.bcd_adc != 0x0100) return false;` -- UAC1 only. It cannot claim a UAC2 device at all, so the right-justifying uac_pack16 was unreachable on hardware. Attempted 2026-08-05: host ran the full 180 s at `audio=none alt=-1 pkts/s=0` and the capture held zero state blocks (judge: INVALID, correctly). History order settles it: the fix 35b0cce is commit 588, UAC2 claim support 01c1cdd is 593 -- the bug was fixed five commits BEFORE the code path became reachable, so no commit in this tree has both. The design spec's original assumption was right: R3 has no historical negative and needs an injected one. See D2_right_justified_injected.",
+      "expect_note": "Expectations left exactly as derived. They are not reachable on hardware; that is a fact about the history, not a reason to soften the rule."
     },
     {
       "id": "E_device_swap_wedge",
@@ -137,6 +139,29 @@
         "phase1_witness": "1AMi2o2xxxxxx",
         "note": "Two-phase, one XTAG: phase 1 runs the UAC1 image uncaptured until the host claims and streams, then ends (SIGINT resets the xcore, which IS the disconnect); phase 2 brings the device back as UAC2 WITH the capture, host never reset. The plan's 'xrun the other image mid-capture' needs two XTAGs and is not stageable as written."
       }
+    },
+    {
+      "id": "D2_right_justified_injected",
+      "repo": "USBHost_t36",
+      "commit": "master",
+      "defect_patch": "defects/r3-right-justify.patch",
+      "witness_config": "2AMi8o8xxxxxx",
+      "manifest": {
+        "audio_class": 2,
+        "speed": "HS",
+        "channels": 8,
+        "subslot_bytes": 4,
+        "sample_rate_hz": 44100,
+        "max_packet_size_bytes": 800,
+        "mode": "passive",
+        "host_note": "USBHost_t36 master + defects/r3-right-justify.patch -- samples right-justified within the 4-byte subslot"
+      },
+      "duration_s": 180,
+      "expect": {
+        "R3": "FAIL"
+      },
+      "ground_truth": "Injected because history has no reachable negative (see D_right_justified). The injection is the exact inverse of 35b0cce's fix: uac_pack16's 4-byte arm emits {lo,hi,0,0} instead of {0,0,lo,hi}. USB Audio Data Formats 2.0 2.3.1 requires the sample left-justified in the subslot, so the low byte must never be set -- R3's whole test.",
+      "expect_reasoning": "R3 FAIL, not SKIP: the tone keeps nonsilent_frames far above the vacuity floor, and a 4-byte subslot has the spare lane the structural SKIP is about. or_acc should come back with its low byte SET, which is the single boolean the whole justification finding rests on."
     }
   ]
 }

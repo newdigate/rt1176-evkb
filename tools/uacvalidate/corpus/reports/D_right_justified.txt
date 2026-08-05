@@ -1,0 +1,12 @@
+UAC host conformance report
+============================================================
+host under test : USBHost_t36 35b0cce~1 -- before subslot left-justification
+capture         : /Users/nicholasnewdigate/Development/rt1170/uacv-captures/corpus/D_right_justified.vcd
+duration        : 0.0 s
+xscope missing  : 0
+observer build  : b424b0e0
+
+[INVALID] CAPTURE no validator state blocks found in the capture
+
+------------------------------------------------------------
+0 PASS, 0 FAIL, 1 INVALID
