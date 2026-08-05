@@ -75,6 +75,21 @@ class TestCheck(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("feedback_polls", " ".join(msgs))
 
+    def test_expect_no_pass_rejects_any_pass_verdict(self):
+        """Case E's real requirement, and the one worth keeping teeth on: a
+        capture in which the host transmitted NOTHING must never produce a
+        PASS. Which SKIP/INVALID shape the tool uses to say 'nothing was
+        tested' is an implementation detail; blessing an untested host is the
+        failure."""
+        case = {"id": "E", "expect": {}, "expect_no_pass": True}
+        ok, _ = check(case, rpt({"CAPTURE": "INVALID"}))
+        self.assertTrue(ok)
+        ok, _ = check(case, rpt({"R2": "SKIP", "R3": "SKIP"}))
+        self.assertTrue(ok)
+        ok, msgs = check(case, rpt({"R2": "PASS", "R3": "SKIP"}))
+        self.assertFalse(ok)
+        self.assertIn("PASS", " ".join(msgs))
+
     def test_all_mismatches_are_reported_not_just_the_first(self):
         """Bench iterations are expensive: a checker that stops at the first
         mismatch costs a whole re-run to discover the second."""

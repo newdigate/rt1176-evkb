@@ -31,6 +31,20 @@ def check(case, report_json):
             ok = False
             msgs.append(f"{rid}: expected {expected}, got {got}")
 
+    # The negative assertion. Some cases are defined by what must NOT appear:
+    # a capture in which the host transmitted nothing must never yield a PASS,
+    # whatever shape the tool uses to say so. Pinning the shape instead would
+    # make the case brittle against the tool's expression while leaving the
+    # thing that actually matters unasserted.
+    if case.get("expect_no_pass"):
+        passes = [v["rule_id"] for v in report_json["verdicts"]
+                  if v["level"] == "PASS"]
+        if passes:
+            ok = False
+            msgs.append(
+                f"expected NO rule to PASS on a capture where nothing was "
+                f"transmitted, but these did: {', '.join(passes)}")
+
     for rid, fields in case.get("expect_evidence", {}).items():
         if rid not in by_id:
             ok = False

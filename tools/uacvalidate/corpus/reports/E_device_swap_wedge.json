@@ -1,0 +1,22 @@
+{
+  "header": {
+    "vcd": "/Users/nicholasnewdigate/Development/rt1170/uacv-captures/corpus/E_device_swap_wedge.vcd",
+    "duration_s": 0.0,
+    "missing_marks": 0,
+    "wrap_repairs": 0,
+    "observer_sha": "b424b0e0",
+    "host_note": "USBHost_t36 090eadb~1 -- device-swap wedge, after an FS->HS swap"
+  },
+  "verdicts": [
+    {
+      "rule_id": "CAPTURE",
+      "level": "INVALID",
+      "summary": "no validator state blocks found in the capture",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {}
+    }
+  ],
+  "metrics": []
+}

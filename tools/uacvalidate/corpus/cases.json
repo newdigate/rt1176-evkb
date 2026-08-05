@@ -129,16 +129,16 @@
       "duration_s": 120,
       "requires_device_swap": true,
       "expect": {
-        "R2": "SKIP",
-        "R3": "SKIP",
-        "R4a": "SKIP",
-        "R4b": "SKIP"
+        "CAPTURE": "INVALID"
       },
       "ground_truth": "transcript_hw_evkb.txt: 'audio=ready uac2=0 alt=1 pkts/s=0' -- the claim and control sequence succeed while nothing is transmitted.",
       "stage": {
         "phase1_witness": "1AMi2o2xxxxxx",
         "note": "Two-phase, one XTAG: phase 1 runs the UAC1 image uncaptured until the host claims and streams, then ends (SIGINT resets the xcore, which IS the disconnect); phase 2 brings the device back as UAC2 WITH the capture, host never reset. The plan's 'xrun the other image mid-capture' needs two XTAGs and is not stageable as written."
-      }
+      },
+      "expect_no_pass": true,
+      "expect_correction": "The HOST behaviour reproduced exactly and is verified: through all 140 s of phase 2 the console read `audio=ready alt=1 pkts/s=0` with the FIFO frozen at 3854 -- the claim and control state survive while nothing is transmitted, matching the recorded `audio=ready uac2=0 alt=1 pkts/s=0`. What changed is the prediction about the TOOL, not the claim about the host. The plan expected per-rule SKIPs; the judge reports a capture-level INVALID, because the observer's emission is driven by packet arrival (uacvEmitBlock sits inside the decoupler's packet path) so a host that sends nothing produces a capture with zero state blocks. INVALID is correct for that input -- an empty capture genuinely could be a dead collector -- and exit 2 says nothing about the host, which is the honest answer. expect_no_pass keeps the assertion that actually matters: whatever shape the tool uses, it must never bless a host that transmitted nothing.",
+      "finding": "INSTRUMENT BLIND SPOT, found by this case. A device that is alive but receiving nothing is indistinguishable, in the capture, from a collector that failed -- both are zero blocks. The validator cannot therefore attribute this defect, only decline to rule. The fix is device-side: emit the state block on a timer independent of packet arrival, so 'device up, host silent' becomes a positive observation and R2/R3/R4 can SKIP with a named witness instead of the whole report going INVALID. Deferred to the observer branch; it changes the wire format's emission rule, not its layout."
     },
     {
       "id": "D2_right_justified_injected",
@@ -162,6 +162,64 @@
       },
       "ground_truth": "Injected because history has no reachable negative (see D_right_justified). The injection is the exact inverse of 35b0cce's fix: uac_pack16's 4-byte arm emits {lo,hi,0,0} instead of {0,0,lo,hi}. USB Audio Data Formats 2.0 2.3.1 requires the sample left-justified in the subslot, so the low byte must never be set -- R3's whole test.",
       "expect_reasoning": "R3 FAIL, not SKIP: the tone keeps nonsilent_frames far above the vacuity floor, and a 4-byte subslot has the spare lane the structural SKIP is about. or_acc should come back with its low byte SET, which is the single boolean the whole justification finding rests on."
+    },
+    {
+      "id": "Z_clean_uac1",
+      "repo": "USBHost_t36",
+      "commit": "master",
+      "witness_config": "1AMi2o2xxxxxx",
+      "manifest": {
+        "audio_class": 1,
+        "speed": "FS",
+        "channels": 2,
+        "subslot_bytes": 2,
+        "sample_rate_hz": 44100,
+        "max_packet_size_bytes": 196,
+        "mode": "passive",
+        "host_note": "USBHost_t36 master -- clean-host regression, UAC1/FS"
+      },
+      "duration_s": 300,
+      "expect": {
+        "R1": "PASS",
+        "R2": "PASS",
+        "R3": "SKIP",
+        "R4a": "PASS",
+        "R4b": "PASS",
+        "W1": "PASS",
+        "W3": "PASS"
+      },
+      "expect_reasoning": "The negative control. Every rule that fired against a defective host must come back clean here, or the corpus proves only that the tool can say FAIL. W1 PASS means inside DRIFT_NOISE_FLOOR_PPM (1.0); the closed-loop UAC1 soaks measured +0.10 and +0.24 ppm. R3 SKIP is structural, as in case A. Run fresh at master rather than reusing yesterday's UAC1 soak because today's ring-priming fix (3e66161) touched the FS path.",
+      "ground_truth": "UAC1 closed-loop soaks: +0.1 ppm (2026-08-04) and +0.238 ppm (21 min)."
+    },
+    {
+      "id": "Z_clean_uac2",
+      "repo": "USBHost_t36",
+      "commit": "master",
+      "witness_config": "2AMi8o8xxxxxx",
+      "reuses_capture": "~/Development/rt1170/uacv-captures/soak_evkb_uac2_1000.vcd",
+      "manifest": {
+        "audio_class": 2,
+        "speed": "HS",
+        "channels": 8,
+        "subslot_bytes": 4,
+        "sample_rate_hz": 44100,
+        "max_packet_size_bytes": 800,
+        "mode": "passive",
+        "host_note": "USBHost_t36 master (1f13bda) -- clean-host regression, UAC2/HS, judged from the 20-minute 1000 polls/s soak"
+      },
+      "duration_s": 1280,
+      "expect": {
+        "R1": "PASS",
+        "R2": "PASS",
+        "R3": "PASS",
+        "R4a": "PASS",
+        "R4b": "PASS",
+        "W1": "PASS",
+        "W2": "PASS",
+        "W3": "PASS"
+      },
+      "expect_reasoning": "Reuses today's 1000 polls/s A/B soak rather than spending bench time on a second clean UAC2 run: same commit, same witness, same procedure, 20 minutes instead of 5. Provenance is in reuses_capture.",
+      "ground_truth": "transcript_uacv_1000polls_ab.txt: 9 PASS 0 FAIL, W1 -0.052 ppm, envelope 268 B."
     }
   ]
 }
