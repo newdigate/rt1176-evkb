@@ -1,0 +1,191 @@
+{
+  "header": {
+    "vcd": "/Users/nicholasnewdigate/Development/rt1170/uacv-captures/corpus/A_uac1_no_feedback.vcd",
+    "duration_s": 310.29472451000004,
+    "missing_marks": 0,
+    "wrap_repairs": 0,
+    "observer_sha": "b424b0e0",
+    "host_note": "USBHost_t36 99cd466~1 -- before the UAC1 feedback read"
+  },
+  "verdicts": [
+    {
+      "rule_id": "R1",
+      "level": "WARN",
+      "summary": "host never polled the feedback endpoint in 310.3 s of streaming",
+      "citation": "",
+      "consequence": "the device is reporting its rate and no one is listening. Open loop, the measured drift is +85.39 ppm, so this host forces a block correction -- silence insertion or dropped packets, audible either way -- every 68 s. The device is entitled to do this: the spec obliges it to publish its rate, not the host to read it.",
+      "missing_witness": "",
+      "evidence": {
+        "feedback_polls": 0,
+        "duration_s": 310.29
+      }
+    },
+    {
+      "rule_id": "R2",
+      "level": "PASS",
+      "summary": "no packets arrived during alt 0",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "packets_while_alt0": 0,
+        "total_packets": 310300
+      }
+    },
+    {
+      "rule_id": "R3",
+      "level": "SKIP",
+      "summary": "2-byte subslot has no spare lane",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "a subslot wider than the sample",
+      "evidence": {
+        "or_acc": "0xFFFF0000",
+        "and_acc": "0x00000000",
+        "nonsilent_frames": 13683412
+      }
+    },
+    {
+      "rule_id": "R4a",
+      "level": "PASS",
+      "summary": "all packets within the declared 196 B",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "sizes": {
+          "176": 279359,
+          "180": 31041
+        },
+        "wMaxPacketSize_bytes": 196,
+        "hist_overflow": 0
+      }
+    },
+    {
+      "rule_id": "R4b",
+      "level": "PASS",
+      "summary": "all packets are whole multiples of 4 B",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "not_multiple": 0,
+        "short_discarded": 0,
+        "frame_bytes": 4,
+        "total_packets": 310300
+      }
+    },
+    {
+      "rule_id": "R7",
+      "level": "SKIP",
+      "summary": "continuity needs a known test pattern",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "passive mode: no test pattern sent",
+      "evidence": {
+        "pattern_errors": 0,
+        "resyncs": 0,
+        "pattern_syncs": 0,
+        "first_error_index": 0,
+        "first_expected": "0x00000000",
+        "first_actual": "0x00000000"
+      }
+    },
+    {
+      "rule_id": "W2",
+      "level": "PASS",
+      "summary": "packet sizes are the expected floor/ceiling pair [176, 180]",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "",
+      "evidence": {
+        "sizes": {
+          "176": 279359,
+          "180": 31041
+        },
+        "expected": [
+          176,
+          180
+        ],
+        "hist_overflow": 0
+      }
+    },
+    {
+      "rule_id": "W1",
+      "level": "WARN",
+      "summary": "residual rate error +85.39 ppm after the feedback loop",
+      "citation": "",
+      "consequence": "a +85.39 ppm residual against the device's 1024 B correction quantum: at +15.063 B/s this host will force a block correction -- silence insertion or dropped packets, audible either way -- every 68 s (1.1 min).",
+      "missing_witness": "",
+      "evidence": {
+        "fill_slope_bytes_per_s": 15.06307698786239,
+        "correction_quantum_bytes": 1024,
+        "residual_ppm": 85.392,
+        "seconds_between_corrections": 68.0
+      }
+    },
+    {
+      "rule_id": "W3",
+      "level": "SKIP",
+      "summary": "host never polled feedback, so there is no tracking to assess (R1 covers this)",
+      "citation": "",
+      "consequence": "",
+      "missing_witness": "any feedback poll",
+      "evidence": {
+        "feedback_polls": 0,
+        "device_fb_value": "0x000B0620",
+        "fill_slope_bytes_per_s": 15.06307698786239
+      }
+    }
+  ],
+  "metrics": [
+    [
+      "duration",
+      "310.29 s over 3104 state blocks"
+    ],
+    [
+      "packets",
+      "310300 (1000.0/s, nominal 1000/s)"
+    ],
+    [
+      "packet sizes",
+      "176 B x279359, 180 B x31041"
+    ],
+    [
+      "feedback polls",
+      "0 (0.0/s)"
+    ],
+    [
+      "device feedback value",
+      "0x000B0620 (raw; encoding undecided, see metrics.py)"
+    ],
+    [
+      "alt setting",
+      "1 now, 0 transitions; changes: none"
+    ],
+    [
+      "class requests",
+      "0x4 (bits [2])"
+    ],
+    [
+      "host active",
+      "1 now; changes: none"
+    ],
+    [
+      "OUT FIFO fill",
+      "min 780 B, max 3348 B, mean 2363 B over 31042 samples"
+    ],
+    [
+      "OUT FIFO fill (steady)",
+      "min 1244 B, max 3348 B, envelope 2104 B, mean 2498 B over 28041 samples from 30 s in"
+    ],
+    [
+      "fill slope",
+      "+15.063 B/s (+85.39 ppm)"
+    ],
+    [
+      "block corrections",
+      "dry-outs 0, overflows 3, underflows 1"
+    ]
+  ]
+}
