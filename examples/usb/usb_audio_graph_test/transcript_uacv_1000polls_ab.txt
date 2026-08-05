@@ -1,0 +1,49 @@
+1000 polls/s A/B: the aliasing hypothesis, partially confirmed -- 2026-08-05
+=============================================================================
+
+The servo-isolation transcript predicted that polling the HS feedback
+endpoint at the device's own 1000/s refresh rate would collapse the >10 s
+fill-drift band to macOS's level. USBHost_t36 1f13bda (pin bumped): one
+feedback iTD per frame (FB_SLOTS_HS 32), ITD_POOL_SIZE 40 -> 64 (drained
+to exactly zero at arm, same discipline), EMA div 128 holding the 128 ms
+horizon. 20-minute soak, pattern mode, judged on repaired time.
+
+                        250 polls/s      1000 polls/s     macOS 1000/s
+  steady envelope       296 B            268 B            204 B
+  >10s drift band p2p   127 B            97 B             6 B
+  >10s drift band rms   33.6 B           26.6 B           0.9 B
+  W1 residual           -0.025 ppm       -0.052 ppm       +0.000 ppm
+  R7                    PASS             PASS (0 errors)  --
+  polls (R1)            250.0/s          968.8/s          1000.0/s
+
+Verdict on the hypothesis: PARTIALLY CONFIRMED, and the honest record
+matters more than the win. Removing the subsampling took out ~21% of the
+drift rms -- real, keep the change (it also matches the report contract:
+the dither's information is its duty cycle, and now every report enters
+the average). But the drift did not collapse: a second mechanism holds
+~27 B rms that the isolation could not see, and the +0.91 correlation
+that named aliasing as THE mechanism deserves a caveat in hindsight --
+the analysis view (block-cadence fb_value, ~80/s) subsamples the report
+stream just as the 250/s host did, so host and instrument may have
+aliased ALIKE, inflating the correlation.
+
+Two artefacts of this run worth recording:
+- fbrej ~31/s (3% of reads): a 1000/s reader's microframe-0 transaction
+  sometimes lands where the device has not primed the next report;
+  zero-length reads are counted and skipped, never applied. Structured
+  3% dropouts could themselves alias (up to ~4 mHz duty bias), but that
+  bounds well under the residual drift.
+- The analysis view is now 12.5:1 aliased against the reports it tries
+  to reconstruct; the "10s-mean report wander" it computes is BYTE-
+  IDENTICAL between the 250/s and 1000/s captures (976.6 mHz), which is
+  the fingerprint of instrument aliasing, not device behaviour. fbdrift
+  correlations against this capture are uninterpretable (-0.53 observed;
+  treat as noise).
+
+What the next isolating step needs (before any further knob): an
+UNALIASED record of the report stream -- either raise the observer's
+block cadence for a diagnostic capture (g_uacvBlockDiv, at the cost of
+re-approaching the xscope overload ceiling) or add a dedicated probe
+emitting fb_value per report. Until the instrument can see what the host
+saw, the residual ~27 B rms drift is unattributable, and the gap to
+macOS (268 vs 204 B envelope, 1.3x) stands as measured, not explained.
