@@ -54,6 +54,12 @@ def render(header, verdicts, metrics=()):
     lines.append(f"capture         : {header.get('vcd', '')}")
     lines.append(f"duration        : {header.get('duration_s', 0):.1f} s")
     lines.append(f"xscope missing  : {header.get('missing_marks', 0)}")
+    # Phantom timestamp wraps the reader removed (wireformat.XSCOPE_WRAP_S).
+    # Zero on a clean capture; non-zero says every time-derived figure below
+    # is on REPAIRED time, and the raw file's own span disagrees with it.
+    if header.get("wrap_repairs"):
+        lines.append(f"wrap repairs    : {header['wrap_repairs']} "
+                     f"phantom 42.95 s period(s) removed from the time base")
     lines.append(f"observer build  : {header.get('observer_sha', 'unknown')}")
     lines.append("")
 

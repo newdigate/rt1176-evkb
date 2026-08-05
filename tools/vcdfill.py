@@ -164,7 +164,22 @@ def probe_points(sigs, name):
         sid = PROBE_IDS.get(name)
         if sid is None:
             return []
-    return [(t * TICK, v) for t, v in sigs.get(sid, [])]
+    # Phantom-wrap repair, per signal: the capture chain sometimes double-
+    # counts its own 32-bit timestamp wrap, jumping the clock forward by an
+    # exact multiple of 42.94967296 s between samples that were milliseconds
+    # apart (see uacvalidate/wireformat.py, XSCOPE_WRAP_S, for the silicon
+    # evidence). Left in place, each jump splits the fill trace at
+    # SEGMENT_GAP_S and caps every fitted window at ~43 s -- the same
+    # short-window trap that once produced a confident -3.39 ppm that a
+    # 21-minute soak read as +0.24. This signal's own cadence is
+    # milliseconds, far inside the repair tolerance, so filtering this
+    # signal's stream alone is sound.
+    try:
+        from uacvalidate.wireformat import PhantomWrapFilter
+    except ImportError:                       # run from tools/ directly
+        from wireformat import PhantomWrapFilter
+    fix = PhantomWrapFilter()
+    return [(fix(t * TICK), v) for t, v in sigs.get(sid, [])]
 
 
 def fill_points(sigs):

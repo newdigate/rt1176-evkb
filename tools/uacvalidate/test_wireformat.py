@@ -4,7 +4,8 @@ import unittest
 
 from wireformat import (BLOCK_WORDS, HIST_COUNT_BASE, HIST_SIZE_BASE,
                         HIST_SLOTS, MAGIC, PROBE_BASE, SCALAR_LAYOUT, VERSION,
-                        Block, _signal_name, count_missing_marks, delta32,
+                        XSCOPE_WRAP_S, Block, PhantomWrapFilter, _signal_name,
+                        count_missing_marks, count_wrap_repairs, delta32,
                         read_blocks, synth_vcd)
 
 
@@ -532,6 +533,90 @@ class TestWireFormatConstantsArePinned(unittest.TestCase):
         # stop matching read_blocks' uacv_w prefix parse.
         self.assertEqual(_signal_name(0), "uacv_w00")
         self.assertEqual(_signal_name(36), "uacv_w36")
+
+
+class TestPhantomWrapFilter(unittest.TestCase):
+    # The silicon signature (2026-08-05): the VCD clock jumps forward by
+    # exactly 2^32 ticks of the 100 MHz reference between events the
+    # capture's own counters prove were one emission interval apart. The
+    # repair must remove exactly those jumps and nothing else.
+
+    def test_clean_stream_is_identity(self):
+        fix = PhantomWrapFilter()
+        ts = [0.0, 0.0125, 0.025, 60.0, 120.5]
+        self.assertEqual([fix(t) for t in ts], ts)
+        self.assertEqual(fix.repairs, 0)
+
+    def test_single_phantom_wrap_collapsed(self):
+        fix = PhantomWrapFilter()
+        fix(10.0)
+        # 12.5 ms of real time reported as a wrap period later.
+        out = fix(10.0 + XSCOPE_WRAP_S + 0.0125)
+        self.assertAlmostEqual(out, 10.0125, places=6)
+        self.assertEqual(fix.repairs, 1)
+        # The offset persists: later times stay repaired.
+        self.assertAlmostEqual(fix(10.0 + XSCOPE_WRAP_S + 0.025), 10.025,
+                               places=6)
+
+    def test_double_wrap_collapsed_as_two(self):
+        fix = PhantomWrapFilter()
+        fix(5.0)
+        out = fix(5.0 + 2 * XSCOPE_WRAP_S + 0.01)
+        self.assertAlmostEqual(out, 5.01, places=6)
+        self.assertEqual(fix.repairs, 2)
+
+    def test_gap_outside_tolerance_is_left_alone(self):
+        # A real 40 s silence is not a wrap, and neither is 44 s: only the
+        # exact quantum may be removed, because the repair's honesty rests
+        # on the jump being arithmetic, not approximation.
+        for gap in (40.0, 44.0, XSCOPE_WRAP_S - 0.6, XSCOPE_WRAP_S + 0.6):
+            fix = PhantomWrapFilter()
+            fix(0.0)
+            self.assertAlmostEqual(fix(gap), gap, places=6)
+            self.assertEqual(fix.repairs, 0, f"gap {gap} was wrongly repaired")
+
+    def test_wrap_inside_tolerance_collapses(self):
+        for slack in (-0.4, 0.0, 0.4):
+            fix = PhantomWrapFilter()
+            fix(0.0)
+            out = fix(XSCOPE_WRAP_S + slack)
+            self.assertLess(out, 1.0, f"slack {slack} not repaired")
+            self.assertEqual(fix.repairs, 1)
+
+
+class TestWrapRepairInReadBlocks(unittest.TestCase):
+    def _capture_with_phantom(self, path):
+        # Three blocks 12.5 ms apart; the middle timestamp is then pushed a
+        # wrap period late, the way the broken capture chain writes it.
+        b0 = Block(pkt_count=100)
+        b1 = Block(pkt_count=200)
+        b2 = Block(pkt_count=300)
+        text = _synth_text(path, [(0.0, b0), (0.0125, b1), (0.025, b2)])
+        lines = text.split("\n")
+        stamps = [i for i, ln in enumerate(lines) if ln.startswith("#")]
+        # tick from synth: recover it by reading the second stamp's value.
+        t1 = int(lines[stamps[1]][1:])
+        tick_s = 0.0125 / t1
+        for i in stamps[1:]:
+            lines[i] = f"#{int(lines[i][1:]) + round(XSCOPE_WRAP_S / tick_s)}"
+        _rewrite(path, "\n".join(lines))
+
+    def test_duration_and_count_repaired(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "phantom.vcd")
+            self._capture_with_phantom(path)
+            blocks = read_blocks(path)
+            self.assertEqual(len(blocks), 3)
+            self.assertAlmostEqual(blocks[-1][0] - blocks[0][0], 0.025,
+                                   places=6)
+            self.assertEqual(count_wrap_repairs(path), 1)
+
+    def test_clean_capture_counts_zero(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "clean.vcd")
+            synth_vcd(path, [(0.0, Block(pkt_count=1)),
+                             (0.0125, Block(pkt_count=2))])
+            self.assertEqual(count_wrap_repairs(path), 0)
 
 
 if __name__ == "__main__":

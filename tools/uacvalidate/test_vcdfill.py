@@ -185,6 +185,32 @@ class TestFitFillSlope(VcdCase):
         self.assertAlmostEqual(slope, 0.0, places=6)
 
 
+class TestPhantomWrapRepairInFillTrace(VcdCase):
+    def test_fit_spans_a_phantom_wrap(self):
+        """The capture chain's spurious 32-bit wrap (wireformat.XSCOPE_WRAP_S)
+        pushes every later timestamp 42.9497 s late. Unrepaired, the jump
+        splits the trace at SEGMENT_GAP_S and caps every fitted window at the
+        inter-wrap spacing -- the short-window trap that once produced a
+        confident -3.39 ppm a 21-minute soak read as +0.24. Repaired, the two
+        halves are one continuous segment with the true slope."""
+        from wireformat import XSCOPE_WRAP_S
+        first = ramp(0, 60, 2.5)
+        second = [(t + 60 + XSCOPE_WRAP_S, 150 + (v - 0))
+                  for t, v in ramp(0, 60, 2.5)]
+        sigs = self.parsed(first + second)
+        seg = vcdfill.longest_segment(sigs)
+        self.assertGreater(seg[-1][0] - seg[0][0], 100)   # spans both halves
+        self.assertAlmostEqual(vcdfill.fit_fill_slope(sigs), 2.5, places=2)
+
+    def test_a_real_forty_second_gap_still_splits(self):
+        """Only the exact quantum is repaired: a genuine 40 s silence is a
+        stream stop, and fitting across one measures the stop."""
+        first = ramp(0, 60, 2.5)
+        second = [(t + 100, 150 + v) for t, v in ramp(0, 60, 2.5)]
+        seg = vcdfill.longest_segment(self.parsed(first + second))
+        self.assertLess(seg[-1][0] - seg[0][0], 61)
+
+
 class TestFillSignalResolution(VcdCase):
     def test_resolved_by_name_at_any_identifier(self):
         """xscope assigns ids in xscope_register order, so "2" is the fill

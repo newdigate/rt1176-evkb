@@ -294,6 +294,65 @@ def _parse_header(lines):
     return tick_s, names, i
 
 
+# The xscope capture chain occasionally double-counts its own 32-bit
+# timestamp wrap: the VCD clock jumps forward by exactly 2^32 ticks of the
+# 100 MHz reference (42.94967296 s) between two events that the capture's own
+# counters prove were one emission interval apart. Measured on silicon
+# 2026-08-05: a 560 s wall-clock capture claimed 1765.5 s across 29 such
+# jumps -- at each one the packet counter was frozen and the block cadence
+# resumed 12.5 ms later as if nothing had happened, and both baseline UAC2
+# soaks carry the same signature (6 and 5 jumps). The wire never paused; the
+# clock lied.
+#
+# The signature is unmistakable -- a forward jump within WRAP_TOLERANCE_S of
+# an exact multiple of the wrap period -- and the repair is exact arithmetic,
+# not calibration: subtract the phantom multiple. (Contrast the 12.7x
+# uniform stretch of 2026-08-04, which had no such quantum and was rightly
+# never "corrected".) A genuine silence lasting a wrap-multiple +/-0.5 s
+# would be mis-collapsed; a powered observer heartbeats far too often for
+# that, and every repair is counted so the report can say it happened.
+XSCOPE_WRAP_S = 2 ** 32 / 100e6
+WRAP_TOLERANCE_S = 0.5
+
+
+class PhantomWrapFilter:
+    """Stateful timestamp repair: feed raw seconds in capture order, get
+    repaired seconds out. `repairs` counts phantom wrap periods removed."""
+
+    def __init__(self):
+        self.offset_s = 0.0
+        self.repairs = 0
+        self._prev_raw = None
+
+    def __call__(self, raw_s):
+        if self._prev_raw is not None:
+            dt = raw_s - self._prev_raw
+            k = round(dt / XSCOPE_WRAP_S)
+            if k >= 1 and abs(dt - k * XSCOPE_WRAP_S) <= WRAP_TOLERANCE_S:
+                self.offset_s -= k * XSCOPE_WRAP_S
+                self.repairs += k
+        self._prev_raw = raw_s
+        return raw_s + self.offset_s
+
+
+def count_wrap_repairs(path):
+    """Number of phantom wrap periods the reader removed from the capture.
+
+    A separate pass over timestamps only, like count_missing_marks: the
+    count belongs in the report header, because a repaired time base is
+    still a finding about the capture chain even when the repair is exact.
+    """
+    with open(path) as f:
+        lines = f.read().split("\n")
+    tick_s, _names, first_data_line = _parse_header(lines)
+    fix = PhantomWrapFilter()
+    for ln in lines[first_data_line:]:
+        ln = ln.strip()
+        if ln and ln[0] == "#":
+            fix(int(ln[1:]) * tick_s)
+    return fix.repairs
+
+
 def read_blocks(path, emit_window_s=EMISSION_WINDOW_S):
     """Parse a capture into `[(time_seconds, Block)]`, in capture order.
 
@@ -336,7 +395,8 @@ def read_blocks(path, emit_window_s=EMISSION_WINDOW_S):
 
     out = []
     state = [0] * BLOCK_WORDS
-    t = 0
+    t_s = 0.0
+    fix = PhantomWrapFilter()   # see XSCOPE_WRAP_S: repairs phantom wraps
     written = set()    # word indices written in the open emission group
     group_t = None     # seconds at that group's first write
     checked_first = False
@@ -365,9 +425,9 @@ def read_blocks(path, emit_window_s=EMISSION_WINDOW_S):
         if not ln:
             continue
         if ln[0] == "#":
-            t = int(ln[1:])
+            t_s = fix(int(ln[1:]) * tick_s)
             # Rule 2: the open group has run past its emission window.
-            if written and t * tick_s - group_t > emit_window_s:
+            if written and t_s - group_t > emit_window_s:
                 flush()
                 written = set()
                 group_t = None
@@ -385,7 +445,7 @@ def read_blocks(path, emit_window_s=EMISSION_WINDOW_S):
                     written = set()
                     group_t = None
                 if group_t is None:
-                    group_t = t * tick_s
+                    group_t = t_s
                 state[w] = int(val_s, 2) & MASK32
                 written.add(w)
     flush()

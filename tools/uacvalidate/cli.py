@@ -35,7 +35,8 @@ import metrics
 import rules
 import report
 from manifest import Manifest, ManifestError
-from wireformat import read_blocks, count_missing_marks, delta32, MAGIC, VERSION
+from wireformat import (read_blocks, count_missing_marks, count_wrap_repairs,
+                        delta32, MAGIC, VERSION)
 from verdict import Verdict, INVALID
 # fit_fill_slope, not fit_slope: vcdfill already had a public fit_slope(pts)
 # returning (slope, r2, n) over a point list, and analyse() unpacks that
@@ -169,6 +170,7 @@ def main(argv=None):
         return 2
 
     header = {"vcd": args.vcd, "duration_s": 0.0, "missing_marks": 0,
+              "wrap_repairs": 0,
               "observer_sha": args.observer_sha, "host_note": man.host_note}
 
     try:
@@ -205,6 +207,13 @@ def main(argv=None):
 
     missing = count_missing_marks(args.vcd)
     header["missing_marks"] = missing
+
+    # Phantom-wrap repairs are a finding about the capture chain, not the
+    # host, and the repair is exact arithmetic (see wireformat.XSCOPE_WRAP_S)
+    # -- so unlike missing marks they do not invalidate the report. They must
+    # still be visible: a reader comparing this capture's duration against the
+    # bench log needs to know the clock was repaired, and by how much.
+    header["wrap_repairs"] = count_wrap_repairs(args.vcd)
 
     # Two capture-level invalidations, both BEFORE any rule runs. Neither may
     # fall through: a rule verdict computed from these captures would be an
