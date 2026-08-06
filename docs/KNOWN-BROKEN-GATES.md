@@ -199,6 +199,19 @@ documented `cm4_audio_test` singleton, zero SKIPs.
 sweep: **74 → 75 gates**. Clean baseline re-measured on an idle machine with
 `-j 2`: **75 passed, 0 failed, 0 SKIP**.
 
+**2026-08-06 (USB audio duplex, Stage C):** `usb/usb_audio_duplex_test` joins the
+sweep: **75 → 76 gates**. Measured at `-j 2`: **75 passed, 1 failed, 0 SKIP** —
+the failure being the documented `dualcore/cm4_audio_test` singleton, which
+compiles none of that session's sources (UAC2 parser, iTD pool, duplex example).
+Expectation is therefore `76/0/0` or `75/1/0` with that one gate red, zero SKIPs
+either way.
+
+A counting trap worth one line, because it cost a puzzled minute: `-l` prints a
+trailing `(N gate(s))` summary line, so `run-all-qemu-gates.sh -l | wc -l` is one
+MORE than the gate count. The runner is still the right thing to ask — that
+correction is above and stands — but ask it for the number it prints, not for
+the number of lines it prints.
+
 Two corrections to how this sweep gets counted and read, both learned the hard
 way in that session:
 
