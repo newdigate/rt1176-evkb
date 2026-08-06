@@ -20,6 +20,14 @@ set(DUPLEX_RATE_HZ "" CACHE STRING "Rate for both directions; empty = 44100")
 set(DUPLEX_IN_CHANNELS "" CACHE STRING "Device capture channels; empty = 8")
 set(DUPLEX_IN_BITS "" CACHE STRING "Device capture bit resolution; empty = 24")
 set(DUPLEX_TAKE_CHANNELS "" CACHE STRING "Channels delivered to the sketch; empty = 2")
+# ECHO: play what arrives on IN back out on OUT, instead of the driver's tone
+# generator. Off by default so the QEMU gate and the Stage C transcript's
+# measurements keep describing the same image they were taken from.
+option(DUPLEX_ECHO "Echo the input stream back out (monitor path)" OFF)
+if(DUPLEX_ECHO)
+    target_compile_definitions(usb_audio_duplex_test.elf PRIVATE DUPLEX_ECHO=1)
+endif()
+
 foreach(opt DUPLEX_RATE_HZ DUPLEX_IN_CHANNELS DUPLEX_IN_BITS DUPLEX_TAKE_CHANNELS)
     if(NOT ${opt} STREQUAL "")
         target_compile_definitions(usb_audio_duplex_test.elf PRIVATE ${opt}=${${opt}})

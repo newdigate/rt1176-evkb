@@ -51,6 +51,19 @@
 #define DUPLEX_TAKE_CHANNELS 2
 #endif
 
+// ECHO mode: route what arrives on IN straight back out on OUT, instead of
+// playing the driver's tone generator. A monitor path, and the first thing in
+// this project where the audio leaving the host is audio that entered it.
+//
+// The channel counts do NOT have to match and generally do not: the UAC1
+// dongle captures 1ch/16 and plays 2ch/16, so mono must be fanned to both
+// sides on the way through. The driver's FIFO is stereo int16 regardless of
+// what the wire carries -- uac_pack16 handles the wire geometry underneath --
+// so this only has to get from `capture channels` to two.
+#ifndef DUPLEX_ECHO
+#define DUPLEX_ECHO 0
+#endif
+
 USBHost myusb;
 DMAMEM USBHub hub1(myusb);
 DMAMEM USBAudioOut audio(myusb);
@@ -90,13 +103,48 @@ void setup()
 // Drain the capture FIFO. Unlike the OUT side there is no servo here: the
 // device sends what its converter produces and the host must keep up, so this
 // runs every loop() and the only defence against falling behind is being fast.
+static uint32_t echo_frames, echo_dropped;
+
 static uint32_t drainCapture(void)
 {
     uint32_t total = 0, n;
+#if DUPLEX_ECHO
+    static int16_t out[sizeof(sink) / sizeof(sink[0]) * 2];
+    const uint8_t ch = audio.captureChannels() ? audio.captureChannels() : 1;
+    while (true) {
+        // Read only whole frames, and only as many as the OUT side has room
+        // for in STEREO. Reading more than can be written would mean throwing
+        // captured audio away, which is a click; leaving it in the capture
+        // FIFO instead just delays it one pass.
+        uint32_t room_frames = audio.available() / 2;
+        if (room_frames == 0) break;
+        uint32_t want = room_frames * ch;
+        if (want > sizeof(sink) / sizeof(sink[0])) want = (sizeof(sink) / sizeof(sink[0]) / ch) * ch;
+        if (want == 0) break;
+        n = audio.read(sink, want);
+        if (n == 0) break;
+        uint32_t frames = n / ch;
+        total += n;
+        // capture -> stereo. One channel is fanned to both (the dongle's
+        // case); two or more are taken as L,R and the rest discarded, which
+        // is what captureChannels() already limited us to anyway.
+        for (uint32_t f = 0; f < frames; f++) {
+            int16_t l = sink[f * ch];
+            int16_t r = (ch >= 2) ? sink[f * ch + 1] : l;
+            out[f * 2]     = l;
+            out[f * 2 + 1] = r;
+        }
+        uint32_t took = audio.write(out, frames * 2);
+        echo_frames += frames;
+        if (took < frames * 2) echo_dropped += (frames * 2 - took) / 2;
+        if (frames * ch < want) break;      // capture FIFO drained
+    }
+#else
     while ((n = audio.read(sink, sizeof(sink) / sizeof(sink[0]))) > 0) {
         total += n;
         if (n < sizeof(sink) / sizeof(sink[0])) break;
     }
+#endif
     return total;
 }
 
@@ -139,7 +187,12 @@ void loop()
         // Order matters only in that both must succeed; the descriptor pool
         // now holds 96 iTDs = 32 OUT + 32 feedback + 32 IN, which is exactly
         // what a duplex arm needs and is why Stage C had to grow it.
+#if DUPLEX_ECHO
+        Serial1.printf("DUPLEX-TEST: ECHO mode -- IN %u ch fanned to stereo OUT\n",
+                       (unsigned)audio.captureChannels());
+#else
         audio.tone(440);
+#endif
         bool o = audio.beginStreaming();
         bool r = audio.beginRecording();
         Serial1.printf("DUPLEX-TEST: out=%s in=%s\n",
@@ -194,6 +247,14 @@ void loop()
                            (unsigned long)audio.recorded());
             last_in_packets = ip; last_in_bytes = ib;
         }
+#if DUPLEX_ECHO
+        // echo= is frames that made the round trip; drop= is frames the OUT
+        // FIFO could not take. drop climbing means the two directions are not
+        // actually sharing a clock, or the consumer is too slow -- either way
+        // it is the number that turns "it sounds odd" into a measurement.
+        Serial1.printf(" ECHO[frames=%lu drop=%lu]",
+                       (unsigned long)echo_frames, (unsigned long)echo_dropped);
+#endif
         // The two instruments, side by side, same device, same instant.
         Serial1.printf(" fb=%lu sizing=%lu fresh=%d\n",
                        (unsigned long)audio.feedbackRateMilliHz(),
