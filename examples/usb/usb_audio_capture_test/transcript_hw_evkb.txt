@@ -114,3 +114,76 @@ BENCH NOTES
   where this device uses 4. 24-bit audio is carried in EITHER 3 or 4 bytes;
   the descriptor says which and the sketch now reads it. Corrected before any
   of the figures above were taken.
+
+
+THE LOOPBACK — CLOSED, 2026-08-06
+==================================
+The check the section above said was owed. A 440 Hz sine from the Mac's
+headphone output into the MC200's analogue inputs 1,2, recorded through the
+RT1176 host. Nothing in this path is instrumented: no device-side observer,
+no patched firmware, no counter that could agree with itself.
+
+    Mac DAC -> cable -> MC200 ADC -> USB iso IN -> RT1176 host
+    -> IN ring -> unpack 24-in-4 to int16 -> FIFO -> console -> FFT
+
+ON-DEVICE, silence vs tone:
+
+                    silence          440 Hz playing
+    peak            7 / 8            3980 / 3994
+    rms             2                2812 / 2822
+    zero crossings  ~620-660         20-21
+
+55 dB of separation. Two things make that more than "the number went up":
+
+**It is a sine.** For a pure sine rms/peak = 1/sqrt(2) = 0.7071. Measured
+2812/3980 = 0.7065 and 2822/3994 = 0.7066 -- 0.08 % off, on both channels
+independently. A clipped, distorted or aliased waveform does not land there.
+
+**It is 440 Hz, and the estimator proves it the hard way.** The zero-crossing
+counter is an integer over 1024 frames, so a true 440 Hz MUST read 20 or 21
+crossings (440 x 2 x 1024 / 44100 = 20.43) and nothing else. Observed: 20 and
+21, alternating. The quantisation is the evidence.
+
+SPECTRUM, from a dumped 1024-frame window (CAPTURE_DUMP_EVERY=5 build):
+
+    fundamental             440.65 Hz, both channels
+    h2                      -66.9 dB      h5   -91.1 dB
+    h3                      -83.7 dB      h6   -91.7 dB
+    h4                      -88.2 dB      h7   -89.8 dB
+    THD (h2..h7)            0.046 %
+    fundamental / noise     90.7 dB
+
+Harmonics 67 dB down and a 90 dB noise floor, through a consumer headphone
+output, an analogue cable, an ADC, an isochronous USB stream, a descriptor
+ring, a subslot unpacker and a FIFO. The waveform survives the trip.
+
+WHAT THE 440.65 Hz IS NOT. It is not a clock measurement. A 1024-point FFT at
+44.1 kHz has 43.1 Hz bins; parabolic interpolation on a Hann-windowed peak is
+good to a fraction of a bin, not to ppm. The apparent +1473 ppm is estimator
+bias, and reading it as two crystals disagreeing would be wrong by an order of
+magnitude. The rate comparison that IS trustworthy is the byte counter above:
+-86.7 ppm, against the feedback endpoint's -85.7 ppm.
+
+BENCH NOTES, both of which cost time
+------------------------------------
+* **The console died silently and I read stale data for three rounds.** The
+  reader process stayed alive, the log file stayed on disk, and `tail` kept
+  returning the same lines -- so "still noise" was reported three times when
+  nothing was being measured at all. The tell is that the ANALYSIS lines were
+  byte-identical between rounds. Any bench reading from this console must
+  first prove the log is ADVANCING (count lines, wait, count again); a live
+  reader is not the same as a live link.
+
+* **The VCOM instability is USB topology, and it recurs.** Fixed earlier by
+  moving the EVKB's debug cable off a two-deep hub chain; it came back when
+  the RME was unplugged and the chain rearranged, with the MCU-Link two hubs
+  deep again and the XTAG3 on the same branch. Fixed again by putting the
+  EVKB direct and the XTAG on the hub. Check
+  `system_profiler SPUSBDataType | grep -E "Hub:|MCU-LINK|XTAG3"` and count
+  the indentation before suspecting the board.
+
+* The first loopback attempt used the RME (outputs 7,8 into MC200 in 1,2) and
+  recorded nothing. That was traced to the TotalMix output faders being down,
+  but the console had also died by then, so how much of that round measured
+  anything is unknown. Replacing the RME with a direct stereo cable from the
+  Mac removed the routing variable entirely and worked first time.

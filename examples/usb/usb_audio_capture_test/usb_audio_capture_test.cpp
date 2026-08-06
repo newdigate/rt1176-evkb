@@ -61,6 +61,17 @@ DMAMEM USBAudioOut audio(myusb);
 #define CAPTURE_TAKE_CHANNELS 2
 #endif
 
+// How often to hex-dump a window of samples. 0 = once, a few beats in, which
+// is what a normal run wants and what the QEMU gate expects. N = every Nth
+// beat, for bench work where the input is being changed while the firmware
+// runs: peak and RMS cannot tell "nothing connected" from "connected with
+// 60 dB of attenuation", but an FFT of a dumped window finds a tone tens of
+// dB BELOW the noise floor. Repeated windows are what let that measurement
+// track a mixer being adjusted.
+#ifndef CAPTURE_DUMP_EVERY
+#define CAPTURE_DUMP_EVERY 0
+#endif
+
 // The claim still needs an OUTPUT alt to succeed -- uac1_parse_config and
 // uac2_parse_config both return false for a device with no iso OUT endpoint,
 // a limitation recorded in the design spec rather than worked around here.
@@ -316,8 +327,12 @@ void loop() {
 			// 0.7 s during which service() does not run, so the beat that
 			// contains it reads ~640 pkts/s instead of 1000. That dip is this
 			// sketch starving its own harvest, not a transport fault -- and it
-			// is a fair demonstration that the counter notices. Once only.
+			// is a fair demonstration that the counter notices.
+#if CAPTURE_DUMP_EVERY
+			if (seq % (uint32_t)CAPTURE_DUMP_EVERY == 0) dumpWindow();
+#else
 			if (!dumped && seq >= 3) { dumpWindow(); dumped = true; }
+#endif
 			window_used = 0;   // next beat analyses fresh audio
 		}
 	}
