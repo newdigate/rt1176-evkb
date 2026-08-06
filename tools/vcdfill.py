@@ -225,7 +225,33 @@ def fit_fill_slope(sigs):
     return None if r is None else r[0]
 
 
-def analyse(path, want_json=False, plot=None):
+# Bytes per second of device OUT stream that ONE ppm of rate error represents.
+# The fill probe counts BYTES, so converting its slope to a ppm equivalent needs
+# the stream's byte rate -- which depends on the negotiated format, not just the
+# sample rate:
+#
+#     1AMi2o2 (UAC1, 2ch x 16-bit)   44100 x  4 B =  176400 B/s -> 0.17640
+#     2AMi8o8 (UAC2, 8ch x 24-in-4)  44100 x 32 B = 1411200 B/s -> 1.41120
+#
+# 0.17640 was hardcoded. This is NOT a newly discovered defect: the UAC2 P1
+# gate hit it on 2026-08-02 and transcript_hw_evkb.txt says so in as many
+# words -- "vcdfill's printed ppm column assumes 4 B frames; divide its B/s by
+# 1.4112 for this stream". It was recorded, worked around by hand, and left.
+#
+# What forced the parameter was driftrun.sh's FIT rather than a single point.
+# A manual division is fine when you read one number off one run; it is not
+# fine when a five-point sweep feeds slope/intercept arithmetic, because the
+# slope comes out 7.85 against a gate that demands 1.000 and the natural
+# reading of that is "the probe or the analysis is broken" -- which is exactly
+# what the gate's own comment tells you to conclude.
+#
+# Note what the wrong constant did NOT break: the zero crossing (-icept/slope)
+# is invariant under a uniform scale error on drift, so -85.8 ppm for the
+# device's converter was right either way. Only the slope gate could see it.
+PPM_BPS_UAC1 = 0.17640
+
+
+def analyse(path, want_json=False, plot=None, ppm_Bps=PPM_BPS_UAC1):
     sigs = parse(path)
     fill = [(t * TICK, v) for t, v in sigs.get("2", [])]
     out = {"file": path}
@@ -272,14 +298,15 @@ def analyse(path, want_json=False, plot=None):
         seg_rows.append({
             "t_start": round(s[0][0], 2), "t_end": round(s[-1][0], 2),
             "dur_s": round(dur, 1), "slope_Bps": round(b, 3),
-            "ppm_equiv": round(b / 0.17640, 1), "r2": round(r2, 4), "n": n,
+            "ppm_equiv": round(b / ppm_Bps, 1), "r2": round(r2, 4), "n": n,
         })
     out["segments"] = seg_rows
+    out["ppm_Bps"] = ppm_Bps
     if seg_rows:
         tot = sum(r["dur_s"] for r in seg_rows)
         wm = sum(r["slope_Bps"] * r["dur_s"] for r in seg_rows) / tot
         out["weighted_slope_Bps"] = round(wm, 3)
-        out["weighted_ppm_equiv"] = round(wm / 0.17640, 1)
+        out["weighted_ppm_equiv"] = round(wm / ppm_Bps, 1)
 
     if plot:
         try:
@@ -327,4 +354,13 @@ if __name__ == "__main__":
         args.remove(plot)
     if want_json:
         args.remove("--json")
-    sys.exit(analyse(args[0], want_json, plot))
+    # --frame-bytes N: bytes per audio frame on the wire (channels x subslot).
+    # Default 4 = UAC1 stereo 16-bit, which is what every pre-2026-08-06 caller
+    # meant. Pass 32 for 2AMi8o8 (8ch x 24-in-4).
+    fb = 4
+    if "--frame-bytes" in args:
+        i = args.index("--frame-bytes")
+        fb = int(args[i + 1])
+        del args[i:i + 2]
+    ppm_Bps = 44100.0 * fb / 1e6
+    sys.exit(analyse(args[0], want_json, plot, ppm_Bps))

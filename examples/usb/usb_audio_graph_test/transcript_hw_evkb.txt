@@ -305,3 +305,211 @@ by an enumeration bug (suspected Transfer_t pool leak from the aborted
 in-flight control transfer). And JTAG-alive does not imply USB-alive:
 the flash-booted witness survived the Mac power cycle with its USB
 wedged; xrun restarting the same image brought it back.
+
+UAC2 P4 gate, 2026-08-06 (the graph, at last, actually driving it)
+------------------------------------------------------------------
+Spec: docs/superpowers/specs/2026-08-02-uac2-audio-out-design.md section 3 P4
+-- "16->24-in-4 packing live, stereo tone from the graph, locked-bias sweep
+replayed open-loop on UAC2 (slope ~1, intercept near the UAC1-measured rate),
+then the closed-loop soak, transcripted." Gate: sweep + soak both recorded
+here.
+
+THE FINDING THAT DEFINED THIS PHASE
+-----------------------------------
+The example is called usb_audio_graph_test. Until this gate its audio graph
+was compiled out of every image ever built from it.
+
+    usb_audio_graph_test.cpp:35     #define DRIVE_FROM_TONE 1
+
+was a bare #define with no build override, and the sine node,
+AudioOutputUSBHost and both AudioConnections all live under
+`#if !DRIVE_FROM_TONE`. So every measurement in this directory -- the UAC1
+sweep and soak above, the whole UAC2 P1 and P3 evidence, both A/B soaks --
+was taken with USBAudioOut's INTERNAL tone generator. The graph adapter this
+example exists to exercise was never in the binary. The console said so all
+along, in the line nobody read as an accusation:
+
+    GRAPH-TEST: MODE = driver tone generator (graph bypassed)
+
+That is not a defect in any of those measurements: they measured transport,
+descriptors and clocking, and they measured them correctly. It does mean P4
+was the first time the graph -> FIFO -> packer path ran on hardware at all.
+
+Now a CMake option, GRAPH_DRIVE, default OFF. The default build is unchanged
+and that was verified rather than asserted: .text.itcm + .text.code + .data
+extracted from before and after the edit are byte-identical, 37580 bytes,
+sha 5021aa6843c0a359. (The first attempt to check this extracted `.text`,
+which this linker script does not emit, compared two empty files and printed
+IDENTICAL. A size guard now makes that failure mode impossible.)
+
+T4 -- STEREO TONE FROM THE GRAPH, UAC2 8ch/24-in-4
+---------------------------------------------------
+Host console, GRAPH_DRIVE=ON, MC200 in 2AMi8o8xxxxxx:
+
+    audio=ready uac2=1 alt=1  graph=44100Hz usb=44100Hz
+    port=18001205(ccs=1 pe=1 pp=1 spd=2)
+    pkts/s=1000   err/s=0 (xact=0 babble=0 buf=0 short=0)
+    fb=44096209  sizing=44096205  fresh=1
+    dropped=0  underruns=8  fifo=862/768  cpu=0% mem=1
+
+dropped=, cpu= and mem= exist ONLY in the graph build -- they are
+usbSink.dropped(), AudioProcessorUsage() and AudioMemoryUsage(), all inside
+`#if !DRIVE_FROM_TONE`. The tone build prints `mode=tone` in their place. So
+those three fields are the proof that the samples came from the graph and not
+from the driver's generator; they are not decoration.
+
+Analogue, MC200 line out -> RME Fireface UFX, 3.4 s at 44.1 kHz, all 30
+captured channels searched for a 440 Hz component rather than assuming a pair:
+
+                        ch0         ch1
+    peak                16612       14386
+    rms                 11740       10070
+    fundamental         440.085 Hz  440.085 Hz
+    THD (h2..h7)        0.0478 %    0.1277 %
+    h2                  -69.6 dB    -58.9 dB
+    fundamental/noise   95.1 dB     95.0 dB
+    crest factor        1.4151      1.4284
+
+Crest 1.4151 against sqrt(2)=1.41421 is 0.06 % -- a real sine, through
+graph -> FIFO -> uac_pack16(ch_live=2, ch_total=8, subslot=4) -> iso OUT ->
+MC200 DAC -> RME.
+
+The channel asymmetry is analogue, and that is provable rather than assumed:
+the sketch fans ONE mono sine node to both graph inputs, so interleaved[i*2]
+and interleaved[i*2+1] are bit-identical, and uac_pack16 writes them to device
+channels 0 and 1 unchanged. Identical digital in, 10.7 dB more h2 out. The
+difference can only live in the MC200's DAC channel 2, the cable or the RME's
+input 2.
+
+440.085 Hz is NOT a clock measurement and is not offered as one. It conflates
+three clocks -- the MC200's DAC, the RME's ADC and the 44100 the FFT assumes
+-- and the RME's own offset is uncalibrated here. Same discipline as the Stage
+B loopback's 440.65 Hz, different reason (there it was bin width; here it is
+an uncalibrated capture clock).
+
+T5 -- LOCKED-BIAS SWEEP, OPEN LOOP, GRAPH-DRIVEN, UAC2
+-------------------------------------------------------
+Five points, 120 s dwell, one firmware per point (BIAS_MODE_LOCKED opens the
+loop; provenance is in the build command):
+
+    bias(ppm)  drift(ppm)  residual
+         -125       -38.3      0.22
+         -105       -19.1     -0.22
+          -85         0.8      0.04
+          -65        20.1     -0.30
+          -45        40.3      0.26
+
+    slope            = 0.9820   (gate: 1.000; the UAC1 sweep got 0.9909)
+    device true rate = -85.8 ppm relative to host nominal
+    residual rms     = 0.23 ppm
+
+The bias range is centred on the device's known rate and spans 80 ppm, not the
+UAC1 sweep's +-250. That is forced by geometry: lib_xua's OUT FIFO is a fixed
+BYTE buffer, so at 8ch x 24-in-4 (32 B/frame) it holds one eighth the audio
+time it holds at 1AMi2o2 (2ch x 16, 4 B/frame). The same ppm error reaches a
+rail eight times sooner. A first attempt at 45 s dwell with the UAC1-style
+range produced 7 block corrections in 49 s and a meaningless 674.9 ppm fit
+across the discontinuities.
+
+This is now the FIFTH independent measurement of this unit's converter:
+
+    UAC1 locked-bias sweep     2026-08-02   -85.7 ppm
+    UAC1 glitch investigation  2026-08-02   ~-86 ppm
+    IN byte counter (Stage B)  2026-08-06   -86.7 ppm
+    feedback endpoint, live    2026-08-06   -85.4 ppm
+    UAC2 graph-driven sweep    2026-08-06   -85.8 ppm
+
+T6 -- CLOSED-LOOP SOAK, GRAPH-DRIVEN, UAC2
+--------------------------------------------
+followFeedback(true), 1079.1 s device-side VCD:
+
+    fill 744..1112 (mean 1007.3), 725902 samples, xscope missing marks 0
+    weighted slope +0.157 B/s = +0.1 ppm equivalent (32 B/frame)
+    overflow: ZERO      dryout: ZERO
+    underflow: one event at t=0.177 s, the stream-start transient
+
+Five segments, split at emission gaps rather than corrections, each fitted
+independently: +0.193, +0.155, +0.127, +0.134, +0.130 B/s. All +0.1 ppm.
+
+Host console, 900 heartbeats: err/s=0 and pkts/s=1000 were the ONLY values
+that ever appeared; dropped=0 for the whole soak (the graph sink never lost a
+block); underruns frozen at 8 from stream start; final fifo=780/768, one
+sample above target.
+
+Per-segment r2 is 0.0014..0.0733, and that is the expected signature of a
+converged loop rather than a weak fit: a flat trace with jitter has nothing to
+correlate. The evidence is five independent segments agreeing to 0.1 ppm over
+725902 samples, not any one r2.
+
+Matches the UAC1 closed-loop baseline above (+0.1 ppm equivalent, runtime
+corrections ZERO) -- now with the graph driving, on the other class.
+
+T7 -- UAC1 HARDWARE REGRESSION (deferred to P4 on 2026-08-03)
+--------------------------------------------------------------
+P3 changed the feedback path (FB_SLOTS 2->8 at HS, EMA alpha 1/8->1/32, then
+1000 polls/s and ITD pool 40->64). The UAC1 hardware regression that should
+have followed was deferred here by decision on 2026-08-03. Run now, and
+graph-driven, so it is also the first graph-driven UAC1 evidence:
+
+    MC200 in 1AMi2o2xxxxxx, followFeedback(true), 607.2 s device-side VCD
+    fill 772..948 (mean 906.2), 60722 samples, xscope missing marks 0
+    weighted slope +0.01 B/s = +0.1 ppm equivalent (4 B/frame)
+    overflow: ZERO   dryout: ZERO   underflow: one, at stream start
+    ONE segment spanning the entire 607.2 s -- no emission gaps at all
+
+    console, 600 heartbeats: uac2=0, spd=0 (the full-speed path really is
+    the one under test), err/s=0 and pkts/s=1000 the only values seen,
+    dropped=0, fifo=946/768
+
+Matches the 2026-08-02 UAC1 closed-loop baseline (+0.1 ppm, corrections ZERO).
+P3's feedback work did not regress UAC1.
+
+A contrast the two soaks make visible, recorded because it looked alarming
+before it was explained. Feedback rejects:
+
+    UAC1/FS   fbrej      5 / 37797 polls  = 0.013 %   at ~63 polls/s
+    UAC2/HS   fbrej  28320 / 877806 polls = 3.2 %     at 1000 polls/s
+
+Not a defect and not new breakage: at 1000 polls/s the host reads the feedback
+endpoint far faster than the device refreshes the value behind it, so a few
+percent of reads return nothing usable and are counted as rejects rather than
+as buffer errors -- which is exactly what that counter was built to
+distinguish. fberr stayed 0 on UAC1 and static at 88 on UAC2, sizing tracked
+fb throughout, and fresh=1 never dropped.
+
+INSTRUMENT AND BENCH FINDINGS FROM THIS GATE
+---------------------------------------------
+* Print::printf truncates at PRINTF_BUF_SIZE (128) bytes PER CALL, silently.
+  Adding port= to the heartbeat's first printf put it at exactly 128, and the
+  field that got cut was spd= -- the one bit that separates a high-speed UAC2
+  enumeration from a full-speed fallback, which was the entire reason for
+  adding it. Now its own printf. Every other heartbeat field was already a
+  separate call, which is why none of them had ever truncated.
+
+* `LinkServer run` was misdiagnosed here as hanging, and driftrun.sh was
+  briefly "fixed" to use `flash ... load` instead. It does not hang: it is
+  asynchronous and silent, exactly as driftrun.sh's own comment has said since
+  2026-08-02, and the board resets about 23 s in. `flash load` does program
+  the part but leaves the core HALTED, so the first sweep point dwelled
+  against a dead board and the console guard caught it. Reverted, with the
+  trap written down in the script.
+
+* The MC200 is loaded with `xrun`, which is RAM-resident. Unplugging it power
+  cycles it, the image is gone, and it re-enumerates at FULL speed running
+  whatever is in flash -- at which point the UAC2 driver correctly refuses it
+  (dev->speed != 2) and the host reports audio=none with a perfectly healthy
+  port. port=...(ccs=1 pe=1 pp=1 spd=0) is the signature; re-run xrun.
+
+* vcdfill.py's ppm column assumed 4 B frames. This was NOT discovered here --
+  the UAC2 P1 gate above records it and gives the manual 1.4112 divisor. What
+  forced it to become a parameter (--frame-bytes) is that a manual division is
+  fine for one number off one run but not when a five-point FIT consumes it:
+  the slope came out 7.85 against a gate demanding 1.000, and that gate's own
+  comment tells you to read that as "the probe or the analysis is broken".
+  The zero crossing was never affected -- -icept/slope is invariant under a
+  uniform scale error, which is why -85.8 ppm was right either way.
+
+* driftrun.sh is now parameterised by DEV_CONFIG and GRAPH_DRIVE, with
+  separate build trees per mode so a cached GRAPH_DRIVE cannot silently mix a
+  tone-driven point into a graph-driven sweep. Defaults reproduce the UAC1
+  tone-driven behaviour every earlier transcript was taken with.

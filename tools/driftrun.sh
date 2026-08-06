@@ -25,7 +25,27 @@ POINTS=("${@:--250 -150 -83 0 150 250}")
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXDIR="$HERE/../examples/usb/usb_audio_graph_test"
 XMOS_APP="$HOME/Development/xmos/sw_usb_audio/app_usb_aud_xk_216_mc"
-XE="$XMOS_APP/bin/1AMi2o2xxxxxx/app_usb_aud_xk_216_mc_1AMi2o2xxxxxx.xe"
+
+# Which MC200 image to boot, and whether the host image is driven by the audio
+# GRAPH or by USBAudioOut's internal tone generator. Both default to what this
+# script has always done -- UAC1 full speed, tone generator -- so every earlier
+# invocation and every committed UAC1 transcript reproduces unchanged.
+#
+#   DEV_CONFIG=2AMi8o8xxxxxx GRAPH_DRIVE=ON tools/driftrun.sh out 120 ...
+#
+# is P4's cell: the UAC2 high-speed image with the graph feeding it. The fill
+# probe the fit depends on (XUA_PROBE_FILL -> xscope_int(2,...)) is compiled
+# into both images -- it is gated on XSCOPE, which the app's CMakeLists sets
+# via -fxscope for every config -- and out_fifo_fill was confirmed present in
+# a 2AMi8o8 VCD before this option was added, rather than assumed.
+DEV_CONFIG="${DEV_CONFIG:-1AMi2o2xxxxxx}"
+GRAPH_DRIVE="${GRAPH_DRIVE:-OFF}"
+XE="$XMOS_APP/bin/$DEV_CONFIG/app_usb_aud_xk_216_mc_$DEV_CONFIG.xe"
+
+# Separate build trees per mode. Sharing one would silently reuse a cached
+# GRAPH_DRIVE from a previous sweep, and the console guard below only checks
+# the BIAS -- a graph/tone mix-up would pass it and poison the whole fit.
+BUILDDIR="$EXDIR/build-drift-$( [ "$GRAPH_DRIVE" = "ON" ] && echo graph || echo tone )"
 LINKSERVER="${LINKSERVER:-/Applications/LinkServer_26.6.137/LinkServer}"
 DEVICE="MIMXRT1176:MIMXRT1170-EVKB"
 PORT="${RT1170_PORT:-/dev/cu.usbmodem5DQ2DDHVWO5EI3}"
@@ -73,11 +93,11 @@ pushd "$XTC" >/dev/null; set +u; source SetEnv.sh; set -u; popd >/dev/null
 
 for BIAS in "${POINTS[@]}"; do
   TAG="bias${BIAS}"
-  echo "=== point $TAG: build ==="
-  cmake -S "$EXDIR" -B "$EXDIR/build" \
+  echo "=== point $TAG: build (GRAPH_DRIVE=$GRAPH_DRIVE) ==="
+  cmake -S "$EXDIR" -B "$BUILDDIR" \
         -DCMAKE_TOOLCHAIN_FILE="$EXDIR/toolchain/rt1170-evkb.toolchain.cmake" \
-        -DBIAS_LOCKED_PPM="$BIAS" >/dev/null
-  cmake --build "$EXDIR/build" >/dev/null
+        -DBIAS_LOCKED_PPM="$BIAS" -DGRAPH_DRIVE="$GRAPH_DRIVE" >/dev/null
+  cmake --build "$BUILDDIR" >/dev/null
 
   echo "=== point $TAG: flash host ==="
   pkill -f 'xrun --xscope-file' 2>/dev/null || true
@@ -85,7 +105,7 @@ for BIAS in "${POINTS[@]}"; do
   kill_probe_daemons
   # `LinkServer run` = load + reset + free-run; killing it afterwards leaves
   # the board running. There is no standalone reset subcommand in 26.6.137.
-  "$LINKSERVER" run "$DEVICE" "$EXDIR/build/usb_audio_graph_test.elf" \
+  "$LINKSERVER" run "$DEVICE" "$BUILDDIR/usb_audio_graph_test.elf" \
       > "$OUT/$TAG.linkserver.log" 2>&1 &
   LS_PID=$!
   # LinkServer run prints three INFO lines then goes silent while it erases,
@@ -94,6 +114,13 @@ for BIAS in "${POINTS[@]}"; do
   # 120 s). The console cannot be attached to confirm either, because a VCOM
   # reader during programming kernel-panics this Mac. So: a generous fixed
   # wait, then the per-point console check below fails loudly on a bad flash.
+  #
+  # ★ 2026-08-06: do NOT "fix" this by switching to `flash ... load`. That was
+  # tried, on the misreading that the three-INFO-lines-then-silence above was
+  # a hang rather than the documented normal behaviour. `flash load` is indeed
+  # synchronous and does program the part -- but it leaves the core HALTED,
+  # so every sweep point dwelled against a dead board and produced an empty
+  # console. `run` is what resets and free-runs; the silence is not a fault.
   sleep 90
   kill $LS_PID 2>/dev/null || true
   kill_probe_daemons

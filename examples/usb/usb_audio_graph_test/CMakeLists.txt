@@ -45,6 +45,16 @@ if(NOT USB_RATE_HZ STREQUAL "")
     target_compile_definitions(usb_audio_graph_test.elf PRIVATE USB_RATE_HZ=${USB_RATE_HZ})
 endif()
 
+# Drive the USB FIFO from the audio GRAPH (sine -> AudioOutputUSBHost) rather
+# than USBAudioOut's internal tone generator. Default OFF, which is what every
+# build and transcript in this directory has always used -- see the
+# DRIVE_FROM_TONE note in the sketch. P4's whole point is that ON has never
+# been exercised on hardware.
+option(GRAPH_DRIVE "Drive the FIFO from the audio graph, not the driver's tone generator" OFF)
+if(GRAPH_DRIVE)
+    target_compile_definitions(usb_audio_graph_test.elf PRIVATE DRIVE_FROM_TONE=0)
+endif()
+
 option(UACV_PATTERN "Send the UAC validator LFSR pattern instead of audio" OFF)
 if(UACV_PATTERN)
     target_compile_definitions(usb_audio_graph_test.elf PRIVATE UACV_PATTERN=1)

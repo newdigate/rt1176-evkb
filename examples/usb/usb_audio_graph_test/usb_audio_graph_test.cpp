@@ -1,6 +1,13 @@
 #include "Arduino.h"
 #include "HardwareSerial.h"   // Serial1 (LPUART1) -- not pulled in by USBHost_t36.h
 #include "USBHost_t36.h"
+// USBHS_PORTSC1 -- the root port's own status register, for the port= field
+// in the heartbeat. Carried across from usb_audio_capture_test, where it was
+// added after "the port is empty" was asserted twice about a port that had a
+// device on it. `audio=none` only proves nothing ENUMERATED; it cannot tell a
+// dark port (PP=0) from an empty one (CCS=0) from a device that enumerated
+// and was refused.
+#include "utility/imxrt_usbhs.h"
 #include "AudioStream.h"
 #include "synth_sine.h"
 #include "output_usbhost.h"
@@ -32,7 +39,19 @@
 // its real event rate was ~0.2/s, invisible under that floor. The bisection
 // stands for what it did prove: the glitch needs neither the graph nor the
 // adapter.)
+// Overridable from the build (-DGRAPH_DRIVE=ON defines DRIVE_FROM_TONE=0).
+// Default 1 keeps every existing build, gate and transcript byte-identical.
+//
+// Until P4 this was a bare `#define ... 1` with no way to override it, which
+// meant the audio graph in the example called "usb_audio_graph_test" was
+// compiled out of EVERY image ever built from it -- the sine node,
+// AudioOutputUSBHost and both AudioConnections all live under
+// `#if !DRIVE_FROM_TONE`. Every UAC1 and UAC2 measurement in this directory
+// was therefore taken with the driver's internal tone generator, not the
+// graph. P4 exists to close exactly that gap.
+#ifndef DRIVE_FROM_TONE
 #define DRIVE_FROM_TONE 1
+#endif
 
 // --- USB sample rate -----------------------------------------------------
 //
@@ -317,6 +336,23 @@ void loop() {
                        (unsigned)USB_RATE_HZ, (unsigned long)audioOut.rate(),
                        (audioOut.ready() && audioOut.rate() != USB_RATE_HZ)
                            ? " RATE-MISMATCH" : "");
+        // Its OWN printf, and that is not stylistic. Print::printf truncates at
+        // PRINTF_BUF_SIZE (128) bytes PER CALL, silently. Appending these
+        // fields to the line above put it at exactly 128, so spd= -- the one
+        // field that distinguishes a high-speed UAC2 enumeration from a
+        // full-speed fallback, and the reason the field was added at all --
+        // was the part that got cut. Every other heartbeat field here is
+        // already a separate call, which is why none of them ever truncated.
+        //
+        // CCS bit 0 (a device is connected), PE bit 2 (port enabled by the
+        // controller after reset), PP bit 12 (the host is driving VBUS --
+        // PP=0 means the port is dark and nothing can present itself, whatever
+        // is plugged in), PSPD bits 27:26 (00 full, 01 low, 10 high).
+        uint32_t portsc = USBHS_PORTSC1;
+        Serial1.printf(" port=%08lX(ccs=%u pe=%u pp=%u spd=%u)",
+                       (unsigned long)portsc,
+                       (unsigned)(portsc & 1u), (unsigned)((portsc >> 2) & 1u),
+                       (unsigned)((portsc >> 12) & 1u), (unsigned)((portsc >> 26) & 3u));
         if (audioOut.streaming()) {
             uint32_t p = audioOut.packetsSent();
             // fifo= is the clock. It should hover near the target; a trend
