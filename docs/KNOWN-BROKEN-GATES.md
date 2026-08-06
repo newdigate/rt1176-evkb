@@ -212,6 +212,30 @@ MORE than the gate count. The runner is still the right thing to ask — that
 correction is above and stands — but ask it for the number it prints, not for
 the number of lines it prints.
 
+**2026-08-06 (emulated USB audio device):** `usb/usb_descriptor_survey` joins
+the sweep: **76 → 77 gates**. First gate in this tree to run the USB audio
+stack against an ACTUAL emulated audio device rather than an empty bus —
+QEMU's `hw/usb/dev-audio.c` on the OTG2 host bus. It asserts real enumeration
+(104-byte config retrieved), the interface walk, bcdADC, FORMAT_TYPE_I
+(2 ch, 16-bit, 48000) and the endpoint's synchronisation type.
+
+Two facts about that model, established by measurement and worth not
+rediscovering:
+
+- **It offers 48000 Hz only.** `USBAUDIO_SAMPLE_RATE` is a compile-time
+  `#define` baked into its descriptor tables, with no property to change it.
+  Every streaming example here ships asking for 44100 to match the Audio
+  library, so they enumerate against it and are correctly refused by format.
+  That is why the gate lives on `usb_descriptor_survey`, which never binds and
+  is therefore format-agnostic.
+- **Isochronous data does not flow against it.** An OUT sketch built for 48000
+  enumerates, claims, selects alt 1, completes the whole control sequence with
+  `ctrl=0/0/0`, prints "streaming started" — and sits at `pkts/s=0`. Cause not
+  established; the leading suspicion is a split-transaction/TT mismatch, since
+  siTD is for a full-speed device behind a high-speed hub and QEMU has this one
+  on the root port. So this gate covers enumeration and the descriptor plane
+  ONLY. Silicon remains the only proof that audio moves.
+
 Two corrections to how this sweep gets counted and read, both learned the hard
 way in that session:
 

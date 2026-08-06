@@ -201,6 +201,7 @@ examples/storage-memory/sdram_test:sdram_test \
 examples/timing/interval_timer_test:interval_timer_test examples/timing/rtc_test:rtc_test \
 examples/usb/usb_audio_capture_test:usb_audio_capture_test \
 examples/usb/usb_audio_duplex_test:usb_audio_duplex_test \
+examples/usb/usb_descriptor_survey:usb_descriptor_survey \
 examples/usb/usb_data_test:usb_data_test examples/usb/usb_enum_test:usb_enum_test \
 examples/usb/usb_host_hid_test:usb_host_hid_test examples/usb/usb_joystick_test:usb_joystick_test \
 examples/usb/usb_keyboard_test:usb_keyboard_test examples/usb/usb_midi_test:usb_midi_test \
