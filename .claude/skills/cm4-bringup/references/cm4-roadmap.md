@@ -390,11 +390,16 @@ enables either cache.
     the work that happens however often you poll: slope 468 %/Mloop,
     **intercept 1.163%, R² = 1.00000**. The 69% the naive metric reports at
     the sketch's natural loop rate is almost entirely spin.
-  - **`isr/s` was 0 at every level.** `USBHS_USBINTR` is 0 (`ehci.cpp:287`)
-    and the iso rings are armed `ioc=false`, so the path is *wholly polled* —
-    `USBAudioOut::service()` harvests and refills (`usb_audio.cpp:1087`,
-    `:605`). There is no interrupt cost to move, and the deadline is met by
-    loop() latency.
+  - **`isr/s` was 0 at every level — but that is a claim about STREAMING
+    ONLY.** The measurement is sound; an earlier reading of it here was not.
+    `USBHS_USBINTR = 0` at `ehci.cpp:287` is transient: `:326-328` then
+    enable PCE/TIE0/TIE1/UEE/SEE/UPIE/UAIE. In steady state none of them
+    fire — the iso rings are armed `ioc=false` (`usb_audio.cpp:605`) so UPI
+    stays quiet, there is no async traffic so UAI stays quiet, and PCI only
+    moves on connect/disconnect. **Enumeration is a different matter and IS
+    interrupt-driven:** every control transfer completes through UAI →
+    `followup_Transfer` (`ehci.cpp:380`). So streaming needs no interrupt,
+    enumeration does, and a CM4 port must answer for both.
   - **The binding constraint is contiguous stall length.** Stealing the CPU
     in one block per millisecond: **600 µs stalls soak healthy** (OUT fifo
     oscillates 3092–4094 with no downward trend, rate locked 44100 Hz, over
@@ -1142,9 +1147,12 @@ no power; **check J38 / the barrel-jack supply** before chasing the debug chain.
   the same instrumentation reports **69.1%** at its natural 145127 loops/s —
   nearly all spin. A percentage-of-a-spinning-loop cannot answer "how much is
   available"; only stealing the CPU and watching the audio break can.
-  **`isr/s` was 0 at every level** — `USBHS_USBINTR=0` and `ioc=false`, so
-  the whole path is polled and the deadline is loop() latency, not interrupt
-  service. **The constraint is contiguous stall length, not throughput:**
+  **`isr/s` was 0 at every level** — the iso rings are `ioc=false` and there
+  is no async traffic in steady state, so STREAMING is wholly polled and its
+  deadline is loop() latency. ★Narrowed same day: this says nothing about
+  ENUMERATION, which is interrupt-driven (UAI → `followup_Transfer`,
+  `ehci.cpp:380`); the `USBHS_USBINTR=0` at `ehci.cpp:287` is transient and
+  `:326-328` enables the interrupts. **The constraint is contiguous stall length, not throughput:**
   600 µs/ms soaks healthy (OUT fifo 3092–4094, no trend, 44100 Hz locked,
   4.3 min), 850 µs/ms fails (fifo drains 2830→1494, underruns accelerate
   0.36/s→7.73/s, 5 min); knee not pinned. ★★**A 10 s staircase step
