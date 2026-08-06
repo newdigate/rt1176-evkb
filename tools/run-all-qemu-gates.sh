@@ -110,6 +110,17 @@ EOF
     return $_found
 }
 
+# build* directories are PRUNED, and that is not tidiness. `-DEVKB_FORCE_FETCH`
+# clones peripheral libraries into <example>/build-fetch/_deps/, and those
+# libraries carry gates of their own -- four of them, in the SPI and SdFat
+# trees. Discovery used to descend into them, so a sweep reported 79 gates
+# instead of 75 and four permanent SKIPs for images this repo never builds.
+#
+# The SKIPs are the damaging part. This file's own contract, repeated in
+# CLAUDE.md, is that "a non-zero SKIP count means you measured less than you
+# think" -- so a discovery bug that manufactures four of them permanently
+# destroys the one signal that tells you the sweep under-reported. It also
+# meant the documented baseline looked stale when it was exactly right.
 GATES=""
 NGATES=0
 while IFS= read -r gate; do
@@ -120,7 +131,8 @@ while IFS= read -r gate; do
     GATES="$GATES$id	$gate"$'\n'
     NGATES=$((NGATES + 1))
 done <<EOF
-$(find "$REPO/examples" -name 'run_qemu*.sh' -type f | LC_ALL=C sort)
+$(find "$REPO/examples" -type d -name 'build*' -prune -o \
+       -name 'run_qemu*.sh' -type f -print | LC_ALL=C sort)
 EOF
 
 if [ "$NGATES" -eq 0 ]; then

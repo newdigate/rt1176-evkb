@@ -79,30 +79,49 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **74 gates**. Expect
-**74 passed, 0 failed, 0 SKIP** *or* **73 passed, 1 failed, 0 SKIP** — the one
-permitted failure being `dualcore/cm4_audio_test`. Any *other* failure is a real
-regression from what you are doing.
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **75 gates**. Expect
+**75 passed, 0 failed, 0 SKIP** on an idle machine — measured 2026-08-06 with
+`-j 2`. A single dual-core failure with everything else green is the known
+load artefact described below; any *other* failure is a real regression from
+what you are doing.
 
-Two things that number depends on:
+Three things that number depends on:
 
 - **Gates do not build.** The runner assumes `build/<name>.elf` exists and
   reports a missing one as SKIP, not as a failure. A non-zero SKIP count means
   you measured less than you think — build every gate-owning example first, or
   the sweep quietly under-reports.
-- **`dualcore/cm4_audio_test` is load-sensitive, not deterministic.**
-  `docs/KNOWN-BROKEN-GATES.md` records both outcomes on consecutive days: 68/0
-  on 2026-07-28 (5 runs of 5, idle machine) and 67/1 on 2026-07-29 (five
-  consecutive sweeps). It passed again on 2026-07-29 in the sweep that produced
-  the count above. Do not chase its red, and equally do not delete it, weaken
-  it, or drop it from the runner to make a sweep green. That file is the record;
-  keep this line agreeing with it.
+- **Do not count gates with a bare `find`.** Until 2026-08-06 discovery
+  descended into `build*` directories, where `-DEVKB_FORCE_FETCH` clones
+  peripheral libraries that carry gates of their OWN — four, in the SPI and
+  SdFat trees. A raw find therefore returns 79, and the four extras become
+  permanent SKIPs for images this repo never builds. That is worse than a
+  wrong count: it destroys the SKIP signal above, which is the only thing
+  that tells you a sweep under-reported. Discovery now prunes `build*`; ask
+  the runner (`-l`) rather than `find`.
+- **Dual-core gates are load-sensitive, not deterministic — and it moves
+  between them.** `docs/KNOWN-BROKEN-GATES.md` records `cm4_audio_test` both
+  ways on consecutive days. On 2026-08-06 a `-j 4` sweep run *while the
+  machine was simultaneously building, flashing and driving hardware* failed
+  `cm4_wire_int_slave_test` instead — a gate not previously suspect — while
+  `cm4_audio_test` passed in that same run. The failing gate passed in 1 s
+  when re-run idle and compiles none of the code that sweep was testing. So
+  do not treat one red dual-core gate as a regression without re-running it
+  idle first, and do not assume the susceptible gate is the documented one.
+  Equally: do not delete, weaken, or drop any of them to make a sweep green.
+  That file is the record; keep this line agreeing with it.
 
-The previously documented baseline here was `28 passed, 1 failed, 0 SKIP`,
-which had gone stale by more than half the tree. A baseline that understates the
-gate count that badly means a sweep can silently lose dozens of gates and still
-look right — the same class of defect the audit's `GATES` drift check exists to
+The baseline before that was `28 passed, 1 failed, 0 SKIP`, which had gone
+stale by more than half the tree. A baseline that understates the gate count
+that badly means a sweep can silently lose dozens of gates and still look
+right — the same class of defect the audit's `GATES` drift check exists to
 catch. Re-measure this line when you add gates.
+
+Re-measuring means running the sweep, not counting files. On 2026-08-06 the
+`74` above was judged stale on the strength of a bare `find` returning 79, and
+it was not stale — the four extras were another repo's gates inside a build
+directory, and 74 was exactly right. The number moved to 75 only because a
+gate was genuinely added.
 
 Repo-wide gates in `tools/`:
 - `license-audit.sh` — proves no copyleft source is compiled into firmware

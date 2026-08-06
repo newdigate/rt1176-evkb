@@ -194,3 +194,35 @@ LVGL scene generates image tasks, the op class where the PXP wins 12–63×. The
 census probe (-DDRAW_CENSUS) stand as the instrument; REVISIT when an image-heavy
 scene (large images/sprites/photos) enters the tree. Expectation: 74/0/0 or the
 documented `cm4_audio_test` singleton, zero SKIPs.
+
+**2026-08-06 (USB audio input, Stage B):** `usb/usb_audio_capture_test` joins the
+sweep: **74 → 75 gates**. Clean baseline re-measured on an idle machine with
+`-j 2`: **75 passed, 0 failed, 0 SKIP**.
+
+Two corrections to how this sweep gets counted and read, both learned the hard
+way in that session:
+
+**The gate count must come from the runner, not from `find`.** Discovery used to
+descend into `build*` directories, where `-DEVKB_FORCE_FETCH` clones peripheral
+libraries that ship gates of their own — four, under `usb_audio_graph_test/
+build-fetch/_deps/` in the SPI and SdFat trees. A bare `find` returned 79, which
+made the documented 74 look stale when it was exactly right, and the four extras
+became permanent SKIPs for images this repo never builds. That last part is the
+real harm: this file and CLAUDE.md both treat a non-zero SKIP as proof the sweep
+under-reported, so a discovery bug that manufactures four of them permanently
+disables the only integrity check on the count. Discovery now prunes `build*`
+(`tools/run-all-qemu-gates.sh`); use `-l` to count.
+
+**Load sensitivity is not confined to `cm4_audio_test`.** A `-j 4` sweep run
+while the same machine was concurrently building examples, flashing the EVKB and
+driving hardware came back `74 passed, 1 failed` — and the failure was
+`dualcore/cm4_wire_int_slave_test`, never previously suspect, with
+`cm4_audio_test` PASSING in that same run. The failing gate re-ran green in 1 s
+on an idle machine and compiles none of the code that sweep was testing
+(`err=00000004`, `WIRE_INT_SLAVE_CM4=FAIL` under load; clean idle).
+
+So the rule "any failure other than `cm4_audio_test` is a real regression" is too
+narrow as written: it is the DUAL-CORE gates as a class that are load-sensitive,
+and which one shows it varies. Re-run a lone dual-core red on an idle machine
+before believing it — and check whether the gate even compiles what you changed.
+Neither of those excuses a red that survives both tests.
