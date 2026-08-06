@@ -176,7 +176,12 @@ int main(void) {
     spin_ms(8000u);                              /* ~8 s observation window */
 
     mu_send(usb_irq_count);                      /* THE ANSWER: >0 = CM4 took it */
-    mu_send(usb_last_sts);                       /* which status bit(s) */
+    mu_send(usb_last_sts);                       /* which status bit(s), from the ISR */
+    mu_send(USB2_USBSTS);                        /* post-window RAW status: proves whether
+                                                  * the condition was PENDING but unrouted
+                                                  * (PCI set, irqcnt 0) versus never having
+                                                  * occurred at all (both clear). Without
+                                                  * this, irqcnt=0 is ambiguous. */
     mu_send(USB2_PORTSC1);                       /* CCS after the window */
     mu_send(0xD0DE0007u);                        /* done marker */
     for (;;) { __asm volatile ("wfi"); }

@@ -14,15 +14,41 @@
  *   s2/pllsic   C5B00002 / bit31=LOCK
  *   s3/rstspin  C5B00003 / spin count for USBCMD.RST to clear
  *   s4/usbmode  C5B00004 / CM(3)|SDIS readback
- *   s5/portsc   C5B00005 / PORTSC1 after 100 ms attach window
+ *   s5/portsc   C5B00005 / PORTSC1 after 100 ms attach window. CCS(bit0) is
+ *                          expected 0: the device is plugged AFTER stage 6.
  *   s6          C5B00006            PCE enabled, NVIC 135 armed
  *   irqcnt      ........            THE ANSWER: >0 = the CM4 took the IRQ
  *   laststs     ........            USBSTS snapshot from the handler
- *   portsc2     ........            PORTSC1 after the observation window
+ *   stsraw      ........            USBSTS read directly after the window, so
+ *                                   irqcnt=0 is unambiguous: PCI(bit2) set
+ *                                   means the condition was PENDING but never
+ *                                   routed to the CM4 NVIC; both clear means
+ *                                   it never occurred at all.
+ *   portsc2     ........            PORTSC1 after the observation window; CCS
+ *                                   expected 1, so portsc->portsc2 is a real
+ *                                   0->1 connect edge (PLUG_TRANSITION).
  *   done        D0DE0007
  *
  * Verdict USB_IRQ_CM4=PASS requires: all six stage markers in order, the done
- * marker, PLL lock, host mode, AND irqcnt > 0.
+ * marker, host mode, AND irqcnt > 0.
+ *
+ * THE DEVICE MUST ARRIVE AFTER STAGE 6, in both worlds. ChipIdea defers the
+ * attach report to the guest's PP write (chipidea.c:230 -> hcd-ehci.c:1066),
+ * so a device already present at reset raises PCD during stage 5 -- and the
+ * stage-6 W1C then clears it before PCE and the NVIC are armed. Measured
+ * 2026-08-06: that gave irqcnt=0 with stsraw=0, i.e. no interrupt condition
+ * ever occurred while anything was listening, making the red VACUOUS with
+ * respect to IRQ routing. The QEMU gate therefore waits for the s6 marker and
+ * only then hotplugs; on silicon the operator plugs J47 during the window.
+ * PLUG_TRANSITION machine-checks that edge in both worlds.
+ *
+ * PLL lock is deliberately NOT part of that composite. It is a WORLD-SPLIT
+ * token: QEMU's TYPE_IMX_USBPHY is an i.MX6-era model whose register file ends
+ * at USBPHY_VERSION (0x80), so the RT1176's PLL_SIC quad at 0xA0/A4/A8/AC is
+ * unmodelled and the lock poll cannot succeed for EITHER core -- a divergence
+ * already recorded in HW-verified firmware (USBHost_t36/ehci.cpp:248, "QEMU:
+ * PLL_SIC reads 0 -> times out, proceeds"). PHY_PLL_CM4 is still printed as
+ * its own verdict line; silicon asserts it is true, QEMU only that it exists.
  *
  * QEMU is EXPECTED-FAIL until the model fans IRQ 135 to both NVICs (qemu2
  * wires both USB IRQs to the CM7 NVIC only, fsl-imxrt1170.c:1418). The EVKB
@@ -57,6 +83,27 @@ static void phex(const char *k, uint32_t v) {
     Serial1.println();
 }
 
+/* Receive one word and print it IMMEDIATELY.
+ *
+ * The streaming is load-bearing, not a style choice -- do not "tidy" this back
+ * into a batch of wait_recv()s followed by a batch of phex()es. The QEMU gate
+ * polls the UART for the s6 marker and hotplugs the device the moment it
+ * appears, so that the connect event lands inside the CM4's armed observation
+ * window. Batch printing emits s6 only after ALL sixteen words have arrived --
+ * i.e. after the window has already closed -- so the gate would plug too late
+ * and measure irqcnt=0 for a reason that has nothing to do with IRQ routing.
+ * Measured 2026-08-06: that is exactly what happened, and it looked identical
+ * to a routing failure.
+ *
+ * Token order and content are unchanged from the batch version; only the
+ * timing differs. A timeout now truncates the transcript at the word that
+ * never arrived, which localises a hang instead of printing zeros for it. */
+static bool recv_show(const char *k, uint32_t *out) {
+    if (!wait_recv(0, out)) return false;
+    phex(k, *out);
+    return true;
+}
+
 void setup() {
     Serial1.begin(115200);
     Serial1.println("CM4USBIRQ-GATE v1");
@@ -66,25 +113,17 @@ void setup() {
 
     uint32_t s1 = 0, lpcg = 0, s2 = 0, pllsic = 0, s3 = 0, rstspin = 0;
     uint32_t s4 = 0, usbmode = 0, s5 = 0, portsc = 0, s6 = 0;
-    uint32_t irqcnt = 0, laststs = 0, portsc2 = 0, done = 0;
+    uint32_t irqcnt = 0, laststs = 0, stsraw = 0, portsc2 = 0, done = 0;
 
-    bool ok = wait_recv(0, &s1)      && wait_recv(0, &lpcg)
-           && wait_recv(0, &s2)      && wait_recv(0, &pllsic)
-           && wait_recv(0, &s3)      && wait_recv(0, &rstspin)
-           && wait_recv(0, &s4)      && wait_recv(0, &usbmode)
-           && wait_recv(0, &s5)      && wait_recv(0, &portsc)
-           && wait_recv(0, &s6)
-           && wait_recv(0, &irqcnt)  && wait_recv(0, &laststs)
-           && wait_recv(0, &portsc2) && wait_recv(0, &done);
-
-    phex("s1",      s1);      phex("lpcg",    lpcg);
-    phex("s2",      s2);      phex("pllsic",  pllsic);
-    phex("s3",      s3);      phex("rstspin", rstspin);
-    phex("s4",      s4);      phex("usbmode", usbmode);
-    phex("s5",      s5);      phex("portsc",  portsc);
-    phex("s6",      s6);
-    phex("irqcnt",  irqcnt);  phex("laststs", laststs);
-    phex("portsc2", portsc2); phex("done",    done);
+    bool ok = recv_show("s1",      &s1)      && recv_show("lpcg",    &lpcg)
+           && recv_show("s2",      &s2)      && recv_show("pllsic",  &pllsic)
+           && recv_show("s3",      &s3)      && recv_show("rstspin", &rstspin)
+           && recv_show("s4",      &s4)      && recv_show("usbmode", &usbmode)
+           && recv_show("s5",      &s5)      && recv_show("portsc",  &portsc)
+           && recv_show("s6",      &s6)
+           && recv_show("irqcnt",  &irqcnt)  && recv_show("laststs", &laststs)
+           && recv_show("stsraw",  &stsraw)
+           && recv_show("portsc2", &portsc2) && recv_show("done",    &done);
 
     /* Decoded, so a human reading the transcript does not have to remember
      * bit positions -- and so a wrong decode is visible rather than latent. */
@@ -93,6 +132,7 @@ void setup() {
     Serial1.print(" sdis=");            Serial1.print((usbmode >> 4) & 1u);
     Serial1.print(" ccs=");             Serial1.print(portsc & 1u);
     Serial1.print(" ccs2=");            Serial1.print(portsc2 & 1u);
+    Serial1.print(" pci=");             Serial1.print((stsraw >> 2) & 1u);
     Serial1.println();
 
     bool stages = (s1 == 0xC5B00001u) && (s2 == 0xC5B00002u) && (s3 == 0xC5B00003u)
@@ -104,8 +144,18 @@ void setup() {
     Serial1.println(stages ? "STAGES=PASS" : "STAGES=FAIL");
     Serial1.println(phy    ? "PHY_PLL_CM4=PASS" : "PHY_PLL_CM4=FAIL");
     Serial1.println(host   ? "HOSTMODE_CM4=PASS" : "HOSTMODE_CM4=FAIL");
-    Serial1.println((ok && stages && phy && host && irqcnt > 0u)
-                    ? "USB_IRQ_CM4=PASS" : "USB_IRQ_CM4=FAIL");
+    /* A real 0->1 CONNECT EDGE inside the observation window, not merely a
+     * device being present at the end of it. A device already attached at
+     * reset (ccs=1 -> ccs2=1) and a device that never arrives (0 -> 0) both
+     * fail here, which is what makes this un-fakeable in the same way the
+     * silicon probe is. */
+    bool plug = ((portsc & 1u) == 0u) && ((portsc2 & 1u) == 1u);
+    Serial1.println(plug ? "PLUG_TRANSITION=PASS" : "PLUG_TRANSITION=FAIL");
+    /* `phy` is deliberately NOT a term here -- see the world-split note in the
+     * header. Folding an unobservable-in-QEMU token into the composite would
+     * make USB_IRQ_CM4 unpassable for a reason unrelated to interrupts. */
+    bool pass = ok && stages && host && irqcnt > 0u;
+    Serial1.println(pass ? "USB_IRQ_CM4=PASS" : "USB_IRQ_CM4=FAIL");
     Serial1.println("CM4USBIRQ-DONE");
 }
 

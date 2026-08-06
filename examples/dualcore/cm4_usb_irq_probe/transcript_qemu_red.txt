@@ -1,0 +1,56 @@
+./run_qemu.sh — 2026-08-06, EXPECTED-FAIL (red) baseline, exit status 1.
+qemu2 wires both USB IRQs to the CM7 NVIC only (fsl-imxrt1170.c:1418); the
+fan-out task flips this gate green. Checked in BEFORE that change so a later
+green run can prove the split was needed, not merely present.
+
+The red is specifically about interrupt ROUTING. Everything upstream of the
+interrupt is green in this very run:
+  - STAGES=PASS        the CM4 completed all six register stages on its own
+  - HOSTMODE_CM4=PASS  usbmode=00000013 -> CM=3 (host) | SDIS
+  - PLUG_TRANSITION=PASS  portsc ccs=0 -> portsc2 ccs2=1, a real 0->1 connect
+                       edge produced by a monitor device_add that the gate
+                       issues only AFTER the CM4 prints its s6 (armed) marker
+  - stsraw=00000004    USBSTS bit 2 (PCI) SET and still pending at the end of
+                       the window -- the port-change condition occurred while
+                       PCE and NVIC 135 were armed and PRIMASK was clear
+  - irqcnt=00000000    ...and the CM4's handler never ran regardless.
+
+Condition present, unmasked, unserviced: the line does not reach the CM4 NVIC
+in the model. Same shape as cm4_sai_irq_probe's red (flags=00000003 with zero
+ISR entries).
+
+PHY_PLL_CM4=FAIL is NOT part of this red. It is a world-split token: QEMU's
+TYPE_IMX_USBPHY is an i.MX6-era model ending at USBPHY_VERSION (0x80), so the
+RT1176's PLL_SIC quad at 0xA0 is unmodelled and pllsic reads 00000000 for
+EITHER core. Pre-existing and already recorded in HW-verified firmware
+(USBHost_t36/ehci.cpp:248, "QEMU: PLL_SIC reads 0 -> times out, proceeds").
+Silicon asserts that token; the gate only asserts it is present.
+
+Deterministic: four consecutive runs produced byte-identical UART.
+
+==== captured ====
+CM4USBIRQ-GATE v1
+s1=C5B00001
+lpcg=00000001
+s2=C5B00002
+pllsic=00000000
+s3=C5B00003
+rstspin=00000000
+s4=C5B00004
+usbmode=00000013
+s5=C5B00005
+portsc=00001000
+s6=C5B00006
+irqcnt=00000000
+laststs=00000000
+stsraw=00000004
+portsc2=00001003
+done=D0DE0007
+decode: plllock=0 hostmode=3 sdis=1 ccs=0 ccs2=1 pci=1
+STAGES=PASS
+PHY_PLL_CM4=FAIL
+HOSTMODE_CM4=PASS
+PLUG_TRANSITION=PASS
+USB_IRQ_CM4=FAIL
+CM4USBIRQ-DONE
+FAIL: the CM4 did not take IRQ 135
