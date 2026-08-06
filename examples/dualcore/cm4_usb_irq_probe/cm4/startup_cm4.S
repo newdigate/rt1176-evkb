@@ -4,11 +4,15 @@
  * reload MSP, enable FPU, copy .data, zero .bss, call main), but with a full
  * vector table: SysTick at exception 15, the SAI1 interrupt (external IRQ 76,
  * RM Table 4-2 — the fact this probe exists to verify) at vector index
- * 16+76 = 92, and the MU interrupt (external IRQ 118) at vector index
- * 16+118 = 134. Unused vectors spin in Default_Handler. SysTick_Handler,
- * SAI1_IRQHandler, and MU_IRQHandler are C functions in main_cm4.c.
+ * 16+76 = 92, the MU interrupt (external IRQ 118) at vector index
+ * 16+118 = 134, and the USB OTG2 interrupt (external IRQ 135, RM Table 4-2)
+ * at vector index 16+135 = 151. Unused vectors spin in Default_Handler.
+ * SysTick_Handler, SAI1_IRQHandler, and MU_IRQHandler are C functions in
+ * main_cm4.c; USB_OTG2_IRQHandler is weak-aliased to Default_Handler here
+ * (.thumb_set, so the Thumb bit survives — plain .set would drop it and
+ * hard-fault on entry) until main_cm4.c defines the strong handler.
  *
- * The table is 135 words (540 B); VTOR must cover it, so it sits at
+ * The table is 152 words (608 B); VTOR must cover it, so it sits at
  * ORIGIN(ITCM)=0x1FFE0000, which is 1 KB aligned. Public domain (N. Newdigate).
  */
     .syntax unified
@@ -44,6 +48,10 @@ __isr_vector:
     .word Default_Handler
     .endr
     .word MU_IRQHandler         /* 134: external IRQ 118 (MU) */
+    .rept 16                    /* IRQ 119..134 */
+    .word Default_Handler
+    .endr
+    .word USB_OTG2_IRQHandler   /* 151: external IRQ 135 (USB OTG2) */
 
     .text
     .thumb_func
@@ -90,3 +98,11 @@ Reset_Handler:
     .global Default_Handler
 Default_Handler:
     b       Default_Handler
+
+    /* USB_OTG2_IRQHandler (vector 151, external IRQ 135) is not yet defined
+     * in C (that is the next commit's job); weak-alias it to Default_Handler
+     * so this image links now. .thumb_set (not .set) copies Default_Handler's
+     * value including its bit-0 Thumb marker -- .set would copy the raw
+     * address and the CM4 would hard-fault the instant the IRQ fired. */
+    .weak   USB_OTG2_IRQHandler
+    .thumb_set USB_OTG2_IRQHandler, Default_Handler
