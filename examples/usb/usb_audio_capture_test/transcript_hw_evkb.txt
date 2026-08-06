@@ -88,10 +88,9 @@ estimates printed beside it (1800-4300 Hz, wandering) are noise crossing zero
 at random and carry no information at this level; they exist for the tone
 test that has not been run yet.
 
-THE LOOPBACK TEST IS STILL OWED. Play a known tone from the RME into the
-MC200's analogue input, record it through this host, and compare. That is the
-first end-to-end check in this project that does not depend on the device
-being instrumented, and it is the one thing Stage B still lacks.
+THE LOOPBACK TEST IS STILL OWED -- **done later the same day; see THE
+LOOPBACK -- CLOSED at the end of this file.** The noise-floor figures above
+stand as the silence reference that measurement is contrasted against.
 
 BENCH NOTES
 -----------
