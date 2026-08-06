@@ -1,0 +1,158 @@
+CM7 CPU BUDGET FOR USB HOST AUDIO -- EVKB, 2026-08-06
+=====================================================
+
+Image: usb_audio_duplex_test, DUPLEX_ECHO=ON CPU_BUDGET=ON, 44100 Hz,
+device IN 1ch/16 taken as 1ch, OUT 2ch/16. UAC1 dongle on J47 (OTG2),
+full-speed, both directions streaming simultaneously (echo/monitor path).
+
+--- 1. THE NAIVE METRIC IS A TRAP -------------------------------------
+This sketch polls in a free-running loop, so it is ~100% busy by
+construction and its 'idle' is only the share of spin that missed the
+instrumented calls. At its natural 145127 loops/s the USB service path
+MEASURES as 69.1% of the CM7. That number is nearly all waste.
+
+--- 2. SEPARATING WORK FROM SPIN --------------------------------------
+The steal staircase varied the loop rate over a 19x range (145127 ->
+7528 loops/s) while the device kept streaming. Regressing each bucket
+against loop rate splits per-call spin (slope) from the work that must
+happen however often you poll (intercept):
+
+  bucket   %/Mloop   intercept%      R^2
+     svc   424.320        0.888  1.00000
+    task    20.955       -0.006  0.99999
+    echo    23.179        0.281  0.99995
+   TOTAL   468.454        1.163  1.00000
+
+  => GENUINE USB DUPLEX WORK = 1.16% of the CM7 at 996 MHz.
+  task's intercept is ~0: myusb.Task() does nothing per call once
+  enumeration is done. R^2=1.00000 over 15 points.
+
+--- 3. isr/s = 0, ALWAYS ----------------------------------------------
+The EHCI interrupt never fired once, at any steal level. USBHS_USBINTR
+is 0 (ehci.cpp:287) and the iso rings are armed ioc=false, so the whole
+USB host audio path is POLLED. There is no interrupt cost to move.
+
+--- 4. THE REAL CONSTRAINT IS LATENCY, NOT THROUGHPUT -----------------
+The thief burns pct% of every millisecond as ONE contiguous block, so
+pct maps directly to a stall length: 60% = 600us, 85% = 850us.
+
+  85% (850us stalls), 5 min soak  -- FAILS.
+    OUT fifo drains monotonically 2830 -> 1494 and keeps going;
+    under 189 -> 1387, and the RATE ACCELERATES (0.36/s in the first
+    half, 7.73/s in the second); derived falls to 43681 Hz.
+    Frozen and clean for the first ~80 s, which is exactly why a short
+    observation overestimates headroom.
+
+  60% (600us stalls), 4.3 min soak -- HEALTHY.
+    OUT fifo oscillates 3092-4094 with NO downward trend;
+    derived locked at 44100 Hz; under frozen at 155 for 180 s
+    (up=54 -> 234) with ~0.4/s residual over the whole span.
+
+  => Safe contiguous stall is bracketed: 600us OK, 850us not.
+     The knee was NOT pinned down; no level between the two was soaked.
+
+--- 5. WHAT THE 10-SECOND STAIRCASE CLAIMED, AND WHY IT WAS WRONG -----
+With a well-primed FIFO the ramp ran clean all the way to 88.56% taken
+and only cracked at the end of that step. The 5-minute soak at a LOWER
+level (85%) then failed outright. Short steps measure the buffer, not
+the steady state.
+
+--- 6. CAVEATS --------------------------------------------------------
+  - rpt=1.58% of every window is this sketch's own 250-byte heartbeat
+    at 115200 baud. It is bucketed separately, not hidden in idle, but
+    a real application would not pay it.
+  - Full-speed device (1000 frames/s). A high-speed device runs 8000
+    microframes/s and was not measured here.
+  - Starting up UNDER load is harder than running under it: the fixed
+    soaks enumerated with the thief already active and began at
+    fifo=1148, versus the ramp which primed at 0% first.
+
+--- RAW: staircase, collapsed to transitions --------------------------
+DUPLEX-TEST: HEARTBEAT seq=210 up=252s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1576 under=272] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=48 err=0 fifo=0] ECHO[frames=11100452 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.07% echo=0.44% rpt=1.58% idle=0.28% loops/s=7528 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=211 up=254s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1310 under=287] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=51 err=0 fifo=0] ECHO[frames=11187814 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.06% echo=0.45% rpt=1.58% idle=0.28% loops/s=7492 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=212 up=256s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1574 under=308] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=54 err=0 fifo=0] ECHO[frames=11275176 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.07% echo=0.44% rpt=1.58% idle=0.28% loops/s=7531 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=213 up=258s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1308 under=323] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=57 err=0 fifo=0] ECHO[frames=11362538 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.06% echo=0.45% rpt=1.58% idle=0.28% loops/s=7495 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=214 up=260s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1574 under=344] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=60 err=0 fifo=0] ECHO[frames=11449900 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.07% echo=0.44% rpt=1.58% idle=0.28% loops/s=7531 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=215 up=262s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1308 under=359] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=63 err=0 fifo=0] ECHO[frames=11537262 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.06% echo=0.45% rpt=1.58% idle=0.28% loops/s=7492 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=216 up=264s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=2720 under=377] IN[pkts/s=1000 B/s=88068 derived=44034Hz over=0 empty=66 err=0 fifo=0] ECHO[frames=11625330 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.05% echo=0.46% rpt=1.58% idle=0.28% loops/s=7447 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=217 up=266s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=2720 under=379] IN[pkts/s=1000 B/s=88068 derived=44034Hz over=0 empty=69 err=0 fifo=0] ECHO[frames=11713398 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.05% echo=0.46% rpt=1.58% idle=0.29% loops/s=7451 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.47% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=218 up=268s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=2986 under=381] IN[pkts/s=1000 B/s=88200 derived=44100Hz over=0 empty=69 err=0 fifo=0] ECHO[frames=11801598 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.05% echo=0.46% rpt=1.58% idle=0.29% loops/s=7446 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.47% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=219 up=270s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1662 under=381] IN[pkts/s=992 B/s=87494 derived=43747Hz over=0 empty=69 err=0 fifo=0] ECHO[frames=11889092 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.07% echo=0.44% rpt=1.58% idle=0.29% loops/s=7528 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.47% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=220 up=272s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1310 under=395] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=72 err=0 fifo=0] ECHO[frames=11976454 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.06% echo=0.45% rpt=1.58% idle=0.28% loops/s=7495 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=221 up=274s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1572 under=416] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=75 err=0 fifo=0] ECHO[frames=12063816 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.07% echo=0.44% rpt=1.58% idle=0.28% loops/s=7528 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=222 up=276s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1306 under=431] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=78 err=0 fifo=0] ECHO[frames=12151178 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.06% echo=0.45% rpt=1.58% idle=0.28% loops/s=7492 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=223 up=278s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1572 under=452] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=81 err=0 fifo=0] ECHO[frames=12238540 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.07% echo=0.44% rpt=1.58% idle=0.28% loops/s=7529 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=224 up=280s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1306 under=467] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=84 err=0 fifo=0] ECHO[frames=12325902 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.06% echo=0.45% rpt=1.58% idle=0.28% loops/s=7495 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=225 up=282s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=2716 under=485] IN[pkts/s=1000 B/s=88067 derived=44033Hz over=0 empty=87 err=0 fifo=0] ECHO[frames=12413969 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.05% echo=0.46% rpt=1.58% idle=0.28% loops/s=7446 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.48% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=226 up=284s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=2980 under=487] IN[pkts/s=1000 B/s=88200 derived=44100Hz over=0 empty=87 err=0 fifo=0] ECHO[frames=12502169 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.05% echo=0.46% rpt=1.58% idle=0.29% loops/s=7446 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.47% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=227 up=286s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=3068 under=487] IN[pkts/s=1000 B/s=88200 derived=44100Hz over=0 empty=87 err=0 fifo=0] ECHO[frames=12590369 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.05% echo=0.46% rpt=1.58% idle=0.29% loops/s=7447 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.47% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=228 up=288s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=3158 under=487] IN[pkts/s=1000 B/s=88200 derived=44100Hz over=0 empty=87 err=0 fifo=0] ECHO[frames=12678569 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.05% echo=0.46% rpt=1.58% idle=0.29% loops/s=7446 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.47% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=229 up=290s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1836 under=487] IN[pkts/s=992 B/s=87495 derived=43747Hz over=0 empty=87 err=0 fifo=0] ECHO[frames=12766064 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: CPU isr=0.00% task=0.15% svc=4.07% echo=0.44% rpt=1.58% idle=0.29% loops/s=7528 isr/s=0 win=2000ms
+DUPLEX-TEST: STEAL asked=95% took=93.47% streaming=1
+
+--- RAW: 85% soak (failing) tail ---
+DUPLEX-TEST: HEARTBEAT seq=171 up=342s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1584 under=1301] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=228 err=0 fifo=0] ECHO[frames=15020542 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=85% took=83.63% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=172 up=344s out=1 in=1 ctrl=0/0/0 port=10001405(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1406 under=1316] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=231 err=0 fifo=0] ECHO[frames=15107904 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=85% took=83.63% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=173 up=346s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1582 under=1336] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=234 err=0 fifo=0] ECHO[frames=15195266 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=85% took=83.63% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=174 up=348s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1316 under=1351] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=237 err=0 fifo=0] ECHO[frames=15282628 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=85% took=83.63% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=175 up=350s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1580 under=1372] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=240 err=0 fifo=0] ECHO[frames=15369990 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=85% took=83.63% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=176 up=352s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=998 err/s=0 fifo=1494 under=1387] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=243 err=0 fifo=0] ECHO[frames=15457352 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=85% took=83.63% streaming=1
+
+--- RAW: 60% soak (healthy) tail ---
+DUPLEX-TEST: HEARTBEAT seq=141 up=282s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=1238 under=175] IN[pkts/s=992 B/s=87362 derived=43681Hz over=0 empty=48 err=0 fifo=0] ECHO[frames=12425572 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=60% took=59.04% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=142 up=284s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=2650 under=193] IN[pkts/s=1000 B/s=88068 derived=44034Hz over=0 empty=51 err=0 fifo=0] ECHO[frames=12513640 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=60% took=59.04% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=143 up=286s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=2914 under=195] IN[pkts/s=1000 B/s=88200 derived=44100Hz over=0 empty=51 err=0 fifo=0] ECHO[frames=12601840 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=60% took=59.04% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=144 up=288s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=3004 under=195] IN[pkts/s=1000 B/s=88200 derived=44100Hz over=0 empty=51 err=0 fifo=0] ECHO[frames=12690040 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=60% took=59.04% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=145 up=290s out=1 in=1 ctrl=0/0/0 port=10001805(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=3092 under=195] IN[pkts/s=1000 B/s=88200 derived=44100Hz over=0 empty=51 err=0 fifo=0] ECHO[frames=12778240 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=60% took=59.04% streaming=1
+DUPLEX-TEST: HEARTBEAT seq=146 up=292s out=1 in=1 ctrl=0/0/0 port=10001405(ccs=1 pe=1 pp=1 spd=0) OUT[pkts/s=999 err/s=0 fifo=3180 under=195] IN[pkts/s=1000 B/s=88200 derived=44100Hz over=0 empty=51 err=0 fifo=0] ECHO[frames=12866440 drop=0] fb=0 sizing=44100000 fresh=0
+DUPLEX-TEST: STEAL asked=60% took=59.04% streaming=1

@@ -321,6 +321,111 @@ CM7 HW-verified stream on the same block instances.
 - **Concurrent CM7+CM4 peripheral use / arbitration** — a cross-core ownership
   protocol.
 
+### USB host audio on the CM4 — ASSESSED 2026-08-06, NOT STARTED, NOT PROBED
+
+Desk triangulation only (RM + this tree's own sources). **Nothing below is
+HW-verified**; every item marked ⚠ is a risk-trigger that MANDATES a probe
+before any of it is relied on. Recorded so a future session does not
+re-derive it — the assessment came out far more favourable than expected,
+because the three constraints that would normally kill it all clear.
+
+**Cleared — the interrupt reaches the CM4.** RM **Table 4-2** (*CM4 domain
+interrupt summary*, `rm_full.txt:3910-3911`) lists **135 = USB OTG2** and
+**136 = USB OTG1**. 135 is exactly the line this stack uses
+(`core_pins.h:70`, `IRQ_USB_OTG2 = 135`). Same shape as the SAI1 IRQ-76 fact
+that Phase 5 HW-proved reaches the CM4's own NVIC. ⚠ qemu2 fans non-MU
+peripheral IRQs to the CM7 NVIC only, so this needs a per-line
+`TYPE_SPLIT_IRQ` for 135 (idiom: SAI1 76, LPSPI1, LPI2C5) — new-model
+trigger + probe, run red-first like `cm4_sai_irq_probe`.
+
+**Cleared — the two-eDMA finding does NOT apply here.** The rule that pins
+`input_i2s`/`output_i2s` to the CM7 forever is that *main-eDMA completion
+IRQs are CM7-domain* ([[rt1176-cm4-edma-lpsr-split]]). USBHost_t36 touches
+no eDMA at all: EHCI is its own bus master walking the periodic schedule
+(`USBHS_USB_SBUSCFG`, `ehci.cpp:270`), with its own IRQ — and that IRQ is in
+Table 4-2. **Do not reason from the Phase-6 DMA verdict to this one.**
+
+**Cleared — the Phase-6 ANATOP blocker does NOT apply either.** Finding 1 of
+Phase 6 is that the CM4 hangs on the ANATOP AI-write handshake
+(`I2S.cpp:9 ai_write`). USBPHY2's 480 MHz PLL does not use it:
+`ehci.cpp:237-250` is plain MMIO on `USBPHY2_CTRL` / `USBPHY2_PLL_SIC` plus
+one `CCM_LPCG115_DIRECT` write. ⚠ that CCM write is still the standard
+clock-gating trigger, but CM4-self-ungated LPCGs are HW-proven twice
+(3.1 LPSPI1 / LPCG104, 3.2 LPI2C5 / LPCG102).
+
+**Cleared — memory already lands in the right place.** `.bss.dma` (DMAMEM,
+where every EHCI descriptor, iTD/siTD pool and payload ring lives) links at
+**0x20240000 = OCRAM1** (`imxrt1176.ld:10`), plain system SRAM addressed
+identically from both cores. It does **not** collide with **OCRAM M4**
+(0x20200000–0x2023FFFF, `rm_full.txt:2130`) where the CM4's own TCM backdoor
+and `Multicore.begin`'s default `stageAddr` live. Measured on
+`usb_audio_duplex_test` (echo build): `.bss.dma` = 195,392 B of OCRAM1's
+512 K. Code size is a non-issue — the whole duplex image is **28,128 B** of
+`.text.itcm` against 128 K of CM4 ITCM.
+
+**Cleared — cache coherency is a non-issue by construction, today.** The
+CM4 does have a cache (LMEM-managed; `rm_full.txt:82259`, `:150699`; note
+`:151162` — the LMEM backdoor reaches the TCM controller only, never the
+cache). But this core never enables the CM7 D-cache either: `startup.c` does
+no MPU/cache setup and `arm_dcache_delete` / `arm_dcache_flush_delete` are
+no-ops (`imxrt1176.h:865-866`). Leaving the CM4's cache off matches the
+existing, HW-proven baseline. ⚠ becomes a real probe the moment anyone
+enables either cache.
+
+**The actual work, and the actual risk:**
+- **Shim expansion.** `cm4_shim/Arduino.h` is 50 lines. `ehci.cpp:324`
+  attaches its ISR at runtime, but `attachInterruptVector` is a documented
+  CM4 no-op → needs the Phase-5 static-vector wrapper pattern (as
+  `Software_IRQHandler` does for `software_isr`). The PHY bring-up needs
+  `delay`/`delayMicroseconds`; `USBHost_t36.h` unconditionally pulls
+  `<FS.h>` + `<SdFat.h>`; ~103 print sites in `ehci.cpp` and 23 in
+  `enumeration.cpp` must at least compile.
+- ⚠ **Timing headroom — MEASURED 2026-08-06, and it is a latency budget, not
+  a throughput one.** See `examples/usb/usb_audio_duplex_test/`
+  `transcript_hw_cpu_budget.txt` (EVKB, UAC1 dongle, FS, both directions
+  streaming).
+  - **The genuine work is 1.16% of the CM7 at 996 MHz.** Regressing each
+    instrumented bucket against loop rate over a 19× range (145127 → 7528
+    loops/s, driven by a CPU-steal staircase) separates per-call spin from
+    the work that happens however often you poll: slope 468 %/Mloop,
+    **intercept 1.163%, R² = 1.00000**. The 69% the naive metric reports at
+    the sketch's natural loop rate is almost entirely spin.
+  - **`isr/s` was 0 at every level.** `USBHS_USBINTR` is 0 (`ehci.cpp:287`)
+    and the iso rings are armed `ioc=false`, so the path is *wholly polled* —
+    `USBAudioOut::service()` harvests and refills (`usb_audio.cpp:1087`,
+    `:605`). There is no interrupt cost to move, and the deadline is met by
+    loop() latency.
+  - **The binding constraint is contiguous stall length.** Stealing the CPU
+    in one block per millisecond: **600 µs stalls soak healthy** (OUT fifo
+    oscillates 3092–4094 with no downward trend, rate locked 44100 Hz, over
+    4.3 min) while **850 µs stalls fail** (fifo drains 2830 → 1494
+    monotonically, underruns accelerate 0.36/s → 7.73/s, derived falls to
+    43681 Hz, over 5 min). The knee was not pinned.
+  - ★**A 10 s staircase step OVERSTATES headroom.** With a primed FIFO the
+    ramp ran clean to 88.56% taken; a 5-minute soak at a *lower* level (85%)
+    then failed outright, and stayed clean for its first ~80 s before
+    turning. Short steps measure the buffer, not the steady state — soak
+    anything that claims headroom.
+  - **What this means for the CM4:** 1.16% of a 996 MHz M7 is ~11.6
+    MHz-equivalent, so throughput is a non-issue on a 400 MHz M4 even
+    allowing for M4-vs-M7 IPC. The risk is entirely the ~½ ms service
+    latency, and **Phase 6 finding 2 is the direct warning** — on the CM4
+    the SAI ISR had to outrank the AudioStream graph or RX overflowed
+    (`rx_overflows=0x3FF`). Any CM4 port must keep the same discipline: the
+    USB service must not be blocked for ~½ ms by graph work.
+
+**Recommendation on record (updated 2026-08-06, now measured):** the payoff
+people want — CM7 freed for DSP — is
+already available with **zero** new bring-up by splitting the other way:
+CM7 keeps USB host, CM4 takes the DSP (Phase 6 proved the CM4 can own the
+whole audio pipeline), with the existing `usb_audio_fifo` SPSC ring in
+OCRAM as the natural cross-core boundary. Moving USB to the CM4 only wins
+if the CM7 must be *completely* free, or if a second device on OTG1 has to
+stream concurrently. **The measurement strengthens this:** at 1.16% the USB
+path is not what is costing the CM7 anything, so moving it buys almost no
+CPU back — it buys *isolation*, and isolation is only worth a qemu2 IRQ
+split plus a shim port if something else needs the CM7 wholly free.
+
 ## Phase 5 — CM4 audio foundation (Plan 1 of 2)  ★★HW-VERIFIED 2026-07-21
 
 **Status: DONE + ★★ALL HW-VERIFIED 2026-07-21.** Plan at
@@ -1008,3 +1113,45 @@ no power; **check J38 / the barrel-jack supply** before chasing the debug chain.
   even when the target is UNPOWERED, so LinkServer "Wire not connected" = check
   J38/barrel power, not the debug chain. Next: a new capability (the CM4 audio
   arc — Plan 1 foundation + Plan 2 pipeline — is closed).
+- 2026-08-06: **USB host audio on the CM4 — ASSESSED, not started.** Desk
+  triangulation recorded under "Deferred beyond Phase 3"; **no code, no probe,
+  nothing HW-verified.** Came out far more favourable than expected: (a) RM
+  **Table 4-2 lists 135 = USB OTG2**, so the interrupt this stack uses is in the
+  CM4 domain (`rm_full.txt:3910`); (b) the **two-eDMA verdict does not transfer**
+  — EHCI is its own bus master (`ehci.cpp:270`) with its own IRQ, so the rule
+  that pins the I2S DMA nodes to the CM7 forever says nothing about USB;
+  (c) the **Phase-6 ANATOP-AI blocker does not apply** — USBPHY2's PLL is plain
+  MMIO (`ehci.cpp:237-250`), not an `ai_write` handshake; (d) DMAMEM already
+  links to **OCRAM1 @0x20240000**, clear of OCRAM M4 @0x20200000 where the CM4
+  TCM backdoor lives, and the whole duplex image is 28,128 B of `.text.itcm`
+  vs 128 K of CM4 ITCM. Remaining real work = a qemu2 `TYPE_SPLIT_IRQ` for line
+  135 (+ red-first probe), shim expansion (`attachInterruptVector` is a CM4
+  no-op but `ehci.cpp:324` needs it), and the open timing question — service is
+  *polled* (`ioc=false`), so the deadline is loop() latency on a 400 MHz M4,
+  which is the same shape as Phase 6 finding 2. Recommendation on record: do
+  not start before measuring what USB actually costs the CM7, and prefer the
+  free split (CM7 keeps USB, CM4 takes DSP) unless the CM7 must be wholly free.
+- 2026-08-06: **CM7 CPU budget for USB host audio — MEASURED on the EVKB**
+  (`examples/usb/usb_audio_duplex_test/transcript_hw_cpu_budget.txt`; new
+  build-gated `CPU_BUDGET` / `CPU_STEAL_RAMP` / `CPU_STEAL_FIXED` options,
+  default image proven byte-identical). Answers the "measure before you move
+  it" precondition recorded above. **The genuine USB duplex work is 1.16% of
+  the CM7 @996 MHz** — regression of instrumented buckets against loop rate
+  over a 19× range, intercept 1.163%, **R² = 1.00000**. ★★TRAP THIS EXPOSED:
+  the sketch free-runs its poll loop, so it is ~100% busy by construction and
+  the same instrumentation reports **69.1%** at its natural 145127 loops/s —
+  nearly all spin. A percentage-of-a-spinning-loop cannot answer "how much is
+  available"; only stealing the CPU and watching the audio break can.
+  **`isr/s` was 0 at every level** — `USBHS_USBINTR=0` and `ioc=false`, so
+  the whole path is polled and the deadline is loop() latency, not interrupt
+  service. **The constraint is contiguous stall length, not throughput:**
+  600 µs/ms soaks healthy (OUT fifo 3092–4094, no trend, 44100 Hz locked,
+  4.3 min), 850 µs/ms fails (fifo drains 2830→1494, underruns accelerate
+  0.36/s→7.73/s, 5 min); knee not pinned. ★★**A 10 s staircase step
+  OVERSTATES headroom** — the ramp ran clean to 88.56% taken, then a 5-minute
+  soak at the *lower* 85% failed, staying clean for its first ~80 s first.
+  Short steps measure the buffer, not the steady state. Consequence for the
+  CM4 assessment above: throughput is a non-issue on a 400 MHz M4 (1.16% of
+  996 MHz ≈ 11.6 MHz-equivalent), and moving USB to the CM4 buys isolation
+  rather than CPU — the risk is entirely the ~½ ms service latency, the same
+  shape as Phase 6 finding 2.
