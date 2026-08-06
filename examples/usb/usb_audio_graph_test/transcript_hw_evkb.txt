@@ -513,3 +513,125 @@ INSTRUMENT AND BENCH FINDINGS FROM THIS GATE
   separate build trees per mode so a cached GRAPH_DRIVE cannot silently mix a
   tone-driven point into a graph-driven sweep. Defaults reproduce the UAC1
   tone-driven behaviour every earlier transcript was taken with.
+
+UAC2 P2 gate, 2026-08-06 (parser and control breadth)
+------------------------------------------------------
+Spec: docs/superpowers/specs/2026-08-02-uac2-audio-out-design.md section 3 P2
+-- "Full UAC2 walk, RANGE, IADs, rejection taxonomy; fixture corpus."
+Gate: host suite green over the corpus, and the MC200 re-enumerating through
+the full parser with results identical to P1's minimal one. Run last of the
+four phases, because P1/P3/P4 all needed the bench and this needed none of it.
+
+WHAT THE PARSER COULD NOT DO BEFORE
+------------------------------------
+* Say WHY it refused a device. Six distinct failures returned one `false`.
+  That is the same defect usb_audio_capture_test's cfg= field had to work
+  around at the sketch level -- "offered and rejected" and "nothing arrived"
+  are different events and were indistinguishable. Now eight named reasons
+  (uac2_parse_result), with the two that used to share a line deliberately
+  split: NO_AC_HEADER ("not an audio function we recognise") is a different
+  verdict from NOT_UAC2 ("an audio function we understand, declined by
+  version").
+* Follow a clock chain through a CLOCK_MULTIPLIER. The header documented this
+  as out of scope and failing closed, so a device clocked
+  source -> multiplier -> terminal did not parse at all.
+* Tell two audio functions apart. Every interface was identified by CLASS, so
+  a composite device -- separate playback and capture functions, the ordinary
+  headset shape -- could have function A's AudioControl interface assembled
+  with function B's AudioStreaming interface into a topology describing no
+  real device, with the clock chain resolved across the seam.
+* Ask what rates the device actually supports. UAC2 puts rates in a runtime
+  RANGE conversation, and that conversation had never been had: the driver
+  wrote CUR 44100 and assumed. A device not supporting 44100 would have been
+  set to a rate it never advertised, first evidenced by wrong-pitch audio.
+
+A WRONG ASSUMPTION THE CAPTURED FIXTURE CAUGHT
+-----------------------------------------------
+The IAD matcher was first written to require bFunctionSubClass == 0x01
+(AUDIOCONTROL), which is the intuitive guess. The MC200's real IAD carries
+0x00, and UAC2 4.6 agrees: an audio function's IAD uses
+FUNCTION_SUBCLASS_UNDEFINED. So the matcher recognised no real audio function
+at all, and the composite test failed with the whole topology empty.
+
+It only surfaced because the tests run against a CAPTURED descriptor set. The
+hand-written decoy function in the test had the same wrong assumption baked
+into it, so a synthetic-only corpus would have agreed with the parser and both
+would have been wrong together. That is the argument for building the
+rejection and multiplier tests by MUTATING the real fixture rather than
+inventing byte arrays: every byte except the one under test is known-good and
+known-accepted, so a rejection can only be the field being tested.
+
+A DESIGN CORRECTION MADE MID-TASK
+----------------------------------
+IAD scoping was first written as "the first audio function wins". That is
+wrong in an ordinary case: a composite device declaring its capture function
+before its playback function would be refused for having no output stream,
+while the stream it needed sat in the next function along. The parser now
+TRIES each audio function in declaration order and takes the first that yields
+a usable topology, reporting the primary function's complaint if none do.
+
+CORPUS (P2's first gate half)
+------------------------------
+Every captured fixture through the UAC2 parser, including the five UAC1 ones,
+because what those prove is that the taxonomy answers informatively on real
+devices rather than falling out early with something vague:
+
+    dongle_uac1_duplex.bin           244 B  -> not-uac2
+    generalplus_uac1_multirate.bin   244 B  -> not-uac2
+    headset_uac1_config.bin          799 B  -> not-uac2
+    jabra_uac1_multirate.bin         272 B  -> not-uac2
+    xmos_uac1_async_feedback.bin     233 B  -> not-uac2
+    xmos_uac2_2ami8o8.bin            372 B  -> ok, clock=0x29 alts=3 in_alts=2
+                                              interfaces 0/1, input 2
+
+Each UAC1 device reaches the version check and is declined BY VERSION -- the
+most informative answer available. Before the taxonomy all six were `false`.
+
+Host suite: 11838 checks, 0 failures (test_uac2_parse alone 112 -> 233). A
+missing corpus fixture FAILS rather than skipping, verified by hiding one: a
+corpus that quietly shrinks to nothing is green and worthless. Both new
+features were vacuity-checked by disabling them and confirming the tests go
+red -- the multiplier (3 checks fail, clock resolves to 0) and the RANGE step
+arithmetic (44100 wrongly accepted inside an 8000..48000/4000 subrange).
+
+SILICON (P2's second gate half)
+--------------------------------
+MC200 re-enumerated through the full parser, usb_audio_capture_test:
+
+    CAPTURE-TEST: input ready, iface=2 alt=1 uac2=1
+    CAPTURE-TEST: input ep=0x81 attr=0x05 mps=800 8ch x 4B (24 bit) clock=41
+    CAPTURE-TEST: recording started
+
+Byte for byte what P1's minimal parser and the Stage B run reported, clock=41
+(0x29) included. Steady state: pkts/s=1000 the only value over 25 heartbeats,
+over=0, fifo=0, cfg=372, spd=2, bytes/s alternating 1411072/1411088 -- the
+same two modal values Stage B recorded -- derived=44096Hz.
+
+Two console artefacts worth knowing, neither a fault:
+
+* empty= and err= accumulate while the host's IN ring is armed and the device
+  is ABSENT, then freeze. Flashing the host before loading the MC200 gave
+  empty=333 err=333; resetting the host with the device already up gave
+  empty=0 err=0 on the same firmware. They are independent counters
+  (err = xact+babble+buffer, empty = zero-length microframes), so their being
+  exactly equal is itself the diagnostic: every empty microframe also carried
+  a transaction error, which is an absent device rather than a silent one.
+* up= in this sketch is the RECORDING SESSION's age, not the board's:
+  started_at is reset at "recording started" (line 237) while seq free-runs.
+  A re-enumeration therefore shows up=1s with seq unbroken (75 -> 76), and one
+  beat of absurd rates (pkts/s=82767) from dividing by a near-zero dt. Neither
+  is a reset; seq never went backwards.
+
+The MC200 is xrun-loaded, so it is RAM-resident and a power cycle loses it.
+Re-running xrun with the console ATTACHED is safe and is how the one-shot
+topology line above was captured without a LinkServer operation: xrun drives
+the XTAG only and never touches the MCU-Link VCOM.
+
+NOT DONE, AND DELIBERATELY
+---------------------------
+GET_RANGE is built and unit-tested but is NOT wired into the enumeration
+control sequence. That sequence is a fixed chain (SET_CLOCK -> SET_INTERFACE
+-> SET_RATE, then the input three) whose wedge cost a bench night and is
+documented above; inserting a transfer into it risks precisely the "identical
+results" half of this gate. The rate a device advertises should be consulted
+before CUR is written, and the pieces to do it now exist.
