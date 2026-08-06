@@ -1,6 +1,11 @@
 #include "Arduino.h"
 #include "HardwareSerial.h"   // Serial1 (LPUART1) -- not pulled in by USBHost_t36.h
 #include "USBHost_t36.h"
+// USBHS_PORTSC1 -- the root port's own status register, for the port= field
+// in the heartbeat. Reading it is the only way to tell "no device is
+// physically connected" from "a device is connected and enumeration is
+// failing", and those two have identical symptoms everywhere else.
+#include "utility/imxrt_usbhs.h"
 
 // USB audio INPUT on the RT1176 host port: record from a class-compliant
 // device instead of playing to one.
@@ -70,6 +75,13 @@ static bool driver_active[] = {false, false};
 #define NDRIVERS (sizeof(drivers) / sizeof(drivers[0]))
 
 static bool recording_started = false;
+// The device's ACTUAL subslot width, read from the alt it selected -- not
+// derived from the bit resolution. 24-bit audio is carried in either 3 or 4
+// bytes and the MC200 uses 4, so computing (bits+7)/8 gives 3 and the derived
+// rate comes out 4/3 too high: 58794 Hz for a 44100 Hz stream. That is not a
+// rounding error, it is the wrong divisor, and it briefly made a working
+// capture look broken.
+static uint8_t dev_subslot = 0;
 static uint32_t last_beat = 0, seq = 0, started_at = 0;
 static uint32_t last_packets = 0, last_bytes = 0, last_beat_ms = 0;
 
@@ -206,6 +218,7 @@ void loop() {
 			               t.in_alts[i].max_packet_size, t.in_alts[i].channels,
 			               t.in_alts[i].subframe_size, t.in_alts[i].bit_resolution,
 			               t.in_clock_source_id);
+			dev_subslot = t.in_alts[i].subframe_size;
 		}
 		Serial1.println(audio.beginRecording() ? "CAPTURE-TEST: recording started"
 		                                       : "CAPTURE-TEST: RECORD START FAILED");
@@ -248,12 +261,30 @@ void loop() {
 		// has already succeeded.
 		uint16_t cfglen = 0;
 		audio.lastConfig(&cfglen);
+
+		// port= is the layer below cfg=. cfg= says whether the DRIVER was
+		// offered a device; this says whether the root port sees one at all.
+		//   CCS  bit 0   current connect status -- something is on the wire
+		//   CSC  bit 1   connect status changed since last cleared
+		//   PE   bit 2   port enabled (set by the controller after reset)
+		//   PP   bit 12  port POWER -- the host driving VBUS through the
+		//                EVKB's load switch. PP=0 means the port is dark and
+		//                no device can present itself, whatever is plugged in.
+		//   PSPD bits 27:26  00 = full, 01 = low, 10 = high speed
+		// This board has a recorded history at exactly this layer: an earlier
+		// device never enumerated here with CCS=0, and VBUS supply at J18 was
+		// never confirmed. Guessing at cables cost that investigation a lot of
+		// time; four bits settle it.
+		uint32_t portsc = USBHS_PORTSC1;
 		Serial1.printf("CAPTURE-TEST: HEARTBEAT seq=%lu up=%lus rec=%d ready=%d/%d "
-		               "ctrl=%u/%lu/%lu cfg=%u",
+		               "ctrl=%u/%lu/%lu cfg=%u port=%08lX(ccs=%u pe=%u pp=%u spd=%u)",
 		               (unsigned long)seq, (unsigned long)((now - started_at) / 1000),
 		               (int)audio.recording(), (int)audio.ready(), (int)audio.readyIn(),
 		               audio.controlState(), (unsigned long)audio.controlTimeouts(),
-		               (unsigned long)audio.controlQueueFails(), cfglen);
+		               (unsigned long)audio.controlQueueFails(), cfglen,
+		               (unsigned long)portsc,
+		               (unsigned)(portsc & 1u), (unsigned)((portsc >> 2) & 1u),
+		               (unsigned)((portsc >> 12) & 1u), (unsigned)((portsc >> 26) & 3u));
 
 		if (audio.recording() && dt) {
 			// The load-bearing number. bytes/s divided by (channels x
@@ -261,7 +292,8 @@ void loop() {
 			// what it actually delivered -- an independent estimate of the
 			// same quantity the feedback endpoint reports on the OUT side.
 			uint32_t bps = (uint32_t)(((uint64_t)db * 1000u) / dt);
-			uint32_t per_frame = (uint32_t)CAPTURE_CHANNELS * ((CAPTURE_BITS + 7) / 8);
+			// dev_subslot, NOT (bits+7)/8 -- see its declaration.
+			uint32_t per_frame = (uint32_t)CAPTURE_CHANNELS * dev_subslot;
 			uint32_t derived = per_frame ? bps / per_frame : 0;
 			Serial1.printf(" pkts/s=%lu bytes/s=%lu derived=%luHz fifo=%lu "
 			               "over=%lu empty=%lu err=%lu",
@@ -280,6 +312,11 @@ void loop() {
 		if (audio.recording() && window_used >= WINDOW_FRAMES * CAPTURE_TAKE_CHANNELS) {
 			for (uint8_t c = 0; c < CAPTURE_TAKE_CHANNELS && c < 2; c++)
 				analyseWindow(c);
+			// The dump BLOCKS: 2048 hex values over a 115200 console is about
+			// 0.7 s during which service() does not run, so the beat that
+			// contains it reads ~640 pkts/s instead of 1000. That dip is this
+			// sketch starving its own harvest, not a transport fault -- and it
+			// is a fair demonstration that the counter notices. Once only.
 			if (!dumped && seq >= 3) { dumpWindow(); dumped = true; }
 			window_used = 0;   // next beat analyses fresh audio
 		}

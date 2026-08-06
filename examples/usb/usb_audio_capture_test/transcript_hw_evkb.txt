@@ -1,0 +1,116 @@
+USB audio INPUT on the RT1176 host -- first capture from silicon
+================================================================
+2026-08-06. MIMXRT1176-EVKB host port (J18, via the OTG adapter that grounds
+USB_OTG2_ID) -> XMOS MC200 running the lib_xua observer build, 20B1:000E.
+Firmware: examples/usb/usb_audio_capture_test. Stage B of
+docs/superpowers/specs/2026-08-05-uac-host-input-and-duplex-design.md:
+input only, nothing streaming OUT.
+
+WHAT THE DEVICE REPORTED, AND WHY IT MATTERS
+--------------------------------------------
+    CAPTURE-TEST: + Audio vid=20B1 pid=000E
+    CAPTURE-TEST: input ready, iface=2 alt=1 uac2=1
+    CAPTURE-TEST: input ep=0x81 attr=0x05 mps=800 8ch x 4B (24 bit) clock=41
+    CAPTURE-TEST: recording started
+
+Every field matches what the parser predicted from the committed fixture
+(test/fixtures/xmos_uac2_2ami8o8.bin) before any of this ran on hardware:
+interface 2 alt 1, endpoint 0x81, wMaxPacketSize 800, 8 channels of 24-in-4.
+
+`clock=41` is the one worth pointing at. 41 is 0x29, and reaching it required
+following the capture interface's bTerminalLink to an OUTPUT terminal -- for
+a capture stream the USB side is the SINK -- and reading bCSourceID from
+offset 8 rather than an input terminal's offset 7. Before 2026-08-05 the UAC2
+parser recorded only input terminals, resolved nothing for this path, and
+reported in_alt_count 0 for this exact device. The unit test asserts 0x29
+against the fixture; silicon says 41.
+
+`attr=0x05` is bmAttributes: isochronous, ASYNCHRONOUS, data. The device
+free-runs its converter and nothing the host does paces it. That is the
+clock-ownership problem section 4 of the design spec is about, stated by the
+device rather than by the document.
+
+TRANSPORT
+---------
+51 heartbeat windows at exactly 1000 packets/s -- one iTD per frame, eight
+microframe transactions each -- with:
+
+    over=0     no FIFO overruns; the consumer never fell behind
+    empty=0    no microframe completed carrying nothing
+    err=0      no transaction, babble or buffer errors
+    fifo=0     drained faster than it filled, every pass
+
+THE RATE, WHICH IS THE POINT
+-----------------------------
+The heartbeat derives a converter rate from the byte counter alone:
+
+    bytes/s / (channels x subslot) = rate
+
+Over 51 clean windows the byte counter took exactly two values, 1411072 and
+1411088 -- the alternation is 44.1 kHz's fractional packet sizing beating
+against a 2 s window. Mean 1411077.6 B/s over 8 channels x 4-byte subslots:
+
+    derived converter rate  44096.18 Hz
+    offset vs nominal       -86.7 ppm
+
+Now compare that against the SAME device's crystal offset measured earlier
+from the OPPOSITE direction, by the OUT path's feedback endpoint:
+
+    2026-08-02, feedback endpoint       -85.7 ppm
+    UAC1 glitch investigation           ~-86 ppm
+    2026-08-06, IN byte counter         -86.7 ppm
+
+Two independent instruments, opposite directions of travel, agreeing to
+about a part per million. The design spec argued for input partly on these
+grounds -- "two measurements of one quantity, from opposite directions, is
+the pattern that has caught every real defect in this project" -- and this is
+that pattern paying out on its first run.
+
+Care with the statistics: dt comes from millis(), so ONE 2 s window quantises
+to roughly 500 ppm. The figure above is meaningful only because it is a mean
+over 51 windows whose spread is the two-valued alternation and nothing else.
+A tighter number wants a single long integration, not more short ones. One
+further window (1409391 B/s) was discarded as a console hiccup rather than a
+rate observation; it is the only sample outside the two modal values.
+
+WHAT IS NOT MEASURED HERE
+-------------------------
+Nothing is patched into the MC200's analogue inputs, so the recorded audio is
+the converter's noise floor:
+
+    ANALYSIS ch0 frames=1024 peak=3 rms=1
+    ANALYSIS ch1 frames=1024 peak=2 rms=0
+
+Peak of 2-3 LSB at 16-bit. That is a real ADC producing real noise -- a
+dead-silent all-zero result would mean the samples never came from a
+converter -- but it says nothing about fidelity. The zero-crossing frequency
+estimates printed beside it (1800-4300 Hz, wandering) are noise crossing zero
+at random and carry no information at this level; they exist for the tone
+test that has not been run yet.
+
+THE LOOPBACK TEST IS STILL OWED. Play a known tone from the RME into the
+MC200's analogue input, record it through this host, and compare. That is the
+first end-to-end check in this project that does not depend on the device
+being instrumented, and it is the one thing Stage B still lacks.
+
+BENCH NOTES
+-----------
+* The MCU-Link VCOM re-enumerated continuously for most of an evening, with
+  the probe idle, no reader attached, and machine load average 4.3 with zero
+  QEMU processes -- so not load. Flash writes failed repeatedly and
+  `LinkServer run` could not load its stub. Moving the EVKB's debug USB off a
+  two-deep hub chain (VIA Labs -> Genesys Logic, shared with the XTAG3) fixed
+  it completely: zero drops across every subsequent flash/verify/reset cycle.
+  Worth trying first if this recurs.
+
+* The dip to 640 pkts/s at seq=4 in the raw log is this SKETCH starving its
+  own harvest: the one-shot hex dump writes 2048 hex values to a 115200
+  console, blocking loop() for ~0.7 s. It recovers to 1000 within two beats.
+  Not a transport fault -- and a fair demonstration that the packet counter
+  notices a harvest that stops running.
+
+* `derived=` initially read 58794 Hz for a 44100 Hz stream. The sketch was
+  computing the subslot width as (bits+7)/8 = 3 from the 24-bit resolution,
+  where this device uses 4. 24-bit audio is carried in EITHER 3 or 4 bytes;
+  the descriptor says which and the sketch now reads it. Corrected before any
+  of the figures above were taken.
