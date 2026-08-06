@@ -1,0 +1,119 @@
+Stage C -- FULL DUPLEX on the RT1176 USB host
+==============================================
+2026-08-06. MIMXRT1176-EVKB host port (J18, via the OTG adapter that grounds
+USB_OTG2_ID) -> XMOS MC200 in 2AMi8o8xxxxxx (UAC2, high speed, 8ch 24-in-4),
+xrun-loaded. Firmware: examples/usb/usb_audio_duplex_test. Stage C of
+docs/superpowers/specs/2026-08-05-uac-host-input-and-duplex-design.md:
+both directions, ONE device.
+
+WHAT STAGE C ACTUALLY NEEDED
+-----------------------------
+Less than the spec assumed, because Stage B had already built the hard part.
+The control plane was ALREADY duplex: usb_audio.cpp chains the output steps
+(clock, interface, rate) into the input three, and it already handles the
+shared-clock case by SKIPPING a redundant CUR write when in_clock_source_id
+equals clock_source_id -- which is the MC200, and is exactly the "IN and OUT
+share the converter" property Stage C is built on.
+
+What was genuinely missing was descriptors. ITD_POOL_SIZE 64 was spent to
+exactly zero by design: 32 OUT ring + 32 feedback at 1000 polls/s. A third
+ring needs 32 more, so the pool is now 96. That is +3072 bytes of DMAMEM
+(itd_pool 0x1800 -> 0x2400, 96 B per descriptor); total .bss moved +4096
+because growing the pool shifted alignment padding in its neighbours, which
+is worth knowing before someone reads the difference as a leak.
+
+The design spec's larger worry -- "the IN ring is the largest single
+allocation the driver would own", roughly 57 KB -- turned out to be already
+paid. Both payload rings are members of the same object, so a Stage B build
+already allocated them whether or not anything streamed: `audio` is one
+152,640-byte object. Stage C's marginal cost is the 3 KB above.
+
+FIRST DUPLEX RUN, and it came up first try:
+
+    out=1 in=1 ctrl=0/0/0 port=18001205(ccs=1 pe=1 pp=1 spd=2)
+    OUT[pkts/s=1000 err/s=0 fifo=3956 under=0]
+    IN [pkts/s=1000 B/s=1411088 derived=44096Hz over=0 empty=0 err=0 fifo=0]
+    fb=44096244 sizing=44096241 fresh=1
+
+THE MEASUREMENT STAGE C EXISTS FOR
+-----------------------------------
+Design spec section 4: "The IN FIFO occupancy should be exported the way OUT's
+is, because on a duplex device it is an INDEPENDENT estimate of the same drift
+the feedback endpoint reports. Those two numbers agreeing is a strong
+correctness signal; disagreeing means one of them is wrong."
+
+This project had measured this MC200's converter five times, and every pair of
+those numbers was separated by hours or days -- so temperature was always a
+confound between any two. Duplex removes it. Over a 15-minute soak, 360
+heartbeats, both read from the same device in the same beat:
+
+                          mean rate       offset      per-sample sd
+    IN byte counter      44096.203 Hz    -86.1 ppm      6.948 Hz
+    feedback endpoint    44096.207 Hz    -86.0 ppm      0.025 Hz
+    ------------------------------------------------------------
+    DIFFERENCE                           -0.09 ppm
+
+They agree to under a tenth of a part per million. The instruments share no
+mechanism: one counts payload bytes the controller wrote back on the IN
+stream, the other decodes 16.16 feedback values the device sends on a
+different endpoint entirely.
+
+The standard deviations are the reason neither could have checked itself. The
+byte counter is noisy per sample -- 6.9 Hz is 158 ppm, because dt comes from
+millis() over a 2 s window -- but unbiased, so only its MEAN means anything.
+The feedback estimate is quiet per sample (0.025 Hz) because it is EMA
+filtered, which is exactly the property that would hide a systematic offset.
+Precise and noisy, agreeing on the mean, is the useful combination.
+
+For the record, this crystal has now been measured seven ways:
+
+    UAC1 locked-bias sweep       2026-08-02   -85.7 ppm
+    UAC1 glitch investigation    2026-08-02   ~-86   ppm
+    IN byte counter (Stage B)    2026-08-06   -86.7 ppm
+    feedback endpoint, live      2026-08-06   -85.4 ppm
+    UAC2 graph-driven sweep      2026-08-06   -85.8 ppm
+    IN byte counter (duplex)     2026-08-06   -86.1 ppm  <- simultaneous
+    feedback endpoint (duplex)   2026-08-06   -86.0 ppm  <- simultaneous
+
+DUPLEX SOAK, 896 s, device-side VCD
+------------------------------------
+    fill 360..1012 (mean 922.6), 579500 samples, xscope missing marks 0
+    weighted slope +0.119 B/s = +0.1 ppm equivalent (32 B/frame)
+    overflow: ZERO
+    underflow: one at t=0.177 s; dry-out: two, at t=2.237 s and t=4.227 s
+    -- all three inside the stream-start window, none afterwards
+
+Six segments. The two short ones are the startup transients (2.0 s at
++0.403 B/s, 17.7 s at -0.351); the four that carry the run -- 151.2 s, 73.5 s,
+394.2 s and 85.7 s -- read +0.125, +0.138, +0.128 and +0.143 B/s. All +0.1 ppm.
+
+That is the SAME +0.1 ppm with overflow ZERO that the P4 simplex soak
+recorded, which is the answer to design spec section 8's stated risk: "Clock
+ownership is a behaviour change to code that currently works. The OUT path is
+at -0.05 ppm with zero corrections over 20 minutes. Stage C must not regress
+that." Running a second stream in the opposite direction did not move it.
+
+Host console over the soak: 360 heartbeats, OUT pkts/s=1000 the ONLY value,
+OUT err/s=0 the ONLY value, IN pkts/s 998/1000/1001 (millis() quantisation on
+a 2 s window, not jitter on the wire), under=0, IN over=0.
+
+WHAT IS NOT DEMONSTRATED HERE
+------------------------------
+* The OUT direction is fed by USBAudioOut's internal tone generator, not the
+  audio graph. OUT fifo= therefore parks near the 4096-sample ceiling (3956)
+  because that generator fills whenever there is room; under=0 says it is
+  harmless, but it is high latency by construction. P4 proved the graph path
+  works on UAC2 and would hold the FIFO at its 768 setpoint instead. Duplex
+  FROM THE GRAPH is the obvious next increment and is not claimed here.
+* Clock ownership was NOT changed. The spec's recommended option 1 -- run the
+  graph from IN completions rather than OUT -- was not needed to make duplex
+  work, and the numbers above say the existing OUT-paced arrangement did not
+  suffer for it. That is a measurement, not a proof that option 1 is
+  unnecessary; a device whose IN FIFO actually drifted would be the test.
+* IN empty=/err= read 659/659, frozen. Same artefact the P2 run documented:
+  they accumulate only while the IN ring is armed with the device ABSENT --
+  here, the xrun reboot at the start of the soak -- and stop. Equality is the
+  signature of an absent device rather than a silent one, because the two are
+  independent counters (err = xact+babble+buffer).
+* Duplex across two DIFFERENT devices remains a non-goal. It needs
+  asynchronous sample-rate conversion between unrelated crystals.

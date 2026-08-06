@@ -79,9 +79,15 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **75 gates**. Expect
-**75 passed, 0 failed, 0 SKIP** on an idle machine — measured 2026-08-06 with
-`-j 2`. A single dual-core failure with everything else green is the known
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **76 gates** (75 until
+`usb/usb_audio_duplex_test` was added for Stage C). Expect
+**76 passed, 0 failed, 0 SKIP** on an idle machine, or **75 passed, 1 failed,
+0 SKIP** when the single permitted intermittent (`dualcore/cm4_audio_test`)
+is red — the latter is what the 2026-08-06 Stage C sweep measured at `-j 2`.
+**0 SKIP is the load-bearing number in either case**: it is what says the
+sweep actually covered everything rather than quietly measuring less.
+Note `-l` prints a trailing "(N gate(s))" summary line, so `wc -l` on its
+output is one more than the gate count. A single dual-core failure with everything else green is the known
 load artefact described below; any *other* failure is a real regression from
 what you are doing.
 
