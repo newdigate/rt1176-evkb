@@ -264,6 +264,75 @@ and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
 
+**2026-08-07 (the capstone: an audio graph on the CM4 feeding its own USB
+stream):** `dualcore/cm4_graph_usb_capstone` joins the sweep: **80 → 81
+gates**. Phase 7.4 — the CM4 image adds `AudioStream.cpp`, the Audio library's
+`AudioOutputUSBHost` adapter, a sine source and a peak analyser on top of 7.3's
+whole USB stack, and the driver's built-in tone generator is gone: the graph is
+the only producer. No qemu2 change was needed.
+
+★★ **This gate PASSES while printing TWO FAIL tokens — `STREAM_PACKETS=FAIL`
+AND `GRAPH_CLOCKED=FAIL` — and both are correct.** The first is 7.3's, unchanged
+(iso data does not flow against QEMU's `usb-audio`). The second is **new, and it
+is a consequence of the first**: `AudioOutputUSBHost` makes the USB frame clock
+the graph's clock, via `USBAudioOut::onFrameConsumed()`, which the driver calls
+once per ring slot it arms. No packets ⇒ no callbacks ⇒ the graph is never
+ticked. A graph that is never clocked is not a graph that cannot run.
+
+**So the graph is proved SEPARATELY, and that separation is the design of this
+gate rather than a concession.** After `beginStreaming()` the CM4 image pends
+`IRQ_SOFTWARE` itself until the FIFO reaches the adapter's own setpoint — the
+real engine, the real sine, the real adapter, the real FIFO, with only the tick
+supplied locally, and gated on exactly the `queued() < FIFO_TARGET_SAMPLES`
+condition `frame_consumed()` applies. It is pure CPU, so it works in both
+worlds, and it is what `GRAPH_ALIVE` / `GRAPH_AUDIO` / `GRAPH_NOLEAK` assert.
+It also earns its keep on silicon: `beginStreaming()` resets the FIFO and arms
+32 slots from it, so without the priming step the first frames of every measured
+window underrun while the graph catches up and `unders` — the number that says
+whether the graph kept the stream fed — would carry a startup artefact in every
+run.
+
+Four world-split tokens here, not two. `TRANSPORT_CLEAN` and the new
+`STREAM_FED` (`unders == 0`) both read PASS in QEMU **vacuously**: nothing was
+transmitted, so there can be no transmission error, and nothing was consumed, so
+the producer cannot have failed to keep up. Presence-checked, never
+value-asserted, for the same reason `TRANSPORT_CLEAN` already was.
+
+Two further notes, both of which cost time before they were understood:
+
+- ★★ **`gcyc`/`gcycmax`/`cpu`/`lps` are meaningless in QEMU, and the meaningless
+  value LOOKS ALARMING.** These are the numbers Phase 7.4 exists to produce —
+  the worst contiguous graph pass, against the CM7-measured knee of 600 µs clean
+  / 850 µs fail. qemu2 derives the CM4's DWT CYCCNT from the virtual clock
+  scaled by the modelled 400 MHz core and models no M4 pipeline, so a "cycle"
+  count there is host emulation time. Consecutive runs of this gate reported
+  worst = **776 µs** and then **2111 µs** for identical code, and the `dwt=`
+  spin measured 66400 cycles against 7.3's 28800 for the same 200-iteration
+  loop. The firmware therefore prints a four-line caveat next to them. Compare
+  them with the knee **only** from a silicon transcript; the one legitimate
+  in-world use is this gate's `lps` against 7.3's `lps` (67299) as a rough
+  instruction-count ratio.
+- ★ **An unguarded `AudioAnalyzePeak::read()` reports FULL SCALE when it has
+  analysed nothing.** Its reset state is min = +32767, max = −32768 and `read()`
+  returns max(|min|,|max|)/32767, so a starved tap reads 1.0 — the starved case
+  and the healthy case are indistinguishable and the starved one looks *better*.
+  Caught in the first QEMU run, where the streaming window analyses nothing and
+  `peak2` came back 32768. The firmware now guards both reads on `available()`
+  and sends `PEAK_NONE` (0xFFFFFFFF) instead, so "no blocks arrived" and "blocks
+  arrived carrying silence" are different values and different messages.
+
+Two negative controls are checked in. `transcript_qemu_red_vector.txt`: vector
+index 60 (IRQ 44, `IRQ_SOFTWARE`) repointed at `Default_Handler`, nothing else
+changed — the CM4 reaches `s7=armed` and then hangs, because `Default_Handler`
+spins and the first `NVIC_SET_PENDING` never returns, so a misrouted graph
+vector is visibly a HANG exactly as a misrouted USB vector was in 7.2.
+`transcript_qemu_red_silent.txt`: `GRAPH_AMPLITUDE` set to 0, nothing else
+changed — ★ `GRAPH_ALIVE` still **passes**, with `blocks=3` and `fifo=768/768`
+identical to the green run, because the adapter really did fill the FIFO, with
+silence. Only the peak tap separates them. That is the argument for having a
+peak node in the graph at all, and it is why `GRAPH_ALIVE` alone would have been
+a gate that a completely silent stream could satisfy.
+
 **2026-08-07 (the CM4 arms an isochronous stream):**
 `dualcore/cm4_usb_audio_probe` joins the sweep: **79 → 80 gates**. Phase 7.3 —
 the CM4 image links the UAC class driver on top of 7.2's transport core, claims

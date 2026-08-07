@@ -179,6 +179,7 @@ examples/dualcore/cm4_audio_test:cm4_audio_test \
 examples/dualcore/cm4_audiostream_test:cm4_audiostream_test \
 examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_cpp_test:cm4_cpp_test \
 examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_fft_test:cm4_fft_test \
+examples/dualcore/cm4_graph_usb_capstone:cm4_graph_usb_capstone \
 examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test \
 examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_image_test:cm4_image_test \
 examples/dualcore/cm4_imagebank_test:cm4_imagebank_test \
