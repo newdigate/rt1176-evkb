@@ -321,13 +321,16 @@ CM7 HW-verified stream on the same block instances.
 - **Concurrent CM7+CM4 peripheral use / arbitration** — a cross-core ownership
   protocol.
 
-### USB host audio on the CM4 — ASSESSED 2026-08-06, NOT STARTED, NOT PROBED
+### USB host audio on the CM4 — Phase 7 IN PROGRESS; 7.1 ★★HW-VERIFIED 2026-08-07
 
-Desk triangulation only (RM + this tree's own sources). **Nothing below is
-HW-verified**; every item marked ⚠ is a risk-trigger that MANDATES a probe
-before any of it is relied on. Recorded so a future session does not
-re-derive it — the assessment came out far more favourable than expected,
-because the three constraints that would normally kill it all clear.
+**Phase 7.1 (CM4 takes the USB port) is DONE + HW-VERIFIED** — see the Phase 7
+section below. The desk triangulation that follows was written 2026-08-06
+*before* any probe; it is kept because 7.2–7.4 still rest on it, with each
+item now marked against what silicon actually said.
+
+⚠ items are risk-triggers that MANDATE a probe before being relied on. The
+three constraints that would normally kill this all cleared on paper, and the
+two that 7.1 tested cleared on silicon too.
 
 **Cleared — the interrupt reaches the CM4.** RM **Table 4-2** (*CM4 domain
 interrupt summary*, `rm_full.txt:3910-3911`) lists **135 = USB OTG2** and
@@ -430,6 +433,94 @@ stream concurrently. **The measurement strengthens this:** at 1.16% the USB
 path is not what is costing the CM7 anything, so moving it buys almost no
 CPU back — it buys *isolation*, and isolation is only worth a qemu2 IRQ
 split plus a shim port if something else needs the CM7 wholly free.
+
+## Phase 7 — USB host audio on the CM4;  7.1 ★★HW-VERIFIED 2026-08-07
+
+**Goal (user-directed): a fully autonomous CM4** — it owns the USB host stack,
+the AudioStream graph, the WM8962 codec and SAI, while the CM7 boots it and
+parks. Phase 6 proved the second half on silicon; Phase 7 attacks the first.
+Spec: `docs/superpowers/specs/2026-08-06-cm4-usb-port-design.md`.
+Plan: `docs/superpowers/plans/2026-08-06-cm4-usb-port.md`.
+
+**Be honest about what this buys.** Measured 2026-08-06
+(`examples/usb/usb_audio_duplex_test/transcript_hw_cpu_budget.txt`), the
+genuine USB host duplex work is **1.16% of the CM7 @996 MHz**. Moving it to
+the CM4 buys *isolation*, not CPU. Nobody should later read Phase 7 as a
+performance optimisation.
+
+| | Sub-project | Status |
+|---|---|---|
+| **7.1** | **CM4 takes the USB port** | ✅ **DONE + ★★HW-VERIFIED 2026-08-07** |
+| 7.2 | Stack compiles and enumerates on the CM4 | not started |
+| 7.3 | Iso streaming on the CM4 | not started |
+| 7.4 | Autonomous capstone | not started |
+
+### 7.1 — CM4 takes the USB port  ✅ DONE + ★★HW-VERIFIED
+
+`examples/dualcore/cm4_usb_irq_probe` (shape: `cm4_sai_irq_probe`). The CM4
+self-configures LPCG115 → USBPHY2 480 MHz PLL → EHCI reset → host mode+SDIS →
+port power+run → PCE + NVIC 135, emitting a marker plus one observation per
+stage so a red run localises itself. The CM7 boots it and relays; it
+configures no USB register.
+
+**EVKB result, two runs, both PASS.** `irqcnt` 6 then 2 with a real
+`ccs=0 → ccs2=1` connect edge from a physical plug into J47.
+★**What VARIES is the evidence:** every deterministic field is byte-identical
+across the two runs and only the interrupt count moves, because it tracks
+contact bounce on a hand-pushed connector. A latched line, a fixed model
+artefact, or a miscounted vector entry would all give the same number twice.
+
+- ★★**Phase 6 finding 1 REFUTED for this block** — the design's biggest open
+  risk. The CM4 hangs on ANATOP's AI-write handshake (`I2S.cpp ai_write`),
+  and the spec predicted that would not apply because USBPHY2's PLL is plain
+  MMIO. It does not: `pllsic=80F03040`, bit 31 LOCK set, CM4-driven, first
+  try. **Do not generalise the ANATOP blocker to blocks with their own PLL.**
+- **qemu2 `7c9bd4cbe6` (LOCAL ONLY, GPL firewall):** `TYPE_SPLIT_IRQ` fans
+  IRQ 135 to both NVICs — the model wired both USB IRQs to the CM7 only
+  (`fsl-imxrt1170.c:1418`). Same idiom as LPI2C5/LPI2C2/LPSPI1/SAI1. OTG1
+  (136) stays CM7-only: RM Table 4-2 lists it too, but it is unprobed and
+  nothing here uses it as a host. Run **red-first**;
+  `transcript_qemu_red.txt` is checked in from before the change.
+- **Divergences recorded, not absorbed:** `rstspin=2` on silicon vs 0 in
+  QEMU (the model completes the EHCI reset instantly); `portsc` upper
+  PTS/PSPD fields unpopulated in the model (CCS agrees in both worlds);
+  `PHY_PLL_CM4` world-split (PASS silicon / FAIL QEMU — stock
+  `TYPE_IMX_USBPHY` has no `PLL_SIC` at 0xA0; see `ehci.cpp:248`).
+- ★★**Two vacuous-gate traps, both of which produced `irqcnt=0`** — the
+  legitimate negative result, so each looked like a finding. (1) A
+  present-from-reset device raises PCD during stage 5 and the stage-6 W1C
+  clears it before PCE is armed, so nothing was ever pending while armed;
+  (2) the CM7 batched its mailbox reads, so the marker the gate polls for
+  reached the UART only after the window closed. Fixed by hotplugging on the
+  streamed `s6` marker and asserting `PLUG_TRANSITION` *before* the interrupt.
+  See `docs/KNOWN-BROKEN-GATES.md` for the full account.
+- ★**A delay loop calibrated by counting instructions was off ~2.3×**
+  ("~3 cycles/iter"; a volatile decrement is nearer 7), so an 8 s window ran
+  ~18.7 s and collided with the CM7's receive timeout — the transcript
+  truncated, reading as a CM4 hang. Delays now use DWT CYCCNT.
+- Sweep **77 → 78 gates**; `license-audit.sh` GATES extended (105 files
+  walked), PASS.
+
+### 7.2 — next, and what 7.1 already established for it
+
+- **The OCRAM DMA trap.** qemu2 holes out the CM7's ITCM (0x0) and DTCM
+  (0x20000000) in the EHCI DMA view (`fsl-imxrt1170.c:77-101`), modelling
+  `memory.cpp:60`. **The CM4's own DTCM is also at 0x20000000 from its view**,
+  so a buffer in a CM4 image's `.bss` is doubly unusable — wrong memory in the
+  system map *and* holed. `cm4.ld` needs a `.bss.dma` in OCRAM1 (0x20240000),
+  clear of OCRAM M4 (0x20200000) where the TCM backdoor and
+  `Multicore.begin`'s `stageAddr` live. 7.1 allocated no DMA memory so it
+  never hit this; 7.2 will.
+- **`USBHost::isr` is private** (`USBHost_t36.h:307`), so 7.2 needs a small
+  non-breaking library change to give the CM4's static vector table something
+  to call. The CM7 gets away with a runtime `attachInterruptVector`; the CM4
+  cannot.
+- **`cpsie i` is a PER-IMAGE obligation** — the copied `startup_cm4.S` leaves
+  PRIMASK set and the fix lives in each image's own main. It false-FAILs on
+  silicon and passes in QEMU.
+- **Enumeration is interrupt-driven** (UAI → `followup_Transfer`,
+  `ehci.cpp:380`) even though *streaming* is wholly polled. 7.1 enabled PCE
+  only; 7.2 needs the rest.
 
 ## Phase 5 — CM4 audio foundation (Plan 1 of 2)  ★★HW-VERIFIED 2026-07-21
 
@@ -1163,3 +1254,29 @@ no power; **check J38 / the barrel-jack supply** before chasing the debug chain.
   996 MHz ≈ 11.6 MHz-equivalent), and moving USB to the CM4 buys isolation
   rather than CPU — the risk is entirely the ~½ ms service latency, the same
   shape as Phase 6 finding 2.
+- 2026-08-07: **Phase 7.1 (CM4 takes the USB port) DONE + ★★HW-VERIFIED.**
+  `examples/dualcore/cm4_usb_irq_probe`; qemu2 `7c9bd4cbe6` (local-only,
+  TYPE_SPLIT_IRQ for IRQ 135); evkb commits on branch `cm4-usb-host-audio`.
+  The CM4 brings up LPCG115 + USBPHY2's 480 MHz PLL + the EHCI controller
+  itself and takes USB OTG2's IRQ 135 on its own NVIC — EVKB, two runs,
+  `irqcnt` 6 then 2 with a real `ccs=0→ccs2=1` connect edge from a physical
+  plug into J47. ★★**Phase 6 finding 1 REFUTED for this block:** the CM4
+  drove the PHY PLL directly (`pllsic=80F03040`, LOCK set) because USBPHY2
+  has its own PLL behind plain MMIO — the ANATOP AI-write blocker does NOT
+  generalise to blocks with their own PLL. Red-first discipline held
+  (`transcript_qemu_red.txt` checked in before the qemu2 change). ★★**TWO
+  vacuous-gate traps caught before they could mislead**, both producing
+  `irqcnt=0`, which is *also* the legitimate negative result: a
+  present-from-reset device raises PCD during stage 5 and the stage-6 W1C
+  clears it before PCE is armed; and the CM7 batching its mailbox reads meant
+  the marker the gate polls for reached the UART only after the window closed.
+  Fixed by hotplugging on the streamed `s6` marker and asserting a real
+  `PLUG_TRANSITION` edge before the interrupt assertion. ★**Delay loops
+  calibrated by counting instructions are not safe** — "~3 cycles/iter" for a
+  volatile decrement is nearer 7, so an 8 s window ran ~18.7 s and collided
+  with the CM7's receive timeout, truncating the transcript in a way that
+  read as a CM4 hang; use DWT CYCCNT. Divergences recorded not absorbed
+  (`rstspin` 2 vs 0, `portsc` upper fields, `PHY_PLL_CM4` world-split).
+  Sweep 77 → 78 gates; license-audit PASS. Next: 7.2 (port USBHost_t36 to
+  the CM4 world — shim expansion, the OCRAM `.bss.dma` section in `cm4.ld`,
+  and exposing `USBHost::isr` for the static vector table).

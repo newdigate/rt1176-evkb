@@ -263,3 +263,47 @@ narrow as written: it is the DUAL-CORE gates as a class that are load-sensitive,
 and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
+
+**2026-08-07 (CM4 takes the USB port):** `dualcore/cm4_usb_irq_probe` joins the
+sweep: **77 → 78 gates**. Phase 7.1 — the CM4 self-configures LPCG115, the
+USBPHY2 480 MHz PLL, EHCI reset, host mode and port power, then takes USB
+OTG2's **IRQ 135** on its own NVIC. HW-verified on the EVKB across two runs.
+Needed a qemu2 change (`7c9bd4cbe6`, local-only per the GPL firewall): a
+`TYPE_SPLIT_IRQ` fanning 135 to both NVICs, since the model wired both USB
+IRQs to the CM7 only. Run **red-first**, with `transcript_qemu_red.txt`
+checked in before that change.
+
+Three things about this gate worth not rediscovering:
+
+- **`PHY_PLL_CM4` is a world-split token: FAIL in QEMU, PASS on silicon, and
+  the gate asserts only that the token is PRESENT.** qemu2 instantiates stock
+  `TYPE_IMX_USBPHY`, an i.MX6-era model whose register file ends at
+  `USBPHY_VERSION` (0x80); the RT1176's `PLL_SIC` quad at 0xA0/A4/A8/AC is
+  unmodelled, so the lock poll cannot succeed for *either* core. Pre-existing
+  and already recorded in HW-verified firmware — `USBHost_t36/ehci.cpp:248`
+  literally reads "QEMU: PLL_SIC reads 0 -> times out, proceeds". Do not
+  "fix" this by asserting lock in the gate.
+
+- ★★**The device must be HOTPLUGGED, not present at reset — and the first two
+  attempts at this gate were VACUOUS in two different ways.** ChipIdea defers
+  attach to the guest's PP write (`chipidea.c:230` → `hcd-ehci.c:1066`), so a
+  present-from-reset device raises PCD during the firmware's *stage 5* and
+  the stage-6 "clear stale status" W1C wipes it before PCE is armed. The
+  first red therefore had `irqcnt=0` with `stsraw=0` — no interrupt condition
+  ever occurred while anything was listening, so the red said nothing about
+  routing and the qemu2 split would not have flipped it. The second attempt
+  polled for the firmware's `s6` marker before hotplugging — but the CM7 was
+  batching all its mailbox reads before printing, so `s6` only reached the
+  UART *after* the window closed and the plug again landed too late, with the
+  identical symptom. The gate now streams each token as it arrives and
+  hotplugs on `s6`. **`irqcnt=0` is the legitimate negative result here, so
+  almost every possible mistake wears its costume** — that is why the gate
+  asserts `PLUG_TRANSITION` (a real ccs 0→1 edge) *before* it asserts the
+  interrupt, and why the firmware reports a post-window raw `USBSTS`.
+
+- **A delay loop calibrated by counting instructions was off by ~2.3×.** The
+  CM4's observation window was written as a `volatile` decrement loop with a
+  "~3 cycles/iter" estimate; it is nearer 7 (LDR+SUBS+STR+CMP+B), so a
+  nominal 8 s window ran ~18.7 s and collided with the CM7's receive timeout.
+  The transcript truncated mid-sequence, which reads as a CM4 hang rather
+  than a miscalibrated delay. Delays are now measured with DWT CYCCNT.
