@@ -113,9 +113,15 @@ drifts.
 The sequencing decision is about diagnosability, not speed. The refactor
 touches `run-all-qemu-gates.sh`, `license-audit.sh`, `KNOWN-BROKEN-GATES.md`,
 `evkb.cmake` and 81 gate scripts — everything that protects the tree. Doing it
-against `blink` (already known-good on this silicon, already has
-`tools/qemu_check_blink.py`, zero USB unknowns) means any red is definitively
-the refactor.
+against a canary with zero USB unknowns means any red is definitively the
+refactor.
+
+The canary is **`examples/serial/serial_test`**, not `blink`. Writing the plan
+established that `blink` has **no gate at all** — it is not one of the 81 — and
+that `tools/qemu_check_blink.py` is referenced by nothing in the tree. Serial is
+the better choice anyway: UART tokens are what every gate in this tree asserts,
+so the canary exercises the exact mechanism the other 81 depend on, and the
+console is one of the four things confirmed working on the 1060 silicon.
 
 ---
 
@@ -205,15 +211,19 @@ example.
 
 ### 4.3 Per-example declaration
 
-Each example declares `EVKB_BOARDS`. **The default is `rt1176` alone**, so all
-99 example directories keep their present meaning without being edited. An
-example opts in explicitly:
+Each example declares its boards in a **`boards` sidecar file**, one name per
+line. **Absent means `rt1176` alone**, so all 99 example directories keep their
+present meaning without being edited.
 
-```cmake
-set(EVKB_BOARDS rt1176 rt1062)
-```
+A sidecar rather than a CMake variable, for a concrete reason: the consumer of
+this declaration is `tools/run-all-qemu-gates.sh`, which is POSIX sh and would
+otherwise have to parse CMake to discover it. There is no duplication — CMake
+*receives* the board (`-DEVKB_BOARD=`), it does not declare the set.
 
-Build output moves to `build-<board>/`.
+Build output goes to `build-<board>/`, **except that `rt1176` keeps the plain
+`build/`**. The asymmetry is deliberate: it leaves the 81 existing gates, the
+runner's SKIP probe and every documented `cmake -B build` line untouched, which
+is what lets Phase 1 be codegen- and workflow-neutral for the existing board.
 
 Categories that will never declare `rt1062`: `dualcore/` (23 examples — the
 RT1062 is single-core) and the RK055 MIPI-DSI examples in `display/` (the
@@ -268,7 +278,7 @@ lone dual-core red.
 
 ### 4.6 Definition of done
 
-- `examples/gpio-analog/blink` declares both boards, builds for both, and its
+- `examples/serial/serial_test` declares both boards, builds for both, and its
   gate passes on both.
 - `run-all-qemu-gates.sh` reports both boards with zero SKIP.
 - Every sampled `rt1176` image is byte-identical to its pre-refactor build.
