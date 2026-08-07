@@ -1,0 +1,73 @@
+EVKB clean run -- 2026-08-07. THE ORACLE for Phase 7.2. The real USBHost_t36
+stack, compiled into a freestanding Cortex-M4 image, ENUMERATES A REAL USB
+DEVICE on silicon: brings up the port, addresses the device, fetches its
+descriptors, and reads back its identity.
+
+Procedure: flashed, console reader attached, SW4/RESET pressed with a UAC1
+audio dongle on J47 (USB_OTG2). The CM4 image runs USBHost::begin() and then
+USBHost::Task(); the CM7 boots it and relays MU tokens, touching no USB
+register.
+
+  vid=00001B3F pid=00002008
+
+★ THAT NUMBER IS THE WHOLE POINT. It is not QEMU's emulated usb-audio device
+(46F4:0002, what the QEMU gate asserts), and it is not the XMOS MC200 witness
+(20B1:000E, the only device ID anywhere else in this tree's transcripts). It
+is the dongle's own identity, and the only way to obtain it is to have driven
+a real control transfer over a real wire and parsed what came back. A code
+path that merely executed cannot produce it.
+
+VERDICTS, each localising a different failure:
+
+  DWT_ALIVE=PASS          dwt=000007D9, non-zero.
+                          ★ Reported FIRST and deliberately so. The shim
+                          derives millis()/micros() from DWT CYCCNT; if DWT
+                          were not enabled it would read 0 forever, every
+                          USBHost_t36 timeout would never fire, and
+                          enumeration would neither complete nor give up --
+                          a silent hang with no error. This token turns that
+                          into a visible fact instead of an inference.
+  USBINTR_UAIE=PASS       usbintr=030C0016, uaie=1. USBHost::begin() armed
+                          the async-schedule interrupt on the CM4's OWN NVIC.
+                          Control transfers complete through it (UAI ->
+                          followup_Transfer), so enumeration is genuinely
+                          interrupt-driven here, not polled.
+  PLUG_TRANSITION=PASS    ccs=0 at s3 -> ccs2=1. A real connect edge. The
+                          dongle was already in J47, so this is silicon's
+                          attach/debounce completing AFTER port power was
+                          applied -- real hardware takes time the model does
+                          not.
+  CLAIM_CALLED=PASS       claims=00000007. claim() is reachable only via
+                          followup_Transfer, which runs INSIDE USBHost::isr()
+                          -- so a non-zero count is independent proof the CM4
+                          took and serviced USB interrupts on its own NVIC.
+  DESCRIPTOR_FETCHED=PASS vid/pid above.
+  ENUM_CM4=PASS
+
+OTHER OBSERVATIONS:
+
+  portsc2=10001805  CCS=1, PE=1, PP=1. PE (port enabled) is the one that
+                    matters: the port only enables after the reset/handshake
+                    completes, so the link is genuinely up, not merely
+                    powered.
+  addr=1            the device was ADDRESSED -- SET_ADDRESS succeeded.
+  speed=0           PSPD=00 = full speed. Correct for this dongle.
+  loops=000DF717    915,735 Task() iterations inside the window.
+  stsraw=0000C088   post-window USBSTS.
+
+QEMU-vs-SILICON, recorded not absorbed:
+
+  portsc=1C001000 at s3 vs QEMU's 00001000 -- the upper PTS/PSPD transceiver
+  fields the model leaves unpopulated. Same divergence Phase 7.1 measured;
+  CCS, the bit the gate reads, agrees in both worlds.
+
+  claims=7 here vs 4 in QEMU. claim() is offered to each driver per interface
+  per configuration, and the real dongle's descriptor set is richer than the
+  emulated device's. The gate asserts >0, not an exact count, for this reason
+  -- precedent: 2C systick, 3.2 rdv, Phase 5 irqcnt.
+
+  usbintr=030C0016 is IDENTICAL in both worlds. It is written by the library
+  rather than by the probe, which is the point: the CM4 ran USBHost::begin()
+  itself and got the same interrupt mask the CM7 does.
+
+==== captured ====
