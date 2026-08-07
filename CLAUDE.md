@@ -79,12 +79,13 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **79 gates** (78 before Phase
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **80 gates** (79 before Phase
+7.3 added `dualcore/cm4_usb_audio_probe`; 78 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). Expect **79 passed, 0 failed, 0 SKIP** on an idle
-machine, or **78 passed, 1 failed, 0 SKIP** when the single permitted
+`usb/usb_descriptor_survey`). Expect **80 passed, 0 failed, 0 SKIP** on an idle
+machine, or **79 passed, 1 failed, 0 SKIP** when the single permitted
 intermittent (`dualcore/cm4_audio_test`) is red — the latter is what the
 2026-08-06 Stage C sweep measured at `-j 2`.
 **0 SKIP is the load-bearing number in either case**: it is what says the

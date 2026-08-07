@@ -1,9 +1,15 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 7 — USB host on the CM4. 7.1 ★★HW-VERIFIED (2026-08-07);
-7.2 QEMU-GREEN (2026-08-07), ★HW UNVERIFIED — the real USBHost_t36 stack
-enumerates a device on the CM4 (`cm4_usb_enum_probe`, VID/PID off the wire).
-Next action: run 7.2 on the EVKB with a device in J47 before starting 7.3.**
+**Current phase: 7 — USB host on the CM4. 7.1 and 7.2 both ★★HW-VERIFIED
+(2026-08-07) — the real USBHost_t36 stack enumerates a real dongle on the CM4
+(`cm4_usb_enum_probe`, `vid=1B3F pid=2008` off the wire, `0442782`).
+7.3 QEMU-GREEN (2026-08-07), ★HW UNVERIFIED — the CM4 claims a USB audio device,
+negotiates a format, completes the control sequence and ARMS an isochronous OUT
+ring (`cm4_usb_audio_probe`, `AUDIO_CM4=PASS`). ★★ That gate deliberately does
+NOT assert packet flow: iso data does not move against QEMU's emulated
+usb-audio, so `STREAM_PACKETS` is a world-split token and reads FAIL in a
+PASSING gate. Next action: run 7.3 on the EVKB with a device in J47 — silicon is
+the only oracle for whether audio actually moves.**
 See the Phase 7 section below. History follows, newest first.
 
 Superseded pointer, kept for history — **Phase 6 — CM4 audio pipeline, Plan 2 of 2, ★★ALL HW-VERIFIED
@@ -457,8 +463,8 @@ performance optimisation.
 | | Sub-project | Status |
 |---|---|---|
 | **7.1** | **CM4 takes the USB port** | ✅ **DONE + ★★HW-VERIFIED 2026-08-07** |
-| 7.2 | Stack compiles and enumerates on the CM4 | ✅ **QEMU-GREEN 2026-08-07; HW UNVERIFIED** |
-| 7.3 | Iso streaming on the CM4 | not started |
+| 7.2 | Stack compiles and enumerates on the CM4 | ✅ **DONE + ★★HW-VERIFIED 2026-08-07** (`0442782`) |
+| 7.3 | Iso streaming on the CM4 | ✅ **QEMU-GREEN 2026-08-07 (control plane); ★HW UNVERIFIED** |
 | 7.4 | Autonomous capstone | not started |
 
 ### 7.1 — CM4 takes the USB port  ✅ DONE + ★★HW-VERIFIED
@@ -507,7 +513,7 @@ artefact, or a miscounted vector entry would all give the same number twice.
 - Sweep **77 → 78 gates**; `license-audit.sh` GATES extended (105 files
   walked), PASS.
 
-### 7.2 — the real stack enumerates on the CM4  ✅ QEMU-GREEN 2026-08-07
+### 7.2 — the real stack enumerates on the CM4  ✅ DONE + ★★HW-VERIFIED 2026-08-07
 
 `examples/dualcore/cm4_usb_enum_probe`. The CM4 image links the REAL
 USBHost_t36 transport core — `ehci.cpp`, `ehci_iso.cpp`, `enumeration.cpp`,
@@ -517,11 +523,16 @@ VID/PID. **QEMU: `vid=000046F4 pid=00000002`** (the emulator's `usb-audio`,
 `hw/usb/dev-audio.c:43-44`), `claims=4`, `ENUM_CM4=PASS`, stable 3×.
 7.2a/b (the shim's DWT clocks, DMAMEM and OCRAM2 region) were already in place.
 
-★ **NOT YET HW-VERIFIED.** Everything below is QEMU only. The two-gate rule is
-half-satisfied; silicon is still the oracle, and 7.1's own experience — a
-`rstspin` and a `portsc` that differed between the worlds — says do not assume
-this transfers. **Do not mark 7.2 done until an EVKB run with a real device on
-J47 is checked in.**
+★★ **HW-VERIFIED on the EVKB (`0442782`, `transcript_hw_evkb.txt`):** a real UAC1
+dongle on J47 answered `vid=00001B3F pid=00002008` — not QEMU's 46F4:0002 and
+not the MC200 witness, so it can only have come off the wire. `claims=7` (vs 4
+in QEMU: a richer real descriptor set, which is why the gate asserts >0 and not
+an exact count), `addr=1`, `speed=0` (full speed), `portsc2=10001805` with PE
+set. `usbintr=030C0016` is IDENTICAL in both worlds because the LIBRARY writes
+it. One divergence recorded, not absorbed: `portsc=1C001000` at s3 on silicon vs
+`00001000` in QEMU — the upper PTS/PSPD transceiver fields the model leaves
+unpopulated, the same divergence 7.1 measured; CCS, the bit the gate reads,
+agrees.
 
 What it establishes:
 - **5,797 lines of C++ USB host stack run `-nostdlib` on the M4.** `.text` is
@@ -587,12 +598,77 @@ Still true from 7.1, and still load-bearing:
   readback, and the observation window carries a hard iteration cap so a dead
   clock is reported rather than hung on.
 
-### 7.3 — next: iso streaming on the CM4
+### 7.3 — iso streaming on the CM4  ✅ QEMU-GREEN 2026-08-07; ★HW UNVERIFIED
 
-Entry criteria: **7.2 HW-verified on the EVKB first.** The measured warning from
-the Phase-7 desk work applies directly — the constraint is ~½ ms service
-latency, not throughput (1.16% of a 996 MHz M7), and Phase 6 finding 2 says the
-USB service must outrank graph work on the CM4 or the FIFO drains.
+`examples/dualcore/cm4_usb_audio_probe`. The CM4 image links the UAC class
+driver (`usb_audio.cpp` + the five sources it references unconditionally) on top
+of 7.2's transport core, claims a device, negotiates a format, completes the
+post-claim control sequence and arms 32 siTDs across all 32 periodic frame
+slots. Fed by the driver's own tone generator, deliberately: no AudioStream is
+linked, so a red run cannot be the graph's fault. That is 7.4's problem.
+
+**QEMU: `AUDIO_CM4=PASS`, stable 3× — with `STREAM_PACKETS=FAIL`, and that is
+CORRECT.** Isochronous data does not flow against the emulated `usb-audio`
+device (measured 2026-08-06, see `docs/KNOWN-BROKEN-GATES.md`), so packet flow
+is a **world-split token**: the firmware prints it, the QEMU gate asserts only
+that it is PRESENT, silicon asserts it is TRUE. `AUDIO_CM4` is the CONTROL-PLANE
+verdict and stops at "armed" on purpose. ★ **Do not assert `pkts > 0` in QEMU** —
+that is 7.1's `PHY_PLL_CM4` mistake, which has now cost this phase twice.
+
+★ **NOT YET HW-VERIFIED. Silicon is the only oracle for whether audio moves**,
+and a CM4 that enumerates, claims, negotiates and arms but does not stream would
+look identical to the checked-in QEMU transcript. Next action: EVKB run with a
+device on J47 (`transcript_hw_evkb.txt`), asserting `STREAM_PACKETS=PASS` and
+`TRANSPORT_CLEAN=PASS`, and recording `lps`.
+
+What the green run establishes:
+
+- **The class driver fits.** `.text` 24,000 B + `.isr_vector` 608 = **24,608 B
+  of 128 K ITCM** (18.8%), against 7.2's 10,608. `.bss.dma` **172,096 B at
+  0x202C0000–0x202EA040**, 32.8% of OCRAM2, and `nm` puts every DMA-walked
+  object there — `audioOut` (152,640 B: two payload rings + two 4096-sample
+  FIFOs), `hub1`, `itd_pool` (96×96), `sitd_pool` (72×64), `periodictable`,
+  `enumsetup`/`enumbuf`, the memory.cpp pools. Nothing DMA-ish is in DTCM; the
+  340 B of `.bss` there is scalar bookkeeping (list heads, counters,
+  `uframe_bandwidth`).
+- **`queued=3840`/4096 with `unders=0` localises the QEMU stall to the
+  TRANSPORT.** The tone generator is producing into the real streaming FIFO and
+  saturating it because nothing drains it — the producer half works.
+- ★ **libgcc, and the first CM4 image to need it.** The audio driver divides
+  64-bit values by runtime denominators (`topUpFromTone`,
+  `effectiveRateMilliHz`, `uac1_feedback_plausible`), GCC lowers that to
+  `__aeabi_uldivmod`/`__aeabi_ldivmod`, and `teensy_add_cm4_image` links
+  `-nostdlib`. Fixed with **`GROUP(-lgcc)` in the image's own `cm4.ld`**, NOT a
+  new argument to the shared macro: a per-image need must not change any other
+  image's command line (2B `cmp` discipline). `GROUP` not `INPUT` (re-scanned,
+  and pulled in after the command-line objects); the failure mode if a future
+  toolchain ordered it differently is a LINK ERROR, not silence. Licence: the
+  compiler runtime under the GCC Runtime Library Exception, already permitted by
+  `license-audit.sh` and already linked by every CM7 image.
+- **`.ARM.exidx` is now `/DISCARD/`ed.** libgcc brings unwind-index entries into
+  an image built `-fno-exceptions`; left alone they are an ORPHAN allocatable
+  section, and orphan placement between `.text` and the `.data` LMA would
+  silently pad the staged binary — the script's contiguity invariant.
+- **NEGATIVE CONTROL checked in** as `transcript_qemu_red_rate.txt`:
+  `-DPROBE_RATE_HZ=44100u`, nothing else changed. The model offers 48000 only,
+  `uac1_find_alt()` refuses, `claim()` returns false, gate red at
+  `DEVICE_CLAIMED` — with `ctrl_timeouts=0`, which is the distinction stage 6
+  exists for (unofferred format ⇒ watchdog silent; stalled request ⇒ watchdog
+  climbing). Stages/DWT/UAIE/PLUG stay green, so the run also re-proves the
+  interrupt path while failing the thing under test.
+
+Still true from 7.1/7.2, and still load-bearing: **`cpsie i` is a per-image
+obligation** (passes in QEMU, false-FAILs on silicon), and **DWT before ANY
+clock call, failing silently** — which costs more here than in 7.2, because the
+audio driver's control watchdog is the only way back from a configuration
+request the device never answers, and a frozen `millis()` disarms it.
+
+The measured warning from the Phase-7 desk work still applies to 7.4 — the
+constraint is ~½ ms service latency, not throughput (1.16% of a 996 MHz M7), and
+Phase 6 finding 2 says the USB service must outrank graph work on the CM4 or the
+FIFO drains. `lps` is printed so that margin is visible rather than assumed; it
+is a characterisation token in QEMU (it measures the emulator) and is asserted
+by neither world.
 
 ## Phase 5 — CM4 audio foundation (Plan 1 of 2)  ★★HW-VERIFIED 2026-07-21
 

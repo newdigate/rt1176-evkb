@@ -264,6 +264,65 @@ and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
 
+**2026-08-07 (the CM4 arms an isochronous stream):**
+`dualcore/cm4_usb_audio_probe` joins the sweep: **79 → 80 gates**. Phase 7.3 —
+the CM4 image links the UAC class driver on top of 7.2's transport core, claims
+a USB audio device, negotiates a format, completes the post-claim control
+sequence and arms 32 siTDs across all 32 periodic frame slots. No qemu2 change
+was needed.
+
+★★ **This gate PASSES while printing `STREAM_PACKETS=FAIL`, and that is
+correct.** It is the direct, deliberate consequence of the emulated-device
+finding recorded two entries below: **isochronous data does not flow against
+QEMU's `usb-audio`**. Everything up to and including "streaming armed" is
+green; `pkts` then stays at 0 forever. So packet flow is a **world-split
+token** — the firmware prints the verdict, the QEMU gate asserts only that the
+token is PRESENT, and SILICON asserts it is PASS. `AUDIO_CM4`, the verdict the
+gate does assert, is the **control-plane** verdict and stops at "armed" on
+purpose. Precedent: 7.1's `PHY_PLL_CM4`, 3.2's `rdv`, 2C's `systick`.
+
+Do not "strengthen" this gate by asserting `pkts > 0`. That is the same mistake
+7.1 made when it asserted `PHY_PLL_CM4=PASS` against a PHY model with no
+`PLL_SIC` register — a gate rendered unpassable for a reason with nothing to do
+with what it was testing. It has now cost this phase twice.
+
+Three further notes:
+
+- **`TRANSPORT_CLEAN` is presence-checked for the opposite reason.** It reads
+  PASS in QEMU, but vacuously: a stream that transmitted nothing cannot have had
+  a transmission error. A check that cannot fail is worse than no check, so the
+  value assertion belongs to silicon there too.
+- ★ **`queued` is what localises the QEMU stall.** It sits at 3840 of 4096
+  samples, which says the driver's tone generator is producing into the real
+  streaming FIFO and saturating it because nothing drains. The producer half
+  works; it is the transport that does not move. `unders=0` agrees.
+- **`lps` (service-loop rate) is a characterisation token in BOTH worlds and is
+  asserted by neither.** In QEMU it measures the emulator, not the M4 — CYCCNT
+  comes from the virtual clock scaled by the modelled 400 MHz CM4 clock, so
+  `millis()` tracks wall-clock while the loop runs at TCG speed. It is printed
+  because the CM7 budget measurement
+  (`usb_audio_duplex_test/transcript_hw_cpu_budget.txt`) established that the
+  binding constraint is **contiguous stall length** (600 µs clean, 850 µs fail),
+  not throughput — so `1/lps` on silicon is the number that matters, and it
+  should be visible rather than assumed.
+
+A negative control is checked in as `transcript_qemu_red_rate.txt`: the same
+firmware built with `-DPROBE_RATE_HZ=44100u` and nothing else changed. QEMU's
+`usb-audio` offers 48000 only, `uac1_find_alt()` refuses, `claim()` returns
+false, and the gate goes red at `DEVICE_CLAIMED` — with `ctrl_timeouts=0`,
+which is the distinction the stage-6 packing exists for (a format the device
+never offered leaves the watchdog silent; a device that stalled the request
+leaves it climbing).
+
+One build note, because it links libgcc where no CM4 image did before: the audio
+driver divides 64-bit values by runtime denominators, GCC lowers that to
+`__aeabi_uldivmod`/`__aeabi_ldivmod`, and `teensy_add_cm4_image` links
+`-nostdlib`. The fix is `GROUP(-lgcc)` in **this image's own `cm4.ld`**, not a
+new argument to the shared macro — a per-image need must not change any other
+image's command line (the 2B `cmp` discipline). Licence-wise this is the
+compiler runtime under the GCC Runtime Library Exception, which
+`tools/license-audit.sh` already permits and every CM7 image already links.
+
 **2026-08-07 (the real stack enumerates on the CM4):**
 `dualcore/cm4_usb_enum_probe` joins the sweep: **78 → 79 gates**. Phase 7.2c —
 the CM4 image links the actual USBHost_t36 transport core, calls
