@@ -51,7 +51,7 @@ macro(_evkb_lib NAME LOCAL URL REF PATH)
 endmacro()
 
 set(_dev "$ENV{HOME}/Development")
-_evkb_lib(cores          ${EVKB_ROOT}/cores/imxrt1176 https://github.com/newdigate/teensy-cores    7b65f8af99de07ee1c64dabaa251e66a1321a5ea imxrt1176)
+_evkb_lib(cores          ${EVKB_ROOT}/cores/imxrt1176 https://github.com/newdigate/teensy-cores    4d871629d0de2421c7482d6c0e8efa3f38da8a26 imxrt1176)
 _evkb_lib(Wire           ${_dev}/Wire                 https://github.com/newdigate/Wire            19babd18b83bc2f9ddbd16f6afefcbb42558530d .)
 _evkb_lib(SPI            ${_dev}/SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
 _evkb_lib(PXP         ${_dev}/PXP                  https://github.com/newdigate/PXP          5658e34885ff3a5cb5516a178ba60743e62a7517 .)
