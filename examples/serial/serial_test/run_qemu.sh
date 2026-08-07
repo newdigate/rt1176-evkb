@@ -10,10 +10,10 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/serial_test.elf"
+ELF="$DIR/$(gate_build_dir)/serial_test.elf"
 OUT="$DIR/serial.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/serial.dbg" &
 P=$!; gate_pid $P
 # Poll for the last token this gate asserts instead of guessing a duration. The
