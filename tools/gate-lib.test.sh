@@ -297,17 +297,21 @@ test_build_dir_rt1062_is_suffixed() {
 }
 test_build_dir_rt1062_is_suffixed; report test_build_dir_rt1062_is_suffixed $?
 
-# Unknown board must EXIT non-zero, not fall through to a default. Note
-# gate_qemu_machine calls `exit 2` directly (not `return`): calling it
-# unguarded here would terminate this whole subshell before the assertion
-# below ever ran, so the call is confined to its own command-substitution
-# subshell and only the captured exit status escapes.
+# Assert the SPECIFIC failure, not merely "non-zero". A bare non-zero check
+# passes when the function does not exist at all (127, command not found), so
+# it would have gone green before gate_qemu_machine was ever written -- a
+# vacuous test, which this tree treats as a defect in its own right (see
+# tools/gate-vacuity.test.sh). gate_qemu_machine calls `exit 2` directly (not
+# `return`), so the call is confined to its own command-substitution subshell
+# (2>&1 >/dev/null redirect order: stderr follows the ORIGINAL stdout into the
+# capture, then stdout itself is discarded) and only the captured exit status
+# and stderr text escape.
 test_unknown_board_fails_loudly() {
     ( . "$LIB"
       EVKB_BOARD=rt9999
-      _out=$(gate_qemu_machine 2>/dev/null)
-      _rc=$?
-      [ "$_rc" -ne 0 ] )
+      _err=$(gate_qemu_machine 2>&1 >/dev/null); _rc=$?
+      [ "$_rc" -eq 2 ] || exit 1
+      case "$_err" in *rt9999*) exit 0 ;; *) exit 1 ;; esac )
 }
 test_unknown_board_fails_loudly; report test_unknown_board_fails_loudly $?
 
