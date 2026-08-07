@@ -264,6 +264,32 @@ and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
 
+**2026-08-07 (the real stack enumerates on the CM4):**
+`dualcore/cm4_usb_enum_probe` joins the sweep: **78 → 79 gates**. Phase 7.2c —
+the CM4 image links the actual USBHost_t36 transport core, calls
+`USBHost::begin()`, and reports the attached device's VID/PID. **No qemu2
+change was needed**: 7.1's IRQ-135 split is the only model work this arc
+required, so unlike 7.1 there is no red-first-then-model-change story here.
+
+The negative control is checked in instead, as `transcript_qemu_red_vector.txt`:
+vector index 151 repointed at `Default_Handler` and nothing else touched. The
+CM4 reaches stage 3, takes the interrupt, and spins in the default handler — the
+transcript truncates with `STAGES=FAIL` and no VID/PID. Worth keeping because it
+shows the shape a misrouted vector actually has: a **hang**, not a quiet zero.
+Two more notes on this gate:
+
+- **`vid`/`pid` are the whole oracle, and only the GATE asserts them.** Every
+  other token could in principle be produced by firmware talking to itself;
+  `46F4:0002` is QEMU's `usb-audio` (`hw/usb/dev-audio.c:43-44`) and the CM4
+  image has no knowledge of those numbers. The firmware asserts only
+  `vid != 0`, deliberately, so the identical image serves a silicon run with
+  whatever device is in J47 — the device-specific oracle belongs to whoever
+  knows which device is attached.
+- ★ **`claims` is the interrupt assertion, which is why there is no `irqcnt`
+  token.** `claim()` is reachable only via `claim_drivers` ←
+  `enumeration_receive` ← `followup_Transfer`, and that runs inside
+  `USBHost::isr()`. There is no polled path to it.
+
 **2026-08-07 (CM4 takes the USB port):** `dualcore/cm4_usb_irq_probe` joins the
 sweep: **77 → 78 gates**. Phase 7.1 — the CM4 self-configures LPCG115, the
 USBPHY2 480 MHz PLL, EHCI reset, host mode and port power, then takes USB

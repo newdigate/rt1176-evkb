@@ -1,6 +1,12 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 6 — CM4 audio pipeline, Plan 2 of 2, ★★ALL HW-VERIFIED
+**Current phase: 7 — USB host on the CM4. 7.1 ★★HW-VERIFIED (2026-08-07);
+7.2 QEMU-GREEN (2026-08-07), ★HW UNVERIFIED — the real USBHost_t36 stack
+enumerates a device on the CM4 (`cm4_usb_enum_probe`, VID/PID off the wire).
+Next action: run 7.2 on the EVKB with a device in J47 before starting 7.3.**
+See the Phase 7 section below. History follows, newest first.
+
+Superseded pointer, kept for history — **Phase 6 — CM4 audio pipeline, Plan 2 of 2, ★★ALL HW-VERIFIED
 (2026-07-22)** — the CM4 now OWNS the whole audio pipeline: interrupt-driven SAI
 I/O (`sai1176` shared core + `AudioOutputI2SInt`/`AudioInputI2SInt`, no eDMA),
 CMSIS-DSP on the M4, and the codec+SAI+graph+FFT capstone with the CM7 idle and
@@ -451,7 +457,7 @@ performance optimisation.
 | | Sub-project | Status |
 |---|---|---|
 | **7.1** | **CM4 takes the USB port** | ✅ **DONE + ★★HW-VERIFIED 2026-08-07** |
-| 7.2 | Stack compiles and enumerates on the CM4 | not started |
+| 7.2 | Stack compiles and enumerates on the CM4 | ✅ **QEMU-GREEN 2026-08-07; HW UNVERIFIED** |
 | 7.3 | Iso streaming on the CM4 | not started |
 | 7.4 | Autonomous capstone | not started |
 
@@ -501,26 +507,92 @@ artefact, or a miscounted vector entry would all give the same number twice.
 - Sweep **77 → 78 gates**; `license-audit.sh` GATES extended (105 files
   walked), PASS.
 
-### 7.2 — next, and what 7.1 already established for it
+### 7.2 — the real stack enumerates on the CM4  ✅ QEMU-GREEN 2026-08-07
 
-- **The OCRAM DMA trap.** qemu2 holes out the CM7's ITCM (0x0) and DTCM
-  (0x20000000) in the EHCI DMA view (`fsl-imxrt1170.c:77-101`), modelling
-  `memory.cpp:60`. **The CM4's own DTCM is also at 0x20000000 from its view**,
-  so a buffer in a CM4 image's `.bss` is doubly unusable — wrong memory in the
-  system map *and* holed. `cm4.ld` needs a `.bss.dma` in OCRAM1 (0x20240000),
-  clear of OCRAM M4 (0x20200000) where the TCM backdoor and
-  `Multicore.begin`'s `stageAddr` live. 7.1 allocated no DMA memory so it
-  never hit this; 7.2 will.
-- **`USBHost::isr` is private** (`USBHost_t36.h:307`), so 7.2 needs a small
-  non-breaking library change to give the CM4's static vector table something
-  to call. The CM7 gets away with a runtime `attachInterruptVector`; the CM4
-  cannot.
+`examples/dualcore/cm4_usb_enum_probe`. The CM4 image links the REAL
+USBHost_t36 transport core — `ehci.cpp`, `ehci_iso.cpp`, `enumeration.cpp`,
+`hub.cpp`, `memory.cpp`, `usbhost_isr_entry.cpp` — calls `USBHost::begin()`
+instead of 7.1's hand-written literals, and reports the attached device's
+VID/PID. **QEMU: `vid=000046F4 pid=00000002`** (the emulator's `usb-audio`,
+`hw/usb/dev-audio.c:43-44`), `claims=4`, `ENUM_CM4=PASS`, stable 3×.
+7.2a/b (the shim's DWT clocks, DMAMEM and OCRAM2 region) were already in place.
+
+★ **NOT YET HW-VERIFIED.** Everything below is QEMU only. The two-gate rule is
+half-satisfied; silicon is still the oracle, and 7.1's own experience — a
+`rstspin` and a `portsc` that differed between the worlds — says do not assume
+this transfers. **Do not mark 7.2 done until an EVKB run with a real device on
+J47 is checked in.**
+
+What it establishes:
+- **5,797 lines of C++ USB host stack run `-nostdlib` on the M4.** `.text` is
+  **10,608 B** of 128 K ITCM (`.isr_vector` 608 + `.text` 10,000) — a non-issue,
+  as the Phase-7 desk estimate predicted from the CM7's 28 KB duplex image.
+- **The DMA trap was real and the OCRAM2 answer works.** `.bss.dma` is
+  **20,544 B** at `0x202C0000..0x202C5040`, and `nm` shows every DMA-touched
+  object there: `hub1`, `periodictable`, `itd_pool`, `sitd_pool`, `enumsetup`,
+  `enumbuf`, `memory_Device/Pipe/Transfer`. Nothing DMA-ish is left in DTCM.
+  (The roadmap previously said OCRAM1 0x20240000; that would have had the CM4's
+  reset-time zeroing loop wipe the front of the CM7's live DMAMEM — the
+  `cm4.ld` ★ note has the argument, and OCRAM2 is what shipped.)
+- **`usbhost_isr_entry` closes the interrupt loop**, at vector index 151.
+  Verified by objdump: word 151 = `0x1FFE2909` = `nm`'s `usbhost_isr_entry`
+  (`0x1FFE2908`) + the Thumb bit.
+- ★ **`claim()` IS the interrupt assertion.** It is reachable only through
+  `claim_drivers` ← `enumeration_receive` ← `followup_Transfer`, which runs
+  inside `USBHost::isr()`. There is no polled path to it, so `claims>0` cannot
+  happen unless IRQ 135 dispatched on the CM4's own NVIC. That is why this gate
+  needs no separate irqcnt token.
+- **Enumeration needs more than PCE**, as predicted: `usbintr=030C0016` is
+  `begin()`'s full mask (PCE|UEE|SEE|TIE0|TIE1|UPIE|UAIE). Letting the library
+  arm it — rather than hand-configuring as 7.1 did — is the whole fix.
+- **NEGATIVE CONTROL RUN, checked in** as `transcript_qemu_red_vector.txt`:
+  vector 151 repointed at `Default_Handler` and nothing else changed. The CM4
+  reaches s3, takes the interrupt, and spins — the transcript truncates with
+  `STAGES=FAIL`, no VID/PID. So the gate is not vacuous with respect to the one
+  thing it is really testing, and a misrouted vector is visibly a *hang*, not a
+  quiet zero.
+
+Shim growth this needed (`cores/imxrt1176/cm4_shim/Arduino.h`), all additive —
+`cm4_audiostream_test` and `cm4_audio_test` rebuilt **byte-identical**
+(sha256 `d101c608…` / `e161270a…` unchanged), the 2B `cmp` discipline:
+- `#include "imxrt1176.h"` for the USB register map, plus `IRQ_USB2 = 135`
+  (`core_pins.h` is the pin API and unusable here — the two literals must not
+  drift). Needs `#undef DMAMEM` and `#undef` of four `NVIC_*` macros: the core
+  spells them as function-like macros, the shim as inline functions, and a
+  macro of the same name mangles the function's own definition.
+- Minimal abstract `Print`/`Stream` and `elapsedMillis`/`elapsedMicros`, purely
+  so `USBHost_t36.h` PARSES (`USBSerialBase`/`USBSerialEmu` derive from
+  `Stream`; `BluetoothConnection` has an `elapsedMicros` member). No vtable is
+  emitted — those classes' virtuals live in .cpps a CM4 image does not build.
+- ★ **Quoted-include trap, worth remembering:** the core's `elapsedMillis.h`
+  could NOT simply be `#include`d. It opens with a quoted
+  `#include "Arduino.h"`, and a quoted include searches the *including file's*
+  directory first — ahead of every `-I` — so from `cores/imxrt1176/` it
+  resolves to the CM7 `Arduino.h`, drags in `core_pins.h`, and collides head-on
+  with the shim. The INCLUDE_DIRS ordering that makes the shim win for
+  `<Arduino.h>` cannot help; it is out-ranked by the includer's own directory.
+- `ehci_iso.cpp` is a **mandatory** source even with no isochronous schedule:
+  `add_qh_to_periodic_schedule()` calls `sitd_skip_iso()` and is reached from
+  `new_Pipe()`, so `--gc-sections` keeps it for anything that enumerates.
+
+Still true from 7.1, and still load-bearing:
 - **`cpsie i` is a PER-IMAGE obligation** — the copied `startup_cm4.S` leaves
-  PRIMASK set and the fix lives in each image's own main. It false-FAILs on
+  PRIMASK set and the fix lives in each image's own `main`. It false-FAILs on
   silicon and passes in QEMU.
-- **Enumeration is interrupt-driven** (UAI → `followup_Transfer`,
-  `ehci.cpp:380`) even though *streaming* is wholly polled. 7.1 enabled PCE
-  only; 7.2 needs the rest.
+- ★★ **DWT before ANY clock call, and its failure is SILENT.** Without
+  `DEMCR.TRCENA` + `DWT_CTRL.CYCCNTENA`, `ARM_DWT_CYCCNT` reads 0 forever, so
+  the shim's `millis()`/`micros()` never advance, so **no USBHost_t36 timeout
+  ever fires** — enumeration neither completes nor gives up. The gate's first
+  token is therefore a *measured* cycle delta (`dwt=000041A0`), not a register
+  readback, and the observation window carries a hard iteration cap so a dead
+  clock is reported rather than hung on.
+
+### 7.3 — next: iso streaming on the CM4
+
+Entry criteria: **7.2 HW-verified on the EVKB first.** The measured warning from
+the Phase-7 desk work applies directly — the constraint is ~½ ms service
+latency, not throughput (1.16% of a 996 MHz M7), and Phase 6 finding 2 says the
+USB service must outrank graph work on the CM4 or the FIFO drains.
 
 ## Phase 5 — CM4 audio foundation (Plan 1 of 2)  ★★HW-VERIFIED 2026-07-21
 

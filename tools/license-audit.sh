@@ -184,6 +184,7 @@ examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_image_
 examples/dualcore/cm4_imagebank_test:cm4_imagebank_test \
 examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_sai_irq_probe:cm4_sai_irq_probe \
 examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_spi_test:cm4_spi_test \
+examples/dualcore/cm4_usb_enum_probe:cm4_usb_enum_probe \
 examples/dualcore/cm4_usb_irq_probe:cm4_usb_irq_probe \
 examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test \
 examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test \
