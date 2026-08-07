@@ -95,15 +95,38 @@ void USB_OTG2_IRQHandler(void) {
  * "let's make the window longer" edit would silently wrap and produce a spin
  * of nearly zero. spin_ms scales by 1000 fewer, so it cannot get there. */
 #define CM4_HZ 400000000u
+
+/* DWT cycle counter -- Phase 2C (cm4_intr_test) HW-proved the CM4 stands up
+ * its own DWT CYCCNT, so the delays here are measured rather than guessed. */
+#define ARM_DEMCR        REG32(0xE000EDFCu)
+#define ARM_DEMCR_TRCENA (1u << 24)
+#define ARM_DWT_CTRL     REG32(0xE0001000u)
+#define ARM_DWT_CYCCNT   REG32(0xE0001004u)
+
+static void dwt_start(void) {
+    ARM_DEMCR   |= ARM_DEMCR_TRCENA;
+    ARM_DWT_CYCCNT = 0u;
+    ARM_DWT_CTRL |= 1u;                       /* CYCCNTENA */
+}
+
+/* ★ EVKB 2026-08-07: this was a counted delay loop with a "~3 cycles/iter"
+ * estimate. That estimate was wrong -- a volatile uint32_t decrement on the
+ * M4 is LDR+SUBS+STR+CMP+B, nearer 7 cycles -- so the nominal 8 s
+ * observation window actually ran ~18.7 s and collided with the CM7's 20 s
+ * receive timeout. The probe truncated after s6 with no irqcnt, which reads
+ * as "the CM4 hung", not as "the delay was miscalibrated". Cycle-counting a
+ * delay loop is guesswork; DWT measures it. */
 static void spin_us(uint32_t us) {
-    volatile uint32_t n = (CM4_HZ / 1000000u) * us / 3u;   /* ~3 cycles/iter */
-    while (n--) { }
+    uint32_t start  = ARM_DWT_CYCCNT;
+    uint32_t cycles = (CM4_HZ / 1000000u) * us;   /* us <= 10.7e6 or this wraps */
+    while ((uint32_t)(ARM_DWT_CYCCNT - start) < cycles) { }
 }
 static void spin_ms(uint32_t ms) {
     while (ms--) { spin_us(1000u); }
 }
 
 int main(void) {
+    dwt_start();                                 /* delays are measured, not counted */
     /* Stage 1: ungate the shared USB clock. RISK TRIGGER: clock/power gating
      * from the CM4. Precedent: LPCG104 (3.1) and LPCG102 (3.2) self-ungated
      * on silicon. */

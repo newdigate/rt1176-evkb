@@ -1,0 +1,57 @@
+EVKB clean run -- 2026-08-07. THE ORACLE. The CM4 brings up the USB host port
+itself and takes USB OTG2's IRQ 135 on its own NVIC, on real silicon.
+
+Procedure: flashed with J47 EMPTY, console reader attached, SW4/RESET pressed,
+then a USB audio dongle physically plugged into J47 during the 8 s observation
+window. The plug is the un-fakeable part -- a readback of registers the CM4
+itself wrote would be circular (the ssi-loopback trap from Phase 3.1), so the
+assertion needs BOTH halves below, from the same run.
+
+  irqcnt=00000006      the CM4's OWN handler ran, six times
+  ccs=0 -> ccs2=1      a real 0->1 connect edge, i.e. the plug actually happened
+                       inside the window rather than before or after it
+
+Neither alone would do: irqcnt could be a latched or spurious line, and a CCS
+change alone says nothing about the NVIC.
+
+Six entries rather than one is expected and is itself corroboration -- a
+human pushing a connector home produces contact bounce, and each bounce is
+another port-change event. A cleanly asserted single interrupt would be more
+suspicious, not less.
+
+WHAT ELSE THIS RUN SETTLES:
+
+  pllsic=80F03040   bit 31 LOCK SET -> PHY_PLL_CM4=PASS. This is the
+                    world-split token, and it reads FAIL in QEMU because stock
+                    TYPE_IMX_USBPHY has no PLL_SIC register at 0xA0 at all.
+                    ** It also refutes the phase's biggest open risk: Phase 6
+                    finding 1 (the CM4 hangs on ANATOP's AI-write handshake)
+                    does NOT apply here, because USBPHY2's PLL is plain MMIO.
+                    The CM4 drove it directly, first try. **
+
+  rstspin=00000002  the EHCI reset took two poll iterations to clear on
+                    silicon, against 0 in QEMU -- the model completes the
+                    reset instantly. Harmless, but it is a real divergence
+                    and is recorded rather than absorbed.
+
+  portsc=1C001000   the port-status word differs from QEMU's 00001000 in its
+                    upper bits (PTS/PSPD speed and transceiver fields), which
+                    the model does not populate. CCS (bit 0) is what the gate
+                    reads and it agrees in both worlds.
+
+  stsraw=00000088   post-window raw USBSTS: bits 3 (frame-list rollover) and 7
+                    (SOF received) set, PCI (bit 2) CLEAR. The schedule is
+                    running -- USBCMD.RS was set in stage 5 -- and those two
+                    are status-only here since USBINTR enables PCE alone. PCI
+                    clear means the port-change condition was CONSUMED by the
+                    handler, not merely counted.
+
+  laststs=00000000  the LAST handler entry read USBSTS as zero. Expected for
+                    the tail of a bounce burst: the NVIC latches a pending
+                    interrupt while an earlier entry is still running, and by
+                    the time that entry executes, the preceding one has
+                    already W1C'd the status. Noted rather than explained
+                    away; the load-bearing evidence is irqcnt with a real
+                    connect edge, not this field.
+
+==== captured ====

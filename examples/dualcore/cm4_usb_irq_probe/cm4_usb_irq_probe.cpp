@@ -70,7 +70,7 @@
  * missing token rather than blocking the gate forever. */
 static bool wait_recv(uint8_t ch, uint32_t *out) {
     uint32_t start = millis();
-    while ((uint32_t)(millis() - start) < 20000u) {
+    while ((uint32_t)(millis() - start) < 30000u) {
         if (MU.tryReceive(ch, out)) return true;
     }
     return false;
