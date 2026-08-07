@@ -14,11 +14,13 @@ evkb_library_dir(USBHost_t36 EVKB_USBHOST_T36_DIR)
 # device, runs the control sequence, arms 32 siTDs and streams.
 #
 # The six audio sources are NOT independently optional; usb_audio.cpp references
-# all of them unconditionally.  usb_audio_uac1_test learned that the expensive
-# way (it silently stopped linking for three months when the feedback work
-# landed and its source list was not extended), so they are listed together and
-# commented as one unit rather than split by whether a UAC1-only sketch "needs"
-# them.
+# all of them unconditionally, UAC2 parser and feedback endpoint included, even
+# in a UAC1-only image.  usb_audio_uac1_test learned that the expensive way: the
+# feedback work added three of them, its source list was not extended, and the
+# example simply stopped linking and stayed that way until someone next built it
+# by hand -- nothing but a person builds it and no gate covered it.  So they are
+# listed together and commented as one unit, rather than split by whether a
+# UAC1-only sketch looks like it "needs" them.
 #
 # Nothing else is added.  In particular the AUDIO LIBRARY IS ABSENT: the stream
 # is fed by the driver's own tone generator (usb_audio.cpp topUpFromTone),
