@@ -27,6 +27,24 @@ evkb_library_dir(USBHost_t36 EVKB_USBHOST_T36_DIR)
 # which is a producer into the same FIFO an AudioStream adapter would write to.
 # Porting AudioStream to this image is Phase 7.4; doing it here would mean a
 # failure could be the graph's rather than the transport's.
+# PROBE_RATE_HZ: the rate asked of the device. Default 48000 because that is
+# the ONLY rate QEMU's emulated usb-audio offers (USBAUDIO_SAMPLE_RATE is a
+# compile-time #define in its descriptor tables), so the QEMU gate must use it.
+# Real devices generally differ -- the UAC1 dongle this tree tests against is
+# 44100 -- so a silicon run needs -DPROBE_RATE_HZ=44100.
+#
+# It is a cache option rather than a hand-edit of DEFINES below for a reason
+# worth recording: editing this file and restoring it with `mv` preserves the
+# ORIGINAL mtime, so CMake does not re-run and the next build silently links a
+# STALE image. A gate then reports the previous rate's result from a tree that
+# looks reverted. Use the option; do not hand-edit.
+set(PROBE_RATE_HZ "" CACHE STRING "Rate to request from the device; empty = 48000 (QEMU's only rate)")
+if(NOT PROBE_RATE_HZ STREQUAL "")
+    set(_probe_rate_def PROBE_RATE_HZ=${PROBE_RATE_HZ}u)
+else()
+    set(_probe_rate_def)
+endif()
+
 teensy_add_cm4_image(cm4_usb_audio
     LINKER  ${CMAKE_CURRENT_LIST_DIR}/cm4/cm4.ld
     SOURCES ${CMAKE_CURRENT_LIST_DIR}/cm4/startup_cm4.S
@@ -50,7 +68,7 @@ teensy_add_cm4_image(cm4_usb_audio
                  ${EVKB_USBHOST_T36_DIR}
                  ${EVKB_USBHOST_T36_DIR}/utility
     DEFINES  __IMXRT1176__ USBHOST_NO_MASSSTORAGE
-             EVKB_CM4_SOC_REGS EVKB_CM4_ARDUINO_CXX)
+             EVKB_CM4_SOC_REGS EVKB_CM4_ARDUINO_CXX ${_probe_rate_def})
 
 # INCLUDE_DIRS ordering and the two EVKB_CM4_* opt-ins are 7.2's and are
 # explained there (cm4_usb_enum_probe/CMakeLists.txt) -- gate's own cm4/ first,
