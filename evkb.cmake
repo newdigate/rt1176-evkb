@@ -51,7 +51,22 @@ macro(_evkb_lib NAME LOCAL URL REF PATH)
 endmacro()
 
 set(_dev "$ENV{HOME}/Development")
-_evkb_lib(cores          ${EVKB_ROOT}/cores/imxrt1176 https://github.com/newdigate/teensy-cores    4d871629d0de2421c7482d6c0e8efa3f38da8a26 imxrt1176)
+
+# --- board axis --------------------------------------------------------------
+# Which board this build targets. Drives the cores subdirectory below and the
+# QEMU machine in tools/gate-lib.sh. Default rt1176 so every existing example
+# builds exactly as before without being edited.
+set(EVKB_BOARD "rt1176" CACHE STRING "Target board: rt1176 (MIMXRT1170-EVKB) or rt1062 (MIMXRT1060-EVKB)")
+set_property(CACHE EVKB_BOARD PROPERTY STRINGS rt1176 rt1062)
+if(EVKB_BOARD STREQUAL "rt1176")
+    set(EVKB_CORE_SUBDIR imxrt1176)
+elseif(EVKB_BOARD STREQUAL "rt1062")
+    set(EVKB_CORE_SUBDIR teensy4)
+else()
+    message(FATAL_ERROR "EVKB_BOARD must be rt1176 or rt1062, got '${EVKB_BOARD}'")
+endif()
+
+_evkb_lib(cores          ${EVKB_ROOT}/cores/${EVKB_CORE_SUBDIR} https://github.com/newdigate/teensy-cores    4d871629d0de2421c7482d6c0e8efa3f38da8a26 ${EVKB_CORE_SUBDIR})
 _evkb_lib(Wire           ${_dev}/Wire                 https://github.com/newdigate/Wire            19babd18b83bc2f9ddbd16f6afefcbb42558530d .)
 _evkb_lib(SPI            ${_dev}/SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
 _evkb_lib(PXP         ${_dev}/PXP                  https://github.com/newdigate/PXP          5658e34885ff3a5cb5516a178ba60743e62a7517 .)
@@ -284,12 +299,13 @@ macro(import_evkb_audio_full)
     endif()
 endmacro()
 
-# --- the imxrt1176 core (every example needs it) -----------------------------
+# --- the core (every example needs it) ---------------------------------------
 evkb_library_dir(cores EVKB_CORES_DIR)
 # The toolchain file guessed COREPATH from its own location; re-point it at the
-# resolved core so a fresh clone (fetched core) links the right imxrt1176.ld.
+# resolved core so a fresh clone (fetched core) links the right linker script.
 # MUST happen BEFORE the first import_arduino_library call — that call runs
 # teensy_set_dynamic_properties once, baking COREPATH into the link flags.
-# Trailing slash required (LINKER_FILE is "${COREPATH}imxrt1176.ld").
-set(COREPATH "${EVKB_CORES_DIR}/" CACHE STRING "imxrt1176 core path" FORCE)
+# Trailing slash required: the macros build LINKER_FILE as
+# "${COREPATH}imxrt1176.ld" (117) or "${COREPATH}imxrt1060_evkb.ld" (42).
+set(COREPATH "${EVKB_CORES_DIR}/" CACHE STRING "resolved core path" FORCE)
 import_arduino_library(cores "${EVKB_CORES_DIR}")
