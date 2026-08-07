@@ -251,4 +251,64 @@ test_require_capture_empty; report test_require_capture_empty $?
 test_require_capture_ok() { _require_capture_case full 0 yes; }
 test_require_capture_ok; report test_require_capture_ok $?
 
+# --- board helpers -----------------------------------------------------------
+#
+# gate_board / gate_qemu_machine / gate_build_dir read $EVKB_BOARD so a gate
+# script never names a QEMU machine itself. Each case runs in its own
+# `( . "$LIB" ... )` subshell (matching test_tmp etc. above) so EVKB_BOARD
+# never leaks between cases or into the rest of this suite.
+test_board_defaults_to_rt1176() {
+    ( . "$LIB"
+      unset EVKB_BOARD
+      _got=$(gate_board)
+      [ "$_got" = "rt1176" ] )
+}
+test_board_defaults_to_rt1176; report test_board_defaults_to_rt1176 $?
+
+test_machine_args_rt1176() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1176
+      _got=$(gate_qemu_machine)
+      [ "$_got" = "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on" ] )
+}
+test_machine_args_rt1176; report test_machine_args_rt1176 $?
+
+test_machine_args_rt1062() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1062
+      _got=$(gate_qemu_machine)
+      [ "$_got" = "-M mimxrt1060-evk -global fsl-imxrt1062.boot-xip=on" ] )
+}
+test_machine_args_rt1062; report test_machine_args_rt1062 $?
+
+test_build_dir_rt1176_is_plain_build() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1176
+      _got=$(gate_build_dir)
+      [ "$_got" = "build" ] )
+}
+test_build_dir_rt1176_is_plain_build; report test_build_dir_rt1176_is_plain_build $?
+
+test_build_dir_rt1062_is_suffixed() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1062
+      _got=$(gate_build_dir)
+      [ "$_got" = "build-rt1062" ] )
+}
+test_build_dir_rt1062_is_suffixed; report test_build_dir_rt1062_is_suffixed $?
+
+# Unknown board must EXIT non-zero, not fall through to a default. Note
+# gate_qemu_machine calls `exit 2` directly (not `return`): calling it
+# unguarded here would terminate this whole subshell before the assertion
+# below ever ran, so the call is confined to its own command-substitution
+# subshell and only the captured exit status escapes.
+test_unknown_board_fails_loudly() {
+    ( . "$LIB"
+      EVKB_BOARD=rt9999
+      _out=$(gate_qemu_machine 2>/dev/null)
+      _rc=$?
+      [ "$_rc" -ne 0 ] )
+}
+test_unknown_board_fails_loudly; report test_unknown_board_fails_loudly $?
+
 exit $FAILED

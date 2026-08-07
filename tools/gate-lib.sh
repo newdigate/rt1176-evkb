@@ -62,6 +62,37 @@ gate_require_capture() {   # gate_require_capture FILE [WHAT]
     exit 1
 }
 
+# --- board axis --------------------------------------------------------------
+# A gate never names a QEMU machine. It asks here, and the answer comes from
+# $EVKB_BOARD (default rt1176). That is what stops a gate booting the wrong
+# machine: with the name in 81 scripts, adding a board meant 81 chances to get
+# it wrong, and a gate that boots the wrong model can still PASS vacuously.
+
+gate_board() { echo "${EVKB_BOARD:-rt1176}"; }
+
+# Emit the -M/-global pair for the current board. Both machines expose a
+# "boot-xip" bool (fsl-imxrt1170.c / fsl-imxrt1062.c DEFINE_PROP_BOOL), so only
+# the SoC type name differs. Unknown boards EXIT rather than defaulting: a typo
+# in EVKB_BOARD must be a loud failure, never a silent run on the other board.
+gate_qemu_machine() {
+    case "$(gate_board)" in
+        rt1176) echo "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on" ;;
+        rt1062) echo "-M mimxrt1060-evk -global fsl-imxrt1062.boot-xip=on" ;;
+        *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
+    esac
+}
+
+# Build directory for the current board. rt1176 keeps the plain "build" so the
+# 81 pre-existing gates, the sweep runner's SKIP probe and every documented
+# `cmake -B build` line are unaffected; new boards are suffixed.
+gate_build_dir() {
+    case "$(gate_board)" in
+        rt1176) echo "build" ;;
+        rt1062) echo "build-rt1062" ;;
+        *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
+    esac
+}
+
 gate_cleanup() {
     _rc=$?
     set +e   # trap-only: a dead registered PID must not abort us under the runner's
