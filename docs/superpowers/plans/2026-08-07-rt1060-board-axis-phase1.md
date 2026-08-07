@@ -56,6 +56,29 @@ cd ~/Development/rt1170/evkb && git status --short && git branch --show-current
 Expected: only `?? cores/` and `?? teensy-cmake-macros/` (both are nested
 independent repos — normal), and branch `rt1060-board-axis`.
 
+- [ ] **Step 1b: Rebuild the sample BEFORE hashing it — the CMake version changed**
+
+The images currently in `build/` were produced by CMake 3.x; this machine now
+has **CMake 4.4.2** (a new major version, installed mid-session). If the
+baseline is hashed from stale artefacts, Task 5's byte-identity check compares
+old-CMake output against new-CMake output and any difference is attributed to
+the refactor, which would be wrong in both directions — a false red, or a false
+green hiding a real change.
+
+```bash
+cd ~/Development/rt1170/evkb
+for d in examples/serial/serial_test examples/framework/string_test \
+         examples/gpio-analog/dac_test examples/dualcore/cm4_audiostream_test \
+         examples/usb/usb_audio_uac1_test; do
+  ( cd "$d" && cmake --build build >/dev/null 2>&1 ) || echo "BUILD FAILED: $d"
+done
+```
+
+Expected: no output. **If a build fails**, CMake 4.x has broken something —
+most likely a fetched dependency declaring `cmake_minimum_required` below 3.5,
+which CMake 4 rejects outright. That is a real problem to solve *before* any
+board-axis work, not during it; stop and report rather than working around it.
+
 - [ ] **Step 2: Record hashes of a representative sample of built images**
 
 ```bash
