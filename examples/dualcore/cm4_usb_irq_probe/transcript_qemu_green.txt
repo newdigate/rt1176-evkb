@@ -1,0 +1,60 @@
+./run_qemu.sh -- 2026-08-06, GREEN, exit status 0, after the qemu2 change
+that fans USB OTG2's IRQ 135 to both NVICs (qemu2 7c9bd4cbe6, TYPE_SPLIT_IRQ,
+same idiom as the LPI2C5/LPI2C2/LPSPI1/SAI1 splitters). GPL-2.0 and local to
+~/Development/qemu2; it never enters a firmware repo.
+
+Read this against transcript_qemu_red.txt: same firmware, same gate, same
+command line, one emulator line changed. Every field is the exact inverse of
+the red where it should be, and unchanged where it should be.
+
+  - irqcnt=00000001    the CM4's own handler ran (red: 00000000)
+  - laststs=00000004   the handler read USBSTS with PCI set -- it was
+                       servicing the port-change, not some spurious entry
+  - stsraw=00000000    post-window raw USBSTS is CLEAR: the pending condition
+                       was CONSUMED and W1C'd by the handler (red: 00000004,
+                       set and still pending). A spurious increment could not
+                       produce this, which is why the pair irqcnt/stsraw is
+                       stronger evidence than a count alone.
+  - PLUG_TRANSITION=PASS  unchanged: ccs=0 -> ccs2=1, still a real 0->1
+                       connect edge from the gate's post-s6 device_add
+
+  - PHY_PLL_CM4=FAIL   UNCHANGED and expected. World-split token, deliberately
+                       not asserted by the gate: QEMU instantiates stock
+                       TYPE_IMX_USBPHY, an i.MX6-era model whose register file
+                       ends at USBPHY_VERSION (0x80), so the RT1176's PLL_SIC
+                       quad at 0xA0 is unmodelled and the lock poll cannot
+                       succeed for EITHER core. Pre-existing and already
+                       recorded in HW-verified firmware (ehci.cpp:248, "QEMU:
+                       PLL_SIC reads 0 -> times out, proceeds"). SILICON
+                       asserts this one; QEMU only asserts the token exists.
+
+What this does NOT prove: that the interrupt reaches the CM4 on real silicon.
+QEMU says the model routes it; the EVKB probe (transcript_hw_evkb.txt) is the
+oracle, and its assertion is a physical plug/unplug on J47 moving irqcnt and
+PORTSC.CCS together.
+
+==== captured ====
+CM4USBIRQ-GATE v1
+s1=C5B00001
+lpcg=00000001
+s2=C5B00002
+pllsic=00000000
+s3=C5B00003
+rstspin=00000000
+s4=C5B00004
+usbmode=00000013
+s5=C5B00005
+portsc=00001000
+s6=C5B00006
+irqcnt=00000001
+laststs=00000004
+stsraw=00000000
+portsc2=00001003
+done=D0DE0007
+decode: plllock=0 hostmode=3 sdis=1 ccs=0 ccs2=1 pci=0
+STAGES=PASS
+PHY_PLL_CM4=FAIL
+HOSTMODE_CM4=PASS
+PLUG_TRANSITION=PASS
+USB_IRQ_CM4=PASS
+CM4USBIRQ-DONE

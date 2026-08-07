@@ -27,6 +27,30 @@ option(DUPLEX_ECHO "Echo the input stream back out (monitor path)" OFF)
 if(DUPLEX_ECHO)
     target_compile_definitions(usb_audio_duplex_test.elf PRIVATE DUPLEX_ECHO=1)
 endif()
+# CPU_BUDGET: report where the CM7 goes while streaming, and how much is left.
+# Off by default for the same reason as DUPLEX_ECHO -- the gate and the Stage C
+# transcripts must keep describing the image they were measured from.
+option(CPU_BUDGET "Report CM7 cycle accounting in the heartbeat" OFF)
+if(CPU_BUDGET)
+    target_compile_definitions(usb_audio_duplex_test.elf PRIVATE CPU_BUDGET=1)
+endif()
+# CPU_STEAL_RAMP: climb a staircase of stolen CPU while streaming, so the
+# transcript records where the audio actually breaks. Needs CPU_BUDGET.
+option(CPU_STEAL_RAMP "Ramp stolen CPU until the audio breaks" OFF)
+if(CPU_STEAL_RAMP)
+    if(NOT CPU_BUDGET)
+        message(FATAL_ERROR "CPU_STEAL_RAMP requires CPU_BUDGET=ON")
+    endif()
+    target_compile_definitions(usb_audio_duplex_test.elf PRIVATE CPU_STEAL_RAMP=1)
+endif()
+# CPU_STEAL_FIXED: hold one level forever (soak) instead of ramping.
+set(CPU_STEAL_FIXED "" CACHE STRING "Hold this percent of stolen CPU; empty = 0")
+if(NOT CPU_STEAL_FIXED STREQUAL "")
+    if(NOT CPU_BUDGET)
+        message(FATAL_ERROR "CPU_STEAL_FIXED requires CPU_BUDGET=ON")
+    endif()
+    target_compile_definitions(usb_audio_duplex_test.elf PRIVATE CPU_STEAL_FIXED=${CPU_STEAL_FIXED})
+endif()
 
 foreach(opt DUPLEX_RATE_HZ DUPLEX_IN_CHANNELS DUPLEX_IN_BITS DUPLEX_TAKE_CHANNELS)
     if(NOT ${opt} STREQUAL "")

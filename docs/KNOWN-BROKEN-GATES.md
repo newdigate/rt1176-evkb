@@ -263,3 +263,201 @@ narrow as written: it is the DUAL-CORE gates as a class that are load-sensitive,
 and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
+
+**2026-08-07 (the capstone: an audio graph on the CM4 feeding its own USB
+stream):** `dualcore/cm4_graph_usb_capstone` joins the sweep: **80 → 81
+gates**. Phase 7.4 — the CM4 image adds `AudioStream.cpp`, the Audio library's
+`AudioOutputUSBHost` adapter, a sine source and a peak analyser on top of 7.3's
+whole USB stack, and the driver's built-in tone generator is gone: the graph is
+the only producer. No qemu2 change was needed.
+
+★★ **This gate PASSES while printing TWO FAIL tokens — `STREAM_PACKETS=FAIL`
+AND `GRAPH_CLOCKED=FAIL` — and both are correct.** The first is 7.3's, unchanged
+(iso data does not flow against QEMU's `usb-audio`). The second is **new, and it
+is a consequence of the first**: `AudioOutputUSBHost` makes the USB frame clock
+the graph's clock, via `USBAudioOut::onFrameConsumed()`, which the driver calls
+once per ring slot it arms. No packets ⇒ no callbacks ⇒ the graph is never
+ticked. A graph that is never clocked is not a graph that cannot run.
+
+**So the graph is proved SEPARATELY, and that separation is the design of this
+gate rather than a concession.** After `beginStreaming()` the CM4 image pends
+`IRQ_SOFTWARE` itself until the FIFO reaches the adapter's own setpoint — the
+real engine, the real sine, the real adapter, the real FIFO, with only the tick
+supplied locally, and gated on exactly the `queued() < FIFO_TARGET_SAMPLES`
+condition `frame_consumed()` applies. It is pure CPU, so it works in both
+worlds, and it is what `GRAPH_ALIVE` / `GRAPH_AUDIO` / `GRAPH_NOLEAK` assert.
+It also earns its keep on silicon: `beginStreaming()` resets the FIFO and arms
+32 slots from it, so without the priming step the first frames of every measured
+window underrun while the graph catches up and `unders` — the number that says
+whether the graph kept the stream fed — would carry a startup artefact in every
+run.
+
+Four world-split tokens here, not two. `TRANSPORT_CLEAN` and the new
+`STREAM_FED` (`unders == 0`) both read PASS in QEMU **vacuously**: nothing was
+transmitted, so there can be no transmission error, and nothing was consumed, so
+the producer cannot have failed to keep up. Presence-checked, never
+value-asserted, for the same reason `TRANSPORT_CLEAN` already was.
+
+Two further notes, both of which cost time before they were understood:
+
+- ★★ **`gcyc`/`gcycmax`/`cpu`/`lps` are meaningless in QEMU, and the meaningless
+  value LOOKS ALARMING.** These are the numbers Phase 7.4 exists to produce —
+  the worst contiguous graph pass, against the CM7-measured knee of 600 µs clean
+  / 850 µs fail. qemu2 derives the CM4's DWT CYCCNT from the virtual clock
+  scaled by the modelled 400 MHz core and models no M4 pipeline, so a "cycle"
+  count there is host emulation time. Consecutive runs of this gate reported
+  worst = **776 µs** and then **2111 µs** for identical code, and the `dwt=`
+  spin measured 66400 cycles against 7.3's 28800 for the same 200-iteration
+  loop. The firmware therefore prints a four-line caveat next to them. Compare
+  them with the knee **only** from a silicon transcript; the one legitimate
+  in-world use is this gate's `lps` against 7.3's `lps` (67299) as a rough
+  instruction-count ratio.
+- ★ **An unguarded `AudioAnalyzePeak::read()` reports FULL SCALE when it has
+  analysed nothing.** Its reset state is min = +32767, max = −32768 and `read()`
+  returns max(|min|,|max|)/32767, so a starved tap reads 1.0 — the starved case
+  and the healthy case are indistinguishable and the starved one looks *better*.
+  Caught in the first QEMU run, where the streaming window analyses nothing and
+  `peak2` came back 32768. The firmware now guards both reads on `available()`
+  and sends `PEAK_NONE` (0xFFFFFFFF) instead, so "no blocks arrived" and "blocks
+  arrived carrying silence" are different values and different messages.
+
+Two negative controls are checked in. `transcript_qemu_red_vector.txt`: vector
+index 60 (IRQ 44, `IRQ_SOFTWARE`) repointed at `Default_Handler`, nothing else
+changed — the CM4 reaches `s7=armed` and then hangs, because `Default_Handler`
+spins and the first `NVIC_SET_PENDING` never returns, so a misrouted graph
+vector is visibly a HANG exactly as a misrouted USB vector was in 7.2.
+`transcript_qemu_red_silent.txt`: `GRAPH_AMPLITUDE` set to 0, nothing else
+changed — ★ `GRAPH_ALIVE` still **passes**, with `blocks=3` and `fifo=768/768`
+identical to the green run, because the adapter really did fill the FIFO, with
+silence. Only the peak tap separates them. That is the argument for having a
+peak node in the graph at all, and it is why `GRAPH_ALIVE` alone would have been
+a gate that a completely silent stream could satisfy.
+
+**2026-08-07 (the CM4 arms an isochronous stream):**
+`dualcore/cm4_usb_audio_probe` joins the sweep: **79 → 80 gates**. Phase 7.3 —
+the CM4 image links the UAC class driver on top of 7.2's transport core, claims
+a USB audio device, negotiates a format, completes the post-claim control
+sequence and arms 32 siTDs across all 32 periodic frame slots. No qemu2 change
+was needed.
+
+★★ **This gate PASSES while printing `STREAM_PACKETS=FAIL`, and that is
+correct.** It is the direct, deliberate consequence of the emulated-device
+finding recorded two entries below: **isochronous data does not flow against
+QEMU's `usb-audio`**. Everything up to and including "streaming armed" is
+green; `pkts` then stays at 0 forever. So packet flow is a **world-split
+token** — the firmware prints the verdict, the QEMU gate asserts only that the
+token is PRESENT, and SILICON asserts it is PASS. `AUDIO_CM4`, the verdict the
+gate does assert, is the **control-plane** verdict and stops at "armed" on
+purpose. Precedent: 7.1's `PHY_PLL_CM4`, 3.2's `rdv`, 2C's `systick`.
+
+Do not "strengthen" this gate by asserting `pkts > 0`. That is the same mistake
+7.1 made when it asserted `PHY_PLL_CM4=PASS` against a PHY model with no
+`PLL_SIC` register — a gate rendered unpassable for a reason with nothing to do
+with what it was testing. It has now cost this phase twice.
+
+Three further notes:
+
+- **`TRANSPORT_CLEAN` is presence-checked for the opposite reason.** It reads
+  PASS in QEMU, but vacuously: a stream that transmitted nothing cannot have had
+  a transmission error. A check that cannot fail is worse than no check, so the
+  value assertion belongs to silicon there too.
+- ★ **`queued` is what localises the QEMU stall.** It sits at 3840 of 4096
+  samples, which says the driver's tone generator is producing into the real
+  streaming FIFO and saturating it because nothing drains. The producer half
+  works; it is the transport that does not move. `unders=0` agrees.
+- **`lps` (service-loop rate) is a characterisation token in BOTH worlds and is
+  asserted by neither.** In QEMU it measures the emulator, not the M4 — CYCCNT
+  comes from the virtual clock scaled by the modelled 400 MHz CM4 clock, so
+  `millis()` tracks wall-clock while the loop runs at TCG speed. It is printed
+  because the CM7 budget measurement
+  (`usb_audio_duplex_test/transcript_hw_cpu_budget.txt`) established that the
+  binding constraint is **contiguous stall length** (600 µs clean, 850 µs fail),
+  not throughput — so `1/lps` on silicon is the number that matters, and it
+  should be visible rather than assumed.
+
+A negative control is checked in as `transcript_qemu_red_rate.txt`: the same
+firmware built with `-DPROBE_RATE_HZ=44100u` and nothing else changed. QEMU's
+`usb-audio` offers 48000 only, `uac1_find_alt()` refuses, `claim()` returns
+false, and the gate goes red at `DEVICE_CLAIMED` — with `ctrl_timeouts=0`,
+which is the distinction the stage-6 packing exists for (a format the device
+never offered leaves the watchdog silent; a device that stalled the request
+leaves it climbing).
+
+One build note, because it links libgcc where no CM4 image did before: the audio
+driver divides 64-bit values by runtime denominators, GCC lowers that to
+`__aeabi_uldivmod`/`__aeabi_ldivmod`, and `teensy_add_cm4_image` links
+`-nostdlib`. The fix is `GROUP(-lgcc)` in **this image's own `cm4.ld`**, not a
+new argument to the shared macro — a per-image need must not change any other
+image's command line (the 2B `cmp` discipline). Licence-wise this is the
+compiler runtime under the GCC Runtime Library Exception, which
+`tools/license-audit.sh` already permits and every CM7 image already links.
+
+**2026-08-07 (the real stack enumerates on the CM4):**
+`dualcore/cm4_usb_enum_probe` joins the sweep: **78 → 79 gates**. Phase 7.2c —
+the CM4 image links the actual USBHost_t36 transport core, calls
+`USBHost::begin()`, and reports the attached device's VID/PID. **No qemu2
+change was needed**: 7.1's IRQ-135 split is the only model work this arc
+required, so unlike 7.1 there is no red-first-then-model-change story here.
+
+The negative control is checked in instead, as `transcript_qemu_red_vector.txt`:
+vector index 151 repointed at `Default_Handler` and nothing else touched. The
+CM4 reaches stage 3, takes the interrupt, and spins in the default handler — the
+transcript truncates with `STAGES=FAIL` and no VID/PID. Worth keeping because it
+shows the shape a misrouted vector actually has: a **hang**, not a quiet zero.
+Two more notes on this gate:
+
+- **`vid`/`pid` are the whole oracle, and only the GATE asserts them.** Every
+  other token could in principle be produced by firmware talking to itself;
+  `46F4:0002` is QEMU's `usb-audio` (`hw/usb/dev-audio.c:43-44`) and the CM4
+  image has no knowledge of those numbers. The firmware asserts only
+  `vid != 0`, deliberately, so the identical image serves a silicon run with
+  whatever device is in J47 — the device-specific oracle belongs to whoever
+  knows which device is attached.
+- ★ **`claims` is the interrupt assertion, which is why there is no `irqcnt`
+  token.** `claim()` is reachable only via `claim_drivers` ←
+  `enumeration_receive` ← `followup_Transfer`, and that runs inside
+  `USBHost::isr()`. There is no polled path to it.
+
+**2026-08-07 (CM4 takes the USB port):** `dualcore/cm4_usb_irq_probe` joins the
+sweep: **77 → 78 gates**. Phase 7.1 — the CM4 self-configures LPCG115, the
+USBPHY2 480 MHz PLL, EHCI reset, host mode and port power, then takes USB
+OTG2's **IRQ 135** on its own NVIC. HW-verified on the EVKB across two runs.
+Needed a qemu2 change (`7c9bd4cbe6`, local-only per the GPL firewall): a
+`TYPE_SPLIT_IRQ` fanning 135 to both NVICs, since the model wired both USB
+IRQs to the CM7 only. Run **red-first**, with `transcript_qemu_red.txt`
+checked in before that change.
+
+Three things about this gate worth not rediscovering:
+
+- **`PHY_PLL_CM4` is a world-split token: FAIL in QEMU, PASS on silicon, and
+  the gate asserts only that the token is PRESENT.** qemu2 instantiates stock
+  `TYPE_IMX_USBPHY`, an i.MX6-era model whose register file ends at
+  `USBPHY_VERSION` (0x80); the RT1176's `PLL_SIC` quad at 0xA0/A4/A8/AC is
+  unmodelled, so the lock poll cannot succeed for *either* core. Pre-existing
+  and already recorded in HW-verified firmware — `USBHost_t36/ehci.cpp:248`
+  literally reads "QEMU: PLL_SIC reads 0 -> times out, proceeds". Do not
+  "fix" this by asserting lock in the gate.
+
+- ★★**The device must be HOTPLUGGED, not present at reset — and the first two
+  attempts at this gate were VACUOUS in two different ways.** ChipIdea defers
+  attach to the guest's PP write (`chipidea.c:230` → `hcd-ehci.c:1066`), so a
+  present-from-reset device raises PCD during the firmware's *stage 5* and
+  the stage-6 "clear stale status" W1C wipes it before PCE is armed. The
+  first red therefore had `irqcnt=0` with `stsraw=0` — no interrupt condition
+  ever occurred while anything was listening, so the red said nothing about
+  routing and the qemu2 split would not have flipped it. The second attempt
+  polled for the firmware's `s6` marker before hotplugging — but the CM7 was
+  batching all its mailbox reads before printing, so `s6` only reached the
+  UART *after* the window closed and the plug again landed too late, with the
+  identical symptom. The gate now streams each token as it arrives and
+  hotplugs on `s6`. **`irqcnt=0` is the legitimate negative result here, so
+  almost every possible mistake wears its costume** — that is why the gate
+  asserts `PLUG_TRANSITION` (a real ccs 0→1 edge) *before* it asserts the
+  interrupt, and why the firmware reports a post-window raw `USBSTS`.
+
+- **A delay loop calibrated by counting instructions was off by ~2.3×.** The
+  CM4's observation window was written as a `volatile` decrement loop with a
+  "~3 cycles/iter" estimate; it is nearer 7 (LDR+SUBS+STR+CMP+B), so a
+  nominal 8 s window ran ~18.7 s and collided with the CM7's receive timeout.
+  The transcript truncated mid-sequence, which reads as a CM4 hang rather
+  than a miscalibrated delay. Delays are now measured with DWT CYCCNT.

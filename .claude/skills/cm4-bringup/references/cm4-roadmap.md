@@ -1,6 +1,28 @@
 # CM4 roadmap (LIVING document — update every session)
 
-**Current phase: 6 — CM4 audio pipeline, Plan 2 of 2, ★★ALL HW-VERIFIED
+**Current phase: 7 — USB host on the CM4. 7.1, 7.2 and 7.3 all ★★HW-VERIFIED
+(2026-08-07): the CM4 owns the port, the real USBHost_t36 stack enumerates a
+real dongle (`vid=1B3F pid=2008` off the wire), and the CM4 STREAMS AUDIBLE
+ISOCHRONOUS AUDIO — `pkts=8109 xerr=0 unders=0`, a tone in the headphones, and
+`lps=142332` (a service pass every ~7 µs, ~85× margin against the CM7-measured
+600 µs stall knee).**
+
+**7.4, THE CAPSTONE, is QEMU-GREEN (2026-08-07) and ★HW UNVERIFIED** —
+`cm4_graph_usb_capstone`: an AudioStream GRAPH runs on the CM4 and feeds the USB
+stream the same core drives, with the driver's tone generator removed so the
+graph is the only producer. `CAPSTONE_CM4=PASS`, stable 3×.
+★★ **Next action, and it is the whole point of the phase: run 7.4 on the EVKB.**
+The number 7.4 exists to produce — the worst contiguous graph pass in
+microseconds, against the 600 µs clean / 850 µs fail knee — **cannot be measured
+in QEMU at all** (CYCCNT there is virtual-clock derived and qemu2 models no M4
+pipeline; consecutive runs reported 776 µs and 2111 µs for identical code). The
+gate also prints FOUR world-split FAIL tokens in a PASSING run —
+`STREAM_PACKETS`, `GRAPH_CLOCKED`, plus vacuous `TRANSPORT_CLEAN`/`STREAM_FED` —
+because iso data does not move against QEMU's emulated usb-audio and the graph's
+clock IS packet flow. Do not "strengthen" any of them in QEMU.
+See the Phase 7 section below. History follows, newest first.
+
+Superseded pointer, kept for history — **Phase 6 — CM4 audio pipeline, Plan 2 of 2, ★★ALL HW-VERIFIED
 (2026-07-22)** — the CM4 now OWNS the whole audio pipeline: interrupt-driven SAI
 I/O (`sai1176` shared core + `AudioOutputI2SInt`/`AudioInputI2SInt`, no eDMA),
 CMSIS-DSP on the M4, and the codec+SAI+graph+FFT capstone with the CM7 idle and
@@ -320,6 +342,461 @@ CM7 HW-verified stream on the same block instances.
   the arbiter for now.
 - **Concurrent CM7+CM4 peripheral use / arbitration** — a cross-core ownership
   protocol.
+
+### USB host audio on the CM4 — Phase 7 IN PROGRESS; 7.1 ★★HW-VERIFIED 2026-08-07
+
+**Phase 7.1 (CM4 takes the USB port) is DONE + HW-VERIFIED** — see the Phase 7
+section below. The desk triangulation that follows was written 2026-08-06
+*before* any probe; it is kept because 7.2–7.4 still rest on it, with each
+item now marked against what silicon actually said.
+
+⚠ items are risk-triggers that MANDATE a probe before being relied on. The
+three constraints that would normally kill this all cleared on paper, and the
+two that 7.1 tested cleared on silicon too.
+
+**Cleared — the interrupt reaches the CM4.** RM **Table 4-2** (*CM4 domain
+interrupt summary*, `rm_full.txt:3910-3911`) lists **135 = USB OTG2** and
+**136 = USB OTG1**. 135 is exactly the line this stack uses
+(`core_pins.h:70`, `IRQ_USB_OTG2 = 135`). Same shape as the SAI1 IRQ-76 fact
+that Phase 5 HW-proved reaches the CM4's own NVIC. ⚠ qemu2 fans non-MU
+peripheral IRQs to the CM7 NVIC only, so this needs a per-line
+`TYPE_SPLIT_IRQ` for 135 (idiom: SAI1 76, LPSPI1, LPI2C5) — new-model
+trigger + probe, run red-first like `cm4_sai_irq_probe`.
+
+**Cleared — the two-eDMA finding does NOT apply here.** The rule that pins
+`input_i2s`/`output_i2s` to the CM7 forever is that *main-eDMA completion
+IRQs are CM7-domain* ([[rt1176-cm4-edma-lpsr-split]]). USBHost_t36 touches
+no eDMA at all: EHCI is its own bus master walking the periodic schedule
+(`USBHS_USB_SBUSCFG`, `ehci.cpp:270`), with its own IRQ — and that IRQ is in
+Table 4-2. **Do not reason from the Phase-6 DMA verdict to this one.**
+
+**Cleared — the Phase-6 ANATOP blocker does NOT apply either.** Finding 1 of
+Phase 6 is that the CM4 hangs on the ANATOP AI-write handshake
+(`I2S.cpp:9 ai_write`). USBPHY2's 480 MHz PLL does not use it:
+`ehci.cpp:237-250` is plain MMIO on `USBPHY2_CTRL` / `USBPHY2_PLL_SIC` plus
+one `CCM_LPCG115_DIRECT` write. ⚠ that CCM write is still the standard
+clock-gating trigger, but CM4-self-ungated LPCGs are HW-proven twice
+(3.1 LPSPI1 / LPCG104, 3.2 LPI2C5 / LPCG102).
+
+**Cleared — memory already lands in the right place.** `.bss.dma` (DMAMEM,
+where every EHCI descriptor, iTD/siTD pool and payload ring lives) links at
+**0x20240000 = OCRAM1** (`imxrt1176.ld:10`), plain system SRAM addressed
+identically from both cores. It does **not** collide with **OCRAM M4**
+(0x20200000–0x2023FFFF, `rm_full.txt:2130`) where the CM4's own TCM backdoor
+and `Multicore.begin`'s default `stageAddr` live. Measured on
+`usb_audio_duplex_test` (echo build): `.bss.dma` = 195,392 B of OCRAM1's
+512 K. Code size is a non-issue — the whole duplex image is **28,128 B** of
+`.text.itcm` against 128 K of CM4 ITCM.
+
+**Cleared — cache coherency is a non-issue by construction, today.** The
+CM4 does have a cache (LMEM-managed; `rm_full.txt:82259`, `:150699`; note
+`:151162` — the LMEM backdoor reaches the TCM controller only, never the
+cache). But this core never enables the CM7 D-cache either: `startup.c` does
+no MPU/cache setup and `arm_dcache_delete` / `arm_dcache_flush_delete` are
+no-ops (`imxrt1176.h:865-866`). Leaving the CM4's cache off matches the
+existing, HW-proven baseline. ⚠ becomes a real probe the moment anyone
+enables either cache.
+
+**The actual work, and the actual risk:**
+- **Shim expansion.** `cm4_shim/Arduino.h` is 50 lines. `ehci.cpp:324`
+  attaches its ISR at runtime, but `attachInterruptVector` is a documented
+  CM4 no-op → needs the Phase-5 static-vector wrapper pattern (as
+  `Software_IRQHandler` does for `software_isr`). The PHY bring-up needs
+  `delay`/`delayMicroseconds`; `USBHost_t36.h` unconditionally pulls
+  `<FS.h>` + `<SdFat.h>`; ~103 print sites in `ehci.cpp` and 23 in
+  `enumeration.cpp` must at least compile.
+- ⚠ **Timing headroom — MEASURED 2026-08-06, and it is a latency budget, not
+  a throughput one.** See `examples/usb/usb_audio_duplex_test/`
+  `transcript_hw_cpu_budget.txt` (EVKB, UAC1 dongle, FS, both directions
+  streaming).
+  - **The genuine work is 1.16% of the CM7 at 996 MHz.** Regressing each
+    instrumented bucket against loop rate over a 19× range (145127 → 7528
+    loops/s, driven by a CPU-steal staircase) separates per-call spin from
+    the work that happens however often you poll: slope 468 %/Mloop,
+    **intercept 1.163%, R² = 1.00000**. The 69% the naive metric reports at
+    the sketch's natural loop rate is almost entirely spin.
+  - **`isr/s` was 0 at every level — but that is a claim about STREAMING
+    ONLY.** The measurement is sound; an earlier reading of it here was not.
+    `USBHS_USBINTR = 0` at `ehci.cpp:287` is transient: `:326-328` then
+    enable PCE/TIE0/TIE1/UEE/SEE/UPIE/UAIE. In steady state none of them
+    fire — the iso rings are armed `ioc=false` (`usb_audio.cpp:605`) so UPI
+    stays quiet, there is no async traffic so UAI stays quiet, and PCI only
+    moves on connect/disconnect. **Enumeration is a different matter and IS
+    interrupt-driven:** every control transfer completes through UAI →
+    `followup_Transfer` (`ehci.cpp:380`). So streaming needs no interrupt,
+    enumeration does, and a CM4 port must answer for both.
+  - **The binding constraint is contiguous stall length.** Stealing the CPU
+    in one block per millisecond: **600 µs stalls soak healthy** (OUT fifo
+    oscillates 3092–4094 with no downward trend, rate locked 44100 Hz, over
+    4.3 min) while **850 µs stalls fail** (fifo drains 2830 → 1494
+    monotonically, underruns accelerate 0.36/s → 7.73/s, derived falls to
+    43681 Hz, over 5 min). The knee was not pinned.
+  - ★**A 10 s staircase step OVERSTATES headroom.** With a primed FIFO the
+    ramp ran clean to 88.56% taken; a 5-minute soak at a *lower* level (85%)
+    then failed outright, and stayed clean for its first ~80 s before
+    turning. Short steps measure the buffer, not the steady state — soak
+    anything that claims headroom.
+  - **What this means for the CM4:** 1.16% of a 996 MHz M7 is ~11.6
+    MHz-equivalent, so throughput is a non-issue on a 400 MHz M4 even
+    allowing for M4-vs-M7 IPC. The risk is entirely the ~½ ms service
+    latency, and **Phase 6 finding 2 is the direct warning** — on the CM4
+    the SAI ISR had to outrank the AudioStream graph or RX overflowed
+    (`rx_overflows=0x3FF`). Any CM4 port must keep the same discipline: the
+    USB service must not be blocked for ~½ ms by graph work.
+
+**Recommendation on record (updated 2026-08-06, now measured):** the payoff
+people want — CM7 freed for DSP — is
+already available with **zero** new bring-up by splitting the other way:
+CM7 keeps USB host, CM4 takes the DSP (Phase 6 proved the CM4 can own the
+whole audio pipeline), with the existing `usb_audio_fifo` SPSC ring in
+OCRAM as the natural cross-core boundary. Moving USB to the CM4 only wins
+if the CM7 must be *completely* free, or if a second device on OTG1 has to
+stream concurrently. **The measurement strengthens this:** at 1.16% the USB
+path is not what is costing the CM7 anything, so moving it buys almost no
+CPU back — it buys *isolation*, and isolation is only worth a qemu2 IRQ
+split plus a shim port if something else needs the CM7 wholly free.
+
+## Phase 7 — USB host audio on the CM4;  7.1 ★★HW-VERIFIED 2026-08-07
+
+**Goal (user-directed): a fully autonomous CM4** — it owns the USB host stack,
+the AudioStream graph, the WM8962 codec and SAI, while the CM7 boots it and
+parks. Phase 6 proved the second half on silicon; Phase 7 attacks the first.
+Spec: `docs/superpowers/specs/2026-08-06-cm4-usb-port-design.md`.
+Plan: `docs/superpowers/plans/2026-08-06-cm4-usb-port.md`.
+
+**Be honest about what this buys.** Measured 2026-08-06
+(`examples/usb/usb_audio_duplex_test/transcript_hw_cpu_budget.txt`), the
+genuine USB host duplex work is **1.16% of the CM7 @996 MHz**. Moving it to
+the CM4 buys *isolation*, not CPU. Nobody should later read Phase 7 as a
+performance optimisation.
+
+| | Sub-project | Status |
+|---|---|---|
+| **7.1** | **CM4 takes the USB port** | ✅ **DONE + ★★HW-VERIFIED 2026-08-07** |
+| 7.2 | Stack compiles and enumerates on the CM4 | ✅ **DONE + ★★HW-VERIFIED 2026-08-07** (`0442782`) |
+| 7.3 | Iso streaming on the CM4 | ✅ **DONE + ★★HW-VERIFIED 2026-08-07** — audible tone, `lps=142332` |
+| 7.4 | Autonomous capstone (graph feeds its own USB stream) | ✅ **QEMU-GREEN 2026-08-07 (control plane + graph); ★HW UNVERIFIED** |
+
+### 7.1 — CM4 takes the USB port  ✅ DONE + ★★HW-VERIFIED
+
+`examples/dualcore/cm4_usb_irq_probe` (shape: `cm4_sai_irq_probe`). The CM4
+self-configures LPCG115 → USBPHY2 480 MHz PLL → EHCI reset → host mode+SDIS →
+port power+run → PCE + NVIC 135, emitting a marker plus one observation per
+stage so a red run localises itself. The CM7 boots it and relays; it
+configures no USB register.
+
+**EVKB result, two runs, both PASS.** `irqcnt` 6 then 2 with a real
+`ccs=0 → ccs2=1` connect edge from a physical plug into J47.
+★**What VARIES is the evidence:** every deterministic field is byte-identical
+across the two runs and only the interrupt count moves, because it tracks
+contact bounce on a hand-pushed connector. A latched line, a fixed model
+artefact, or a miscounted vector entry would all give the same number twice.
+
+- ★★**Phase 6 finding 1 REFUTED for this block** — the design's biggest open
+  risk. The CM4 hangs on ANATOP's AI-write handshake (`I2S.cpp ai_write`),
+  and the spec predicted that would not apply because USBPHY2's PLL is plain
+  MMIO. It does not: `pllsic=80F03040`, bit 31 LOCK set, CM4-driven, first
+  try. **Do not generalise the ANATOP blocker to blocks with their own PLL.**
+- **qemu2 `7c9bd4cbe6` (LOCAL ONLY, GPL firewall):** `TYPE_SPLIT_IRQ` fans
+  IRQ 135 to both NVICs — the model wired both USB IRQs to the CM7 only
+  (`fsl-imxrt1170.c:1418`). Same idiom as LPI2C5/LPI2C2/LPSPI1/SAI1. OTG1
+  (136) stays CM7-only: RM Table 4-2 lists it too, but it is unprobed and
+  nothing here uses it as a host. Run **red-first**;
+  `transcript_qemu_red.txt` is checked in from before the change.
+- **Divergences recorded, not absorbed:** `rstspin=2` on silicon vs 0 in
+  QEMU (the model completes the EHCI reset instantly); `portsc` upper
+  PTS/PSPD fields unpopulated in the model (CCS agrees in both worlds);
+  `PHY_PLL_CM4` world-split (PASS silicon / FAIL QEMU — stock
+  `TYPE_IMX_USBPHY` has no `PLL_SIC` at 0xA0; see `ehci.cpp:248`).
+- ★★**Two vacuous-gate traps, both of which produced `irqcnt=0`** — the
+  legitimate negative result, so each looked like a finding. (1) A
+  present-from-reset device raises PCD during stage 5 and the stage-6 W1C
+  clears it before PCE is armed, so nothing was ever pending while armed;
+  (2) the CM7 batched its mailbox reads, so the marker the gate polls for
+  reached the UART only after the window closed. Fixed by hotplugging on the
+  streamed `s6` marker and asserting `PLUG_TRANSITION` *before* the interrupt.
+  See `docs/KNOWN-BROKEN-GATES.md` for the full account.
+- ★**A delay loop calibrated by counting instructions was off ~2.3×**
+  ("~3 cycles/iter"; a volatile decrement is nearer 7), so an 8 s window ran
+  ~18.7 s and collided with the CM7's receive timeout — the transcript
+  truncated, reading as a CM4 hang. Delays now use DWT CYCCNT.
+- Sweep **77 → 78 gates**; `license-audit.sh` GATES extended (105 files
+  walked), PASS.
+
+### 7.2 — the real stack enumerates on the CM4  ✅ DONE + ★★HW-VERIFIED 2026-08-07
+
+`examples/dualcore/cm4_usb_enum_probe`. The CM4 image links the REAL
+USBHost_t36 transport core — `ehci.cpp`, `ehci_iso.cpp`, `enumeration.cpp`,
+`hub.cpp`, `memory.cpp`, `usbhost_isr_entry.cpp` — calls `USBHost::begin()`
+instead of 7.1's hand-written literals, and reports the attached device's
+VID/PID. **QEMU: `vid=000046F4 pid=00000002`** (the emulator's `usb-audio`,
+`hw/usb/dev-audio.c:43-44`), `claims=4`, `ENUM_CM4=PASS`, stable 3×.
+7.2a/b (the shim's DWT clocks, DMAMEM and OCRAM2 region) were already in place.
+
+★★ **HW-VERIFIED on the EVKB (`0442782`, `transcript_hw_evkb.txt`):** a real UAC1
+dongle on J47 answered `vid=00001B3F pid=00002008` — not QEMU's 46F4:0002 and
+not the MC200 witness, so it can only have come off the wire. `claims=7` (vs 4
+in QEMU: a richer real descriptor set, which is why the gate asserts >0 and not
+an exact count), `addr=1`, `speed=0` (full speed), `portsc2=10001805` with PE
+set. `usbintr=030C0016` is IDENTICAL in both worlds because the LIBRARY writes
+it. One divergence recorded, not absorbed: `portsc=1C001000` at s3 on silicon vs
+`00001000` in QEMU — the upper PTS/PSPD transceiver fields the model leaves
+unpopulated, the same divergence 7.1 measured; CCS, the bit the gate reads,
+agrees.
+
+What it establishes:
+- **5,797 lines of C++ USB host stack run `-nostdlib` on the M4.** `.text` is
+  **10,608 B** of 128 K ITCM (`.isr_vector` 608 + `.text` 10,000) — a non-issue,
+  as the Phase-7 desk estimate predicted from the CM7's 28 KB duplex image.
+- **The DMA trap was real and the OCRAM2 answer works.** `.bss.dma` is
+  **20,544 B** at `0x202C0000..0x202C5040`, and `nm` shows every DMA-touched
+  object there: `hub1`, `periodictable`, `itd_pool`, `sitd_pool`, `enumsetup`,
+  `enumbuf`, `memory_Device/Pipe/Transfer`. Nothing DMA-ish is left in DTCM.
+  (The roadmap previously said OCRAM1 0x20240000; that would have had the CM4's
+  reset-time zeroing loop wipe the front of the CM7's live DMAMEM — the
+  `cm4.ld` ★ note has the argument, and OCRAM2 is what shipped.)
+- **`usbhost_isr_entry` closes the interrupt loop**, at vector index 151.
+  Verified by objdump: word 151 = `0x1FFE2909` = `nm`'s `usbhost_isr_entry`
+  (`0x1FFE2908`) + the Thumb bit.
+- ★ **`claim()` IS the interrupt assertion.** It is reachable only through
+  `claim_drivers` ← `enumeration_receive` ← `followup_Transfer`, which runs
+  inside `USBHost::isr()`. There is no polled path to it, so `claims>0` cannot
+  happen unless IRQ 135 dispatched on the CM4's own NVIC. That is why this gate
+  needs no separate irqcnt token.
+- **Enumeration needs more than PCE**, as predicted: `usbintr=030C0016` is
+  `begin()`'s full mask (PCE|UEE|SEE|TIE0|TIE1|UPIE|UAIE). Letting the library
+  arm it — rather than hand-configuring as 7.1 did — is the whole fix.
+- **NEGATIVE CONTROL RUN, checked in** as `transcript_qemu_red_vector.txt`:
+  vector 151 repointed at `Default_Handler` and nothing else changed. The CM4
+  reaches s3, takes the interrupt, and spins — the transcript truncates with
+  `STAGES=FAIL`, no VID/PID. So the gate is not vacuous with respect to the one
+  thing it is really testing, and a misrouted vector is visibly a *hang*, not a
+  quiet zero.
+
+Shim growth this needed (`cores/imxrt1176/cm4_shim/Arduino.h`), all additive —
+`cm4_audiostream_test` and `cm4_audio_test` rebuilt **byte-identical**
+(sha256 `d101c608…` / `e161270a…` unchanged), the 2B `cmp` discipline:
+- `#include "imxrt1176.h"` for the USB register map, plus `IRQ_USB2 = 135`
+  (`core_pins.h` is the pin API and unusable here — the two literals must not
+  drift). Needs `#undef DMAMEM` and `#undef` of four `NVIC_*` macros: the core
+  spells them as function-like macros, the shim as inline functions, and a
+  macro of the same name mangles the function's own definition.
+- Minimal abstract `Print`/`Stream` and `elapsedMillis`/`elapsedMicros`, purely
+  so `USBHost_t36.h` PARSES (`USBSerialBase`/`USBSerialEmu` derive from
+  `Stream`; `BluetoothConnection` has an `elapsedMicros` member). No vtable is
+  emitted — those classes' virtuals live in .cpps a CM4 image does not build.
+- ★ **Quoted-include trap, worth remembering:** the core's `elapsedMillis.h`
+  could NOT simply be `#include`d. It opens with a quoted
+  `#include "Arduino.h"`, and a quoted include searches the *including file's*
+  directory first — ahead of every `-I` — so from `cores/imxrt1176/` it
+  resolves to the CM7 `Arduino.h`, drags in `core_pins.h`, and collides head-on
+  with the shim. The INCLUDE_DIRS ordering that makes the shim win for
+  `<Arduino.h>` cannot help; it is out-ranked by the includer's own directory.
+- `ehci_iso.cpp` is a **mandatory** source even with no isochronous schedule:
+  `add_qh_to_periodic_schedule()` calls `sitd_skip_iso()` and is reached from
+  `new_Pipe()`, so `--gc-sections` keeps it for anything that enumerates.
+
+Still true from 7.1, and still load-bearing:
+- **`cpsie i` is a PER-IMAGE obligation** — the copied `startup_cm4.S` leaves
+  PRIMASK set and the fix lives in each image's own `main`. It false-FAILs on
+  silicon and passes in QEMU.
+- ★★ **DWT before ANY clock call, and its failure is SILENT.** Without
+  `DEMCR.TRCENA` + `DWT_CTRL.CYCCNTENA`, `ARM_DWT_CYCCNT` reads 0 forever, so
+  the shim's `millis()`/`micros()` never advance, so **no USBHost_t36 timeout
+  ever fires** — enumeration neither completes nor gives up. The gate's first
+  token is therefore a *measured* cycle delta (`dwt=000041A0`), not a register
+  readback, and the observation window carries a hard iteration cap so a dead
+  clock is reported rather than hung on.
+
+### 7.3 — iso streaming on the CM4  ✅ QEMU-GREEN 2026-08-07; ★HW UNVERIFIED
+
+`examples/dualcore/cm4_usb_audio_probe`. The CM4 image links the UAC class
+driver (`usb_audio.cpp` + the five sources it references unconditionally) on top
+of 7.2's transport core, claims a device, negotiates a format, completes the
+post-claim control sequence and arms 32 siTDs across all 32 periodic frame
+slots. Fed by the driver's own tone generator, deliberately: no AudioStream is
+linked, so a red run cannot be the graph's fault. That is 7.4's problem.
+
+**QEMU: `AUDIO_CM4=PASS`, stable 3× — with `STREAM_PACKETS=FAIL`, and that is
+CORRECT.** Isochronous data does not flow against the emulated `usb-audio`
+device (measured 2026-08-06, see `docs/KNOWN-BROKEN-GATES.md`), so packet flow
+is a **world-split token**: the firmware prints it, the QEMU gate asserts only
+that it is PRESENT, silicon asserts it is TRUE. `AUDIO_CM4` is the CONTROL-PLANE
+verdict and stops at "armed" on purpose. ★ **Do not assert `pkts > 0` in QEMU** —
+that is 7.1's `PHY_PLL_CM4` mistake, which has now cost this phase twice.
+
+★★ **HW-VERIFIED on the EVKB 2026-08-07** (`transcript_hw_evkb.txt`, built
+`-DPROBE_RATE_HZ=44100`, dongle 1B3F:2008 in J47): `pkts=8109 xerr=0 unders=0
+queued=3884` over 4000 ms, and **a TONE IN THE HEADPHONES**, which is the
+un-fakeable part. **`lps=142332` — a service pass every ~7 µs, ~85× margin
+against the CM7-measured 600 µs stall knee.** That is what made 7.4 worth
+attempting. One number is recorded rather than smoothed over: `packets_sent`
+reads ~2027/s where a full-speed device is physically 1000 frames/s, and the
+transcript's own arithmetic proves the WIRE rate is 1000 (a 2× rate would drain
+the 4096-sample FIFO in 0.086 s and trip `unders`; `unders=0` and the FIFO
+stayed full). So it is a counter defect on this core's siTD path
+(`usb_audio.cpp:1310` counts ARMING, not transmitting), not a transport one.
+
+### 7.4 — the capstone: the graph feeds its own stream  ✅ QEMU-GREEN 2026-08-07; ★HW UNVERIFIED
+
+`examples/dualcore/cm4_graph_usb_capstone`. 7.3's image plus the Audio library:
+`cores/imxrt1176/AudioStream.cpp`, `output_usbhost.cpp` (the
+`AudioOutputUSBHost` adapter), `synth_sine.cpp` + `data_waveforms.c`, and
+`analyze_peak.cpp`. **The driver's built-in tone generator is gone** — nothing
+calls `tone()`, so the graph is the only producer, which is exactly the confound
+7.3 left behind. `AudioSynthWaveformSine → AudioOutputUSBHost → USBAudioOut →
+device`, with a peak tap off the same source.
+
+**QEMU: `CAPSTONE_CM4=PASS`, stable 3×**, every deterministic token
+byte-identical across runs. `gblocks=3` graph passes fill the FIFO to
+`fifo=768 = fifotgt`, `peak=16384` (q15, against the requested amplitude 0.5),
+`drop=0`, `mem=1/1`, `rate=48000` set by the ADAPTER, `prio` = usb135:0 /
+graph44:208.
+
+★★ **THE ARCHITECTURAL FINDING, and it is the INVERSE of Phase 6's.** Phase 6
+finding 2 says the SAI I/O ISR must OUTRANK the graph or RX overflows. Here USB
+service is **not an interrupt at all** — `Task()` + `service()` run in the main
+loop while the graph runs from `software_isr` at IRQ 44 — so **the graph
+unconditionally preempts USB service** and no priority can change that. Only the
+graph's cost can. The image therefore measures the stall directly
+(`AudioStream::cpu_cycles_total_max` × 16 cycles → µs at 400 MHz) rather than
+inferring it, and reports `lps` in 7.3's exact shape so the two are comparable.
+The interrupt half of the polarity is measured, not assumed: `PRIORITY_SPLIT`
+reads both NVIC priority bytes back, and neither is set by the firmware
+(`AudioStream::update_setup()` chose 208; `USBHost::begin()` left IRQ 135 at its
+reset 0).
+
+★ **NOT YET HW-VERIFIED, and the number that matters is unmeasured.**
+`gcyc`/`gcycmax`/`cpu`/`lps` are meaningless in QEMU — CYCCNT comes from the
+virtual clock and qemu2 models no M4 pipeline — and the meaningless value looks
+alarming: consecutive runs reported worst = 776 µs and 2111 µs for identical
+code. **Only silicon can say whether a graph pass fits inside the 600 µs
+budget.** Next action: EVKB run with a device on J47, built
+`-DPROBE_RATE_HZ=44100`, asserting `STREAM_PACKETS`, `GRAPH_CLOCKED`,
+`TRANSPORT_CLEAN` and `STREAM_FED`, and recording `gcycmax` and `lps` beside
+7.3's 142332.
+
+Four world-split tokens now, and two are new. `GRAPH_CLOCKED` is FAIL in QEMU
+**as a consequence of `STREAM_PACKETS` being FAIL**: the adapter makes the USB
+frame clock the graph's clock (`onFrameConsumed`), so no packets means no ticks.
+`STREAM_FED` (`unders == 0`) is vacuously PASS there, like `TRANSPORT_CLEAN`.
+The graph is therefore proved **separately and world-independently**: after
+arming, the image pends `IRQ_SOFTWARE` itself until the FIFO reaches the
+adapter's setpoint, gated on the same `queued() < FIFO_TARGET_SAMPLES` condition
+`frame_consumed()` uses. That step also earns its keep on silicon —
+`beginStreaming()` resets the FIFO and arms 32 slots from it, so without priming
+every run's `unders` would carry a startup artefact.
+
+Measured: `.text` 26,828 + `.isr_vector` 608 = **27,436 B of 128 K ITCM
+(20.9%)**, up from 7.3's 24,608 (+2,828 B; the staged .bin is 27,440 B
+including the 4 B .data LMA). `.bss.dma` unchanged at 172,096 B in OCRAM2;
+`.bss` 340 → 6,900 B in DTCM, which is the audio pool (24 × 260 = 6,240 B at
+`0x20000004`) plus the graph nodes. ★ `nm` confirms the split the design
+depends on: every DMA-walked object in OCRAM2 (`hub1`, `audioOut`, `itd_pool`,
+`sitd_pool`, `periodictable`, `enumsetup`/`enumbuf`, the memory.cpp pools) and
+every audio object in DTCM. Audio blocks do **not** need to be DMA-reachable —
+the adapter COPIES them into `USBAudioOut`'s FIFO, which is itself already in
+OCRAM2 — so `AudioMemory()`'s DMAMEM placement is hand-expanded away, as
+Phase 5 did.
+
+Things this cost, worth not paying twice:
+- ★ **`abs()` needs a real definition.** `analyze_peak.h`'s `read()` calls it,
+  and `teensy_add_cm4_image` compiles `-ffreestanding`, which implies
+  `-fno-builtin` for everything but `mem*` — so it is a genuine call and the
+  link fails. Phase 6's `cm4_audio_test` hit this first and fixed it the same
+  way (a definition in the image's `runtime_stubs.c`). **The shim's own comment
+  on that line is wrong** (`cm4_shim/Arduino.h`: "GCC lowers abs(int) to
+  `__builtin_abs`, so this stays a pure declaration with no -nostdlib link
+  dependency") and should be corrected next time `cores` is touched.
+- ★ **`AudioAnalyzePeak::read()` reports FULL SCALE when it has analysed
+  nothing** (reset state min=+32767/max=−32768). An unguarded read makes the
+  starved case look *better* than the healthy one. Both reads are now guarded on
+  `available()` — which also CLEARS the flag, so the two reads are independent —
+  and send `PEAK_NONE` otherwise.
+- **`F_CPU_ACTUAL` opt-in.** The shim declares and deliberately never defines it
+  so `AudioProcessorUsage()` fails at LINK rather than computing against the
+  CM7's 996 MHz. This image opts in by defining it **in its own main** to
+  `F_CPU_CM4` (400 MHz). The percentage is still the weaker measurement; the
+  contiguous stall is `gcycmax`.
+- **Declaration order is load-bearing**, as `usb_audio_graph_test` says:
+  `AudioOutputUSBHost`'s ctor calls `audioOut.format()` from the graph's rate,
+  and `format()` only takes effect before the device attaches — so `audioOut`
+  must be constructed first. On this image "constructed" means "reached by
+  `cm4_run_ctors()`", which walks `.init_array` in declaration order.
+  `PROBE_RATE_HZ` therefore drives BOTH `AUDIO_SAMPLE_RATE_EXACT` (the CM4
+  image) and the CM7 relay's expectation, and `GRAPH_RATE` asserts they agree.
+
+Two negative controls checked in. `transcript_qemu_red_vector.txt`: vector 60
+repointed at `Default_Handler` — the CM4 reaches `s7=armed` then HANGS (the
+first `NVIC_SET_PENDING` never returns), the 7.2 shape.
+`transcript_qemu_red_silent.txt`: amplitude 0 — ★ `GRAPH_ALIVE` still PASSES
+with `blocks=3` and `fifo=768/768` identical to green, because the adapter did
+fill the FIFO, with silence. Only the peak tap separates them, which is the
+argument for the tap existing.
+
+Sweep **80 → 81 gates**; `license-audit.sh` GATES extended (137 files walked for
+this gate), PASS.
+
+What the green run establishes:
+
+- **The class driver fits.** `.text` 24,000 B + `.isr_vector` 608 = **24,608 B
+  of 128 K ITCM** (18.8%), against 7.2's 10,608. `.bss.dma` **172,096 B at
+  0x202C0000–0x202EA040**, 32.8% of OCRAM2, and `nm` puts every DMA-walked
+  object there — `audioOut` (152,640 B: two payload rings + two 4096-sample
+  FIFOs), `hub1`, `itd_pool` (96×96), `sitd_pool` (72×64), `periodictable`,
+  `enumsetup`/`enumbuf`, the memory.cpp pools. Nothing DMA-ish is in DTCM; the
+  340 B of `.bss` there is scalar bookkeeping (list heads, counters,
+  `uframe_bandwidth`).
+- **`queued=3840`/4096 with `unders=0` localises the QEMU stall to the
+  TRANSPORT.** The tone generator is producing into the real streaming FIFO and
+  saturating it because nothing drains it — the producer half works.
+- ★ **libgcc, and the first CM4 image to need it.** The audio driver divides
+  64-bit values by runtime denominators (`topUpFromTone`,
+  `effectiveRateMilliHz`, `uac1_feedback_plausible`), GCC lowers that to
+  `__aeabi_uldivmod`/`__aeabi_ldivmod`, and `teensy_add_cm4_image` links
+  `-nostdlib`. Fixed with **`GROUP(-lgcc)` in the image's own `cm4.ld`**, NOT a
+  new argument to the shared macro: a per-image need must not change any other
+  image's command line (2B `cmp` discipline). `GROUP` not `INPUT` (re-scanned,
+  and pulled in after the command-line objects); the failure mode if a future
+  toolchain ordered it differently is a LINK ERROR, not silence. Licence: the
+  compiler runtime under the GCC Runtime Library Exception, already permitted by
+  `license-audit.sh` and already linked by every CM7 image.
+- **`.ARM.exidx` is now `/DISCARD/`ed.** libgcc brings unwind-index entries into
+  an image built `-fno-exceptions`; left alone they are an ORPHAN allocatable
+  section, and orphan placement between `.text` and the `.data` LMA would
+  silently pad the staged binary — the script's contiguity invariant.
+- **NEGATIVE CONTROL checked in** as `transcript_qemu_red_rate.txt`:
+  `-DPROBE_RATE_HZ=44100u`, nothing else changed. The model offers 48000 only,
+  `uac1_find_alt()` refuses, `claim()` returns false, gate red at
+  `DEVICE_CLAIMED` — with `ctrl_timeouts=0`, which is the distinction stage 6
+  exists for (unofferred format ⇒ watchdog silent; stalled request ⇒ watchdog
+  climbing). Stages/DWT/UAIE/PLUG stay green, so the run also re-proves the
+  interrupt path while failing the thing under test.
+
+Still true from 7.1/7.2, and still load-bearing: **`cpsie i` is a per-image
+obligation** (passes in QEMU, false-FAILs on silicon), and **DWT before ANY
+clock call, failing silently** — which costs more here than in 7.2, because the
+audio driver's control watchdog is the only way back from a configuration
+request the device never answers, and a frozen `millis()` disarms it.
+
+The measured warning from the Phase-7 desk work still applies to 7.4 — the
+constraint is ~½ ms service latency, not throughput (1.16% of a 996 MHz M7).
+`lps` is printed so that margin is visible rather than assumed; it is a
+characterisation token in QEMU (it measures the emulator) and is asserted by
+neither world.
+
+★★ **7.4 CORRECTED the half of that warning that named a priority.** The desk
+note above (and the Phase-7 spec) read Phase 6 finding 2 as "the USB service
+must OUTRANK graph work on the CM4". It cannot, and no priority number would
+help: USB service is `myusb.Task()` + `audioOut.service()` called from **thread
+mode**, not an ISR, while the graph runs from `software_isr` at IRQ 44. An
+interrupt always outranks thread mode, so **the graph unconditionally preempts
+USB service** and the only lever is the graph's COST, not its priority. What
+priority does govern is the *other* half — the interrupt-driven part of USB
+(enumeration and every control transfer) versus the graph — and there the
+polarity is already correct and now measured rather than assumed:
+`USBHost::begin()` leaves IRQ 135 at reset priority 0 while
+`AudioStream::update_setup()` chooses 208, so USB wins. See 7.4.
 
 ## Phase 5 — CM4 audio foundation (Plan 1 of 2)  ★★HW-VERIFIED 2026-07-21
 
@@ -1008,3 +1485,74 @@ no power; **check J38 / the barrel-jack supply** before chasing the debug chain.
   even when the target is UNPOWERED, so LinkServer "Wire not connected" = check
   J38/barrel power, not the debug chain. Next: a new capability (the CM4 audio
   arc — Plan 1 foundation + Plan 2 pipeline — is closed).
+- 2026-08-06: **USB host audio on the CM4 — ASSESSED, not started.** Desk
+  triangulation recorded under "Deferred beyond Phase 3"; **no code, no probe,
+  nothing HW-verified.** Came out far more favourable than expected: (a) RM
+  **Table 4-2 lists 135 = USB OTG2**, so the interrupt this stack uses is in the
+  CM4 domain (`rm_full.txt:3910`); (b) the **two-eDMA verdict does not transfer**
+  — EHCI is its own bus master (`ehci.cpp:270`) with its own IRQ, so the rule
+  that pins the I2S DMA nodes to the CM7 forever says nothing about USB;
+  (c) the **Phase-6 ANATOP-AI blocker does not apply** — USBPHY2's PLL is plain
+  MMIO (`ehci.cpp:237-250`), not an `ai_write` handshake; (d) DMAMEM already
+  links to **OCRAM1 @0x20240000**, clear of OCRAM M4 @0x20200000 where the CM4
+  TCM backdoor lives, and the whole duplex image is 28,128 B of `.text.itcm`
+  vs 128 K of CM4 ITCM. Remaining real work = a qemu2 `TYPE_SPLIT_IRQ` for line
+  135 (+ red-first probe), shim expansion (`attachInterruptVector` is a CM4
+  no-op but `ehci.cpp:324` needs it), and the open timing question — service is
+  *polled* (`ioc=false`), so the deadline is loop() latency on a 400 MHz M4,
+  which is the same shape as Phase 6 finding 2. Recommendation on record: do
+  not start before measuring what USB actually costs the CM7, and prefer the
+  free split (CM7 keeps USB, CM4 takes DSP) unless the CM7 must be wholly free.
+- 2026-08-06: **CM7 CPU budget for USB host audio — MEASURED on the EVKB**
+  (`examples/usb/usb_audio_duplex_test/transcript_hw_cpu_budget.txt`; new
+  build-gated `CPU_BUDGET` / `CPU_STEAL_RAMP` / `CPU_STEAL_FIXED` options,
+  default image proven byte-identical). Answers the "measure before you move
+  it" precondition recorded above. **The genuine USB duplex work is 1.16% of
+  the CM7 @996 MHz** — regression of instrumented buckets against loop rate
+  over a 19× range, intercept 1.163%, **R² = 1.00000**. ★★TRAP THIS EXPOSED:
+  the sketch free-runs its poll loop, so it is ~100% busy by construction and
+  the same instrumentation reports **69.1%** at its natural 145127 loops/s —
+  nearly all spin. A percentage-of-a-spinning-loop cannot answer "how much is
+  available"; only stealing the CPU and watching the audio break can.
+  **`isr/s` was 0 at every level** — the iso rings are `ioc=false` and there
+  is no async traffic in steady state, so STREAMING is wholly polled and its
+  deadline is loop() latency. ★Narrowed same day: this says nothing about
+  ENUMERATION, which is interrupt-driven (UAI → `followup_Transfer`,
+  `ehci.cpp:380`); the `USBHS_USBINTR=0` at `ehci.cpp:287` is transient and
+  `:326-328` enables the interrupts. **The constraint is contiguous stall length, not throughput:**
+  600 µs/ms soaks healthy (OUT fifo 3092–4094, no trend, 44100 Hz locked,
+  4.3 min), 850 µs/ms fails (fifo drains 2830→1494, underruns accelerate
+  0.36/s→7.73/s, 5 min); knee not pinned. ★★**A 10 s staircase step
+  OVERSTATES headroom** — the ramp ran clean to 88.56% taken, then a 5-minute
+  soak at the *lower* 85% failed, staying clean for its first ~80 s first.
+  Short steps measure the buffer, not the steady state. Consequence for the
+  CM4 assessment above: throughput is a non-issue on a 400 MHz M4 (1.16% of
+  996 MHz ≈ 11.6 MHz-equivalent), and moving USB to the CM4 buys isolation
+  rather than CPU — the risk is entirely the ~½ ms service latency, the same
+  shape as Phase 6 finding 2.
+- 2026-08-07: **Phase 7.1 (CM4 takes the USB port) DONE + ★★HW-VERIFIED.**
+  `examples/dualcore/cm4_usb_irq_probe`; qemu2 `7c9bd4cbe6` (local-only,
+  TYPE_SPLIT_IRQ for IRQ 135); evkb commits on branch `cm4-usb-host-audio`.
+  The CM4 brings up LPCG115 + USBPHY2's 480 MHz PLL + the EHCI controller
+  itself and takes USB OTG2's IRQ 135 on its own NVIC — EVKB, two runs,
+  `irqcnt` 6 then 2 with a real `ccs=0→ccs2=1` connect edge from a physical
+  plug into J47. ★★**Phase 6 finding 1 REFUTED for this block:** the CM4
+  drove the PHY PLL directly (`pllsic=80F03040`, LOCK set) because USBPHY2
+  has its own PLL behind plain MMIO — the ANATOP AI-write blocker does NOT
+  generalise to blocks with their own PLL. Red-first discipline held
+  (`transcript_qemu_red.txt` checked in before the qemu2 change). ★★**TWO
+  vacuous-gate traps caught before they could mislead**, both producing
+  `irqcnt=0`, which is *also* the legitimate negative result: a
+  present-from-reset device raises PCD during stage 5 and the stage-6 W1C
+  clears it before PCE is armed; and the CM7 batching its mailbox reads meant
+  the marker the gate polls for reached the UART only after the window closed.
+  Fixed by hotplugging on the streamed `s6` marker and asserting a real
+  `PLUG_TRANSITION` edge before the interrupt assertion. ★**Delay loops
+  calibrated by counting instructions are not safe** — "~3 cycles/iter" for a
+  volatile decrement is nearer 7, so an 8 s window ran ~18.7 s and collided
+  with the CM7's receive timeout, truncating the transcript in a way that
+  read as a CM4 hang; use DWT CYCCNT. Divergences recorded not absorbed
+  (`rstspin` 2 vs 0, `portsc` upper fields, `PHY_PLL_CM4` world-split).
+  Sweep 77 → 78 gates; license-audit PASS. Next: 7.2 (port USBHost_t36 to
+  the CM4 world — shim expansion, the OCRAM `.bss.dma` section in `cm4.ld`,
+  and exposing `USBHost::isr` for the static vector table).

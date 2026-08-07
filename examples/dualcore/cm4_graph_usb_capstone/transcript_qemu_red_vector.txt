@@ -1,0 +1,63 @@
+NEGATIVE CONTROL for cm4_graph_usb_capstone, captured 2026-08-07.
+
+Vector index 60 (external IRQ 44, IRQ_SOFTWARE) repointed at Default_Handler in
+cm4/startup_cm4.S and NOTHING ELSE CHANGED. This is the 7.2 idiom applied to the
+graph's vector instead of USB's: it proves the new 7.4 assertions are not
+vacuous with respect to the one thing they are really testing.
+
+Result: the CM4 reaches s7=armed, then hangs. Default_Handler is a spin loop, so
+the first NVIC_SET_PENDING(IRQ_SOFTWARE) in the priming phase never returns and
+the transcript truncates there -- a misrouted graph vector is visibly a HANG,
+not a quiet zero, exactly as a misrouted USB vector was in 7.2.
+GRAPH_ALIVE/GRAPH_AUDIO/GRAPH_NOLEAK all FAIL and the gate exits 1 by name.
+
+==== captured ====
+CM4GRAPHUSB-GATE v1
+s1=A5B00001
+dwt=000249F0
+s2=A5B00002
+usbintr=030C0016
+s3=A5B00003
+portsc=00001000
+s4=A5B00004
+bound=00000001
+vid=000046F4
+pid=00000002
+s5=A5B00005
+alt=00000001
+rate=0000BB80
+s6=A5B00006
+ctrl=00000000
+s7=A5B00007
+armed=00000001
+decode: uaie=1 ccs=0 ccs2=0 alt=1 rate=48000 ctrl_state=0 ctrl_timeouts=0 ctrl_qfails=0
+graph: blocks=0 fifo=0/0 peak=0 dropped=0 mem=0/0
+stream: pkts=0 in 0 ms, loops=0 (0 loops/s), xerr=0 unders=0 queued=0
+stream-graph: gpasses=0 peak2=0 dropped=0 mem=0 cpu=0%/0% max
+budget: graph_pass_us last=0 worst=0 (cycles 0)
+budget: service gap_ns=0 vs 7.3 lps=142332 (no graph, EVKB); this run lps=0
+budget: * gcyc/gcycmax/cpu/lps are WORLD-SPLIT characterisation.
+budget:   QEMU derives CYCCNT from the virtual clock and models no M4
+budget:   pipeline, so ONLY a silicon run may be compared with the
+budget:   CM7-measured knee (600us stall clean / 850us fail).
+prio: usb135=0 graph44=0 (lower = higher priority; usb must outrank the graph)
+STAGES=FAIL
+DWT_ALIVE=PASS
+USBINTR_UAIE=PASS
+PLUG_TRANSITION=FAIL
+DEVICE_CLAIMED=PASS
+FORMAT_NEGOTIATED=PASS
+CONTROL_SEQUENCE=PASS
+STREAM_ARMED=PASS
+GRAPH_RATE=PASS
+GRAPH_ALIVE=FAIL
+GRAPH_AUDIO=FAIL
+GRAPH_NOLEAK=FAIL
+PRIORITY_SPLIT=FAIL
+STREAM_PACKETS=FAIL
+GRAPH_CLOCKED=FAIL
+TRANSPORT_CLEAN=PASS
+STREAM_FED=PASS
+CAPSTONE_CM4=FAIL
+CM4GRAPHUSB-DONE
+FAIL: the CM4 did not reach all nine stage markers

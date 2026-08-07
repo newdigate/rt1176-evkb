@@ -25,3 +25,7 @@ tap.raw
 # repo would breach the licence they were downloaded under. Cite clause
 # numbers in code and docs; keep the documents local.
 docs/*.pdf
+
+# Gate monitor sockets (cm4_usb_irq_probe hotplugs via -monitor unix:).
+# Trap-cleaned on normal exit; this covers a SIGKILLed run leaving one behind.
+*.sock

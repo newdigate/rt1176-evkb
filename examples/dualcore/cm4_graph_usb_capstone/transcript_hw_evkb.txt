@@ -1,0 +1,63 @@
+EVKB clean run -- 2026-08-07. THE ORACLE for Phase 7.4, the capstone. An
+AudioStream GRAPH running on the Cortex-M4 feeds a USB audio stream that the
+same core drives, end to end, with the CM7 doing nothing but booting it and
+relaying tokens.
+
+Built -DPROBE_RATE_HZ=44100 (rate=0000AC44 confirms it took). Dongle
+1B3F:2008 on J47, full speed. Operator confirmed A TONE IN THE HEADPHONES.
+★ tone() is never called in this image -- the graph is the ONLY producer, so
+the sound in the headphones came out of AudioSynthWaveformSine, through
+AudioOutputUSBHost, through USBAudioOut, onto the wire. That was 7.3's
+remaining confound and it is now closed.
+
+★★ THE PHASE'S CENTRAL RISK, ANSWERED -- AND IT IS NOT CLOSE.
+
+The concern was architectural and real: USB service is Task() + service() in
+THREAD MODE, while the graph runs from software_isr at IRQ 44. An interrupt
+always outranks thread mode, so the graph preempts USB service
+unconditionally and no priority setting can change that. The only lever is
+how expensive a graph pass is, measured against the CM7-established knee --
+600 us contiguous stall clean, 850 us fail.
+
+  graph_pass_us last=23 worst=25   (10,048 cycles at 400 MHz)
+
+25 us against a 600 us budget. TWENTY-FOUR TIMES the margin. The preemption
+happens exactly as predicted and simply does not matter at this cost.
+
+  lps=150184 WITH the graph      vs 7.3's 142332 WITHOUT it
+  service gap_ns=6658            a service pass every 6.7 us
+  cpu=1%/1% max                  the graph's own accounting agrees
+
+☆ NOTE THE DIRECTION: the loop got slightly FASTER with the graph, not
+slower. That is not noise to wave at -- it has a cause. In 7.3 the FIFO was
+fed by the driver's own topUpFromTone() called from INSIDE service(); here
+the graph fills it from the ISR instead, so each service() call does strictly
+less work. The graph did not come for free, it moved the producer off the
+service path.
+
+TRANSPORT AND GRAPH HEALTH, over the 4 s window:
+  pkts=8122   xerr=0   unders=0   queued=952 (fed, above the 768 setpoint)
+  gpasses=2799  drop=0  memuse=1/1  peak2=16384 (half full scale, as asked)
+
+  gpasses at ~700/s is ~2x the 344.5 blocks/s that 128-sample blocks at
+  44100 Hz implies -- the SAME 2x already characterised in 7.3, because the
+  graph is clocked by onFrameConsumed() and therefore inherits packets_sent's
+  over-count on this core's siTD path. Already resolved as a counter defect,
+  not a transport one (see cm4_usb_audio_probe/transcript_hw_evkb.txt): a 2x
+  wire rate would drain the FIFO and trip unders, and unders is 0 here too.
+
+WHAT THIS COMPLETES. The CM4 now owns, unaided:
+  7.1  the USB host port and IRQ 135 on its own NVIC
+  7.2  enumeration -- the real USBHost_t36 stack in a freestanding image
+  7.3  isochronous streaming, audible
+  7.4  the AudioStream graph that produces what is streamed
+
+A KNOWN-STALE STRING, recorded so it is not read as a claim: the "prio:" line
+below still says "usb must outrank the graph". That framing is WRONG and was
+corrected in the roadmap during this phase -- thread mode cannot outrank an
+interrupt, which is the whole reason graph COST is the thing that matters.
+The PRIORITY_SPLIT token itself is still meaningful (it reads back both NVIC
+priority bytes, neither set by this firmware); only the parenthetical is
+stale.
+
+==== captured ====

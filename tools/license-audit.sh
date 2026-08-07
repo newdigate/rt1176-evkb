@@ -179,11 +179,15 @@ examples/dualcore/cm4_audio_test:cm4_audio_test \
 examples/dualcore/cm4_audiostream_test:cm4_audiostream_test \
 examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_cpp_test:cm4_cpp_test \
 examples/dualcore/cm4_dual_test:cm4_dual_test examples/dualcore/cm4_fft_test:cm4_fft_test \
+examples/dualcore/cm4_graph_usb_capstone:cm4_graph_usb_capstone \
 examples/dualcore/cm4_hotswap2_test:cm4_hotswap2_test \
 examples/dualcore/cm4_hotswap_test:cm4_hotswap_test examples/dualcore/cm4_image_test:cm4_image_test \
 examples/dualcore/cm4_imagebank_test:cm4_imagebank_test \
 examples/dualcore/cm4_intr_test:cm4_intr_test examples/dualcore/cm4_sai_irq_probe:cm4_sai_irq_probe \
 examples/dualcore/cm4_spi_dma_test:cm4_spi_dma_test examples/dualcore/cm4_spi_test:cm4_spi_test \
+examples/dualcore/cm4_usb_audio_probe:cm4_usb_audio_probe \
+examples/dualcore/cm4_usb_enum_probe:cm4_usb_enum_probe \
+examples/dualcore/cm4_usb_irq_probe:cm4_usb_irq_probe \
 examples/dualcore/cm4_wire_dma_test:cm4_wire_dma_test \
 examples/dualcore/cm4_wire_int_master_test:cm4_wire_int_master_test \
 examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test \

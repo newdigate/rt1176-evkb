@@ -1,0 +1,76 @@
+EVKB clean run -- 2026-08-07. THE ORACLE for Phase 7.3. The Cortex-M4 drives
+an ISOCHRONOUS USB AUDIO STREAM: claims the device, negotiates a format, runs
+the control sequence, arms the siTD ring in OCRAM2 and streams -- AUDIBLY.
+
+Built -DPROBE_RATE_HZ=44100 (the QEMU default of 48000 is the emulated
+device's only rate; this dongle is 44.1k). Dongle 1B3F:2008 on J47, full
+speed. Operator confirmed a TONE IN THE HEADPHONES, which is the un-fakeable
+part: no counter can fake air moving.
+
+  pkts=8109  xerr=0  unders=0  queued=3884  over elapsed=4000 ms
+  lps=142332 loops/s
+
+★ THE LATENCY QUESTION IS ANSWERED, and it was the phase's real risk.
+Measured on the CM7 at 996 MHz (usb_audio_duplex_test/transcript_hw_cpu_budget
+.txt), the USB path's genuine work is only ~1.16% of the core, but the binding
+constraint is how long you can go WITHOUT calling service(): 600 us stalls soak
+clean, 850 us fail. The open worry was whether a 400 MHz M4 with a simpler
+pipeline could hold that.
+
+  142,332 loops/s = a service pass every ~7 us.
+
+That is roughly 85x margin against the 600 us figure. The CM4 is not close to
+the edge, and 7.4 can add graph work without the transport being the thing
+that breaks first. xerr=0 and unders=0 over the window corroborate it.
+
+☆ ONE NUMBER IS NOT YET EXPLAINED, and it is recorded rather than smoothed
+over. 8109 packets in 4000 ms is ~2027/s, but a FULL-SPEED device has a
+physically fixed 1000 frames/s, and the CM7 reports exactly 1000/s from the
+same counter (usb_audio_duplex_test heartbeat, OUT[pkts/s=1000]).
+
+What packets_sent actually counts is the key: it increments when
+sitd_fill_out() ARMS a ring slot (usb_audio.cpp:1310), not when a frame is
+transmitted. So the candidate explanation is double-ARMING -- the CM4's much
+faster service loop revisiting a slot the controller has retired but not yet
+re-run -- rather than double-TRANSMITTING.
+
+Two things point that way rather than at a genuine 2x wire rate:
+  - queued=3884 sits near the FIFO's 4096 ceiling. A stream consuming frames
+    at 2x would drain the FIFO and trip unders; unders=0.
+  - the tone was audible and the operator did not report it sounding fast or
+    high-pitched, which a 2x sample rate would make obvious.
+
+RESOLVED 2026-08-07, from the data already in this run -- no new measurement
+needed. A 2x wire rate is arithmetically incompatible with what was recorded:
+
+  tone produces          44100 samples/s
+  at 1000 fps the stream consumes 44100/s  -> net 0, FIFO stays full
+  at 2027 fps it would consume    89391/s  -> net -45291/s, so the 4096-sample
+                                              FIFO empties in 0.086 s and then
+                                              underruns at ~45291/s
+
+Measured over the full 4 s window: queued=3884/4096 (full), unders=0, xerr=0.
+The FIFO never drained. So the WIRE RATE IS 1000 frames/s as the spec
+requires, and packets_sent over-counts on this core's siTD path -- a counter
+defect, not a transport one. The audio was correct, which is also what the ear
+reported.
+
+Still open, but cosmetic: WHY it over-counts here and not on the CM7, which
+reports exactly 1000/s from the same counter on the same dongle. Likely the
+much faster service loop revisiting a retired-but-not-yet-rerun slot. Logged
+as a counter bug against usb_audio.cpp:1310, not a blocker.
+
+OTHER OBSERVATIONS:
+  dwt=000007D9      the clock base is alive (see 7.2 -- a dead DWT silently
+                    disables every USBHost_t36 timeout)
+  usbintr=030C0016  identical to QEMU and to the CM7: begin() set it, not us
+  alt=1, ctrl=0     the post-claim control sequence completed, 0 timeouts,
+                    0 queue failures
+  portsc=1C001000 -> portsc2=10001805   ccs 0->1, PE=1 (port enabled, so the
+                    reset/handshake completed), PP=1
+  vid=1B3F pid=2008 the same dongle 7.2 enumerated
+
+WHY THE TONE STOPS: by design. STREAM_MS is 4000, after which the probe
+reports and parks in wfi. It is a probe, not a player.
+
+==== captured ====

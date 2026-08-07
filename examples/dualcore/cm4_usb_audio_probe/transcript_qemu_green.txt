@@ -1,0 +1,145 @@
+QEMU green run -- 2026-08-07. Phase 7.3: the Cortex-M4 claims a USB audio
+device, negotiates a format, completes the control sequence and ARMS an
+isochronous OUT ring, with the CM7 booting the image and touching no USB
+register.
+
+★★ READ THE STREAM_PACKETS LINE BEFORE CONCLUDING ANYTHING.  This is a PASSING
+gate that contains "STREAM_PACKETS=FAIL", and that is CORRECT here, not a
+tolerated wart.
+
+  Isochronous data does not flow against QEMU's emulated usb-audio device.
+  Measured 2026-08-06 and recorded in docs/KNOWN-BROKEN-GATES.md: an OUT sketch
+  enumerates, claims, selects alt 1, completes the entire control sequence with
+  ctrl=0/0/0, reports "streaming started" -- and then sits at pkts/s = 0
+  forever.  Cause unestablished; the leading suspicion is a split-transaction/TT
+  mismatch, since an siTD is the descriptor for a full-speed device behind a
+  high-speed hub and the model has this one on the root port.
+
+  So `pkts` is a WORLD-SPLIT token, exactly as PHY_PLL_CM4 is in 7.1: the
+  firmware prints the verdict, the QEMU gate asserts only that the token is
+  PRESENT, and SILICON asserts that it is PASS.  AUDIO_CM4 -- the verdict this
+  gate does assert -- is the CONTROL-PLANE verdict and stops at "armed".
+  Precedent for world-split tokens: 2C systick, 3.2 rdv, Phase 5 irqcnt,
+  7.1 PHY_PLL_CM4.
+
+WHAT IS GREEN HERE, AND WHY EACH LINE IS A DIFFERENT FACT:
+
+  DWT_ALIVE=PASS          dwt=00007080, non-zero.  The shim derives
+                          millis()/micros() from DWT CYCCNT.  A dead counter
+                          freezes every USBHost_t36 timeout AND the audio
+                          driver's own control watchdog -- the only thing that
+                          can rescue a configuration request the device never
+                          answers, because a driver is told about CLEAN
+                          completions only.  Reported first because that failure
+                          is otherwise silent.
+  USBINTR_UAIE=PASS       usbintr=030C0016.  USBHost::begin() armed the
+                          async-schedule interrupt on the CM4's OWN NVIC; every
+                          control transfer -- enumeration's and this driver's
+                          SET_INTERFACE -- completes through UAI ->
+                          followup_Transfer.
+  PLUG_TRANSITION=PASS    portsc ccs=0 -> portsc2 ccs2=1.  A real connect edge
+                          inside the armed window, not a device present at reset.
+  DEVICE_CLAIMED=PASS     bound=1, vid=000046F4 pid=00000002.
+                          ★ THE ORACLE.  Those are QEMU's usb-audio identity
+                          (hw/usb/dev-audio.c:43-44) and the CM4 image has no
+                          knowledge of them; they can only have arrived in a
+                          GET_DESCRIPTOR data stage, over the wire, by DMA the
+                          EHCI controller performed into OCRAM2, completed by an
+                          interrupt on the CM4's own NVIC.
+                          It is ALSO the interrupt evidence, as in 7.2: claim()
+                          is reachable only via claim_drivers <-
+                          enumeration_receive <- followup_Transfer, which runs
+                          inside USBHost::isr().  There is no polled path to it.
+  FORMAT_NEGOTIATED=PASS  alt=00000001 = the model's ALTSET_STEREO, its only
+                          streaming alt.  uac1_find_alt() refuses any rate,
+                          channel count or width the device did not advertise --
+                          see the RED transcript beside this one, which is
+                          exactly that refusal.
+  CONTROL_SEQUENCE=PASS   ctrl=00000000: state 0 (nothing outstanding),
+                          timeouts 0 (the watchdog never abandoned a request),
+                          queue-fails 0 (no retry outran the shared Transfer_t
+                          pool).
+  STREAM_ARMED=PASS       armed=1.  32 siTDs allocated from the isochronous
+                          pool, filled from the tone FIFO and linked into all 32
+                          periodic frame slots.
+  TRANSPORT_CLEAN=PASS    xerr=0 -- but VACUOUSLY so in this world: a stream
+                          that transmitted nothing cannot have had a
+                          transmission error.  Presence-checked, not
+                          value-checked, for that reason.
+  AUDIO_CM4=PASS
+
+OTHER OBSERVATIONS, and what they are good for:
+
+  queued=00000F00   3840 of 4096 samples sitting in the FIFO.  This is the most
+                    informative number in a run where nothing transmits: the
+                    driver's tone generator IS producing into the real streaming
+                    FIFO and saturating it, because the ring never drains it.
+                    unders=0 for the same reason.  It localises the QEMU stall
+                    to the transport, not to the producer.
+  loops / lps       ★ A CHARACTERISATION TOKEN IN THIS WORLD, NOT A MEASUREMENT.
+                    QEMU derives CYCCNT from the virtual clock scaled by the
+                    modelled 400 MHz CM4 clock (hw/arm/armv7m.c,
+                    fsl-imxrt1170.c:365), so millis() tracks wall-clock while
+                    the loop runs at emulator speed.  67,299 loops/s here says
+                    how fast this Mac emulates the M4, not how fast the M4 is.
+                    ONLY the silicon figure bears on the real question, which is
+                    the service-latency budget: the CM7 measurement
+                    (usb_audio_duplex_test/transcript_hw_cpu_budget.txt) found
+                    600 us contiguous stalls soak clean and 850 us fail, so what
+                    matters is 1/lps on the board.  Not asserted by either
+                    world's gate.
+  elapsed=00000FA0  4000 ms, the streaming window actually measured.
+  portsc2=00001005  CCS=1, PE=1.
+
+WHAT IS *NOT* PROVEN HERE, stated plainly so nobody has to infer it:
+
+  That audio moves.  A silicon run with a real device on J47 is the only oracle
+  for STREAM_PACKETS and for TRANSPORT_CLEAN.  A CM4 that enumerates, claims,
+  negotiates and arms but does not stream would look IDENTICAL to this
+  transcript -- that is precisely why the packet verdict is printed rather than
+  folded into AUDIO_CM4, and why this file says so at the top.
+
+STABILITY: 3 consecutive runs.  Every token identical except the four
+timing-dependent ones (dwt, loops, lps, elapsed).
+
+==== captured ====
+CM4USBAUDIO-GATE v1
+s1=A5B00001
+dwt=00007080
+s2=A5B00002
+usbintr=030C0016
+s3=A5B00003
+portsc=00001000
+s4=A5B00004
+bound=00000001
+vid=000046F4
+pid=00000002
+s5=A5B00005
+alt=00000001
+s6=A5B00006
+ctrl=00000000
+s7=A5B00007
+armed=00000001
+pkts=00000000
+xerr=00000000
+unders=00000000
+queued=00000F00
+loops=00041B8D
+lps=000106E3
+elapsed=00000FA0
+portsc2=00001005
+done=D0DE0009
+decode: uaie=1 ccs=0 ccs2=1 alt=1 ctrl_state=0 ctrl_timeouts=0 ctrl_qfails=0
+stream: pkts=0 in 4000 ms, loops=269197 (67299 loops/s), xerr=0 unders=0 queued=3840
+STAGES=PASS
+DWT_ALIVE=PASS
+USBINTR_UAIE=PASS
+PLUG_TRANSITION=PASS
+DEVICE_CLAIMED=PASS
+FORMAT_NEGOTIATED=PASS
+CONTROL_SEQUENCE=PASS
+STREAM_ARMED=PASS
+STREAM_PACKETS=FAIL
+TRANSPORT_CLEAN=PASS
+AUDIO_CM4=PASS
+CM4USBAUDIO-DONE

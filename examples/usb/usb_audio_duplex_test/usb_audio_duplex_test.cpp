@@ -79,6 +79,113 @@ static uint32_t last_out_packets, last_in_packets, last_in_bytes, last_out_errs;
 static uint8_t  dev_subslot;          // bytes per device sample, from the descriptor
 static int16_t  sink[256];            // where drained capture goes
 
+// ---- CPU budget accounting ------------------------------------------------
+// Where does the CM7 actually GO while USB audio streams, and how much is left
+// for anything else? Off by default so the gate and the Stage C transcripts
+// keep describing the image they were taken from.
+//
+// EXCLUSIVE is the load-bearing word. The EHCI ISR can land inside any of the
+// polled windows, so each window subtracts whatever the ISR accumulated while
+// it was open. Without that, ISR cycles are counted twice, the buckets sum to
+// more than the wall clock, and idle is understated -- an error in exactly the
+// direction that would make this measurement useless.
+//
+// The reporting printf is its OWN bucket rather than being left to fall into
+// idle. It is not free: the heartbeat is ~250 bytes at 115200 baud, and if it
+// blocks that is ~20 ms of a 2 s window. Silently calling that "idle" would
+// inflate the one number this whole exercise exists to produce.
+#ifndef CPU_BUDGET
+#define CPU_BUDGET 0
+#endif
+
+#if CPU_BUDGET
+static volatile uint32_t cpu_isr_cycles;    // cycles inside the EHCI ISR
+static volatile uint32_t cpu_isr_entries;
+static void (*cpu_isr_chain)(void);         // the driver's own ISR, called through
+
+// Wrapping via _VectorsRam instead of editing the library: USBHost::isr is
+// private, and this keeps the measurement entirely inside the sketch.
+static void cpu_usb_isr(void)
+{
+    uint32_t t0 = ARM_DWT_CYCCNT;
+    cpu_isr_chain();
+    cpu_isr_cycles += ARM_DWT_CYCCNT - t0;
+    cpu_isr_entries++;
+}
+
+static uint32_t cpu_task_cycles, cpu_svc_cycles, cpu_echo_cycles, cpu_rpt_cycles;
+static uint32_t cpu_window_t0, cpu_loops;
+
+// CYCCNT wraps every ~4.31 s at 996 MHz; uint32 subtraction handles that for
+// any window shorter than one wrap, and the heartbeat is 2 s.
+#define CPU_TIME(acc, call) do {                                    \
+        uint32_t _i0 = cpu_isr_cycles, _t0 = ARM_DWT_CYCCNT;        \
+        call;                                                       \
+        acc += (ARM_DWT_CYCCNT - _t0) - (cpu_isr_cycles - _i0);     \
+    } while (0)
+
+static uint32_t cpu_bp(uint32_t cycles, uint32_t window)   // basis points
+{
+    if (!window) return 0;
+    return (uint32_t)(((uint64_t)cycles * 10000u) / window);
+}
+
+// ---- headroom by theft ----------------------------------------------------
+// The percentages above answer "where did the CM7 go", NOT "how much is
+// left". They cannot answer the second question, because this sketch polls in
+// a free-running loop: it is ~100% busy by construction, and its `idle` is
+// just the share of spin that missed the instrumented calls. Turning that into
+// an availability figure would be a fabrication.
+//
+// So measure availability the only way that cannot be faked: TAKE the CPU away
+// and see when the audio breaks. A rising staircase of stolen time, with the
+// health counters (under/over/drop/err, and pkts/s) printed beside the level,
+// puts the answer in the transcript rather than in an estimate. One flash, one
+// capture, and the number is whatever the last clean step was.
+// CPU_STEAL_FIXED holds a level indefinitely instead of climbing, which is how
+// a staircase step that merely "looked clean for 10 s" becomes a soak result.
+#ifndef CPU_STEAL_FIXED
+#define CPU_STEAL_FIXED 0
+#endif
+static uint32_t cpu_steal_pct = CPU_STEAL_FIXED;   // current staircase level
+static uint32_t cpu_steal_cycles;   // actually burned this window -- the check
+                                    // that the thief took what it claimed
+#ifndef CPU_STEAL_STEP
+#define CPU_STEAL_STEP 5            // percent added per step
+#endif
+#ifndef CPU_STEAL_PERIOD
+#define CPU_STEAL_PERIOD 5          // heartbeats per step (5 x 2 s = 10 s)
+#endif
+#ifndef CPU_STEAL_MAX
+#define CPU_STEAL_MAX 95
+#endif
+
+// Burn `cpu_steal_pct` percent of every millisecond. Pegged to WALL TIME, not
+// to loop iterations: the loop rate changes by more than an order of magnitude
+// between idle and streaming, so a per-iteration burn would steal a wildly
+// different share in the two cases and measure nothing.
+static void cpu_steal(void)
+{
+    if (!cpu_steal_pct) return;
+    const uint32_t per_ms = (uint32_t)(F_CPU_ACTUAL / 1000u);
+    static uint32_t next_slot;
+    static bool armed;
+    uint32_t now = ARM_DWT_CYCCNT;
+    if (!armed) { next_slot = now + per_ms; armed = true; return; }
+    if ((int32_t)(now - next_slot) < 0) return;          // not this millisecond
+    // If the loop fell behind by more than a slot, resync rather than trying to
+    // repay the debt -- catching up would burn far more than the stated share.
+    next_slot = ((int32_t)(now - next_slot) > (int32_t)per_ms) ? now + per_ms
+                                                              : next_slot + per_ms;
+    uint32_t burn = (uint32_t)(((uint64_t)per_ms * cpu_steal_pct) / 100u);
+    uint32_t t0 = ARM_DWT_CYCCNT;
+    while ((uint32_t)(ARM_DWT_CYCCNT - t0) < burn) { __asm__ volatile("nop"); }
+    cpu_steal_cycles += ARM_DWT_CYCCNT - t0;
+}
+#else
+#define CPU_TIME(acc, call) call
+#endif
+
 void setup()
 {
     Serial1.begin(115200);
@@ -97,6 +204,15 @@ void setup()
     audio.captureChannels(DUPLEX_TAKE_CHANNELS);
     audio.followFeedback(true);
     myusb.begin();
+#if CPU_BUDGET
+    // AFTER begin() -- ehci.cpp attaches the driver's ISR there, and this
+    // chains onto whatever it installed rather than replacing it.
+    cpu_isr_chain = _VectorsRam[16 + IRQ_USBHS];
+    if (cpu_isr_chain) _VectorsRam[16 + IRQ_USBHS] = cpu_usb_isr;
+    Serial1.printf("DUPLEX-TEST: CPU budget instrumentation on (isr chain %s)\n",
+                   cpu_isr_chain ? "hooked" : "MISSING -- isr%% will read 0");
+    cpu_window_t0 = ARM_DWT_CYCCNT;
+#endif
     last_beat_ms = millis();
 }
 
@@ -150,7 +266,10 @@ static uint32_t drainCapture(void)
 
 void loop()
 {
-    myusb.Task();
+#if CPU_BUDGET
+    cpu_loops++;
+#endif
+    CPU_TIME(cpu_task_cycles, myusb.Task());
 
     for (unsigned i = 0; i < NDRIVERS; i++) {
         if (*drivers[i] != driver_active[i]) {
@@ -203,14 +322,20 @@ void loop()
         last_out_packets = last_in_packets = last_in_bytes = last_out_errs = 0;
     }
 
-    audio.service();
-    drainCapture();
+    CPU_TIME(cpu_svc_cycles, audio.service());
+    CPU_TIME(cpu_echo_cycles, drainCapture());
+#if CPU_BUDGET
+    cpu_steal();          // its own bucket, so idle stays the honest remainder
+#endif
 
     uint32_t now = millis();
     if ((uint32_t)(now - last_beat_ms) >= 2000u) {
         uint32_t dt = now - last_beat_ms;
         last_beat_ms = now;
         uint32_t portsc = USBHS_PORTSC1;
+#if CPU_BUDGET
+        uint32_t rpt_t0 = ARM_DWT_CYCCNT;
+#endif
 
         Serial1.printf("DUPLEX-TEST: HEARTBEAT seq=%lu up=%lus out=%d in=%d ctrl=%u/%lu/%lu",
                        (unsigned long)++seq,
@@ -260,5 +385,65 @@ void loop()
                        (unsigned long)audio.feedbackRateMilliHz(),
                        (unsigned long)audio.sizingRateMilliHz(),
                        (int)audio.feedbackFresh());
+
+#if CPU_BUDGET
+        // The window is [previous rpt_t0, this rpt_t0], so it CONTAINS the
+        // previous heartbeat's printing -- which is what cpu_rpt_cycles holds.
+        // Buckets are reset after the print, so they cover the same span
+        // exclusive of it. Everything therefore sums to the wall clock, and
+        // idle is what is genuinely left over.
+        uint32_t win = rpt_t0 - cpu_window_t0;
+        uint32_t isr_bp  = cpu_bp(cpu_isr_cycles,  win);
+        uint32_t task_bp = cpu_bp(cpu_task_cycles, win);
+        uint32_t svc_bp  = cpu_bp(cpu_svc_cycles,  win);
+        uint32_t echo_bp = cpu_bp(cpu_echo_cycles, win);
+        uint32_t rpt_bp  = cpu_bp(cpu_rpt_cycles,  win);
+        uint32_t stl_bp  = cpu_bp(cpu_steal_cycles, win);
+        uint32_t busy_bp = isr_bp + task_bp + svc_bp + echo_bp + rpt_bp + stl_bp;
+        uint32_t idle_bp = (busy_bp < 10000u) ? (10000u - busy_bp) : 0u;
+
+        // Split across two calls: Print::printf truncates at 128 bytes PER
+        // CALL, silently, and one long line has already cost this project a
+        // debugging session.
+        Serial1.printf("DUPLEX-TEST: CPU isr=%lu.%02lu%% task=%lu.%02lu%% svc=%lu.%02lu%% echo=%lu.%02lu%%",
+                       (unsigned long)(isr_bp / 100),  (unsigned long)(isr_bp % 100),
+                       (unsigned long)(task_bp / 100), (unsigned long)(task_bp % 100),
+                       (unsigned long)(svc_bp / 100),  (unsigned long)(svc_bp % 100),
+                       (unsigned long)(echo_bp / 100), (unsigned long)(echo_bp % 100));
+        Serial1.printf(" rpt=%lu.%02lu%% idle=%lu.%02lu%% loops/s=%lu isr/s=%lu win=%lums\n",
+                       (unsigned long)(rpt_bp / 100),  (unsigned long)(rpt_bp % 100),
+                       (unsigned long)(idle_bp / 100), (unsigned long)(idle_bp % 100),
+                       (unsigned long)(dt ? (uint32_t)((uint64_t)cpu_loops * 1000u / dt) : 0u),
+                       (unsigned long)(dt ? (uint32_t)((uint64_t)cpu_isr_entries * 1000u / dt) : 0u),
+                       (unsigned long)dt);
+        // asked= is the staircase level, took= what the thief actually burned.
+        // They must agree; if took lags asked, the loop could not keep up with
+        // its own theft and the level is not the one being tested.
+        Serial1.printf("DUPLEX-TEST: STEAL asked=%lu%% took=%lu.%02lu%% streaming=%d\n",
+                       (unsigned long)cpu_steal_pct,
+                       (unsigned long)(stl_bp / 100), (unsigned long)(stl_bp % 100),
+                       (int)(audio.streaming() && audio.recording()));
+
+        // Climb only while BOTH directions are actually streaming -- ramping
+        // during enumeration would test the wrong thing and could break the
+        // control sequence rather than the audio.
+#if CPU_STEAL_RAMP
+        static uint32_t steal_beats;
+        if (audio.streaming() && audio.recording()) {
+            if (++steal_beats >= (uint32_t)CPU_STEAL_PERIOD) {
+                steal_beats = 0;
+                if (cpu_steal_pct < (uint32_t)CPU_STEAL_MAX)
+                    cpu_steal_pct += (uint32_t)CPU_STEAL_STEP;
+            }
+        }
+#endif
+
+        cpu_window_t0 = rpt_t0;                       // next window starts here
+        cpu_rpt_cycles = ARM_DWT_CYCCNT - rpt_t0;     // ...and this print is in it
+        cpu_isr_cycles = 0; cpu_isr_entries = 0;
+        cpu_task_cycles = cpu_svc_cycles = cpu_echo_cycles = 0;
+        cpu_steal_cycles = 0;
+        cpu_loops = 0;
+#endif
     }
 }

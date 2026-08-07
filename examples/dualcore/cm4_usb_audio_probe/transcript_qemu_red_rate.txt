@@ -1,0 +1,84 @@
+NEGATIVE CONTROL -- QEMU, 2026-08-07.  Built with -DPROBE_RATE_HZ=44100u and
+NOTHING ELSE CHANGED; the gate correctly goes RED, exit 1.
+
+WHY THIS FILE EXISTS.  The green run's strongest-looking claim is
+FORMAT_NEGOTIATED=PASS with alt=1, and by itself that is not much evidence: a
+driver that always reported alt 1 would produce the identical line.  This run is
+the same firmware asking for a rate the device does not advertise.  QEMU's
+usb-audio bakes USBAUDIO_SAMPLE_RATE=48000 into its descriptor tables as a
+compile-time #define (hw/usb/dev-audio.c:118) with no property to change it, so
+44100 is a rate that provably is not there.
+
+  uac1_find_alt() refuses it, claim() returns FALSE, and the whole chain
+  downstream of it collapses in the right order:
+
+    bound=00000000            the driver never bound
+    vid=00000000 pid=0        so no identity was recorded
+    alt=FFFFFFFF (-1)         no alternate setting selected
+    armed=00000000            beginStreaming() was never even attempted
+    queued=00000000           the tone FIFO was never primed
+    DEVICE_CLAIMED=FAIL
+    FORMAT_NEGOTIATED=FAIL
+    STREAM_ARMED=FAIL
+    AUDIO_CM4=FAIL
+    FAIL: the audio driver never bound to a device        <- exit 1
+
+★ THE INTERESTING TOKEN IS ctrl_timeouts=0.  This is the distinction the stage-6
+packing exists for: a format the device never offered leaves alt=-1 with the
+control watchdog SILENT, whereas a device that stalled SET_INTERFACE would leave
+alt=-1 with timeouts CLIMBING.  Both read as "not ready" and they are completely
+different faults -- one is a negotiation the host got wrong, the other is a
+device that stopped answering.  Confirmed here in the first form.
+
+★ AND STAGES/DWT/UAIE/PLUG ALL STAY GREEN, which is the other half of the point.
+The device WAS enumerated, offered to the driver, and claim() ran -- so this run
+also re-proves the interrupt path (claim() is reachable only from inside
+USBHost::isr()) while failing the thing under test.  A red that took the whole
+transcript down with it would prove much less.
+
+Also visible, and worth one line: lps is 124,667 here against ~52,000 in the
+green run.  service() returns early when nothing is streaming, so the loop rate
+roughly doubles.  The figure is measuring real work, not spinning on a constant.
+
+==== captured ====
+CM4USBAUDIO-GATE v1
+s1=A5B00001
+dwt=0000A5A0
+s2=A5B00002
+usbintr=030C0016
+s3=A5B00003
+portsc=00001000
+s4=A5B00004
+bound=00000000
+vid=00000000
+pid=00000000
+s5=A5B00005
+alt=FFFFFFFF
+s6=A5B00006
+ctrl=00000000
+s7=A5B00007
+armed=00000000
+pkts=00000000
+xerr=00000000
+unders=00000000
+queued=00000000
+loops=00079BEF
+lps=0001E6FB
+elapsed=00000FA0
+portsc2=00001005
+done=D0DE0009
+decode: uaie=1 ccs=0 ccs2=1 alt=-1 ctrl_state=0 ctrl_timeouts=0 ctrl_qfails=0
+stream: pkts=0 in 4000 ms, loops=498671 (124667 loops/s), xerr=0 unders=0 queued=0
+STAGES=PASS
+DWT_ALIVE=PASS
+USBINTR_UAIE=PASS
+PLUG_TRANSITION=PASS
+DEVICE_CLAIMED=FAIL
+FORMAT_NEGOTIATED=FAIL
+CONTROL_SEQUENCE=PASS
+STREAM_ARMED=FAIL
+STREAM_PACKETS=FAIL
+TRANSPORT_CLEAN=PASS
+AUDIO_CM4=FAIL
+CM4USBAUDIO-DONE
+FAIL: the audio driver never bound to a device
