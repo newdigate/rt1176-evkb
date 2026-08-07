@@ -119,29 +119,53 @@ the refactor.
 
 ---
 
-## 3. Constraint: the GPL firewall, and the trap it sets here
+## 3. The RT1062 QEMU tests belong to qemu2, and stay there
 
-`~/Development/rt1062-p2-tests/` holds 13 bare-metal validation images that
-were written alongside the qemu2 RT1062 model — LPUART, GPIO, GPIO6, GPT,
-eDMA, ENET, uSDHC, SAI, SGTL5000 codec, SRC/OCOTP, LPI2C/LPSPI, FlexSPI
-fidelity. They are genuinely useful as a record of which peripherals have been
-validated and by what method.
+`~/Development/rt1062-p2-tests/` holds 13 bare-metal validation images
+covering LPUART, GPIO, GPIO6, GPT, eDMA, ENET, uSDHC, SAI, the SGTL5000 codec,
+SRC/OCOTP, LPI2C/LPSPI and FlexSPI fidelity. They are a useful record of which
+RT1062 peripherals have been validated and by what method.
 
-**All 13 are `SPDX-License-Identifier: GPL-2.0-or-later`.**
+The instinct on reaching Phase 2 or 3 will be *"we already have RT1062 test
+images — use those as the 1060's first gates"*. **Don't.** The reason is
+engineering, not licensing, and it is worth stating in that order because the
+licensing reason is the weaker one.
 
-The instinct on reaching Phase 2 or 3 will be "we already have RT1062 test
-images — use those as the 1060's first gates". That would breach the one-way
-firewall that `tools/license-audit.sh` exists to enforce: this tree is
-deliberately MIT/BSD-only, every inherited LGPL file has a clean-room rewrite,
-and firmware→qemu2 is fine while qemu2→firmware is not.
+**They are QEMU model validation, and they already live in QEMU's functional
+test suite** — `qemu2/tests/functional/arm/imxrt1062/`, 31 commits deep, of
+which the loose directory above is a stale byte-identical snapshot of an early
+13. That is exactly the right home for them. They are bare-metal `-kernel`
+ELFs with hand-rolled vector tables and their own linker script; this repo's
+examples are Teensy-core CMake builds that boot as FlexSPI XIP images. They
+fit neither the example shape nor the gate shape here, and duplicating them
+into a firmware repo would be worse engineering **at any licence**.
 
-**They are reference, never imports.** Two things may be taken from them,
-because neither is code:
+The licence position, recorded so it is not re-litigated:
 
-- the *fact* of what has been validated in the 1062 model, and
-- the *technique* in `sai_audio_test.c` — streaming SAI1 TX into
-  `-audiodev wav` so a gate can assert on captured audio rather than on
-  register state. Worth remembering for Phase 5.
+- All 13 are `SPDX-License-Identifier: GPL-2.0-or-later`, and they are
+  **published** — the suite is on `origin/master` and `origin/imxrt1062` at
+  `gitlab.com/Newdigate/qemu-rt1170`.
+- Sole authorship is established: every commit touching that directory is by
+  the same author, no file asserts a third-party copyright, and `<stdint.h>`
+  is the only include across all 13 — so none of it derives from QEMU's own
+  GPL source.
+- **Contributing to QEMU under copyleft is deliberate and fine.** The policy
+  is one-directional and unchanged: firmware→qemu2 is fine, qemu2→firmware is
+  not, and `tools/license-audit.sh` exists to prove no copyleft compiles into
+  firmware. This tree stays MIT/BSD-only; every inherited LGPL file has a
+  clean-room rewrite.
+- The author could dual-license any of it MIT at will — a licence binds
+  recipients, not the copyright holder. **That does not make importing it a
+  good idea**, which is why the paragraph above leads. If a specific chunk is
+  ever genuinely wanted in a firmware example, dual-licensing that one file is
+  a two-minute edit and the author's call; the default answer stays no.
+
+What *may* be taken freely, because neither is code:
+
+- the **fact** of what has been validated in the 1062 model, and
+- the **technique** in `sai_audio_test.c` — streaming SAI1 TX into
+  `-audiodev wav` so a gate asserts on captured audio rather than on register
+  state. Techniques are not copyrightable. Worth remembering for Phase 5.
 
 Note also there is **no USB test among the 13**, which is consistent with the
 stale README claim in §1.2 and means the 1062 model's host path has never been
@@ -292,7 +316,7 @@ technique available as an oracle.
 |---|---|
 | The 81-gate refactor breaks something subtly | Byte-identity on a sampled set (§4.5), and `blink` as the only new variable |
 | A lone dual-core red is misread as a regression | Documented load sensitivity; re-run idle; check whether the gate compiles what changed |
-| GPL test images get imported as 1060 gates | §3; the licence audit fails the build if they are |
+| The qemu2 RT1062 tests get imported as 1060 gates | §3 — wrong shape for this repo regardless of licence, and the licence audit backstops it |
 | The qemu2 1060 change is local-only, so fresh clones go red | Same situation as the IRQ-135 split; document it in `KNOWN-BROKEN-GATES.md` when Phase 2 lands |
 | `usb_audio*.cpp` hides an RT1176 assumption | They carry zero chip guards; if one surfaces it belongs in the transport layer, where the pattern already exists |
 | Stall headroom is tighter at 600 MHz | Measure in Phase 4 rather than assume; the instrument already exists |
