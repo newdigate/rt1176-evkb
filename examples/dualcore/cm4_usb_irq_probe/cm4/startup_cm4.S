@@ -1,7 +1,8 @@
 /* Cortex-M4 startup for the cm4_sai_irq_probe image.
  *
  * Same minimal reset handler as cm4_image_test (relocate VTOR to 0x1FFE0000,
- * reload MSP, enable FPU, copy .data, zero .bss, call main), but with a full
+ * reload MSP, enable FPU, copy .data, zero .bss -- and, added for the USB host
+ * work, zero .bss.dma in OCRAM2 -- then call main), but with a full
  * vector table: SysTick at exception 15, the SAI1 interrupt (external IRQ 76,
  * RM Table 4-2 — the fact this probe exists to verify) at vector index
  * 16+76 = 92, the MU interrupt (external IRQ 118) at vector index
@@ -89,6 +90,21 @@ Reset_Handler:
     itt     lo
     strlo   r3, [r0], #4
     blo     2b
+
+    /* Zero .bss.dma (DMAMEM, OCRAM2 @ 0x202C0000) -- same idiom, r3 still 0.
+     * Separate loop because the section is NOLOAD in a different MEMORY region,
+     * so it is not contiguous with .bss.  While no DMAMEM object is declared
+     * _sbss_dma == _ebss_dma and this falls straight through.  ★ This loop is
+     * why the window is OCRAM2 and not OCRAM1: it runs at CM4 reset, i.e. after
+     * the CM7 has booted and staged this image, so pointing it at OCRAM1 would
+     * zero the front of the CM7's live DMAMEM.  See cm4.ld for the full note,
+     * and for why TCM cannot be used at all. */
+    ldr     r0, =_sbss_dma
+    ldr     r1, =_ebss_dma
+4:  cmp     r0, r1
+    itt     lo
+    strlo   r3, [r0], #4
+    blo     4b
 
     bl      main
 3:  b       3b
