@@ -10,7 +10,7 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/audioinput_i2s_test.elf"
+ELF="$DIR/$(gate_build_dir)/audioinput_i2s_test.elf"
 VCOM="$DIR/vcom.uart"; DBG="$DIR/audioinput.dbg"; INJ="$DIR/inject.raw"
 python3 "$DIR/gen_inject.py" "$INJ"
 rm -f "$VCOM" "$DBG"
@@ -29,7 +29,7 @@ gate_tmp "$INJ" "$INJ.fifo" "$INJ.fifo.in" "$INJ.fifo.out"
 rm -f "$INJ.fifo"; mkfifo "$INJ.fifo"
 ( while true; do cat "$INJ" > "$INJ.fifo" 2>/dev/null; done ) & PUMP_PID=$!
 gate_pid $PUMP_PID
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$VCOM" \
     -chardev pipe,id=sai1-rxinject,path="$INJ.fifo" \
     -d guest_errors -D "$DBG" &

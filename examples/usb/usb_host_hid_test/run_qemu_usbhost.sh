@@ -37,7 +37,7 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/usb_host_hid_test.elf"
+ELF="$DIR/$(gate_build_dir)/usb_host_hid_test.elf"
 OUT_A="$DIR/usb_kbd.uart"; OUT_B="$DIR/usb_mouse.uart"; OUT_C="$DIR/usb_kbd_fs.uart"
 rm -f "$OUT_A" "$OUT_B" "$OUT_C"
 
@@ -55,7 +55,7 @@ rm -f "$SOCK_A" "$SOCK_B" "$SOCK_C"
 # The injector's failure is non-fatal here -- check_markers.py is the authority.
 
 # Run A: high-speed keyboard on the OTG2 root port.
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -icount shift=auto -display none \
     -serial file:"$OUT_A" -d guest_errors -D "$DIR/usb_kbd.dbg" \
     -qmp unix:"$SOCK_A",server=on,wait=off \
@@ -67,7 +67,7 @@ sleep 1; gate_reap $P
 gate_require_capture "$OUT_A"
 
 # Run B: high-speed mouse on the OTG2 root port.
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -icount shift=auto -display none \
     -serial file:"$OUT_B" -d guest_errors -D "$DIR/usb_mouse.dbg" \
     -qmp unix:"$SOCK_B",server=on,wait=off \
@@ -80,7 +80,7 @@ gate_require_capture "$OUT_B"
 
 # Run C: full-speed keyboard (usb_version=1) -- exercises the companion-less
 # FS/LS root-port path (enumeration + interrupt-IN) a real keyboard/mouse uses.
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -icount shift=auto -display none \
     -serial file:"$OUT_C" -d guest_errors -D "$DIR/usb_kbd_fs.dbg" \
     -qmp unix:"$SOCK_C",server=on,wait=off \

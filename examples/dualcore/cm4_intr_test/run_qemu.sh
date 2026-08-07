@@ -12,11 +12,11 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/cm4_intr_test.elf"
+ELF="$DIR/$(gate_build_dir)/cm4_intr_test.elf"
 OUT="$DIR/cm4_intr.uart"
 rm -f "$OUT"
 # -icount gives SysTick/DWT a deterministic time base (see IntervalTimer gates).
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -icount shift=2 -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -icount shift=2 -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/cm4_intr.dbg" &
 P=$!; gate_pid $P
 for _ in $(seq 1 60); do

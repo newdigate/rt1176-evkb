@@ -39,11 +39,11 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/usb_midi_test.elf"
+ELF="$DIR/$(gate_build_dir)/usb_midi_test.elf"
 OUT="$DIR/midi.uart"; DBG="$DIR/midi.dbg"
 rm -f "$OUT" "$DBG"
 
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -icount shift=auto -display none \
     -serial file:"$OUT" -d guest_errors -D "$DBG" \
     -device usb-midi,bus=usbhost.0,port=1 &

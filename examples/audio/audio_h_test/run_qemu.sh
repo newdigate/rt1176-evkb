@@ -10,9 +10,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/audio_h_test.elf"; OUT="$DIR/audio_h.uart"
+ELF="$DIR/$(gate_build_dir)/audio_h_test.elf"; OUT="$DIR/audio_h.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/audio_h.dbg" &
 P=$!; gate_pid $P
 for _ in $(seq 1 40); do [ -f "$OUT" ] && grep -q "AUDIOH-DONE" "$OUT" 2>/dev/null && break; sleep 0.25; done

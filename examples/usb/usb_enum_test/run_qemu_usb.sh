@@ -10,9 +10,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/usb_enum_test.elf"; OUT="$DIR/usb.uart"
+ELF="$DIR/$(gate_build_dir)/usb_enum_test.elf"; OUT="$DIR/usb.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none \
     -serial file:"$OUT" \
     -chardev null,id=usbcdc \

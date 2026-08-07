@@ -10,12 +10,12 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/usb_mouse_test.elf"
+ELF="$DIR/$(gate_build_dir)/usb_mouse_test.elf"
 VCOM="$DIR/vcom.uart"; DBG="$DIR/usb.dbg"; RES="$DIR/mouse.result"
 gate_tmp "$RES"
 PORT=14557
 rm -f "$VCOM" "$DBG" "$RES"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none \
     -serial file:"$VCOM" \
     -chardev socket,id=usbhid-tap,host=127.0.0.1,port=$PORT,server=on,wait=off \

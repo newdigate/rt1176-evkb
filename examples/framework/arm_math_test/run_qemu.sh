@@ -10,9 +10,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/arm_math_test.elf"; OUT="$DIR/arm_math.uart"
+ELF="$DIR/$(gate_build_dir)/arm_math_test.elf"; OUT="$DIR/arm_math.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/arm_math.dbg" &
 P=$!; gate_pid $P; sleep 5; gate_reap $P
 gate_require_capture "$OUT"

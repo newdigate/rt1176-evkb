@@ -10,10 +10,10 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/i2s_audio_test.elf"
+ELF="$DIR/$(gate_build_dir)/i2s_audio_test.elf"
 VCOM="$DIR/vcom.uart"; DBG="$DIR/i2s.dbg"; TAP="$DIR/tap.raw"
 rm -f "$VCOM" "$DBG" "$TAP"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$VCOM" \
     -chardev file,id=sai1-tap,path="$TAP" \
     -d guest_errors -D "$DBG" &

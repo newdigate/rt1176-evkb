@@ -34,7 +34,7 @@ run_build() {
     _elf="$1"; _out="$2"; _dbg="$3"; _depth="$4"; _draws="$5"
     shift 5
     rm -f "$_out" "$_dbg"
-    QRUN_TIMEOUT=60 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on \
+    QRUN_TIMEOUT=60 "$QEMU" $(gate_qemu_machine) \
         -kernel "$_elf" -display none -serial file:"$_out" \
         -d guest_errors -D "$_dbg" &
     _p=$!; gate_pid $_p
@@ -79,7 +79,7 @@ run_build() {
 }
 
 # --- build 1: RGB565 (default) -- fills + blits + composites + overhead ----
-run_build "$DIR/build/pxp_draw_bench.elf" "$DIR/pxp_draw_565.uart" \
+run_build "$DIR/$(gate_build_dir)/pxp_draw_bench.elf" "$DIR/pxp_draw_565.uart" \
           "$DIR/pxp_draw_565.dbg" 16 21 \
           $FILL_NAMES $BLIT_NAMES $COMP_NAMES overhead_16x2
 # The two-engine composite divergence must be REPORTED per case (a measured

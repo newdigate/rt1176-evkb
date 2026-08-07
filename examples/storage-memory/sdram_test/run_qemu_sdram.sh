@@ -10,13 +10,13 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/sdram_test.elf"; OUT="$DIR/sdram.uart"
+ELF="$DIR/$(gate_build_dir)/sdram_test.elf"; OUT="$DIR/sdram.uart"
 rm -f "$OUT"
 # Faithful window: the SDRAM at 0x80000000 is created DISABLED in the SEMC model
 # and only enabled when the guest's semc_sdram_init() issues the SDRAM Mode-Set
 # IP command during startup. A normal boot therefore lights the window up before
 # setup() runs the memory test. No -icount: a plain memory test isn't timing-sensitive.
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/sdram.dbg" &
 P=$!; gate_pid $P; sleep 6; gate_reap $P
 gate_require_capture "$OUT"

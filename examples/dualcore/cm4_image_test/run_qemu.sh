@@ -12,10 +12,10 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/cm4_image_test.elf"
+ELF="$DIR/$(gate_build_dir)/cm4_image_test.elf"
 OUT="$DIR/cm4_image.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/cm4_image.dbg" &
 P=$!; gate_pid $P
 for _ in $(seq 1 40); do

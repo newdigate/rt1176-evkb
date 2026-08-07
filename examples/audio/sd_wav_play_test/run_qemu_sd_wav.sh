@@ -10,7 +10,7 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/sd_wav_play_test.elf"
+ELF="$DIR/$(gate_build_dir)/sd_wav_play_test.elf"
 [ -f "$ELF" ] || { echo "FAIL: no ELF ($ELF) — build first"; exit 1; }
 
 run_one() {   # $1 = mono|stereo
@@ -35,7 +35,7 @@ run_one() {   # $1 = mono|stereo
     # keeps draining half-buffers the guest hasn't refilled -> the captured TDR0
     # stream is scrambled (mid-block phase jumps). Same determinism lever the
     # interval_timer / tone gates use; here it makes the play->TDR0 path exact.
-    "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+    "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
         -display none -serial file:"$VCOM" \
         -drive if=sd,format=raw,file="$IMG" \
         -chardev file,id=sai1-tap,path="$TAP" \

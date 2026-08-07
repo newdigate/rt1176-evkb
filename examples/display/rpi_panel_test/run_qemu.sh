@@ -10,9 +10,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/rpi_panel_test.elf"; OUT="$DIR/rpi_panel.uart"
+ELF="$DIR/$(gate_build_dir)/rpi_panel_test.elf"; OUT="$DIR/rpi_panel.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/rpi_panel.dbg" &
 P=$!; gate_pid $P
 # sleep 8 (was 5 through Task 7): known rt1170-qemu-class timing flake -- the
