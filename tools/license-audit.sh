@@ -30,8 +30,35 @@ $HOME/Development/PXP $HOME/Development/MipiDisplay $HOME/Development/LVGL \
 $HOME/Development/EEPROM"}
 
 # Allowlist (extended regex), each entry justified:
-#   cores/teensy*        — uncompiled PJRC reference copies, never in any build
+#   cores/teensy/, cores/teensy3/
+#                        — uncompiled PJRC reference copies, never in any build
 #                          (audit part 2 proves nothing under them is compiled)
+#   cores/teensy4/       — NOT a reference copy any more. Until the rt1062 board
+#                          axis landed, this entry read "never in any build" for
+#                          all of cores/teensy*, and that was true. EVKB_BOARD=
+#                          rt1062 (evkb.cmake) now compiles this core for real,
+#                          which turned five inherited LGPL sources into live
+#                          firmware code — WString.cpp (102 symbols), Stream.cpp
+#                          (11), WMath.cpp (8), IPAddress.cpp (4), Time.cpp (3).
+#                          They were REPLACED, not excused, with the MIT
+#                          clean-room versions already carried by
+#                          cores/imxrt1176 (IPAddress.cpp from Ethernet), so
+#                          this directory ships no copyleft source at all.
+#                          Two things to know before trusting this entry:
+#                          (a) part 2's EMPTY-object rule is what still
+#                          backstops SOURCES here — any future copyleft .cpp
+#                          that actually compiles fails the audit rather than
+#                          riding this allowlist in;
+#                          (b) that rule cannot see HEADERS, which define no
+#                          symbols. So a copyleft header under this path is
+#                          invisible to both checks. Printable.h and
+#                          WCharacter.h were in the rt1062 link manifest
+#                          (WCharacter.h is 13 inline functions — it genuinely
+#                          emits code) and were replaced for that reason.
+#                          Client.h and Server.h still carry LGPL text and are
+#                          deliberately left: no link manifest includes them.
+#                          Check the manifest, not this comment, before adding
+#                          a header here.
 #   SPI/SPI.{h,cpp}, Wire/{Wire.h,Wire.cpp}, Wire/utility/twi.{h,c}
 #                        — dual-licensed upstream platform branches,
 #                          preprocessor-dead under __IMXRT1176__ (documented in
