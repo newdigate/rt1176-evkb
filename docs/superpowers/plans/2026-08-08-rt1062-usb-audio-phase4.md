@@ -552,7 +552,15 @@ examples/usb/usb_audio_uac1_test/build-rt1062:usb_audio_uac1_test \
 ```
 
 If that example is not in `GATES` at all, add both lines — it needs the rt1176
-entry too.
+entry too. **It is not there today**, so expect to add both.
+
+★ **The audit's own drift check will not fully cover you here.** It iterates
+`examples/*/*/run_qemu*.sh` and matches on the **example directory**, so once
+Task 3 lands `run_qemu.sh` a missing *example-level* entry is caught — but a
+missing `…/build-rt1062:` entry is **invisible to it**, because no `run_qemu.sh`
+corresponds to a build directory. The second board's link manifest is silently
+never audited if you forget that line. Verify by name in Step 2 rather than
+trusting the drift check to complain.
 
 - [ ] **Step 2: Run the audit, capturing FULL output**
 
@@ -606,6 +614,19 @@ Scratch file + `git commit -F`.
 - [ ] Sweep 86 gates, zero SKIP
 - [ ] `LICENSE-AUDIT: PASS` with `build-rt1062` walked
 - [ ] `CLAUDE.md` and `KNOWN-BROKEN-GATES.md` updated
+
+## Follow-up found during execution
+
+**`postTestPacket(180)` posts a 44.1 kHz frame while the example now requests
+48000.** 4 bytes/sample stereo 16-bit x 45 samples = 180 (the 44.1 kHz frame);
+x 48 = 192 (the 48 kHz frame). Harmless today — `test_buf` is 256 bytes and the
+controller accepts a short isochronous packet, which is why nothing has ever
+failed on it — but the pair has been inconsistent since before Phase 4 and the
+rate change makes 192 the coherent value. **Deliberately not changed here**: the
+gate asserts the literal string `siTD posted, 180 bytes`, so changing it means
+changing the gate in the same commit, and neither should be guessed at while the
+control plane is still being brought up. Fix it and the assertion together, or
+derive the length from `UAC1_RATE_HZ` and assert the derived value.
 
 ## Not in this phase
 
