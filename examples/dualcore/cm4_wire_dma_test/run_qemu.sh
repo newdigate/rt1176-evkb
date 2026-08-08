@@ -22,10 +22,10 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/cm4_wire_dma_test.elf"
+ELF="$DIR/$(gate_build_dir)/cm4_wire_dma_test.elf"
 OUT="$DIR/cm4_wire_dma.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/cm4_wire_dma.dbg" &
 P=$!; gate_pid $P
 # RED-scaffold budget: with only READY emitted, the CM7 reporter spins through

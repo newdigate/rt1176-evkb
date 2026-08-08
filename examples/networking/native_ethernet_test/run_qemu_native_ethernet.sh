@@ -11,7 +11,7 @@ QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 export PHASE="${1:-${PHASE:-boot}}"
 gate_init
-ELF="$DIR/build/native_ethernet_test.elf"; VCOM="$DIR/vcom.uart"; DBG="$DIR/neth.dbg"; RES="$DIR/neth.result"
+ELF="$DIR/$(gate_build_dir)/native_ethernet_test.elf"; VCOM="$DIR/vcom.uart"; DBG="$DIR/neth.dbg"; RES="$DIR/neth.result"
 gate_tmp "$RES"; PORT=15600
 rm -f "$VCOM" "$DBG" "$RES"
 # Carry the -nic VALUE (no flag) so it can be passed as a single quoted arg;
@@ -23,7 +23,7 @@ case "$PHASE" in
   dns)    NICVAL="user,model=imx.enet" ;;
   *)      NICVAL="user,model=imx.enet" ;;
 esac
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$VCOM" -nic "$NICVAL" -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
 if [ "$PHASE" = server ] || [ "$PHASE" = udp ]; then

@@ -1,0 +1,139 @@
+rt1062 QEMU transcript for usb_descriptor_survey. THREE states, recorded in the
+order they happened. The gate is GREEN today; states 2 and 3 are kept because a
+wrong conclusion was drawn in between and the bench overturned it.
+
+Recorded 2026-08-08 on branch rt1060-board-axis.
+
+================================================================================
+STATE 1 -- GREEN. qemu2 0b000a6a81 (SET/CLR/TOG aliases), before the TCM holes.
+================================================================================
+
+This is the state that proves the RT1062 USB host path works in emulation. The
+oracle is external: 46F4:0002 and the 104-byte configuration descriptor are
+QEMU's usb-audio identity, which the firmware has no knowledge of.
+
+==== captured ====
+SURVEY: start -- plug in any USB device
+SURVEY: device 46F4:0002, 104 descriptor bytes
+SURVEY:  if 0 alt 0  class=0x01(AUDIO) sub=0x01 eps=0
+SURVEY:    *** UAC 1.00 ***
+SURVEY:  if 1 alt 0  class=0x01(AUDIO) sub=0x02 eps=0
+SURVEY:  if 1 alt 1  class=0x01(AUDIO) sub=0x02 eps=1
+SURVEY:    format: 2 ch, 16-bit, 1 rate(s): 48000
+SURVEY:    ep 0x01 OUT iso       sync=synchronous  usage=data        mps=192 refresh=0 synchAddr=0x00
+SURVEY: VERDICT adaptive/synchronous only -- cannot exercise async
+SURVEY: end
+PASS: SURVEY_ENUMERATES_EMULATED_UAC1_DEVICE
+
+Byte-for-byte what rt1176 prints, and all 13 usb/ + 3 serial/ gates passed on
+both boards in this state.
+
+WHAT MADE IT GREEN. Naming the OTG2 host bus (e84a6e451e) was necessary but not
+sufficient. With that alone the firmware HUNG: it printed its banner and then
+NOTHING -- not even the 2-second "SURVEY: waiting" heartbeat, which is the tell
+that this was never an enumeration failure. gdbstub put the PC in
+USBHost::begin() at ehci.cpp:184-195, the __IMXRT1062__ PLL_USB2 powerup loop.
+
+The cause was in hw/misc/imxrt1060_anatop.c: the SET/CLR/TOG alias words at
+base+0x4/+0x8/+0xC were modelled as ordinary storage instead of alias ports
+onto the base register, so every alias write vanished. Measured live over the
+gdbstub:
+
+    PLL_USB2     (0x400D8020) = 0x80000000   only the forced LOCK bit
+    PLL_USB2_SET (0x400D8024) = 0x00002000   the ENABLE the firmware wrote,
+                                             sitting in its own storage word
+
+Forcing LOCK was necessary but nowhere near sufficient -- the same loop also
+demands ENABLE, POWER and EN_USB_CLKS and sets all three through the alias.
+PLL_USB1 escaped notice only because the model seeds it to 0x3040 at reset, so
+startup.c's identical loop breaks on its first read without ever writing.
+
+================================================================================
+STATE 2 -- RED. qemu2 e236216190 (Task 3, the USB DMA TCM holes).
+================================================================================
+
+Adding the TCM holes turned the gate red. survey.dbg named exactly ONE genuine
+blocked access:
+
+    USB DMA read from CPU-private DTCM @ 0x20002004
+
+which is periodictable[1] (periodictable @ 0x20002000). The other 544 messages
+were cascade: the hole reads back 0, a frame-list entry of 0 is a pointer to
+0x00000000 with the T-bit clear, and the controller then walks a bogus QH at
+ITCM 0x0-0x3c forever.
+
+At this point it was NOT established that RT1062 silicon enforces the
+constraint, and the available evidence pointed the other way (upstream
+USBHost_t36 leaves these buffers in .bss = DTCM, and USB host works on a Teensy
+4.1). The red was therefore carried deliberately, pending the bench.
+
+================================================================================
+STATE 3 -- GREEN, and the model was right. Silicon settled it 2026-08-08.
+================================================================================
+
+On a MIMXRT1060-EVKB with a USB audio adapter in J47, with periodictable still
+at 0x20002000 (DTCM), read over the debug probe while the firmware ran:
+
+    PORTSC1 = 0x10001805    CCS=1 PE=1 PP=1 -- device connected and powered
+    USBSTS  = 0x0000d09a    HCH=1 (halted) + SEI=1 (SYSTEM ERROR)
+
+SEI is the controller faulting on its own DMA fetch of the periodic list.
+Rebuilding with those buffers in DMAMEM/OCRAM (USBHost_t36 fa939cc) cleared it:
+USBSTS became 0x0000d080, same board, same cable, one variable changed.
+
+That same change makes this gate pass WITH the TCM holes still in place:
+
+==== captured ====
+SURVEY: start -- plug in any USB device
+SURVEY: device 46F4:0002, 104 descriptor bytes
+SURVEY:  if 0 alt 0  class=0x01(AUDIO) sub=0x01 eps=0
+SURVEY:    *** UAC 1.00 ***
+SURVEY:  if 1 alt 0  class=0x01(AUDIO) sub=0x02 eps=0
+SURVEY:  if 1 alt 1  class=0x01(AUDIO) sub=0x02 eps=1
+SURVEY:    format: 2 ch, 16-bit, 1 rate(s): 48000
+SURVEY:    ep 0x01 OUT iso       sync=synchronous  usage=data        mps=192 refresh=0 synchAddr=0x00
+SURVEY: VERDICT adaptive/synchronous only -- cannot exercise async
+SURVEY: end
+PASS: SURVEY_ENUMERATES_EMULATED_UAC1_DEVICE
+
+So the State 2 red was a TRUE POSITIVE. The model refused an access the silicon
+also refuses; the firmware really was handing the controller TCM-resident
+memory. DO NOT remove the holes.
+
+STATE 4 -- THE BOARD ENUMERATES TOO. Same day, after a second fix.
+
+DMAMEM was only half of it. The EVKB core enables the D-cache and maps OCRAM
+write-back/write-allocate, so once these descriptors moved out of DTCM the CPU's
+writes sat in cache while the EHCI read stale physical memory. It walked a
+garbage periodic list and halted one frame after start:
+
+    USBSTS=0000D080 USBCMD=00018B34 FRINDEX=00000008 (frozen, CPU running)
+
+HCH=1 with NO error bit, because the port-connect ISR had already acked the
+fatal status -- which is exactly why it read as a clean halt rather than a fault.
+The tell was a debug-probe read of periodictable showing garbage where the CPU
+had just written T-bits: the probe sees physical memory, the CPU sees its cache.
+
+Mapping OCRAM non-cached on that board (cores a090c9d, guarded by
+ARDUINO_MIMXRT1060_EVKB) closes it. On J47, with a real USB audio adapter:
+
+SURVEY: device 1B3F:2008, 244 descriptor bytes
+SURVEY:  if 0 alt 0  class=0x01(AUDIO) sub=0x01 eps=0
+SURVEY:    *** UAC 1.00 ***
+SURVEY:  if 1 alt 1  class=0x01(AUDIO) sub=0x02 eps=1
+SURVEY:    format: 2 ch, 16-bit, 2 rate(s): 44100 48000
+SURVEY:    ep 0x05 OUT iso  sync=none  usage=data  mps=192
+SURVEY:  if 2 alt 1  class=0x01(AUDIO) sub=0x02 eps=1
+SURVEY:    format: 1 ch, 16-bit, 2 rate(s): 44100 48000
+SURVEY:    ep 0x86 IN  iso  sync=none  usage=data  mps=100
+SURVEY:  if 3 alt 0  class=0x03(HID) sub=0x00 eps=1
+SURVEY: VERDICT adaptive/synchronous only -- cannot exercise async
+SURVEY: end
+
+The two halves are causally linked, not independent bugs: DTCM is unreachable so
+the buffers must move to OCRAM, and OCRAM is cached so moving them there creates
+the coherency exposure. Fixing either one alone leaves the port dead.
+
+Also note the console moved: these rt1062 sketches now print to Serial6
+(LPUART1, the EVKB's DAPLink VCOM), not Serial1 (LPUART6, which only reaches
+Arduino header pins D0/D1). The gate takes its chain from gate_console.

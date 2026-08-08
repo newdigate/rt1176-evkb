@@ -15,12 +15,12 @@ PHASE="${1:-${ENET_PHASE:-boot}}"
 export ENET_PHASE="$PHASE"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/enet_test.elf"
+ELF="$DIR/$(gate_build_dir)/enet_test.elf"
 VCOM="$DIR/vcom.uart"; DBG="$DIR/enet.dbg"; RES="$DIR/enet.result"
 gate_tmp "$RES"
 PORT=15556
 rm -f "$VCOM" "$DBG" "$RES"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none \
     -serial file:"$VCOM" \
     -nic socket,listen=127.0.0.1:$PORT,model=imx.enet \

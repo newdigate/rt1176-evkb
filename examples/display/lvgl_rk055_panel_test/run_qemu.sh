@@ -7,9 +7,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/lvgl_rk055_panel_test.elf"; OUT="$DIR/lvgl_rk055_panel.uart"
+ELF="$DIR/$(gate_build_dir)/lvgl_rk055_panel_test.elf"; OUT="$DIR/lvgl_rk055_panel.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/lvgl_rk055_panel.dbg" &
 P=$!; gate_pid $P
 # 12s: panel bring-up (PLL roots + LCDIFv2 + MIPI-DSI + HX8394) plus a 720x1280

@@ -25,10 +25,10 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/i2s_int_test.elf"
+ELF="$DIR/$(gate_build_dir)/i2s_int_test.elf"
 OUT="$DIR/vcom.uart"
 rm -f "$OUT" "$DIR/i2s_int.dbg"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/i2s_int.dbg" &
 P=$!; gate_pid $P
 for _ in $(seq 1 40); do

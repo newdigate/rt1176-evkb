@@ -79,26 +79,94 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **81 gates** (80 before Phase
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **86 gates** (84 before Phase 4 gated
+`usb/usb_audio_uac1_test` on two boards; 83 before
+`framework/string_test` was gated on a second board; 82 before Phase 2
+gated `usb/usb_descriptor_survey` on a second board; 81 before the
+RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.4 added `dualcore/cm4_graph_usb_capstone`; 79 before Phase
 7.3 added `dualcore/cm4_usb_audio_probe`; 78 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). Expect **81 passed, 0 failed, 0 SKIP** on an idle
-machine, or **80 passed, 1 failed, 0 SKIP** when the single permitted
-intermittent (`dualcore/cm4_audio_test`) is red — the latter is what the
-2026-08-06 Stage C sweep measured at `-j 2`.
-The 81 is `run-all-qemu-gates.sh -l` measured on 2026-08-07 after 7.4 landed;
-that sweep was NOT re-run end to end for 7.4 (the four Phase-7 gates were, all
-green), so treat the pass/fail counts above as carried forward and the gate
-COUNT as re-measured.
-**0 SKIP is the load-bearing number in either case**: it is what says the
+`usb/usb_descriptor_survey`). Expect **86 passed, 0 failed, 0 SKIP**, or
+**85 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+There is **one** permitted red:
+
+- `rt1176:dualcore/cm4_audio_test` — **nondeterministic.** Long called a load
+  artefact, and load does not predict it: on 2026-08-08 it failed a sweep
+  starting at load 6.8 and passed one starting at 8.6. Re-run before believing a
+  red, and note that **consecutive readings are not a trend** — four in a row
+  that day looked like a clean threshold near load 4 and the next measurement
+  refuted it. Don't infer a load number; `docs/KNOWN-BROKEN-GATES.md` has all
+  six readings.
+
+Both the count and the pass/fail were measured that day; nothing here is
+carried forward.
+**0 SKIP is the load-bearing number in every case**: it is what says the
 sweep actually covered everything rather than quietly measuring less.
 Note `-l` prints a trailing "(N gate(s))" summary line, so `wc -l` on its
-output is one more than the gate count. A single dual-core failure with everything else green is the known
-load artefact described below; any *other* failure is a real regression from
-what you are doing.
+output is one more than the gate count. Any failure that is **not** that one is
+a real regression from what you are doing — read the gate NAMES in the summary
+rather than trusting the count alone.
+
+**The tree is multi-board.** `EVKB_BOARD` selects `rt1176` (MIMXRT1170-EVKB,
+the default) or `rt1062` (MIMXRT1060-EVKB). An example declares the boards it
+supports in a `boards` sidecar file; absent means `rt1176` only, which is why
+most examples have none. Gate ids are `<board>:<category>/<name>` and no gate
+names a QEMU machine — `tools/gate-lib.sh` derives `-M`, `-global`, the build
+directory and the `-serial` chain from the board. Build a non-default board with
+`cmake -B build-rt1062 -DEVKB_BOARD=rt1062 -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1062-evkb.toolchain.cmake`.
+
+`usb/usb_descriptor_survey` is gated on both boards and is the RT1062's USB
+host proof: it enumerates QEMU's emulated `usb-audio` and reads `46F4:0002` off
+the wire — an oracle the firmware has no knowledge of. Like
+`dualcore/cm4_usb_irq_probe`, its rt1062 half depends on LOCAL-ONLY qemu2
+changes, so **a fresh clone sees it red for that reason too**; that is the GPL
+firewall working, not a regression. It is *also* red on this machine, for the
+separate and deliberate TCM-hole reason above.
+
+★ **The RT1062 USB host needs the CCM_ANALOG SET/CLR/TOG aliases modelled.**
+`hw/misc/imxrt1060_anatop.c` treated the `base+0x4/+0x8/+0xC` words as ordinary
+storage rather than alias ports onto the base register, so every alias write
+vanished. USBHost_t36's `PLL_USB2` powerup (`ehci.cpp:182-214`) drives that PLL
+*only* through `_SET`, so it spun forever and `USBHost::begin()` never
+returned. Worth knowing because of how it presents: **not** "USB does not
+enumerate" but a hard hang in `setup()`, with the banner printed and the
+2-second heartbeat absent. If an rt1062 image goes quiet after one line, check
+whether it is looping on a register whose only writes go through an alias —
+`-d unimp` will NOT show it, because the registers are all implemented.
+
+Three per-board divergences are already known, all handled in `gate-lib.sh`,
+and any new two-board example must go through it rather than spelling them out:
+- **QEMU machine**: `mimxrt1170-evk` vs `mimxrt1060-evk`.
+- **Boot property**: the RT1170 model's `boot-xip` is a boot-ROM stub that
+  parses the real IVT; the RT1062 model has `boot-xip` AND `boot-ivt` as
+  *different* properties selecting different reset vectors, and a Teensy-core
+  image is the `boot-ivt` kind. Using the wrong one double-faults into Lockup
+  before a line of firmware runs.
+- **Which object is the console**: **LPUART1 on both boards**, but the cores
+  name it differently — `Serial1` on `cores/imxrt1176`, `Serial6` on
+  `cores/teensy4` (which follows the Teensy pin-0/1 convention and gives the
+  name `Serial1` to LPUART6). Every two-board sketch therefore defines a
+  `CONSOLE` alias rather than naming a `SerialN` directly, and every gate takes
+  its chain from `gate_console` — which now emits a plain `-serial file:` for
+  both boards, because both land in slot 0.
+  ★ **This was got wrong first time and the mistake is worth knowing.** The
+  rt1062 sketches originally printed to `Serial1` = LPUART6, and `gate-lib`
+  emitted five `-serial null` to reach it. That passed in QEMU and was **useless
+  on silicon**: on the MIMXRT1060-EVKB, LPUART6 only reaches Arduino header pins
+  D0/D1, while the DAPLink/OpenSDA VCOM is wired to LPUART1
+  (`GPIO_AD_B0_12/13` — `core_pins.h` pins 21/22). The gate and the bench were
+  reading different wires, and nothing caught it until a hardware run was
+  attempted. Get the slot wrong in either direction and the firmware runs
+  perfectly while the capture stays empty — indistinguishable from firmware that
+  never started.
+
+★ **`rt1062` links `cores/teensy4`, which is LGPL** — see the licence-audit
+note under `tools/` below. That core is upstream Teensy, not the clean-room
+`cores/imxrt1176`, and building it is what put copyleft source into a link
+manifest for the first time in this tree.
 
 Three things that number depends on:
 
@@ -144,6 +212,28 @@ Repo-wide gates in `tools/`:
   tree is deliberately MIT/BSD-only; every inherited LGPL file has a clean-room
   rewrite. Don't introduce GPL/LGPL/MPL code or dependencies, and don't vendor a
   prebuilt binary without licence text beside it.
+  An entry may name a **build directory** (`examples/…/build-rt1062:target`)
+  rather than an example directory, so a second board's build of the same
+  example gets its own depfile walk. It needs one: `EVKB_BOARD=rt1062` links a
+  different core.
+  ✅ **CLOSED 2026-08-08 — the audit PASSES, rt1062 builds included.** It was
+  open for most of that day: `cores/teensy4/` sits in the audit's `ALLOW` list
+  on the condition that its objects define **no** symbols, which held while
+  that directory was "an uncompiled upstream reference copy — never built".
+  The board axis builds it, and five of its files were LGPL-2.1 (`WString.cpp`,
+  `IPAddress.cpp`, `Stream.cpp`, `WMath.cpp`, `Time.cpp` — all
+  Arduino-inherited), compiling to real symbols in `libcores.o.a`.
+  Resolved the only acceptable way — the five were **replaced** with the MIT
+  clean-room versions (`cores` `99f7657`, pinned at `evkb.cmake:69` and pushed
+  to `origin/master`), not excused by relaxing `ALLOW` or dropping the
+  `build-rt1062` GATES entry. Two headers went the same way, `Printable.h` and
+  `WCharacter.h`, because they were in the rt1062 link manifest and the
+  EMPTY-object rule cannot see headers — they define no symbols. `Client.h` and
+  `Server.h` still carry LGPL text and are deliberately left: no link manifest
+  includes them. **Check the manifest, not this note, before adding a header.**
+  Measured: `LICENSE-AUDIT: PASS` with both rt1062 entries walked —
+  `serial_test/build-rt1062` 136 dep paths, `usb_descriptor_survey/build-rt1062`
+  203.
 - `license-audit.test.sh` — negative tests proving the audit's part-1 checks
   actually fire (unlicensed binary, MPL header) rather than passing vacuously.
 - `gate-lib.test.sh` — tests for the gate runner lifecycle library.
@@ -188,8 +278,27 @@ harness.
   Teensy-compatible API surface (GPIO, LPADC, FlexPWM, DAC, PIT/IntervalTimer,
   LPUART Serial, USB device stack, DMAChannel/eDMA, EventResponder,
   AudioStream), and the dual-core layer (`Multicore`, `MessagingUnit`,
-  `Cm4ImageBank`). `cores/teensy4/` is an uncompiled upstream reference copy —
-  never built.
+  `Cm4ImageBank`). **`cores/teensy4/` used to be an uncompiled upstream
+  reference copy; since the RT1060 board axis it is the core that
+  `EVKB_BOARD=rt1062` actually builds.** That is what broke the licence audit
+  for a day (see `tools/license-audit.sh` above) — it is upstream
+  Teensy/Arduino code, and the five LGPL files it carried have since been
+  replaced with the clean-room versions. Its linker scripts still differ from
+  `imxrt1176.ld` in a way that matters for DMA: `.bss` goes to **DTCM** in
+  `imxrt1060_evkb.ld`, `imxrt1062.ld` and `imxrt1062_t41.ld` alike, and only
+  `.bss.dma` (`DMAMEM`) reaches OCRAM. So a buffer that is DMA-reachable by
+  default on one board is not on the other.
+  ★ **The two cores also differ on the D-cache, and DMA correctness depends on
+  it.** `cores/teensy4` enables it (`startup.c`, `SCB_CCR_IC | SCB_CCR_DC`);
+  `cores/imxrt1176` never writes `SCB_CCR` at all, so OCRAM is coherent there
+  for free. On rt1062 it is not: a DMAMEM buffer is cached write-back unless the
+  MPU says otherwise, so a CPU write can sit in cache while a bus master reads
+  stale memory. That cost a full silicon debug session — the EHCI walked a
+  periodic list of stale garbage and halted with **no error bit set**, because
+  the port-connect ISR had already acked the fatal status. OCRAM is now mapped
+  `MEM_NOCACHE` under `ARDUINO_MIMXRT1060_EVKB`. **Two facts follow: DMA buffers
+  on rt1062 need OCRAM *and* that OCRAM must be uncached, and `SEI`/`UEI`
+  reading 0 never proves no error occurred when an ISR is attached.**
 - **Peripheral libraries are sibling repos**, not in-core: Wire (LPI2C),
   SPI (LPSPI), Audio (graph nodes + WM8962 codec driver), MipiDisplay
   (MIPI-DSI panels), Ethernet stacks, etc. Core-vs-library boundary follows

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # run-all-qemu-gates.sh — run every QEMU gate under examples/ and summarise.
 #
-# Each example owns exactly one gate that boots its image on the custom
-# mimxrt1170-evk QEMU machine and asserts the expected UART tokens. This runs
+# Each example owns exactly one gate that boots its image on the QEMU machine
+# for the board being swept and asserts the expected UART tokens. This runs
 # them all, prints one line per gate, and exits non-zero if any gate failed —
 # so it drops straight into CI or a pre-push check.
 #
@@ -10,8 +10,8 @@
 # tree are named for what they test (run_qemu_usb.sh, run_qemu_lwip.sh, …), and
 # while discovery was the bare name those 38 gates were never swept at all —
 # they went stale unnoticed, and a defect fixed in the other 29 stayed live in
-# them. One gate per example directory, so the "<category>/<name>" id stays
-# unique regardless of the script's filename.
+# them. One gate per example directory, so the "<board>:<category>/<name>" id
+# stays unique regardless of the script's filename.
 #
 # Things this gets right, per the repo's gate contract:
 #
@@ -23,8 +23,8 @@
 #    (If this runner were itself invoked from inside a guarded gate, an
 #    inherited GATE_GUARDED would disable every child's hang backstop.)
 #  * GATE_TIMEOUT is exported so a wedged gate cannot hang the whole sweep.
-#  * Gates do NOT build — they assume build/<name>.elf exists. A missing ELF is
-#    reported as SKIP, not as a confusing gate failure.
+#  * Gates do NOT build — they assume the board's build dir holds an ELF. A
+#    missing ELF is reported as SKIP, not as a confusing gate failure.
 #
 # Serial by default ON PURPOSE: the gates are wall-clock timed (fixed `sleep`s
 # while QEMU boots), so CPU contention from parallel runs can cause spurious
@@ -41,7 +41,7 @@
 #   -q          quiet: only the summary and failing-gate output
 #   -h          this help
 #
-# Patterns (optional) are matched as substrings against "<category>/<name>",
+# Patterns (optional) are matched as substrings against "<board>:<category>/<name>",
 # e.g.  run-all-qemu-gates.sh dualcore        # just the dual-core gates
 #       run-all-qemu-gates.sh wire spi        # anything matching wire OR spi
 #
@@ -95,8 +95,11 @@ REAL_QEMU="${REAL_QEMU:-$HOME/Development/qemu2/build/qemu-system-arm}"
     echo "       build gitlab.com/Newdigate/qemu-rt1170, or set REAL_QEMU=<path>" >&2; exit 2; }
 
 # --- gate discovery ---------------------------------------------------------
-# "<category>/<name>\t<path>" per line, sorted; filtered by any patterns given.
-matches() {                                   # $1 = "category/name"
+# "<board>:<category>/<name>\t<path>" per line, sorted; filtered by any patterns
+# given. Patterns are still plain substrings, so every pre-board pattern
+# ("usb", "serial/serial_test") keeps selecting exactly what it did; a board
+# name is simply one more substring you can pattern on.
+matches() {                                   # $1 = "board:category/name"
     [ -z "$PATTERNS" ] && return 0
     _target=$1
     _found=1
@@ -126,10 +129,27 @@ NGATES=0
 while IFS= read -r gate; do
     [ -n "$gate" ] || continue
     dir=$(dirname "$gate")
-    id=${dir#"$REPO"/examples/}
-    matches "$id" || continue
-    GATES="$GATES$id	$gate"$'\n'
-    NGATES=$((NGATES + 1))
+    ex=${dir#"$REPO"/examples/}
+    # An example declares its boards in a `boards` sidecar, one per line.
+    # Absent means rt1176 only -- that default is what keeps all 81 pre-existing
+    # examples untouched by this change.
+    if [ -f "$dir/boards" ]; then
+        _boards=$(grep -v '^[[:space:]]*#' "$dir/boards" | tr -d ' \t\r' | grep -v '^$')
+        # A sidecar that parses to nothing would drop the example from the sweep
+        # ENTIRELY -- not even a SKIP. That is the one failure this runner must
+        # never have: it under-reports while looking green. Die instead.
+        [ -n "$_boards" ] || {
+            echo "error: $dir/boards declares no board (empty after stripping comments)" >&2
+            exit 2; }
+    else
+        _boards=rt1176
+    fi
+    for _b in $_boards; do
+        id="$_b:$ex"
+        matches "$id" || continue
+        GATES="$GATES$id	$gate"$'\n'
+        NGATES=$((NGATES + 1))
+    done
 done <<EOF
 $(find "$REPO/examples" -type d -name 'build*' -prune -o \
        -name 'run_qemu*.sh' -type f -print | LC_ALL=C sort)
@@ -154,6 +174,13 @@ fi
 run_gate() {
     _id=$1; _path=$2; _slug=$3
     _dir=$(dirname "$_path")
+    _board=${_id%%:*}
+    # rt1176 keeps the historical layout so this change is inert: the plain
+    # "build" dir, no -DEVKB_BOARD, and the toolchain file that actually exists
+    # (it is named for the 1170 FAMILY, not the 1176 part — do not "correct" it
+    # to $_board). Other boards are suffixed and pass their board explicitly.
+    _bdir=build; _tc=rt1170; _bopt=""
+    [ "$_board" = rt1176 ] || { _bdir="build-$_board"; _tc=$_board; _bopt=" -DEVKB_BOARD=$_board"; }
     _log="$RESULT_DIR/$_slug.log"
     _start=$(date +%s)
 
@@ -163,15 +190,18 @@ run_gate() {
         echo "gate is not executable: $_path (chmod +x it)" > "$_log"
         echo "ERROR 0" > "$RESULT_DIR/$_slug.result"; return
     fi
-    if ! ls "$_dir"/build/*.elf >/dev/null 2>&1; then
-        echo "no build/*.elf in $_dir — build the example first:" > "$_log"
-        echo "  cd $_dir && cmake -B build -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake && cmake --build build" >> "$_log"
+    if ! ls "$_dir/$_bdir"/*.elf >/dev/null 2>&1; then
+        echo "no $_bdir/*.elf in $_dir — build the example for $_board first:" > "$_log"
+        echo "  cd $_dir && cmake -B $_bdir$_bopt -DCMAKE_TOOLCHAIN_FILE=toolchain/$_tc-evkb.toolchain.cmake && cmake --build $_bdir" >> "$_log"
         echo "SKIP 0" > "$RESULT_DIR/$_slug.result"; return
     fi
 
     # GATE_GUARDED cleared -> the gate arms its own gtimeout backstop.
+    # EVKB_BOARD is what gate-lib's gate_qemu_machine/gate_build_dir read, so
+    # the board lives in exactly one place per run and no gate names a machine.
     ( unset GATE_GUARDED
       export GATE_TIMEOUT="$GATE_TIMEOUT_SECS"
+      export EVKB_BOARD="$_board"
       cd "$_dir" && "$_path" ) >"$_log" 2>&1
     _rc=$?
     _elapsed=$(( $(date +%s) - _start ))
@@ -208,6 +238,11 @@ running=0
 printf '%s' "$GATES" | {
 while IFS=$'\t' read -r id path; do
     [ -n "$id" ] || continue
+    # Slug = the id with '/' -> '_'; the board's ':' is deliberately KEPT. tr
+    # neither adds nor removes ':', so the text before the first ':' is still
+    # exactly the board -- two boards can never collide, and within one board
+    # the collision surface is the same one this line always had. Mapping ':'
+    # to '_' as well would ADD a collision mode, not remove one.
     slug=$(printf '%s' "$id" | tr '/' '_')
     echo "$id	$slug" >> "$RESULT_DIR/order"
 

@@ -10,9 +10,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/camera_preview_synth.elf"; OUT="$DIR/camera_synth.uart"
+ELF="$DIR/$(gate_build_dir)/camera_preview_synth.elf"; OUT="$DIR/camera_synth.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/camera_synth.dbg" &
 P=$!; gate_pid $P; sleep 12; gate_reap $P
 gate_require_capture "$OUT"

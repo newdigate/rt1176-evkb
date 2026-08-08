@@ -251,4 +251,96 @@ test_require_capture_empty; report test_require_capture_empty $?
 test_require_capture_ok() { _require_capture_case full 0 yes; }
 test_require_capture_ok; report test_require_capture_ok $?
 
+# --- board helpers -----------------------------------------------------------
+#
+# gate_board / gate_qemu_machine / gate_build_dir read $EVKB_BOARD so a gate
+# script never names a QEMU machine itself. Each case runs in its own
+# `( . "$LIB" ... )` subshell (matching test_tmp etc. above) so EVKB_BOARD
+# never leaks between cases or into the rest of this suite.
+test_board_defaults_to_rt1176() {
+    ( . "$LIB"
+      unset EVKB_BOARD
+      _got=$(gate_board)
+      [ "$_got" = "rt1176" ] )
+}
+test_board_defaults_to_rt1176; report test_board_defaults_to_rt1176 $?
+
+test_machine_args_rt1176() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1176
+      _got=$(gate_qemu_machine)
+      [ "$_got" = "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on" ] )
+}
+test_machine_args_rt1176; report test_machine_args_rt1176 $?
+
+test_machine_args_rt1062() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1062
+      _got=$(gate_qemu_machine)
+      [ "$_got" = "-M mimxrt1060-evk -global fsl-imxrt1062.boot-ivt=on" ] )
+}
+test_machine_args_rt1062; report test_machine_args_rt1062 $?
+
+# Every board consoles on LPUART1 and QEMU binds -serial N to LPUART(N+1), so
+# every board takes slot 0. Assert the exact chain per board anyway: getting it
+# wrong yields an EMPTY capture, which reads as "firmware never printed".
+#
+# These two now expect the SAME string, and that is the point rather than an
+# oversight. rt1062 used to need five `-serial null` to reach LPUART6, because
+# its sketches printed to Serial1 -- which cores/teensy4 maps to LPUART6, a UART
+# that on the MIMXRT1060-EVKB only reaches Arduino pins D0/D1 and NOT the DAPLink
+# VCOM. The sketches moved to Serial6 (== LPUART1) so QEMU and silicon read the
+# same wire. The rt1062 case below is therefore a REGRESSION GUARD against the
+# five-null chain coming back: it would still pass in QEMU and still be unusable
+# on the bench.
+test_console_rt1176_is_first_slot() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1176
+      _got=$(gate_console /tmp/u.txt)
+      [ "$_got" = "-serial file:/tmp/u.txt" ] )
+}
+test_console_rt1176_is_first_slot; report test_console_rt1176_is_first_slot $?
+
+test_console_rt1062_is_first_slot_too() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1062
+      _got=$(gate_console /tmp/u.txt)
+      [ "$_got" = "-serial file:/tmp/u.txt" ] )
+}
+test_console_rt1062_is_first_slot_too; report test_console_rt1062_is_first_slot_too $?
+
+test_build_dir_rt1176_is_plain_build() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1176
+      _got=$(gate_build_dir)
+      [ "$_got" = "build" ] )
+}
+test_build_dir_rt1176_is_plain_build; report test_build_dir_rt1176_is_plain_build $?
+
+test_build_dir_rt1062_is_suffixed() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1062
+      _got=$(gate_build_dir)
+      [ "$_got" = "build-rt1062" ] )
+}
+test_build_dir_rt1062_is_suffixed; report test_build_dir_rt1062_is_suffixed $?
+
+# Assert the SPECIFIC failure, not merely "non-zero". A bare non-zero check
+# passes when the function does not exist at all (127, command not found), so
+# it would have gone green before gate_qemu_machine was ever written -- a
+# vacuous test, which this tree treats as a defect in its own right (see
+# tools/gate-vacuity.test.sh). gate_qemu_machine calls `exit 2` directly (not
+# `return`), so the call is confined to its own command-substitution subshell
+# (2>&1 >/dev/null redirect order: stderr follows the ORIGINAL stdout into the
+# capture, then stdout itself is discarded) and only the captured exit status
+# and stderr text escape.
+test_unknown_board_fails_loudly() {
+    ( . "$LIB"
+      EVKB_BOARD=rt9999
+      _err=$(gate_qemu_machine 2>&1 >/dev/null); _rc=$?
+      [ "$_rc" -eq 2 ] || exit 1
+      case "$_err" in *rt9999*) exit 0 ;; *) exit 1 ;; esac )
+}
+test_unknown_board_fails_loudly; report test_unknown_board_fails_loudly $?
+
 exit $FAILED

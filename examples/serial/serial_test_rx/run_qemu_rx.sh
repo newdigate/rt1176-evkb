@@ -10,9 +10,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/serial_test_rx.elf"
+ELF="$DIR/$(gate_build_dir)/serial_test_rx.elf"
 PORT=45455
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -chardev socket,id=u1,host=127.0.0.1,port=$PORT,server=on,wait=off \
     -serial chardev:u1 -d guest_errors -D "$DIR/rx.dbg" &
 P=$!; gate_pid $P

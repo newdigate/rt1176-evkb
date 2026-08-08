@@ -1,0 +1,7 @@
+# Boards this example is built and gated for. See
+# docs/superpowers/specs/2026-08-08-rt1062-usb-audio-phase4-design.md
+#
+# rt1062 is the point of Phase 4: this is the first time usb_audio*.cpp compiles
+# for __IMXRT1062__ at all.
+rt1176
+rt1062

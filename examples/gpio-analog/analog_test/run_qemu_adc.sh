@@ -10,9 +10,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/analog_test.elf"; OUT="$DIR/adc.uart"
+ELF="$DIR/$(gate_build_dir)/analog_test.elf"; OUT="$DIR/adc.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/adc.dbg" &
 P=$!; gate_pid $P
 # Poll for the run's terminal token instead of guessing a duration. The fixed

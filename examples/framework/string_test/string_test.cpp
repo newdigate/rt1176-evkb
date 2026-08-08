@@ -6,14 +6,26 @@
 #include <string.h>
 #include <math.h>
 
+// The console is LPUART1 on BOTH boards. The two cores just name it
+// differently: cores/imxrt1176 calls LPUART1 `Serial1`, while cores/teensy4
+// follows the Teensy pin-0/1 convention and calls LPUART6 `Serial1` and LPUART1
+// `Serial6`. Naming it once here is what keeps QEMU and silicon reading the same
+// wire -- on the MIMXRT1060-EVKB, LPUART1 (GPIO_AD_B0_12/13) is the DAPLink VCOM,
+// whereas LPUART6 only reaches Arduino header pins D0/D1.
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+#define CONSOLE Serial6
+#else
+#define CONSOLE Serial1
+#endif
+
 static void check(bool ok, const char *tag) {
-	Serial1.print(tag); Serial1.println(ok ? "=OK" : "=FAIL");
+	CONSOLE.print(tag); CONSOLE.println(ok ? "=OK" : "=FAIL");
 }
 static String make_rvo() { String r("rv"); r += "o"; return r; }
 
 void setup() {
-	Serial1.begin(115200);
-	Serial1.println("STRING GATE");
+	CONSOLE.begin(115200);
+	CONSOLE.println("STRING GATE");
 	bool all = true; bool ok;
 
 	// ★ default ctor, ★ c-string ctor, ★ length, ★ c_str
@@ -119,10 +131,10 @@ void setup() {
 	// Print::print(String&) end-to-end (chunked getBytes path) — the runner
 	// greps the uart for this exact line.
 	{ String s("print-me-via-Print-chunks-print-me-via-Print-chunks-END");
-	  Serial1.print("PRINTSTR:"); Serial1.println(s); }
+	  CONSOLE.print("PRINTSTR:"); CONSOLE.println(s); }
 
-	Serial1.println(all ? "STRING_ALL=PASS" : "STRING_ALL=FAIL");
-	Serial1.println("GATE=DONE");
+	CONSOLE.println(all ? "STRING_ALL=PASS" : "STRING_ALL=FAIL");
+	CONSOLE.println("GATE=DONE");
 }
 
 void loop() {}

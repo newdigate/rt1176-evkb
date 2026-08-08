@@ -65,7 +65,7 @@ endif()
 set(USBHOST ${EVKB_USBHOST_T36_DIR})
 target_sources(usb_audio_graph_test.elf PRIVATE
     ${USBHOST}/ehci.cpp ${USBHOST}/ehci_iso.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
-    ${USBHOST}/memory.cpp
+    ${USBHOST}/memory.cpp ${USBHOST}/print.cpp
     ${USBHOST}/usb_audio.cpp ${USBHOST}/usb_audio_parse.cpp
     ${USBHOST}/usb_audio_fifo.cpp ${USBHOST}/usb_audio_feedback.cpp
     ${USBHOST}/usb_audio2_parse.cpp ${USBHOST}/usb_audio_ctrl.cpp)

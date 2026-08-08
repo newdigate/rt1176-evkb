@@ -81,12 +81,12 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/cm4_graph_usb_capstone.elf"
+ELF="$DIR/$(gate_build_dir)/cm4_graph_usb_capstone.elf"
 OUT="$DIR/cm4_graph_usb.uart"
 MON="$DIR/mon.sock"
 rm -f "$OUT" "$MON"
 gate_tmp "$MON"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/cm4_graph_usb.dbg" \
     -audiodev none,id=snd0 \
     -monitor unix:"$MON",server,nowait &

@@ -1,0 +1,12 @@
+# Boards this example is built and gated for.
+#
+# rt1062 is here for regression coverage, not because a bug is outstanding:
+# EVKB_BOARD=rt1062 links cores/teensy4, which carries its OWN WString.cpp and
+# nonstd.c. Those get COMPILED by other rt1062 builds (serial_test links them
+# too -- WString.cpp alone defines 102 symbols in that libcores.o.a), but until
+# now nothing ASSERTED their behaviour on this core: compiled is not tested. The
+# two implementations agree today (both use the lowercase 0123456789abcdef...
+# digit table, so String(255, HEX) is "ff" on both) -- this gate is what keeps
+# them agreeing now that teensy4 is compiled rather than reference-only.
+rt1176
+rt1062

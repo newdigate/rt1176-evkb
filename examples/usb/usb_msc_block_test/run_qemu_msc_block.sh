@@ -21,13 +21,13 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/usb_msc_block_test.elf"
+ELF="$DIR/$(gate_build_dir)/usb_msc_block_test.elf"
 OUT="$DIR/msc_block.uart"; DBG="$DIR/msc_block.dbg"; IMG="$DIR/usb.img"
 rm -f "$OUT" "$DBG"
 # 64 MB bare raw image (no filesystem needed for raw block R/W); sparse.
 [ -f "$IMG" ] || mkfile -n 64m "$IMG"
 
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -icount shift=auto -display none \
     -serial file:"$OUT" -d guest_errors -D "$DBG" \
     -drive if=none,id=stick,file="$IMG",format=raw \

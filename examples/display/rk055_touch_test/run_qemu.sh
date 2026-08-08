@@ -10,9 +10,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/rk055_touch_test.elf"; OUT="$DIR/rk055_touch.uart"
+ELF="$DIR/$(gate_build_dir)/rk055_touch_test.elf"; OUT="$DIR/rk055_touch.uart"
 rm -f "$OUT" "$DIR/rk055_touch.dbg"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/rk055_touch.dbg" &
 P=$!; gate_pid $P
 # 10s: the 8s the sibling display gates use for a cold binary (SEMC init + a

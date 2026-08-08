@@ -25,7 +25,7 @@ teensy_target_link_libraries(usb_midi_test cores)
 set(USBHOST ${EVKB_USBHOST_T36_DIR})
 target_sources(usb_midi_test.elf PRIVATE
     ${USBHOST}/ehci.cpp ${USBHOST}/ehci_iso.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
-    ${USBHOST}/memory.cpp ${USBHOST}/midi.cpp)
+    ${USBHOST}/memory.cpp ${USBHOST}/print.cpp ${USBHOST}/midi.cpp)
 
 # USBHost_t36.h unconditionally does `#include <FS.h>` (resolves from the core,
 # present from the SD work) AND `#include <SdFat.h>`.  SdFat.h uses relative

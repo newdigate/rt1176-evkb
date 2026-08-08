@@ -10,9 +10,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/interval_timer_test.elf"; OUT="$DIR/it.uart"
+ELF="$DIR/$(gate_build_dir)/interval_timer_test.elf"; OUT="$DIR/it.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -icount shift=auto \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/it.dbg" &
 P=$!; gate_pid $P; sleep 20; gate_reap $P   # -icount couples delay() (DWT) and the PIT (QEMU_CLOCK_VIRTUAL) so counts are deterministic

@@ -8,6 +8,55 @@ time on a subsystem you probably are not touching.
 
 ---
 
+## `rt1062:usb/usb_descriptor_survey` — RESOLVED 2026-08-08 (was red by design)
+
+**Status: GREEN on both boards.** Kept here as a record because this gate was
+deliberately carried red for part of a day, and because the reason it went green
+reverses a conclusion this file previously asserted.
+
+Phase 2 gave `fsl-imxrt1062` a USB DMA view with the ITCM and DTCM windows
+punched out, mirroring `fsl-imxrt1170`. That turned the gate red: USBHost_t36's
+`periodictable` linked at `0x20002000`, inside DTCM, so the modelled controller
+could not read its own periodic list. The red was carried rather than fixed
+because it was **not established** that RT1062 silicon actually enforces the
+constraint — and the available evidence pointed the other way, since upstream
+USBHost_t36 leaves those buffers in `.bss` (= DTCM) and USB host works on a
+Teensy 4.1.
+
+**The bench settled it, and the model was right.** On a MIMXRT1060-EVKB with a
+USB audio adapter in J47, read over the debug probe while the firmware ran:
+
+```
+PORTSC1 = 0x10001805   CCS=1 PE=1 PP=1 -- device connected, powered, enabled
+USBSTS  = 0x0000d09a   HCH=1 (halted) + SEI=1 (SYSTEM ERROR)
+```
+
+`SEI` is the controller faulting on its own DMA fetch from DTCM. Rebuilt with
+those buffers in `DMAMEM`/OCRAM (USBHost_t36 `fa939cc`), `USBSTS` became
+`0x0000d080` — SEI gone, same board, same cable, one variable changed. The same
+change makes this QEMU gate pass **with the TCM holes still in place**.
+
+So the red was a **true positive**: the model correctly refused an access the
+silicon also refuses, and the firmware really was handing the controller
+TCM-resident memory. Do not remove the holes.
+
+✅ **The board enumerates too, as of the same day.** `DMAMEM` was only half the
+fix. The EVKB core enables the D-cache and maps OCRAM write-back, so once these
+descriptors moved out of DTCM the CPU's writes sat in cache while the EHCI read
+stale physical memory — it walked a garbage periodic list and halted one frame
+after start (`HCH=1`, `FRINDEX` frozen at `0x8`, and **no error bit**, because
+the port-connect ISR had already acked the fatal status). Mapping OCRAM
+non-cached on that board (`cores` `a090c9d`, guarded by
+`ARDUINO_MIMXRT1060_EVKB`) closes it. The EVKB now walks all 244 descriptor
+bytes of a real GeneralPlus UAC1 device on J47 — four interfaces, both
+isochronous endpoints, the HID interface.
+
+The two halves are causally linked, not independent bugs: DTCM is unreachable so
+the buffers must go to OCRAM, and OCRAM is cached so moving them there creates
+the coherency exposure. Fixing either alone leaves the port dead.
+
+---
+
 ## `dualcore/cm4_audio_test` — BROKEN, cause unidentified
 
 **Status:** broken. **Do not run by default.** Not a regression from any current work.
@@ -263,6 +312,191 @@ narrow as written: it is the DUAL-CORE gates as a class that are load-sensitive,
 and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
+
+**2026-08-08 (Phase 4 — UAC1 host on two boards):** `usb/usb_audio_uac1_test`
+gains a gate AND a second board in one move: sweep **84 → 86**, two gate ids
+(`rt1176:` and `rt1062:`) from a single new `run_qemu.sh`. It had **no** gate at
+all before — there was no UAC device in QEMU for the host stack to enumerate
+until the emulated `usb-audio` device came into use, so there was nothing to
+assert. Measured `86 passed, 0 failed, 0 SKIP` at `-j 2` on a machine at load
+6.3, with `rt1176:dualcore/cm4_audio_test` green in that run.
+
+Expectation moves to **`86/0/0`**, or **`85/1/0`** when the nondeterministic
+`cm4_audio_test` is red. Zero SKIP either way. The permitted reds are
+**unchanged** — this gate is green on both boards.
+
+★ **The gate proves the CONTROL PLANE only, and that is deliberate.** It asserts
+enumeration, descriptor parse, interface/alt-setting selection and endpoint
+setup. It does **not** assert `SITD PASS` or `pkts/s > 0`, because QEMU never
+runs the isochronous descriptor: the iTD sits with `active=1`, `bytes_left`
+unchanged and no error flags, forever. `SITD FAIL` is therefore the EXPECTED
+output under QEMU. Anyone who "fixes" that by asserting `SITD PASS` will make
+the gate permanently red for no reason at all — the firmware is fine and the
+model is what is missing.
+
+Silicon carried the rest, and the evidence is committed at
+`examples/usb/usb_audio_uac1_test/transcript_hw_evkb.txt`: a GeneralPlus
+`1B3F:2008` UAC1 adapter in J47, an audible 1 kHz tone, and `pkts/s=1000`
+sustained for **29 consecutive seconds** (`total` 10976 → 38976). 1000 pkts/s is
+the theoretical maximum — one packet per 1 ms USB frame — so that is 28000
+packets with **none** dropped.
+
+★ **That measurement closed an open question rather than merely passing.** The
+board-axis design §1.4 predicted the RT1062 has *less* stall headroom than the
+RT1176: the stall ceiling is wall-clock, and at 600 MHz everything between
+service points takes 1.66× longer. Phase 3 then left **all** of DMAMEM uncached
+on this board, adding a second cost on top. Neither is observable — the transfer
+ring is serviced perfectly, at the frame rate, for half a minute. `pkts/s`
+remains the detector if some future workload ever starves it; the fix then would
+be a dedicated non-cached `USBHOST_DMAMEM` section, **not** reverting the
+uncached mapping.
+
+**2026-08-08 (task #74 — String coverage on the second board):**
+`framework/string_test` gains its rt1062 half: sweep **83 → 84**, again without
+a new example. It passed first time, all 21 assertion groups including
+`CTOR_NUM` (which asserts `String(255, HEX) == "ff"`).
+
+Coverage, not a bug hunt: `EVKB_BOARD=rt1062` links `cores/teensy4`, which has
+its **own** `WString.cpp` and `nonstd.c`. Other rt1062 builds already *compile*
+them — `serial_test`'s `libcores.o.a` has 102 symbols from `WString.cpp` alone —
+but nothing **asserted** their behaviour, and compiled is not tested. That gap
+mattered more once the board axis turned that core from a reference copy into
+something built for real.
+
+Worth recording: the first rt1062 run failed with an **empty capture**, because
+the runner still had a bare `-serial file:`. That is the documented LPUART6 trap
+and it is worth having seen once — the firmware ran perfectly and printed to
+LPUART6, which nothing was bound to, so the failure is indistinguishable from an
+image that never started. Fixed by taking the chain from `gate_console` (then
+named `gate_serial1`), which is what every two-board gate must do.
+
+Superseded within the day: `gate_serial1` put rt1062 in the SIXTH `-serial` slot
+because those sketches printed to `Serial1` = LPUART6 on `cores/teensy4`. That
+is the wrong UART on this board — LPUART6 reaches Arduino pins D0/D1, not the
+DAPLink VCOM — so the gate and the bench were reading different wires. The
+rt1062 sketches now use `Serial6` (== LPUART1, the VCOM), and `gate_console`
+emits a plain `-serial file:` for both boards.
+
+Expectation moves to **`84/0/0`**, or **`83/1/0`** when the nondeterministic
+`cm4_audio_test` is red. `rt1062:usb/usb_descriptor_survey` went green later the
+same day (see its section at the top), so **there is once again only ONE
+permitted red**, and it is the dual-core intermittent.
+
+**2026-08-08 (Phase 2 — RT1062 USB host in QEMU):** `usb/usb_descriptor_survey`
+gains its rt1062 half: sweep **82 → 83**, again without a new example.
+
+Expectation is **`83/0/0`**, or **`82/1/0`** when
+`rt1176:dualcore/cm4_audio_test` is red — which is nondeterministic and not
+reliably predicted by machine load (see its table below). Zero SKIP either way.
+(Superseded by the 84-gate entry above; kept for the Phase 2 history.)
+
+There are now **two** permitted reds, and they are different in kind — do not
+conflate them:
+
+- `rt1062:usb/usb_descriptor_survey` — **red by design, every run, any load.**
+  Its own section at the top of this file explains why and what would close it.
+  A sweep where this one is GREEN means someone changed the model; go find out
+  who and why before celebrating.
+- `rt1176:dualcore/cm4_audio_test` — the load-sensitive intermittent, and the
+  threshold is sharper than previously recorded (see the table below).
+
+With two permitted reds, **read the gate names in the summary rather than
+trusting the count** — `81/2/0` with the wrong two gates red is not a pass.
+
+Measured 2026-08-08 at `-j 2`: **`81 passed, 2 failed, 0 SKIP`** — exactly those
+two. `cm4_audio_test` failed in its documented form (`fft_peak_bin` wrong,
+`AUDIO_CM4_DET=FAIL`, while `codec_ack=1` and `cm7_audio_isers=0` passed).
+
+Six readings were taken on 2026-08-08. **Do not read a load threshold into
+them — one was drawn and it did not survive the next measurement.**
+
+| run | 1-min load | result |
+|-----|-----------:|--------|
+| in sweep, `-j 2` | 6.8 at start | FAIL |
+| individual | 5.5 | FAIL |
+| individual | 4.1 | FAIL |
+| individual | 3.4 | **PASS** (6 s) |
+| individual | 3.4 | **PASS** |
+| in sweep, `-j 2` | **8.6 at start** | **PASS** |
+
+The first four readings fell in order and looked exactly like a threshold near
+4, and that conclusion was written down here and then falsified within the hour
+by the last row: a full sweep starting at load **8.6** — higher than the one
+that failed — passed this gate. So load correlates loosely at best, and the
+honest description is **nondeterministic**.
+
+What survives: a single red here means nothing on its own, re-run it, and
+**four consecutive readings are not a trend either**. What does not survive:
+any claim about a specific load number, including the 2026-07-28 entry's
+"~4–5" and the threshold this table used to assert.
+
+It was never a Phase 2 regression regardless: this phase's two qemu2 commits
+touch only `hw/arm/fsl-imxrt1062.c`, `hw/misc/imxrt1060_anatop.c` and
+`include/hw/arm/fsl-imxrt1062.h`, and `cm4_audio_test` has no `boards` sidecar,
+so it runs `-M mimxrt1170-evk` — a model none of those files build.
+
+Licence audit: **PASS**, with both rt1062 build directories walked
+(`serial_test/build-rt1062` 136 dep paths, `usb_descriptor_survey/build-rt1062`
+203). `tools/license-audit.test.sh`: 20/20. The ★★ block above is closed.
+
+Two things worth not rediscovering:
+
+- **The EHCI host was never missing from the 1062 model.** `TYPE_CHIPIDEA`
+  derives from `TYPE_SYS_BUS_EHCI` and is shared with the 1170. Only the wiring
+  on top was absent. USBHost_t36's README claimed otherwise and was corrected.
+- **`-d unimp` did NOT find this phase's bug, and would not have.** The RT1062
+  hang was `hw/misc/imxrt1060_anatop.c` modelling the `SET`/`CLR`/`TOG` alias
+  words as ordinary storage instead of alias ports onto the base register, so
+  every alias write vanished and `ehci.cpp`'s `PLL_USB2` loop spun forever. The
+  registers are all *implemented*, so `unimp` printed nothing — the debug log
+  was three benign lines. What found it was attaching gdb to QEMU's gdbstub
+  (`-s`) and reading the PC, then reading `0x400D8020` and `0x400D8024` live.
+  **The tell was in the UART, not the log:** the firmware printed its banner and
+  then no 2-second heartbeat at all. That is a hang in `setup()`, not a failure
+  to enumerate, and the two look identical if you only read the first line.
+
+**2026-08-08 (the board axis):** `serial/serial_test` becomes the first example
+gated on two boards, so the sweep moves **81 → 82** without a new example: the
+same gate script runs once for `rt1176` and once for `rt1062`
+(MIMXRT1060-EVKB). Gate ids now carry a board prefix.
+
+Expectation is `82/0/0` or `81/1/0` with the documented
+`rt1176:dualcore/cm4_audio_test` singleton, zero SKIP either way.
+
+Measured 2026-08-08 at `-j 2` on a machine at load ~4: **`81 passed, 1 failed,
+0 SKIP`**, the failure being `rt1176:dualcore/cm4_audio_test`
+(`fft_peak_bin` wrong, `AUDIO_CM4_DET=FAIL`) — the documented intermittent, in
+its documented form. Both board variants of `serial/serial_test` passed
+(`rt1176` 1 s, `rt1062` 2 s).
+
+Three notes on reading this sweep:
+
+- **A red on `rt1062:` and green on `rt1176:` for the same example is not a
+  flake** — it is the board axis doing its job, and it means the 1060 build
+  genuinely differs.
+- **The SKIP signal is now per board**: an example that declares `rt1062` but
+  has no `build-rt1062/*.elf` is a SKIP, and the runner prints the exact
+  `cmake` line to fix it.
+- ★ **`rt1062:serial/serial_test` is RED on a fresh clone**, and that is
+  expected rather than a regression. Getting it green needed a qemu2 change
+  (`c850405bf9`, wiring `TYPE_IMXRT_SEMC` into the RT1062 SoC, which had
+  modelled `semc-ctrl` as an unimplemented stub), and qemu2 changes stay local
+  to this machine per the GPL one-way firewall. Same situation as Phase 7.1's
+  IRQ-135 split. Without it the Teensy core's unconditional SDRAM bring-up
+  polls a done bit that never arrives — 1,000,000 reads of INTR offset `0x3c`,
+  bounded but far past any gate timeout, so the capture stays empty.
+
+★★ **The licence audit did NOT pass on this branch when the board axis landed,
+and that blocked the phase from closing. RESOLVED the same day — see the Phase 2
+entry below.** `EVKB_BOARD=rt1062` links `cores/teensy4`, whose `WString.cpp`,
+`IPAddress.cpp`, `Stream.cpp`, `WMath.cpp` and `Time.cpp` were LGPL-2.1.
+`tools/license-audit.sh` allows `cores/teensy4/` only while its objects define
+no symbols — true for as long as that core was reference-only. Once compiled,
+the audit reported `DUAL-LICENSED SOURCE NOT EMPTY` five times and exited 1.
+Nothing LGPL ever reached `serial_test.elf` (`--gc-sections` dropped all five),
+but that was a property of that example, not of the board. It was a licence
+decision, not a harness fix, and it was taken the only acceptable way: the five
+were **replaced** with the MIT clean-room versions (`cores` `99f7657`).
 
 **2026-08-07 (the capstone: an audio graph on the CM4 feeding its own USB
 stream):** `dualcore/cm4_graph_usb_capstone` joins the sweep: **80 → 81

@@ -10,11 +10,11 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/serial_test.elf"
+ELF="$DIR/$(gate_build_dir)/serial_test.elf"
 OUT="$DIR/serial.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
-    -display none -serial file:"$OUT" -d guest_errors -D "$DIR/serial.dbg" &
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
+    -display none $(gate_console "$OUT") -d guest_errors -D "$DIR/serial.dbg" &
 P=$!; gate_pid $P
 # Poll for the last token this gate asserts instead of guessing a duration. The
 # fixed `sleep 3` this replaces made the gate LOAD-SENSITIVE: on a busy machine
@@ -33,6 +33,10 @@ done
 gate_reap $P
 gate_require_capture "$OUT"
 echo "==== captured UART ===="; cat "$OUT"
-grep -q "RT1176 Serial1 up" "$OUT" || { echo "FAIL: banner missing"; exit 1; }
+case "$(gate_board)" in
+    rt1176) BANNER="RT1176 Serial1 up" ;;
+    rt1062) BANNER="RT1062 Serial6 up" ;;
+esac
+grep -q "$BANNER" "$OUT" || { echo "FAIL: banner missing (expected '$BANNER')"; exit 1; }
 grep -q "count=3" "$OUT" || { echo "FAIL: counter missing"; exit 1; }
 echo "PASS: QEMU serial output verified"

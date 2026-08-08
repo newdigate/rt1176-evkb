@@ -44,6 +44,7 @@ teensy_add_cm4_image(cm4_usb_enum
             ${EVKB_USBHOST_T36_DIR}/enumeration.cpp
             ${EVKB_USBHOST_T36_DIR}/hub.cpp
             ${EVKB_USBHOST_T36_DIR}/memory.cpp
+            ${EVKB_USBHOST_T36_DIR}/print.cpp
             ${EVKB_USBHOST_T36_DIR}/usbhost_isr_entry.cpp
     INCLUDE_DIRS ${CMAKE_CURRENT_LIST_DIR}/cm4
                  ${EVKB_CORES_DIR}/cm4_shim

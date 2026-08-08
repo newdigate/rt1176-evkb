@@ -44,10 +44,10 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/usb_descriptor_survey.elf"; OUT="$DIR/survey.uart"
+ELF="$DIR/$(gate_build_dir)/usb_descriptor_survey.elf"; OUT="$DIR/survey.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
-    -display none -serial file:"$OUT" -d guest_errors -D "$DIR/survey.dbg" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
+    -display none $(gate_console "$OUT") -d guest_errors -D "$DIR/survey.dbg" \
     -audiodev none,id=snd0 \
     -device usb-audio,bus=usbhost.0,port=1,audiodev=snd0 &
 P=$!; gate_pid $P

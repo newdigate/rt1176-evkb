@@ -10,9 +10,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/lvgl_rpi_panel_test.elf"; OUT="$DIR/lvgl_rpi.uart"
+ELF="$DIR/$(gate_build_dir)/lvgl_rpi_panel_test.elf"; OUT="$DIR/lvgl_rpi.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/lvgl_rpi.dbg" &
 P=$!; gate_pid $P
 # sleep 12 (vs 10 for the ILI9341 gate): this image also runs the whole RPi panel

@@ -19,7 +19,7 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/usb_msc_fs_test.elf"
+ELF="$DIR/$(gate_build_dir)/usb_msc_fs_test.elf"
 OUT="$DIR/msc_fs.uart"; DBG="$DIR/msc_fs.dbg"; IMG="$DIR/usb.img"
 rm -f "$OUT" "$DBG" "$IMG"
 
@@ -31,7 +31,7 @@ diskutil partitionDisk "$DISK" 1 MBR "MS-DOS FAT16" RTTEST 100% >/dev/null \
     || { hdiutil detach "$DISK" >/dev/null 2>&1 || true; echo "FAIL: partition/format"; exit 1; }
 hdiutil detach "$DISK" >/dev/null
 
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -icount shift=auto -display none \
     -serial file:"$OUT" -d guest_errors -D "$DBG" \
     -drive if=none,id=stick,file="$IMG",format=raw \

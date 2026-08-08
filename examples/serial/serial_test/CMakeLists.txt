@@ -4,7 +4,9 @@ project(serial_test)
 # TEENSY_VERSION / CPU_CORE_SPEED / COMPILERPATH / COREPATH are supplied by the
 # toolchain file (toolchain/rt1170-evkb.toolchain.cmake). Keep a fallback here
 # so a bare `cmake -B build .` without the toolchain file still selects 117.
-set(TEENSY_VERSION 117 CACHE STRING "")
+if(NOT DEFINED TEENSY_VERSION)
+    set(TEENSY_VERSION 117 CACHE STRING "")
+endif()
 
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 # Use the LOCAL macros checkout (branch imxrt1176) rather than fetching from

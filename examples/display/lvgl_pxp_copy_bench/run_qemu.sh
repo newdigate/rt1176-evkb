@@ -5,9 +5,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/lvgl_pxp_copy_bench.elf"; OUT="$DIR/pxp_copy_bench.uart"
+ELF="$DIR/$(gate_build_dir)/lvgl_pxp_copy_bench.elf"; OUT="$DIR/pxp_copy_bench.uart"
 rm -f "$OUT" "$DIR/pxp_copy_bench.dbg"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/pxp_copy_bench.dbg" &
 P=$!; gate_pid $P
 # Poll for the DONE token rather than burning a fixed window; ceiling 20 s

@@ -1,8 +1,8 @@
 #!/bin/sh
 # QEMU gate for usb_audio_capture_test.
 #
-# WHAT THIS CAN AND CANNOT PROVE. The mimxrt1170-evk QEMU machine has no USB
-# audio device model, so nothing here ever enumerates and no packet is ever
+# WHAT THIS CAN AND CANNOT PROVE. This gate's QEMU machine has no USB audio
+# device model, so nothing here ever enumerates and no packet is ever
 # captured. This gate therefore says NOTHING about whether recording works --
 # that is silicon's job, and the design spec (docs/superpowers/specs/
 # 2026-08-05-uac-host-input-and-duplex-design.md section 6) says so in as many
@@ -26,9 +26,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/usb_audio_capture_test.elf"; OUT="$DIR/capture.uart"
+ELF="$DIR/$(gate_build_dir)/usb_audio_capture_test.elf"; OUT="$DIR/capture.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/capture.dbg" &
 P=$!; gate_pid $P
 # Heartbeat is every 2 s, so seq=2 lands around 4 s; 60 quarter-seconds is

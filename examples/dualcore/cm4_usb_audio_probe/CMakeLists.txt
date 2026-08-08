@@ -55,6 +55,7 @@ teensy_add_cm4_image(cm4_usb_audio
             ${EVKB_USBHOST_T36_DIR}/enumeration.cpp
             ${EVKB_USBHOST_T36_DIR}/hub.cpp
             ${EVKB_USBHOST_T36_DIR}/memory.cpp
+            ${EVKB_USBHOST_T36_DIR}/print.cpp
             ${EVKB_USBHOST_T36_DIR}/usbhost_isr_entry.cpp
             ${EVKB_USBHOST_T36_DIR}/usb_audio.cpp
             ${EVKB_USBHOST_T36_DIR}/usb_audio_parse.cpp

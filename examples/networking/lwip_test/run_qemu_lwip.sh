@@ -15,7 +15,7 @@ QEMU="$EVKB/tools/qrun"
 # runner that takes CLI args).
 export PHASE="${1:-${PHASE:-boot}}"
 gate_init
-ELF="$DIR/build/lwip_test.elf"; VCOM="$DIR/vcom.uart"; DBG="$DIR/lwip.dbg"; RES="$DIR/lwip.result"
+ELF="$DIR/$(gate_build_dir)/lwip_test.elf"; VCOM="$DIR/vcom.uart"; DBG="$DIR/lwip.dbg"; RES="$DIR/lwip.result"
 gate_tmp "$RES"; PORT=15600
 rm -f "$VCOM" "$DBG" "$RES"
 case "$PHASE" in
@@ -25,7 +25,7 @@ case "$PHASE" in
   tcp)   NIC="-nic user,model=imx.enet,hostfwd=tcp::5555-:7" ;;
   *)     NIC="-nic user,model=imx.enet" ;;
 esac
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$VCOM" $NIC -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
 if [ "$PHASE" = ping ] || [ "$PHASE" = udp ] || [ "$PHASE" = tcp ]; then

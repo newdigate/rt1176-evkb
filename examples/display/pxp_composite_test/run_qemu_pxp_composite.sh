@@ -5,12 +5,12 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/pxp_composite_test.elf"; OUT="$DIR/pxp_composite.uart"
+ELF="$DIR/$(gate_build_dir)/pxp_composite_test.elf"; OUT="$DIR/pxp_composite.uart"
 rm -f "$OUT" "$DIR/pxp_composite.dbg"
 # A full run measures 31 s wall to PXP_COMPOSITE_DONE (the four 6 s ritual
 # holds + the fade dominate), so the qrun ceiling is raised above its 60 s
 # default and the poll ceiling is 50 s (200 x 0.25 -- measured + ~60% margin).
-QRUN_TIMEOUT=90 "$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on \
+QRUN_TIMEOUT=90 "$QEMU" $(gate_qemu_machine) \
     -kernel "$ELF" -display none -serial file:"$OUT" \
     -d guest_errors -D "$DIR/pxp_composite.dbg" &
 P=$!; gate_pid $P

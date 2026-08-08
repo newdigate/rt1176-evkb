@@ -10,9 +10,9 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/build/eeprom_test.elf"; OUT="$DIR/eeprom.uart"
+ELF="$DIR/$(gate_build_dir)/eeprom_test.elf"; OUT="$DIR/eeprom.uart"
 rm -f "$OUT"
-"$QEMU" -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel "$ELF" \
+"$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/eeprom.dbg" &
 P=$!; gate_pid $P
 # Poll for EEPROM_ALL -- the capture's last line, printed after every token

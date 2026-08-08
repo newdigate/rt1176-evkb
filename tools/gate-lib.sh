@@ -62,6 +62,68 @@ gate_require_capture() {   # gate_require_capture FILE [WHAT]
     exit 1
 }
 
+# --- board axis --------------------------------------------------------------
+# A gate never names a QEMU machine. It asks here, and the answer comes from
+# $EVKB_BOARD (default rt1176). That is what stops a gate booting the wrong
+# machine: with the name in 81 scripts, adding a board meant 81 chances to get
+# it wrong, and a gate that boots the wrong model can still PASS vacuously.
+
+gate_board() { echo "${EVKB_BOARD:-rt1176}"; }
+
+# Emit the -M/-global pair for the current board. Both machines expose a
+# "boot-xip" bool (fsl-imxrt1170.c / fsl-imxrt1062.c DEFINE_PROP_BOOL), so only
+# the SoC type name differs. Unknown boards EXIT rather than defaulting: a typo
+# in EVKB_BOARD must be a loud failure, never a silent run on the other board.
+gate_qemu_machine() {
+    case "$(gate_board)" in
+        rt1176) echo "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on" ;;
+        rt1062) echo "-M mimxrt1060-evk -global fsl-imxrt1062.boot-ivt=on" ;;
+        *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
+    esac
+}
+
+# Emit the -serial chain that lands FILE on the board's CONSOLE UART.
+#
+# QEMU binds the Nth -serial to LPUART(N+1), so which slot the capture goes in
+# depends on which LPUART the firmware prints to. Every board in this tree now
+# consoles on **LPUART1**, so every board takes slot 0 and the two arms below are
+# deliberately identical.
+#
+# They did not used to be, and the history is the reason this function exists.
+# The two cores number the same peripherals differently: LPUART1 is `Serial1` on
+# cores/imxrt1176 but `Serial6` on cores/teensy4, which follows the Teensy
+# pin-0/1 convention and calls LPUART6 `Serial1` instead. The rt1062 examples
+# originally printed to Serial1/LPUART6 and this function emitted five
+# `-serial null` to reach the sixth slot. That passed in QEMU and was USELESS ON
+# SILICON: LPUART6 goes to the EVKB's Arduino header pins D0/D1, while the
+# board's DAPLink/OpenSDA VCOM is wired to LPUART1 (GPIO_AD_B0_12/13). So the
+# gate and the bench were reading different wires. The rt1062 sketches now use
+# Serial6, and QEMU and silicon finally agree on which UART is the console.
+#
+# KEEP THIS FUNCTION even though the arms match. It is the seam for a future
+# board whose console is not LPUART1, and re-hardcoding `-serial file:` into the
+# gate scripts is exactly what the board axis exists to prevent. The failure it
+# guards against is silent: an empty capture is indistinguishable from firmware
+# that never ran.
+gate_console() {   # gate_console FILE
+    case "$(gate_board)" in
+        rt1176) echo "-serial file:$1" ;;   # Serial1 == LPUART1
+        rt1062) echo "-serial file:$1" ;;   # Serial6 == LPUART1
+        *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
+    esac
+}
+
+# Build directory for the current board. rt1176 keeps the plain "build" so the
+# 81 pre-existing gates, the sweep runner's SKIP probe and every documented
+# `cmake -B build` line are unaffected; new boards are suffixed.
+gate_build_dir() {
+    case "$(gate_board)" in
+        rt1176) echo "build" ;;
+        rt1062) echo "build-rt1062" ;;
+        *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
+    esac
+}
+
 gate_cleanup() {
     _rc=$?
     set +e   # trap-only: a dead registered PID must not abort us under the runner's

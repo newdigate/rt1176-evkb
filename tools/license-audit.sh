@@ -30,8 +30,35 @@ $HOME/Development/PXP $HOME/Development/MipiDisplay $HOME/Development/LVGL \
 $HOME/Development/EEPROM"}
 
 # Allowlist (extended regex), each entry justified:
-#   cores/teensy*        — uncompiled PJRC reference copies, never in any build
+#   cores/teensy/, cores/teensy3/
+#                        — uncompiled PJRC reference copies, never in any build
 #                          (audit part 2 proves nothing under them is compiled)
+#   cores/teensy4/       — NOT a reference copy any more. Until the rt1062 board
+#                          axis landed, this entry read "never in any build" for
+#                          all of cores/teensy*, and that was true. EVKB_BOARD=
+#                          rt1062 (evkb.cmake) now compiles this core for real,
+#                          which turned five inherited LGPL sources into live
+#                          firmware code — WString.cpp (102 symbols), Stream.cpp
+#                          (11), WMath.cpp (8), IPAddress.cpp (4), Time.cpp (3).
+#                          They were REPLACED, not excused, with the MIT
+#                          clean-room versions already carried by
+#                          cores/imxrt1176 (IPAddress.cpp from Ethernet), so
+#                          this directory ships no copyleft source at all.
+#                          Two things to know before trusting this entry:
+#                          (a) part 2's EMPTY-object rule is what still
+#                          backstops SOURCES here — any future copyleft .cpp
+#                          that actually compiles fails the audit rather than
+#                          riding this allowlist in;
+#                          (b) that rule cannot see HEADERS, which define no
+#                          symbols. So a copyleft header under this path is
+#                          invisible to both checks. Printable.h and
+#                          WCharacter.h were in the rt1062 link manifest
+#                          (WCharacter.h is 13 inline functions — it genuinely
+#                          emits code) and were replaced for that reason.
+#                          Client.h and Server.h still carry LGPL text and are
+#                          deliberately left: no link manifest includes them.
+#                          Check the manifest, not this comment, before adding
+#                          a header here.
 #   SPI/SPI.{h,cpp}, Wire/{Wire.h,Wire.cpp}, Wire/utility/twi.{h,c}
 #                        — dual-licensed upstream platform branches,
 #                          preprocessor-dead under __IMXRT1176__ (documented in
@@ -155,6 +182,10 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # (teensy-cmake-macros), whose gcc step emits <obj>.o.d depfiles (-MMD -MF,
 # added 2026-07-18) — so CM4-side sources are covered by this same walk
 # (the *.o.d pattern below), not just their provenance headers.
+# An entry may also name a build directory directly (…/build-rt1062) to audit a
+# second board's build of the same example: EVKB_BOARD=rt1062 links
+# cores/teensy4 instead of cores/imxrt1176, so that image has a link manifest
+# this list would otherwise never walk.
 GATES=${LICENSE_AUDIT_GATES:-"examples/audio/audio_h_test:audio_h_test examples/audio/audioinput_i2s_test:audioinput_i2s_test \
 examples/audio/audiooutput_i2s_test:audiooutput_i2s_test \
 examples/audio/audiostream_test:audiostream_test examples/audio/filter_fir_test:filter_fir_test \
@@ -194,18 +225,23 @@ examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test \
 examples/dualcore/cm4_wire_test:cm4_wire_test examples/framework/arm_math_test:arm_math_test \
 examples/framework/edma_test:edma_test examples/framework/eventresponder_test:eventresponder_test \
 examples/framework/stream_test:stream_test examples/framework/string_test:string_test \
+examples/framework/string_test/build-rt1062:string_test \
 examples/framework/wprogram_parity_test:wprogram_parity_test \
 examples/gpio-analog/analog_test:analog_test examples/gpio-analog/dac_test:dac_test \
 examples/gpio-analog/irq_attach_test:irq_attach_test examples/networking/enet_test:enet_test \
 examples/networking/ethernet_test:ethernet_test examples/networking/lwip_test:lwip_test \
 examples/networking/native_ethernet_test:native_ethernet_test \
 examples/serial/serial_test:serial_test examples/serial/serial_test_rx:serial_test_rx \
+examples/serial/serial_test/build-rt1062:serial_test \
 examples/storage-memory/eeprom_test:eeprom_test examples/storage-memory/extmem_test:extmem_test \
 examples/storage-memory/sdram_test:sdram_test \
 examples/timing/interval_timer_test:interval_timer_test examples/timing/rtc_test:rtc_test \
 examples/usb/usb_audio_capture_test:usb_audio_capture_test \
 examples/usb/usb_audio_duplex_test:usb_audio_duplex_test \
+examples/usb/usb_audio_uac1_test:usb_audio_uac1_test \
+examples/usb/usb_audio_uac1_test/build-rt1062:usb_audio_uac1_test \
 examples/usb/usb_descriptor_survey:usb_descriptor_survey \
+examples/usb/usb_descriptor_survey/build-rt1062:usb_descriptor_survey \
 examples/usb/usb_data_test:usb_data_test examples/usb/usb_enum_test:usb_enum_test \
 examples/usb/usb_host_hid_test:usb_host_hid_test examples/usb/usb_joystick_test:usb_joystick_test \
 examples/usb/usb_keyboard_test:usb_keyboard_test examples/usb/usb_midi_test:usb_midi_test \
@@ -280,6 +316,12 @@ case "$PARTS" in *2*) ;; *) GATES="" ;; esac
 for pair in $GATES; do
   g=${pair%%:*}; t=${pair##*:}
   bdir=$EVKB/$g/build
+  # A gate path may name a build directory OUTRIGHT rather than an example
+  # directory (last component starting "build"), which is how a second board's
+  # build of the SAME example gets its own entry — one example directory, two
+  # link manifests, and the rt1062 one links a different core. No example is
+  # named build*, so the suffix test is unambiguous.
+  case "${g##*/}" in build*) bdir=$EVKB/$g ;; esac
   if [ ! -f "$bdir/$t.elf" ]; then
     echo "MISSING BUILD: $g (build it first)"; fail=1; continue
   fi
