@@ -25,7 +25,7 @@ teensy_target_link_libraries(usb_host_hid_test cores)
 set(USBHOST ${EVKB_USBHOST_T36_DIR})
 target_sources(usb_host_hid_test.elf PRIVATE
     ${USBHOST}/ehci.cpp ${USBHOST}/ehci_iso.cpp ${USBHOST}/enumeration.cpp ${USBHOST}/hub.cpp
-    ${USBHOST}/memory.cpp ${USBHOST}/hid.cpp ${USBHOST}/keyboard.cpp ${USBHOST}/mouse.cpp
+    ${USBHOST}/memory.cpp ${USBHOST}/print.cpp ${USBHOST}/hid.cpp ${USBHOST}/keyboard.cpp ${USBHOST}/mouse.cpp
     ${USBHOST}/bluetooth.cpp)
 
 # USBHost_t36.h unconditionally does `#include <FS.h>` (resolves from the core,

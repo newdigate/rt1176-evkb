@@ -218,6 +218,25 @@ static uint32_t beat_seq;
 void setup() {
 	CONSOLE.begin(115200);
 	while (!CONSOLE) {}
+#ifdef USBHOST_PRINT_DEBUG
+	// Bench diagnosis only. USBHost_t36's debug narration happens almost
+	// entirely INSIDE myusb.begin(), which on a flash-and-run lands seconds
+	// before any console can attach -- so the interesting output scrolls past
+	// and all you see is the heartbeat. Hold here long enough to attach a
+	// reader after the flash tool has let go of the VCOM.
+	//
+	// This exists because resetting the board to catch boot output is awkward
+	// here: on the MIMXRT1170-EVKB that is SW4 (POR), but the MIMXRT1060-EVKB
+	// does not have an SW4, and resetting via LinkServer with a reader attached
+	// is the documented route to a HOST KERNEL PANIC (see CLAUDE.md). A delay
+	// needs no button and no probe.
+	//
+	// Guarded, so the gate build is byte-identical -- verified, not assumed.
+	for (int i = 20; i > 0; i--) {
+		CONSOLE.printf("SURVEY: debug build -- attach console, starting in %d\n", i);
+		delay(1000);
+	}
+#endif
 	CONSOLE.println("SURVEY: start -- plug in any USB device");
 	myusb.begin();
 	last_beat = millis();
