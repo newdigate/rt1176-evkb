@@ -1,6 +1,6 @@
-rt1062 QEMU transcript for usb_descriptor_survey. TWO states, both real, both
-recorded on purpose -- the gate is GREEN on the USB host path and RED on the
-DMA-reachability model layered on top of it.
+rt1062 QEMU transcript for usb_descriptor_survey. THREE states, recorded in the
+order they happened. The gate is GREEN today; states 2 and 3 are kept because a
+wrong conclusion was drawn in between and the bench overturned it.
 
 Recorded 2026-08-08 on branch rt1060-board-axis.
 
@@ -49,52 +49,62 @@ PLL_USB1 escaped notice only because the model seeds it to 0x3040 at reset, so
 startup.c's identical loop breaks on its first read without ever writing.
 
 ================================================================================
-STATE 2 -- RED. qemu2 e236216190 (Task 3, the USB DMA TCM holes). CURRENT.
+STATE 2 -- RED. qemu2 e236216190 (Task 3, the USB DMA TCM holes).
 ================================================================================
 
-==== captured ====
-SURVEY: start -- plug in any USB device
-SURVEY: waiting seq=1 up=2s
-SURVEY: waiting seq=2 up=4s
-SURVEY: waiting seq=3 up=6s
-SURVEY: waiting seq=4 up=8s
-SURVEY: waiting seq=5 up=10s
-SURVEY: waiting seq=6 up=12s
-FAIL: device did not enumerate with the expected 104-byte config
-
-Note the heartbeat IS running here -- the firmware is alive and polling, it just
-never sees a device. That is a different failure from State 1's hang.
-
-survey.dbg names exactly ONE genuine blocked access:
+Adding the TCM holes turned the gate red. survey.dbg named exactly ONE genuine
+blocked access:
 
     USB DMA read from CPU-private DTCM @ 0x20002004
 
-which is periodictable[1] (periodictable @ 0x20002000), USBHost_t36's EHCI
-periodic frame list. The other 544 messages are cascade, not independent
-findings: the hole reads back 0, a frame-list entry of 0 is a pointer to
+which is periodictable[1] (periodictable @ 0x20002000). The other 544 messages
+were cascade: the hole reads back 0, a frame-list entry of 0 is a pointer to
 0x00000000 with the T-bit clear, and the controller then walks a bogus QH at
 ITCM 0x0-0x3c forever.
 
-★ WHETHER RT1062 SILICON ENFORCES THIS IS NOT ESTABLISHED, and the available
-evidence points the other way:
+At this point it was NOT established that RT1062 silicon enforces the
+constraint, and the available evidence pointed the other way (upstream
+USBHost_t36 leaves these buffers in .bss = DTCM, and USB host works on a Teensy
+4.1). The red was therefore carried deliberately, pending the bench.
 
-  - .bss is DTCM in imxrt1060_evkb.ld AND in upstream Teensy's imxrt1062.ld
-    and imxrt1062_t41.ld. Only .bss.dma (DMAMEM) is OCRAM. The comment at
-    ehci.cpp:64-66 saying "on Teensy .bss is already OCRAM" is factually wrong;
-    its CONCLUSION (do not DMAMEM on Teensy) may still be right, for the
-    different reason that the RT1062 controller can probably reach DTCM.
-  - Upstream USBHost_t36 declares periodictable with NO DMAMEM, so on Teensy
-    4.1 it sits in DTCM -- and USB host works on that board, same controller,
-    same memory topology. That is the strongest single piece of evidence.
-  - Every "DTCM is DMA-unreachable" claim in this tree is scoped to RT1176,
-    where it was established by measurement. Nothing establishes it for RT1062.
+================================================================================
+STATE 3 -- GREEN, and the model was right. Silicon settled it 2026-08-08.
+================================================================================
 
-The holes are kept and the gate carried RED by an explicit call, pending bench
-confirmation on the MIMXRT1060-EVKB (Phase 3, J47 -- J48 is the device port).
-If silicon shows OTG2 reading DTCM happily, the holes come out of the 1062
-model; the 1170's stay, they were earned there by catching two real bugs.
+On a MIMXRT1060-EVKB with a USB audio adapter in J47, with periodictable still
+at 0x20002000 (DTCM), read over the debug probe while the firmware ran:
 
-Do NOT "fix" this red by extending USBHOST_DMAMEM to __IMXRT1062__. That would
-diverge from upstream on its own home silicon to satisfy a constraint that
-board probably does not have, and it would erase the question instead of
-answering it.
+    PORTSC1 = 0x10001805    CCS=1 PE=1 PP=1 -- device connected and powered
+    USBSTS  = 0x0000d09a    HCH=1 (halted) + SEI=1 (SYSTEM ERROR)
+
+SEI is the controller faulting on its own DMA fetch of the periodic list.
+Rebuilding with those buffers in DMAMEM/OCRAM (USBHost_t36 fa939cc) cleared it:
+USBSTS became 0x0000d080, same board, same cable, one variable changed.
+
+That same change makes this gate pass WITH the TCM holes still in place:
+
+==== captured ====
+SURVEY: start -- plug in any USB device
+SURVEY: device 46F4:0002, 104 descriptor bytes
+SURVEY:  if 0 alt 0  class=0x01(AUDIO) sub=0x01 eps=0
+SURVEY:    *** UAC 1.00 ***
+SURVEY:  if 1 alt 0  class=0x01(AUDIO) sub=0x02 eps=0
+SURVEY:  if 1 alt 1  class=0x01(AUDIO) sub=0x02 eps=1
+SURVEY:    format: 2 ch, 16-bit, 1 rate(s): 48000
+SURVEY:    ep 0x01 OUT iso       sync=synchronous  usage=data        mps=192 refresh=0 synchAddr=0x00
+SURVEY: VERDICT adaptive/synchronous only -- cannot exercise async
+SURVEY: end
+PASS: SURVEY_ENUMERATES_EMULATED_UAC1_DEVICE
+
+So the State 2 red was a TRUE POSITIVE. The model refused an access the silicon
+also refuses; the firmware really was handing the controller TCM-resident
+memory. DO NOT remove the holes.
+
+★ STILL OPEN, and separate. Clearing SEI did NOT make the EVKB enumerate. The
+controller remains halted (HCH=1, SEI clear) with a device sitting on the port
+(CCS=1). QEMU enumerates, silicon does not, and that divergence is unexplained.
+SILICON WINS -- this green gate is not proof the RT1062 USB host works.
+
+Also note the console moved: these rt1062 sketches now print to Serial6
+(LPUART1, the EVKB's DAPLink VCOM), not Serial1 (LPUART6, which only reaches
+Arduino header pins D0/D1). The gate takes its chain from gate_console.

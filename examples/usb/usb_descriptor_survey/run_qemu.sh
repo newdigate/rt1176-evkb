@@ -47,7 +47,7 @@ gate_init
 ELF="$DIR/$(gate_build_dir)/usb_descriptor_survey.elf"; OUT="$DIR/survey.uart"
 rm -f "$OUT"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -display none $(gate_serial1 "$OUT") -d guest_errors -D "$DIR/survey.dbg" \
+    -display none $(gate_console "$OUT") -d guest_errors -D "$DIR/survey.dbg" \
     -audiodev none,id=snd0 \
     -device usb-audio,bus=usbhost.0,port=1,audiodev=snd0 &
 P=$!; gate_pid $P

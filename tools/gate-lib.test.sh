@@ -281,24 +281,33 @@ test_machine_args_rt1062() {
 }
 test_machine_args_rt1062; report test_machine_args_rt1062 $?
 
-# Serial1 is LPUART1 on imxrt1176 but LPUART6 on the Teensy 4 core, and QEMU
-# binds -serial N to LPUART(N+1). Assert the exact chain: getting this wrong
-# yields an EMPTY capture, which reads as "firmware never printed".
-test_serial1_rt1176_is_first_slot() {
+# Every board consoles on LPUART1 and QEMU binds -serial N to LPUART(N+1), so
+# every board takes slot 0. Assert the exact chain per board anyway: getting it
+# wrong yields an EMPTY capture, which reads as "firmware never printed".
+#
+# These two now expect the SAME string, and that is the point rather than an
+# oversight. rt1062 used to need five `-serial null` to reach LPUART6, because
+# its sketches printed to Serial1 -- which cores/teensy4 maps to LPUART6, a UART
+# that on the MIMXRT1060-EVKB only reaches Arduino pins D0/D1 and NOT the DAPLink
+# VCOM. The sketches moved to Serial6 (== LPUART1) so QEMU and silicon read the
+# same wire. The rt1062 case below is therefore a REGRESSION GUARD against the
+# five-null chain coming back: it would still pass in QEMU and still be unusable
+# on the bench.
+test_console_rt1176_is_first_slot() {
     ( . "$LIB"
       EVKB_BOARD=rt1176
-      _got=$(gate_serial1 /tmp/u.txt)
+      _got=$(gate_console /tmp/u.txt)
       [ "$_got" = "-serial file:/tmp/u.txt" ] )
 }
-test_serial1_rt1176_is_first_slot; report test_serial1_rt1176_is_first_slot $?
+test_console_rt1176_is_first_slot; report test_console_rt1176_is_first_slot $?
 
-test_serial1_rt1062_is_sixth_slot() {
+test_console_rt1062_is_first_slot_too() {
     ( . "$LIB"
       EVKB_BOARD=rt1062
-      _got=$(gate_serial1 /tmp/u.txt)
-      [ "$_got" = "-serial null -serial null -serial null -serial null -serial null -serial file:/tmp/u.txt" ] )
+      _got=$(gate_console /tmp/u.txt)
+      [ "$_got" = "-serial file:/tmp/u.txt" ] )
 }
-test_serial1_rt1062_is_sixth_slot; report test_serial1_rt1062_is_sixth_slot $?
+test_console_rt1062_is_first_slot_too; report test_console_rt1062_is_first_slot_too $?
 
 test_build_dir_rt1176_is_plain_build() {
     ( . "$LIB"

@@ -88,17 +88,10 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). Expect **83 passed, 1 failed, 0 SKIP**, or
-**82 passed, 2 failed, 0 SKIP** when the nondeterministic dual-core gate is also
-red. Both were measured on 2026-08-08 at `-j 2`. There are now **two** permitted
-reds, and the distinction between them matters:
+`usb/usb_descriptor_survey`). Expect **84 passed, 0 failed, 0 SKIP**, or
+**83 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+There is **one** permitted red:
 
-- `rt1062:usb/usb_descriptor_survey` — red **by design**, not intermittently.
-  Phase 2 gave `fsl-imxrt1062` a USB DMA view with the TCM windows punched out,
-  and USBHost_t36's `periodictable` lands in DTCM on this board, so the EHCI
-  never reads its periodic list. Whether RT1062 silicon actually enforces that
-  is **unconfirmed and doubted** — see `docs/KNOWN-BROKEN-GATES.md`. Expect it
-  red every run, on any load.
 - `rt1176:dualcore/cm4_audio_test` — **nondeterministic.** Long called a load
   artefact, and load does not predict it: on 2026-08-08 it failed a sweep
   starting at load 6.8 and passed one starting at 8.6. Re-run before believing a
@@ -112,10 +105,9 @@ carried forward.
 **0 SKIP is the load-bearing number in every case**: it is what says the
 sweep actually covered everything rather than quietly measuring less.
 Note `-l` prints a trailing "(N gate(s))" summary line, so `wc -l` on its
-output is one more than the gate count. Any failure that is **not** one of
-those two is a real regression from what you are doing — and with two permitted
-reds rather than one, read the gate NAMES in the summary rather than trusting
-the count alone.
+output is one more than the gate count. Any failure that is **not** that one is
+a real regression from what you are doing — read the gate NAMES in the summary
+rather than trusting the count alone.
 
 **The tree is multi-board.** `EVKB_BOARD` selects `rt1176` (MIMXRT1170-EVKB,
 the default) or `rt1062` (MIMXRT1060-EVKB). An example declares the boards it
@@ -152,11 +144,23 @@ and any new two-board example must go through it rather than spelling them out:
   *different* properties selecting different reset vectors, and a Teensy-core
   image is the `boot-ivt` kind. Using the wrong one double-faults into Lockup
   before a line of firmware runs.
-- **Which LPUART is `Serial1`**: LPUART1 on `cores/imxrt1176`, but **LPUART6**
-  on `cores/teensy4` (the Teensy pin-0/1 convention). QEMU binds the Nth
-  `-serial` to LPUART(N+1), so an rt1062 gate needs five `-serial null` before
-  its capture file. Get this wrong and the firmware runs perfectly while the
-  capture stays empty — indistinguishable from firmware that never started.
+- **Which object is the console**: **LPUART1 on both boards**, but the cores
+  name it differently — `Serial1` on `cores/imxrt1176`, `Serial6` on
+  `cores/teensy4` (which follows the Teensy pin-0/1 convention and gives the
+  name `Serial1` to LPUART6). Every two-board sketch therefore defines a
+  `CONSOLE` alias rather than naming a `SerialN` directly, and every gate takes
+  its chain from `gate_console` — which now emits a plain `-serial file:` for
+  both boards, because both land in slot 0.
+  ★ **This was got wrong first time and the mistake is worth knowing.** The
+  rt1062 sketches originally printed to `Serial1` = LPUART6, and `gate-lib`
+  emitted five `-serial null` to reach it. That passed in QEMU and was **useless
+  on silicon**: on the MIMXRT1060-EVKB, LPUART6 only reaches Arduino header pins
+  D0/D1, while the DAPLink/OpenSDA VCOM is wired to LPUART1
+  (`GPIO_AD_B0_12/13` — `core_pins.h` pins 21/22). The gate and the bench were
+  reading different wires, and nothing caught it until a hardware run was
+  attempted. Get the slot wrong in either direction and the firmware runs
+  perfectly while the capture stays empty — indistinguishable from firmware that
+  never started.
 
 ★ **`rt1062` links `cores/teensy4`, which is LGPL** — see the licence-audit
 note under `tools/` below. That core is upstream Teensy, not the clean-room

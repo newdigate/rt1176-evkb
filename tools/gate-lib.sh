@@ -82,19 +82,33 @@ gate_qemu_machine() {
     esac
 }
 
-# Emit the -serial chain that lands FILE on the board's Serial1 UART.
+# Emit the -serial chain that lands FILE on the board's CONSOLE UART.
 #
-# QEMU binds the Nth -serial to LPUART(N+1), so WHICH slot the capture file goes
-# in depends on which LPUART the core calls Serial1 -- and the two cores differ:
-# LPUART1 on imxrt1176 (HardwareSerial1.cpp, 0x4007C000), LPUART6 on the Teensy
-# 4 core, which follows the Teensy pin-0/1 convention. A gate that hardcodes a
-# bare `-serial file:` therefore captures NOTHING on rt1062 while the firmware
-# prints happily to LPUART6 -- and an empty capture is indistinguishable from
-# firmware that never ran. Board-dependent, so it lives here, not in 82 scripts.
-gate_serial1() {   # gate_serial1 FILE
+# QEMU binds the Nth -serial to LPUART(N+1), so which slot the capture goes in
+# depends on which LPUART the firmware prints to. Every board in this tree now
+# consoles on **LPUART1**, so every board takes slot 0 and the two arms below are
+# deliberately identical.
+#
+# They did not used to be, and the history is the reason this function exists.
+# The two cores number the same peripherals differently: LPUART1 is `Serial1` on
+# cores/imxrt1176 but `Serial6` on cores/teensy4, which follows the Teensy
+# pin-0/1 convention and calls LPUART6 `Serial1` instead. The rt1062 examples
+# originally printed to Serial1/LPUART6 and this function emitted five
+# `-serial null` to reach the sixth slot. That passed in QEMU and was USELESS ON
+# SILICON: LPUART6 goes to the EVKB's Arduino header pins D0/D1, while the
+# board's DAPLink/OpenSDA VCOM is wired to LPUART1 (GPIO_AD_B0_12/13). So the
+# gate and the bench were reading different wires. The rt1062 sketches now use
+# Serial6, and QEMU and silicon finally agree on which UART is the console.
+#
+# KEEP THIS FUNCTION even though the arms match. It is the seam for a future
+# board whose console is not LPUART1, and re-hardcoding `-serial file:` into the
+# gate scripts is exactly what the board axis exists to prevent. The failure it
+# guards against is silent: an empty capture is indistinguishable from firmware
+# that never ran.
+gate_console() {   # gate_console FILE
     case "$(gate_board)" in
-        rt1176) echo "-serial file:$1" ;;
-        rt1062) echo "-serial null -serial null -serial null -serial null -serial null -serial file:$1" ;;
+        rt1176) echo "-serial file:$1" ;;   # Serial1 == LPUART1
+        rt1062) echo "-serial file:$1" ;;   # Serial6 == LPUART1
         *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
     esac
 }

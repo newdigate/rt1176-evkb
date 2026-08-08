@@ -8,48 +8,43 @@ time on a subsystem you probably are not touching.
 
 ---
 
-## `rt1062:usb/usb_descriptor_survey` — RED BY DESIGN, awaiting silicon
+## `rt1062:usb/usb_descriptor_survey` — RESOLVED 2026-08-08 (was red by design)
 
-**Status:** red every run, on any load. **Not intermittent, and not a regression.** The rt1176 half
-of this gate passes; only the rt1062 half is red.
+**Status: GREEN on both boards.** Kept here as a record because this gate was
+deliberately carried red for part of a day, and because the reason it went green
+reverses a conclusion this file previously asserted.
 
-Phase 2 (2026-08-08) gave `fsl-imxrt1062` a USB DMA view with the ITCM and DTCM windows punched out
-as error-logging holes, mirroring `fsl-imxrt1170`. USBHost_t36's `periodictable` — the EHCI periodic
-frame list the controller walks via `USBHS_PERIODICLISTBASE` — links at `0x20002000` on this board,
-inside DTCM. So the controller cannot read its own schedule and nothing enumerates.
+Phase 2 gave `fsl-imxrt1062` a USB DMA view with the ITCM and DTCM windows
+punched out, mirroring `fsl-imxrt1170`. That turned the gate red: USBHost_t36's
+`periodictable` linked at `0x20002000`, inside DTCM, so the modelled controller
+could not read its own periodic list. The red was carried rather than fixed
+because it was **not established** that RT1062 silicon actually enforces the
+constraint — and the available evidence pointed the other way, since upstream
+USBHost_t36 leaves those buffers in `.bss` (= DTCM) and USB host works on a
+Teensy 4.1.
 
-`survey.dbg` names exactly **one** genuine blocked access:
+**The bench settled it, and the model was right.** On a MIMXRT1060-EVKB with a
+USB audio adapter in J47, read over the debug probe while the firmware ran:
 
 ```
-USB DMA read from CPU-private DTCM @ 0x20002004
+PORTSC1 = 0x10001805   CCS=1 PE=1 PP=1 -- device connected, powered, enabled
+USBSTS  = 0x0000d09a   HCH=1 (halted) + SEI=1 (SYSTEM ERROR)
 ```
 
-The other 544 messages are cascade, not independent findings: the hole reads back 0, a frame-list
-entry of 0 is a pointer to `0x00000000` with the T-bit clear, and the controller then walks a bogus
-QH at ITCM `0x0`–`0x3c` forever. Count the DTCM lines, not the total.
+`SEI` is the controller faulting on its own DMA fetch from DTCM. Rebuilt with
+those buffers in `DMAMEM`/OCRAM (USBHost_t36 `fa939cc`), `USBSTS` became
+`0x0000d080` — SEI gone, same board, same cable, one variable changed. The same
+change makes this QEMU gate pass **with the TCM holes still in place**.
 
-★ **Whether RT1062 silicon actually enforces this is NOT established, and the evidence points the
-other way.** Recorded here because it is the whole reason this gate is carried red rather than
-either fixed or deleted:
+So the red was a **true positive**: the model correctly refused an access the
+silicon also refuses, and the firmware really was handing the controller
+TCM-resident memory. Do not remove the holes.
 
-- `.bss` is DTCM in `imxrt1060_evkb.ld` **and** in upstream Teensy's `imxrt1062.ld` and
-  `imxrt1062_t41.ld`; only `.bss.dma` (`DMAMEM`) is OCRAM.
-- Upstream USBHost_t36 declares `periodictable` with **no** `DMAMEM`, so on a Teensy 4.1 it sits in
-  DTCM — and USB host works on that board, same controller, same memory topology. That is the
-  strongest single piece of evidence, and it says the RT1062 can reach DTCM.
-- Every "DTCM is DMA-unreachable" claim in this tree is scoped to **RT1176**, where it was
-  established by measurement and caught two real bugs. Nothing establishes it for RT1062.
-- The comment at `ehci.cpp:64-66` justifying the `__IMXRT1176__`-only `DMAMEM` guard says "on Teensy
-  `.bss` is already OCRAM". That is false. Its *conclusion* may still be right, for the different
-  reason above.
-
-**Resolution path:** bench it on the MIMXRT1060-EVKB (Phase 3, **J47** — J48 is the device port). If
-OTG2 reads DTCM happily, the holes come out of the **1062** model and this gate goes green; the
-1170's holes stay, they were earned there.
-
-**Do NOT** resolve this by extending `USBHOST_DMAMEM` to `__IMXRT1062__`. That diverges from
-upstream on its own home silicon to satisfy a constraint that board probably does not have, and it
-erases the question instead of answering it. Equally, do not delete the holes to get a green sweep.
+★ **Still open, and separate:** clearing `SEI` did NOT make the EVKB enumerate.
+The controller remains halted (`HCH=1`, `SEI` clear) and nothing appears on
+J47's port beyond `CCS=1`. QEMU enumerates; silicon does not. That divergence is
+unexplained and belongs to a later phase — **silicon wins, so do not treat the
+green gate as proof the RT1062 USB host works.**
 
 ---
 
@@ -325,21 +320,28 @@ Worth recording: the first rt1062 run failed with an **empty capture**, because
 the runner still had a bare `-serial file:`. That is the documented LPUART6 trap
 and it is worth having seen once — the firmware ran perfectly and printed to
 LPUART6, which nothing was bound to, so the failure is indistinguishable from an
-image that never started. Fixed by taking the chain from `gate_serial1`, which
-is what every two-board gate must do.
+image that never started. Fixed by taking the chain from `gate_console` (then
+named `gate_serial1`), which is what every two-board gate must do.
 
-Expectation moves to **`83/1/0`**, or **`82/2/0`** when the nondeterministic
-`cm4_audio_test` is also red. The permitted reds are unchanged — this gate is
-green on both boards. Measured at `-j 2`: **`83 passed, 1 failed, 0 SKIP`**,
-the failure being the by-design `rt1062:usb/usb_descriptor_survey`.
+Superseded within the day: `gate_serial1` put rt1062 in the SIXTH `-serial` slot
+because those sketches printed to `Serial1` = LPUART6 on `cores/teensy4`. That
+is the wrong UART on this board — LPUART6 reaches Arduino pins D0/D1, not the
+DAPLink VCOM — so the gate and the bench were reading different wires. The
+rt1062 sketches now use `Serial6` (== LPUART1, the VCOM), and `gate_console`
+emits a plain `-serial file:` for both boards.
+
+Expectation moves to **`84/0/0`**, or **`83/1/0`** when the nondeterministic
+`cm4_audio_test` is red. `rt1062:usb/usb_descriptor_survey` went green later the
+same day (see its section at the top), so **there is once again only ONE
+permitted red**, and it is the dual-core intermittent.
 
 **2026-08-08 (Phase 2 — RT1062 USB host in QEMU):** `usb/usb_descriptor_survey`
 gains its rt1062 half: sweep **82 → 83**, again without a new example.
 
-Expectation is **`82/1/0`** — the single red being
-`rt1062:usb/usb_descriptor_survey` — or **`81/2/0`** when
-`rt1176:dualcore/cm4_audio_test` is also red, which is nondeterministic and not
+Expectation is **`83/0/0`**, or **`82/1/0`** when
+`rt1176:dualcore/cm4_audio_test` is red — which is nondeterministic and not
 reliably predicted by machine load (see its table below). Zero SKIP either way.
+(Superseded by the 84-gate entry above; kept for the Phase 2 history.)
 
 There are now **two** permitted reds, and they are different in kind — do not
 conflate them:
