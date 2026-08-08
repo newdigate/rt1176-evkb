@@ -22,6 +22,29 @@
 // mytransfers[2]), so the whole object must live in OCRAM -- same trap as
 // hid1/keyboard1 in usb_host_hid_test.  USBHub likewise carries member DMA
 // buffers.  myusb has no instance data members, so it correctly stays in DTCM.
+// The console is LPUART1 on BOTH boards. The two cores just name it
+// differently: cores/imxrt1176 calls LPUART1 `Serial1`, while cores/teensy4
+// follows the Teensy pin-0/1 convention and calls LPUART6 `Serial1` and LPUART1
+// `Serial6`. Naming it once here is what keeps QEMU and silicon reading the same
+// wire -- on the MIMXRT1060-EVKB, LPUART1 (GPIO_AD_B0_12/13) is the DAPLink VCOM,
+// whereas LPUART6 only reaches Arduino header pins D0/D1.
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+#define CONSOLE Serial6
+#else
+#define CONSOLE Serial1
+#endif
+
+// Requested sample rate. 48000 and not the Audio library's 44100 on purpose:
+// QEMU's usb-audio model offers 48000 ONLY (USBAUDIO_SAMPLE_RATE is a
+// compile-time #define in hw/usb/dev-audio.c with no property to change it), and
+// gate builds share build/ and build-rt1062/ with silicon builds -- so there is
+// no gate-only override to hide a difference in. The J47 device supports both
+// rates, so one binary claims in QEMU and plays on the bench.
+//
+// Phase 5's capstone will want 44100 back, to match the Audio library. This is
+// the knob it turns.
+#define UAC1_RATE_HZ 48000u
+
 USBHost              myusb;
 DMAMEM USBHub        hub1(myusb);
 DMAMEM USBAudioOut   audioOut(myusb);
@@ -48,7 +71,7 @@ static const char *str_or(const uint8_t *s, const char *fallback) {
 
 static void report_topology(void) {
     const UAC1Topology &t = audioOut.topology();
-    Serial1.printf("UAC1-TEST: bcdADC=%x.%02x control_if=%d streaming_if=%d feature_unit=%d\n",
+    CONSOLE.printf("UAC1-TEST: bcdADC=%x.%02x control_if=%d streaming_if=%d feature_unit=%d\n",
                    t.bcd_adc >> 8, t.bcd_adc & 0xFF, t.control_interface,
                    t.streaming_interface, t.feature_unit_id);
     for (uint8_t i = 0; i < t.alt_count; i++) {
@@ -56,29 +79,29 @@ static void report_topology(void) {
         // Rates: a discrete list, or a continuous range when rate_count is 0.
         // Both idioms occur -- this device lists one rate per alt setting, the
         // Jabra 0B0E:2301 lists five in a single one.
-        Serial1.printf("UAC1-TEST:   alt %d ep=0x%02X attr=0x%02X mps=%d ch=%d bits=%d rates=",
+        CONSOLE.printf("UAC1-TEST:   alt %d ep=0x%02X attr=0x%02X mps=%d ch=%d bits=%d rates=",
                        a.alternate_setting, a.endpoint_address, a.endpoint_attributes,
                        a.max_packet_size, a.channels, a.bit_resolution);
         if (a.rate_count == 0) {
-            Serial1.printf("%lu..%lu (continuous)",
+            CONSOLE.printf("%lu..%lu (continuous)",
                            (unsigned long)a.rate_min, (unsigned long)a.rate_max);
         } else {
             for (uint8_t r = 0; r < a.rate_count; r++)
-                Serial1.printf("%s%lu", r ? "," : "", (unsigned long)a.rates[r]);
+                CONSOLE.printf("%s%lu", r ? "," : "", (unsigned long)a.rates[r]);
         }
-        Serial1.println();
+        CONSOLE.println();
     }
-    Serial1.printf("UAC1-TEST: selected alt=%d\n", audioOut.alternateSetting());
-    Serial1.println("UAC1-TEST: PASS");
+    CONSOLE.printf("UAC1-TEST: selected alt=%d\n", audioOut.alternateSetting());
+    CONSOLE.println("UAC1-TEST: PASS");
 }
 
 void setup() {
-    Serial1.begin(115200);
-    while (!Serial1) {}
-    Serial1.println("UAC1-TEST: start");
-    audioOut.format(44100, 2, 16);   // shipping target: 44.1k, matches the Audio library
+    CONSOLE.begin(115200);
+    while (!CONSOLE) {}
+    CONSOLE.println("UAC1-TEST: start");
+    audioOut.format(UAC1_RATE_HZ, 2, 16);   // see UAC1_RATE_HZ above
     myusb.begin();
-    Serial1.println("UAC1-TEST: host started, waiting for device");
+    CONSOLE.println("UAC1-TEST: host started, waiting for device");
     last_beat = millis();
 }
 
@@ -94,13 +117,13 @@ void loop() {
 
         if (now_active) {
             attach_count++;
-            Serial1.printf("UAC1-TEST: + %s vid=%04X pid=%04X mfg=\"%s\" prod=\"%s\" serial=\"%s\"\n",
+            CONSOLE.printf("UAC1-TEST: + %s vid=%04X pid=%04X mfg=\"%s\" prod=\"%s\" serial=\"%s\"\n",
                            driver_names[i], drivers[i]->idVendor(), drivers[i]->idProduct(),
                            str_or(drivers[i]->manufacturer(), "?"),
                            str_or(drivers[i]->product(), "?"),
                            str_or(drivers[i]->serialNumber(), "?"));
         } else {
-            Serial1.printf("UAC1-TEST: - %s detached\n", driver_names[i]);
+            CONSOLE.printf("UAC1-TEST: - %s detached\n", driver_names[i]);
             if (i == 1) {
                 audioOut.stopStreaming();
                 topology_reported = false;
@@ -112,7 +135,7 @@ void loop() {
     }
 
     if (audioOut.ready() && !topology_reported) {
-        Serial1.println("UAC1-TEST: DEVICE READY");
+        CONSOLE.println("UAC1-TEST: DEVICE READY");
         report_topology();
         topology_reported = true;
     }
@@ -123,10 +146,10 @@ void loop() {
     if (audioOut.ready() && topology_reported && !packet_posted) {
         audioOut.fillTestBuffer(0xA5);
         if (audioOut.postTestPacket(180)) {
-            Serial1.println("UAC1-TEST: siTD posted, 180 bytes");
+            CONSOLE.println("UAC1-TEST: siTD posted, 180 bytes");
             post_ms = millis();
         } else {
-            Serial1.println("UAC1-TEST: siTD POST FAILED");
+            CONSOLE.println("UAC1-TEST: siTD POST FAILED");
             status_reported = true;   // nothing to read back
         }
         packet_posted = true;
@@ -138,13 +161,13 @@ void loop() {
     if (packet_posted && !status_reported && (uint32_t)(millis() - post_ms) > 50u) {
         sitd_status_t st;
         if (audioOut.testPacketStatus(&st)) {
-            Serial1.printf("UAC1-TEST: siTD active=%d xact_err=%d babble=%d buf_err=%d bytes_left=%u\n",
+            CONSOLE.printf("UAC1-TEST: siTD active=%d xact_err=%d babble=%d buf_err=%d bytes_left=%u\n",
                            st.active ? 1 : 0, st.err_transaction ? 1 : 0,
                            st.err_babble ? 1 : 0, st.err_buffer ? 1 : 0,
                            (unsigned)st.bytes_left);
             bool ok = !st.active && !st.err_transaction && !st.err_babble
                    && !st.err_buffer && st.bytes_left == 0;
-            Serial1.println(ok ? "UAC1-TEST: SITD PASS - controller sent the packet"
+            CONSOLE.println(ok ? "UAC1-TEST: SITD PASS - controller sent the packet"
                                : "UAC1-TEST: SITD FAIL - see flags above");
         }
         status_reported = true;
@@ -156,9 +179,9 @@ void loop() {
     if (status_reported && !stream_started && audioOut.ready()) {
         audioOut.tone(1000);                 // 1 kHz, audible
         if (audioOut.beginStreaming()) {
-            Serial1.println("UAC1-TEST: streaming started, 1 kHz tone");
+            CONSOLE.println("UAC1-TEST: streaming started, 1 kHz tone");
         } else {
-            Serial1.println("UAC1-TEST: STREAM START FAILED");
+            CONSOLE.println("UAC1-TEST: STREAM START FAILED");
         }
         stream_started = true;
         last_packets = 0;
@@ -170,13 +193,13 @@ void loop() {
     uint32_t now = millis();
     if ((uint32_t)(now - last_beat) >= 1000u) {
         last_beat = now;
-        Serial1.printf("UAC1-TEST: HEARTBEAT seq=%lu up=%lus attaches=%lu audio=%s alt=%d",
+        CONSOLE.printf("UAC1-TEST: HEARTBEAT seq=%lu up=%lus attaches=%lu audio=%s alt=%d",
                        (unsigned long)++beat_seq, (unsigned long)(now / 1000u),
                        (unsigned long)attach_count,
                        audioOut.ready() ? "ready" : "none",
                        audioOut.alternateSetting());
         for (unsigned i = 0; i < NDRIVERS; i++) {
-            Serial1.printf(" %s=%c", driver_names[i], driver_active[i] ? 'Y' : 'n');
+            CONSOLE.printf(" %s=%c", driver_names[i], driver_active[i] ? 'Y' : 'n');
         }
         if (audioOut.streaming()) {
             // Packets per second is the correctness measure for the ring: at
@@ -184,10 +207,10 @@ void loop() {
             // means frames went out empty because service() did not get round
             // the ring in time.
             uint32_t p = audioOut.packetsSent();
-            Serial1.printf(" pkts/s=%lu total=%lu", (unsigned long)(p - last_packets),
+            CONSOLE.printf(" pkts/s=%lu total=%lu", (unsigned long)(p - last_packets),
                            (unsigned long)p);
             last_packets = p;
         }
-        Serial1.println();
+        CONSOLE.println();
     }
 }
