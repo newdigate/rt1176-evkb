@@ -14,7 +14,7 @@ ELF="$DIR/$(gate_build_dir)/string_test.elf"; OUT="$DIR/string.uart"
 rm -f "$OUT"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -icount shift=auto \
-    -display none -serial file:"$OUT" -d guest_errors -D "$DIR/string.dbg" &
+    -display none $(gate_serial1 "$OUT") -d guest_errors -D "$DIR/string.dbg" &
 P=$!; gate_pid $P; sleep 20; gate_reap $P
 gate_require_capture "$OUT"
 echo "==== captured ===="; cat "$OUT"

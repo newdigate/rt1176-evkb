@@ -309,13 +309,37 @@ and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
 
+**2026-08-08 (task #74 — String coverage on the second board):**
+`framework/string_test` gains its rt1062 half: sweep **83 → 84**, again without
+a new example. It passed first time, all 21 assertion groups including
+`CTOR_NUM` (which asserts `String(255, HEX) == "ff"`).
+
+Coverage, not a bug hunt: `EVKB_BOARD=rt1062` links `cores/teensy4`, which has
+its **own** `WString.cpp` and `nonstd.c`. Other rt1062 builds already *compile*
+them — `serial_test`'s `libcores.o.a` has 102 symbols from `WString.cpp` alone —
+but nothing **asserted** their behaviour, and compiled is not tested. That gap
+mattered more once the board axis turned that core from a reference copy into
+something built for real.
+
+Worth recording: the first rt1062 run failed with an **empty capture**, because
+the runner still had a bare `-serial file:`. That is the documented LPUART6 trap
+and it is worth having seen once — the firmware ran perfectly and printed to
+LPUART6, which nothing was bound to, so the failure is indistinguishable from an
+image that never started. Fixed by taking the chain from `gate_serial1`, which
+is what every two-board gate must do.
+
+Expectation moves to **`83/1/0`**, or **`82/2/0`** when the nondeterministic
+`cm4_audio_test` is also red. The permitted reds are unchanged — this gate is
+green on both boards. Measured at `-j 2`: **`83 passed, 1 failed, 0 SKIP`**,
+the failure being the by-design `rt1062:usb/usb_descriptor_survey`.
+
 **2026-08-08 (Phase 2 — RT1062 USB host in QEMU):** `usb/usb_descriptor_survey`
 gains its rt1062 half: sweep **82 → 83**, again without a new example.
 
-Expectation on a **genuinely idle machine (1-min load below ~4)** is
-**`82/1/0`**, the single red being `rt1062:usb/usb_descriptor_survey`. Under any
-real load expect **`81/2/0`**, the second red being
-`rt1176:dualcore/cm4_audio_test`. Zero SKIP in both cases.
+Expectation is **`82/1/0`** — the single red being
+`rt1062:usb/usb_descriptor_survey` — or **`81/2/0`** when
+`rt1176:dualcore/cm4_audio_test` is also red, which is nondeterministic and not
+reliably predicted by machine load (see its table below). Zero SKIP either way.
 
 There are now **two** permitted reds, and they are different in kind — do not
 conflate them:
@@ -334,23 +358,28 @@ Measured 2026-08-08 at `-j 2`: **`81 passed, 2 failed, 0 SKIP`** — exactly tho
 two. `cm4_audio_test` failed in its documented form (`fft_peak_bin` wrong,
 `AUDIO_CM4_DET=FAIL`, while `codec_ack=1` and `cm7_audio_isers=0` passed).
 
-That one was re-run individually as the machine drained, and the sequence is the
-most useful thing measured about it to date:
+Six readings were taken on 2026-08-08. **Do not read a load threshold into
+them — one was drawn and it did not survive the next measurement.**
 
-| 1-min load | result |
-|-----------:|--------|
-| ~11 (in-sweep, `-j 2`) | FAIL |
-| 5.5 | FAIL |
-| 4.1 | FAIL |
-| **3.4** | **PASS** (6 s) |
+| run | 1-min load | result |
+|-----|-----------:|--------|
+| in sweep, `-j 2` | 6.8 at start | FAIL |
+| individual | 5.5 | FAIL |
+| individual | 4.1 | FAIL |
+| individual | 3.4 | **PASS** (6 s) |
+| individual | 3.4 | **PASS** |
+| in sweep, `-j 2` | **8.6 at start** | **PASS** |
 
-So it **is** the load artefact, and "re-run it idle before believing it" is the
-right advice — but **"idle" means below ~4, not merely below the load you started
-at.** An intermediate reading is worthless: this gate failed three times running
-at 4.1 and above, which is easy to mistake for a genuine regression, and the
-2026-07-28 entry above recording 5-of-5 passes "at load average ~4–5" now looks
-optimistic by about a point at its lower end. Drain the machine and check
-`uptime` before concluding anything about this gate.
+The first four readings fell in order and looked exactly like a threshold near
+4, and that conclusion was written down here and then falsified within the hour
+by the last row: a full sweep starting at load **8.6** — higher than the one
+that failed — passed this gate. So load correlates loosely at best, and the
+honest description is **nondeterministic**.
+
+What survives: a single red here means nothing on its own, re-run it, and
+**four consecutive readings are not a trend either**. What does not survive:
+any claim about a specific load number, including the 2026-07-28 entry's
+"~4–5" and the threshold this table used to assert.
 
 It was never a Phase 2 regression regardless: this phase's two qemu2 commits
 touch only `hw/arm/fsl-imxrt1062.c`, `hw/misc/imxrt1060_anatop.c` and

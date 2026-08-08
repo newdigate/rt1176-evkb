@@ -225,6 +225,7 @@ examples/dualcore/cm4_wire_int_slave_test:cm4_wire_int_slave_test \
 examples/dualcore/cm4_wire_test:cm4_wire_test examples/framework/arm_math_test:arm_math_test \
 examples/framework/edma_test:edma_test examples/framework/eventresponder_test:eventresponder_test \
 examples/framework/stream_test:stream_test examples/framework/string_test:string_test \
+examples/framework/string_test/build-rt1062:string_test \
 examples/framework/wprogram_parity_test:wprogram_parity_test \
 examples/gpio-analog/analog_test:analog_test examples/gpio-analog/dac_test:dac_test \
 examples/gpio-analog/irq_attach_test:irq_attach_test examples/networking/enet_test:enet_test \

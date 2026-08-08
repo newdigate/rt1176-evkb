@@ -79,7 +79,8 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **83 gates** (82 before Phase 2
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **84 gates** (83 before
+`framework/string_test` was gated on a second board; 82 before Phase 2
 gated `usb/usb_descriptor_survey` on a second board; 81 before the
 RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.4 added `dualcore/cm4_graph_usb_capstone`; 79 before Phase
@@ -87,11 +88,10 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). Expect **82 passed, 1 failed, 0 SKIP** on a
-genuinely idle machine (1-min load below ~4), or **81 passed, 2 failed, 0 SKIP**
-under any real load — the latter is what the 2026-08-08 Phase 2 sweep measured
-end to end at `-j 2`. There are now **two** permitted reds, and the distinction
-between them matters:
+`usb/usb_descriptor_survey`). Expect **83 passed, 1 failed, 0 SKIP**, or
+**82 passed, 2 failed, 0 SKIP** when the nondeterministic dual-core gate is also
+red. Both were measured on 2026-08-08 at `-j 2`. There are now **two** permitted
+reds, and the distinction between them matters:
 
 - `rt1062:usb/usb_descriptor_survey` — red **by design**, not intermittently.
   Phase 2 gave `fsl-imxrt1062` a USB DMA view with the TCM windows punched out,
@@ -99,11 +99,13 @@ between them matters:
   never reads its periodic list. Whether RT1062 silicon actually enforces that
   is **unconfirmed and doubted** — see `docs/KNOWN-BROKEN-GATES.md`. Expect it
   red every run, on any load.
-- `rt1176:dualcore/cm4_audio_test` — the documented load-sensitive
-  intermittent. **"Idle" means below ~4, not merely below the load you started
-  at**: measured 2026-08-08 it failed at load 11, 5.5 and 4.1, then passed in
-  6 s at 3.4. Three reds in a row look exactly like a regression; check
-  `uptime` and drain the machine before believing one.
+- `rt1176:dualcore/cm4_audio_test` — **nondeterministic.** Long called a load
+  artefact, and load does not predict it: on 2026-08-08 it failed a sweep
+  starting at load 6.8 and passed one starting at 8.6. Re-run before believing a
+  red, and note that **consecutive readings are not a trend** — four in a row
+  that day looked like a clean threshold near load 4 and the next measurement
+  refuted it. Don't infer a load number; `docs/KNOWN-BROKEN-GATES.md` has all
+  six readings.
 
 Both the count and the pass/fail were measured that day; nothing here is
 carried forward.
