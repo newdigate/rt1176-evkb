@@ -369,13 +369,22 @@ echo "==== captured ===="; head -30 "$OUT"
 grep -q "UAC1-TEST: start" "$OUT" || { echo "FAIL: banner"; exit 1; }
 grep -q "UAC1-TEST: DEVICE READY" "$OUT" \
     || { echo "FAIL: AudioOut never claimed the emulated device"; exit 1; }
+# External oracle: this is QEMU's declared descriptor, which the firmware has no
+# knowledge of. It also proves the UAC1_RATE_HZ=48000 claim path specifically.
+grep -q "alt 1 ep=0x01 attr=0x0D mps=192 ch=2 bits=16 rates=48000" "$OUT" \
+    || { echo "FAIL: audio topology not parsed as declared"; exit 1; }
 grep -q "UAC1-TEST: selected alt=1" "$OUT" \
     || { echo "FAIL: streaming alternate setting not selected"; exit 1; }
 grep -q "UAC1-TEST: PASS" "$OUT" || { echo "FAIL: topology report"; exit 1; }
 grep -q "UAC1-TEST: siTD posted, 180 bytes" "$OUT" \
     || { echo "FAIL: isochronous descriptor not posted"; exit 1; }
-grep -q "UAC1-TEST: SITD PASS - controller sent the packet" "$OUT" \
-    || { echo "FAIL: controller did not accept the siTD"; exit 1; }
+# NOT "SITD PASS" -- measured, that is unreachable under QEMU. The controller
+# never runs the descriptor (active=1, bytes_left unchanged) and prints
+# "SITD FAIL", with NO error flags set. Asserting the flags is the part that is
+# both true and meaningful: a malformed siTD would set them, and this stays
+# correct if QEMU ever gains working iso, since SITD PASS needs them clear too.
+grep -q "xact_err=0 babble=0 buf_err=0" "$OUT" \
+    || { echo "FAIL: siTD reported transaction/babble/buffer errors"; exit 1; }
 grep -q "UAC1-TEST: streaming started, 1 kHz tone" "$OUT" \
     || { echo "FAIL: streaming did not start"; exit 1; }
 grep -q "HEARTBEAT seq=2 " "$OUT" \
@@ -384,7 +393,6 @@ grep -q "HEARTBEAT seq=2 " "$OUT" \
 # Vacuity guards. Each of these is a state the firmware prints INSTEAD of the
 # success token above it, so a loose grep could pass while the path failed.
 grep -q "UAC1-TEST: siTD POST FAILED" "$OUT" && { echo "FAIL: siTD post failed"; exit 1; }
-grep -q "UAC1-TEST: SITD FAIL" "$OUT" && { echo "FAIL: siTD reported error flags"; exit 1; }
 grep -q "UAC1-TEST: STREAM START FAILED" "$OUT" && { echo "FAIL: stream start failed"; exit 1; }
 
 echo "PASS: UAC1_OUT_CONTROL_PLANE"

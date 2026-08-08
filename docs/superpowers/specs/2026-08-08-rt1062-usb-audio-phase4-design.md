@@ -112,11 +112,35 @@ This is the opposite of `usb_audio_capture_test`, which deliberately runs with
 *no* device attached; do not copy that shape here. Machine, build directory and
 `-serial` chain all come from `gate-lib.sh`, never spelled out in the script.
 
-Asserts, in order: banner → device attaches → `audio=ready` → `alt=1` →
-`SITD PASS` → `streaming started` → heartbeat reaches `seq=2`.
+Asserts, in order: banner → device attaches → `audio=ready` → the parsed
+topology line → `alt=1` → siTD posted → siTD error flags all clear →
+`streaming started` → heartbeat reaches `seq=2`.
 
-Vacuity guards: the capture must **not** contain `STREAM START FAILED` or
-`SITD FAIL`.
+Vacuity guards: the capture must **not** contain `siTD POST FAILED` or
+`STREAM START FAILED`.
+
+★ **CORRECTION, measured 2026-08-08 (Task 2).** An earlier revision of this
+section asserted `SITD PASS` and named `SITD FAIL` as a vacuity guard. **Both
+were wrong**, and the evidence was second-hand — taken from
+`usb_descriptor_survey`'s gate comments, which describe a *different* example.
+Measured directly, on **both** boards identically:
+
+```
+UAC1-TEST: siTD posted, 180 bytes
+UAC1-TEST: siTD active=1 xact_err=0 babble=0 buf_err=0 bytes_left=180
+UAC1-TEST: SITD FAIL - see flags above
+```
+
+The controller never executes the descriptor — `active=1`, `bytes_left` still
+180 — with **no error flags set**. That is the same "iso does not flow" fact
+stated another way, so `SITD PASS` is unreachable under QEMU and `SITD FAIL` is
+the *expected* output, not a failure signal.
+
+The gate therefore asserts `xact_err=0 babble=0 buf_err=0` instead. That is the
+part which is both true and meaningful: a malformed siTD would set those bits,
+so it still catches a real regression, and it stays correct if QEMU ever gains
+working isochronous transfer (`SITD PASS` requires those same flags clear).
+`SITD PASS` remains the **silicon** bar, where it is reachable.
 
 ★ **The gate must not assert `pkts/s > 0`.** Isochronous data does not flow
 against QEMU's model — measured, and already recorded in
