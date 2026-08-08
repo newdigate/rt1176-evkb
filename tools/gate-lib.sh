@@ -77,7 +77,24 @@ gate_board() { echo "${EVKB_BOARD:-rt1176}"; }
 gate_qemu_machine() {
     case "$(gate_board)" in
         rt1176) echo "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on" ;;
-        rt1062) echo "-M mimxrt1060-evk -global fsl-imxrt1062.boot-xip=on" ;;
+        rt1062) echo "-M mimxrt1060-evk -global fsl-imxrt1062.boot-ivt=on" ;;
+        *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
+    esac
+}
+
+# Emit the -serial chain that lands FILE on the board's Serial1 UART.
+#
+# QEMU binds the Nth -serial to LPUART(N+1), so WHICH slot the capture file goes
+# in depends on which LPUART the core calls Serial1 -- and the two cores differ:
+# LPUART1 on imxrt1176 (HardwareSerial1.cpp, 0x4007C000), LPUART6 on the Teensy
+# 4 core, which follows the Teensy pin-0/1 convention. A gate that hardcodes a
+# bare `-serial file:` therefore captures NOTHING on rt1062 while the firmware
+# prints happily to LPUART6 -- and an empty capture is indistinguishable from
+# firmware that never ran. Board-dependent, so it lives here, not in 82 scripts.
+gate_serial1() {   # gate_serial1 FILE
+    case "$(gate_board)" in
+        rt1176) echo "-serial file:$1" ;;
+        rt1062) echo "-serial null -serial null -serial null -serial null -serial null -serial file:$1" ;;
         *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
     esac
 }

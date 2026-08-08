@@ -277,9 +277,28 @@ test_machine_args_rt1062() {
     ( . "$LIB"
       EVKB_BOARD=rt1062
       _got=$(gate_qemu_machine)
-      [ "$_got" = "-M mimxrt1060-evk -global fsl-imxrt1062.boot-xip=on" ] )
+      [ "$_got" = "-M mimxrt1060-evk -global fsl-imxrt1062.boot-ivt=on" ] )
 }
 test_machine_args_rt1062; report test_machine_args_rt1062 $?
+
+# Serial1 is LPUART1 on imxrt1176 but LPUART6 on the Teensy 4 core, and QEMU
+# binds -serial N to LPUART(N+1). Assert the exact chain: getting this wrong
+# yields an EMPTY capture, which reads as "firmware never printed".
+test_serial1_rt1176_is_first_slot() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1176
+      _got=$(gate_serial1 /tmp/u.txt)
+      [ "$_got" = "-serial file:/tmp/u.txt" ] )
+}
+test_serial1_rt1176_is_first_slot; report test_serial1_rt1176_is_first_slot $?
+
+test_serial1_rt1062_is_sixth_slot() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1062
+      _got=$(gate_serial1 /tmp/u.txt)
+      [ "$_got" = "-serial null -serial null -serial null -serial null -serial null -serial file:/tmp/u.txt" ] )
+}
+test_serial1_rt1062_is_sixth_slot; report test_serial1_rt1062_is_sixth_slot $?
 
 test_build_dir_rt1176_is_plain_build() {
     ( . "$LIB"
