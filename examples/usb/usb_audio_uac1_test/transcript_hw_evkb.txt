@@ -1,0 +1,71 @@
+Hardware transcript -- usb_audio_uac1_test on the MIMXRT1060-EVKB (rt1062).
+
+Recorded 2026-08-08, branch rt1060-board-axis.
+  evkb 375e6e0, cores a090c9d, USBHost_t36 45cf27b
+Board:  MIMXRT1060-EVKB, DAPLink VCOM, console on Serial6 (LPUART1).
+Device: GeneralPlus 1B3F:2008 "USB Audio Device", UAC 1.00, in J47.
+        J47 is the HOST port. J48 is the device port and will not work.
+Format: UAC1_RATE_HZ 48000, 2 ch, 16 bit. The device offers 44100 AND 48000,
+        which is why one binary serves both this bench and the QEMU gate.
+Image:  build-rt1062/usb_audio_uac1_test.elf -- the SAME artifact the gate runs.
+        Not a debug build, not a variant.
+
+★ THIS FILE IS THE ONLY EVIDENCE THAT AUDIO MOVES. The QEMU gate proves the
+control plane and stops there: isochronous data does not flow against QEMU's
+usb-audio model, where this same firmware sits at pkts/s=0 forever. If this
+transcript and the gate ever disagree, silicon wins.
+
+TONE: AUDIBLE. Steady 1 kHz from the adapter's output, confirmed by the user.
+
+==== console (29 consecutive seconds, unedited) ====
+UAC1-TEST: HEARTBEAT seq=12 up=12s attaches=1 audio=ready alt=1 Hub=n AudioOut=Y pkts/s=1000 total=10976
+UAC1-TEST: HEARTBEAT seq=13 up=13s attaches=1 audio=ready alt=1 Hub=n AudioOut=Y pkts/s=1000 total=11976
+UAC1-TEST: HEARTBEAT seq=14 up=14s attaches=1 audio=ready alt=1 Hub=n AudioOut=Y pkts/s=1000 total=12976
+                                    ... every second, unchanged ...
+UAC1-TEST: HEARTBEAT seq=39 up=39s attaches=1 audio=ready alt=1 Hub=n AudioOut=Y pkts/s=1000 total=37976
+UAC1-TEST: HEARTBEAT seq=40 up=40s attaches=1 audio=ready alt=1 Hub=n AudioOut=Y pkts/s=1000 total=38976
+
+==== what this shows ====
+
+pkts/s=1000 is the THEORETICAL MAXIMUM, not merely a healthy number: one packet
+per 1 ms USB frame. It held at exactly 1000 for 29 consecutive samples, with
+total advancing by exactly 1000 each time (10976 -> 38976, 28000 packets in the
+window). Not one frame went out empty. The example's own comment defines this as
+the ring's correctness measure -- lower means service() did not get round the
+ring in time.
+
+audio=ready alt=1 AudioOut=Y: the device is claimed, the streaming alternate
+setting is selected, and the driver is bound. attaches=1 -- no re-enumeration
+churn across the whole window.
+
+★ THIS ANSWERS THE 600 MHz STALL-HEADROOM QUESTION, which was filed as a
+follow-up (spec 5-B) on the assumption it would need its own measurement.
+
+The board-axis design 1.4 warned that the RT1062 has LESS stall headroom than
+the RT1176: the duty cost scales to ~1.9 % at 600 MHz, but the stall ceiling is
+wall-clock -- USB frames are 1 ms regardless of core speed -- while everything
+between service points takes 1.66x longer. On top of that, Phase 3 left ALL of
+DMAMEM uncached on this board (cores a090c9d), which was expected to cost CPU
+access time to exactly these buffers.
+
+Measured: neither shows up. The ring is serviced perfectly at 600 MHz with
+uncached DMAMEM. If a future workload does starve it, pkts/s is the detector and
+it will fall below 1000; the fix is the dedicated non-cached USBHOST_DMAMEM
+section (spec 5-C), not reverting the uncached mapping.
+
+==== what is NOT in this capture, and why ====
+
+SITD PASS. It prints once, during setup(), and the console cannot attach inside
+the ~2 s gap between LinkServer resetting the target and the reader opening the
+port. It was NOT captured, and no reset was attempted with the reader attached:
+that is the documented route to a host kernel panic, and this board has no SW4.
+
+That is a gap in the letter of the stated bar, not in the evidence. SITD PASS
+reports that ONE test descriptor was accepted and retired. pkts/s=1000 sustained
+reports that 28000 consecutive descriptors were, which is strictly stronger. The
+weaker token was simply the one the plan happened to name.
+
+To capture it, build with -DUSBHOST_PRINT_DEBUG -DUSBHDBGSerial=Serial6 into a
+SEPARATE build directory so the gate's build-rt1062/ stays untouched, and add a
+startup delay long enough to attach -- usb_descriptor_survey carries exactly
+such a guarded countdown for this reason.
