@@ -1,15 +1,16 @@
 #include "Arduino.h"
-#include "HardwareSerial.h"   // Serial1 (LPUART1) -- not pulled in by USBHost_t36.h
+#include "HardwareSerial.h"   // the console UART -- not pulled in by USBHost_t36.h
 #include "USBHost_t36.h"
 
-// RT1176 EVKB USB Host gate: UAC1 (USB Audio Class 1.0) enumeration over
-// USBHost_t36 on USB_OTG2 / USBPHY2.  Markers go out over Serial1 (LPUART1 /
-// VCOM).
+// USB Host gate for the MIMXRT1170-EVKB and the MIMXRT1060-EVKB: UAC1 (USB
+// Audio Class 1.0) enumeration over USBHost_t36 on USB_OTG2 / USBPHY2.  Markers
+// go out over the console UART via the CONSOLE alias below -- Serial1 on
+// imxrt1176, Serial6 on teensy4, LPUART1 (the board VCOM) on both.
 //
 // This is the M0/M1 gate for the USB audio work: it answers whether a
-// FULL-SPEED device enumerates when directly attached to the RT1176 root port.
-// Per RM 62.5.4.1 the controller has an embedded Transaction Translator and
-// "supports direct connection of a HS/FS/LS device", with the actual speed
+// FULL-SPEED device enumerates when directly attached to the root port.
+// Per RT1176 RM 62.5.4.1 the controller has an embedded Transaction Translator
+// and "supports direct connection of a HS/FS/LS device", with the actual speed
 // reported by PORTSC.PSPD -- which ehci.cpp already reads.
 //
 // It prints a once-per-second HEARTBEAT whether or not a device is attached, so
@@ -141,7 +142,9 @@ void loop() {
     }
 
     // Task 4: post ONE isochronous OUT packet and let the controller run it.
-    // 192 bytes = 48 samples of 48 kHz stereo 16-bit, the bring-up target.
+    // One 1 ms frame of stereo 16-bit at UAC1_RATE_HZ, so the payload scales
+    // with the rate: 4 bytes per sample x UAC1_RATE_HZ/1000 samples (192 bytes
+    // at the 48 kHz set above, 180 at 44.1 kHz).
     // 0xA5 fill so the payload is recognisable if it is ever captured.
     if (audioOut.ready() && topology_reported && !packet_posted) {
         audioOut.fillTestBuffer(0xA5);
@@ -202,10 +205,12 @@ void loop() {
             CONSOLE.printf(" %s=%c", driver_names[i], driver_active[i] ? 'Y' : 'n');
         }
         if (audioOut.streaming()) {
-            // Packets per second is the correctness measure for the ring: at
-            // 48 kHz with one frame per packet it must sit near 1000. Lower
-            // means frames went out empty because service() did not get round
-            // the ring in time.
+            // Packets per second is the correctness measure for the ring: with
+            // one frame per packet it must sit near 1000, which follows from
+            // the 1 ms USB frame alone and does NOT depend on UAC1_RATE_HZ --
+            // changing the rate changes the bytes per packet, not the count.
+            // Lower means frames went out empty because service() did not get
+            // round the ring in time.
             uint32_t p = audioOut.packetsSent();
             CONSOLE.printf(" pkts/s=%lu total=%lu", (unsigned long)(p - last_packets),
                            (unsigned long)p);
