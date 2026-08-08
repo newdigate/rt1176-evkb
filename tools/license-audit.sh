@@ -349,8 +349,19 @@ for pair in $GATES; do
             for a in "$bdir"/lib*.a; do
               [ -f "$a" ] || continue
               if "$TOOL/arm-none-eabi-ar" t "$a" 2>/dev/null | grep -qx "$base"; then
+                # ANCHORED (index == 1). nm prints an archive member header at
+                # the START of a line, so a substring match also fires on any
+                # member whose name merely ENDS with this one: base=Stream.cpp
+                # .obj matched AudioStream.cpp.obj: too, and — because the
+                # match arm runs before the /:$/ reset — swallowed the real
+                # header as well, attributing both members' symbols to Stream
+                # .cpp. Measured on serial_test/build-rt1062/libcores.o.a:
+                # 47 symbols unanchored, 12 anchored, the 35 extra all
+                # AudioStream's. That mis-prints evidence (you go debug the
+                # wrong file) and can flag a genuinely-empty ALLOW-listed file
+                # because some <Prefix><Name>.cpp in the same archive is not.
                 syms=$("$TOOL/arm-none-eabi-nm" --defined-only "$a" 2>/dev/null \
-                  | awk -v m="$base:" 'index($0, m) {inm=1; next} /:$/ {inm=0} inm && NF {print}')
+                  | awk -v m="$base:" 'index($0, m) == 1 {inm=1; next} /:$/ {inm=0} inm && NF {print}')
               fi
             done
             if [ -n "$syms" ]; then
