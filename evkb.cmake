@@ -66,7 +66,7 @@ else()
     message(FATAL_ERROR "EVKB_BOARD must be rt1176 or rt1062, got '${EVKB_BOARD}'")
 endif()
 
-_evkb_lib(cores          ${EVKB_ROOT}/cores/${EVKB_CORE_SUBDIR} https://github.com/newdigate/teensy-cores    4d871629d0de2421c7482d6c0e8efa3f38da8a26 ${EVKB_CORE_SUBDIR})
+_evkb_lib(cores          ${EVKB_ROOT}/cores/${EVKB_CORE_SUBDIR} https://github.com/newdigate/teensy-cores    99f7657bd3a7b44912301f7d3ade8164b7237185 ${EVKB_CORE_SUBDIR})
 _evkb_lib(Wire           ${_dev}/Wire                 https://github.com/newdigate/Wire            19babd18b83bc2f9ddbd16f6afefcbb42558530d .)
 _evkb_lib(SPI            ${_dev}/SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
 _evkb_lib(PXP         ${_dev}/PXP                  https://github.com/newdigate/PXP          5658e34885ff3a5cb5516a178ba60743e62a7517 .)
