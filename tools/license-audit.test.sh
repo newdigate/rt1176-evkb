@@ -322,4 +322,105 @@ test_gates_exempt_suppresses() {
 }
 test_gates_exempt_suppresses; report test_gates_exempt_suppresses $?
 
+# =============================================================================
+# Part 2 — the dual-licensed EMPTY-object check
+# =============================================================================
+# An ALLOW-listed copyleft source is excused only because it compiles to NOTHING,
+# so "that object defines no symbols" is the entire justification for the
+# allowlist. These cases pin the symbol walk that proves it.
+#
+# Unlike everything above, these need the ARM toolchain: the check shells out to
+# arm-none-eabi-ar/nm, so there is no way to exercise it without an archive those
+# two can actually read. Faking their output would test the fake. The toolchain
+# path is read back out of the audit rather than restated, so the two cannot
+# drift apart.
+TOOLBIN=$(sed -n 's/^TOOL=//p' "$AUDIT" | head -1)
+
+# An archive with two members whose names COLLIDE by suffix: Stream.cpp.obj is a
+# tail of AudioStream.cpp.obj. That is the real shape from cores/teensy4 under
+# EVKB_BOARD=rt1062, and it is what an unanchored member match gets wrong.
+#
+# AudioStream is deliberately added FIRST and given 6 symbols. nm lists members
+# in archive order, so with an unanchored match the colliding member's symbols
+# arrive first and fill the report's `head -5` on their own — which is exactly
+# how this surfaced: a DUAL-LICENSED SOURCE NOT EMPTY report for Stream.cpp that
+# listed nothing but AudioStream's symbols.
+mk_obj_archive() { # <build-dir> <tag> <empty|full>
+    o="$WORK/objs_$2"; mkdir -p "$o"
+    printf 'typedef int evkb_no_symbols_t;\n' > "$o/empty.cpp"
+    printf 'int stream_timed_read(void){return 3;}\n' > "$o/stream.cpp"
+    : > "$o/audio.cpp"
+    i=0
+    while [ $i -lt 6 ]; do
+        printf 'int audiostream_update_%d(void){return %d;}\n' "$i" "$i" >> "$o/audio.cpp"
+        i=$((i + 1))
+    done
+    "$TOOLBIN/arm-none-eabi-gcc" -c "$o/audio.cpp" -o "$o/AudioStream.cpp.obj" || return 1
+    case "$3" in
+        empty) "$TOOLBIN/arm-none-eabi-gcc" -c "$o/empty.cpp"  -o "$o/Stream.cpp.obj" ;;
+        full)  "$TOOLBIN/arm-none-eabi-gcc" -c "$o/stream.cpp" -o "$o/Stream.cpp.obj" ;;
+    esac || return 1
+    rm -f "$1"/lib*.a
+    "$TOOLBIN/arm-none-eabi-ar" rcs "$1/libfake.o.a" \
+        "$o/AudioStream.cpp.obj" "$o/Stream.cpp.obj" || return 1
+}
+
+# new_tree plus one ALLOW-listed copyleft source in the depfile and an archive
+# carrying the colliding pair. Only Stream.cpp is copyleft-headered: AudioStream
+# exists solely as an archive member, which is the realistic case — an archive
+# holds every TU, and only the copyleft ones are ever symbol-checked.
+new_sym_tree() { # <name> <empty|full> -> prints path
+    t=$(new_tree "$1" sym_test)
+    d="$t/examples/display/sym_test"
+    mkdir -p "$t/cores/teensy4"
+    printf '/*\n * GNU\n * Lesser General Public\n * License\n */\nclass Stream;\n' \
+        > "$t/cores/teensy4/Stream.cpp"
+    printf '%s \\\n' "$t/cores/teensy4/Stream.cpp" >> "$d/build/stub.obj.d"
+    mk_obj_archive "$d/build" "$1" "$2" || return 1
+    printf '%s' "$t"
+}
+
+SYMGATE="examples/display/sym_test:sym_test"
+
+# --- control: a NON-empty dual-licensed object is still caught ----------------
+# The anchoring fix narrows what the walk matches, and the cheapest way to get
+# that wrong is to narrow it to nothing — which would make every case below pass
+# while the check silently protected nothing. This pins that it still fires.
+test_dual_nonempty_fires() {
+    t=$(new_sym_tree dualfull full) || return 1
+    out=$(run_part2 "$t" "$SYMGATE"); rc=$?
+    [ $rc -ne 0 ] \
+        && echo "$out" | grep -q 'DUAL-LICENSED SOURCE NOT EMPTY.*Stream\.cpp' \
+        && echo "$out" | grep -q 'LICENSE-AUDIT: FAIL'
+}
+test_dual_nonempty_fires; report test_dual_nonempty_fires $?
+
+# --- the false positive: an empty object beside a colliding sibling -----------
+# Stream.cpp.obj genuinely defines NOTHING, so the allowlist holds and the audit
+# must pass. With the unanchored match it inherited AudioStream.cpp.obj's six
+# symbols and was flagged anyway — a clean file failing its own gate, the failure
+# mode that erodes trust in an audit fastest.
+test_dual_empty_not_flagged_despite_collision() {
+    t=$(new_sym_tree dualempty empty) || return 1
+    out=$(run_part2 "$t" "$SYMGATE"); rc=$?
+    [ $rc -eq 0 ] \
+        && ! echo "$out" | grep -q 'DUAL-LICENSED SOURCE NOT EMPTY' \
+        && echo "$out" | grep -q 'LICENSE-AUDIT: PASS'
+}
+test_dual_empty_not_flagged_despite_collision; report \
+    test_dual_empty_not_flagged_despite_collision $?
+
+# --- the evidence names the right file ---------------------------------------
+# A true positive is only actionable if the symbols printed under a filename are
+# that file's. Unanchored, the report for Stream.cpp listed AudioStream's symbols
+# and sent the reader to debug a file that was not the problem, so this asserts
+# both halves: Stream's symbol present, the colliding member's absent.
+test_dual_evidence_attributed_correctly() {
+    t=$(new_sym_tree dualattr full) || return 1
+    out=$(run_part2 "$t" "$SYMGATE")
+    echo "$out" | grep -q 'stream_timed_read' \
+        && ! echo "$out" | grep -q 'audiostream_update_'
+}
+test_dual_evidence_attributed_correctly; report test_dual_evidence_attributed_correctly $?
+
 exit $FAILED
