@@ -8,6 +8,51 @@ time on a subsystem you probably are not touching.
 
 ---
 
+## `rt1062:usb/usb_descriptor_survey` — RED BY DESIGN, awaiting silicon
+
+**Status:** red every run, on any load. **Not intermittent, and not a regression.** The rt1176 half
+of this gate passes; only the rt1062 half is red.
+
+Phase 2 (2026-08-08) gave `fsl-imxrt1062` a USB DMA view with the ITCM and DTCM windows punched out
+as error-logging holes, mirroring `fsl-imxrt1170`. USBHost_t36's `periodictable` — the EHCI periodic
+frame list the controller walks via `USBHS_PERIODICLISTBASE` — links at `0x20002000` on this board,
+inside DTCM. So the controller cannot read its own schedule and nothing enumerates.
+
+`survey.dbg` names exactly **one** genuine blocked access:
+
+```
+USB DMA read from CPU-private DTCM @ 0x20002004
+```
+
+The other 544 messages are cascade, not independent findings: the hole reads back 0, a frame-list
+entry of 0 is a pointer to `0x00000000` with the T-bit clear, and the controller then walks a bogus
+QH at ITCM `0x0`–`0x3c` forever. Count the DTCM lines, not the total.
+
+★ **Whether RT1062 silicon actually enforces this is NOT established, and the evidence points the
+other way.** Recorded here because it is the whole reason this gate is carried red rather than
+either fixed or deleted:
+
+- `.bss` is DTCM in `imxrt1060_evkb.ld` **and** in upstream Teensy's `imxrt1062.ld` and
+  `imxrt1062_t41.ld`; only `.bss.dma` (`DMAMEM`) is OCRAM.
+- Upstream USBHost_t36 declares `periodictable` with **no** `DMAMEM`, so on a Teensy 4.1 it sits in
+  DTCM — and USB host works on that board, same controller, same memory topology. That is the
+  strongest single piece of evidence, and it says the RT1062 can reach DTCM.
+- Every "DTCM is DMA-unreachable" claim in this tree is scoped to **RT1176**, where it was
+  established by measurement and caught two real bugs. Nothing establishes it for RT1062.
+- The comment at `ehci.cpp:64-66` justifying the `__IMXRT1176__`-only `DMAMEM` guard says "on Teensy
+  `.bss` is already OCRAM". That is false. Its *conclusion* may still be right, for the different
+  reason above.
+
+**Resolution path:** bench it on the MIMXRT1060-EVKB (Phase 3, **J47** — J48 is the device port). If
+OTG2 reads DTCM happily, the holes come out of the **1062** model and this gate goes green; the
+1170's holes stay, they were earned there.
+
+**Do NOT** resolve this by extending `USBHOST_DMAMEM` to `__IMXRT1062__`. That diverges from
+upstream on its own home silicon to satisfy a constraint that board probably does not have, and it
+erases the question instead of answering it. Equally, do not delete the holes to get a green sweep.
+
+---
+
 ## `dualcore/cm4_audio_test` — BROKEN, cause unidentified
 
 **Status:** broken. **Do not run by default.** Not a regression from any current work.
@@ -264,6 +309,53 @@ and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
 
+**2026-08-08 (Phase 2 — RT1062 USB host in QEMU):** `usb/usb_descriptor_survey`
+gains its rt1062 half: sweep **82 → 83**, again without a new example.
+
+Expectation is now **`81/2/0`**, and there are **two** permitted reds rather
+than one. They are different in kind and must not be conflated:
+
+- `rt1062:usb/usb_descriptor_survey` — **red by design, every run, any load.**
+  Its own section at the top of this file explains why and what would close it.
+- `rt1176:dualcore/cm4_audio_test` — the load-sensitive intermittent.
+
+So `82/1/0` (only the survey red) is *better* than expected, not worse. Zero
+SKIP either way. With two permitted reds, **read the gate names in the summary
+rather than trusting the count.**
+
+Measured 2026-08-08 at `-j 2`: **`81 passed, 2 failed, 0 SKIP`** — exactly those
+two. `cm4_audio_test` failed in its documented form (`fft_peak_bin` wrong,
+`AUDIO_CM4_DET=FAIL`, while `codec_ack=1` and `cm7_audio_isers=0` passed).
+
+Honest note on that one: it was re-run individually **twice more, at load 5.5
+and at load 4.1, and failed both times** — so on this day it did not behave like
+a load artefact, and the "re-run it idle before believing it" test did not clear
+it. It is nonetheless provably not a Phase 2 regression: this phase's two qemu2
+commits touch only `hw/arm/fsl-imxrt1062.c`, `hw/misc/imxrt1060_anatop.c` and
+`include/hw/arm/fsl-imxrt1062.h`, and `cm4_audio_test` has no `boards` sidecar,
+so it runs `-M mimxrt1170-evk` — a model none of those files build. Consistent
+with this file already recording that gate red and green on consecutive days.
+
+Licence audit: **PASS**, with both rt1062 build directories walked
+(`serial_test/build-rt1062` 136 dep paths, `usb_descriptor_survey/build-rt1062`
+203). `tools/license-audit.test.sh`: 20/20. The ★★ block above is closed.
+
+Two things worth not rediscovering:
+
+- **The EHCI host was never missing from the 1062 model.** `TYPE_CHIPIDEA`
+  derives from `TYPE_SYS_BUS_EHCI` and is shared with the 1170. Only the wiring
+  on top was absent. USBHost_t36's README claimed otherwise and was corrected.
+- **`-d unimp` did NOT find this phase's bug, and would not have.** The RT1062
+  hang was `hw/misc/imxrt1060_anatop.c` modelling the `SET`/`CLR`/`TOG` alias
+  words as ordinary storage instead of alias ports onto the base register, so
+  every alias write vanished and `ehci.cpp`'s `PLL_USB2` loop spun forever. The
+  registers are all *implemented*, so `unimp` printed nothing — the debug log
+  was three benign lines. What found it was attaching gdb to QEMU's gdbstub
+  (`-s`) and reading the PC, then reading `0x400D8020` and `0x400D8024` live.
+  **The tell was in the UART, not the log:** the firmware printed its banner and
+  then no 2-second heartbeat at all. That is a hang in `setup()`, not a failure
+  to enumerate, and the two look identical if you only read the first line.
+
 **2026-08-08 (the board axis):** `serial/serial_test` becomes the first example
 gated on two boards, so the sweep moves **81 → 82** without a new example: the
 same gate script runs once for `rt1176` and once for `rt1062`
@@ -295,15 +387,17 @@ Three notes on reading this sweep:
   polls a done bit that never arrives — 1,000,000 reads of INTR offset `0x3c`,
   bounded but far past any gate timeout, so the capture stays empty.
 
-★★ **The licence audit does NOT pass on this branch, and that is the one thing
-blocking the phase from closing.** `EVKB_BOARD=rt1062` links `cores/teensy4`,
-whose `WString.cpp`, `IPAddress.cpp`, `Stream.cpp`, `WMath.cpp` and `Time.cpp`
-are LGPL-2.1. `tools/license-audit.sh` allows `cores/teensy4/` only while its
-objects define no symbols — true for as long as that core was reference-only.
-It is now compiled, so the audit reports `DUAL-LICENSED SOURCE NOT EMPTY` five
-times and exits 1. Nothing LGPL reaches `serial_test.elf` (`--gc-sections`
-drops all five), but that is a property of this example, not of the board.
-Resolving it is a licence decision, not a harness fix.
+★★ **The licence audit did NOT pass on this branch when the board axis landed,
+and that blocked the phase from closing. RESOLVED the same day — see the Phase 2
+entry below.** `EVKB_BOARD=rt1062` links `cores/teensy4`, whose `WString.cpp`,
+`IPAddress.cpp`, `Stream.cpp`, `WMath.cpp` and `Time.cpp` were LGPL-2.1.
+`tools/license-audit.sh` allows `cores/teensy4/` only while its objects define
+no symbols — true for as long as that core was reference-only. Once compiled,
+the audit reported `DUAL-LICENSED SOURCE NOT EMPTY` five times and exited 1.
+Nothing LGPL ever reached `serial_test.elf` (`--gc-sections` dropped all five),
+but that was a property of that example, not of the board. It was a licence
+decision, not a harness fix, and it was taken the only acceptable way: the five
+were **replaced** with the MIT clean-room versions (`cores` `99f7657`).
 
 **2026-08-07 (the capstone: an audio graph on the CM4 feeding its own USB
 stream):** `dualcore/cm4_graph_usb_capstone` joins the sweep: **80 → 81

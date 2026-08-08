@@ -1,0 +1,100 @@
+rt1062 QEMU transcript for usb_descriptor_survey. TWO states, both real, both
+recorded on purpose -- the gate is GREEN on the USB host path and RED on the
+DMA-reachability model layered on top of it.
+
+Recorded 2026-08-08 on branch rt1060-board-axis.
+
+================================================================================
+STATE 1 -- GREEN. qemu2 0b000a6a81 (SET/CLR/TOG aliases), before the TCM holes.
+================================================================================
+
+This is the state that proves the RT1062 USB host path works in emulation. The
+oracle is external: 46F4:0002 and the 104-byte configuration descriptor are
+QEMU's usb-audio identity, which the firmware has no knowledge of.
+
+==== captured ====
+SURVEY: start -- plug in any USB device
+SURVEY: device 46F4:0002, 104 descriptor bytes
+SURVEY:  if 0 alt 0  class=0x01(AUDIO) sub=0x01 eps=0
+SURVEY:    *** UAC 1.00 ***
+SURVEY:  if 1 alt 0  class=0x01(AUDIO) sub=0x02 eps=0
+SURVEY:  if 1 alt 1  class=0x01(AUDIO) sub=0x02 eps=1
+SURVEY:    format: 2 ch, 16-bit, 1 rate(s): 48000
+SURVEY:    ep 0x01 OUT iso       sync=synchronous  usage=data        mps=192 refresh=0 synchAddr=0x00
+SURVEY: VERDICT adaptive/synchronous only -- cannot exercise async
+SURVEY: end
+PASS: SURVEY_ENUMERATES_EMULATED_UAC1_DEVICE
+
+Byte-for-byte what rt1176 prints, and all 13 usb/ + 3 serial/ gates passed on
+both boards in this state.
+
+WHAT MADE IT GREEN. Naming the OTG2 host bus (e84a6e451e) was necessary but not
+sufficient. With that alone the firmware HUNG: it printed its banner and then
+NOTHING -- not even the 2-second "SURVEY: waiting" heartbeat, which is the tell
+that this was never an enumeration failure. gdbstub put the PC in
+USBHost::begin() at ehci.cpp:184-195, the __IMXRT1062__ PLL_USB2 powerup loop.
+
+The cause was in hw/misc/imxrt1060_anatop.c: the SET/CLR/TOG alias words at
+base+0x4/+0x8/+0xC were modelled as ordinary storage instead of alias ports
+onto the base register, so every alias write vanished. Measured live over the
+gdbstub:
+
+    PLL_USB2     (0x400D8020) = 0x80000000   only the forced LOCK bit
+    PLL_USB2_SET (0x400D8024) = 0x00002000   the ENABLE the firmware wrote,
+                                             sitting in its own storage word
+
+Forcing LOCK was necessary but nowhere near sufficient -- the same loop also
+demands ENABLE, POWER and EN_USB_CLKS and sets all three through the alias.
+PLL_USB1 escaped notice only because the model seeds it to 0x3040 at reset, so
+startup.c's identical loop breaks on its first read without ever writing.
+
+================================================================================
+STATE 2 -- RED. qemu2 e236216190 (Task 3, the USB DMA TCM holes). CURRENT.
+================================================================================
+
+==== captured ====
+SURVEY: start -- plug in any USB device
+SURVEY: waiting seq=1 up=2s
+SURVEY: waiting seq=2 up=4s
+SURVEY: waiting seq=3 up=6s
+SURVEY: waiting seq=4 up=8s
+SURVEY: waiting seq=5 up=10s
+SURVEY: waiting seq=6 up=12s
+FAIL: device did not enumerate with the expected 104-byte config
+
+Note the heartbeat IS running here -- the firmware is alive and polling, it just
+never sees a device. That is a different failure from State 1's hang.
+
+survey.dbg names exactly ONE genuine blocked access:
+
+    USB DMA read from CPU-private DTCM @ 0x20002004
+
+which is periodictable[1] (periodictable @ 0x20002000), USBHost_t36's EHCI
+periodic frame list. The other 544 messages are cascade, not independent
+findings: the hole reads back 0, a frame-list entry of 0 is a pointer to
+0x00000000 with the T-bit clear, and the controller then walks a bogus QH at
+ITCM 0x0-0x3c forever.
+
+★ WHETHER RT1062 SILICON ENFORCES THIS IS NOT ESTABLISHED, and the available
+evidence points the other way:
+
+  - .bss is DTCM in imxrt1060_evkb.ld AND in upstream Teensy's imxrt1062.ld
+    and imxrt1062_t41.ld. Only .bss.dma (DMAMEM) is OCRAM. The comment at
+    ehci.cpp:64-66 saying "on Teensy .bss is already OCRAM" is factually wrong;
+    its CONCLUSION (do not DMAMEM on Teensy) may still be right, for the
+    different reason that the RT1062 controller can probably reach DTCM.
+  - Upstream USBHost_t36 declares periodictable with NO DMAMEM, so on Teensy
+    4.1 it sits in DTCM -- and USB host works on that board, same controller,
+    same memory topology. That is the strongest single piece of evidence.
+  - Every "DTCM is DMA-unreachable" claim in this tree is scoped to RT1176,
+    where it was established by measurement. Nothing establishes it for RT1062.
+
+The holes are kept and the gate carried RED by an explicit call, pending bench
+confirmation on the MIMXRT1060-EVKB (Phase 3, J47 -- J48 is the device port).
+If silicon shows OTG2 reading DTCM happily, the holes come out of the 1062
+model; the 1170's stay, they were earned there by catching two real bugs.
+
+Do NOT "fix" this red by extending USBHOST_DMAMEM to __IMXRT1062__. That would
+diverge from upstream on its own home silicon to satisfy a constraint that
+board probably does not have, and it would erase the question instead of
+answering it.
