@@ -104,15 +104,19 @@ a silicon run in Phase 3 with whatever device is in J47.
 `transcript_qemu_red.txt` is committed **before** the model change, showing the
 gate failing because `bus=usbhost.0` does not resolve.
 
-**The device must be HOTPLUGGED, not present at reset.** ChipIdea defers attach
-to the guest's port-power write (`chipidea.c:230` → `hcd-ehci.c:1066`), so a
-device present from reset raises PCD before the firmware is listening. Phase 7.1
-produced two vacuous reds this way before it was understood — the first with
-`irqcnt=0, stsraw=0`, which said nothing about routing at all. The gate hotplugs
-via `-monitor unix:` after polling the UART for a marker proving the firmware
-has powered the port.
+**No hotplug is needed here, and adding it would be cargo-cult.** Phase 7.1
+learned that ChipIdea defers attach to the guest's port-power write
+(`chipidea.c:230` → `hcd-ehci.c:1066`), so a device present from reset raises
+PCD before the firmware is listening — and it produced two vacuous reds before
+that was understood. **That lesson applies to gates asserting an interrupt or
+plug EDGE.** This gate asserts *enumeration*, and it already passes on rt1176
+with `-device usb-audio,bus=usbhost.0,port=1` present from startup. The existing
+gate script is reused unchanged.
 
-A red that would have happened anyway is not evidence.
+What does carry over is the underlying discipline: a red that would have
+happened anyway is not evidence. So the red transcript must be checked for
+*cause* — QEMU refusing to start because `usbhost.0` does not resolve — and not
+merely for being red.
 
 ## 7. Risks
 
