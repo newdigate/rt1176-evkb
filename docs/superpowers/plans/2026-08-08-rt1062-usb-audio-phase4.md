@@ -103,9 +103,13 @@ insert:
 
 ```bash
 cd ~/Development/rt1170/evkb/examples/usb/usb_audio_uac1_test
-sed -i '' 's/\bSerial1\./CONSOLE./g' usb_audio_uac1_test.cpp
+sed -i '' 's/Serial1\./CONSOLE./g' usb_audio_uac1_test.cpp
 grep -n 'Serial1' usb_audio_uac1_test.cpp
 ```
+
+**No `\b` in that pattern** — BSD `sed` on macOS does not support it and the
+command becomes a silent no-op that looks like it worked. The `\.` is what makes
+it safe: no comment line contains `Serial1` followed by a dot.
 
 Expected: the only remaining `Serial1` hits are inside the comment block from
 Step 1 and the `#define CONSOLE Serial1` line. **If any bare `Serial1` remains
@@ -204,11 +208,18 @@ cd ~/Development/rt1170/evkb/examples/usb/usb_audio_uac1_test
   | grep -iE "periodictable|enumbuf|memory_Pipe|memory_Transfer|audioOut|hub1"
 ```
 
-Expected: every address begins `0x2020` (OCRAM). **Any `0x2000xxxx` address is
-DTCM and will fail on silicon** — the OTG2 DMA master cannot reach it, and the
-controller raises `USBSTS.SEI` and halts. If one appears, the `DMAMEM` guard for
-that object is missing; fix it in USBHost_t36 or on the object's declaration in
-this example, not by ignoring it.
+Expected: every DMA-visible object sits at **`0x202xxxxx`** — OCRAM starts at
+`0x20200000` and the section runs on from there, so `0x2022xxxx` is fine.
+**Any `0x2000xxxx` address is DTCM and will fail on silicon** — the OTG2 DMA
+master cannot reach it, and the controller raises `USBSTS.SEI` and halts.
+
+Two known false positives, because the grep is case-insensitive: `reset_busy`
+(matches on "Hub1**0**", a plain `bool`) and `_ZTV11USBAudioOut` (the vtable,
+CPU-read only). Both are in DTCM on the hardware-verified rt1176 build too, so
+they are parity rather than a defect. Check the *objects*, not the grep count.
+
+If a genuine DMA structure lands in DTCM, the `DMAMEM` guard for it is missing;
+fix it in USBHost_t36 or on the object's declaration, not by ignoring it.
 
 - [ ] **Step 10: Commit**
 
