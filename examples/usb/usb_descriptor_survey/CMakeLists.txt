@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
 project(usb_descriptor_survey)
 
-set(TEENSY_VERSION 117 CACHE STRING "")
+# Fallback only: the toolchain file sets this FORCE-fully, so a toolchain-driven
+# build wins. A bare `cmake -B build .` with no toolchain still selects 117.
+if(NOT DEFINED TEENSY_VERSION)
+    set(TEENSY_VERSION 117 CACHE STRING "")
+endif()
 
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 evkb_library_dir(EEPROM EVKB_EEPROM_DIR)

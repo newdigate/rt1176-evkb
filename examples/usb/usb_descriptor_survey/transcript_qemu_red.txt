@@ -1,0 +1,22 @@
+RED transcript, committed BEFORE the qemu2 change that makes this gate pass.
+
+The mimxrt1060-evk machine does not name its OTG2 host bus, so
+"-device usb-audio,bus=usbhost.0" cannot resolve and QEMU exits before the
+firmware runs. This is the red the Phase 2 model change fixes; it is checked in
+so the gate is provably failing for THIS reason and not vacuously.
+
+Recorded on branch rt1060-board-axis, evkb dd6129d, qemu2 c850405bf9.
+
+==== EVKB_BOARD=rt1062 ./run_qemu.sh (stdout+stderr) ====
+FAIL: no UART capture at /Users/nicholasnewdigate/Development/rt1170/evkb/examples/usb/usb_descriptor_survey/survey.uart -- QEMU produced no serial output (did it start?)
+
+==== QEMU's own stderr, captured via -D survey.dbg (tools/qrun redirects it there,
+     not to run_qemu.sh's stdout/stderr -- this is what names the actual cause) ====
+qemu-system-arm: -device usb-audio,bus=usbhost.0,port=1,audiodev=snd0: Bus 'usbhost.0' not found
+
+QEMU refuses the -device argument at startup because the mimxrt1060-evk
+machine's OTG2 controller has no device id, so its EHCI host bus is never
+named "usbhost.0" (unlike mimxrt1170-evk, where it is). QEMU exits before
+loading the kernel image, no UART is ever opened, and the gate's own
+gate_require_capture fails by name on the missing capture file -- exactly the
+two-stage failure this task's design predicted.

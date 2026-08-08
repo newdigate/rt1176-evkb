@@ -1,0 +1,4 @@
+# Boards this example is built and gated for. See
+# docs/superpowers/specs/2026-08-08-rt1062-usb-host-qemu-design.md
+rt1176
+rt1062
