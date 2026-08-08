@@ -9,9 +9,10 @@
 //
 // This is the M0/M1 gate for the USB audio work: it answers whether a
 // FULL-SPEED device enumerates when directly attached to the root port.
-// Per RT1176 RM 62.5.4.1 the controller has an embedded Transaction Translator
-// and "supports direct connection of a HS/FS/LS device", with the actual speed
-// reported by PORTSC.PSPD -- which ehci.cpp already reads.
+// Per RT1176 RM 62.5.4.1 the controller has an embedded Transaction Translator;
+// the quoted phrase "supports direct connection of a HS/FS/LS device" is from
+// 62.3.1.1 (Host Mode), not 62.5.4.1 -- two sections, one claim. The actual
+// speed is reported by PORTSC.PSPD, which ehci.cpp already reads.
 //
 // It prints a once-per-second HEARTBEAT whether or not a device is attached, so
 // silence on the console always means "firmware stopped", never "nothing
@@ -143,8 +144,11 @@ void loop() {
 
     // Task 4: post ONE isochronous OUT packet and let the controller run it.
     // One 1 ms frame of stereo 16-bit at UAC1_RATE_HZ, so the payload scales
-    // with the rate: 4 bytes per sample x UAC1_RATE_HZ/1000 samples (192 bytes
-    // at the 48 kHz set above, 180 at 44.1 kHz).
+    // with the rate: 4 bytes per sample x ceil(UAC1_RATE_HZ/1000) samples. That
+    // is 192 bytes at the 48 kHz set above, and 180 at 44.1 kHz -- 45 samples,
+    // NOT 44.1: a 44.1 kHz stream sends 45-sample frames with a 44 every tenth,
+    // so the max packet is the rounded-up one. Drop the round-up and you get
+    // 176.4, which is why this spells it out.
     // 0xA5 fill so the payload is recognisable if it is ever captured.
     if (audioOut.ready() && topology_reported && !packet_posted) {
         audioOut.fillTestBuffer(0xA5);
