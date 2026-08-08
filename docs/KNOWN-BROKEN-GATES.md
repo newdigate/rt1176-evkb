@@ -313,6 +313,44 @@ and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
 
+**2026-08-08 (Phase 4 — UAC1 host on two boards):** `usb/usb_audio_uac1_test`
+gains a gate AND a second board in one move: sweep **84 → 86**, two gate ids
+(`rt1176:` and `rt1062:`) from a single new `run_qemu.sh`. It had **no** gate at
+all before — there was no UAC device in QEMU for the host stack to enumerate
+until the emulated `usb-audio` device came into use, so there was nothing to
+assert. Measured `86 passed, 0 failed, 0 SKIP` at `-j 2` on a machine at load
+6.3, with `rt1176:dualcore/cm4_audio_test` green in that run.
+
+Expectation moves to **`86/0/0`**, or **`85/1/0`** when the nondeterministic
+`cm4_audio_test` is red. Zero SKIP either way. The permitted reds are
+**unchanged** — this gate is green on both boards.
+
+★ **The gate proves the CONTROL PLANE only, and that is deliberate.** It asserts
+enumeration, descriptor parse, interface/alt-setting selection and endpoint
+setup. It does **not** assert `SITD PASS` or `pkts/s > 0`, because QEMU never
+runs the isochronous descriptor: the iTD sits with `active=1`, `bytes_left`
+unchanged and no error flags, forever. `SITD FAIL` is therefore the EXPECTED
+output under QEMU. Anyone who "fixes" that by asserting `SITD PASS` will make
+the gate permanently red for no reason at all — the firmware is fine and the
+model is what is missing.
+
+Silicon carried the rest, and the evidence is committed at
+`examples/usb/usb_audio_uac1_test/transcript_hw_evkb.txt`: a GeneralPlus
+`1B3F:2008` UAC1 adapter in J47, an audible 1 kHz tone, and `pkts/s=1000`
+sustained for **29 consecutive seconds** (`total` 10976 → 38976). 1000 pkts/s is
+the theoretical maximum — one packet per 1 ms USB frame — so that is 28000
+packets with **none** dropped.
+
+★ **That measurement closed an open question rather than merely passing.** The
+board-axis design §1.4 predicted the RT1062 has *less* stall headroom than the
+RT1176: the stall ceiling is wall-clock, and at 600 MHz everything between
+service points takes 1.66× longer. Phase 3 then left **all** of DMAMEM uncached
+on this board, adding a second cost on top. Neither is observable — the transfer
+ring is serviced perfectly, at the frame rate, for half a minute. `pkts/s`
+remains the detector if some future workload ever starves it; the fix then would
+be a dedicated non-cached `USBHOST_DMAMEM` section, **not** reverting the
+uncached mapping.
+
 **2026-08-08 (task #74 — String coverage on the second board):**
 `framework/string_test` gains its rt1062 half: sweep **83 → 84**, again without
 a new example. It passed first time, all 21 assertion groups including

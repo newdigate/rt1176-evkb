@@ -238,6 +238,8 @@ examples/storage-memory/sdram_test:sdram_test \
 examples/timing/interval_timer_test:interval_timer_test examples/timing/rtc_test:rtc_test \
 examples/usb/usb_audio_capture_test:usb_audio_capture_test \
 examples/usb/usb_audio_duplex_test:usb_audio_duplex_test \
+examples/usb/usb_audio_uac1_test:usb_audio_uac1_test \
+examples/usb/usb_audio_uac1_test/build-rt1062:usb_audio_uac1_test \
 examples/usb/usb_descriptor_survey:usb_descriptor_survey \
 examples/usb/usb_descriptor_survey/build-rt1062:usb_descriptor_survey \
 examples/usb/usb_data_test:usb_data_test examples/usb/usb_enum_test:usb_enum_test \
