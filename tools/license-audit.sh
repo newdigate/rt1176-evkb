@@ -155,6 +155,10 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # (teensy-cmake-macros), whose gcc step emits <obj>.o.d depfiles (-MMD -MF,
 # added 2026-07-18) — so CM4-side sources are covered by this same walk
 # (the *.o.d pattern below), not just their provenance headers.
+# An entry may also name a build directory directly (…/build-rt1062) to audit a
+# second board's build of the same example: EVKB_BOARD=rt1062 links
+# cores/teensy4 instead of cores/imxrt1176, so that image has a link manifest
+# this list would otherwise never walk.
 GATES=${LICENSE_AUDIT_GATES:-"examples/audio/audio_h_test:audio_h_test examples/audio/audioinput_i2s_test:audioinput_i2s_test \
 examples/audio/audiooutput_i2s_test:audiooutput_i2s_test \
 examples/audio/audiostream_test:audiostream_test examples/audio/filter_fir_test:filter_fir_test \
@@ -200,6 +204,7 @@ examples/gpio-analog/irq_attach_test:irq_attach_test examples/networking/enet_te
 examples/networking/ethernet_test:ethernet_test examples/networking/lwip_test:lwip_test \
 examples/networking/native_ethernet_test:native_ethernet_test \
 examples/serial/serial_test:serial_test examples/serial/serial_test_rx:serial_test_rx \
+examples/serial/serial_test/build-rt1062:serial_test \
 examples/storage-memory/eeprom_test:eeprom_test examples/storage-memory/extmem_test:extmem_test \
 examples/storage-memory/sdram_test:sdram_test \
 examples/timing/interval_timer_test:interval_timer_test examples/timing/rtc_test:rtc_test \
@@ -280,6 +285,12 @@ case "$PARTS" in *2*) ;; *) GATES="" ;; esac
 for pair in $GATES; do
   g=${pair%%:*}; t=${pair##*:}
   bdir=$EVKB/$g/build
+  # A gate path may name a build directory OUTRIGHT rather than an example
+  # directory (last component starting "build"), which is how a second board's
+  # build of the SAME example gets its own entry — one example directory, two
+  # link manifests, and the rt1062 one links a different core. No example is
+  # named build*, so the suffix test is unambiguous.
+  case "${g##*/}" in build*) bdir=$EVKB/$g ;; esac
   if [ ! -f "$bdir/$t.elf" ]; then
     echo "MISSING BUILD: $g (build it first)"; fail=1; continue
   fi

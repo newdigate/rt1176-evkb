@@ -264,6 +264,47 @@ and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
 
+**2026-08-08 (the board axis):** `serial/serial_test` becomes the first example
+gated on two boards, so the sweep moves **81 → 82** without a new example: the
+same gate script runs once for `rt1176` and once for `rt1062`
+(MIMXRT1060-EVKB). Gate ids now carry a board prefix.
+
+Expectation is `82/0/0` or `81/1/0` with the documented
+`rt1176:dualcore/cm4_audio_test` singleton, zero SKIP either way.
+
+Measured 2026-08-08 at `-j 2` on a machine at load ~4: **`81 passed, 1 failed,
+0 SKIP`**, the failure being `rt1176:dualcore/cm4_audio_test`
+(`fft_peak_bin` wrong, `AUDIO_CM4_DET=FAIL`) — the documented intermittent, in
+its documented form. Both board variants of `serial/serial_test` passed
+(`rt1176` 1 s, `rt1062` 2 s).
+
+Three notes on reading this sweep:
+
+- **A red on `rt1062:` and green on `rt1176:` for the same example is not a
+  flake** — it is the board axis doing its job, and it means the 1060 build
+  genuinely differs.
+- **The SKIP signal is now per board**: an example that declares `rt1062` but
+  has no `build-rt1062/*.elf` is a SKIP, and the runner prints the exact
+  `cmake` line to fix it.
+- ★ **`rt1062:serial/serial_test` is RED on a fresh clone**, and that is
+  expected rather than a regression. Getting it green needed a qemu2 change
+  (`c850405bf9`, wiring `TYPE_IMXRT_SEMC` into the RT1062 SoC, which had
+  modelled `semc-ctrl` as an unimplemented stub), and qemu2 changes stay local
+  to this machine per the GPL one-way firewall. Same situation as Phase 7.1's
+  IRQ-135 split. Without it the Teensy core's unconditional SDRAM bring-up
+  polls a done bit that never arrives — 1,000,000 reads of INTR offset `0x3c`,
+  bounded but far past any gate timeout, so the capture stays empty.
+
+★★ **The licence audit does NOT pass on this branch, and that is the one thing
+blocking the phase from closing.** `EVKB_BOARD=rt1062` links `cores/teensy4`,
+whose `WString.cpp`, `IPAddress.cpp`, `Stream.cpp`, `WMath.cpp` and `Time.cpp`
+are LGPL-2.1. `tools/license-audit.sh` allows `cores/teensy4/` only while its
+objects define no symbols — true for as long as that core was reference-only.
+It is now compiled, so the audit reports `DUAL-LICENSED SOURCE NOT EMPTY` five
+times and exits 1. Nothing LGPL reaches `serial_test.elf` (`--gc-sections`
+drops all five), but that is a property of this example, not of the board.
+Resolving it is a licence decision, not a harness fix.
+
 **2026-08-07 (the capstone: an audio graph on the CM4 feeding its own USB
 stream):** `dualcore/cm4_graph_usb_capstone` joins the sweep: **80 → 81
 gates**. Phase 7.4 — the CM4 image adds `AudioStream.cpp`, the Audio library's

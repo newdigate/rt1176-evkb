@@ -79,26 +79,52 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **81 gates** (80 before Phase
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **82 gates** (81 before the
+RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.4 added `dualcore/cm4_graph_usb_capstone`; 79 before Phase
 7.3 added `dualcore/cm4_usb_audio_probe`; 78 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). Expect **81 passed, 0 failed, 0 SKIP** on an idle
-machine, or **80 passed, 1 failed, 0 SKIP** when the single permitted
-intermittent (`dualcore/cm4_audio_test`) is red — the latter is what the
-2026-08-06 Stage C sweep measured at `-j 2`.
-The 81 is `run-all-qemu-gates.sh -l` measured on 2026-08-07 after 7.4 landed;
-that sweep was NOT re-run end to end for 7.4 (the four Phase-7 gates were, all
-green), so treat the pass/fail counts above as carried forward and the gate
-COUNT as re-measured.
+`usb/usb_descriptor_survey`). Expect **82 passed, 0 failed, 0 SKIP** on an idle
+machine, or **81 passed, 1 failed, 0 SKIP** when the single permitted
+intermittent (`rt1176:dualcore/cm4_audio_test`) is red — the latter is what the
+2026-08-08 board-axis sweep measured at `-j 2`, on a machine at load ~4.
+Both the count and the pass/fail were measured that day, end to end; nothing
+here is carried forward.
 **0 SKIP is the load-bearing number in either case**: it is what says the
 sweep actually covered everything rather than quietly measuring less.
 Note `-l` prints a trailing "(N gate(s))" summary line, so `wc -l` on its
 output is one more than the gate count. A single dual-core failure with everything else green is the known
 load artefact described below; any *other* failure is a real regression from
 what you are doing.
+
+**The tree is multi-board.** `EVKB_BOARD` selects `rt1176` (MIMXRT1170-EVKB,
+the default) or `rt1062` (MIMXRT1060-EVKB). An example declares the boards it
+supports in a `boards` sidecar file; absent means `rt1176` only, which is why
+most examples have none. Gate ids are `<board>:<category>/<name>` and no gate
+names a QEMU machine — `tools/gate-lib.sh` derives `-M`, `-global`, the build
+directory and the `-serial` chain from the board. Build a non-default board with
+`cmake -B build-rt1062 -DEVKB_BOARD=rt1062 -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1062-evkb.toolchain.cmake`.
+
+Three per-board divergences are already known, all handled in `gate-lib.sh`,
+and any new two-board example must go through it rather than spelling them out:
+- **QEMU machine**: `mimxrt1170-evk` vs `mimxrt1060-evk`.
+- **Boot property**: the RT1170 model's `boot-xip` is a boot-ROM stub that
+  parses the real IVT; the RT1062 model has `boot-xip` AND `boot-ivt` as
+  *different* properties selecting different reset vectors, and a Teensy-core
+  image is the `boot-ivt` kind. Using the wrong one double-faults into Lockup
+  before a line of firmware runs.
+- **Which LPUART is `Serial1`**: LPUART1 on `cores/imxrt1176`, but **LPUART6**
+  on `cores/teensy4` (the Teensy pin-0/1 convention). QEMU binds the Nth
+  `-serial` to LPUART(N+1), so an rt1062 gate needs five `-serial null` before
+  its capture file. Get this wrong and the firmware runs perfectly while the
+  capture stays empty — indistinguishable from firmware that never started.
+
+★ **`rt1062` links `cores/teensy4`, which is LGPL** — see the licence-audit
+note under `tools/` below. That core is upstream Teensy, not the clean-room
+`cores/imxrt1176`, and building it is what put copyleft source into a link
+manifest for the first time in this tree.
 
 Three things that number depends on:
 
@@ -144,6 +170,22 @@ Repo-wide gates in `tools/`:
   tree is deliberately MIT/BSD-only; every inherited LGPL file has a clean-room
   rewrite. Don't introduce GPL/LGPL/MPL code or dependencies, and don't vendor a
   prebuilt binary without licence text beside it.
+  An entry may name a **build directory** (`examples/…/build-rt1062:target`)
+  rather than an example directory, so a second board's build of the same
+  example gets its own depfile walk. It needs one: `EVKB_BOARD=rt1062` links a
+  different core.
+  ★ **OPEN as of 2026-08-08 — this audit FAILS on the rt1062 build.**
+  `cores/teensy4/` is in the audit's `ALLOW` list on the condition that its
+  objects define **no** symbols, which held while CLAUDE.md could say it was
+  "an uncompiled upstream reference copy — never built". The board axis builds
+  it, and five of its files are LGPL-2.1 (`WString.cpp`, `IPAddress.cpp`,
+  `Stream.cpp`, `WMath.cpp`, `Time.cpp` — all Arduino-inherited). Four have a
+  clean-room rewrite in `cores/imxrt1176`; `IPAddress.cpp` has none, because
+  that core has no `IPAddress` at all. They compile to real symbols in
+  `libcores.o.a`. `--gc-sections` keeps them out of `serial_test.elf` today,
+  so nothing LGPL has shipped, but that is an artefact of which example it is
+  and not a policy. Do not resolve this by deleting the `build-rt1062` GATES
+  entry or by relaxing `ALLOW`.
 - `license-audit.test.sh` — negative tests proving the audit's part-1 checks
   actually fire (unlicensed binary, MPL header) rather than passing vacuously.
 - `gate-lib.test.sh` — tests for the gate runner lifecycle library.
@@ -188,8 +230,11 @@ harness.
   Teensy-compatible API surface (GPIO, LPADC, FlexPWM, DAC, PIT/IntervalTimer,
   LPUART Serial, USB device stack, DMAChannel/eDMA, EventResponder,
   AudioStream), and the dual-core layer (`Multicore`, `MessagingUnit`,
-  `Cm4ImageBank`). `cores/teensy4/` is an uncompiled upstream reference copy —
-  never built.
+  `Cm4ImageBank`). **`cores/teensy4/` used to be an uncompiled upstream
+  reference copy; since the RT1060 board axis it is the core that
+  `EVKB_BOARD=rt1062` actually builds.** That is what broke the licence audit
+  (see `tools/license-audit.sh` above) — it is upstream Teensy/Arduino code
+  and carries LGPL files the clean-room `imxrt1176` core exists to avoid.
 - **Peripheral libraries are sibling repos**, not in-core: Wire (LPI2C),
   SPI (LPSPI), Audio (graph nodes + WM8962 codec driver), MipiDisplay
   (MIPI-DSI panels), Ethernet stacks, etc. Core-vs-library boundary follows
