@@ -260,5 +260,18 @@ void loop() {
 		last_beat = now;
 		CONSOLE.printf("SURVEY: waiting seq=%lu up=%lus\n",
 		               (unsigned long)++beat_seq, (unsigned long)(now / 1000u));
+#if defined(USBHOST_PRINT_DEBUG) && defined(__IMXRT1062__)
+		// Bench diagnosis: sample the OTG2 host registers WITH THE CPU RUNNING.
+		// Every earlier reading of these came through the debug probe, which
+		// halts the core -- and a halted core is exactly the wrong instrument
+		// for deciding whether a free-running frame counter is advancing.
+		// USB2 operational base 0x402E0200 (imxrt.h IMXRT_USB2_ADDRESS).
+		#define _U2(off) (*(volatile uint32_t *)(0x402E0200u + (off)))
+		CONSOLE.printf("HW: USBSTS=%08lX USBCMD=%08lX PORTSC=%08lX FRINDEX=%08lX ASYNC=%08lX MODE=%08lX\n",
+		               (unsigned long)_U2(0x144), (unsigned long)_U2(0x140),
+		               (unsigned long)_U2(0x184), (unsigned long)_U2(0x14C),
+		               (unsigned long)_U2(0x158), (unsigned long)_U2(0x1A8));
+		#undef _U2
+#endif
 	}
 }

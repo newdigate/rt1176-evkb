@@ -287,6 +287,17 @@ harness.
   `imxrt1060_evkb.ld`, `imxrt1062.ld` and `imxrt1062_t41.ld` alike, and only
   `.bss.dma` (`DMAMEM`) reaches OCRAM. So a buffer that is DMA-reachable by
   default on one board is not on the other.
+  ★ **The two cores also differ on the D-cache, and DMA correctness depends on
+  it.** `cores/teensy4` enables it (`startup.c`, `SCB_CCR_IC | SCB_CCR_DC`);
+  `cores/imxrt1176` never writes `SCB_CCR` at all, so OCRAM is coherent there
+  for free. On rt1062 it is not: a DMAMEM buffer is cached write-back unless the
+  MPU says otherwise, so a CPU write can sit in cache while a bus master reads
+  stale memory. That cost a full silicon debug session — the EHCI walked a
+  periodic list of stale garbage and halted with **no error bit set**, because
+  the port-connect ISR had already acked the fatal status. OCRAM is now mapped
+  `MEM_NOCACHE` under `ARDUINO_MIMXRT1060_EVKB`. **Two facts follow: DMA buffers
+  on rt1062 need OCRAM *and* that OCRAM must be uncached, and `SEI`/`UEI`
+  reading 0 never proves no error occurred when an ISR is attached.**
 - **Peripheral libraries are sibling repos**, not in-core: Wire (LPI2C),
   SPI (LPSPI), Audio (graph nodes + WM8962 codec driver), MipiDisplay
   (MIPI-DSI panels), Ethernet stacks, etc. Core-vs-library boundary follows

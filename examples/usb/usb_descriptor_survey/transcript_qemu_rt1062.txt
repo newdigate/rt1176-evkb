@@ -100,10 +100,39 @@ So the State 2 red was a TRUE POSITIVE. The model refused an access the silicon
 also refuses; the firmware really was handing the controller TCM-resident
 memory. DO NOT remove the holes.
 
-★ STILL OPEN, and separate. Clearing SEI did NOT make the EVKB enumerate. The
-controller remains halted (HCH=1, SEI clear) with a device sitting on the port
-(CCS=1). QEMU enumerates, silicon does not, and that divergence is unexplained.
-SILICON WINS -- this green gate is not proof the RT1062 USB host works.
+STATE 4 -- THE BOARD ENUMERATES TOO. Same day, after a second fix.
+
+DMAMEM was only half of it. The EVKB core enables the D-cache and maps OCRAM
+write-back/write-allocate, so once these descriptors moved out of DTCM the CPU's
+writes sat in cache while the EHCI read stale physical memory. It walked a
+garbage periodic list and halted one frame after start:
+
+    USBSTS=0000D080 USBCMD=00018B34 FRINDEX=00000008 (frozen, CPU running)
+
+HCH=1 with NO error bit, because the port-connect ISR had already acked the
+fatal status -- which is exactly why it read as a clean halt rather than a fault.
+The tell was a debug-probe read of periodictable showing garbage where the CPU
+had just written T-bits: the probe sees physical memory, the CPU sees its cache.
+
+Mapping OCRAM non-cached on that board (cores a090c9d, guarded by
+ARDUINO_MIMXRT1060_EVKB) closes it. On J47, with a real USB audio adapter:
+
+SURVEY: device 1B3F:2008, 244 descriptor bytes
+SURVEY:  if 0 alt 0  class=0x01(AUDIO) sub=0x01 eps=0
+SURVEY:    *** UAC 1.00 ***
+SURVEY:  if 1 alt 1  class=0x01(AUDIO) sub=0x02 eps=1
+SURVEY:    format: 2 ch, 16-bit, 2 rate(s): 44100 48000
+SURVEY:    ep 0x05 OUT iso  sync=none  usage=data  mps=192
+SURVEY:  if 2 alt 1  class=0x01(AUDIO) sub=0x02 eps=1
+SURVEY:    format: 1 ch, 16-bit, 2 rate(s): 44100 48000
+SURVEY:    ep 0x86 IN  iso  sync=none  usage=data  mps=100
+SURVEY:  if 3 alt 0  class=0x03(HID) sub=0x00 eps=1
+SURVEY: VERDICT adaptive/synchronous only -- cannot exercise async
+SURVEY: end
+
+The two halves are causally linked, not independent bugs: DTCM is unreachable so
+the buffers must move to OCRAM, and OCRAM is cached so moving them there creates
+the coherency exposure. Fixing either one alone leaves the port dead.
 
 Also note the console moved: these rt1062 sketches now print to Serial6
 (LPUART1, the EVKB's DAPLink VCOM), not Serial1 (LPUART6, which only reaches

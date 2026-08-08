@@ -40,11 +40,20 @@ So the red was a **true positive**: the model correctly refused an access the
 silicon also refuses, and the firmware really was handing the controller
 TCM-resident memory. Do not remove the holes.
 
-★ **Still open, and separate:** clearing `SEI` did NOT make the EVKB enumerate.
-The controller remains halted (`HCH=1`, `SEI` clear) and nothing appears on
-J47's port beyond `CCS=1`. QEMU enumerates; silicon does not. That divergence is
-unexplained and belongs to a later phase — **silicon wins, so do not treat the
-green gate as proof the RT1062 USB host works.**
+✅ **The board enumerates too, as of the same day.** `DMAMEM` was only half the
+fix. The EVKB core enables the D-cache and maps OCRAM write-back, so once these
+descriptors moved out of DTCM the CPU's writes sat in cache while the EHCI read
+stale physical memory — it walked a garbage periodic list and halted one frame
+after start (`HCH=1`, `FRINDEX` frozen at `0x8`, and **no error bit**, because
+the port-connect ISR had already acked the fatal status). Mapping OCRAM
+non-cached on that board (`cores` `a090c9d`, guarded by
+`ARDUINO_MIMXRT1060_EVKB`) closes it. The EVKB now walks all 244 descriptor
+bytes of a real GeneralPlus UAC1 device on J47 — four interfaces, both
+isochronous endpoints, the HID interface.
+
+The two halves are causally linked, not independent bugs: DTCM is unreachable so
+the buffers must go to OCRAM, and OCRAM is cached so moving them there creates
+the coherency exposure. Fixing either alone leaves the port dead.
 
 ---
 
