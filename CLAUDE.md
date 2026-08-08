@@ -87,9 +87,11 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). Expect **81 passed, 2 failed, 0 SKIP**, which is
-what the 2026-08-08 Phase 2 sweep measured end to end at `-j 2`. There are now
-**two** permitted reds, and the distinction between them matters:
+`usb/usb_descriptor_survey`). Expect **82 passed, 1 failed, 0 SKIP** on a
+genuinely idle machine (1-min load below ~4), or **81 passed, 2 failed, 0 SKIP**
+under any real load — the latter is what the 2026-08-08 Phase 2 sweep measured
+end to end at `-j 2`. There are now **two** permitted reds, and the distinction
+between them matters:
 
 - `rt1062:usb/usb_descriptor_survey` — red **by design**, not intermittently.
   Phase 2 gave `fsl-imxrt1062` a USB DMA view with the TCM windows punched out,
@@ -98,11 +100,13 @@ what the 2026-08-08 Phase 2 sweep measured end to end at `-j 2`. There are now
   is **unconfirmed and doubted** — see `docs/KNOWN-BROKEN-GATES.md`. Expect it
   red every run, on any load.
 - `rt1176:dualcore/cm4_audio_test` — the documented load-sensitive
-  intermittent. Expect it either way.
+  intermittent. **"Idle" means below ~4, not merely below the load you started
+  at**: measured 2026-08-08 it failed at load 11, 5.5 and 4.1, then passed in
+  6 s at 3.4. Three reds in a row look exactly like a regression; check
+  `uptime` and drain the machine before believing one.
 
-So green on this tree is `81/2/0`, and `82 passed, 1 failed, 0 SKIP` (only the
-rt1062 survey red) is *better* than expected, not worse. Both the count and the
-pass/fail were measured that day; nothing here is carried forward.
+Both the count and the pass/fail were measured that day; nothing here is
+carried forward.
 **0 SKIP is the load-bearing number in every case**: it is what says the
 sweep actually covered everything rather than quietly measuring less.
 Note `-l` prints a trailing "(N gate(s))" summary line, so `wc -l` on its

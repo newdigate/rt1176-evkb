@@ -312,29 +312,50 @@ Neither of those excuses a red that survives both tests.
 **2026-08-08 (Phase 2 — RT1062 USB host in QEMU):** `usb/usb_descriptor_survey`
 gains its rt1062 half: sweep **82 → 83**, again without a new example.
 
-Expectation is now **`81/2/0`**, and there are **two** permitted reds rather
-than one. They are different in kind and must not be conflated:
+Expectation on a **genuinely idle machine (1-min load below ~4)** is
+**`82/1/0`**, the single red being `rt1062:usb/usb_descriptor_survey`. Under any
+real load expect **`81/2/0`**, the second red being
+`rt1176:dualcore/cm4_audio_test`. Zero SKIP in both cases.
+
+There are now **two** permitted reds, and they are different in kind — do not
+conflate them:
 
 - `rt1062:usb/usb_descriptor_survey` — **red by design, every run, any load.**
   Its own section at the top of this file explains why and what would close it.
-- `rt1176:dualcore/cm4_audio_test` — the load-sensitive intermittent.
+  A sweep where this one is GREEN means someone changed the model; go find out
+  who and why before celebrating.
+- `rt1176:dualcore/cm4_audio_test` — the load-sensitive intermittent, and the
+  threshold is sharper than previously recorded (see the table below).
 
-So `82/1/0` (only the survey red) is *better* than expected, not worse. Zero
-SKIP either way. With two permitted reds, **read the gate names in the summary
-rather than trusting the count.**
+With two permitted reds, **read the gate names in the summary rather than
+trusting the count** — `81/2/0` with the wrong two gates red is not a pass.
 
 Measured 2026-08-08 at `-j 2`: **`81 passed, 2 failed, 0 SKIP`** — exactly those
 two. `cm4_audio_test` failed in its documented form (`fft_peak_bin` wrong,
 `AUDIO_CM4_DET=FAIL`, while `codec_ack=1` and `cm7_audio_isers=0` passed).
 
-Honest note on that one: it was re-run individually **twice more, at load 5.5
-and at load 4.1, and failed both times** — so on this day it did not behave like
-a load artefact, and the "re-run it idle before believing it" test did not clear
-it. It is nonetheless provably not a Phase 2 regression: this phase's two qemu2
-commits touch only `hw/arm/fsl-imxrt1062.c`, `hw/misc/imxrt1060_anatop.c` and
+That one was re-run individually as the machine drained, and the sequence is the
+most useful thing measured about it to date:
+
+| 1-min load | result |
+|-----------:|--------|
+| ~11 (in-sweep, `-j 2`) | FAIL |
+| 5.5 | FAIL |
+| 4.1 | FAIL |
+| **3.4** | **PASS** (6 s) |
+
+So it **is** the load artefact, and "re-run it idle before believing it" is the
+right advice — but **"idle" means below ~4, not merely below the load you started
+at.** An intermediate reading is worthless: this gate failed three times running
+at 4.1 and above, which is easy to mistake for a genuine regression, and the
+2026-07-28 entry above recording 5-of-5 passes "at load average ~4–5" now looks
+optimistic by about a point at its lower end. Drain the machine and check
+`uptime` before concluding anything about this gate.
+
+It was never a Phase 2 regression regardless: this phase's two qemu2 commits
+touch only `hw/arm/fsl-imxrt1062.c`, `hw/misc/imxrt1060_anatop.c` and
 `include/hw/arm/fsl-imxrt1062.h`, and `cm4_audio_test` has no `boards` sidecar,
-so it runs `-M mimxrt1170-evk` — a model none of those files build. Consistent
-with this file already recording that gate red and green on consecutive days.
+so it runs `-M mimxrt1170-evk` — a model none of those files build.
 
 Licence audit: **PASS**, with both rt1062 build directories walked
 (`serial_test/build-rt1062` 136 dep paths, `usb_descriptor_survey/build-rt1062`
