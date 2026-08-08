@@ -19,10 +19,15 @@
 # DO NOT add assertions on SITD PASS or pkts/s. Silicon is the sole proof the
 # tone plays; see transcript_hw_evkb.txt.
 #
-# What IS asserted about the siTD is that its error flags are clear. That is
-# both true and meaningful: a malformed descriptor would set them, and it stays
-# correct if QEMU ever gains working isochronous transfer, because SITD PASS
-# requires those same flags clear.
+# What IS asserted about the siTD is that its error flags are clear. Be precise
+# about what that buys, because the obvious justification is wrong: since this
+# model never RUNS the descriptor, no path in it can set xact_err/babble/buf_err,
+# so the check does not catch a malformed descriptor here. What it actually
+# proves today is that the status readback happened at all -- testPacketStatus()
+# returned true and the driver read the controller's writeback -- and it goes red
+# if that line is missing or any flag differs. It becomes the stronger check it
+# looks like only if QEMU ever gains working isochronous transfer, since SITD
+# PASS requires those same flags clear. Keep it; just do not overclaim it.
 #
 # The example requests 48000 (UAC1_RATE_HZ) because QEMU's model offers only
 # that rate. The J47 bench device supports 44100 and 48000, so the same binary
@@ -42,6 +47,13 @@ rm -f "$OUT"
 P=$!; gate_pid $P
 # Poll for the last token asserted rather than guessing a duration -- a fixed
 # sleep makes the gate load-sensitive, which has cost this tree real time.
+#
+# seq=2 is a GUEST-time marker (millis()), not a causally-final one like the
+# sibling's "SURVEY: end", so host load cannot reorder it past the streaming
+# tokens. The failure it could mask: if enumeration ever slipped beyond 2 s of
+# guest time, this reaps early and the gate reports "streaming did not start"
+# for what is really a timeout. False RED, so it fails safe -- but read that
+# message with this in mind before blaming the streaming path.
 for _ in $(seq 1 80); do
     [ -f "$OUT" ] && grep -q "HEARTBEAT seq=2 " "$OUT" 2>/dev/null && break
     sleep 0.25
