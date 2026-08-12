@@ -15,7 +15,8 @@ teensy_add_executable(audiooutput_i2s_test audiooutput_i2s_test.cpp)
 teensy_target_link_libraries(audiooutput_i2s_test cores Wire)
 
 # Task 3 gate: AudioSynthWaveformSine -> AudioOutputI2S (SAI1 TX DMA) + a synth
-# peak sanity, with AudioControlWM8962 bringing up the codec's playback route.
+# peak sanity, with the board's codec driver (WM8962 or WM8960) bringing up the
+# playback route.
 # output_i2s.cpp's isr() calls into memcpy_tointerleave{LR,L,R} (memcpy_audio.S,
 # guarded __ARM_ARCH_7EM__ -- defined for -mcpu=cortex-m7 too, since M4 and M7
 # are both ARMv7E-M) which import_arduino_library's own .S handling never sees

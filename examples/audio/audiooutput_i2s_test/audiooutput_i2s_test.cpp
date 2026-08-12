@@ -67,7 +67,8 @@ void loop() {
         // Periodic health readout for the HW test: the sine also feeds `peak`,
         // and `peak` only advances when the graph runs (the TX DMA isr pends
         // update_all). ~0.5 here => the graph self-clocks on silicon => the same
-        // sine is going out SAI1 TX -> WM8962 DAC -> J101. "(no update)" => the
+        // sine is going out SAI1 TX to the codec DAC (WM8962/J101 on the
+        // 1170-EVKB, WM8960 on the 1060-EVKB). "(no update)" => the
         // TX DMA isn't driving the graph (a silicon-vs-QEMU divergence to chase).
         if (peak.available()) {
             CONSOLE.print("TONE_PLAYING synth_peak="); CONSOLE.println(peak.read(), 4);
