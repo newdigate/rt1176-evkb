@@ -1,0 +1,7 @@
+# Boards this example is built and gated for. See
+# docs/superpowers/specs/2026-08-08-rt1062-audio-phase5a-design.md
+#
+# rt1062 is the point of Phase 5a: this is the first time the Audio library
+# compiles for __IMXRT1062__ anywhere in this tree.
+rt1176
+rt1062

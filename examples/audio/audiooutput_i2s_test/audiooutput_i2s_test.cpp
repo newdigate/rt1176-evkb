@@ -4,7 +4,27 @@
 #include "synth_sine.h"
 #include "analyze_peak.h"
 #include "output_i2s.h"
+// The console is LPUART1 on BOTH boards. The two cores just name it
+// differently: cores/imxrt1176 calls LPUART1 `Serial1`, while cores/teensy4
+// follows the Teensy pin-0/1 convention and calls LPUART6 `Serial1` and LPUART1
+// `Serial6`. Naming it once here is what keeps QEMU and silicon reading the same
+// wire -- on the MIMXRT1060-EVKB, LPUART1 (GPIO_AD_B0_12/13) is the DAPLink VCOM,
+// whereas LPUART6 only reaches Arduino header pins D0/D1.
+//
+// The CODEC is a genuinely different chip, not a naming difference: the
+// MIMXRT1170-EVKB has a WM8962, the MIMXRT1060-EVKB a WM8960. Different register
+// maps, different drivers. The I2C bus differs too (LPI2C5 vs LPI2C1, both at
+// 0x1A) but needs no guard here -- control_wm8962.cpp uses Wire2 and
+// control_wm8960.cpp uses Wire, so swapping the class swaps the bus.
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+#include "control_wm8960.h"
+#define CONSOLE       Serial6
+#define BOARD_CODEC_T AudioControlWM8960
+#else
 #include "control_wm8962.h"
+#define CONSOLE       Serial1
+#define BOARD_CODEC_T AudioControlWM8962
+#endif
 
 // Task 3: AudioSynthWaveformSine -> AudioOutputI2S (SAI1 TX DMA) + a synth peak
 // sanity. STAGE_SYNTH proves the source; STAGE_TONE is asserted host-side from
@@ -16,11 +36,11 @@ AudioOutputI2S         out;
 AudioConnection        pcPeak(sine, 0, peak, 0);   // sanity tap of the source
 AudioConnection        pcL(sine, 0, out, 0);       // left  = sine
 AudioConnection        pcR(sine, 0, out, 1);       // right = sine
-AudioControlWM8962     wm;
+BOARD_CODEC_T          wm;
 
 void setup() {
-    Serial1.begin(115200);
-    while (!Serial1) {}
+    CONSOLE.begin(115200);
+    while (!CONSOLE) {}
     AudioMemory(12);
     wm.enable();
     sine.frequency(1000.0f);
@@ -34,11 +54,11 @@ void setup() {
         yield();
     }
     bool synth_ok = pk > 0.40f && pk < 0.60f;
-    Serial1.print("info synth_peak="); Serial1.println(pk, 4);
-    Serial1.println(synth_ok ? "STAGE_SYNTH=PASS" : "STAGE_SYNTH=FAIL");
+    CONSOLE.print("info synth_peak="); CONSOLE.println(pk, 4);
+    CONSOLE.println(synth_ok ? "STAGE_SYNTH=PASS" : "STAGE_SYNTH=FAIL");
     // STAGE_TONE is decided host-side from the tap; emit a marker so the run
     // script knows the firmware reached steady state.
-    Serial1.println("TONE_PLAYING");
+    CONSOLE.println("TONE_PLAYING");
 }
 void loop() {
     static uint32_t last = 0;
@@ -50,9 +70,9 @@ void loop() {
         // sine is going out SAI1 TX -> WM8962 DAC -> J101. "(no update)" => the
         // TX DMA isn't driving the graph (a silicon-vs-QEMU divergence to chase).
         if (peak.available()) {
-            Serial1.print("TONE_PLAYING synth_peak="); Serial1.println(peak.read(), 4);
+            CONSOLE.print("TONE_PLAYING synth_peak="); CONSOLE.println(peak.read(), 4);
         } else {
-            Serial1.println("TONE_PLAYING synth_peak=(no update)");
+            CONSOLE.println("TONE_PLAYING synth_peak=(no update)");
         }
     }
 }
