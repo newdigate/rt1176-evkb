@@ -1,0 +1,8 @@
+# Boards this example is built and gated for. See
+# docs/superpowers/specs/2026-08-13-rt1062-capstone-phase5b-design.md
+#
+# rt1062 ONLY. The capstone is the MIMXRT1060-EVKB's showcase -- a working
+# on-board codec on the same board as the USB host port, which the RT1176-EVKB
+# does not have. The RT1176 has its own capstone in
+# dualcore/cm4_graph_usb_capstone.
+rt1062
