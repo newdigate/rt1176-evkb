@@ -79,7 +79,8 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **86 gates** (84 before Phase 4 gated
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **87 gates** (86 before Phase 5a gated
+`audio/audiooutput_i2s_test` on two boards; 84 before Phase 4 gated
 `usb/usb_audio_uac1_test` on two boards; 83 before
 `framework/string_test` was gated on a second board; 82 before Phase 2
 gated `usb/usb_descriptor_survey` on a second board; 81 before the
@@ -89,8 +90,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). Expect **86 passed, 0 failed, 0 SKIP**, or
-**85 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). Expect **87 passed, 0 failed, 0 SKIP**, or
+**86 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 There is **one** permitted red:
 
 - `rt1176:dualcore/cm4_audio_test` — **nondeterministic.** Long called a load

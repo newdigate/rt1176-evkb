@@ -313,6 +313,86 @@ and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
 
+**2026-08-13 (Phase 5a — RT1062 audio output):** `audio/audiooutput_i2s_test`
+gains its rt1062 half: sweep **86 → 87**, again without a new example. First
+time the Audio library compiles for `__IMXRT1062__` in this tree (including
+`control_wm8960.cpp`, which no build here had ever compiled).
+
+Expectation moves to **`87/0/0`**, or **`86/1/0`** when the nondeterministic
+`rt1176:dualcore/cm4_audio_test` is red. Zero SKIP either way.
+
+Measured 2026-08-13: **`87 passed, 0 failed, 0 SKIP`** serially — the runner's
+default mode, run as two disjoint category halves (50 + 37) to fit a timeout —
+with both halves of this gate green and `cm4_audio_test` green. At `-j 2` the
+same tree measured `86/1/0` and, in an earlier run, `85/2/0`, and those reds
+are a **harness collision, not firmware**: the two board halves of a two-board
+example share their capture paths (`vcom.uart` and `tap.raw` here;
+`serial.uart`, `string.uart`, `uac1.uart`, `survey.uart` elsewhere), each half
+`rm -f`s them at gate start, and `-j 2` schedules the halves adjacently — so
+the later half deletes the earlier half's live capture mid-run. The rt1176
+half of THIS gate lost that race in 2 of 2 `-j 2` sweeps (its fixed `sleep 5`
+keeps the halves aligned), and `rt1176:usb/usb_descriptor_survey` lost it in
+one of them with the smoking gun in its gate output: a complete, correct
+captured transcript followed by `grep: …survey.uart: No such file or
+directory`. Every such red passed immediately when re-run alone at the same
+load. So at `-j 2`, a red `rt1176:` half of a two-board example wearing "no
+UART capture" is this collision until proven otherwise — re-run it alone
+before reading it as a regression. The serial default does not collide.
+
+★ **A fresh clone sees `rt1062:audio/audiooutput_i2s_test` RED**, and that is
+expected rather than a regression: its rt1062 half needs the LOCAL-ONLY qemu2
+change binding the `sai1-tap` on `fsl-imxrt1062` (qemu2 `6d98ec3b27`), and
+qemu2 changes stay on this machine per the GPL one-way firewall. Same
+situation as `usb_descriptor_survey` and `cm4_usb_irq_probe`.
+
+★ **`STAGE_TONE` is amplitude-only** — it asserts peak > 4000 in the tap, no
+frequency analysis — so it proves non-silent samples reached SAI1's TDR and
+nothing about pitch or rate. Silicon carries audibility: the committed
+`transcript_hw_evkb.txt` records the tone confirmed by ear on 2026-08-13.
+
+The codecs differ by chip — WM8962 on the 1170-EVKB, WM8960 on the 1060-EVKB —
+and the QEMU models are not equally faithful: the 1060 machine has a real
+`TYPE_WM8960`, the 1170 a stub that ACKs writes and returns 0 on reads. Do not
+assume codec parity between the two halves of this gate.
+
+★★ **THE WEDGE this phase found and fixed, recorded here because any
+teensy4-core rt1062 image was one relink away from it.** The rt1062 half
+originally produced NO UART output ever in QEMU while the tap filled with
+zeros. Root cause: `cores/teensy4` `startup.c` programs a 32-byte NOACCESS MPU
+region at address 0x0 (the NULL-pointer trap), and QEMU's PMSAv7 walk
+(`target/arm/ptw.c`) refuses to TLB-cache any 1 KB page an MPU region
+partially covers — so code linked into ITCM 0x020–0x3FF executes as fresh,
+never-cached, single-instruction translation blocks, roughly 1000× slow. This
+image happened to link its sine-update loop at 0x3ae: measured ~150k TB
+translations/s with the host near 100% in the translator, and thread mode
+advanced `delay(5)` by about 1 ms per 5 s of wall clock. The kill-test that
+confirmed it: disabling only MPU region 2 over the gdbstub revived the wedged
+image in seconds. The fix is a 1 KB code hole at ITCM 0x0 in
+`cores/teensy4/imxrt1060_evkb.ld` (cores `5bcae78`, pinned by evkb `c4fdd10`)
+— silicon-true, with the MPU region, the QEMU model and the gate all
+untouched. **Which image trips this is a link-order lottery**, and it presents
+as "no UART capture" — indistinguishable from firmware that never started.
+
+Two consequences of that hole worth knowing:
+
+- It can tick `_itcm_block_count` (FlexRAM banks come in 32 KB granules) and
+  silently move a bank from DTCM to ITCM. It DID for `usb_audio_uac1_test`
+  (`_estack` 0x20078000 → 0x20070000). The layout is self-consistent by
+  construction; that image was re-flashed and re-measured on 2026-08-13 — 45
+  consecutive heartbeats at `pkts/s=1000`, identical to the old layout
+  (addendum in its `transcript_hw_evkb.txt`).
+- The upstream-style scripts `imxrt1062.ld` / `imxrt1062_t41.ld` /
+  `imxrt1062_mm.ld` still carry the 32-byte hole, so a Teensy 4.x image booted
+  on `mimxrt1060-evk` via `tools/rt1170-qemu.sh` can still lose the same
+  lottery. Deliberate — they are upstream Teensy targets this tree does not
+  gate — and this entry is the breadcrumb.
+
+Licence audit: **PASS**, with the new build directory walked —
+`audiooutput_i2s_test` 123 dep paths, `audiooutput_i2s_test/build-rt1062` 160.
+The drift check cannot notice a missing `build-rt1062:` GATES entry (it keys
+on example directories, and no `run_qemu*.sh` corresponds to a build
+directory), so the entry was verified by name in the audit output.
+
 **2026-08-08 (Phase 4 — UAC1 host on two boards):** `usb/usb_audio_uac1_test`
 gains a gate AND a second board in one move: sweep **84 → 86**, two gate ids
 (`rt1176:` and `rt1062:`) from a single new `run_qemu.sh`. It had **no** gate at

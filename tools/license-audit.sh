@@ -188,6 +188,7 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # this list would otherwise never walk.
 GATES=${LICENSE_AUDIT_GATES:-"examples/audio/audio_h_test:audio_h_test examples/audio/audioinput_i2s_test:audioinput_i2s_test \
 examples/audio/audiooutput_i2s_test:audiooutput_i2s_test \
+examples/audio/audiooutput_i2s_test/build-rt1062:audiooutput_i2s_test \
 examples/audio/audiostream_test:audiostream_test examples/audio/filter_fir_test:filter_fir_test \
 examples/audio/guard_sweep_test:guard_sweep_test examples/audio/i2s_audio_test:i2s_audio_test \
 examples/audio/i2s_int_test:i2s_int_test examples/audio/sai_rx_test:sai_rx_test \
