@@ -124,6 +124,30 @@ gate_build_dir() {
     esac
 }
 
+# Per-board path for a gate's run artifacts: captures, -D debug logs, taps.
+#
+#   OUT=$(gate_capture_path "$DIR" serial.uart)
+#
+# Every per-run file a gate creates MUST go through this, never "$DIR/<name>".
+# The two board halves of a two-board example are separate gates that run the
+# same script from the same directory, and each begins with `rm -f` on its
+# artifacts. When the sweep runs them concurrently (`run-all-qemu-gates.sh -j`
+# schedules the halves adjacently), a shared path means the later half deletes
+# the earlier half's LIVE capture — which then fails as "no UART capture",
+# indistinguishable from firmware that never started. Measured 2026-08-13:
+# rt1176:audio/audiooutput_i2s_test lost that race in 2 of 2 `-j 2` sweeps and
+# rt1176:usb/usb_descriptor_survey in one, with the smoking gun of a complete,
+# correct transcript followed by `grep: survey.uart: No such file or directory`
+# (docs/KNOWN-BROKEN-GATES.md, 2026-08-13 entry).
+#
+# The board's build directory is the natural namespace: it already exists for
+# any gate the runner will start (the ELF lives there — a missing one is SKIP),
+# it is per-board by construction, and it is gitignored. A future board added
+# to gate_build_dir gets collision-free capture paths without touching this.
+gate_capture_path() {   # gate_capture_path DIR BASENAME
+    echo "$1/$(gate_build_dir)/$2"
+}
+
 gate_cleanup() {
     _rc=$?
     set +e   # trap-only: a dead registered PID must not abort us under the runner's

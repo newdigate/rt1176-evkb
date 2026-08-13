@@ -11,10 +11,10 @@ QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/$(gate_build_dir)/serial_test.elf"
-OUT="$DIR/serial.uart"
+OUT=$(gate_capture_path "$DIR" serial.uart)
 rm -f "$OUT"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -display none $(gate_console "$OUT") -d guest_errors -D "$DIR/serial.dbg" &
+    -display none $(gate_console "$OUT") -d guest_errors -D "$(gate_capture_path "$DIR" serial.dbg)" &
 P=$!; gate_pid $P
 # Poll for the last token this gate asserts instead of guessing a duration. The
 # fixed `sleep 3` this replaces made the gate LOAD-SENSITIVE: on a busy machine

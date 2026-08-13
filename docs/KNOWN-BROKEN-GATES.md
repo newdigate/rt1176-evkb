@@ -336,8 +336,21 @@ one of them with the smoking gun in its gate output: a complete, correct
 captured transcript followed by `grep: …survey.uart: No such file or
 directory`. Every such red passed immediately when re-run alone at the same
 load. So at `-j 2`, a red `rt1176:` half of a two-board example wearing "no
-UART capture" is this collision until proven otherwise — re-run it alone
-before reading it as a regression. The serial default does not collide.
+UART capture" was this collision until proven otherwise. The serial default
+never collided.
+
+★ **FIXED later the same day.** Per-run gate artifacts (captures, `-D` debug
+logs, the audio tap) now go through gate-lib's `gate_capture_path`, which puts
+them in the board's own build directory (`build/` vs `build-rt1062/`) —
+per-board by construction, gitignored, and guaranteed to exist for any gate
+the runner starts, since that is where the ELF lives. All five two-board gates
+converted; `gate-lib.test.sh` and `gate-vacuity.test.sh` pass unchanged (the
+vacuity fake QEMU takes its capture path from the `-serial` argument, so it
+never cared where the file lived). Verified with two consecutive full `-j 2`
+sweeps: **`87 passed, 0 failed, 0 SKIP` both times**, the second starting at
+load 8.9, `cm4_audio_test` green in both. ★ Any per-run file a future gate
+creates must go through the helper — a bare `"$DIR/<name>"` recreates this bug
+for the next two-board example.
 
 A later single-run serial sweep the same day measured `86/1/0`, the red being
 one half of this gate in the OTHER known mode — the fixed `sleep 5`'s load

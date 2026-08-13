@@ -44,10 +44,10 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/$(gate_build_dir)/usb_descriptor_survey.elf"; OUT="$DIR/survey.uart"
+ELF="$DIR/$(gate_build_dir)/usb_descriptor_survey.elf"; OUT=$(gate_capture_path "$DIR" survey.uart)
 rm -f "$OUT"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -display none $(gate_console "$OUT") -d guest_errors -D "$DIR/survey.dbg" \
+    -display none $(gate_console "$OUT") -d guest_errors -D "$(gate_capture_path "$DIR" survey.dbg)" \
     -audiodev none,id=snd0 \
     -device usb-audio,bus=usbhost.0,port=1,audiodev=snd0 &
 P=$!; gate_pid $P

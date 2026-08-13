@@ -11,7 +11,9 @@ QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/$(gate_build_dir)/audiooutput_i2s_test.elf"
-VCOM="$DIR/vcom.uart"; DBG="$DIR/audiooutput.dbg"; TAP="$DIR/tap.raw"
+VCOM=$(gate_capture_path "$DIR" vcom.uart)
+DBG=$(gate_capture_path "$DIR" audiooutput.dbg)
+TAP=$(gate_capture_path "$DIR" tap.raw)
 rm -f "$VCOM" "$DBG" "$TAP"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none $(gate_console "$VCOM") \

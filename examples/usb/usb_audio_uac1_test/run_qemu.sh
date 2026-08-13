@@ -38,10 +38,10 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/$(gate_build_dir)/usb_audio_uac1_test.elf"; OUT="$DIR/uac1.uart"
+ELF="$DIR/$(gate_build_dir)/usb_audio_uac1_test.elf"; OUT=$(gate_capture_path "$DIR" uac1.uart)
 rm -f "$OUT"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -display none $(gate_console "$OUT") -d guest_errors -D "$DIR/uac1.dbg" \
+    -display none $(gate_console "$OUT") -d guest_errors -D "$(gate_capture_path "$DIR" uac1.dbg)" \
     -audiodev none,id=snd0 \
     -device usb-audio,bus=usbhost.0,port=1,audiodev=snd0 &
 P=$!; gate_pid $P
