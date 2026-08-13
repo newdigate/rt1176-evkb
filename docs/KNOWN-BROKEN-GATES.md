@@ -313,6 +313,112 @@ and which one shows it varies. Re-run a lone dual-core red on an idle machine
 before believing it — and check whether the gate even compiles what you changed.
 Neither of those excuses a red that survives both tests.
 
+**2026-08-13 (Phase 5b — the RT1062 capstone):** two gate ids join the sweep:
+**87 → 89**. `usb/usb_audio_capstone_test` is a new example and the tree's first
+**rt1062-ONLY** gate owner — the 1060-EVKB has an on-board codec on the same
+board as the USB host port, which the 1170-EVKB does not; the RT1176's capstone
+is `dualcore/cm4_graph_usb_capstone`. `audio/audioinput_i2s_test` gains its
+rt1062 half.
+
+Expectation moves to **`89/0/0`**, or **`88/1/0`** when the nondeterministic
+`rt1176:dualcore/cm4_audio_test` is red. Zero SKIP either way. Measured
+2026-08-13 at `-j 2`, twice consecutively at load 4.6 then 4.8:
+**`89 passed, 0 failed, 0 SKIP` both times**, `cm4_audio_test` green in both.
+
+★ **A fresh clone sees `rt1062:audio/audioinput_i2s_test` RED**, and that is
+expected rather than a regression: its rt1062 half needs the LOCAL-ONLY qemu2
+change binding the `sai1-rxinject` chardev on `fsl-imxrt1062` (qemu2
+`2141a5d781`) — the RX-side promise Phase 5a deferred — and qemu2 changes stay
+on this machine per the GPL one-way firewall. Same situation as the tap,
+`usb_descriptor_survey` and `cm4_usb_irq_probe`. The capstone gate needs only
+`sai1-tap`, which Phase 5a already bound.
+
+★ **What the capstone gate does NOT prove, and why its tap assertion is
+inverted.** QEMU's `usb-audio` advertises exactly one sample rate — 48000
+(`hw/usb/dev-audio.c:118`, `USBAUDIO_SAMPLE_RATE`) — while this graph runs at
+44100 by construction, because `AudioOutputUSBHost` pins the OUT rate to the
+graph rate deliberately (a mismatch there is a permanent 8.8% pitch error, not
+a caveat). So `uac1_find_alt()` matches no alternate, `claim()` returns false,
+and **the emulated device is never claimed at all**: `out=none` forever, no
+`+ Audio` line. The gate therefore proves **graph plumbing, not USB** —
+`check_tap.py --expect-silence` demands peak == 0 **AND** ≥128 KiB of tap,
+because peak 0 alone is equally what a dead graph produces. An empty tap is
+silent too.
+
+★ **`out=none` is asserted as a TRIPWIRE, not as a limitation.** If the model
+ever gains 44100 this gate goes red *deliberately*, and whoever sees that red
+must re-read what the gate can prove rather than repair it. **Do NOT "fix" the
+divergence by moving a rate**: a 48000 graph would ship a deliberate 8.8% pitch
+error into the silicon path, and moving the model would break
+`usb/usb_audio_uac1_test`, whose gate asserts `rates=48000` from QEMU's
+descriptor as an external oracle. The rt1062 USB claim path is already gated by
+that example, so re-proving it here would add no coverage.
+
+★ **The unclaimed device hands the clocking design a free proof**, stronger
+than any symbol inspection: with nothing claimed,
+`AudioOutputUSBHost::frame_consumed()` never fires — yet the graph still
+updated ~430×/guest-second for the whole run. Only the SAI TX DMA can be pacing
+it. That is the declaration-order clock ownership (`AudioOutputI2S` declared
+first wins `update_setup()`) verified by a run rather than by reading
+constructor order.
+
+★ **Counter rates are not assertable; direction is.** `in_under`/`out_drop`
+climb at ~430/s against guest `millis()`, not the ~344.5/s (44100/128) that
+arithmetic predicts — guest time runs fast against wall clock on this model.
+Assert that a counter CLIMBS, never how fast. And `out_drop` climbing at the
+**full graph rate is CORRECT in QEMU** (nothing drains the FIFO), flatly
+contradicting the sketch's "one drop every seven minutes" comment — which is a
+*silicon* prediction, for a claimed device whose USB frames drain the FIFO.
+The gate must never assert a small `out_drop`.
+
+**Three silicon-only defects this phase found, none of which QEMU could see.**
+This is the phase's real yield; the gate is green with all three present.
+
+1. ★ **`USBAudioOut::init()` did not reset its FIFOs** — only the attach paths
+   did. Every sketch declares that driver `DMAMEM` (the EHCI cannot reach DTCM
+   on RT1062), and `.bss.dma` is a separate NOLOAD section that the Teensy
+   startup deliberately never clears (`memory_clear` covers `[_sbss,_ebss]`
+   only), so `head`/`tail` began as stale OCRAM. It had never mattered because
+   every earlier sketch drove writes from the attach path; the capstone is the
+   first firmware whose **graph writes before a device attaches**
+   (`AudioOutputUSBHost::update()` runs as soon as its `AudioConnection` makes
+   it active). Symptom: MemManage fault ~8 s into every boot — banner, reset,
+   forever. Diagnosed from the core's crash report at OCRAM `0x2027FF80` over
+   the probe: IPSR=4, CFSR=0x82 (DACCVIOL|MMARVALID), MMFAR=`0x00FEC1A8`,
+   PC=`0x2F7A` in `usb_audio_fifo_write`; working back with 32-bit wraparound
+   gives head = `0x706F4A94`, i.e. garbage rather than a bad base pointer.
+   QEMU zero-fills emulated RAM, so head/tail read 0 there **by accident**.
+   Fixed in USBHost_t36 `928bfef`. ★ **Generalise it: any driver placed in
+   DMAMEM whose invariants assume zero-init is broken, and QEMU will never tell
+   you.**
+2. **The sketch never armed the transport.** Selecting an alternate setting
+   agrees a format but moves no audio: `beginStreaming()`/`beginRecording()`
+   post the isochronous descriptors and `service()` advances the rings.
+   Symptom: `out=ready in=ready` while both counters climbed at the full graph
+   rate — which reads as a transport failure rather than a missing call.
+3. **`AudioInputI2S` never enabled the SAI transmitter on the EVKB**, and RX is
+   synchronous to TX on that board, so RX got no bit clock. QEMU's SAI model
+   gates RX on the RCSR bits alone and passes either way, so the fix was
+   argued, then **A/B-measured on silicon this phase**: without the TX enable
+   `MIC peak=(no blocks)` ×30 (RX entirely dead); with it, blocks flowing ×56.
+   Fixed in Audio `972f919`.
+
+**The measured silicon numbers** (`transcript_hw_evkb.txt`, 130 consecutive
+heartbeats): `out_drop` **delta 0** and `in_under` **delta 1** across 129 s —
+one zero-filled block in over two minutes, better than `input_usbhost.h`'s
+one-per-~34 s prediction from the bench device's −86 ppm. Both counters'
+absolute values accrued *before* the arm. `in_peak=1.0000`: the bare
+headphone-out-to-mic-in loopback clips, which is expected (a line output is
+~two orders of magnitude hotter than a mic input expects) — still 1 kHz, still
+audible, which is what the bar asks.
+
+**One open loose end, recorded honestly:** `audioinput_i2s_test` on the
+1060-EVKB shows a flat `MIC peak=0.0001` that does not respond to sound, so no
+microphone signal reaches the WM8960's ADC with the driver's current input
+routing on that board. That is separate from the clock fix above — the A/B
+settles that independently — and does not affect its gate, which uses an
+injected waveform.
+
 **2026-08-13 (Phase 5a — RT1062 audio output):** `audio/audiooutput_i2s_test`
 gains its rt1062 half: sweep **86 → 87**, again without a new example. First
 time the Audio library compiles for `__IMXRT1062__` in this tree (including

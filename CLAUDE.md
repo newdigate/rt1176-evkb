@@ -79,7 +79,9 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **87 gates** (86 before Phase 5a gated
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **89 gates** (87 before Phase 5b
+gated `usb/usb_audio_capstone_test` and `audio/audioinput_i2s_test`'s second
+board; 86 before Phase 5a gated
 `audio/audiooutput_i2s_test` on two boards; 84 before Phase 4 gated
 `usb/usb_audio_uac1_test` on two boards; 83 before
 `framework/string_test` was gated on a second board; 82 before Phase 2
@@ -90,8 +92,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). Expect **87 passed, 0 failed, 0 SKIP**, or
-**86 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). Expect **89 passed, 0 failed, 0 SKIP**, or
+**88 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 There is **one** permitted red:
 
 - `rt1176:dualcore/cm4_audio_test` — **nondeterministic.** Long called a load
@@ -122,9 +124,10 @@ directory and the `-serial` chain from the board. Build a non-default board with
 `usb/usb_descriptor_survey` is gated on both boards and is the RT1062's USB
 host proof: it enumerates QEMU's emulated `usb-audio` and reads `46F4:0002` off
 the wire — an oracle the firmware has no knowledge of. Like
-`dualcore/cm4_usb_irq_probe`, its rt1062 half depends on LOCAL-ONLY qemu2
-changes, so **a fresh clone sees it red for that reason too**; that is the GPL
-firewall working, not a regression.
+`dualcore/cm4_usb_irq_probe` and `audio/audioinput_i2s_test` (whose rt1062 half
+needs the `sai1-rxinject` binding, qemu2 `2141a5d781`), its rt1062 half depends
+on LOCAL-ONLY qemu2 changes, so **a fresh clone sees it red for that reason
+too**; that is the GPL firewall working, not a regression.
 
 ★ **The RT1062 USB host needs the CCM_ANALOG SET/CLR/TOG aliases modelled.**
 `hw/misc/imxrt1060_anatop.c` treated the `base+0x4/+0x8/+0xC` words as ordinary
@@ -216,6 +219,15 @@ Repo-wide gates in `tools/`:
   rather than an example directory, so a second board's build of the same
   example gets its own depfile walk. It needs one: `EVKB_BOARD=rt1062` links a
   different core.
+  ★ **The GATES drift check accepts `<rel>/build*:` as well as `<rel>:`** (fixed
+  Phase 5b). An example gated on a NON-default board only has no plain `build/`,
+  so its build-directory entry is its *only* entry — and the old `"$rel:"`
+  substring test false-positived on it. `usb/usb_audio_capstone_test` (rt1062
+  only) is the first such example; before it every two-board example also built
+  for rt1176, so a plain entry always existed and the narrower test was
+  sufficient by accident. Left unfixed, the only ways to green the audit were
+  deleting a real entry or writing a bogus `GATES_EXEMPT` — the check meant to
+  keep GATES honest applying pressure to weaken it.
   ✅ **CLOSED 2026-08-08 — the audit PASSES, rt1062 builds included.** It was
   open for most of that day: `cores/teensy4/` sits in the audit's `ALLOW` list
   on the condition that its objects define **no** symbols, which held while

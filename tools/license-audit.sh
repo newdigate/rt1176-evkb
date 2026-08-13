@@ -187,6 +187,7 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # cores/teensy4 instead of cores/imxrt1176, so that image has a link manifest
 # this list would otherwise never walk.
 GATES=${LICENSE_AUDIT_GATES:-"examples/audio/audio_h_test:audio_h_test examples/audio/audioinput_i2s_test:audioinput_i2s_test \
+examples/audio/audioinput_i2s_test/build-rt1062:audioinput_i2s_test \
 examples/audio/audiooutput_i2s_test:audiooutput_i2s_test \
 examples/audio/audiooutput_i2s_test/build-rt1062:audiooutput_i2s_test \
 examples/audio/audiostream_test:audiostream_test examples/audio/filter_fir_test:filter_fir_test \
@@ -237,6 +238,7 @@ examples/serial/serial_test/build-rt1062:serial_test \
 examples/storage-memory/eeprom_test:eeprom_test examples/storage-memory/extmem_test:extmem_test \
 examples/storage-memory/sdram_test:sdram_test \
 examples/timing/interval_timer_test:interval_timer_test examples/timing/rtc_test:rtc_test \
+examples/usb/usb_audio_capstone_test/build-rt1062:usb_audio_capstone_test \
 examples/usb/usb_audio_capture_test:usb_audio_capture_test \
 examples/usb/usb_audio_duplex_test:usb_audio_duplex_test \
 examples/usb/usb_audio_uac1_test:usb_audio_uac1_test \
@@ -293,11 +295,20 @@ case "$PARTS" in *2*)
     [ -f "$gsh" ] || continue
     gdir=${gsh%/*}; rel=${gdir#$EVKB/}; name=${rel##*/}
     case " $GATES_EXEMPT " in *" $rel "*) continue ;; esac
+    # An entry may satisfy this as "<rel>:" OR as "<rel>/build*:" — a gate-owning
+    # example that supports only a NON-default board has no plain build/ and so
+    # contributes its build-directory entry alone. usb/usb_audio_capstone_test
+    # (rt1062-only, Phase 5b) is the first of those; before it, every two-board
+    # example also built for rt1176, so a plain entry always existed and the
+    # "<rel>:" test was sufficient by accident. Without the second pattern the
+    # check FALSE-POSITIVES on a correctly-listed example, and the only ways out
+    # are deleting a real entry or writing a bogus GATES_EXEMPT — pressure to
+    # weaken the audit, from the check meant to keep it honest.
     case "$GATES" in
-      *"$rel:"*)
+      *"$rel:"*|*"$rel/build"*)
         # listed — also check the target name matches the CMake project()
         proj=$(sed -n 's/^project(\([A-Za-z0-9_.-]*\).*/\1/p' "$gdir/CMakeLists.txt" 2>/dev/null | head -1)
-        listed=$(printf '%s\n' $GATES | grep "^$rel:" | head -1); listed=${listed##*:}
+        listed=$(printf '%s\n' $GATES | grep -E "^$rel(/build[^:]*)?:" | head -1); listed=${listed##*:}
         if [ -n "$proj" ] && [ "$proj" != "$listed" ]; then
           echo "GATES MISMATCH: $rel listed as target '$listed' but project() says '$proj'"
           drift=1
