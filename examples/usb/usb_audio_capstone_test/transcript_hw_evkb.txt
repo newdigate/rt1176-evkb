@@ -1,0 +1,118 @@
+Hardware transcript -- usb_audio_capstone_test on the MIMXRT1060-EVKB (rt1062).
+
+Recorded 2026-08-13, branch rt1062-capstone-phase5b.
+  evkb df96234+, cores 5bcae78, Audio de2d7bc, USBHost_t36 45cf27b + the
+  init()-FIFO-reset fix recorded below.
+Board:  MIMXRT1060-EVKB, DAPLink VCOM, console on Serial6 (LPUART1).
+Device: GeneralPlus 1B3F:2008 "USB Audio Device", UAC 1.00, in J47.
+        J47 is the HOST port. J48 is the device port and will not work.
+Bench:  3.5 mm male-male loopback, adapter headphone-out -> adapter mic-in.
+        Speaker on the board's WM8960 line out.
+Graph:  sine 1 kHz -> AudioOutputUSBHost -> USB OUT -> adapter DAC
+        -> [cable] -> adapter ADC -> USB IN -> AudioInputUSBHost
+        -> AudioOutputI2S -> WM8960.
+Image:  build-rt1062/usb_audio_capstone_test.elf -- the SAME artifact the gate
+        runs.
+
+★ THIS FILE IS THE ONLY EVIDENCE THE ROUND TRIP WORKS. The QEMU gate cannot
+reach it: QEMU's usb-audio model advertises 48000 only while this graph runs
+at 44100 by construction, so the emulated device is never even claimed there
+and the gate proves graph plumbing (a silent-at-rate SAI tap), not transport.
+If this transcript and the gate ever disagree, silicon wins.
+
+ROUND TRIP: AUDIBLE. A steady 1 kHz tone from the board's line out, having
+travelled USB OUT -> adapter DAC -> loopback cable -> adapter ADC -> USB IN ->
+AudioInputUSBHost -> AudioOutputI2S -> WM8960. Confirmed by ear.
+
+==== console (steady state; 130 consecutive heartbeats) ====
+CAPSTONE: HEARTBEAT seq=51  up=51s  out=ready in=ready in_peak=1.0000 out_drop=314 in_under=340 port=10001805
+CAPSTONE: HEARTBEAT seq=52  up=52s  out=ready in=ready in_peak=1.0000 out_drop=314 in_under=340 port=10001805
+                          ... every second, unchanged ...
+CAPSTONE: HEARTBEAT seq=179 up=179s out=ready in=ready in_peak=1.0000 out_drop=314 in_under=341 port=10001805
+CAPSTONE: HEARTBEAT seq=180 up=180s out=ready in=ready in_peak=1.0000 out_drop=314 in_under=341 port=10001805
+
+The setup lines (start / OUT READY / IN READY / armed) were missed: LinkServer
+resets the target on flash and the reader can only attach once the probe
+daemons are killed, by which point setup() is long done. The heartbeat carries
+the evidence instead.
+
+==== what this shows ====
+
+out=ready in=ready -- BOTH directions negotiated. The input interface being
+claimed at all is new on this board; every prior rt1062 USB audio example was
+output-only.
+
+out_drop 314 -> 314 over 129 seconds: DELTA ZERO. Not one block dropped once
+streaming was armed. The 314 accrued before the arm, while the graph was
+already producing into a FIFO nothing was draining yet.
+
+in_under 340 -> 341 over 129 seconds: exactly ONE zero-filled block in over two
+minutes. input_usbhost.h predicts one per ~34 s from the bench device's -86 ppm
+(128 frames / 3.8 frames-per-second); the measured rate is better than that
+prediction, not worse. Same story as out_drop's 340 pre-arm accrual.
+
+in_peak=1.0000 -- full scale, i.e. the returning signal CLIPS. Expected with a
+bare headphone-out-to-mic-in cable: a line output is roughly two orders of
+magnitude hotter than a microphone input expects. The tone is still 1 kHz and
+still audible, which is what the bar asks; it is simply a clipped sine. An
+inline attenuator would clean it up and is not needed to prove the path.
+
+port=10001805 -- CCS|PE|PP: device connected, port enabled and powered.
+
+==== two silicon-only defects this bench run found ====
+
+Both were invisible to QEMU, and the capstone is the first firmware in this
+tree that could expose either.
+
+(1) USBHost_t36 USBAudioOut::init() did not reset its FIFOs; only the
+device-attach paths did. Every sketch declares this driver DMAMEM because the
+EHCI cannot reach DTCM on the RT1062 -- and DMAMEM lands in .bss.dma, which the
+Teensy startup deliberately does NOT clear (memory_clear covers [_sbss,_ebss];
+.bss.dma is a separate NOLOAD section outside it). So fifo.head/tail began as
+stale OCRAM. Nothing had ever written before a device arrived, because every
+earlier sketch drove writes from the attach path -- but an AudioStream graph
+does not wait: AudioOutputUSBHost::update() runs as soon as its AudioConnection
+makes it active, during static construction, long before USBHost::begin().
+
+    Symptom: MemManage fault ~8 s into every boot, so the board printed
+    "CAPSTONE: start" and reset, forever.
+    Crash report read from OCRAM 0x2027FF80 over the probe (the core saves it
+    across reset): IPSR=4, CFSR=0x00000082 (DACCVIOL|MMARVALID),
+    MMFAR=BFAR=0x00FEC1A8, PC=0x00002F7A = usb_audio_fifo_write, the
+    `strh [r4, r3, lsl #1]` store. Working back: 0x00FEC1A8 - &fifo with 32-bit
+    wraparound gives head = 0x706F4A94, i.e. garbage, not a bad base pointer.
+
+    QEMU cannot reproduce it: emulated RAM starts zeroed, so head/tail are 0
+    there by accident.
+
+(2) The sketch never armed the transport. Selecting an alternate setting only
+agrees a format; beginStreaming() and beginRecording() are what post
+isochronous descriptors, and service() in loop() is what advances the rings.
+Without them the console read out=ready in=ready while out_drop and in_under
+both climbed at the graph's full update rate (~345/s) -- the OUT FIFO filling
+and the IN FIFO starving, which reads as a transport failure rather than a
+missing call. The frozen counters above are what a correctly armed duplex link
+looks like.
+
+==== bonus: the AudioInputI2S TX-clock fix, A/B-measured on this board ====
+
+Phase 5b Task 2 added `I2S1_TCSR |= I2S_TCSR_TE | I2S_TCSR_BCE` to
+AudioInputI2S::begin() under ARDUINO_MIMXRT1060_EVKB, reasoned from the
+identical already-fixed case in the __IMXRT1176__ branch: config_i2s() makes
+RX synchronous to TX on this board, so RX gets no bit clock unless the
+transmitter is enabled. QEMU's SAI model gates RX on the RCSR bits alone and
+passes either way, so the fix was argued rather than measured. Settled here by
+flashing audio/audioinput_i2s_test twice, one variable changed:
+
+    WITHOUT the TX enable:  "MIC peak=(no blocks)"  x30   -- RX entirely dead
+    WITH the TX enable:     "MIC peak=0.0001"       x56   -- blocks flowing
+
+Blocks arriving at all is the property the fix provides: no BCLK means no SAI
+FIFO request, no DMA, no audio blocks. CONFIRMED on silicon.
+
+The level itself is a flat 0.0001 that does not respond to sound, so no
+microphone signal reaches the WM8960's ADC with the driver's current input
+routing on this board. That is a separate, open question about the 1060-EVKB's
+analogue input path -- NOT evidence against the clock fix, which the A/B
+settles independently. audioinput_i2s_test's QEMU gate uses an injected
+waveform and is unaffected either way.

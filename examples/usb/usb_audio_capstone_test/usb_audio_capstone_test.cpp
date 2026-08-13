@@ -141,6 +141,12 @@ void setup() {
 
 void loop() {
     myusb.Task();
+    // ★ service() is what advances the isochronous rings -- it retires
+    // completed descriptors and re-posts them with the next FIFO contents, in
+    // BOTH directions. myusb.Task() does not do it: that drives enumeration
+    // and the control plane, not the periodic schedule. Miss this and the arm
+    // above transfers exactly one ring's worth and then stops for good.
+    audioOut.service();
 
     for (unsigned i = 0; i < NDRIVERS; i++) {
         bool now_active = (bool)*drivers[i];
@@ -173,6 +179,25 @@ void loop() {
         // field is what reports whether it ever became true.
         CONSOLE.println(audioOut.readyIn() ? "CAPSTONE: IN READY"
                                            : "CAPSTONE: IN not ready yet");
+
+        // ★ ARM BOTH DIRECTIONS. Selecting an alternate setting only agrees a
+        // format -- it moves no audio. These are what post isochronous
+        // descriptors into the periodic schedule, and without them the wire
+        // stays idle no matter how busy the graph is: the OUT FIFO fills and
+        // every block is dropped, the IN FIFO stays empty and every update
+        // underruns, and both counters climb at the graph's full update rate
+        // while the console still reports out=ready in=ready. That is exactly
+        // what this sketch did before they were added, and it reads as a
+        // transport failure rather than a missing call.
+        //
+        // Both, in this order, mirroring usb_audio_duplex_test: the descriptor
+        // pool holds 96 iTDs = 32 OUT + 32 feedback + 32 IN, sized for exactly
+        // this duplex arm.
+        bool o = audioOut.beginStreaming();
+        bool r = audioOut.beginRecording();
+        CONSOLE.printf("CAPSTONE: armed out=%s in=%s\n",
+                       o ? "streaming" : "FAILED",
+                       r ? "recording" : "FAILED");
     }
 
     if (millis() - last_beat_ms >= 1000) {
