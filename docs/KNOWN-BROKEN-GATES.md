@@ -339,6 +339,15 @@ load. So at `-j 2`, a red `rt1176:` half of a two-board example wearing "no
 UART capture" is this collision until proven otherwise — re-run it alone
 before reading it as a regression. The serial default does not collide.
 
+A later single-run serial sweep the same day measured `86/1/0`, the red being
+one half of this gate in the OTHER known mode — the fixed `sleep 5`'s load
+sensitivity, under load ~7–8.6 from concurrent review tooling. Its tap was
+healthy (`tap_peak=16383`, `STAGE_TONE=PASS`); only the console token was
+missing. Green on idle re-run at load 5.4, and the same flake had already
+shown once that day on a single-gate run at load 5.7. Two observations in one
+day says the spec's deferred fix — poll the tap for a sample count instead of
+sleeping — is worth its follow-up task; a longer sleep is NOT that fix.
+
 ★ **A fresh clone sees `rt1062:audio/audiooutput_i2s_test` RED**, and that is
 expected rather than a regression: its rt1062 half needs the LOCAL-ONLY qemu2
 change binding the `sai1-tap` on `fsl-imxrt1062` (qemu2 `6d98ec3b27`), and

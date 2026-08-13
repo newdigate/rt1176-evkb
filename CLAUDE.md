@@ -124,8 +124,7 @@ host proof: it enumerates QEMU's emulated `usb-audio` and reads `46F4:0002` off
 the wire — an oracle the firmware has no knowledge of. Like
 `dualcore/cm4_usb_irq_probe`, its rt1062 half depends on LOCAL-ONLY qemu2
 changes, so **a fresh clone sees it red for that reason too**; that is the GPL
-firewall working, not a regression. It is *also* red on this machine, for the
-separate and deliberate TCM-hole reason above.
+firewall working, not a regression.
 
 ★ **The RT1062 USB host needs the CCM_ANALOG SET/CLR/TOG aliases modelled.**
 `hw/misc/imxrt1060_anatop.c` treated the `base+0x4/+0x8/+0xC` words as ordinary
