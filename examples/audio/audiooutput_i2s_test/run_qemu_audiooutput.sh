@@ -20,7 +20,39 @@ rm -f "$VCOM" "$DBG" "$TAP"
     -chardev file,id=sai1-tap,path="$TAP" \
     -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
-sleep 5; gate_reap $P
+# Wait on the run's TWO liveness signals instead of a fixed sleep. The fixed
+# `sleep 5` flaked twice on 2026-08-13 under load (~5.7 and ~7-8.6): the tap
+# was healthy but the console token had not landed yet, so the gate reaped a
+# run that was merely slow (docs/KNOWN-BROKEN-GATES.md, 2026-08-13 entry).
+#
+# BOTH conditions matter, in this order (the spec's 4.3 names the trap):
+#   1. the VCOM contains a STAGE_SYNTH= verdict (PASS or FAIL -- this is
+#      liveness, not the assertion; a FAIL must stop the wait and fail below,
+#      not spin to the cap), AND
+#   2. the tap has accumulated TAP_MIN_BYTES. The token arrives BEFORE the tap
+#      finishes accumulating, so polling the token alone would reap early and
+#      starve check_tap.py. 128 KiB is ~1 s of tap at the observed QEMU drain
+#      (~130 KB/s); the old sleep 5 collected ~650 KB, far more than the
+#      amplitude-only peak check needs.
+# The cap is a diagnosis aid, not an assertion: on expiry the wait notes it
+# and falls through, and the named assertions below say what was missing. A
+# QEMU that died early ends the wait immediately rather than eating the cap.
+TAP_MIN_BYTES=131072
+WAIT_CAP=60
+waited=0
+while :; do
+    if grep -q "STAGE_SYNTH=" "$VCOM" 2>/dev/null; then
+        sz=$(wc -c < "$TAP" 2>/dev/null | tr -d ' ')
+        if [ "${sz:-0}" -ge "$TAP_MIN_BYTES" ]; then break; fi
+    fi
+    if ! kill -0 "$P" 2>/dev/null; then break; fi
+    if [ "$waited" -ge "$WAIT_CAP" ]; then
+        echo "note: liveness wait capped at ${WAIT_CAP}s (token or tap never arrived)"
+        break
+    fi
+    sleep 1; waited=$((waited + 1))
+done
+gate_reap $P
 gate_require_capture "$VCOM"
 echo "==== VCOM ===="; cat "$VCOM"
 grep -q "^info synth_peak=" "$VCOM" || { echo "FAIL: no info synth_peak= line"; exit 1; }

@@ -361,6 +361,17 @@ shown once that day on a single-gate run at load 5.7. Two observations in one
 day says the spec's deferred fix — poll the tap for a sample count instead of
 sleeping — is worth its follow-up task; a longer sleep is NOT that fix.
 
+★ **FIXED: the gate now polls both liveness signals instead of sleeping.** It
+waits until the VCOM holds a `STAGE_SYNTH=` verdict (PASS or FAIL — liveness,
+not the assertion) AND the tap has ≥128 KiB, capped at 60 s, breaking early if
+QEMU dies. Both conditions in that order because the token arrives BEFORE the
+tap finishes accumulating — token-only polling would reap early and starve
+`check_tap.py`, which is why the fixed sleep was left in place during Phase 5a
+rather than half-fixed. Verified: both halves pass in 3 s (the old sleep made
+every pass 5–6 s); a dead QEMU fails by name in ~1 s instead of eating the
+cap; and a live QEMU that prints the token but never feeds the tap caps at
+60 s then fails as `STAGE_TONE`, not as a vacuous pass.
+
 ★ **A fresh clone sees `rt1062:audio/audiooutput_i2s_test` RED**, and that is
 expected rather than a regression: its rt1062 half needs the LOCAL-ONLY qemu2
 change binding the `sai1-tap` on `fsl-imxrt1062` (qemu2 `6d98ec3b27`), and
