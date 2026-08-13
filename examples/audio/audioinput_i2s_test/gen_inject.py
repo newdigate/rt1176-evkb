@@ -18,6 +18,10 @@
 # copy purely so a left-channel check (if ever needed) also sees a non-zero
 # signal. Amplitude 0x6000 (~49% FS) comfortably clears the peak.read() >
 # 0.02f gate threshold (~0.02 * 32767 = 655) on the right channel.
+#
+# ★ run_qemu_audioinput.sh asserts the exact peak this amplitude produces --
+# 0x6000 = 24576, 24576/32767 = 0.7500, so the gate greps "info peak=0.7500".
+# Changing the 0x6000 below therefore means changing that assertion too.
 import sys, struct, math
 PI_C = 3.14159265358979
 out = open(sys.argv[1], "wb")

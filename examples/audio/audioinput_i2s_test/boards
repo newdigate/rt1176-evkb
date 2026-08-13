@@ -1,0 +1,7 @@
+# Boards this example is built and gated for. See
+# docs/superpowers/specs/2026-08-13-rt1062-capstone-phase5b-design.md
+#
+# The rt1062 half is what gates qemu2's sai1-rxinject binding on
+# fsl-imxrt1062 -- the RX-side promise Phase 5a deferred.
+rt1176
+rt1062
