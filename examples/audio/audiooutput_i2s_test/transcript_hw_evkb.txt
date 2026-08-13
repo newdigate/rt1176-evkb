@@ -1,0 +1,42 @@
+Hardware transcript -- audiooutput_i2s_test on the MIMXRT1060-EVKB (rt1062).
+
+Recorded 2026-08-13, branch rt1062-audio-phase5a, evkb 8efb28d, cores 5bcae78.
+Board: MIMXRT1060-EVKB, DAPLink VCOM (/dev/cu.usbmodem14544402), console on
+Serial6 (LPUART1).
+Codec: WM8960 on LPI2C1 at 0x1A, driven by AudioControlWM8960.
+Graph: AudioSynthWaveformSine 1 kHz @ 0.5 -> AudioOutputI2S (SAI1 TX DMA).
+
+★ THIS FILE IS THE ONLY EVIDENCE THE TONE IS AUDIBLE. The QEMU gate's
+STAGE_TONE is amplitude-only -- peak > 4000 over the raw tap, no frequency
+analysis -- so it proves non-silent samples reached SAI1 TDR and nothing about
+pitch or rate. If this transcript and the gate ever disagree, silicon wins.
+
+TONE: audible -- steady 1 kHz from the board line out, confirmed by ear.
+No dropouts or glitches reported.
+
+==== console ====
+The setup()-time lines (info synth_peak=, STAGE_SYNTH=PASS, the first
+TONE_PLAYING) were missed: LinkServer's flash load resets the target and the
+reader can only attach after the probe daemons are killed, by which time
+setup() has long finished. The loop() health readout carries the evidence
+instead -- it prints peak.read() every 500 ms, and peak only advances when the
+SAI1 TX DMA isr pends update_all(), so each line below proves the graph was
+self-clocking at that moment. 21 lines captured over ~11 s (~2/s as coded),
+all identical:
+
+TONE_PLAYING synth_peak=0.5000
+TONE_PLAYING synth_peak=0.5000
+TONE_PLAYING synth_peak=0.5000
+TONE_PLAYING synth_peak=0.5000
+TONE_PLAYING synth_peak=0.5000
+TONE_PLAYING synth_peak=0.5000
+  ... (15 more, byte-identical)
+
+Notes:
+- synth_peak observed: 0.5000 (gate band is 0.40-0.60).
+- The Audio block pool lives in DMAMEM, which is UNCACHED on this board since
+  cores a090c9d. This example is its first real exercise by the audio graph.
+  The tone was clean -- the uncached pool keeps up at 44.1 kHz stereo.
+- This image carries the 1 KB ITCM hole (cores 5bcae78): code starts at 0x400,
+  clear of the NULL-trap MPU page that wedged the QEMU half. Same layout in
+  the emulator and on this bench -- the two gates verified the same image.
