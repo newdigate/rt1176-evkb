@@ -69,3 +69,22 @@ To capture it, build with -DUSBHOST_PRINT_DEBUG -DUSBHDBGSerial=Serial6 into a
 SEPARATE build directory so the gate's build-rt1062/ stays untouched, and add a
 startup delay long enough to attach -- usb_descriptor_survey carries exactly
 such a guarded countdown for this reason.
+
+==== 2026-08-13 addendum: re-verified after the ITCM-hole relink ====
+
+cores 5bcae78 widened the ITCM reservation at 0x0 from 32 bytes to 1 KB (the
+QEMU NULL-trap-page fix -- see docs/KNOWN-BROKEN-GATES.md, Phase 5a). Of the
+five rt1062 images, this is the ONE the hole pushed over a FlexRAM boundary:
+_itcm_block_count went 1 -> 2, moving a 32 KB bank from DTCM to ITCM and
+dropping _estack 0x20078000 -> 0x20070000. Self-consistent by construction
+(startup.c derives the bank config and SP from the same linker symbols), but
+it is the only bench-observable behavioral delta the fix introduced, so the
+relinked image was re-flashed and re-measured on the same J47 adapter:
+
+  45 consecutive heartbeats captured (evkb 5876f5e, cores 5bcae78), EVERY one
+  at pkts/s=1000, total advancing by exactly 1000 each second
+  (e.g. seq=17 total=16733 ... seq=36 total=34977). attaches=1, audio=ready,
+  alt=1, AudioOut=Y throughout. No re-enumeration, no dropped frame.
+
+Identical to the 2026-08-08 measurement above. The bank move costs nothing
+this workload can see.
