@@ -418,13 +418,20 @@ with:
 ```sh
 P=$!; gate_pid $P
 # Poll for the verdict token rather than guessing a duration -- a fixed sleep
-# makes the gate load-sensitive, which has cost this tree real time. Every
-# assertion below reads the console, and STAGE_PEAK= is printed once the 500 ms
-# capture window closes, so it is the last thing this gate waits on. Match the
-# `=` so a FAIL verdict ends the wait too and is reported by name below,
-# instead of spinning to the cap and being blamed on the timeout.
+# makes the gate load-sensitive, which has cost this tree real time.
+#
+# ★ Poll the LAST token this gate asserts, not the first interesting one. The
+# firmware prints STAGE_PEAK= and then AUDIOINPUT_ALL= on the very next line,
+# and gate_reap fires on the statement right after the loop -- so polling
+# STAGE_PEAK= leaves a window where a tick lands between the two printlns, QEMU
+# is killed before the second reaches the file, and the gate reports
+# "FAIL: AUDIOINPUT_ALL" for a run that passed. Match the `=` so a FAIL verdict
+# ends the wait too and is reported by name below, rather than spinning to the
+# cap and being blamed on the timeout. Break early if QEMU has died, so an
+# instant crash is reported as a missing capture instead of burning the cap.
 for _ in $(seq 1 80); do
-    [ -f "$VCOM" ] && grep -q "STAGE_PEAK=" "$VCOM" 2>/dev/null && break
+    [ -f "$VCOM" ] && grep -q "AUDIOINPUT_ALL=" "$VCOM" 2>/dev/null && break
+    kill -0 "$P" 2>/dev/null || break
     sleep 0.25
 done
 gate_reap $P
@@ -1363,6 +1370,45 @@ What each says:
   firmware — say so plainly.
 - `out_drop` / `in_under` → the drift instruments. Single-digit-per-minute
   growth is expected; runaway growth is a finding worth recording.
+
+- [ ] **Step 4b: Bench-check the AudioInputI2S TX-clock fix (60 seconds, same board)**
+
+★ **Added from Task 2's review.** Task 2 added `I2S1_TCSR |= I2S_TCSR_TE |
+I2S_TCSR_BCE` to `AudioInputI2S::begin()` under `ARDUINO_MIMXRT1060_EVKB`,
+because that board's `config_i2s()` makes RX synchronous to TX and RX therefore
+gets no bit clock unless the transmitter is enabled. **QEMU cannot verify it**
+— its SAI model gates RX on the RCSR bits alone — so the rt1062 gate passes
+either way, and the fix currently rests on the identical already-fixed case in
+the `__IMXRT1176__` branch. This is the only step that can turn it from argued
+into measured, and the board is already on the bench:
+
+```bash
+pkill -9 -f "rt1170-console" 2>/dev/null
+pkill LinkServer; pkill redlinkserv; pkill crt_emu_cm_redlink; sleep 1
+cd ~/Development/rt1170/evkb/examples/audio/audioinput_i2s_test
+gtimeout 180 /Applications/LinkServer_26.6.137/LinkServer flash \
+  MIMXRT1062:MIMXRT1060-EVKB load build-rt1062/audioinput_i2s_test.elf 2>&1 | tail -3
+pkill LinkServer; pkill redlinkserv; pkill crt_emu_cm_redlink; sleep 2
+cd ~/Development/rt1170/evkb
+gtimeout 25 python3 -u tools/rt1170-console.py /dev/cu.usbmodem14544402 115200 \
+  > /tmp/audioin-hw.txt 2>/dev/null; true
+pkill -9 -f "rt1170-console" 2>/dev/null
+grep -oE "MIC peak=[0-9.()a-z ]+" /tmp/audioin-hw.txt | tail -10
+```
+
+Ask the user to make noise near the board (speak, tap it) during the capture.
+
+- `MIC peak=` values that MOVE with sound → the fix works; RX is clocked and
+  the codec's ADC data is reaching the graph.
+- `MIC peak=0.0000` flat, or `(no blocks)` → RX is not receiving. Report it;
+  do NOT patch around it, and do not let the green QEMU gate stand as evidence.
+- If the MIMXRT1060-EVKB turns out to have no microphone wired to the WM8960 on
+  this board revision, say so plainly and record the fix as **reasoned from the
+  1176 precedent but unverified** in both the transcript and the KBG entry.
+  That is an honest outcome; a silent assumption is not.
+
+Then re-flash the capstone (Task 6 Step 2) before continuing, since this
+overwrote it.
 
 - [ ] **Step 5: Soak for the drift numbers**
 
