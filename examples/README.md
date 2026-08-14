@@ -52,7 +52,7 @@ and the build macros (`teensy-cmake-macros`) are **not** in this repo at all —
 they're sibling checkouts under `$TEENSY_LIB_ROOT` (default `~/Development`),
 their own git repos, resolved by `evkb.cmake` (see above).
 
-> **Path note:** each example's `CMakeLists.txt` and `toolchain/…cmake` reach
+> **Path note:** each example's `CMakeLists.txt` reaches
 > the shared core and macros via `${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake`
 > (three levels up from `examples/<category>/<name>/`), which in turn resolves
 > `teensy-cores`/`teensy-cmake-macros` under `$TEENSY_LIB_ROOT` — not a

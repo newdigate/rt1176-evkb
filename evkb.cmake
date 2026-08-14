@@ -14,7 +14,7 @@
 # CPM_SOURCE_CACHE env var (e.g. ~/.cache/CPM) to clone each repo once across
 # all build dirs — covers every declared library INCLUDING the core; the one
 # exception is teensy-cmake-macros itself, fetched with plain FetchContent
-# (456K; deliberately not CPM, so the single CPM pin stays in the macros —
+# (~½ MB; deliberately not CPM, so the single CPM pin stays in the macros —
 # see docs/superpowers/specs/2026-08-14-shared-cores-macros-resolution-design.md).
 #
 # -DEVKB_FORCE_FETCH=ON ignores every local checkout — the "fresh user"

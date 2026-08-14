@@ -8,8 +8,8 @@ Arduino UNO-style header.
 
 ## Overview
 
-This repository is the board bring-up tree: 57 example/verification firmwares
-(`examples/`) and tooling (`tools/`). The core itself (`teensy-cores`,
+This repository is the board bring-up tree: the example/verification
+firmwares under `examples/` and tooling (`tools/`). The core itself (`teensy-cores`,
 subdir `imxrt1176/`) and the CMake build glue (`teensy-cmake-macros/`) are
 sibling repos, not part of this repository — see "Getting started" below.
 
@@ -67,7 +67,7 @@ with no sibling checkouts at all.
   and build macros (`teensy-cmake-macros`); otherwise fetched automatically
   from GitHub at pinned refs. Set the `CPM_SOURCE_CACHE` env var (e.g.
   `~/.cache/CPM`) so each repo is cloned once and shared across build
-  directories — the macros themselves are the one exception (456K, plain
+  directories — the macros themselves are the one exception (~½ MB, plain
   FetchContent per build dir, deliberate)
 
 **Try an example**
@@ -157,8 +157,9 @@ MIT/BSD-only — see its
 `VENDORING.md` before bumping the pin.
 
 Configure with the board toolchain file (`TEENSY_VERSION 117`, core clock
-996 MHz, `COREPATH` → `$TEENSY_LIB_ROOT/teensy-cores/imxrt1176/`, linker
-script `imxrt1176.ld`, XIP image at `0x30002000`):
+996 MHz) plus `evkb.cmake`, which resolves `COREPATH` →
+`$TEENSY_LIB_ROOT/teensy-cores/imxrt1176/` (linker script `imxrt1176.ld`,
+XIP image at `0x30002000`):
 
 ```sh
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake

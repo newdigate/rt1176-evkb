@@ -23,7 +23,7 @@ large.
 - **Nothing else lives inside this repo.** The core (`teensy-cores`), the
   build macros (`teensy-cmake-macros`) and all peripheral libraries (Wire,
   SPI, Audio, SdFat, SD, Ethernet, NativeEthernet, FNET, lwip, USBHost_t36,
-  …) are sibling checkouts under `$TEENSY_LIB_ROOT` (default
+  …) are sibling checkouts under `$TEENSY_LIB_ROOT/<lib>` (default
   `~/Development/<lib>`), each its own repo. A reappearing `?? cores/` or
   `?? teensy-cmake-macros/` in git status is a STALE in-repo copy from before
   2026-08-14 — it is dead (nothing resolves there); delete it.
