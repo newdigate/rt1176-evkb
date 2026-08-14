@@ -311,4 +311,8 @@ evkb_library_dir(cores EVKB_CORES_DIR)
 # Trailing slash required: the macros build LINKER_FILE as
 # "${COREPATH}imxrt1176.ld" (117) or "${COREPATH}imxrt1060_evkb.ld" (42).
 set(COREPATH "${EVKB_CORES_DIR}/" CACHE STRING "resolved core path" FORCE)
+# CMP0126 (NEW here): the cache FORCE above does not remove the pre-include
+# NORMAL COREPATH variable, which would otherwise shadow the cache for every
+# later read — on the fetch path that put the placeholder on the link line.
+set(COREPATH "${EVKB_CORES_DIR}/")
 import_arduino_library(cores "${EVKB_CORES_DIR}")
