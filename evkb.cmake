@@ -86,7 +86,7 @@ else()
     message(STATUS "teensy-cmake-macros: fetching at the pinned ref")
     FetchContent_Declare(teensy_cmake_macros
         GIT_REPOSITORY https://github.com/newdigate/teensy-cmake-macros
-        GIT_TAG        e948da4d43cf76e3a0d8813cd85e6da314a0a569)
+        GIT_TAG        917062ee01a2f38ac1973f51e0600d01f6a88726)
 endif()
 FetchContent_MakeAvailable(teensy_cmake_macros)
 include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
