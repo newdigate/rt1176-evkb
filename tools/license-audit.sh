@@ -19,19 +19,25 @@ TOOL=/Applications/ARM_10/bin
 # the negative tests need no gate builds and no network. Nothing in normal use
 # sets them.
 EVKB=${LICENSE_AUDIT_EVKB:-$HOME/Development/rt1170/evkb}
+# Sibling-checkout root — the same TEENSY_LIB_ROOT the build resolves against
+# (evkb.cmake / teensy-cmake-macros). The audit must sweep the SAME trees the
+# firmware compiles from, or it passes by measuring less: the core moved from
+# $EVKB/cores to $LIB_ROOT/teensy-cores in the 2026-08-14 resolution change.
+LIB_ROOT=${TEENSY_LIB_ROOT:-$HOME/Development}
 fail=0
 
-REPOS=${LICENSE_AUDIT_REPOS:-"$EVKB/cores $HOME/Development/Ethernet $HOME/Development/NativeEthernet \
-$HOME/Development/SdFat $HOME/Development/SPI $HOME/Development/Wire \
-$HOME/Development/Audio $HOME/Development/SD $HOME/Development/PaulS_SD \
-$HOME/Development/USBHost_t36 $HOME/Development/FNET $HOME/Development/lwip \
-$HOME/Development/CMSIS-DSP $HOME/Development/CMSIS_6 $HOME/Development/SerialFlash \
-$HOME/Development/PXP $HOME/Development/MipiDisplay $HOME/Development/LVGL \
-$HOME/Development/EEPROM"}
+REPOS=${LICENSE_AUDIT_REPOS:-"$LIB_ROOT/teensy-cores $LIB_ROOT/Ethernet $LIB_ROOT/NativeEthernet \
+$LIB_ROOT/SdFat $LIB_ROOT/SPI $LIB_ROOT/Wire \
+$LIB_ROOT/Audio $LIB_ROOT/SD $LIB_ROOT/PaulS_SD \
+$LIB_ROOT/USBHost_t36 $LIB_ROOT/FNET $LIB_ROOT/lwip \
+$LIB_ROOT/CMSIS-DSP $LIB_ROOT/CMSIS_6 $LIB_ROOT/SerialFlash \
+$LIB_ROOT/PXP $LIB_ROOT/MipiDisplay $LIB_ROOT/LVGL \
+$LIB_ROOT/EEPROM"}
 
 # Allowlist (extended regex), each entry justified:
 #   cores/teensy/, cores/teensy3/
-#                        — uncompiled PJRC reference copies, never in any build
+#                        — uncompiled PJRC reference copies inside the
+#                          teensy-cores sibling repo, never in any build
 #                          (audit part 2 proves nothing under them is compiled)
 #   cores/teensy4/       — NOT a reference copy any more. Until the rt1062 board
 #                          axis landed, this entry read "never in any build" for
@@ -73,7 +79,12 @@ $HOME/Development/EEPROM"}
 #                          .cpp). Being a .cpp on this allowlist, part 2 holds it
 #                          to the EMPTY-object rule, so enabling thorvg would
 #                          fail this audit rather than slip through.
-ALLOW='cores/teensy/|cores/teensy3/|cores/teensy4/|Development/SPI/SPI\.(h|cpp)$|Development/Wire/Wire\.(h|cpp)$|Development/Wire/utility/twi\.(h|c)$|Development/LVGL/lvgl/src/libs/thorvg/tvgLottieInterpolator\.cpp$'
+# Entries are deliberately ROOT-INDEPENDENT (no Development/ prefix): they must
+# match under $LIB_ROOT wherever it points, AND under this script's own tests'
+# throwaway trees. Slightly wider than path-anchored — acceptable because ALLOW
+# only applies inside REPOS directories and part 2's EMPTY-object rule
+# independently backstops every entry (see each justification above).
+ALLOW='cores/teensy/|cores/teensy3/|cores/teensy4/|/SPI/SPI\.(h|cpp)$|/Wire/Wire\.(h|cpp)$|/Wire/utility/twi\.(h|c)$|/LVGL/lvgl/src/libs/thorvg/tvgLottieInterpolator\.cpp$'
 # Between keywords, tolerate whitespace AND comment decoration (* / # ! -):
 # a wrapped header line like "GNU\n * Lesser General Public\n * License"
 # must still match. Plain [[:space:]]+ misses star-prefixed continuations —
