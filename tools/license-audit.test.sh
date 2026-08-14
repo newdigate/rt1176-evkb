@@ -423,4 +423,42 @@ test_dual_evidence_attributed_correctly() {
 }
 test_dual_evidence_attributed_correctly; report test_dual_evidence_attributed_correctly $?
 
+# --- REPOS coverage: a dep path outside every swept root must fail -----------
+# Part 1 sweeps only what REPOS names, and its `[ -d ] || continue` skips a
+# missing repo silently — so firmware that compiled sources from a tree REPOS
+# does not name would pass while the audit never looked at those files. The
+# coverage check makes that omission LOUD, like the GATES drift check. The
+# rogue file is MIT-headered on purpose: ONLY the coverage check may fire.
+test_repos_coverage_fires() {
+    t=$(new_tree rogue alpha_test)
+    rogue="$WORK/rogue-src"; mkdir -p "$rogue"
+    printf '/* MIT licensed: permission is hereby granted. */\n' > "$rogue/outside.h"
+    printf '%s \\\n' "$rogue/outside.h" >> "$t/examples/display/alpha_test/build/stub.obj.d"
+    out=$(LICENSE_AUDIT_PARTS=2 LICENSE_AUDIT_EVKB="$t" \
+          LICENSE_AUDIT_GATES="examples/display/alpha_test:alpha_test" \
+          LICENSE_AUDIT_REPOS="$t/no-such-repo" sh "$AUDIT" 2>&1); rc=$?
+    [ $rc -ne 0 ] \
+        && echo "$out" | grep -q "OUTSIDE SWEPT ROOTS.*alpha_test" \
+        && echo "$out" | grep -q "rogue-src/outside.h" \
+        && echo "$out" | grep -q 'LICENSE-AUDIT: FAIL'
+}
+test_repos_coverage_fires; report test_repos_coverage_fires $?
+
+# --- control: the same shape under a REPOS entry passes ----------------------
+# Without this, a coverage check that flagged every out-of-EVKB path would
+# "detect" the case above while breaking every real gate that links a library.
+test_repos_coverage_covered_passes() {
+    t=$(new_tree covered alpha_test)
+    repo="$WORK/covered-repo"; mkdir -p "$repo"
+    printf '/* MIT licensed: permission is hereby granted. */\n' > "$repo/inside.h"
+    printf '%s \\\n' "$repo/inside.h" >> "$t/examples/display/alpha_test/build/stub.obj.d"
+    out=$(LICENSE_AUDIT_PARTS=2 LICENSE_AUDIT_EVKB="$t" \
+          LICENSE_AUDIT_GATES="examples/display/alpha_test:alpha_test" \
+          LICENSE_AUDIT_REPOS="$repo" sh "$AUDIT" 2>&1); rc=$?
+    [ $rc -eq 0 ] \
+        && ! echo "$out" | grep -q 'OUTSIDE SWEPT ROOTS' \
+        && echo "$out" | grep -q 'LICENSE-AUDIT: PASS'
+}
+test_repos_coverage_covered_passes; report test_repos_coverage_covered_passes $?
+
 exit $FAILED

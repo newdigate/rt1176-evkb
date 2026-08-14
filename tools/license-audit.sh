@@ -32,7 +32,11 @@ $LIB_ROOT/Audio $LIB_ROOT/SD $LIB_ROOT/PaulS_SD \
 $LIB_ROOT/USBHost_t36 $LIB_ROOT/FNET $LIB_ROOT/lwip \
 $LIB_ROOT/CMSIS-DSP $LIB_ROOT/CMSIS_6 $LIB_ROOT/SerialFlash \
 $LIB_ROOT/PXP $LIB_ROOT/MipiDisplay $LIB_ROOT/LVGL \
-$LIB_ROOT/EEPROM"}
+$LIB_ROOT/EEPROM $LIB_ROOT/ILI9341_t3 $LIB_ROOT/TouchPanel $LIB_ROOT/Bounce2"}
+# ILI9341_t3, TouchPanel and Bounce2 joined 2026-08-14: Part 2's REPOS-coverage
+# check (below) found their sources in link manifests while Part 1 never swept
+# them — 7, 3 and 2 dep paths respectively. Adding a repo here is always the
+# answer to that finding; never exempt a source tree from the sweep.
 
 # Allowlist (extended regex), each entry justified:
 #   cores/teensy/, cores/teensy3/
@@ -84,7 +88,16 @@ $LIB_ROOT/EEPROM"}
 # throwaway trees. Slightly wider than path-anchored — acceptable because ALLOW
 # only applies inside REPOS directories and part 2's EMPTY-object rule
 # independently backstops every entry (see each justification above).
-ALLOW='cores/teensy/|cores/teensy3/|cores/teensy4/|/SPI/SPI\.(h|cpp)$|/Wire/Wire\.(h|cpp)$|/Wire/utility/twi\.(h|c)$|/LVGL/lvgl/src/libs/thorvg/tvgLottieInterpolator\.cpp$'
+#   ILI9341_t3/extras/bdf_to_ili9341.c
+#                        — GPL-3.0 HOST-SIDE font-conversion utility (PJRC
+#                          upstream, includes <stdio.h>, runs on a desktop —
+#                          not firmware code). Found the day ILI9341_t3 joined
+#                          REPOS via the Part-2 coverage check; Part 2's walk
+#                          of every link manifest confirms nothing compiles it.
+#                          Being a .c on this allowlist, the EMPTY-object rule
+#                          fires if it ever IS compiled — self-enforcing, the
+#                          same shape as thorvg above.
+ALLOW='cores/teensy/|cores/teensy3/|cores/teensy4/|/SPI/SPI\.(h|cpp)$|/Wire/Wire\.(h|cpp)$|/Wire/utility/twi\.(h|c)$|/LVGL/lvgl/src/libs/thorvg/tvgLottieInterpolator\.cpp$|/ILI9341_t3/extras/bdf_to_ili9341\.c$'
 # Between keywords, tolerate whitespace AND comment decoration (* / # ! -):
 # a wrapped header line like "GNU\n * Lesser General Public\n * License"
 # must still match. Plain [[:space:]]+ misses star-prefixed continuations —
@@ -135,6 +148,11 @@ LICTEXT='(licen[cs]e|copying)[^/]*$'
 # throwaway repo without needing the fat gate builds part 2 walks.
 PARTS=${LICENSE_AUDIT_PARTS:-123}
 SHARED="Client.h Server.h IPAddress.h IPAddress.cpp"
+# Snapshot BEFORE the part-1 clearing below: Part 2's REPOS-coverage check
+# needs the swept-root list even in a PARTS=2 run (the clearing only exists so
+# a parts-restricted run skips part 1's sweep loop, not to change what counts
+# as a swept root).
+SWEEP_ROOTS="$REPOS"
 case "$PARTS" in *1*) ;; *) REPOS="" ;; esac
 
 echo "== Part 1: repo copyleft-header sweep"
@@ -354,6 +372,27 @@ for pair in $GATES; do
   # Project files only: GCC + newlib headers are GPL with the GCC Runtime
   # Library Exception / BSD — linking into firmware permitted.
   project=$(printf '%s\n' $files | grep -v '^/Applications/ARM_10/' || true)
+  # REPOS coverage: every project dep path must lie under a swept root — $EVKB
+  # or a REPOS entry. Part 1 sweeps only what REPOS names, and its
+  # `[ -d ] || continue` skips a missing repo silently, so firmware that
+  # compiled sources from a tree REPOS does not name would otherwise pass while
+  # the audit never looked at those files. Same discipline as the GATES drift
+  # check: the omission is made LOUD. Found real gaps on day one — ILI9341_t3,
+  # TouchPanel and Bounce2 fed firmware unswept (see the REPOS comment above).
+  # Existence is deliberately not required: the depfile RECORD is the evidence
+  # that the path fed a compile, whether or not the file is still there.
+  outside=$(printf '%s\n' $project | awk -v evkb="$EVKB" -v repos="$SWEEP_ROOTS" '
+      BEGIN { n = split(repos, r, /[ \t\n]+/) }
+      {
+        if (index($0, evkb "/") == 1) next
+        for (i = 1; i <= n; i++) if (r[i] != "" && index($0, r[i] "/") == 1) next
+        print
+      }' | head -5)
+  if [ -n "$outside" ]; then
+    echo "OUTSIDE SWEPT ROOTS in $g (Part 1 never sweeps these; add the repo to REPOS):"
+    printf '%s\n' "$outside" | sed 's/^/  /'
+    fail=1
+  fi
   checked=0
   for f in $project; do [ -f "$f" ] && checked=$((checked + 1)); done
   # ONE batched grep instead of a head|tr|grep pipeline per file. The LVGL gate
