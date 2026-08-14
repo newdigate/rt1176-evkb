@@ -8,12 +8,19 @@ mostly HW-verified on the EVKB. Organized into categories on 2026-07-20
 
 **Build any example** (from its own directory):
 ```sh
-cmake -B build -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake
 cmake --build build
 ./run_qemu.sh            # QEMU gate — never `sh run_qemu.sh` (it re-execs under gtimeout)
 ```
-The two SD examples (`storage-memory/sd_test`, `audio/sd_wav_play_test`) inline
-their toolchain, so they build with a plain `cmake -B build`.
+The two toolchain files (`rt1170-evkb.toolchain.cmake`, `rt1062-evkb.toolchain.cmake`)
+live once at the repo root, in `toolchain/`, and are shared by every example —
+a new example needs no `toolchain/` directory of its own.
+
+Four examples inline their toolchain and need no flag: `storage-memory/sd_test`
+and `audio/sd_wav_play_test` `include()` the shared root file directly;
+`display/pxp_composite_test` and `display/pxp_draw_bench` point
+`CMAKE_TOOLCHAIN_FILE` at it behind an `if(NOT ...)` guard, so an explicit `-D`
+still wins.
 
 Every example bootstraps through **`../../../evkb.cmake`**: the build macros,
 the `cores` library, and all peripheral libraries resolve **local-first**

@@ -36,12 +36,24 @@ framework). Each example is self-contained; build from its own directory:
 
 ```sh
 cd examples/gpio-analog/blink
-cmake -B build -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake
 cmake --build build          # produces <name>.elf (+ .hex)
 ```
 
-(`storage-memory/sd_test` and `audio/sd_wav_play_test` inline their toolchain —
-plain `cmake -B build` for those two.)
+The two toolchain files (`rt1170-evkb.toolchain.cmake`, `rt1062-evkb.toolchain.cmake`)
+live once at the repo root, in `toolchain/`, and are shared by every example —
+a new example needs no `toolchain/` directory of its own.
+
+Build dirs configured before 2026-08-14 cached an absolute toolchain path that
+no longer exists; their elfs remain valid (gates run them unchanged), but the
+first reconfigure fails with "toolchain file not found" — `rm -rf` the build
+dir and configure fresh with the command above.
+
+(`storage-memory/sd_test`, `audio/sd_wav_play_test`, `display/pxp_composite_test`
+and `display/pxp_draw_bench` inline their toolchain, so none of the four need
+the flag: `sd_test`/`sd_wav_play_test` `include()` the shared root file
+directly, and the two PXP examples `set(CMAKE_TOOLCHAIN_FILE ...)` to it behind
+an `if(NOT ...)` guard, so an explicit `-D` still wins.)
 
 - Compiler: ARM GCC 10 at `/Applications/ARM_10/bin/` (override with
   `ARM_TOOLCHAIN_BIN`).
@@ -125,7 +137,7 @@ supports in a `boards` sidecar file; absent means `rt1176` only, which is why
 most examples have none. Gate ids are `<board>:<category>/<name>` and no gate
 names a QEMU machine — `tools/gate-lib.sh` derives `-M`, `-global`, the build
 directory and the `-serial` chain from the board. Build a non-default board with
-`cmake -B build-rt1062 -DEVKB_BOARD=rt1062 -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1062-evkb.toolchain.cmake`.
+`cmake -B build-rt1062 -DEVKB_BOARD=rt1062 -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1062-evkb.toolchain.cmake`.
 
 `usb/usb_descriptor_survey` is gated on both boards and is the RT1062's USB
 host proof: it enumerates QEMU's emulated `usb-audio` and reads `46F4:0002` off

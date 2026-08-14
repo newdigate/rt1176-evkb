@@ -52,8 +52,8 @@ endif()
 # problem rather than a build misconfiguration. Name it at configure time.
 if(NOT DEFINED TEENSY_VERSION OR NOT TEENSY_VERSION EQUAL _evkb_expected_tv)
     message(FATAL_ERROR "EVKB_BOARD=${EVKB_BOARD} requires TEENSY_VERSION ${_evkb_expected_tv} "
-        "(rt1176 -> 117 via toolchain/rt1170-evkb.toolchain.cmake, "
-        "rt1062 -> 42 via toolchain/rt1062-evkb.toolchain.cmake); got '${TEENSY_VERSION}'")
+        "(rt1176 -> 117 via ../../../toolchain/rt1170-evkb.toolchain.cmake, "
+        "rt1062 -> 42 via ../../../toolchain/rt1062-evkb.toolchain.cmake); got '${TEENSY_VERSION}'")
 endif()
 
 # --- TEENSY_LIB_ROOT: where sibling checkouts live ---------------------------

@@ -37,7 +37,7 @@ target_sources(usb_descriptor_survey.elf PRIVATE
 # on produced a wall of undefined references instead of debug output. Build the
 # diagnostic image with:
 #   cmake -B build-dbg -DEVKB_BOARD=rt1062 \
-#     -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1062-evkb.toolchain.cmake \
+#     -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1062-evkb.toolchain.cmake \
 #     -DCMAKE_CXX_FLAGS="-DUSBHOST_PRINT_DEBUG -DUSBHDBGSerial=Serial6"
 # USBHDBGSerial defaults to `Serial` (the USB *device* CDC), which is not the
 # console on either board -- name the board's console UART explicitly.

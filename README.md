@@ -74,10 +74,20 @@ with no sibling checkouts at all.
 
 ```sh
 cd examples/gpio-analog/blink
-cmake -B build -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake
 cmake --build build
 ./run_qemu.sh        # runs the QEMU gate — asserts the expected UART tokens
 ```
+
+The two toolchain files (`rt1170-evkb.toolchain.cmake`, `rt1062-evkb.toolchain.cmake`)
+live once at the repo root, in `toolchain/`, and are shared by every example —
+a new example needs no `toolchain/` directory of its own, just the `../../../`
+reach-up to the root.
+
+Build dirs configured before 2026-08-14 cached an absolute toolchain path
+that no longer exists; their elfs remain valid (gates run them unchanged),
+but the first reconfigure fails with "toolchain file not found" — `rm -rf`
+the build dir and configure fresh with the command above.
 
 Examples are grouped by category under `examples/` (dualcore, usb, audio,
 networking, storage-memory, gpio-analog, timing, serial, display, framework) —
@@ -162,7 +172,7 @@ Configure with the board toolchain file (`TEENSY_VERSION 117`, core clock
 XIP image at `0x30002000`):
 
 ```sh
-cmake -B build -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake
 cmake --build build        # produces my_sketch.elf (+ hex)
 ```
 

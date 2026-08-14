@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 project(usb_keyboard_test)
 
-# TEENSY_VERSION / CPU_CORE_SPEED / COMPILERPATH / COREPATH come from the
-# toolchain file (toolchain/rt1170-evkb.toolchain.cmake); fallback keeps 117.
+# TEENSY_VERSION / CPU_CORE_SPEED / COMPILERPATH come from the toolchain file
+# (../../../toolchain/rt1170-evkb.toolchain.cmake); fallback keeps 117.
 set(TEENSY_VERSION 117 CACHE STRING "")
 
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)

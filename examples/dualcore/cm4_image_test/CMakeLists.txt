@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 project(cm4_image_test)
 
-# Fallback if the toolchain file isn't passed (see toolchain/rt1170-evkb…).
+# Fallback if the toolchain file isn't passed (see
+# ../../../toolchain/rt1170-evkb…).
 set(TEENSY_VERSION 117 CACHE STRING "")
 
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
