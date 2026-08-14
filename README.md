@@ -90,8 +90,8 @@ but the first reconfigure fails with "toolchain file not found" — `rm -rf`
 the build dir and configure fresh with the command above.
 
 Examples are grouped by category under `examples/` (dualcore, usb, audio,
-networking, storage-memory, gpio-analog, timing, serial, display, framework) —
-see [examples/README.md](examples/README.md) for the full index.
+camera, networking, storage-memory, gpio-analog, timing, serial, display,
+framework) — see [examples/README.md](examples/README.md) for the full index.
 
 To run every QEMU gate at once (exits non-zero if any fail, so it drops
 straight into CI):

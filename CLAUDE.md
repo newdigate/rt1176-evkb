@@ -30,9 +30,10 @@ large.
 
 ## Build (CMake only — no Arduino IDE)
 
-Firmware lives in `examples/<category>/<name>/` (10 categories: dualcore, usb,
-audio, networking, storage-memory, gpio-analog, timing, serial, display,
-framework). Each example is self-contained; build from its own directory:
+Firmware lives in `examples/<category>/<name>/` (11 categories: dualcore, usb,
+audio, camera, networking, storage-memory, gpio-analog, timing, serial,
+display, framework). Each example is self-contained; build from its own
+directory:
 
 ```sh
 cd examples/gpio-analog/blink
