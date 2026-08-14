@@ -299,14 +299,15 @@ macro(import_evkb_audio_full)
             target_include_directories(teensy_flags INTERFACE "${_inc}")
         endforeach()
         # 2. The peripheral-lib deps Audio's headers reach (Wire/SD/SdFat/
-        #    SerialFlash). import_evkb_library adds each lib root to teensy_flags
-        #    (global) and creates its target; the linker RESCAN group resolves
-        #    cross-refs regardless of order.
+        #    SerialFlash/USBHost_t36). import_evkb_library adds each lib root to
+        #    teensy_flags (global) and creates its target; the linker RESCAN
+        #    group resolves cross-refs regardless of order.
         import_evkb_library(Wire)
         import_evkb_library(SPI)
         import_evkb_library(SdFat src)
         import_evkb_library(SD src)
         import_evkb_library(SerialFlash)
+        import_evkb_library(USBHost_t36)
         # 3. The whole Audio fork (root globs 87 .cpp/6 .c; utility/ adds 2).
         import_evkb_library(Audio utility)
     endif()
