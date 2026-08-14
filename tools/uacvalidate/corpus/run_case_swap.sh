@@ -72,7 +72,7 @@ git -C "$USBHOST" checkout -q --detach "$COMMIT" || exit 2
 git -C "$USBHOST" log --oneline -1
 rm -rf "$HERE/host/build-corpus"
 ( cd "$HERE/host" && cmake -B build-corpus \
-    -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake >/dev/null 2>&1 \
+    -DCMAKE_TOOLCHAIN_FILE="$EVKB/toolchain/rt1170-evkb.toolchain.cmake" >/dev/null 2>&1 \
   && cmake --build build-corpus >/dev/null 2>&1 ) \
   || { echo "BUILD FAILED at $COMMIT" >&2; git -C "$USBHOST" checkout -q master; exit 2; }
 ELF="$HERE/host/build-corpus/corpus_host.elf"

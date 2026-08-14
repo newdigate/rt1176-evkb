@@ -23,6 +23,7 @@ POINTS=("${@:--250 -150 -83 0 150 250}")
 [ ${#POINTS[@]} -eq 1 ] && POINTS=(${POINTS[0]})   # split default string
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EVKB_ROOT="$(cd "$HERE/.." && pwd)"
 EXDIR="$HERE/../examples/usb/usb_audio_graph_test"
 XMOS_APP="$HOME/Development/xmos/sw_usb_audio/app_usb_aud_xk_216_mc"
 
@@ -95,7 +96,7 @@ for BIAS in "${POINTS[@]}"; do
   TAG="bias${BIAS}"
   echo "=== point $TAG: build (GRAPH_DRIVE=$GRAPH_DRIVE) ==="
   cmake -S "$EXDIR" -B "$BUILDDIR" \
-        -DCMAKE_TOOLCHAIN_FILE="$EXDIR/toolchain/rt1170-evkb.toolchain.cmake" \
+        -DCMAKE_TOOLCHAIN_FILE="$EVKB_ROOT/toolchain/rt1170-evkb.toolchain.cmake" \
         -DBIAS_LOCKED_PPM="$BIAS" -DGRAPH_DRIVE="$GRAPH_DRIVE" >/dev/null
   cmake --build "$BUILDDIR" >/dev/null
 

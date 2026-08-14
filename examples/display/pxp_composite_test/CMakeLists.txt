@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.24)
 # Inlined toolchain: plain `cmake -B build` works; an explicit
 # -DCMAKE_TOOLCHAIN_FILE=... still wins if a caller passes one.
 if(NOT CMAKE_TOOLCHAIN_FILE)
-    set(CMAKE_TOOLCHAIN_FILE ${CMAKE_CURRENT_LIST_DIR}/toolchain/rt1170-evkb.toolchain.cmake)
+    set(CMAKE_TOOLCHAIN_FILE ${CMAKE_CURRENT_LIST_DIR}/../../../toolchain/rt1170-evkb.toolchain.cmake)
 endif()
 
 project(pxp_composite_test)

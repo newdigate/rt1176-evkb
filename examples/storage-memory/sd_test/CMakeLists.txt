@@ -1,22 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
-set(TEENSY_VERSION 117 CACHE STRING "RT1176 / MIMXRT1170-EVKB" FORCE)
-set(CPU_CORE_SPEED 996000000 CACHE STRING "RT1176 M7 core clock" FORCE)
-set(CMAKE_EXE_LINKER_FLAGS "--specs=nano.specs" CACHE INTERNAL "")
-if(DEFINED ENV{ARM_TOOLCHAIN_BIN})
-    set(COMPILERPATH "$ENV{ARM_TOOLCHAIN_BIN}/")   # portable override
-else()
-    if(DEFINED ENV{ARM_TOOLCHAIN_BIN})
-    set(COMPILERPATH "$ENV{ARM_TOOLCHAIN_BIN}/")   # portable override
-else()
-    set(COMPILERPATH "/Applications/ARM_10/bin/")
-endif()
-endif()
-set(CMAKE_SYSTEM_NAME Generic)
-set(CMAKE_SYSTEM_PROCESSOR arm)
-set(CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
-set(CMAKE_C_COMPILER ${COMPILERPATH}arm-none-eabi-gcc)
-set(CMAKE_CXX_COMPILER ${COMPILERPATH}arm-none-eabi-g++)
-set(CMAKE_CXX_LINK_EXECUTABLE "${CMAKE_C_COMPILER} <FLAGS> <CMAKE_CXX_LINK_FLAGS> <LINK_FLAGS> <OBJECTS> -o <TARGET> <LINK_LIBRARIES>")
+# Board + compiler come from the shared toolchain file, included BEFORE
+# project() — same mechanism as passing -DCMAKE_TOOLCHAIN_FILE, so a plain
+# `cmake -B build` still cross-compiles with no extra flags.
+include(${CMAKE_CURRENT_LIST_DIR}/../../../toolchain/rt1170-evkb.toolchain.cmake)
 project(sd_test)
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 import_evkb_library(Wire)
