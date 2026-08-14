@@ -143,7 +143,7 @@ Expected: both IDENTICAL.
   - `driftrun.sh:98`: `-DCMAKE_TOOLCHAIN_FILE="$EXDIR/toolchain/rt1170-evkb.toolchain.cmake" \` — `$EXDIR` is the example dir; replace the value with the repo-root file. If the script already has a repo-root variable, use it; otherwise derive one near the top (e.g. `EVKB_ROOT=$(cd "$(dirname "$0")/.." && pwd)`) and use `"$EVKB_ROOT/toolchain/rt1170-evkb.toolchain.cmake"`.
   - `run_case.sh:107` and `run_case_swap.sh:75`: `-DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake` — these run with the example dir as cwd; `../../../toolchain/rt1170-evkb.toolchain.cmake` is the equivalent. Verify the cwd assumption from the surrounding cd/pushd before editing; if cwd is not `examples/<cat>/<name>`, use the same repo-root-variable approach as driftrun.
 
-- [ ] **Step 3.2: Syntax-check all three** — `sh -n tools/driftrun.sh tools/uacvalidate/corpus/run_case.sh tools/uacvalidate/corpus/run_case_swap.sh` (expect silence). Full end-to-end runs need hardware/bench state; the configure-path correctness is covered by Task 5's grep (no stale path survives) plus the Task 1 proof that the root file configures.
+- [ ] **Step 3.2: Syntax-check all three** — `bash -n` each, NOT `sh -n`: `run_case.sh` and `run_case_swap.sh` are `#!/usr/bin/env bash` and use process substitution (`read … < <(…)`), which POSIX `sh` cannot parse. `sh -n` fails on them at lines 56/38 **before this change** too (verified by stashing) — the same `sh`-vs-`bash` trap CLAUDE.md documents for `run_qemu.sh`. Full end-to-end runs need hardware/bench state; the configure-path correctness is covered by Task 5's grep (no stale path survives) plus the Task 1 proof that the root file configures.
 
 ---
 
@@ -170,6 +170,18 @@ find examples -type d -name toolchain -not -path '*build*' | head   # expect: em
 ```
 
 Expected: `deleted: 97 rt1170, 7 rt1062, fail=0`, no surviving toolchain dirs. Any `UNEXPECTED`: STOP, report the file, delete nothing further.
+
+- [ ] **Step 4.1b: The 105th copy — `tools/uacvalidate/corpus/host/toolchain/`**
+
+Found during Task 3, outside `examples/` so the `find` above cannot see it. It is a **pre-strip** copy (md5 `de3a026f1ce722f0a7afe6cf31a0e124`) that still force-sets `COREPATH` to `${_evkb_root}/cores/imxrt1176/` — the in-repo core deleted by the previous migration — with an up-level count wrong for its own depth. It was reachable only because `run_case*.sh` passed a bare relative `toolchain/…` with `corpus/host` as cwd; Task 3 re-pointed both scripts at the root canonical, leaving this orphaned. Its only remaining references are stale build-dir caches under `corpus/host/build*/`, which are gitignored artifacts.
+
+```bash
+cd ~/Development/rt1170/evkb
+git ls-files --error-unmatch tools/uacvalidate/corpus/host/toolchain/rt1170-evkb.toolchain.cmake   # confirm it is tracked
+rm -rf tools/uacvalidate/corpus/host/toolchain
+```
+
+Equivalence was already measured during Task 3: building `corpus_host` against the old host-local file and against the root canonical produced byte-identical `corpus_host.hex`. Include this deletion in the same atomic commit — the dedup's claim is zero content copies, and this is the 105th.
 
 - [ ] **Step 4.2: No stale references anywhere in the build system**
 
