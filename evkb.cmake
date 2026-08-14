@@ -2,16 +2,20 @@
 #
 #   include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 #
-# It (1) pulls in teensy-cmake-macros (the local sibling checkout if present,
-# else GitHub at the pinned ref), (2) defines the pinned library manifest and
-# the import_evkb_library()/evkb_library_dir() helpers, (3) imports the
-# imxrt1176 core and points COREPATH at wherever it resolved to.
+# It (1) pulls in teensy-cmake-macros (a ${TEENSY_LIB_ROOT}/teensy-cmake-macros
+# checkout if present, else GitHub at the pinned ref), (2) declares the pinned
+# library manifest behind import_evkb_library()/evkb_library_dir(), (3) imports
+# the board's core and points COREPATH at wherever it resolved to.
 #
-# Local-first: a developer's ~/Development/<lib> checkout always wins (working
-# tree, uncommitted edits included) — the silicon-truth loop is unchanged. A
-# fresh clone with no sibling checkouts fetches everything from GitHub at the
-# pinned refs below (CPM; set the CPM_SOURCE_CACHE env var, e.g. ~/.cache/CPM,
-# to clone each repo once across all build dirs).
+# Local-first: a developer's ${TEENSY_LIB_ROOT}/<lib> checkout always wins
+# (working tree, uncommitted edits included) — TEENSY_LIB_ROOT defaults to
+# ~/Development (env var to override). A fresh clone with no sibling checkouts
+# fetches everything from GitHub at the pinned refs below. Set the
+# CPM_SOURCE_CACHE env var (e.g. ~/.cache/CPM) to clone each repo once across
+# all build dirs — covers every declared library INCLUDING the core; the one
+# exception is teensy-cmake-macros itself, fetched with plain FetchContent
+# (456K; deliberately not CPM, so the single CPM pin stays in the macros —
+# see docs/superpowers/specs/2026-08-14-shared-cores-macros-resolution-design.md).
 #
 # -DEVKB_FORCE_FETCH=ON ignores every local checkout — the "fresh user"
 # simulation used to test this file.
@@ -26,35 +30,9 @@ set(EVKB_CMAKE_INCLUDED 1)
 set(EVKB_ROOT ${CMAKE_CURRENT_LIST_DIR})
 option(EVKB_FORCE_FETCH "Ignore local sibling checkouts; fetch at the pinned refs" OFF)
 
-# --- teensy-cmake-macros (the build system itself) ---------------------------
-include(FetchContent)
-if(EXISTS ${EVKB_ROOT}/teensy-cmake-macros/CMakeLists.include.txt AND NOT EVKB_FORCE_FETCH)
-    FetchContent_Declare(teensy_cmake_macros SOURCE_DIR ${EVKB_ROOT}/teensy-cmake-macros)
-else()
-    FetchContent_Declare(teensy_cmake_macros
-        GIT_REPOSITORY https://github.com/newdigate/teensy-cmake-macros
-        GIT_TAG        e948da4d43cf76e3a0d8813cd85e6da314a0a569)
-endif()
-FetchContent_MakeAvailable(teensy_cmake_macros)
-include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
-
-# --- pinned library manifest: name -> (local checkout, repo, ref, sub-path) --
-# The name is what examples pass to import_evkb_library()/evkb_library_dir()
-# (it matches the existing import_arduino_library call sites). LOCAL is the
-# full local path (including any sub-path); PATH is the sub-path inside the
-# fetched repo ("." for the repo root).
-macro(_evkb_lib NAME LOCAL URL REF PATH)
-    set(EVKB_LIB_${NAME}_LOCAL "${LOCAL}")
-    set(EVKB_LIB_${NAME}_URL   "${URL}")
-    set(EVKB_LIB_${NAME}_REF   "${REF}")
-    set(EVKB_LIB_${NAME}_PATH  "${PATH}")
-endmacro()
-
-set(_dev "$ENV{HOME}/Development")
-
-# --- board axis --------------------------------------------------------------
-# Which board this build targets. Drives the cores subdirectory below and the
-# QEMU machine in tools/gate-lib.sh. Default rt1176 so every existing example
+# --- board axis (before the macros: the COREPATH pre-set needs the subdir) ---
+# Which board this build targets. Drives the core subdir below and the QEMU
+# machine in tools/gate-lib.sh. Default rt1176 so every existing example
 # builds exactly as before without being edited.
 set(EVKB_BOARD "rt1176" CACHE STRING "Target board: rt1176 (MIMXRT1170-EVKB) or rt1062 (MIMXRT1060-EVKB)")
 set_property(CACHE EVKB_BOARD PROPERTY STRINGS rt1176 rt1062)
@@ -66,55 +44,81 @@ else()
     message(FATAL_ERROR "EVKB_BOARD must be rt1176 or rt1062, got '${EVKB_BOARD}'")
 endif()
 
-_evkb_lib(cores          ${EVKB_ROOT}/cores/${EVKB_CORE_SUBDIR} https://github.com/newdigate/teensy-cores    5bcae781b6c0e451f073298ddf7e1cd859f3e4de ${EVKB_CORE_SUBDIR})
-_evkb_lib(Wire           ${_dev}/Wire                 https://github.com/newdigate/Wire            19babd18b83bc2f9ddbd16f6afefcbb42558530d .)
-_evkb_lib(SPI            ${_dev}/SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
-_evkb_lib(PXP         ${_dev}/PXP                  https://github.com/newdigate/PXP          5658e34885ff3a5cb5516a178ba60743e62a7517 .)
-_evkb_lib(ILI9341_t3     ${_dev}/ILI9341_t3           https://github.com/newdigate/ILI9341_t3      e69e657f360e997e93fc7736a23eba8b09d1a043 .)
-_evkb_lib(MipiDisplay    ${_dev}/MipiDisplay          https://github.com/newdigate/MipiDisplay     4cdb46c1d96cd7d42c05003481644cf81a8c030f .) # panel chosen by the importer: import_evkb_library(MipiDisplay soc panels/<name>)
-_evkb_lib(TouchPanel     ${_dev}/TouchPanel           https://github.com/newdigate/TouchPanel      d20499c707290985379cb407689eca7f2c14fd08 .) # controller chosen by the importer: import_evkb_library(TouchPanel gt911)
-_evkb_lib(Audio          ${_dev}/Audio                https://github.com/newdigate/Audio           de2d7bcee3ce72663a71c0e16f446648fbd5da84 .)
-_evkb_lib(SdFat          ${_dev}/SdFat                https://github.com/newdigate/SdFat           681bfcf83d05beb943e3d905f15d8181bf9072c7 .)
-_evkb_lib(SD             ${_dev}/PaulS_SD             https://github.com/newdigate/SD              e28c549918ea34ffb2942fd84deffc7c76a89880 .)
-_evkb_lib(SerialFlash    ${_dev}/SerialFlash          https://github.com/newdigate/SerialFlash     2b6f24168c1ca97af1138c4a5b10255b39c4ad0b .)
-_evkb_lib(ethernet       ${_dev}/Ethernet             https://github.com/newdigate/Ethernet        eebbfebc699a1500864236db21d17abf3cf7535a .)
-_evkb_lib(nativeethernet ${_dev}/NativeEthernet       https://github.com/newdigate/NativeEthernet  7f5d881d5da80540177caea760d895780478b128 .)
-_evkb_lib(fnet           ${_dev}/FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
-_evkb_lib(lwip           ${_dev}/lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
-_evkb_lib(USBHost_t36    ${_dev}/USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
-_evkb_lib(LVGL           ${_dev}/LVGL                 https://github.com/newdigate/LVGL            6fa16a733d3d2a30b18f7ec15a2ad3791b02c66f .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
-_evkb_lib(EEPROM         ${_dev}/EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
-_evkb_lib(Bounce2        ${_dev}/Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
+# --- TEENSY_LIB_ROOT: where sibling checkouts live ---------------------------
+# Set BEFORE the macros load so both computations agree by construction.
+if(NOT DEFINED TEENSY_LIB_ROOT)
+    if(DEFINED ENV{TEENSY_LIB_ROOT})
+        set(TEENSY_LIB_ROOT "$ENV{TEENSY_LIB_ROOT}" CACHE PATH "root for sibling library checkouts")
+    else()
+        set(TEENSY_LIB_ROOT "$ENV{HOME}/Development" CACHE PATH "root for sibling library checkouts")
+    endif()
+endif()
+set(TEENSY_FORCE_FETCH ${EVKB_FORCE_FETCH})   # the generic flag the resolver honors
+
+# --- COREPATH pre-set: suppress the macros' own core resolution --------------
+# The macros resolve teensy-cores themselves when COREPATH is undefined; evkb
+# resolves the core through its own manifest (pinned below) instead. Economy,
+# not safety: the real value is FORCEd after resolution, before the first
+# import bakes it into link flags.
+if(EXISTS "${TEENSY_LIB_ROOT}/teensy-cores/${EVKB_CORE_SUBDIR}" AND NOT EVKB_FORCE_FETCH)
+    set(COREPATH "${TEENSY_LIB_ROOT}/teensy-cores/${EVKB_CORE_SUBDIR}/")
+else()
+    set(COREPATH "${CMAKE_BINARY_DIR}/evkb-corepath-pending/")   # placeholder; FORCEd below
+endif()
+
+# --- teensy-cmake-macros (the build system itself) ---------------------------
+# Plain FetchContent, deliberately NOT CPM: the macros own the single CPM pin,
+# and this bootstrap must not duplicate it (dual-pin drift — see the spec).
+include(FetchContent)
+if(EXISTS ${TEENSY_LIB_ROOT}/teensy-cmake-macros/CMakeLists.include.txt AND NOT EVKB_FORCE_FETCH)
+    message(STATUS "teensy-cmake-macros: local ${TEENSY_LIB_ROOT}/teensy-cmake-macros")
+    FetchContent_Declare(teensy_cmake_macros SOURCE_DIR ${TEENSY_LIB_ROOT}/teensy-cmake-macros)
+else()
+    message(STATUS "teensy-cmake-macros: fetching at the pinned ref")
+    FetchContent_Declare(teensy_cmake_macros
+        GIT_REPOSITORY https://github.com/newdigate/teensy-cmake-macros
+        GIT_TAG        e948da4d43cf76e3a0d8813cd85e6da314a0a569)
+endif()
+FetchContent_MakeAvailable(teensy_cmake_macros)
+include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
+
+# --- pinned library manifest -------------------------------------------------
+# teensy_declare_library(NAME <subdir under TEENSY_LIB_ROOT> URL REF <sub-path
+# inside the fetched repo>). NAME is what examples pass to
+# import_evkb_library()/evkb_library_dir() (matches the existing call sites).
+teensy_declare_library(cores          teensy-cores/${EVKB_CORE_SUBDIR} https://github.com/newdigate/teensy-cores    5bcae781b6c0e451f073298ddf7e1cd859f3e4de ${EVKB_CORE_SUBDIR})
+teensy_declare_library(Wire           Wire                 https://github.com/newdigate/Wire            19babd18b83bc2f9ddbd16f6afefcbb42558530d .)
+teensy_declare_library(SPI            SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
+teensy_declare_library(PXP            PXP                  https://github.com/newdigate/PXP             5658e34885ff3a5cb5516a178ba60743e62a7517 .)
+teensy_declare_library(ILI9341_t3     ILI9341_t3           https://github.com/newdigate/ILI9341_t3      e69e657f360e997e93fc7736a23eba8b09d1a043 .)
+teensy_declare_library(MipiDisplay    MipiDisplay          https://github.com/newdigate/MipiDisplay     4cdb46c1d96cd7d42c05003481644cf81a8c030f .) # panel chosen by the importer: import_evkb_library(MipiDisplay soc panels/<name>)
+teensy_declare_library(TouchPanel     TouchPanel           https://github.com/newdigate/TouchPanel      d20499c707290985379cb407689eca7f2c14fd08 .) # controller chosen by the importer: import_evkb_library(TouchPanel gt911)
+teensy_declare_library(Audio          Audio                https://github.com/newdigate/Audio           de2d7bcee3ce72663a71c0e16f446648fbd5da84 .)
+teensy_declare_library(SdFat          SdFat                https://github.com/newdigate/SdFat           681bfcf83d05beb943e3d905f15d8181bf9072c7 .)
+teensy_declare_library(SD             PaulS_SD             https://github.com/newdigate/SD              e28c549918ea34ffb2942fd84deffc7c76a89880 .)
+teensy_declare_library(SerialFlash    SerialFlash          https://github.com/newdigate/SerialFlash     2b6f24168c1ca97af1138c4a5b10255b39c4ad0b .)
+teensy_declare_library(ethernet       Ethernet             https://github.com/newdigate/Ethernet        eebbfebc699a1500864236db21d17abf3cf7535a .)
+teensy_declare_library(nativeethernet NativeEthernet       https://github.com/newdigate/NativeEthernet  7f5d881d5da80540177caea760d895780478b128 .)
+teensy_declare_library(fnet           FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
+teensy_declare_library(lwip           lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
+teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
+teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            6fa16a733d3d2a30b18f7ec15a2ad3791b02c66f .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
+teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
+teensy_declare_library(Bounce2        Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).
 # CMSIS-Core is a headers-only dependency of CMSIS-DSP (cmsis_compiler.h et al).
-_evkb_lib(CMSIS-DSP  ${_dev}/CMSIS-DSP https://github.com/ARM-software/CMSIS-DSP 4b4fa8ff218ca5ac20bad71b653a37d93815f24b .) # v1.17.1
-_evkb_lib(CMSIS-Core ${_dev}/CMSIS_6   https://github.com/ARM-software/CMSIS_6   45dab712ad84f8cbbf2b7bfc089c19088507df6f .) # v6.3.0
+teensy_declare_library(CMSIS-DSP  CMSIS-DSP https://github.com/ARM-software/CMSIS-DSP 4b4fa8ff218ca5ac20bad71b653a37d93815f24b .) # v1.17.1
+teensy_declare_library(CMSIS-Core CMSIS_6   https://github.com/ARM-software/CMSIS_6   45dab712ad84f8cbbf2b7bfc089c19088507df6f .) # v6.3.0
 
-# --- helpers -----------------------------------------------------------------
-# evkb_library_dir(NAME OUT_VAR): resolve NAME's source directory (local-first,
-# pinned-git fallback) without importing — for cherry-picked sources.
+# --- helpers: thin aliases over the macros' declared-library API -------------
+# Kept so no example CMakeLists.txt changes (≈90 call sites). Memoization,
+# local-first and force-fetch all live in the macros now.
 macro(evkb_library_dir NAME OUT_VAR)
-    if(NOT DEFINED EVKB_LIB_${NAME}_URL)
-        message(FATAL_ERROR "evkb_library_dir(${NAME}): not in the evkb.cmake manifest")
-    endif()
-    if(NOT DEFINED _evkb_resolved_${NAME})    # memoized: an example may both
-        if(EVKB_FORCE_FETCH)                  # import a lib AND reference its dir
-            set(_evkb_local "${EVKB_ROOT}/.force-fetch-no-local")
-        else()
-            set(_evkb_local "${EVKB_LIB_${NAME}_LOCAL}")
-        endif()
-        resolve_arduino_library_auto(${NAME} "${_evkb_local}"
-            "${EVKB_LIB_${NAME}_URL}" "${EVKB_LIB_${NAME}_REF}" "${EVKB_LIB_${NAME}_PATH}"
-            _evkb_resolved_${NAME})
-    endif()
-    set(${OUT_VAR} "${_evkb_resolved_${NAME}}")
+    teensy_resolve_library(${NAME} ${OUT_VAR})
 endmacro()
 
-# import_evkb_library(NAME [subdirs...]): the drop-in replacement for
-# import_arduino_library(NAME <local path> [subdirs...]).
 macro(import_evkb_library NAME)
-    evkb_library_dir(${NAME} _evkb_import_dir)
-    import_arduino_library(${NAME} "${_evkb_import_dir}" ${ARGN})
+    teensy_import_library(${NAME} ${ARGN})
 endmacro()
 
 # --- CMSIS-DSP shared helpers (CM7 target + CM4 image world) -----------------
@@ -301,10 +305,9 @@ endmacro()
 
 # --- the core (every example needs it) ---------------------------------------
 evkb_library_dir(cores EVKB_CORES_DIR)
-# The toolchain file guessed COREPATH from its own location; re-point it at the
-# resolved core so a fresh clone (fetched core) links the right linker script.
-# MUST happen BEFORE the first import_arduino_library call — that call runs
-# teensy_set_dynamic_properties once, baking COREPATH into the link flags.
+# Re-point COREPATH at the resolved core (replacing the pre-include value set
+# above). MUST happen BEFORE the first import_arduino_library call — that call
+# runs teensy_set_dynamic_properties once, baking COREPATH into the link flags.
 # Trailing slash required: the macros build LINKER_FILE as
 # "${COREPATH}imxrt1176.ld" (117) or "${COREPATH}imxrt1060_evkb.ld" (42).
 set(COREPATH "${EVKB_CORES_DIR}/" CACHE STRING "resolved core path" FORCE)
