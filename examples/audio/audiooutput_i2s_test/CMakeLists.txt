@@ -33,7 +33,7 @@ target_sources(audiooutput_i2s_test.elf PRIVATE
 )
 # The two boards carry different codecs -- WM8962 on the MIMXRT1170-EVKB, WM8960
 # on the MIMXRT1060-EVKB -- so exactly one driver is compiled. EVKB_BOARD is set
-# by evkb.cmake (line 59) and is a normal CMake cache variable here.
+# by evkb.cmake (the board axis near the top of evkb.cmake) and is a normal CMake cache variable here.
 if(EVKB_BOARD STREQUAL "rt1062")
     # output_i2s.cpp's __IMXRT1062__ path drives PLL4 through set_audioClock()
     # (utility/imxrt_hw.cpp -- self-guarded to 1052/1062, an empty TU elsewhere);

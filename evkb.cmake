@@ -46,6 +46,8 @@ endif()
 
 # --- TEENSY_LIB_ROOT: where sibling checkouts live ---------------------------
 # Set BEFORE the macros load so both computations agree by construction.
+# evkb's default wins by construction; keep in sync with the macros' own
+# block (CMakeLists.include.txt, TEENSY_LIB_ROOT).
 if(NOT DEFINED TEENSY_LIB_ROOT)
     if(DEFINED ENV{TEENSY_LIB_ROOT})
         set(TEENSY_LIB_ROOT "$ENV{TEENSY_LIB_ROOT}" CACHE PATH "root for sibling library checkouts")
@@ -53,7 +55,14 @@ if(NOT DEFINED TEENSY_LIB_ROOT)
         set(TEENSY_LIB_ROOT "$ENV{HOME}/Development" CACHE PATH "root for sibling library checkouts")
     endif()
 endif()
-set(TEENSY_FORCE_FETCH ${EVKB_FORCE_FETCH})   # the generic flag the resolver honors
+# Map evkb's knob onto the generic flag the resolver honors. Respect a
+# directly-passed -DTEENSY_FORCE_FETCH=ON too — the macros' README documents
+# that flag, so it must not be silently clobbered here.
+if(EVKB_FORCE_FETCH OR TEENSY_FORCE_FETCH)
+    set(TEENSY_FORCE_FETCH ON)
+else()
+    set(TEENSY_FORCE_FETCH OFF)
+endif()
 
 # --- COREPATH pre-set: suppress the macros' own core resolution --------------
 # The macros resolve teensy-cores themselves when COREPATH is undefined; evkb
@@ -305,6 +314,11 @@ endmacro()
 
 # --- the core (every example needs it) ---------------------------------------
 evkb_library_dir(cores EVKB_CORES_DIR)
+# A core directory that exists but carries no core is otherwise diagnosed
+# hundreds of lines later as "Arduino.h: No such file or directory".
+if(NOT EXISTS "${EVKB_CORES_DIR}/core_pins.h")
+    message(FATAL_ERROR "resolved core at '${EVKB_CORES_DIR}' has no core_pins.h — stale or empty ${EVKB_BOARD} core checkout?")
+endif()
 # Re-point COREPATH at the resolved core (replacing the pre-include value set
 # above). MUST happen BEFORE the first import_arduino_library call — that call
 # runs teensy_set_dynamic_properties once, baking COREPATH into the link flags.
