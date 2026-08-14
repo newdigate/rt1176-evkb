@@ -20,11 +20,13 @@ large.
 - This repo is `github.com/newdigate/rt1176-evkb`. The parent `rt1170/`
   directory is **not** a repo — run git from here (or `git -C evkb` from the
   parent).
-- `cores/` and `teensy-cmake-macros/` are **nested independent git repos**
-  (they show as untracked in this repo's status — that is normal).
-- Peripheral libraries (Wire, SPI, Audio, SdFat, SD, Ethernet, NativeEthernet,
-  FNET, lwip, USBHost_t36, …) live as sibling checkouts under
-  `~/Development/<lib>`, each its own repo.
+- **Nothing else lives inside this repo.** The core (`teensy-cores`), the
+  build macros (`teensy-cmake-macros`) and all peripheral libraries (Wire,
+  SPI, Audio, SdFat, SD, Ethernet, NativeEthernet, FNET, lwip, USBHost_t36,
+  …) are sibling checkouts under `$TEENSY_LIB_ROOT` (default
+  `~/Development/<lib>`), each its own repo. A reappearing `?? cores/` or
+  `?? teensy-cmake-macros/` in git status is a STALE in-repo copy from before
+  2026-08-14 — it is dead (nothing resolves there); delete it.
 
 ## Build (CMake only — no Arduino IDE)
 
@@ -46,11 +48,15 @@ plain `cmake -B build` for those two.)
 - Every example bootstraps via `../../../evkb.cmake`, which provides the
   `cores` library, the `teensy-cmake-macros` build macros, and
   `import_evkb_library(<name>)` for peripheral libraries.
-- **Library resolution is local-first**: a `~/Development/<lib>` checkout wins
-  (including uncommitted edits); if absent, the library is fetched from GitHub
-  at a SHA pinned in `evkb.cmake`. `-DEVKB_FORCE_FETCH=ON` forces the pinned
-  fetch ("fresh user" mode). After pushing new library work, the pin in
-  `evkb.cmake` must be updated by hand.
+- **Library resolution is local-first**: a `$TEENSY_LIB_ROOT/<lib>` checkout
+  wins (default `~/Development`; env var to override — including uncommitted
+  edits); if absent, the library is fetched from GitHub at a SHA pinned in
+  `evkb.cmake`. This covers the core (`teensy-cores`) and the build macros
+  (`teensy-cmake-macros`) too — the macros are the one repo fetched with plain
+  FetchContent rather than CPM (the single CPM pin lives in the macros;
+  `CPM_SOURCE_CACHE` covers everything else). `-DEVKB_FORCE_FETCH=ON` forces
+  the pinned fetch ("fresh user" mode). After pushing new library work, the
+  pin in `evkb.cmake` must be updated by hand.
 - CM4 (second-core) images are built by the same macros
   (`teensy_add_cm4_image` / `teensy_add_cm4_slot_image`) and embedded into the
   CM7 ELF as C arrays.
@@ -149,8 +155,8 @@ and any new two-board example must go through it rather than spelling them out:
   image is the `boot-ivt` kind. Using the wrong one double-faults into Lockup
   before a line of firmware runs.
 - **Which object is the console**: **LPUART1 on both boards**, but the cores
-  name it differently — `Serial1` on `cores/imxrt1176`, `Serial6` on
-  `cores/teensy4` (which follows the Teensy pin-0/1 convention and gives the
+  name it differently — `Serial1` on the `imxrt1176` core, `Serial6` on
+  the `teensy4` core (which follows the Teensy pin-0/1 convention and gives the
   name `Serial1` to LPUART6). Every two-board sketch therefore defines a
   `CONSOLE` alias rather than naming a `SerialN` directly, and every gate takes
   its chain from `gate_console` — which now emits a plain `-serial file:` for
@@ -166,9 +172,9 @@ and any new two-board example must go through it rather than spelling them out:
   perfectly while the capture stays empty — indistinguishable from firmware that
   never started.
 
-★ **`rt1062` links `cores/teensy4`, which is LGPL** — see the licence-audit
+★ **`rt1062` links the `teensy4` core, which is LGPL** — see the licence-audit
 note under `tools/` below. That core is upstream Teensy, not the clean-room
-`cores/imxrt1176`, and building it is what put copyleft source into a link
+`imxrt1176` core, and building it is what put copyleft source into a link
 manifest for the first time in this tree.
 
 Three things that number depends on:
@@ -236,8 +242,8 @@ Repo-wide gates in `tools/`:
   `IPAddress.cpp`, `Stream.cpp`, `WMath.cpp`, `Time.cpp` — all
   Arduino-inherited), compiling to real symbols in `libcores.o.a`.
   Resolved the only acceptable way — the five were **replaced** with the MIT
-  clean-room versions (`cores` `99f7657`, pinned at `evkb.cmake:69` and pushed
-  to `origin/master`), not excused by relaxing `ALLOW` or dropping the
+  clean-room versions (`cores` `99f7657`, pinned in evkb.cmake's manifest and
+  pushed to `origin/master`), not excused by relaxing `ALLOW` or dropping the
   `build-rt1062` GATES entry. Two headers went the same way, `Printable.h` and
   `WCharacter.h`, because they were in the rt1062 link manifest and the
   EMPTY-object rule cannot see headers — they define no symbols. `Client.h` and
@@ -285,12 +291,13 @@ harness.
 
 ## Architecture
 
-- **`cores/imxrt1176/`** — the core: startup (FlexRAM config, 996 MHz
+- **`imxrt1176/` (in the `teensy-cores` sibling repo)** — the core: startup
+  (FlexRAM config, 996 MHz
   OverDrive voltage), linker script `imxrt1176.ld` (XIP image at 0x30002000),
   Teensy-compatible API surface (GPIO, LPADC, FlexPWM, DAC, PIT/IntervalTimer,
   LPUART Serial, USB device stack, DMAChannel/eDMA, EventResponder,
   AudioStream), and the dual-core layer (`Multicore`, `MessagingUnit`,
-  `Cm4ImageBank`). **`cores/teensy4/` used to be an uncompiled upstream
+  `Cm4ImageBank`). **`teensy4/` (same repo) used to be an uncompiled upstream
   reference copy; since the RT1060 board axis it is the core that
   `EVKB_BOARD=rt1062` actually builds.** That is what broke the licence audit
   for a day (see `tools/license-audit.sh` above) — it is upstream
@@ -301,8 +308,8 @@ harness.
   `.bss.dma` (`DMAMEM`) reaches OCRAM. So a buffer that is DMA-reachable by
   default on one board is not on the other.
   ★ **The two cores also differ on the D-cache, and DMA correctness depends on
-  it.** `cores/teensy4` enables it (`startup.c`, `SCB_CCR_IC | SCB_CCR_DC`);
-  `cores/imxrt1176` never writes `SCB_CCR` at all, so OCRAM is coherent there
+  it.** `teensy4` enables it (`startup.c`, `SCB_CCR_IC | SCB_CCR_DC`);
+  `imxrt1176` never writes `SCB_CCR` at all, so OCRAM is coherent there
   for free. On rt1062 it is not: a DMAMEM buffer is cached write-back unless the
   MPU says otherwise, so a CPU write can sit in cache while a bus master reads
   stale memory. That cost a full silicon debug session — the EHCI walked a

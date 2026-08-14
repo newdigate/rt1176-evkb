@@ -8,9 +8,10 @@ Arduino UNO-style header.
 
 ## Overview
 
-This repository is the board bring-up tree: the core itself
-(`cores/imxrt1176/`), the CMake build glue (`teensy-cmake-macros/`), 57
-example/verification firmwares (`examples/`), and tooling (`tools/`).
+This repository is the board bring-up tree: 57 example/verification firmwares
+(`examples/`) and tooling (`tools/`). The core itself (`teensy-cores`,
+subdir `imxrt1176/`) and the CMake build glue (`teensy-cmake-macros/`) are
+sibling repos, not part of this repository — see "Getting started" below.
 
 - **Teensy 4 heritage.** The core is derived from the Teensy 4.x core
   (`PaulStoffregen/cores`), ported register-by-register to the RT1176. The
@@ -40,8 +41,9 @@ example/verification firmwares (`examples/`), and tooling (`tools/`).
 
 Peripheral libraries (Wire, SPI, Audio, SdFat, SD, Ethernet, NativeEthernet,
 FNET, lwip, USBHost_t36, EEPROM, Bounce2) are resolved **local-first with a
-pinned-GitHub fallback** by `evkb.cmake`: a developer's `~/Development/<lib>`
-checkout wins (uncommitted edits included), and when it's absent the library is
+pinned-GitHub fallback** by `evkb.cmake`: a developer's `$TEENSY_LIB_ROOT/<lib>`
+checkout (default `~/Development/<lib>`) wins (uncommitted edits included),
+and when it's absent the library is
 fetched from GitHub at a SHA pinned in the manifest — so a fresh clone builds
 with no sibling checkouts at all.
 
@@ -60,10 +62,13 @@ with no sibling checkouts at all.
 - Optional: the custom
   [**qemu-rt1170**](https://gitlab.com/Newdigate/qemu-rt1170) (`mimxrt1170-evk`
   machine) to run every example without hardware
-- Optional: sibling library checkouts under `~/Development/` — used when
-  present; otherwise fetched automatically from GitHub at pinned refs. Set the
-  `CPM_SOURCE_CACHE` env var (e.g. `~/.cache/CPM`) so each repo is cloned once
-  and shared across build directories
+- Optional: sibling library checkouts under `$TEENSY_LIB_ROOT` (default
+  `~/Development/`) — used when present, including the core (`teensy-cores`)
+  and build macros (`teensy-cmake-macros`); otherwise fetched automatically
+  from GitHub at pinned refs. Set the `CPM_SOURCE_CACHE` env var (e.g.
+  `~/.cache/CPM`) so each repo is cloned once and shared across build
+  directories — the macros themselves are the one exception (456K, plain
+  FetchContent per build dir, deliberate)
 
 **Try an example**
 
@@ -112,8 +117,8 @@ loads, resets and free-runs in one step.
 
 ## Build
 
-The build is plain CMake — no Arduino IDE. `teensy-cmake-macros/` provides the
-macros; each example is a self-contained consumer project:
+The build is plain CMake — no Arduino IDE. The `teensy-cmake-macros` sibling
+repo provides the macros; each example is a self-contained consumer project:
 
 ```cmake
 cmake_minimum_required(VERSION 3.24)
@@ -152,8 +157,8 @@ MIT/BSD-only — see its
 `VENDORING.md` before bumping the pin.
 
 Configure with the board toolchain file (`TEENSY_VERSION 117`, core clock
-996 MHz, `COREPATH` → `cores/imxrt1176/`, linker script `imxrt1176.ld`, XIP
-image at `0x30002000`):
+996 MHz, `COREPATH` → `$TEENSY_LIB_ROOT/teensy-cores/imxrt1176/`, linker
+script `imxrt1176.ld`, XIP image at `0x30002000`):
 
 ```sh
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=toolchain/rt1170-evkb.toolchain.cmake

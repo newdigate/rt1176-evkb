@@ -1,10 +1,10 @@
 # examples — RT1170-EVKB firmware
 
 Each subdirectory is a self-contained bare-metal firmware for the NXP
-**MIMXRT1170-EVKB** (i.MX RT1176), built with `teensy-cmake-macros` + the
-`cores/imxrt1176` Teensy-derived core, gated in QEMU (`tools/qrun`) and mostly
-HW-verified on the EVKB. Organized into categories on 2026-07-20 (previously all
-flat at the `evkb/` root).
+**MIMXRT1170-EVKB** (i.MX RT1176), built with the `teensy-cmake-macros` +
+`teensy-cores` (`imxrt1176/`) sibling repos, gated in QEMU (`tools/qrun`) and
+mostly HW-verified on the EVKB. Organized into categories on 2026-07-20
+(previously all flat at the `evkb/` root).
 
 **Build any example** (from its own directory):
 ```sh
@@ -17,10 +17,13 @@ their toolchain, so they build with a plain `cmake -B build`.
 
 Every example bootstraps through **`../../../evkb.cmake`**: the build macros,
 the `cores` library, and all peripheral libraries resolve **local-first**
-(a `~/Development/<lib>` checkout wins) with a **pinned-GitHub fallback** — a
+(a `$TEENSY_LIB_ROOT/<lib>` checkout wins; default `~/Development`) with a
+**pinned-GitHub fallback** — a
 fresh clone with no sibling checkouts fetches everything at the SHAs pinned in
 `evkb.cmake`. Set `CPM_SOURCE_CACHE` (e.g. `~/.cache/CPM`) to clone each repo
 once; pass `-DEVKB_FORCE_FETCH=ON` to force the fetch path (fresh-user mode);
+note the macros repo itself is fetched with plain FetchContent — the one repo
+`CPM_SOURCE_CACHE` doesn't cover, deliberately;
 set `ARM_TOOLCHAIN_BIN` if your ARM GCC isn't at `/Applications/ARM_10/bin/`.
 
 ## Categories
@@ -40,14 +43,20 @@ set `ARM_TOOLCHAIN_BIN` if your ARM GCC isn't at `/Applications/ARM_10/bin/`.
 
 ## Not examples (still at `evkb/` root)
 
-- `cores/`, `teensy-cmake-macros/` — the Teensy-derived core + build macros (their own nested git repos).
 - `tools/` — `qrun`, `gate-lib.sh`, `license-audit.sh`, and the board helper scripts `rt1170-flash.sh`, `rt1170-qemu.sh`, `rt1170-console.py`.
 - `docs/` — specs, plans, QEMU peripheral status.
 - `mkr_ssd1306_test/`, `qemu_dcd_boot_test/` — an MKR-Zero companion sketch + a DCD boot probe (not EVKB-target gates).
 
-> **Path note:** each example's `CMakeLists.txt` and `toolchain/…cmake` reach the
-> shared core via `${CMAKE_CURRENT_LIST_DIR}/../../../{cores,teensy-cmake-macros}`
-> (three levels up from `examples/<category>/<name>/`). `tools/license-audit.sh`
+The Teensy-derived core (`teensy-cores`, subdirs `imxrt1176/` and `teensy4/`)
+and the build macros (`teensy-cmake-macros`) are **not** in this repo at all —
+they're sibling checkouts under `$TEENSY_LIB_ROOT` (default `~/Development`),
+their own git repos, resolved by `evkb.cmake` (see above).
+
+> **Path note:** each example's `CMakeLists.txt` and `toolchain/…cmake` reach
+> the shared core and macros via `${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake`
+> (three levels up from `examples/<category>/<name>/`), which in turn resolves
+> `teensy-cores`/`teensy-cmake-macros` under `$TEENSY_LIB_ROOT` — not a
+> relative path into this repo. `tools/license-audit.sh`
 > references gates by their `examples/<category>/<name>` path. Historical
 > `docs/superpowers/{plans,specs}/*` and dated roadmap log entries keep their
 > original flat paths as timestamped records.
