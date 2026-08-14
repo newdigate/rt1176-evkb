@@ -31,11 +31,15 @@ Hex-naming note: blink's target is `blinky`, so its hex is `blinky.hex`.
 ```bash
 cd ~/Development/rt1170/evkb
 git status --short              # expect: empty
-git rev-list --count origin/master..master   # expect: 0
+git log --oneline origin/master..master      # expect: docs-only commits, or none
 mkdir -p $SCRATCH/oracle
 ```
 
-Any dirt or unpushed commits: STOP and report — the baseline must be the pushed state.
+Working tree MUST be clean. Unpushed commits are fine **only if every one is
+docs-only** (`git show --stat` each) — this plan's own spec and plan commits
+are the expected case, and documentation cannot move a hex. An unpushed commit
+touching `evkb.cmake`, `examples/`, `tools/` or a toolchain file means the
+baseline would not be the state being deduped: STOP and report.
 
 - [ ] **Step 0.2: Baseline builds of the five oracle examples (current commands)**
 
