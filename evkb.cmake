@@ -38,10 +38,22 @@ set(EVKB_BOARD "rt1176" CACHE STRING "Target board: rt1176 (MIMXRT1170-EVKB) or 
 set_property(CACHE EVKB_BOARD PROPERTY STRINGS rt1176 rt1062)
 if(EVKB_BOARD STREQUAL "rt1176")
     set(EVKB_CORE_SUBDIR imxrt1176)
+    set(_evkb_expected_tv 117)
 elseif(EVKB_BOARD STREQUAL "rt1062")
     set(EVKB_CORE_SUBDIR teensy4)
+    set(_evkb_expected_tv 42)
 else()
     message(FATAL_ERROR "EVKB_BOARD must be rt1176 or rt1062, got '${EVKB_BOARD}'")
+endif()
+# The toolchain file supplies TEENSY_VERSION; the board flag and the toolchain
+# must agree. A mismatch used to configure CLEAN and die deep in the core
+# compile — wrong -D__IMXRT1176__, a linker script that does not exist in the
+# selected core (e.g. teensy4/imxrt1176.ld) — looking like a board or model
+# problem rather than a build misconfiguration. Name it at configure time.
+if(NOT DEFINED TEENSY_VERSION OR NOT TEENSY_VERSION EQUAL _evkb_expected_tv)
+    message(FATAL_ERROR "EVKB_BOARD=${EVKB_BOARD} requires TEENSY_VERSION ${_evkb_expected_tv} "
+        "(rt1176 -> 117 via toolchain/rt1170-evkb.toolchain.cmake, "
+        "rt1062 -> 42 via toolchain/rt1062-evkb.toolchain.cmake); got '${TEENSY_VERSION}'")
 endif()
 
 # --- TEENSY_LIB_ROOT: where sibling checkouts live ---------------------------
