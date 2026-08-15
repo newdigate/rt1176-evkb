@@ -225,16 +225,18 @@ void setup() {
 // for the single tick 384), firing two note-ons about 5 ms apart and flamming
 // every downbeat. That is audible at the bench and is a defect of THIS mapping,
 // not of the transport: 384 and 0 are the same musical position, and
-// `idx % ticksPerLoop` says so exactly (384 % 384 == 0). The sequencer will
-// need the same fold for the same reason.
+// the modulo says so exactly. This is now the LIBRARY'S DOCUMENTED IDIOM, not a
+// workaround local to this sketch -- transport.h spells it out next to tickAt()
+// as `(tickAt(i) - loopStartTick()) % loopTicks()`, and a sequencer needs the
+// same fold for the same reason.
 //
-// ticksPerLoop is hardcoded to one 4/4 bar because it must match the
-// `transport.loop(0.0f, 1.0f)` call at the end of setup() above, and the
-// transport exposes no getter for its loop bounds. Change one and you must
-// change the other. A real sequencer needs a genuine answer here rather than a
-// constant that agrees with a call site by hand.
+// The loop geometry comes from the transport itself via loopTicks() /
+// loopStartTick(), so it cannot drift out of step with the
+// `transport.loop(0.0f, 1.0f)` call at the end of setup(). This used to be a
+// hardcoded `PPQN * 4` that had to be kept in sync by hand.
 void loop() {
-    const uint32_t ticksPerLoop = AudioTransport::PPQN * 4;   // 1 bar at 4/4
+    const uint32_t ticksPerLoop = transport.loopTicks();
+    const uint32_t loopBase     = transport.loopStartTick();
     // Sentinel is outside 0..3, so the very first downbeat fires exactly once.
     static uint32_t lastQuarter = 0xFFFFFFFFu;
     static uint32_t lastBeat    = 0;
@@ -251,7 +253,8 @@ void loop() {
     __enable_irq();
     for (int i = 0; i < n; i++) {
         // Fold into the loop FIRST, then derive the quarter: q is 0..3.
-        uint32_t q = (idx[i] % ticksPerLoop) / AudioTransport::PPQN;
+        if (idx[i] < loopBase || ticksPerLoop == 0) continue;   // pre-roll
+        uint32_t q = ((idx[i] - loopBase) % ticksPerLoop) / AudioTransport::PPQN;
         if (q != lastQuarter) {
             lastQuarter = q;
             acid.noteOff(33);
