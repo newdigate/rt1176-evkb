@@ -82,12 +82,12 @@ bool playing() const;
 void loop(float startBar, float endBar);
 void looping(bool on);
 
-// query
-uint64_t samples() const;         // exact, monotonic
-float seconds() const;            // derived from samples
-float beats() const; float bars() const;
-int barNumber() const;            // 1-based, for display
-int beatInBar() const;            // 1-based
+// query -- NOTE the two families answer different questions; see below
+uint64_t samples() const;         // elapsed audio time, exact, monotonic
+float    seconds() const;         // elapsed audio time, derived from samples
+float beats() const; float bars() const;   // SONG POSITION, derived from ticks
+int barNumber() const;            // 1-based song position, for display
+int beatInBar() const;            // 1-based song position
 
 // THE SEQUENCER INTERFACE -- ticks that began during the block just processed
 int      tickCount() const;
@@ -100,6 +100,17 @@ void externalPulse();             // one MIDI clock pulse = PPQN/24 = 4 ticks
 ```
 
 ### Behaviour contract
+
+★ **The two query families are not interchangeable, and this is the one place
+the API can mislead.** `samples()` / `seconds()` report **elapsed audio time**:
+monotonic, unaffected by looping, and the honest answer to "how long has this
+been running". `beats()` / `bars()` / `barNumber()` / `beatInBar()` report
+**song position**: derived from `tickPhase_`, and therefore they *wrap* at the
+loop seam. In mulch these were the same number, because mulch has no separate
+elapsed-time counter — a reader porting from it will expect `seconds()` to be
+the playhead and it is not. Both are named and documented accordingly, and the
+QEMU gate asserts the difference (below) so the distinction cannot silently
+rot.
 
 - `tickCount()` is normally 0, 1 or 2 — at 96 PPQN and 300 BPM a block spans
   1.39 ticks. The internal array is sized **8** and the count **saturates**
@@ -155,6 +166,11 @@ any host speed.
   unchanged. This is the property that motivated ticks-as-master, so it is
   asserted rather than assumed.
 - `TRANSPORT PASS` — paused advances nothing; `stop()` rewinds.
+- `ELAPSED PASS` — across a loop wrap, `bars()` decreases (song position
+  wrapped) while `samples()` keeps increasing (audio time did not). This is
+  what pins down the two query families as genuinely different quantities;
+  without it, a future refactor could quietly collapse them and every other
+  assertion here would still pass.
 
 Committed `transcript_qemu.txt` so `gate-vacuity.test.sh` has a fixture.
 
