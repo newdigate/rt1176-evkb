@@ -124,7 +124,7 @@ teensy_declare_library(fnet           FNET/src             https://github.com/ne
 teensy_declare_library(lwip           lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
 teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            6fa16a733d3d2a30b18f7ec15a2ad3791b02c66f .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
-teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         551cec1b0d703f2a9af1600541775fb2adb49134 .) # LOCAL-ONLY (unpushed): resolves under TEENSY_LIB_ROOT; fresh clones fail here until SynthUI's first push -- same class as the qemu2-local gate deps. Not Arduino-layout for imports: use import_evkb_synthui().
+teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         a1b6da7572a9125f901a9d9d26fc371e7689e672 .) # LOCAL-ONLY (unpushed): resolves under TEENSY_LIB_ROOT; fresh clones fail here until SynthUI's first push -- same class as the qemu2-local gate deps. Not Arduino-layout for imports: use import_evkb_synthui().
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 teensy_declare_library(Bounce2        Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).
