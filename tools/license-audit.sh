@@ -224,6 +224,7 @@ examples/audio/audiostream_test:audiostream_test examples/audio/filter_fir_test:
 examples/audio/guard_sweep_test:guard_sweep_test examples/audio/i2s_audio_test:i2s_audio_test \
 examples/audio/i2s_int_test:i2s_int_test examples/audio/sai_rx_test:sai_rx_test \
 examples/audio/sd_wav_play_test:sd_wav_play_test examples/audio/tone_test:tone_test \
+examples/audio/transport_test:transport_test \
 examples/display/camera_preview_synth:camera_preview_synth \
 examples/display/lvgl_ili9341_test:lvgl_ili9341_test \
 examples/display/lvgl_pxp_copy_bench:lvgl_pxp_copy_bench \
