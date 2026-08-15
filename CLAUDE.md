@@ -98,7 +98,8 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **89 gates** (87 before Phase 5b
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **90 gates** (89 before the
+acid-bass voice added `audio/acid_bass_test`; 87 before Phase 5b
 gated `usb/usb_audio_capstone_test` and `audio/audioinput_i2s_test`'s second
 board; 86 before Phase 5a gated
 `audio/audiooutput_i2s_test` on two boards; 84 before Phase 4 gated
@@ -111,9 +112,27 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). Expect **89 passed, 0 failed, 0 SKIP**, or
-**88 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
-There is **one** permitted red:
+`usb/usb_descriptor_survey`). The target is **90 passed, 0 failed, 0 SKIP**, or
+**89 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+
+★ **As measured 2026-08-15 the sweep is 88 passed, 2 failed, 0 SKIP** — two
+dual-core Wire gates are red and they are NOT the nondeterministic one below:
+
+- `rt1176:dualcore/cm4_wire_test`
+- `rt1176:dualcore/cm4_wire_int_master_test`
+
+Both fail on the same token, `expected rdv=00000000` against a reported
+`rdv=00006243`. **Do not mistake these for the load artefact** — they were
+re-run idle, one after a `rm -rf build` and full reconfigure, and reproduced
+identically every time. That is the opposite signature to `cm4_audio_test`,
+which passes in ~1 s when re-run idle. Undiagnosed as of that date; the acid
+bass phase established only that it did not cause them (its branch touched
+docs, `examples/audio/acid_bass_test/` and the `license-audit.sh` GATES list
+and nothing else, and both ELFs predated the session). `Wire` last changed
+2026-07-24 and the QEMU LPI2C/GT911 model 2026-07-29, so neither is an obvious
+cause. See `docs/KNOWN-BROKEN-GATES.md`.
+
+Beyond those two there is **one** permitted red:
 
 - `rt1176:dualcore/cm4_audio_test` — **nondeterministic.** Long called a load
   artefact, and load does not predict it: on 2026-08-08 it failed a sweep

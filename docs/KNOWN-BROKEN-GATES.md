@@ -8,6 +8,56 @@ time on a subsystem you probably are not touching.
 
 ---
 
+## `rt1176:dualcore/cm4_wire_test` + `cm4_wire_int_master_test` — OPEN, undiagnosed (2026-08-15)
+
+**Status: RED, reproducible, cause unknown.** Both fail on the same assertion:
+
+```
+FAIL: expected rdv=00000000        (reported: rdv=00006243)
+```
+
+Everything else in both gates passes, including `WIRE_CM4=PASS` /
+`WIRE_INT_MASTER_CM4=PASS` from the firmware itself — it is the host-side
+`rdv` check that is red, and the firmware believes it succeeded.
+
+**This is NOT the load artefact, and that is the most important thing to know
+about it.** The distinguishing test is re-running idle:
+
+| | re-run idle | `rm -rf build` + reconfigure + rebuild |
+|---|---|---|
+| `cm4_audio_test` (the documented nondeterministic gate) | passes, ~1 s | — |
+| these two | **fails identically** | **fails identically** |
+
+Three consecutive idle runs of `cm4_wire_test` and one of
+`cm4_wire_int_master_test` all produced the same `rdv=00006243`. So the
+"re-run it idle before believing a red" rule in `CLAUDE.md` has already been
+applied here and did not clear it. Do not spend the time again.
+
+**What has been ruled out**, all on 2026-08-15:
+
+- **Not caused by the acid-bass phase.** That branch changed only
+  `docs/`, `examples/audio/acid_bass_test/` and the `GATES` list in
+  `tools/license-audit.sh` (`git diff --name-only` over the whole branch).
+  Neither failing example references the Audio library at all, and both ELFs
+  were dated 2026-08-14 16:31 — before that session started.
+- **Not a stale build.** A full `rm -rf build` and fresh configure reproduced
+  it exactly, which also rules out the "build dirs configured before
+  2026-08-14 cached an absolute toolchain path" trap.
+- **Not an obvious upstream change.** `Wire` last changed 2026-07-24
+  (`19babd1`), and the QEMU LPI2C/GT911 model 2026-07-29 (`db4bbd40b6`).
+  Neither is close to the 2026-08-14 build date.
+
+**Not investigated**: what `0x6243` actually is, whether the CM4 side reads a
+real register or uninitialised memory, and whether the 2026-08-14 shared
+cores/macros migration (`3bf458e`) is implicated — it is the change closest in
+time, and it altered how the core is resolved for every example, but nothing
+has been done to confirm or exonerate it. That is the first thread to pull.
+
+**Do not weaken either gate to green the sweep.** Two independent gates
+agreeing on the same unexpected value is evidence about the system, not noise.
+
+---
+
 ## `rt1062:usb/usb_descriptor_survey` — RESOLVED 2026-08-08 (was red by design)
 
 **Status: GREEN on both boards.** Kept here as a record because this gate was
