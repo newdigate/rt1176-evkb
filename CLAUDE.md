@@ -115,24 +115,24 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 `usb/usb_descriptor_survey`). The target is **90 passed, 0 failed, 0 SKIP**, or
 **89 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
-★ **As measured 2026-08-15 the sweep is 88 passed, 2 failed, 0 SKIP** — two
-dual-core Wire gates are red and they are NOT the nondeterministic one below:
+★ **A sweep measured 88 passed, 2 failed, 0 SKIP on 2026-08-15, and both reds
+are now fixed** — `dualcore/cm4_wire_test` and `cm4_wire_int_master_test` were
+asserting `rdv=00000000`, a value produced only by QEMU's old WM8962 *stub*.
+That stub is now a real model returning the true 0x6243 device ID, so both
+gates assert what silicon asserts. Full account in
+`docs/KNOWN-BROKEN-GATES.md`; the count above is **not** re-measured, because a
+concurrent qemu2 ASan configure removed the QEMU binary before a fresh sweep
+could run. **Re-measure before trusting any pass/fail number here.**
 
-- `rt1176:dualcore/cm4_wire_test`
-- `rt1176:dualcore/cm4_wire_int_master_test`
+★ **A QEMU model can change under you without a commit to show for it.** That
+change was uncommitted in the qemu2 working tree and already compiled into the
+binary, so `git log` on the model looked a month stale while the behaviour had
+already moved. When a gate goes red and nothing in the firmware's history
+explains it, check the model's WORKING TREE and the binary's mtime, not just
+its log. The same session also rebuilt that binary three times in an hour,
+which is enough to invalidate a sweep taken across it.
 
-Both fail on the same token, `expected rdv=00000000` against a reported
-`rdv=00006243`. **Do not mistake these for the load artefact** — they were
-re-run idle, one after a `rm -rf build` and full reconfigure, and reproduced
-identically every time. That is the opposite signature to `cm4_audio_test`,
-which passes in ~1 s when re-run idle. Undiagnosed as of that date; the acid
-bass phase established only that it did not cause them (its branch touched
-docs, `examples/audio/acid_bass_test/` and the `license-audit.sh` GATES list
-and nothing else, and both ELFs predated the session). `Wire` last changed
-2026-07-24 and the QEMU LPI2C/GT911 model 2026-07-29, so neither is an obvious
-cause. See `docs/KNOWN-BROKEN-GATES.md`.
-
-Beyond those two there is **one** permitted red:
+Beyond those there is **one** permitted red:
 
 - `rt1176:dualcore/cm4_audio_test` — **nondeterministic.** Long called a load
   artefact, and load does not predict it: on 2026-08-08 it failed a sweep

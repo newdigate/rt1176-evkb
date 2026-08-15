@@ -8,7 +8,40 @@ time on a subsystem you probably are not touching.
 
 ---
 
-## `rt1176:dualcore/cm4_wire_test` + `cm4_wire_int_master_test` — OPEN, undiagnosed (2026-08-15)
+## `rt1176:dualcore/cm4_wire_test` + `cm4_wire_int_master_test` — ✅ RESOLVED 2026-08-15
+
+**Root cause: QEMU's WM8962 stub was replaced by a real model.** The stub read
+back 0x0000 from every register; `hw/audio/wm8962.c` (qemu2 `23a86da9c3`)
+returns the true **0x6243 device ID** for R15. The firmware writes R15←0x6243
+and reads it back, so QEMU now returns exactly what silicon returns — and the
+`rdv=00000000` these gates asserted was a property of the stub, not of the
+device. Both now assert `rdv=00006243`, which is **stronger**: 0x6243 can only
+come off the wire, whereas 0x0000 was equally what a read that moved no data
+would leave in the firmware's zero-initialised `rdv`.
+
+**Why no commit explained it.** The model change sat *uncommitted* in the qemu2
+working tree, already compiled into the binary the gates ran against, and was
+committed only after the investigation began. Every `git log` on the model and
+the board looked a month stale, which is what made this look mysterious.
+**Exonerated**: the 2026-08-14 shared cores/macros migration (`3bf458e`), the
+Wire library, the LPI2C model, and the acid-bass phase.
+
+★ **`cm4_wire_dma_test` was affected too, and silently.** It reads the same
+register but deliberately does not assert `rdv`, so it stayed green while its
+committed transcript went stale and its comment kept describing the vanished
+stub. Both corrected. Its only reason for not asserting `rdv` was the split, so
+asserting it is now an available strengthening — left for review rather than
+taken unilaterally. **A grep for the failing assertion will not find gates in
+this state; grep the printed token too.**
+
+The original report is kept below, because the *shape* of the reasoning is
+worth keeping: the gates were correctly identified as not-the-load-artefact
+(they reproduced idle and after `rm -rf build`), and that is what ruled out
+every candidate this tree usually blames first.
+
+---
+
+### Original report (superseded)
 
 **Status: RED, reproducible, cause unknown.** Both fail on the same assertion:
 
