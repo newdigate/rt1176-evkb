@@ -1,0 +1,26 @@
+TRANSPORT-GATE v1
+TR: probe_before=1152
+TR: probe_after=1280
+TR: probe_lead=128
+TRANSPORT_ORDER=PASS
+TR: ticks400=222
+TR: expect400=222.91
+TEMPO=PASS
+TR: ticks_loop=668
+TR: expect_loop=668.73
+TR: bars_in_loop=0.7396
+LOOP=PASS
+TR: samples_delta=115200
+TR: bars_b0=0.7422
+TR: bars_b1=0.0469
+ELAPSED=PASS
+TR: bars_after_tempo=0.0937
+TR: ticks180=334
+TEMPOCHANGE=PASS
+TR: paused_ticks=0
+TR: bars_stopped=0.0000
+STATE=PASS
+TRANSPORT-DONE
+TR_ALIVE bar=1 beat=1 peak=0.4378
+TR_ALIVE bar=1 beat=2 peak=0.4261
+TR_ALIVE bar=1 beat=2 peak=0.4150
