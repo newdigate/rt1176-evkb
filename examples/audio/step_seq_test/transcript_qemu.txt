@@ -1,0 +1,21 @@
+STEPSEQ-GATE v1
+SQ: ons=8
+SQ: offs=8
+STEPS=PASS
+SQ: v127=2 v80=6 vother=0
+ACCENT=PASS
+SQ: idx_on33=2
+SQ: idx_on45=3
+SQ: idx_off33=4
+SQ: slide_flag=1
+ORDER=PASS
+SQ: n33=2 n40=0 n45=2
+REST=PASS
+SQ: wrap_ons=2
+WRAP=PASS
+SQ: in_loop=4 out_loop=0
+SHORTLOOP=PASS
+STEPSEQ-DONE
+SQ_ALIVE step=2 beat=1 peak=0.4390
+SQ_ALIVE step=4 beat=2 peak=0.4267
+SQ_ALIVE step=7 beat=2 peak=0.4277
