@@ -4,9 +4,12 @@
 # (the first non-MU peripheral IRQ routed to the CM4, via the qemu2 split-IRQ)
 # and services LPI2C5 in its own ISR to read the WM8962 R15 ID. The runner
 # asserts irqcnt>0 (the CM4 took the IRQ) and err=0 (transaction OK).
-# rdv is WORLD-SPLIT by design: this runner asserts the stub contract
-# (rdv=00000000); the HW check asserts the WM8962 device ID (rdv=00006243),
-# same as cm4_wire_test's precedent.
+# rdv WAS world-split, and no longer is (2026-08-15) -- same change as
+# cm4_wire_test, and for the same reason: the zero-returning QEMU stub was
+# replaced by a real WM8962 control-interface model (qemu2 23a86da9c3), which
+# returns the true 0x6243 device ID for R15. Both worlds now agree. Asserting
+# the ID is stronger than asserting zero, which is also what a read that moved
+# no data would leave in the firmware's zero-initialised rdv.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 # Tools come from THIS checkout, derived from the gate's own location. The old
@@ -39,7 +42,7 @@ check() {
 }
 grep -q "CM4WIREINT-GATE v1" "$OUT" || { echo "FAIL: banner missing"; exit 1; }
 check "mcr=00000001"
-check "rdv=00000000"                 # stub contract (HW asserts 00006243)
+check "rdv=00006243"                 # WM8962 device ID off the wire -- same on HW
 check "err=00000000"                 # ISR transaction OK (no NDF/ALF/FEF)
 check "done=00000001"
 # irqcnt>0 is this gate's whole point -- the CM4 took LPI2C5's IRQ 36 on its own

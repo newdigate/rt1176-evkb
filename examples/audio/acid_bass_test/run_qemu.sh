@@ -4,6 +4,11 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 # Tools come from THIS checkout, derived from the gate's own location.
 EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
+# The measurement script waits on AUDIO blocks rather than wall-clock delays,
+# which is what makes its numbers host-speed-independent -- but it also means a
+# loaded host stretches the run in wall time. 90 s (vs qrun's 60 s default) and
+# 200 poll iterations give that room. No assertion was relaxed to fit.
+QRUN_TIMEOUT="${QRUN_TIMEOUT:-90}"; export QRUN_TIMEOUT
 . "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/$(gate_build_dir)/acid_bass_test.elf"
@@ -25,7 +30,7 @@ P=$!; gate_pid $P
 # half -- never runs in QEMU, and the committed transcript ends with however
 # many heartbeats happened to slip out before the kill (0-2, nondeterministic).
 # Three costs ~1 s of guest time and makes the tail deterministic.
-for _ in $(seq 1 120); do
+for _ in $(seq 1 200); do
     # `|| true` + ${n:-0}: grep exits 1 on zero matches and prints nothing at
     # all when the file does not exist yet, and a bare "$(...)" would then make
     # the test `[ "" -ge 3 ]` -- "integer expression expected" on stderr once

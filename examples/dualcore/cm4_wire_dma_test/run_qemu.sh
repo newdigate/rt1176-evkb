@@ -4,9 +4,16 @@
 # channel-0 completion IRQ on its OWN NVIC (CM4 IRQ 0, native — the main eDMA's
 # channel IRQs are CM7-domain, so this is the true CM4 interrupt-DMA proof). The
 # runner asserts dmairq>0 (the CM4 took the eDMA_LPSR IRQ) and err=0 (DMA OK).
-# rdv is WORLD-SPLIT by design: QEMU's wm8962-stub reads 0x0000; the HW check
-# asserts the WM8962 device ID (rdv=00006243) — so rdv is printed but not
-# asserted here.
+# rdv is printed but NOT asserted here. It used to be world-split -- QEMU's
+# wm8962 stub read 0x0000 while HW read the 0x6243 device ID -- and that split
+# was the whole reason for not asserting it. The split is gone as of 2026-08-15:
+# the stub was replaced by a real WM8962 control-interface model (qemu2
+# 23a86da9c3) that returns the true 0x6243 for R15, so this gate now reports
+# rdv=00006243 in BOTH worlds, the same as cm4_wire_test and
+# cm4_wire_int_master_test, which do assert it.
+# ★ Asserting rdv here is now possible and would strengthen this gate; it is
+# left unasserted only because nobody has reviewed that change, not because of
+# the split. Do not re-add a world-split rationale -- it is no longer true.
 #
 # Task 3 is the RED scaffold: the CM4 emits only READY, so croot/rdv/dmairq/err/
 # done TIMEOUT and this gate ends WIRE_DMA_CM4=FAIL / GATE FAILED (exit 1). That
@@ -59,8 +66,9 @@ grep -q "^dmairq=" "$OUT" || { echo "FAIL: dmairq not reported -- the CM4 eDMA_L
 grep -q "^dmairq=00000000" "$OUT" && { echo "FAIL: dmairq is 0 (no CM4 eDMA_LPSR IRQ)"; fail=1; }
 check "err=00000000"                 # DMA/transaction OK (no NDF/ALF/FEF)
 check "done=00000001"
-# croot= is printed for HW diagnosis but intentionally NOT asserted; rdv= is
-# WORLD-SPLIT (stub 0x0000 / HW 0x6243) so it is printed but not asserted here.
+# croot= is printed for HW diagnosis but intentionally NOT asserted. rdv= is
+# also printed and not asserted -- see the header: it reads 0x6243 in both
+# worlds now, and asserting it is an available strengthening, not a split.
 check "WIRE_DMA_CM4=PASS"
 check "CM4WIREDMA-DONE"
 

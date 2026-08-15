@@ -4,8 +4,14 @@
 # NOTE: the LPI2C model + stub respond on MCR.MEN alone (clock/pins ignored),
 # so QEMU proves the register/transfer SEQUENCE only — the wiring-free HW run
 # proves the CM4's clock-gating + LPSR pin-mux (see README / spec).
-# rdv is WORLD-SPLIT by design: this runner asserts the stub contract
-# (rdv=00000000); the HW check asserts the WM8962 device ID (rdv=00006243).
+# rdv WAS world-split, and no longer is (2026-08-15). It used to assert
+# rdv=00000000 here and rdv=00006243 on HW, because the QEMU side was a stub
+# whose registers all read back 0. That stub was replaced by a real WM8962
+# control-interface model (qemu2 23a86da9c3, hw/audio/wm8962.c), which returns
+# the true 0x6243 device ID for R15 -- so both worlds now report the same value
+# and the split has collapsed. Asserting it is STRONGER than what it replaced:
+# rdv=00000000 was also what a read that moved no data would leave behind, since
+# the firmware zero-initialises rdv, whereas 0x6243 can only come off the wire.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 # Tools come from THIS checkout, derived from the gate's own location. The old
@@ -41,7 +47,7 @@ check "mcr=00000001"      # LPI2C MCR.MEN set (master enabled)
 check "ack=00000000"      # WM8962 reset-write ACKed (err 0)
 check "nack=00000002"     # absent addr 0x2A -> address NACK (err 2)
 check "rdn=00000002"      # ID read-back returned 2 bytes
-check "rdv=00000000"      # stub contract: all reads 0x00 (HW expects 00006243)
+check "rdv=00006243"      # WM8962 device ID off the wire -- same on HW
 check "done=00000001"     # CM4 sequence completed
 check "WIRE_CM4=PASS"     # verdict
 # lpcg= / croot= are printed for HW diagnosis but intentionally NOT asserted.

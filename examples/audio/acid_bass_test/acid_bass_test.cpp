@@ -28,12 +28,14 @@ AudioConnection    cR  (acid, 0, out,  1);
 AudioControlWM8962 wm;
 
 // One measurement window: the largest AudioAnalyzeRMS::read() and the largest
-// AudioAnalyzePeak::read() seen during `ms`, plus the number of reads.
+// AudioAnalyzePeak::read() seen over a fixed number of DELIVERED BLOCKS, plus
+// the number of reads that produced them.
 //
 // Both read() calls report the value accumulated SINCE THE LAST read(), not
-// "this block" -- so the window is drained on entry, otherwise the first sample
-// inside it carries energy from before the window began (which is exactly how a
-// post-noteOff silence check can read loud).
+// "this block" -- so a window that is not drained first carries energy from
+// before it began (which is exactly how a post-noteOff silence check can read
+// loud). Draining is drainAnalyzers()' job and is deliberately NOT done here:
+// see that function for why the call site, not this one, has to choose when.
 //
 // WHY BOTH STATISTICS, AND WHY THE ACCENT CHECK USES THE PEAK ONE:
 // max-of-RMS is NOT invariant to how blocks group into reads. read() returns
@@ -69,16 +71,88 @@ AudioControlWM8962 wm;
 static int   winReads;
 static float winMaxRms;
 static float winMaxPeak;
-static void measureOver(uint32_t ms) {
-    if (rms.available())  (void)rms.read();    // discard pre-window history
+// Measure until `blocks` blocks have actually been DELIVERED, not until a
+// wall-clock window expires. The window has to contain audio to mean anything,
+// and a wall-clock one does not guarantee that: at load average 77 a 200 ms
+// window collected accent_reads=0/0 and the ratio came out `nan`. The liveness
+// guards caught it, but a check that can only fail under load is still a flake.
+// Counting deliveries makes the window self-timing -- it is the same 60 blocks
+// on silicon, on an idle QEMU, and on a thrashing one.
+//
+// capMs is a backstop for a genuinely dead graph, 25x the nominal 174 ms. On
+// expiry winReads stays short, and every caller asserts a minimum read count,
+// so a capped window fails by name rather than reporting a partial measurement
+// as if it were whole.
+// Discard whatever the analyzers have accumulated so far. WHERE this is called
+// relative to noteOn decides what the window can see, and the two orders are
+// not interchangeable:
+//
+//   drain -> noteOn -> measure   captures the note's ONSET. Required for the
+//                                accent pair, whose accented peak occurs at
+//                                filtEnv_ = 1 and decays with tau = 0.25 s.
+//   noteOn -> ... -> drain -> measure   captures a LATER steady state. Required
+//                                after holdUntilNulled(), and after noteOff
+//                                where the point is to discard the loud part.
+//
+// Getting this wrong is a load-dependent flake, not a constant error: with the
+// drain after noteOn, any stall between the two discards real onset blocks, and
+// under load average 53 that measured accent_ratio = 1.791 against a working
+// 3.2 -- with accent_reads = 60/60, so the window was full, just late. The
+// plain note barely moves (envMod 0.2, accentAmt ~ 0) while the accented one
+// decays hard, so a late window compresses the ratio toward 1.
+static void drainAnalyzers(void) {
+    if (rms.available())  (void)rms.read();
     if (peak.available()) (void)peak.read();
+}
+
+static void measureOver(int blocks, uint32_t capMs) {
     winMaxRms = 0.0f; winMaxPeak = 0.0f; winReads = 0;
     uint32_t t0 = millis();
-    while (millis() - t0 < ms) {
+    while (winReads < blocks && millis() - t0 < capMs) {
         if (rms.available())  {             float v = rms.read();  if (v > winMaxRms)  winMaxRms  = v; }
         if (peak.available()) { winReads++; float v = peak.read(); if (v > winMaxPeak) winMaxPeak = v; }
         yield();
     }
+}
+
+// Hold the sounding note until the filter envelope has actually decayed away,
+// and report what it reached. filtEnv_ advances on the AUDIO clock, so a
+// wall-clock delay is not a null -- it is a guess about the host's speed. The
+// 1e-3 bar is comfortably tight: at that level the two velocities' modOct
+// differ by 3.2e-3 octaves (0.019 dB), i.e. a 1.002x effect on the ratio, so
+// what is left to measure is the VCA and nothing else. Returns the reached
+// value rather than a bool so the caller can assert it and print it.
+static float holdUntilNulled(uint32_t capMs) {
+    uint32_t t0 = millis();
+    while (acid.filtEnv() > 1e-3f && millis() - t0 < capMs) { yield(); }
+    return acid.filtEnv();
+}
+
+// Wait for `n` AUDIO BLOCKS and return how many actually elapsed.
+//
+// update() multiplies filtEnv_ by decayCoef_ once per sample and is called once
+// per block, so from user context the value steps exactly once per block: a
+// change IS a block tick. That makes this an audio-clock reference, which is
+// the only clock a decay constant can honestly be measured against. A
+// wall-clock delay is not one -- QEMU's graph runs at ~0.81x wall clock idle
+// and far slower under load, where 150 ms of delay bought ~26 ms of audio time
+// and pushed the measured ratio from 0.55 to 0.9008, failing a 0.90 bound with
+// nothing wrong but a busy host.
+//
+// Requires a sounding or still-decaying note: filtEnv_ only steps while it is
+// non-zero. The cap makes a stalled graph return short rather than hang, and
+// the caller computes its expectation from the RETURNED count, so a poll that
+// overshoots by a block or two costs nothing.
+static int waitBlocks(int n) {
+    float prev = acid.filtEnv();
+    int seen = 0;
+    uint32_t t0 = millis();
+    while (seen < n && millis() - t0 < 8000) {
+        float v = acid.filtEnv();
+        if (v != prev) { seen++; prev = v; }
+        yield();
+    }
+    return seen;
 }
 
 void setup() {
@@ -207,13 +281,15 @@ void setup() {
     acid.noteOff(33);
     delay(400);
 
-    acid.noteOn(33, 1);                  // A1 = 55 Hz
-    measureOver(200);
+    drainAnalyzers();                    // BEFORE the note: the window must
+    acid.noteOn(33, 1);                  // A1 = 55 Hz   contain the onset
+    measureOver(60, 5000);   // 60 delivered blocks (~174 ms nominal)
     float rmsPlain = winMaxRms, pkPlain = winMaxPeak; int readsPlain = winReads;
     acid.noteOff(33);
     delay(300);                          // release (~8 ms tau) dies away
+    drainAnalyzers();                    // BEFORE the note, as above
     acid.noteOn(33, 127);
-    measureOver(200);
+    measureOver(60, 5000);   // 60 delivered blocks (~174 ms nominal)
     float rmsAccent = winMaxRms, pkAccent = winMaxPeak; int readsAccent = winReads;
     acid.noteOff(33);
 
@@ -249,18 +325,33 @@ void setup() {
     // 0.203 below the working floor -- 31x the spread -- and 0.187 above the
     // broken ceiling. This is by far the tightest statistic in the sketch,
     // which is what nulling a term buys you.
+    // ★ The null is WAITED FOR, not assumed. This was a fixed delay(2000),
+    // calibrated on an idle QEMU -- and that is a wall-clock assumption about
+    // a decay that advances on the AUDIO clock. Silicon runs the graph at 1.0x
+    // wall clock, idle QEMU at ~0.81x (measured, see transcript_hw_evkb.txt),
+    // and under a full-sweep load it is slower still: filtEnv_ decays less,
+    // the residual cutoff difference survives, and the ratio drifts UP into
+    // the 1.65 ceiling. A sweep run measured 1.6589 -- a fail -- against 1.4131
+    // idle minutes earlier on the same binary. Polling the envelope makes the
+    // null a proven precondition at any clock rate, which is the only thing
+    // that lets the ceiling mean "the VCA is too strong" rather than "the host
+    // was busy". The cap exists so a stalled graph fails loudly here instead of
+    // hanging; env_null is asserted below, so tripping it cannot pass silently.
     acid.noteOn(33, 1);
-    delay(2000);                         // filtEnv_ -> e^-8; filter term nulled
-    measureOver(200);
+    float envNullPlain = holdUntilNulled(8000);
+    drainAnalyzers();                    // AFTER the hold: discard the onset,
+    measureOver(60, 5000);               // measure the nulled steady state   // 60 delivered blocks (~174 ms nominal)
     float pkVcaPlain = winMaxPeak; int readsVcaPlain = winReads;
     acid.noteOff(33);
     delay(300);
     acid.noteOn(33, 127);
-    delay(2000);
-    measureOver(200);
+    float envNullAccent = holdUntilNulled(8000);
+    drainAnalyzers();                    // AFTER the hold, as above
+    measureOver(60, 5000);   // 60 delivered blocks (~174 ms nominal)
     float pkVcaAccent = winMaxPeak; int readsVcaAccent = winReads;
     acid.noteOff(33);
     float vcaRatio = pkVcaAccent / pkVcaPlain;
+    float envNullWorst = envNullPlain > envNullAccent ? envNullPlain : envNullAccent;
 
     // Restore the musical voice before anything else runs. These are the same
     // named constants the settings were applied from, NOT copies of them.
@@ -295,10 +386,19 @@ void setup() {
     CONSOLE.print("ACID: vca_ratio=");  CONSOLE.println(vcaRatio, 4);
     CONSOLE.print("ACID: vca_reads=");  CONSOLE.print(readsVcaPlain);
     CONSOLE.print("/"); CONSOLE.println(readsVcaAccent);
-    // 0.02 floor rather than the 0.05 above: after 2 s of decay the notes are
-    // genuinely quiet, and 0.02 against the measured 0.0418 is ~6 dB. Same
-    // read-count guard, same reason.
+    CONSOLE.print("ACID: env_null=");    CONSOLE.println(envNullWorst, 6);
+    // 0.02 floor rather than the 0.05 above: once the envelope has decayed the
+    // notes are genuinely quiet, and 0.02 against the measured 0.0418 is ~6 dB.
+    // Same read-count guard, same reason.
+    //
+    // env_null is asserted, not merely printed: it is the precondition the
+    // 1.65 ceiling rests on. Without it, a host too slow to decay the envelope
+    // inside the cap would leave filter contamination in the ratio and the
+    // ceiling would report "VCA too strong" for what is really "graph too
+    // slow" -- which is exactly how this check failed under sweep load before
+    // the hold became a poll.
     bool vcaOk = pkVcaPlain > 0.02f && readsVcaPlain >= 10 && readsVcaAccent >= 10
+                 && envNullWorst < 1e-3f
                  && vcaRatio > 1.20f && vcaRatio < 1.65f;
     CONSOLE.println(vcaOk ? "ACID_ACCENT_VCA=PASS" : "ACID_ACCENT_VCA=FAIL");
 
@@ -315,7 +415,15 @@ void setup() {
     // rmsReads, k <= ~32 for sawGlide). IF THE AUDIO CLOCK TURNS OUT SLOW,
     // LENGTHEN THIS DELAY -- do not raise the 0.9 threshold, which is what
     // makes the check mean "the envelope moved".
-    delay(100);
+    waitBlocks(40);                        // 40 blocks of AUDIO time: envBefore
+                                           // lands at exp(-0.464) = 0.63,
+                                           // deterministically under 0.9 at any
+                                           // host speed. This was delay(100),
+                                           // which only cleared 0.9 while the
+                                           // audio clock kept up -- see
+                                           // waitBlocks() for the loaded-sweep
+                                           // measurement that broke that
+                                           // assumption elsewhere in this file.
     float f0        = acid.currentFreq();  // non-slide noteOn jumps: exactly 55
     float envBefore = acid.filtEnv();      // sampled immediately BEFORE the slide
     acid.noteOn(45, 100, true);            // slide toward A2 = 110 Hz
@@ -330,8 +438,20 @@ void setup() {
     bool mono     = true;
     bool sawGlide = false;
     float prev = f0;
-    for (int i = 0; i < 60; i++) {       // 600 ms = 7.5 tau of the 80 ms glide
-        delay(10);
+    // 200 blocks = 0.58 s of AUDIO time = 7.3 tau of the 80 ms glide. This was
+    // 60 x delay(10), i.e. 600 ms of WALL time, which is the same figure only
+    // while the graph keeps up: at the k = 0.17 measured under a loaded sweep
+    // it would have bought ~0.10 s of audio, leaving the glide 1.3 tau in and
+    // f_end near 96 Hz -- a failure of the +/-1 Hz landing check caused
+    // entirely by the host being busy.
+    uint32_t slideT0 = millis();
+    for (int i = 0; i < 200; i++) {
+        // Overall wall-clock bound: waitBlocks() caps each call at 8 s, so a
+        // graph that dies mid-slide would otherwise sit here for 200 x 8 s.
+        // Breaking early leaves f_end short of 110 Hz and the landing check
+        // fails by name, which is the right outcome for a dead graph.
+        if (millis() - slideT0 > 20000) break;
+        waitBlocks(1);
         float f = acid.currentFreq();
         // Strictly mid-glide: neither the start value nor the destination.
         // Monotonicity alone is satisfied by a CONSTANT sequence, so a
@@ -357,35 +477,52 @@ void setup() {
 
     // --- ACID_DECAY: filter env falls while held; silence after noteOff ----
     acid.noteOn(33, 100);
-    delay(30);
+    waitBlocks(10);                      // let the note get going
     float e1 = acid.filtEnv();
-    delay(150);
+    int nBlocks = waitBlocks(50);        // 50 blocks of AUDIO time, not wall time
     float e2 = acid.filtEnv();
     acid.noteOff(33);
     delay(300);                          // amp release tau 8 ms -> silence
-    measureOver(100);                    // drains on entry; sets winReads
+    drainAnalyzers();                    // AFTER noteOff: discard the loud part
+    measureOver(30, 5000);               // sets winReads
     // winReads counts DELIVERED BLOCKS (peak analyzer), which is what makes the
     // guard below mean anything -- the RMS analyzer's own count ticks on empty
     // updates too. See measureOver().
     float rmsQuiet = winMaxRms; int blockReads = winReads;
-    // Expected at the nominal rate: e1 = exp(-0.03/0.25) = 0.887,
-    // e2 = exp(-0.18/0.25) = 0.487, so ratio = exp(-0.15/0.25) = 0.549.
-    // Checking the RATIO rather than only `e1 > e2` is what makes this a test
-    // of the time constant: bare monotonicity passes on a decay 100x too fast
-    // or 5x too slow. The band still tolerates an audio clock running anywhere
-    // in k = [0.17, 5] of nominal -- 0.90 rejects tau = 1.42 s, 0.05 rejects
-    // tau = 0.05 s.
+    // The expectation is computed from the BLOCKS THAT ACTUALLY ELAPSED, so it
+    // holds at any host speed: over n blocks the envelope must fall by
+    // decayCoef^(128n) = exp(-128n / (decay * sr)). At the nominal n=50,
+    // decay=0.25 s, sr=44100 that is exp(-0.5805) = 0.560.
+    //
+    // This replaces a pair of wall-clock delays whose expectation only held if
+    // QEMU's audio graph kept up with the host. It did not: under a loaded
+    // sweep the same firmware measured env_ratio = 0.9008 against a 0.90 bound
+    // and failed, because 150 ms of delay had bought roughly 26 ms of audio
+    // time. Deriving the expectation from elapsed blocks removes the host's
+    // speed from the assertion entirely -- and because the timing uncertainty
+    // is gone, the band tightens from [0.05, 0.90] to +/-15%, which now rejects
+    // a decay constant off by as little as ~1.3x instead of needing 5x.
+    //
+    // Checking the ratio at all is what makes this a test of the TIME CONSTANT;
+    // bare monotonicity (e1 > e2) passes on any decay whatsoever.
     float ratio = e2 / e1;
+    float expected = expf(-128.0f * (float)nBlocks / (0.25f * AUDIO_SAMPLE_RATE_EXACT));
+    float ratioErr = ratio / expected - 1.0f;
     CONSOLE.print("ACID: env_early="); CONSOLE.println(e1, 4);
     CONSOLE.print("ACID: env_late=");  CONSOLE.println(e2, 4);
     CONSOLE.print("ACID: env_ratio="); CONSOLE.println(ratio, 4);
+    CONSOLE.print("ACID: env_blocks="); CONSOLE.println(nBlocks);
+    CONSOLE.print("ACID: env_expect="); CONSOLE.println(expected, 4);
     CONSOLE.print("ACID: rms_quiet="); CONSOLE.println(rmsQuiet, 4);
     CONSOLE.print("ACID: block_reads="); CONSOLE.println(blockReads);
     // blockReads >= 10: a 100 ms window at 2.9 ms/block should yield ~34.
     // Without it, `rmsQuiet < 0.01` is equally satisfied by a graph that
     // delivered nothing at all -- the silence would be the harness's, not the
     // synth's.
-    bool decayOk = ratio < 0.90f && ratio > 0.05f && e2 > 0.0f
+    // nBlocks == 50 means the audio clock actually delivered the window rather
+    // than the poll capping out; without it a stalled graph could return a
+    // short count whose (self-consistent) expectation it would then satisfy.
+    bool decayOk = nBlocks == 50 && fabsf(ratioErr) < 0.15f && e2 > 0.0f
                    && rmsQuiet < 0.01f && blockReads >= 10;
     CONSOLE.println(decayOk ? "ACID_DECAY=PASS" : "ACID_DECAY=FAIL");
 
@@ -444,7 +581,14 @@ void loop() {
             soundingNote = s.note;
         }
     }
-    if (now - lastBeat >= 500) {         // heartbeat for the HW transcript
+    // 250 ms, not 500: the gate requires three heartbeats, and everything
+    // before them in setup() is now block-referenced, so under load setup()
+    // legitimately consumes more WALL time while consuming the same AUDIO time.
+    // At load average 84 that left only two heartbeats inside the runner's
+    // budget and the gate failed with every DSP assertion green. Halving the
+    // interval halves the tail the runner has to wait for; the runner's budget
+    // was raised too. Still slow enough to read comfortably in a HW transcript.
+    if (now - lastBeat >= 250) {         // heartbeat for the HW transcript
         lastBeat = now;
         if (peak.available()) {
             CONSOLE.print("ACID_ALIVE peak="); CONSOLE.println(peak.read(), 4);
