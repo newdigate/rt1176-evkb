@@ -269,12 +269,34 @@ endmacro()
 # them.  PUBLIC LVGL so consumers get lvgl.h and -lm transitively.
 macro(import_evkb_synthui)
     if(NOT TARGET SynthUI)
+        # SynthUI is LOCAL-ONLY (unpushed): the pinned URL/SHA above are
+        # documentary and cannot be fetched yet. teensy_resolve_library() (what
+        # evkb_library_dir() calls) reads TEENSY_FORCE_FETCH, not
+        # EVKB_FORCE_FETCH directly -- evkb.cmake folds the latter into the
+        # former near the top of this file, so TEENSY_FORCE_FETCH is the one
+        # actually in effect here. Guard before evkb_library_dir() runs, or a
+        # fresh clone / -DEVKB_FORCE_FETCH=ON configure would fall into the CPM
+        # fetch branch and hang on an interactive git credential prompt instead
+        # of failing loudly.
+        if(TEENSY_FORCE_FETCH OR NOT EXISTS "${TEENSY_LIB_ROOT}/SynthUI/src")
+            message(FATAL_ERROR "import_evkb_synthui(): SynthUI is LOCAL-ONLY "
+                "(unpushed) -- its pinned URL cannot be fetched yet. Expected a "
+                "checkout at ${TEENSY_LIB_ROOT}/SynthUI (TEENSY_LIB_ROOT "
+                "defaults to ~/Development; set it if SynthUI lives elsewhere). "
+                "Force-fetch (-DEVKB_FORCE_FETCH=ON / -DTEENSY_FORCE_FETCH=ON) "
+                "is not supported for this library yet.")
+        endif()
         import_evkb_lvgl()
         evkb_library_dir(SynthUI _evkb_synthui_dir)
-        file(GLOB _evkb_synthui_src ${_evkb_synthui_dir}/src/*.cpp)
+        file(GLOB _evkb_synthui_src CONFIGURE_DEPENDS
+             "${_evkb_synthui_dir}/src/*.cpp")
         add_library(SynthUI STATIC ${_evkb_synthui_src})
-        target_include_directories(SynthUI PUBLIC ${_evkb_synthui_dir}/src)
-        target_link_libraries(SynthUI PUBLIC LVGL)
+        target_include_directories(SynthUI PUBLIC "${_evkb_synthui_dir}/src")
+        # m explicit, not just borrowed from LVGL's PUBLIC m above (that link's
+        # own comment calls it "inert today", i.e. removable): Task 5's draw
+        # port calls cosf/sinf/lroundf directly, so SynthUI needs its own claim
+        # on libm regardless of what LVGL keeps.
+        target_link_libraries(SynthUI PUBLIC LVGL m)
         target_link_libraries(SynthUI PRIVATE teensy_flags)
     endif()
 endmacro()
