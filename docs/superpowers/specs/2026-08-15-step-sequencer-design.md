@@ -81,8 +81,34 @@ struct SeqEvent {
 ```
 
 - **16 steps**, one step = `AudioTransport::PPQN / 4` = **24 ticks**, so a
-  pattern is exactly one 4/4 bar and aligns with the transport's default 1-bar
-  loop by construction.
+  pattern is **384 ticks — exactly one bar at 4/4**, which is the transport's
+  default and the configuration the gate and the hardware run both use.
+
+★ **The pattern is a fixed 384 ticks; the loop is whatever `loopTicks()` says.
+They are not the same quantity, and the spec must not pretend they are.** Three
+cases follow, all defined by the fold rather than special-cased:
+
+- **Loop = 384 ticks (1 bar at 4/4).** The common case: pattern and loop
+  coincide, all 16 steps play, and the pattern restarts exactly at the seam.
+- **Loop shorter than 384, or not a multiple of 24.** The fold restarts the
+  pattern at the loop start, so only the first `loopTicks()/24` steps are ever
+  reached and a final partial step is cut off mid-gate. Defined and harmless,
+  but it is *not* "the pattern playing faster" — it is the tail being unused.
+  At 3/4 a one-bar loop is 288 ticks, so steps 12–15 never fire.
+- **Loop longer than 384.** `% 16` wraps the step index, so the pattern simply
+  repeats within the loop.
+
+A `beatsPerBar()` other than 4 therefore changes which steps are reachable but
+never desynchronises them, because the fold is in ticks and never consults the
+time signature. This is a consequence worth stating rather than a limitation
+worth fixing: making the step count follow the signature would be a different
+component.
+
+- **Not looping.** `loopTicks()` still reports the configured length even when
+  `looping(false)`, so the fold keeps the pattern repeating against a
+  free-running playhead. That is the wanted behaviour, and it means the
+  sequencer needs no separate free-running mode — unlike mulch's, which carries
+  two independent timing paths.
 - The step index comes from the **folded** tick:
   `(tickAt(i) - loopStartTick()) % loopTicks()`, then `/ 24 % 16`. This is the
   idiom `transport.h` documents, and it means the pattern restarts at the loop
@@ -144,7 +170,9 @@ void clear();                      // all steps rest
 void gateLength(float fraction);   // clamped 0.1..0.9
 void accentVelocity(uint8_t v);
 void normalVelocity(uint8_t v);
-int  currentStep() const;          // last step index triggered, for display
+int  currentStep() const;          // last step index triggered; -1 before the
+                                   // first one, so "nothing has played yet" is
+                                   // distinguishable from "step 0 played"
 ```
 
 Pattern mutators run in user context and take `__disable_irq` guards, matching
@@ -172,6 +200,10 @@ QEMU and silicon, and whose absence flaked four `acid_bass_test` assertions.
   nothing else.
 - `WRAP PASS` — the pattern restarts at step 0 on a loop wrap, with no hung
   note.
+- `SHORTLOOP PASS` — with a loop shorter than the pattern, the steps beyond the
+  loop never fire and the reachable ones still land on their correct tick.
+  This pins the fold's defined behaviour from §2 so a future change to step
+  derivation cannot quietly turn "unused tail" into "compressed pattern".
 
 Committed `transcript_qemu.txt` as a `gate-vacuity.test.sh` fixture. Do not pin
 free-running absolute counters in it — assert differences, per the lesson from
