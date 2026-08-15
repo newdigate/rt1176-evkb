@@ -284,7 +284,7 @@ void setup()
     Serial1.println("SYNTHUI_KNOB_BEGIN");
     const bool ok = Display.begin();
     Serial1.println(ok ? "PANEL_OK" : "PANEL_FAIL");
-    if (!ok) { Serial1.println("KNOB_TEST_DONE"); return; }
+    if (!ok) { Serial1.println("SYNTHUI_KNOB_DONE"); return; }
     Display.fillScreen(0x0000);
     lvgl_rt1176_begin();
     lvgl_mipi_panel_create(Display);
@@ -293,7 +293,7 @@ void setup()
     uint32_t t0 = millis();
     while (!lvgl_mipi_panel_frame_done() && (millis() - t0) < 5000) lvgl_rt1176_loop();
     Serial1.printf("LVGL_FLUSHED=%s\n", lvgl_mipi_panel_frame_done() ? "PASS" : "FAIL");
-    Serial1.println("KNOB_TEST_DONE");
+    Serial1.println("SYNTHUI_KNOB_DONE");
 }
 void loop() { lvgl_rt1176_loop(); }
 ```
@@ -314,7 +314,7 @@ Expected: `synthui_knob_test.elf` produced, zero warnings from `synthui_knob.cpp
 $WT/tools/rt1170-qemu.sh $WT/examples/display/synthui_knob_test/build/synthui_knob_test.elf
 ```
 
-Expected in UART: `SYNTHUI_KNOB_BEGIN`, `PANEL_OK`, `LVGL_FLUSHED=PASS`, `KNOB_TEST_DONE`. (Stub draw = blank knob; that's correct here.) If `PANEL_FAIL`, stop — that's an environment regression, not this plan.
+Expected in UART: `SYNTHUI_KNOB_BEGIN`, `PANEL_OK`, `LVGL_FLUSHED=PASS`, `SYNTHUI_KNOB_DONE`. (Stub draw = blank knob; that's correct here.) If `PANEL_FAIL`, stop — that's an environment regression, not this plan.
 
 - [ ] **Step 5: Commit (worktree)**
 
@@ -535,7 +535,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
  *   2. One screen per mode, rendered synchronously via lv_refr_now():
  *      KNOB_SUM_<MODE>.  One golden per mode is the acid-bass lesson: a single
  *      aggregate sum can freeze half the feature without changing color.
- *   3. KNOB_TEST_DONE, then a hero knob animates forever (eyes-on-glass only,
+ *   3. SYNTHUI_KNOB_DONE, then a hero knob animates forever (eyes-on-glass only,
  *      never checksummed).
  */
 #include <Arduino.h>
@@ -622,7 +622,7 @@ void setup()
 
     const bool ok = Display.begin();
     Serial1.println(ok ? "PANEL_OK" : "PANEL_FAIL");
-    if (!ok) { Serial1.println("KNOB_TEST_DONE"); return; }
+    if (!ok) { Serial1.println("SYNTHUI_KNOB_DONE"); return; }
     Display.fillScreen(0x0000);
 
     lvgl_rt1176_begin();
@@ -646,7 +646,7 @@ void setup()
         Serial1.printf("KNOB_SUM_%s=0x%08lX\n", mode_name[m],
                        (unsigned long)sum_screen(build_mode_screen(m)));
 
-    Serial1.println("KNOB_TEST_DONE");
+    Serial1.println("SYNTHUI_KNOB_DONE");
 
     /* Phase 3: hero spin, glass-only, after every token. */
     lv_obj_t *scr = lv_obj_create(NULL); opaque_bg(scr);
@@ -660,8 +660,13 @@ void loop()
     static uint32_t last = 0;
     static float a = 0.0f;
     const uint32_t now = millis();
+    /* hero == NULL is ALSO the LVGL-uninitialised guard: on the PANEL_FAIL
+     * early-return no screen exists and loop() must touch nothing. */
     if (hero && now - last >= 16) {
         last = now;
+        /* wrap into [-360,360): half the cycle feeds NEGATIVE angles on
+         * purpose -- glass-only coverage of the signed-angle path (Task 9's
+         * eyes-on step should see continuous rotation, no jump). */
         a += 1.8f; if (a >= 360.0f) a -= 720.0f;
         synthui_knob_set_angle(hero, a);
     }
@@ -669,7 +674,7 @@ void loop()
 }
 ```
 
-- [ ] **Step 2: Rebuild + boot in QEMU** (Task 4 commands). Expected UART: all tokens through `KNOB_TEST_DONE`, with five `KNOB_SUM_*=0x…` hex values and `LVGL_BYTES=3686400`. Any `LVGL_BYTES` other than 3686400 means the grid was not the first full paint — fix ordering, don't touch the assertion.
+- [ ] **Step 2: Rebuild + boot in QEMU** (Task 4 commands). Expected UART: all tokens through `SYNTHUI_KNOB_DONE`, with five `KNOB_SUM_*=0x…` hex values and `LVGL_BYTES=3686400`. Any `LVGL_BYTES` other than 3686400 means the grid was not the first full paint — fix ordering, don't touch the assertion.
 
 - [ ] **Step 3: Determinism check — run QEMU twice more; sums must be identical across runs**
 
@@ -715,7 +720,9 @@ grep -q "PANEL_OK"          "$OUT" || { echo "FAIL: panel bring-up"; exit 1; }
 grep -q "LVGL_FLUSHED=PASS" "$OUT" || { echo "FAIL: no full refresh"; exit 1; }
 # Flushed AREA of the first refresh -- 720*1280*4 at XRGB8888.  The partial-
 # repaint guard: a corner repaint and a scene edit both just change the sums.
-grep -q "LVGL_BYTES=3686400" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; }
+# Value greps are ANCHORED (CR-tolerant \r?$): 3686400 must not pass via a
+# hypothetical 36864000, and a golden must match the WHOLE value.
+grep -qE "LVGL_BYTES=3686400\r?$" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; }
 # GOLDEN CHECKSUMS -- FNV-1a over the whole 720x1280 framebuffer, ONE PER MODE
 # plus the 4x4 grid.  Per-mode goldens are the acid-bass lesson: a single
 # aggregate can silently stop testing half the feature.  RECORDED, not derived
@@ -727,12 +734,12 @@ grep -q "LVGL_BYTES=3686400" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; 
 #
 # Provenance: recorded YYYY-MM-DD against SynthUI <sha>, vendored LVGL 9.4.0,
 # XRGB8888 (LV_COLOR_DEPTH=32), montserrat 14/28.
-grep -q "KNOB_SUM_ALL=0xDEADBEEF"     "$OUT" || { echo "FAIL: grid checksum"; exit 1; }
-grep -q "KNOB_SUM_ENDLESS=0xDEADBEEF" "$OUT" || { echo "FAIL: endless checksum"; exit 1; }
-grep -q "KNOB_SUM_BOUNDED=0xDEADBEEF" "$OUT" || { echo "FAIL: bounded checksum"; exit 1; }
-grep -q "KNOB_SUM_DETENTS=0xDEADBEEF" "$OUT" || { echo "FAIL: detents checksum"; exit 1; }
-grep -q "KNOB_SUM_ARC=0xDEADBEEF"     "$OUT" || { echo "FAIL: arc checksum"; exit 1; }
-grep -q "KNOB_TEST_DONE"    "$OUT" || { echo "FAIL: no completion token"; exit 1; }
+grep -qE "KNOB_SUM_ALL=0xDEADBEEF\r?$"     "$OUT" || { echo "FAIL: grid checksum"; exit 1; }
+grep -qE "KNOB_SUM_ENDLESS=0xDEADBEEF\r?$" "$OUT" || { echo "FAIL: endless checksum"; exit 1; }
+grep -qE "KNOB_SUM_BOUNDED=0xDEADBEEF\r?$" "$OUT" || { echo "FAIL: bounded checksum"; exit 1; }
+grep -qE "KNOB_SUM_DETENTS=0xDEADBEEF\r?$" "$OUT" || { echo "FAIL: detents checksum"; exit 1; }
+grep -qE "KNOB_SUM_ARC=0xDEADBEEF\r?$"     "$OUT" || { echo "FAIL: arc checksum"; exit 1; }
+grep -q "SYNTHUI_KNOB_DONE"    "$OUT" || { echo "FAIL: no completion token"; exit 1; }
 echo "PASS: SynthUI knob render verified"
 ```
 
@@ -771,13 +778,22 @@ Expected: `PASS: SynthUI knob render verified` twice, `exit=0`.
 examples/display/synthui_knob_test:synthui_knob_test \
 ```
 
+- [ ] **Step 1b: Add SynthUI to the audit's REPOS roots** — `license-audit.sh`'s
+  Part 2 sweeps every link-manifest dep path against its REPOS roots and
+  hard-fails anything outside them ("OUTSIDE SWEPT ROOTS"). SynthUI enters link
+  manifests for the first time with this example, so add `$LIB_ROOT/SynthUI`
+  alongside the existing roots (top of the script, ~lines 29-35). This is
+  bookkeeping, NOT an allowlist entry: SynthUI is MIT-clean (pre-verified —
+  zero copyleft hits, zero tracked binaries), and adding the root puts it
+  UNDER the sweep rather than excusing it from one.
+
 - [ ] **Step 2: Run the audit**
 
 ```bash
 cd $WT && ./tools/license-audit.sh; echo "exit=$?"
 ```
 
-Expected: `LICENSE-AUDIT: PASS`, `exit=0`, with the new entry's depfile walk included (SynthUI's MIT sources are first-party; nothing from `reference/` is in any depfile). Any FAIL naming SynthUI files: STOP and read the failure — do not allowlist.
+Expected: `LICENSE-AUDIT: PASS`, `exit=0`, with the new entry's depfile walk included (SynthUI's MIT sources are first-party; nothing from `reference/` is in any depfile). Any FAIL naming SynthUI files: STOP and read the failure — do not allowlist. (An "OUTSIDE SWEPT ROOTS" failure means Step 1b was missed — that fix is the REPOS root, which is expected bookkeeping, not an allowlist.)
 
 - [ ] **Step 3: Commit (worktree)** — `tools: license-audit GATES entry for synthui_knob_test`.
 
@@ -825,6 +841,21 @@ Expected: **previous-count+1 passed, 0 failed, 0 SKIP** — nominally 93 if the 
 - [ ] **Step 2: Update `$WT/CLAUDE.md`** — extend the sweep-count paragraph exactly in its established style: new total, prepend `(N before the SynthUI knob pilot added display/synthui_knob_test; …)` to the history chain, and replace the "Measured" line with today's measured result. Numbers come from Step 1's actual output.
 
 - [ ] **Step 3: Add `synthui_knob_test` to `$WT/examples/README.md`'s display section**, one line in the neighbors' voice (what it proves: first SynthUI widget, per-mode goldens, glass-confirmed).
+
+- [ ] **Step 3b: Document the SKIP class in `$WT/docs/KNOWN-BROKEN-GATES.md`** — a
+  ★ entry in the house style of the existing local-only entries, stating: on a
+  fresh clone, `rt1176:display/synthui_knob_test` reports **SKIP, not RED** —
+  `import_evkb_synthui()` FATAL_ERRORs without a local `$TEENSY_LIB_ROOT/SynthUI`
+  checkout (SynthUI is unpushed), so the example cannot even configure and the
+  runner reports `(not built)`. This is the tree's FIRST SKIP-class local-only
+  dependency (the three existing local-only deps all build and surface as REDs);
+  the distinction matters because 0-SKIP is the sweep's coverage signal. The
+  example's CMakeLists comment cross-references this entry.
+
+- [ ] **Step 3c: Correct `$WT/README.md`'s dedicated-macro paragraph** — the "Two
+  libraries are too large for the Arduino-style importer" paragraph (~line 152)
+  now undercounts: three libraries use dedicated import macros, and SynthUI's
+  reason is LVGL's target-propagated includes, not size. One-line correction.
 
 - [ ] **Step 4: Commit (worktree)** — `docs: sweep baseline +1 (synthui_knob_test), measured clean`.
 
