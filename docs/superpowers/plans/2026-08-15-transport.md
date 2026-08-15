@@ -72,12 +72,25 @@ No `boards` sidecar — rt1176 only.
 #define CONSOLE Serial1
 #define PPQN 96
 
-// The transport is declared FIRST so it updates first: AudioStream.h:147-154
-// appends each node at the tail of first_update and software_isr walks that
-// list head-first, so update order is construction order. A consumer declared
-// after it therefore sees the CURRENT block's tick span, not the previous
-// one. TRANSPORT_ORDER below asserts this at runtime rather than trusting it.
+// The transport is declared before its consumers so it updates first:
+// AudioStream.h:147-154 appends each node at the tail of first_update and
+// software_isr walks that list head-first, so update order is construction
+// order. A consumer declared after it therefore sees the CURRENT block's tick
+// span, not the previous one. TRANSPORT_ORDER asserts this at runtime rather
+// than trusting the reading.
+//
+// The probes sit either side of the transport and each records the transport's
+// sample count at the moment its own update() runs; the difference between
+// them is what makes the ordering claim testable.
+struct OrderProbe : public AudioStream {
+    volatile uint64_t seen = 0;
+    OrderProbe() : AudioStream(0, NULL) {}
+    void update(void) override;      // defined below, once `transport` exists
+};
+OrderProbe         probeBefore;
 AudioTransport     transport;
+OrderProbe         probeAfter;
+void OrderProbe::update(void) { seen = transport.samples(); }
 AudioSynthAcidBass acid;
 AudioAnalyzePeak   peak;
 AudioOutputI2S     out;
@@ -130,13 +143,25 @@ void setup() {
     acid.decay(0.15f); acid.level(0.7f);
 
     // --- TRANSPORT_ORDER: the transport updates before later-declared nodes.
-    // Un-fakeable because it compares two independently-sourced block counts:
-    // the transport's own sample counter and the peak analyzer's delivery.
+    // Uses the two OrderProbe nodes declared either side of the transport. If
+    // update order is construction order, `before` runs while the transport
+    // still holds the PREVIOUS block's count and `after` runs once it has
+    // advanced, so `after` leads `before` by exactly one block.
+    //
+    // ★ An earlier draft asserted `transport.samples() > 0`, which proves only
+    // that update() ran at all -- it would have passed if the transport
+    // updated LAST, or in a random order. The token would have claimed a
+    // property it did not test, in the one place the sequencer depends on it.
     transport.tempo(120.0f);
     transport.play();
-    waitBlocks(4);
-    bool orderOk = transport.samples() > 0;
-    CONSOLE.print("TR: samples_after_4="); CONSOLE.println((uint32_t)transport.samples());
+    waitBlocks(8);
+    uint64_t sb = probeBefore.seen, sa = probeAfter.seen;
+    int64_t lead = (int64_t)sa - (int64_t)sb;
+    CONSOLE.print("TR: probe_before="); CONSOLE.println((uint32_t)sb);
+    CONSOLE.print("TR: probe_after=");  CONSOLE.println((uint32_t)sa);
+    CONSOLE.print("TR: probe_lead=");   CONSOLE.println((int32_t)lead);
+    // Exactly one block. Not >= 0, which a same-order pair would also satisfy.
+    bool orderOk = (lead == AUDIO_BLOCK_SAMPLES);
     CONSOLE.println(orderOk ? "TRANSPORT_ORDER=PASS" : "TRANSPORT_ORDER=FAIL");
 
     // --- TEMPO: ticks over a counted number of BLOCKS vs the analytic value.
@@ -233,9 +258,18 @@ void setup() {
 void loop() {
     static uint32_t lastQuarter = 0xFFFFFFFFu;
     static uint32_t lastBeat    = 0;
-    for (int i = 0; i < transport.tickCount(); i++) {
-        uint32_t t = transport.tickAt(i);
-        uint32_t q = t / PPQN;
+    // Snapshot the span under a brief IRQ guard: this runs in USER context and
+    // update() can retire the span mid-read. A sequencer would not need this --
+    // it runs inside update_all()'s serial walk, where the span is stable by
+    // construction. Copying is cheap: <= 8 entries, normally 0-2.
+    uint32_t idx[8]; int n;
+    __disable_irq();
+    n = transport.tickCount();
+    if (n > 8) n = 8;
+    for (int i = 0; i < n; i++) idx[i] = transport.tickAt(i);
+    __enable_irq();
+    for (int i = 0; i < n; i++) {
+        uint32_t q = idx[i] / PPQN;
         if (q != lastQuarter) {
             lastQuarter = q;
             acid.noteOff(33);
@@ -297,7 +331,7 @@ gate_init
 ELF="$DIR/$(gate_build_dir)/transport_test.elf"
 OUT=$(gate_capture_path "$DIR" transport.uart)
 DBG=$(gate_capture_path "$DIR" transport.dbg)
-rm -f "$OUT"
+rm -f "$OUT" "$DBG"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none $(gate_console "$OUT") -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
