@@ -98,7 +98,8 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **91 gates** (90 before the
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **92 gates** (91 before the
+step sequencer added `audio/step_seq_test`; 90 before the
 transport added `audio/transport_test`; 89 before the
 acid-bass voice added `audio/acid_bass_test`; 87 before Phase 5b
 gated `usb/usb_audio_capstone_test` and `audio/audioinput_i2s_test`'s second
@@ -113,10 +114,10 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **91 passed, 0 failed, 0 SKIP**, or
-**90 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **92 passed, 0 failed, 0 SKIP**, or
+**91 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
-✅ **Measured 2026-08-15: 91 passed, 0 failed, 0 SKIP.** A fully clean sweep,
+✅ **Measured 2026-08-15: 92 passed, 0 failed, 0 SKIP.** A fully clean sweep,
 including the two dual-core Wire gates that were red earlier the same day —
 `cm4_wire_test` and `cm4_wire_int_master_test` had been asserting
 `rdv=00000000`, a value produced only by QEMU's old WM8962 *stub*. That stub is
@@ -133,14 +134,6 @@ hour and then removed it entirely with an ASan `configure`, which is enough to
 invalidate a sweep taken across it and enough to make every gate report "no
 UART capture". **Confirm with an untouched control gate before believing a
 broad red.**
-
-★ **A QEMU model can change under you without a commit to show for it.** That
-change was uncommitted in the qemu2 working tree and already compiled into the
-binary, so `git log` on the model looked a month stale while the behaviour had
-already moved. When a gate goes red and nothing in the firmware's history
-explains it, check the model's WORKING TREE and the binary's mtime, not just
-its log. The same session also rebuilt that binary three times in an hour,
-which is enough to invalidate a sweep taken across it.
 
 Beyond those there is **one** permitted red:
 
