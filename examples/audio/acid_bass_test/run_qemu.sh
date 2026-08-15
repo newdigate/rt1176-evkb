@@ -45,6 +45,10 @@ grep -q "ACID-GATE v1" "$OUT" || { echo "FAIL: banner"; exit 1; }
 # first ("FAIL: accent" for a firmware that never reached the accent test).
 grep -q "ACID-DONE" "$OUT" || { echo "FAIL: script never completed (truncated run)"; exit 1; }
 grep -q "ACID_ACCENT=PASS" "$OUT" || { echo "FAIL: accent"; exit 1; }
+# Both accent checks, not just the first. ACID_ACCENT is dominated by the filter
+# sweep and passes at 2.70 with accent's VCA term deleted outright; ACID_ACCENT_VCA
+# is the half that covers. Dropping either leaves half of accent() unasserted.
+grep -q "ACID_ACCENT_VCA=PASS" "$OUT" || { echo "FAIL: accent vca"; exit 1; }
 grep -q "ACID_SLIDE=PASS"  "$OUT" || { echo "FAIL: slide"; exit 1; }
 grep -q "ACID_DECAY=PASS"  "$OUT" || { echo "FAIL: decay"; exit 1; }
 # The pattern player must be running AND producing signal. The nonzero-digit
@@ -62,4 +66,4 @@ grep -qE "ACID_ALIVE peak=(0\.[0-9]*[1-9]|1\.)" "$OUT" \
 # wait was added for is satisfied by a run that died.
 [ "$(grep -c 'ACID_ALIVE' "$OUT")" -ge 3 ] \
     || { echo "FAIL: fewer than 3 heartbeats -- loop() stopped or QEMU died early"; exit 1; }
-echo "PASS: ACID_ACCENT ACID_SLIDE ACID_DECAY ACID_ALIVE"
+echo "PASS: ACID_ACCENT ACID_ACCENT_VCA ACID_SLIDE ACID_DECAY ACID_ALIVE"
