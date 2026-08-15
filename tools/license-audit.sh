@@ -215,7 +215,8 @@ echo "== Part 2: link-manifest audit (depfile walk)"
 # second board's build of the same example: EVKB_BOARD=rt1062 links
 # cores/teensy4 instead of cores/imxrt1176, so that image has a link manifest
 # this list would otherwise never walk.
-GATES=${LICENSE_AUDIT_GATES:-"examples/audio/audio_h_test:audio_h_test examples/audio/audioinput_i2s_test:audioinput_i2s_test \
+GATES=${LICENSE_AUDIT_GATES:-"examples/audio/acid_bass_test:acid_bass_test \
+examples/audio/audio_h_test:audio_h_test examples/audio/audioinput_i2s_test:audioinput_i2s_test \
 examples/audio/audioinput_i2s_test/build-rt1062:audioinput_i2s_test \
 examples/audio/audiooutput_i2s_test:audiooutput_i2s_test \
 examples/audio/audiooutput_i2s_test/build-rt1062:audiooutput_i2s_test \
