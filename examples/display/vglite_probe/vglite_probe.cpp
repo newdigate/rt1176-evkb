@@ -150,6 +150,22 @@ void setup()
     target.memory  = (void *)Display.framebuffer();
     target.address = (uint32_t)(uintptr_t)Display.framebuffer();
 
+    /* ★ REGISTER the framebuffer with the driver before drawing into it.
+     *
+     * The GPU will not touch memory the kernel does not know about. Without
+     * this, vg_lite_draw() and vg_lite_finish() both return VG_LITE_SUCCESS,
+     * the completion interrupt fires (TIMEOUTS=0) -- and NOT ONE PIXEL
+     * changes: measured on silicon, where the framebuffer checksum came back
+     * as exactly the all-zeros FNV (0x9BC99DC5 for 720*1280*4). Every status
+     * the firmware could see said success.
+     *
+     * NXP's own examples sidestep this by allocating their render target with
+     * vg_lite_allocate(); a target the application already owns -- like a
+     * panel framebuffer -- has to be mapped instead. */
+    const vg_lite_error_t merr = vg_lite_map(&target);
+    Serial1.printf("VGLITE_MAP=%s err=%d\n",
+                   merr == VG_LITE_SUCCESS ? "OK" : "FAIL", (int)merr);
+
     /* One closed square. Opcodes are VGLite's path VLC encoding:
      * 2 = MOVE_TO, 4 = LINE_TO, 0 = END. */
     static int32_t path_data[] = {
