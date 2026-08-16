@@ -33,7 +33,15 @@ $LIB_ROOT/USBHost_t36 $LIB_ROOT/FNET $LIB_ROOT/lwip \
 $LIB_ROOT/CMSIS-DSP $LIB_ROOT/CMSIS_6 $LIB_ROOT/SerialFlash \
 $LIB_ROOT/PXP $LIB_ROOT/MipiDisplay $LIB_ROOT/LVGL \
 $LIB_ROOT/EEPROM $LIB_ROOT/ILI9341_t3 $LIB_ROOT/TouchPanel $LIB_ROOT/Bounce2 \
-$LIB_ROOT/SynthUI"}
+$LIB_ROOT/SynthUI $LIB_ROOT/VGLite"}
+# VGLite joined 2026-08-16 with display/vglite_probe, the first example to link
+# it. It is the first VENDORED third-party driver in this list rather than a
+# newdigate fork, so the sweep is doing more than coverage bookkeeping here:
+# NXP/Vivante ship VGLite under MIT (VENDORING.md records what was taken and
+# from where), and Part 1 re-proves that on every run against the actual files.
+# Nothing under tools/nxp-oracle/ is vendored SDK — it is a CMakeLists, a linker
+# script and a README that point at an out-of-tree MCUXpresso install — so no
+# NXP-EULA source enters this tree with it.
 # SynthUI joined 2026-08-16 with display/synthui_knob_test, the first example to
 # link it. Same finding as the three below, caught before it fired: its widget
 # sources enter the link manifest, so Part 2 would report them OUTSIDE SWEPT
@@ -247,6 +255,7 @@ examples/display/rk055_panel_test:rk055_panel_test \
 examples/display/rk055_touch_test:rk055_touch_test \
 examples/display/rpi_panel_test:rpi_panel_test \
 examples/display/synthui_knob_test:synthui_knob_test \
+examples/display/vglite_probe:vglite_probe \
 examples/dualcore/cm4_audio_test:cm4_audio_test \
 examples/dualcore/cm4_audiostream_test:cm4_audiostream_test \
 examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_cpp_test:cm4_cpp_test \
