@@ -45,6 +45,21 @@ EXTMEM __attribute__((aligned(64))) static uint8_t vglite_pool[VGLITE_POOL_BYTES
 #define TESS_W 256
 #define TESS_H 256
 
+/* ★ vg_lite_color_t IS ABGR (0xAABBGGRR), NOT ARGB.
+ *
+ * The header is explicit: "The red channel is in the lower 8-bit of the color
+ * value, followed by the green and blue channels. The alpha channel is in the
+ * upper 8-bit" (inc/vg_lite.h). This is INDEPENDENT of the target buffer
+ * format -- VG_LITE_BGRA8888 is the correct format for this panel's XRGB8888
+ * (red in bits 23:16 = word ARGB), and the driver converts.
+ *
+ * Getting it backwards does not fail, it just renders the wrong colour.
+ * Measured: clearing with 0xFF204060 (ARGB-style) put 0xFF604020 in memory --
+ * red and blue transposed -- and the square appeared in the wrong colour on
+ * the glass while every status said success. */
+#define ABGR(r, g, b)  (0xFF000000u | ((uint32_t)(b) << 16) | \
+                        ((uint32_t)(g) << 8) | (uint32_t)(r))
+
 /* The square this probe fills, in panel pixels. Fixed, so the checksum is a
  * golden rather than a moving target. */
 #define SQ_MIN 100.0f
@@ -189,7 +204,7 @@ void setup()
     Serial1.printf("VGLITE_REG pre  idle=0x%08lX intr=0x%08lX\n",
                    (unsigned long)vg_lite_hal_peek(VG_LITE_HW_IDLE),
                    (unsigned long)vg_lite_hal_peek(VG_LITE_INTR_STATUS));
-    const vg_lite_error_t cerr = vg_lite_clear(&target, NULL, 0xFF204060u);
+    const vg_lite_error_t cerr = vg_lite_clear(&target, NULL, ABGR(0x20, 0x40, 0x60));
     Serial1.printf("VGLITE_REG post-clear idle=0x%08lX\n",
                    (unsigned long)vg_lite_hal_peek(VG_LITE_HW_IDLE));
     vg_lite_finish();
@@ -222,7 +237,7 @@ void setup()
     if (aerr == VG_LITE_SUCCESS) {
         volatile uint32_t *px = (volatile uint32_t *)scratch.memory;
         px[0] = 0xDEADBEEFu;            /* poison, so "unchanged" is visible */
-        const vg_lite_error_t serr = vg_lite_clear(&scratch, NULL, 0xFF204060u);
+        const vg_lite_error_t serr = vg_lite_clear(&scratch, NULL, ABGR(0x20, 0x40, 0x60));
         vg_lite_finish();
         Serial1.printf("VGLITE_SCRATCH=%s err=%d px0=0x%08lX px1=0x%08lX irq=%lu\n",
                        serr == VG_LITE_SUCCESS ? "OK" : "FAIL", (int)serr,
@@ -250,7 +265,7 @@ void setup()
 
     const vg_lite_error_t derr =
         vg_lite_draw(&target, &path, VG_LITE_FILL_EVEN_ODD, &matrix,
-                     VG_LITE_BLEND_NONE, 0xFF3399FFu);
+                     VG_LITE_BLEND_NONE, ABGR(0x33, 0x99, 0xFF));
     Serial1.printf("VGLITE_DRAW=%s err=%d\n",
                    derr == VG_LITE_SUCCESS ? "OK" : "FAIL", (int)derr);
 
