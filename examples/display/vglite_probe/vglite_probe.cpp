@@ -22,6 +22,7 @@
 #include "vg_lite.h"
 #include "vg_lite_kernel.h"   /* vg_lite_kernel_mem_t */
 #include "vg_lite_hal.h"      /* vg_lite_hal_query_mem */
+#include "vg_lite_hw.h"       /* VG_LITE_HW_IDLE, VG_LITE_INTR_STATUS */
 #include "vg_lite_platform.h"
 
 /* Contiguous pool for VGLite's command and tessellation buffers.
@@ -179,8 +180,22 @@ void setup()
      * matrix, no tessellation. If this changes the framebuffer, the target is
      * reachable and any later failure is in the path/draw. If it does NOT, the
      * target itself is wrong and the path was never the question. */
+    /* ★ IS THE GPU EVEN STARTING? VG_LITE_HW_IDLE (0x004) is Vivante's
+     * per-module idle status: all-ones means every module is idle. Sampling it
+     * either side of a submit separates "never started" (idle before AND
+     * after) from "started and hung" (not idle after). Never measured until
+     * now -- everything so far inferred GPU state from driver return codes,
+     * which report success regardless. */
+    Serial1.printf("VGLITE_REG pre  idle=0x%08lX intr=0x%08lX\n",
+                   (unsigned long)vg_lite_hal_peek(VG_LITE_HW_IDLE),
+                   (unsigned long)vg_lite_hal_peek(VG_LITE_INTR_STATUS));
     const vg_lite_error_t cerr = vg_lite_clear(&target, NULL, 0xFF204060u);
+    Serial1.printf("VGLITE_REG post-clear idle=0x%08lX\n",
+                   (unsigned long)vg_lite_hal_peek(VG_LITE_HW_IDLE));
     vg_lite_finish();
+    Serial1.printf("VGLITE_REG post-finish idle=0x%08lX intr=0x%08lX\n",
+                   (unsigned long)vg_lite_hal_peek(VG_LITE_HW_IDLE),
+                   (unsigned long)vg_lite_hal_peek(VG_LITE_INTR_STATUS));
     Serial1.printf("VGLITE_CLEAR=%s err=%d sum=0x%08lX irq=%lu\n",
                    cerr == VG_LITE_SUCCESS ? "OK" : "FAIL", (int)cerr,
                    (unsigned long)fb_sum(),
