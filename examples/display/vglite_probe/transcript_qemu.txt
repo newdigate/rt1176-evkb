@@ -1,0 +1,8 @@
+==== captured UART ====
+VGLITE_PROBE_BEGIN
+PANEL_OK
+VGLITE_CHIP_ID=0x00000000
+VGLITE_INIT=ABSENT err=0 reason=no_chip_id
+VGLITE_TIMEOUTS=0
+VGLITE_PROBE_DONE
+PASS: VGLite probe fallback verified
