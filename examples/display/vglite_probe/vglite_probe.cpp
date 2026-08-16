@@ -166,6 +166,55 @@ void setup()
     Serial1.printf("VGLITE_MAP=%s err=%d\n",
                    merr == VG_LITE_SUCCESS ? "OK" : "FAIL", (int)merr);
 
+    /* Diagnostics: what the driver actually believes about the target. If the
+     * GPU address or stride is not what the panel scans out, the GPU can write
+     * perfectly and change nothing visible. */
+    Serial1.printf("VGLITE_TGT fb=0x%08lX addr=0x%08lX w=%ld h=%ld stride=%ld fmt=%d\n",
+                   (unsigned long)(uintptr_t)Display.framebuffer(),
+                   (unsigned long)target.address,
+                   (long)target.width, (long)target.height, (long)target.stride,
+                   (int)target.format);
+
+    /* ★ BISECT: clear is the simplest write the GPU can perform -- no path, no
+     * matrix, no tessellation. If this changes the framebuffer, the target is
+     * reachable and any later failure is in the path/draw. If it does NOT, the
+     * target itself is wrong and the path was never the question. */
+    const vg_lite_error_t cerr = vg_lite_clear(&target, NULL, 0xFF204060u);
+    vg_lite_finish();
+    Serial1.printf("VGLITE_CLEAR=%s err=%d sum=0x%08lX irq=%lu\n",
+                   cerr == VG_LITE_SUCCESS ? "OK" : "FAIL", (int)cerr,
+                   (unsigned long)fb_sum(),
+                   (unsigned long)vg_lite_os_irq_count());
+
+    /* ★ SECOND BISECT: can the GPU write ANYWHERE?
+     *
+     * The clear above proved the panel framebuffer does not change. This one
+     * targets a buffer the DRIVER allocates from its own pool -- the path
+     * NXP's examples use. If this one changes and the framebuffer does not,
+     * the fault is specific to externally-owned memory. If neither changes,
+     * the GPU cannot write at all and the fault is lower: clocks, the AXI
+     * master path, or bus-master permissions (RDC). */
+    vg_lite_buffer_t scratch;
+    memset(&scratch, 0, sizeof(scratch));
+    scratch.width  = 64;
+    scratch.height = 64;
+    scratch.format = VG_LITE_BGRA8888;
+    const vg_lite_error_t aerr = vg_lite_allocate(&scratch);
+    Serial1.printf("VGLITE_ALLOC=%s err=%d mem=0x%08lX addr=0x%08lX stride=%ld\n",
+                   aerr == VG_LITE_SUCCESS ? "OK" : "FAIL", (int)aerr,
+                   (unsigned long)(uintptr_t)scratch.memory,
+                   (unsigned long)scratch.address, (long)scratch.stride);
+    if (aerr == VG_LITE_SUCCESS) {
+        volatile uint32_t *px = (volatile uint32_t *)scratch.memory;
+        px[0] = 0xDEADBEEFu;            /* poison, so "unchanged" is visible */
+        const vg_lite_error_t serr = vg_lite_clear(&scratch, NULL, 0xFF204060u);
+        vg_lite_finish();
+        Serial1.printf("VGLITE_SCRATCH=%s err=%d px0=0x%08lX px1=0x%08lX irq=%lu\n",
+                       serr == VG_LITE_SUCCESS ? "OK" : "FAIL", (int)serr,
+                       (unsigned long)px[0], (unsigned long)px[1],
+                       (unsigned long)vg_lite_os_irq_count());
+    }
+
     /* One closed square. Opcodes are VGLite's path VLC encoding:
      * 2 = MOVE_TO, 4 = LINE_TO, 0 = END. */
     static int32_t path_data[] = {
@@ -199,8 +248,9 @@ void setup()
 
     /* ★ Load-bearing: a non-zero count means a bounded wait gave up, so the
      * completion path is wrong even if pixels appeared. */
-    Serial1.printf("VGLITE_TIMEOUTS=%lu\n",
-                   (unsigned long)vg_lite_os_wait_timeouts());
+    Serial1.printf("VGLITE_TIMEOUTS=%lu VGLITE_IRQS=%lu\n",
+                   (unsigned long)vg_lite_os_wait_timeouts(),
+                   (unsigned long)vg_lite_os_irq_count());
 
     vg_lite_kernel_mem_t mem;
     memset(&mem, 0, sizeof(mem));
