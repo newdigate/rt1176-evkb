@@ -1,6 +1,14 @@
 # VGLite / GC355 GPU acceleration — design
 
-Date: 2026-08-16. Status: approved in session, pending implementation.
+Date: 2026-08-16. Status: **Phase 1 (foundation) COMPLETE and hardware-verified
+2026-08-16** — the GC355 initialises and renders under this tree's bare-metal
+VGLite port (`display/vglite_probe`, golden `VGLITE_SUM=0x45465405`, blue square
+confirmed on the RK055). §3's success criterion — the 16-knob grid at ≥30 fps —
+is **not yet met and not yet attempted**: it needs LVGL's VGLite draw unit,
+which is Phase 2. §2's "LVGL negotiates GPU capabilities at runtime" was
+**refuted** and is now Phase 2's blocker — see the annotation there. The full
+Phase 1 account, including three defects that every status bit called success,
+is in `examples/display/vglite_probe/transcript_hw_evkb.txt`.
 Motivated by a measurement, not a hunch: see §1.
 
 ## 1. Why — the measurement that justifies this
@@ -76,6 +84,14 @@ degrades rather than breaks: `vg_lite_query_feature()` is consulted for
 (`lv_draw_vg_lite.c:141`, `lv_vg_lite_grad.c:168/182/634`,
 `lv_vg_lite_utils.c:89/493/520`). Driver header is `VGLITE_HEADER_VERSION 6`,
 `VGLITE_VERSION_2_0`.
+
+> ★ **REFUTED in Phase 1 — this is the Phase 2 blocker.** The negotiation is
+> only *runtime* for bits the driver **defines**. LVGL 9.4 names four that this
+> driver version does not — `gcFEATURE_BIT_VG_SCISSOR`, `IM_REPEAT_REFLECT`,
+> `VG_24BIT`, `INDEX_ENDIAN` — so the backend does not compile, let alone
+> degrade. Reconcile it FIRST in Phase 2 (newer NXP driver, or shims); the
+> feature bits the GC355 actually reports are in `vglite_probe`'s hardware
+> transcript.
 
 **Cache coherency is free here.** The `imxrt1176` core never writes `SCB_CCR`,
 so CPU/GPU views of memory agree without maintenance — the exact opposite of

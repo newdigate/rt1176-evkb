@@ -125,6 +125,7 @@ teensy_declare_library(lwip           lwip                 https://github.com/ne
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
 teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            6fa16a733d3d2a30b18f7ec15a2ad3791b02c66f .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
 teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         a1b6da7572a9125f901a9d9d26fc371e7689e672 .) # LOCAL-ONLY (unpushed): resolves under TEENSY_LIB_ROOT; fresh clones fail here until SynthUI's first push -- same class as the qemu2-local gate deps. Not Arduino-layout for imports: use import_evkb_synthui().
+teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          f539ff4b0a5c964c3d3ae85d7195be0e791b55de .) # LOCAL-ONLY (unpushed): resolves under TEENSY_LIB_ROOT; fresh clones fail here until VGLite's first push. Not Arduino-layout: use import_evkb_vglite().
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 teensy_declare_library(Bounce2        Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).
@@ -259,6 +260,40 @@ macro(import_evkb_lvgl)
         # Inert today (those paths are behind disabled config), but it turns a
         # confusing undefined-reference in Task 3/4 into a non-event.
         target_link_libraries(LVGL PUBLIC m)
+    endif()
+endmacro()
+
+# --- VGLite ------------------------------------------------------------------
+# Vivante VGLite (MIT) for the GC355, plus this tree's bare-metal port. A plain
+# STATIC target for the same reason LVGL is: consumers need the PUBLIC include
+# dirs, which teensy_target_link_libraries() would not propagate (it rewrites
+# each name to <name>.o).
+#
+# VG_DRIVER_SINGLE_THREAD is PUBLIC and load-bearing: it is honoured by the
+# vendored core and by inc/vg_lite_hal.h, and it is what reduces the port layer
+# to the functions port/baremetal/ actually implements. Drop it and the link
+# fails on the multi-threaded entry points.
+macro(import_evkb_vglite)
+    if(NOT TARGET VGLite)
+        if(TEENSY_FORCE_FETCH OR NOT EXISTS "${TEENSY_LIB_ROOT}/VGLite/inc")
+            message(FATAL_ERROR "import_evkb_vglite(): VGLite is LOCAL-ONLY "
+                "(unpushed) -- its pinned URL cannot be fetched yet. Expected a "
+                "checkout at ${TEENSY_LIB_ROOT}/VGLite.")
+        endif()
+        evkb_library_dir(VGLite _evkb_vglite_dir)
+        file(GLOB _evkb_vglite_srcs CONFIGURE_DEPENDS
+             "${_evkb_vglite_dir}/VGLite/*.c"
+             "${_evkb_vglite_dir}/VGLiteKernel/*.c"
+             "${_evkb_vglite_dir}/port/baremetal/*.c")
+        add_library(VGLite STATIC ${_evkb_vglite_srcs})
+        target_include_directories(VGLite PUBLIC
+             "${_evkb_vglite_dir}/inc"
+             "${_evkb_vglite_dir}/VGLite"
+             "${_evkb_vglite_dir}/VGLiteKernel"
+             "${_evkb_vglite_dir}/port/baremetal")
+        target_compile_definitions(VGLite PUBLIC VG_DRIVER_SINGLE_THREAD=1)
+        target_link_libraries(VGLite PRIVATE teensy_flags)
+        target_link_libraries(VGLite PUBLIC m)
     endif()
 endmacro()
 

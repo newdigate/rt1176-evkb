@@ -260,6 +260,55 @@ after which the fetch path works and a fresh clone builds it like anything else.
 The example's `CMakeLists.txt` carries a comment pointing here, so whoever's
 configure just died reads the explanation at the point of failure.
 
+## `rt1176:display/vglite_probe` — QEMU gates the FALLBACK, not the GPU
+
+★ **QEMU has no GC355 model.** This gate asserts that a chip-ID probe result
+was printed at all, that it reported `VGLITE_INIT=ABSENT`, that
+`VGLITE_TIMEOUTS=0`, and that the run reached `VGLITE_PROBE_DONE` — i.e. the
+probe *detects* the GPU is absent, says so, and takes its software path without
+hanging. (It matches the ID line by shape, `0x[0-9A-F]{8}`, not against the
+`0x00000000` QEMU actually returns; the assertion is "the probe ran and
+answered", and the ABSENT line carries `reason=no_chip_id`.)
+
+That is a real assertion with teeth, and both of its failure modes were
+observed while building it: `vg_lite_init()` **spins forever** on absent
+hardware rather than returning an error, so a port that skipped the chip-ID
+probe goes silent after `PANEL_OK`; and without qemu2's GPU2D window stub, even
+*reading* the ID register raised an external abort and hung in an unhandled bus
+fault. Either regression fails the gate by timing out with no DONE token.
+`VGLITE_TIMEOUTS=0` carries its own weight: under QEMU no bounded wait should
+ever run, so a non-zero count means the fallback path took a GPU branch it
+should not have. The gate also proves the one-binary story — the same ELF runs
+accelerated on silicon and falls back here.
+
+But it proves the FALLBACK path. **It says nothing about whether the GPU
+renders.** Do not read a green `vglite_probe` as "VGLite works".
+
+**The GPU path is verified on silicon only**, in `transcript_hw_evkb.txt`:
+`VGLITE_CHIP_ID=0x00000355`, `VGLITE_INIT=OK`, the nine-bit feature table,
+`VGLITE_DRAW=OK`, `VGLITE_TIMEOUTS=0`, `VGLITE_IRQS=3`, the golden
+`VGLITE_SUM=0x45465405`, and a human eye on a blue square on the RK055.
+
+★ **Every one of those is necessary and none is sufficient alone**, which is
+the lesson Phase 1 paid for. `VGLITE_DRAW=OK` and `VGLITE_TIMEOUTS=0` were both
+reported while the GPU drew *nothing* — the bounded wait was consuming
+interrupt flags left over from init. That is what `VGLITE_IRQS` exists for: a
+wait that "succeeds" without the ISR count advancing did not succeed. And the
+checksum can change while the panel stays black, because the driver was
+resetting the display mix out from under LCDIFv2. Counters, checksum and glass
+each catch what the others miss.
+
+★ **When Phase 2 lands, the GPU and software paths will NOT produce identical
+pixels** — hardware antialiasing differs from LVGL's mask arithmetic. Two
+golden sets, never one. Do not "fix" a mismatch by copying one over the other.
+
+Also SKIP-class on a fresh clone, exactly like `display/synthui_knob_test`
+above: VGLite is unpushed, so `import_evkb_vglite()` FATAL_ERRORs, the example
+cannot configure, and the runner reports SKIP `(not built)` rather than a
+failure. The same reasoning applies about `0 SKIP` being the load-bearing
+number — and with two SKIP-class examples now, a fresh-clone sweep reports
+`2 SKIP`, so check the NAMES before concluding the sweep under-reported.
+
 ## Rules for this list
 
 - **Do not delete, weaken, or `exit 0` a gate to get it off this list.** That defeats the entire
