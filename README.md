@@ -149,10 +149,15 @@ defines the pinned manifest (`import_evkb_library(<name> [subdirs])`, plus
 `-DEVKB_FORCE_FETCH=ON` to ignore all local checkouts and build purely from
 the pinned GitHub refs (the "fresh user" mode).
 
-Two libraries are too large for the Arduino-style importer, which globs only one
-directory level, and get dedicated macros instead: `import_evkb_cmsis_dsp()` and
-`import_evkb_lvgl()`. Both build a plain CMake static-library target, so link
-them directly rather than through the Teensy macro:
+Three libraries get dedicated macros instead of the Arduino-style importer, and
+all three build a plain CMake static-library target, so link them directly
+rather than through the Teensy macro. `import_evkb_cmsis_dsp()` and
+`import_evkb_lvgl()` are there because those trees are too large for the
+importer, which globs only one directory level. `import_evkb_synthui()` is there
+for a different reason: SynthUI's widgets `#include <lvgl.h>`, and LVGL's
+include directories only propagate across a real `target_link_libraries` edge —
+which the Teensy macro cannot provide, because it rewrites each name to
+`<name>.o`.
 
 ```cmake
 import_evkb_lvgl()

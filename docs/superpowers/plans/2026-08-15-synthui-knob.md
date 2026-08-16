@@ -790,8 +790,16 @@ examples/display/synthui_knob_test:synthui_knob_test \
 - [ ] **Step 2: Run the audit**
 
 ```bash
-cd $WT && ./tools/license-audit.sh; echo "exit=$?"
+cd $WT && LICENSE_AUDIT_EVKB=$PWD ./tools/license-audit.sh; echo "exit=$?"
 ```
+
+★ `LICENSE_AUDIT_EVKB` is REQUIRED when running from a worktree: the script
+defaults `EVKB` to `$HOME/Development/rt1170/evkb` (the main checkout), so
+without the override it walks a tree where this example does not exist and
+reports `MISSING BUILD: examples/display/synthui_knob_test` — which reads like
+a build failure but is really "you audited the wrong tree". Same hazard the
+gate scripts avoid by deriving `EVKB` from their own location. After merge to
+master the plain invocation is correct.
 
 Expected: `LICENSE-AUDIT: PASS`, `exit=0`, with the new entry's depfile walk included (SynthUI's MIT sources are first-party; nothing from `reference/` is in any depfile). Any FAIL naming SynthUI files: STOP and read the failure — do not allowlist. (An "OUTSIDE SWEPT ROOTS" failure means Step 1b was missed — that fix is the REPOS root, which is expected bookkeeping, not an allowlist.)
 
