@@ -7,13 +7,21 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/$(gate_build_dir)/synthui_knob_test.elf"; OUT="$DIR/synthui_knob.uart"
+ELF="$DIR/$(gate_build_dir)/synthui_knob_test.elf"
+# Run artifacts go through gate_capture_path, NOT "$DIR/<name>" -- see its
+# comment in gate-lib.sh. This gate is rt1176-only today, so it cannot lose the
+# documented `-j` race with a second board half; the older display siblings
+# spell the path out by hand only because they predate the helper.
+OUT=$(gate_capture_path "$DIR" synthui_knob.uart)
+DBG=$(gate_capture_path "$DIR" synthui_knob.dbg)
 rm -f "$OUT"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -display none -serial file:"$OUT" -d guest_errors -D "$DIR/synthui_knob.dbg" &
+    -display none -serial file:"$OUT" -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
 # 16s: the RK055 bring-up margin lvgl_rk055_panel_test uses (12s) plus four
-# extra full-screen software renders for the per-mode phases.
+# extra full-screen software renders for the per-mode phases. Measured
+# 2026-08-16: all tokens land ~2s in on an idle machine, so this is ~8x margin
+# -- deliberate headroom for a loaded `-j` sweep, not a tight bound.
 sleep 16; gate_reap $P
 gate_require_capture "$OUT"
 echo "==== captured UART ===="; cat "$OUT"
