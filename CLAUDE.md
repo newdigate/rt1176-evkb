@@ -98,7 +98,8 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **93 gates** (92 before the
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **94 gates** (93 before
+VGLite Phase 1 added `display/vglite_probe`; 92 before the
 SynthUI Knob pilot added `display/synthui_knob_test`; 91 before the
 step sequencer added `audio/step_seq_test`; 90 before the
 transport added `audio/transport_test`; 89 before the
@@ -115,19 +116,30 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **93 passed, 0 failed, 0 SKIP**, or
-**92 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **94 passed, 0 failed, 0 SKIP**, or
+**93 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
-✅ **Measured 2026-08-16: 93 passed, 0 failed, 0 SKIP.** A fully clean sweep on
-the merge of the SynthUI Knob pilot, `rt1176:dualcore/cm4_audio_test` included.
+✅ **Measured 2026-08-16: 94 passed, 0 failed, 0 SKIP.** A fully clean sweep on
+the merge of VGLite Phase 1, `rt1176:dualcore/cm4_audio_test` included. Note the
+runner prints only non-zero categories, so `gates: 94 passed` with exit 0 IS
+`94 / 0 / 0` — don't go looking for the zeros.
 
-★ `display/synthui_knob_test` is **SKIP-class on a fresh clone**, which is a
-different failure mode from every other documented exception and the reason
-`docs/KNOWN-BROKEN-GATES.md` now has an entry for it: SynthUI is unpushed, so
-`import_evkb_synthui()` FATAL_ERRORs, the example cannot configure at all, and
+★ **Two gates are now SKIP-class on a fresh clone** — `display/synthui_knob_test`
+and `display/vglite_probe` — a different failure mode from every other
+documented exception, and the reason `docs/KNOWN-BROKEN-GATES.md` has an entry
+for each. SynthUI and VGLite are both unpushed, so `import_evkb_synthui()` /
+`import_evkb_vglite()` FATAL_ERROR, the examples cannot configure at all, and
 the runner reports `(not built)` — invisible in the pass/fail columns and
-visible only in the SKIP count. On this bench the checkout exists, so it builds
-and passes like any other gate.
+visible only in the SKIP count. A fresh-clone sweep therefore reports **2 SKIP**;
+check the NAMES against those two before concluding a sweep under-reported. On
+this bench both checkouts exist, so both build and pass like any other gate.
+
+★ **A green `display/vglite_probe` does NOT mean the GPU works.** QEMU has no
+GC355 model, so that gate asserts the GPU-ABSENT fallback — the same ELF
+detecting no GPU and taking the software path rather than spinning in
+`vg_lite_init()`. The GC355 rendering is verified on silicon only, in the
+example's `transcript_hw_evkb.txt`. This is the sharpest current instance of
+"QEMU pass is necessary but not sufficient".
 
 The previous baseline, kept because its account is still the reference for the
 WM8962 lesson: **measured 2026-08-15: 92 passed, 0 failed, 0 SKIP**, a fully
@@ -376,6 +388,18 @@ harness.
   `import_evkb_library(MipiDisplay soc panels/<name>)` — the panel is chosen by
   which directory the example imports (the RT1176 has one MIPI-DSI host, so
   only one panel can ever be live).
+  **`VGLite` is the newest and the odd one out**: not a newdigate fork but NXP's
+  MIT VGLite driver vendored verbatim (`VENDORING.md` records provenance), plus
+  this tree's own `port/baremetal/` replacing the FreeRTOS port layer. It drives
+  the **Vivante GC355 GPU2D** — which the RT1176 does have, contrary to what
+  `docs/superpowers/specs/2026-07-27-rt1176-lvgl-design.md` claimed until that
+  claim was corrected. Imported with `import_evkb_vglite()`;
+  `VG_DRIVER_SINGLE_THREAD` is load-bearing, not decoration.
+  ★ **Vivante wants 64-byte-aligned command buffers and a misaligned one does
+  not fail — it hangs the front end while every API call returns
+  `VG_LITE_SUCCESS`.** That cost most of Phase 1. When a device API insists
+  everything worked, read the device's own status register (`AQHiIdle`, 0x004,
+  bit 0 = front end).
 - **Dual-core model**: the CM7 stages/boots/hot-swaps CM4 images and talks over
   the MU mailbox. Key constraints: main-eDMA completion IRQs reach the CM7
   only (CM4 interrupt-driven DMA needs eDMA_LPSR + an LPSR peripheral);
