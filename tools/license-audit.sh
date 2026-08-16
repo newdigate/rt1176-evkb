@@ -32,7 +32,13 @@ $LIB_ROOT/Audio $LIB_ROOT/SD $LIB_ROOT/PaulS_SD \
 $LIB_ROOT/USBHost_t36 $LIB_ROOT/FNET $LIB_ROOT/lwip \
 $LIB_ROOT/CMSIS-DSP $LIB_ROOT/CMSIS_6 $LIB_ROOT/SerialFlash \
 $LIB_ROOT/PXP $LIB_ROOT/MipiDisplay $LIB_ROOT/LVGL \
-$LIB_ROOT/EEPROM $LIB_ROOT/ILI9341_t3 $LIB_ROOT/TouchPanel $LIB_ROOT/Bounce2"}
+$LIB_ROOT/EEPROM $LIB_ROOT/ILI9341_t3 $LIB_ROOT/TouchPanel $LIB_ROOT/Bounce2 \
+$LIB_ROOT/SynthUI"}
+# SynthUI joined 2026-08-16 with display/synthui_knob_test, the first example to
+# link it. Same finding as the three below, caught before it fired: its widget
+# sources enter the link manifest, so Part 2 would report them OUTSIDE SWEPT
+# ROOTS. The repo is MIT throughout; its reference/ material is design reference
+# that nothing compiles, so no source in a manifest comes from there.
 # ILI9341_t3, TouchPanel and Bounce2 joined 2026-08-14: Part 2's REPOS-coverage
 # check (below) found their sources in link manifests while Part 1 never swept
 # them — 7, 3 and 2 dep paths respectively. Adding a repo here is always the
@@ -240,6 +246,7 @@ examples/display/pxp_decimate_test:pxp_decimate_test examples/display/pxp_yuv_te
 examples/display/rk055_panel_test:rk055_panel_test \
 examples/display/rk055_touch_test:rk055_touch_test \
 examples/display/rpi_panel_test:rpi_panel_test \
+examples/display/synthui_knob_test:synthui_knob_test \
 examples/dualcore/cm4_audio_test:cm4_audio_test \
 examples/dualcore/cm4_audiostream_test:cm4_audiostream_test \
 examples/dualcore/cm4_boot_test:cm4_boot_test examples/dualcore/cm4_cpp_test:cm4_cpp_test \

@@ -231,6 +231,35 @@ transcript".
 
 ---
 
+## `rt1176:display/synthui_knob_test` — SKIP on a fresh clone, by design
+
+★ **This is the tree's first SKIP-class local-only dependency, and SKIP is a
+different animal from the RED ones above.** The example links the `SynthUI`
+sibling library, which is **unpushed** — it exists only as a local checkout at
+`$TEENSY_LIB_ROOT/SynthUI`. `import_evkb_synthui()` raises `FATAL_ERROR` when
+that checkout is absent (or under `-DEVKB_FORCE_FETCH=ON`, whose pinned URL does
+not exist yet), so on a fresh clone the example **cannot configure at all** →
+no `build/synthui_knob_test.elf` → the runner reports **SKIP `(not built)`**,
+not a failure.
+
+**Why the distinction matters enough to write down.** The other local-only
+dependencies (`rt1062:audio/audioinput_i2s_test`, `usb/usb_descriptor_survey`,
+`dualcore/cm4_usb_irq_probe`) all *build*; only QEMU behaviour differs, so they
+surface as REDs and every one of them is documented above as an expected red.
+This one is invisible in the pass/fail columns and shows up only in the SKIP
+count — and `0 SKIP` is precisely the number CLAUDE.md calls load-bearing,
+because it is what says the sweep covered everything rather than quietly
+measuring less. Someone on a clean machine seeing `N-1 passed, 0 failed, 1 SKIP`
+needs to be able to tell this expected gap from a sweep that under-reported.
+
+**On this bench it is not skipped**: the checkout exists, so the gate builds,
+runs and passes like any other. The fix that removes this entry is pushing
+SynthUI to `github.com/newdigate/SynthUI` and bumping the `evkb.cmake` pin —
+after which the fetch path works and a fresh clone builds it like anything else.
+
+The example's `CMakeLists.txt` carries a comment pointing here, so whoever's
+configure just died reads the explanation at the point of failure.
+
 ## Rules for this list
 
 - **Do not delete, weaken, or `exit 0` a gate to get it off this list.** That defeats the entire

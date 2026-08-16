@@ -124,6 +124,7 @@ teensy_declare_library(fnet           FNET/src             https://github.com/ne
 teensy_declare_library(lwip           lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
 teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            6fa16a733d3d2a30b18f7ec15a2ad3791b02c66f .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
+teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         a1b6da7572a9125f901a9d9d26fc371e7689e672 .) # LOCAL-ONLY (unpushed): resolves under TEENSY_LIB_ROOT; fresh clones fail here until SynthUI's first push -- same class as the qemu2-local gate deps. Not Arduino-layout for imports: use import_evkb_synthui().
 teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          f539ff4b0a5c964c3d3ae85d7195be0e791b55de .) # LOCAL-ONLY (unpushed): resolves under TEENSY_LIB_ROOT; fresh clones fail here until VGLite's first push. Not Arduino-layout: use import_evkb_vglite().
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 teensy_declare_library(Bounce2        Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
@@ -293,6 +294,45 @@ macro(import_evkb_vglite)
         target_compile_definitions(VGLite PUBLIC VG_DRIVER_SINGLE_THREAD=1)
         target_link_libraries(VGLite PRIVATE teensy_flags)
         target_link_libraries(VGLite PUBLIC m)
+    endif()
+endmacro()
+
+# --- SynthUI -----------------------------------------------------------------
+# Plain STATIC target like LVGL/CMSIS-DSP: the widgets #include <lvgl.h>, whose
+# include dirs only propagate through a real target_link_libraries edge --
+# teensy_target_link_libraries() would rewrite the name to SynthUI.o and lose
+# them.  PUBLIC LVGL so consumers get lvgl.h and -lm transitively.
+macro(import_evkb_synthui)
+    if(NOT TARGET SynthUI)
+        # SynthUI is LOCAL-ONLY (unpushed): the pinned URL/SHA above are
+        # documentary and cannot be fetched yet. teensy_resolve_library() (what
+        # evkb_library_dir() calls) reads TEENSY_FORCE_FETCH, not
+        # EVKB_FORCE_FETCH directly -- evkb.cmake folds the latter into the
+        # former near the top of this file, so TEENSY_FORCE_FETCH is the one
+        # actually in effect here. Guard before evkb_library_dir() runs, or a
+        # fresh clone / -DEVKB_FORCE_FETCH=ON configure would fall into the CPM
+        # fetch branch and hang on an interactive git credential prompt instead
+        # of failing loudly.
+        if(TEENSY_FORCE_FETCH OR NOT EXISTS "${TEENSY_LIB_ROOT}/SynthUI/src")
+            message(FATAL_ERROR "import_evkb_synthui(): SynthUI is LOCAL-ONLY "
+                "(unpushed) -- its pinned URL cannot be fetched yet. Expected a "
+                "checkout at ${TEENSY_LIB_ROOT}/SynthUI (TEENSY_LIB_ROOT "
+                "defaults to ~/Development; set it if SynthUI lives elsewhere). "
+                "Force-fetch (-DEVKB_FORCE_FETCH=ON / -DTEENSY_FORCE_FETCH=ON) "
+                "is not supported for this library yet.")
+        endif()
+        import_evkb_lvgl()
+        evkb_library_dir(SynthUI _evkb_synthui_dir)
+        file(GLOB _evkb_synthui_src CONFIGURE_DEPENDS
+             "${_evkb_synthui_dir}/src/*.cpp")
+        add_library(SynthUI STATIC ${_evkb_synthui_src})
+        target_include_directories(SynthUI PUBLIC "${_evkb_synthui_dir}/src")
+        # m explicit, not just borrowed from LVGL's PUBLIC m above (that link's
+        # own comment calls it "inert today", i.e. removable): Task 5's draw
+        # port calls cosf/sinf/lroundf directly, so SynthUI needs its own claim
+        # on libm regardless of what LVGL keeps.
+        target_link_libraries(SynthUI PUBLIC LVGL m)
+        target_link_libraries(SynthUI PRIVATE teensy_flags)
     endif()
 endmacro()
 

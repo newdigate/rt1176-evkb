@@ -98,7 +98,8 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **92 gates** (91 before the
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **93 gates** (92 before the
+SynthUI Knob pilot added `display/synthui_knob_test`; 91 before the
 step sequencer added `audio/step_seq_test`; 90 before the
 transport added `audio/transport_test`; 89 before the
 acid-bass voice added `audio/acid_bass_test`; 87 before Phase 5b
@@ -114,11 +115,24 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **92 passed, 0 failed, 0 SKIP**, or
-**91 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **93 passed, 0 failed, 0 SKIP**, or
+**92 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
-✅ **Measured 2026-08-15: 92 passed, 0 failed, 0 SKIP.** A fully clean sweep,
-including the two dual-core Wire gates that were red earlier the same day —
+✅ **Measured 2026-08-16: 93 passed, 0 failed, 0 SKIP.** A fully clean sweep on
+the merge of the SynthUI Knob pilot, `rt1176:dualcore/cm4_audio_test` included.
+
+★ `display/synthui_knob_test` is **SKIP-class on a fresh clone**, which is a
+different failure mode from every other documented exception and the reason
+`docs/KNOWN-BROKEN-GATES.md` now has an entry for it: SynthUI is unpushed, so
+`import_evkb_synthui()` FATAL_ERRORs, the example cannot configure at all, and
+the runner reports `(not built)` — invisible in the pass/fail columns and
+visible only in the SKIP count. On this bench the checkout exists, so it builds
+and passes like any other gate.
+
+The previous baseline, kept because its account is still the reference for the
+WM8962 lesson: **measured 2026-08-15: 92 passed, 0 failed, 0 SKIP**, a fully
+clean sweep including the two dual-core Wire gates that were red earlier the
+same day —
 `cm4_wire_test` and `cm4_wire_int_master_test` had been asserting
 `rdv=00000000`, a value produced only by QEMU's old WM8962 *stub*. That stub is
 now a real model returning the true 0x6243 device ID, so both gates assert what
