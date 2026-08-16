@@ -47,8 +47,10 @@ grep -qE "LVGL_BYTES=3686400\r?$" "$OUT" || { echo "FAIL: wrong byte count"; exi
 # 9.4.0, XRGB8888 (LV_COLOR_DEPTH=32), montserrat 14/28; stable across two
 # consecutive QEMU runs. Independently cross-verified on a host build of the
 # same widget+scene (clang/macOS vs ARM GCC/QEMU): all five sums bit-identical
-# -- see the Task 6 review record. Hardware eye confirmation is pending until
-# Task 9 (see transcript_hw_evkb.txt).
+# -- see the Task 6 review record. HARDWARE CONFIRMED 2026-08-16: all five
+# sums reproduced exactly on the EVKB and the scene was seen on the RK055 by a
+# human, so these pin correctness and not merely reproducibility
+# (transcript_hw_evkb.txt).
 grep -qE "KNOB_SUM_ALL=0x8E1F9956\r?$"     "$OUT" || { echo "FAIL: grid checksum"; exit 1; }
 grep -qE "KNOB_SUM_ENDLESS=0xBF7FAB41\r?$" "$OUT" || { echo "FAIL: endless checksum"; exit 1; }
 grep -qE "KNOB_SUM_BOUNDED=0x7D77023E\r?$" "$OUT" || { echo "FAIL: bounded checksum"; exit 1; }
