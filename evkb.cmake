@@ -107,7 +107,7 @@ include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
 # teensy_declare_library(NAME <subdir under TEENSY_LIB_ROOT> URL REF <sub-path
 # inside the fetched repo>). NAME is what examples pass to
 # import_evkb_library()/evkb_library_dir() (matches the existing call sites).
-teensy_declare_library(cores          teensy-cores/${EVKB_CORE_SUBDIR} https://github.com/newdigate/teensy-cores    5bcae781b6c0e451f073298ddf7e1cd859f3e4de ${EVKB_CORE_SUBDIR})
+teensy_declare_library(cores          teensy-cores/${EVKB_CORE_SUBDIR} https://github.com/newdigate/teensy-cores    fcd22b0c58c4d9c8099b999e5eeb28b57593e441 ${EVKB_CORE_SUBDIR})
 teensy_declare_library(Wire           Wire                 https://github.com/newdigate/Wire            19babd18b83bc2f9ddbd16f6afefcbb42558530d .)
 teensy_declare_library(SPI            SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
 teensy_declare_library(PXP            PXP                  https://github.com/newdigate/PXP             5658e34885ff3a5cb5516a178ba60743e62a7517 .)

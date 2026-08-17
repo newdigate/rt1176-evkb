@@ -385,3 +385,57 @@ Worth noting BT_WAKE_HOST asserted low is what an NXP BT controller does when it
 has something to say to the host. This card may be sitting in its boot ROM
 waiting for a firmware download over UART -- which on this board it can never
 receive an answer to, because R1901 is DNP.
+
+=====================================================
+TRANSMIT-AND-WATCH over LPUART2 — no reaction
+=====================================================
+
+Date: 2026-08-17 (same session). Serial2 (LPUART2) brought up for this, TX only
+in practice -- the card's reply path dies at DNP R1901. No flow control: CTS/RTS
+would mux DISP_B2_12/13, which are the gigabit PHY's interrupt and reset lines.
+
+Method: sample pin 20 for ~20 ms (2000 reads) as a baseline, transmit HCI Reset
+(H4: 01 03 0C 00), sample another ~20 ms, and compare. If the card is listening,
+processing an HCI command is exactly the kind of thing that makes an NXP
+controller move BT_WAKE_HOST.
+
+    serial2=up_115200
+    hci_probe: before[high=0 edges=0] after[high=0 edges=0] serial2_rx: total=1 last=0x0
+    (identical on every 5 s repetition)
+
+RESULT: no reaction. Pin 20 stays low; ZERO edges in either window. The card
+does not observably respond to UART traffic.
+
+The RX byte is not from the card
+--------------------------------
+
+`serial2_rx: total=1 last=0x0` looked alarming -- R1901 is DNP, so nothing
+should ever arrive. It is an artefact: exactly ONE byte, value 0x00, latched at
+Serial2.begin() and never repeated across 40 s of running. That is the classic
+signature of a pad being muxed -- the line settling to idle-high reads as a
+start bit followed by zeros. Note this pad also reaches Arduino header pin J9.2
+through fitted R2, so it is a floating header pin either way.
+
+Checked rather than assumed, because if real bytes had accumulated the R1901
+finding would be wrong and Track B would not be blocked.
+
+What the permanently-low wake line does and does not tell us
+------------------------------------------------------------
+
+BT_WAKE_HOST is held low continuously, from power-up, and never moves. The
+datasheet says "Active Low by default... used by the Bluetooth radio to wake up
+the platform". Two readings remain open and this test does not separate them:
+
+ (a) The card's support circuitry is powered (its NTB0104 is enabled, which
+     requires the card's VIO) but the MAYA-W1 module inside is NOT running, so
+     its BT_WAKE_HOST output simply sits low.
+ (b) Low is the module's normal asserted state after boot, and the module IS
+     running but has nothing further to say over a channel it cannot complete.
+
+Either way the card is drawing power and driving a pin, which is more than a
+dead card does.
+
+Next step that WOULD separate them: fit R1901 (0402, 0 Ω) and read the card's
+UART directly. That is now the single highest-value modification to this board
+-- it converts the only bidirectional interface the card has from write-only to
+usable, and would say immediately whether the module answers HCI at all.

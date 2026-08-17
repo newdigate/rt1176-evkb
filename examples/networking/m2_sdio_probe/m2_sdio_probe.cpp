@@ -136,6 +136,26 @@ static void m2BtWakeProbe(bool *up, bool *down, uint32_t *padRead) {
 
 static void m2PollBtWake() { if (!m2BtWakeLevel()) g_btWakeEverLow = true; }
 
+// Sample pin 20 hard and report whether it EVER leaves its held-low state, and
+// how many edges we see.  A card that is merely powered holds it low; a card
+// that is LISTENING should react to traffic we send it.
+static void m2BtWakeSample(uint32_t iters, bool *anyHigh, uint32_t *edges) {
+    bool prev = m2BtWakeLevel(); bool hi = prev; uint32_t e = 0;
+    for (uint32_t i = 0; i < iters; i++) {
+        bool now = m2BtWakeLevel();
+        if (now != prev) { e++; prev = now; }
+        if (now) hi = true;
+        delayMicroseconds(10);
+    }
+    *anyHigh = hi; *edges = e;
+}
+
+// HCI Reset, H4 framing: packet type 0x01 (command), opcode 0x0C03, plen 0.
+// If the card is running BT firmware it must answer with a Command Complete --
+// which we can never read (R1901 is DNP) -- but processing it is exactly the
+// kind of thing that makes an NXP controller assert BT_WAKE_HOST.
+static const uint8_t HCI_RESET[] = { 0x01, 0x03, 0x0C, 0x00 };
+
 static const char *statusName(SdioHost::Status s) {
     switch (s) {
         case SdioHost::OK:               return "ok";
@@ -249,6 +269,13 @@ void setup() {
     Serial1.println("RT1176 M.2 SDIO probe up");
 
     m2WatchBtWakeInit();
+
+    // LPUART2 -> J54 pin 32 (card UART_RXD).  TX only in practice: the card's
+    // reply path dies at R1901, which is DNP on this board.  No flow control --
+    // CTS/RTS are the gigabit PHY's interrupt and reset lines here.
+    Serial2.begin(115200);
+    Serial1.println("serial2=up_115200");
+
     m2ReleaseWifiReset();
     Serial1.println("m2_wifi_reset=released");
 
@@ -276,6 +303,33 @@ void loop() {
     // having wedged in it.  A fallback gate without this cannot tell "took the
     // fallback" from "died".
     m2PollBtWake();
+
+    // Every ~5 s: characterise the wake line quietly, transmit HCI Reset, then
+    // characterise it again.  A difference between the two is the card
+    // reacting to us -- the only positive signal available on this board.
+    if (n % 25 == 24) {
+        bool hiBefore=false, hiAfter=false; uint32_t eBefore=0, eAfter=0;
+        m2BtWakeSample(2000, &hiBefore, &eBefore);          // ~20 ms baseline
+        Serial2.write(HCI_RESET, sizeof(HCI_RESET));
+        Serial2.flush();
+        m2BtWakeSample(2000, &hiAfter, &eAfter);            // ~20 ms after TX
+        Serial1.print("hci_probe: before[high=");
+        Serial1.print(hiBefore); Serial1.print(" edges="); Serial1.print(eBefore);
+        Serial1.print("] after[high="); Serial1.print(hiAfter);
+        Serial1.print(" edges="); Serial1.print(eAfter);
+        // Drain and characterise anything on Serial2 RX.  R1901 is DNP so the
+        // card CANNOT reach us -- if real bytes accumulate here that finding is
+        // wrong and Track B is not blocked after all.  The likelier source is
+        // noise: this same pad reaches Arduino header pin J9.2 through fitted
+        // R2, so it is a floating header pin picking up interference.
+        static uint32_t rxTotal = 0; static int lastByte = -1;
+        while (Serial2.available()) { lastByte = Serial2.read(); rxTotal++; }
+        Serial1.print("] serial2_rx: total=");
+        Serial1.print(rxTotal);
+        Serial1.print(" last=0x");
+        Serial1.println(lastByte < 0 ? 0 : lastByte, HEX);
+    }
+
     Serial1.print("alive=");
     Serial1.println(n++);
     // Re-report every 5 s so a reader attached at any moment sees the result,
