@@ -749,6 +749,20 @@ next commit."
 **Files:**
 - Modify: `examples/display/acid_box/acid_box.cpp` (replace the `build_ui` stub; add callbacks + poller)
 
+★ **Decide here (deferred from Task 1's review): cross-axis scroll chaining.**
+The knob turns off `SCROLL_CHAIN_VER` permanently, but leaves
+`SCROLL_CHAIN_HOR` on. `lv_indev_find_scroll_obj()` picks hor-vs-ver by
+comparing `|scroll_sum.x|` against `|scroll_sum.y|` accumulated over the WHOLE
+press, so a vertical drag with enough horizontal wander can flip to `hor_en`
+and let a horizontally-scrollable ancestor steal the press (PRESS_LOST
+mid-turn). `lv_slider` handles this by removing the CROSS-axis flag only once
+a drag is established and restoring it on RELEASED/PRESS_LOST
+(`lv_slider.c:653-656`, `331-332`). This screen's containers are not
+horizontally scrollable as laid out below, so nothing bites today — but if a
+knob is ever put inside a horizontally scrolling panel, port the slider's
+temporary-removal pattern rather than clearing the flag permanently (a
+horizontal swipe across a knob panel is a legitimate gesture worth keeping).
+
 - [ ] **Step 1: Replace the stub with layout A + glue.** Complete code:
 
 ```cpp
