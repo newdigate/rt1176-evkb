@@ -49,6 +49,14 @@ Build dirs configured before 2026-08-14 cached an absolute toolchain path that
 no longer exists; their elfs remain valid (gates run them unchanged), but the
 first reconfigure fails with "toolchain file not found" — `rm -rf` the build
 dir and configure fresh with the command above.
+★ **The same staleness also presents as `COMPILERPATH is UNDEFINED`** (from
+`teensy-cmake-macros/CMakeLists.include.txt:72`), which does not mention a
+toolchain at all — met 2026-08-16 in seven display build dirs when an
+`evkb.cmake` pin bump triggered their first reconfigure since. Same cause, same
+fix. Note what makes it easy to misread: these dirs had been passing gates all
+along, because a gate runs the cached `.elf` and never reconfigures. **A green
+sweep is not evidence that a build dir can still configure** — the two are
+tested by different actions.
 
 (`storage-memory/sd_test`, `audio/sd_wav_play_test`, `display/pxp_composite_test`
 and `display/pxp_draw_bench` inline their toolchain, so none of the four need
