@@ -119,3 +119,79 @@ must be switched to 1.8V (it is selectable — U311, an NX3L1G53GT SPDT switch,
 under SD1_VSELECT). But NXP configures kSD_IOVoltageCtrlByHost, which is the
 UHS switch performed AFTER identification, and standard SDIO begins at 3.3V.
 The default 3.3V leg is correct for CMD5.
+
+=====================================================
+CROSS-CHECK: NXP's own wifi_cli on the same board
+=====================================================
+
+Date: 2026-08-17 (same session)
+
+To separate "our driver is wrong" from "this card does not come up", NXP's
+reference application was built from their SDK and run on the same board.
+
+Build
+-----
+  SDK:       ~/Development/mcuxsdk-ws (west workspace, MCUXpresso SDK 26.x)
+  Example:   examples/wifi_examples/wifi_cli
+  Command:   west build -b evkbmimxrt1170 examples/wifi_examples/wifi_cli \
+               --toolchain armgcc --config flexspi_nor_debug -Dcore_id=cm7 \
+               -DCONFIG_MCUX_COMPONENT_component.wifi_bt_module.board_murata_1xk_m2=y
+  Toolchain: ARM GCC 10.2.1 (SDK warns it prefers 14.2.1; built clean anyway)
+
+Two things had to be supplied by hand, both absent from the west workspace:
+  * components/conn_fwloader/fw_bin — the west project is declared but was
+    never fetched. Copied from the full SDK download at
+    ~/Development/rt1060/SDK_26_03_00_MIMXRT1060-EVKB (chipset firmware is
+    board-independent). ~315 MB, LA_OPT_NXP_Software_License — NXP binary
+    licence, stays in the SDK workspace, MUST NOT enter this repo.
+  * rtos/freertos — likewise copied from the same SDK download (~25 MB).
+
+Note: use --config flexspi_nor_debug, NOT flexspi_nor_sdram_debug. The SDRAM
+variant flashes fine but `LinkServer run` cannot load it ("stub terminated with
+return code 1") and it produced no console output.
+
+Result
+------
+
+    ========================================
+    wifi cli demo
+    ========================================
+    Initialize CLI
+    ========================================
+    CLI Build: Aug 17 2026 [21:30:49]
+    Copyright  2024  NXP
+    MCU Board: MIMXRT1170-EVKB
+    ========================================
+    Initialize WLAN Driver
+    ========================================
+
+...and nothing further, held for 30 s. The CLI task stays alive — a `#` prompt
+answers over the VCOM — but the WLAN initialisation never completes, and none
+of the wlan-* commands are ever registered:
+
+    # wlan-version
+    command 'wlan-version' not found
+
+CONCLUSION
+----------
+
+NXP's own reference software, on NXP's own board, with NXP's own firmware
+blobs, reset sequence and clock configuration, ALSO FAILS TO BRING THIS CARD UP,
+hanging at exactly the same stage ours does: SDIO enumeration inside WLAN init.
+
+This exonerates M2Radio's SdioHost. The fault is not in our driver. It is the
+card, the socket, or this card's compatibility with this host.
+
+Caveat, stated honestly
+-----------------------
+
+NXP's SDK has **no M.2 configuration for the MAYA-W1**. The module list offers
+`UBX-MAYA-W1-USD` (the micro-SD adapter form factor) and `UBX-JODY-W5-M2`, but
+no MAYA-W1 M.2. The build therefore used `IW416-MURATA-1XK-M2` — the only IW416
+M.2 option — as the closest proxy: same chipset, same form factor.
+
+That proxy should not matter for enumeration. The enable/reset GPIOs and the
+SDIO wiring are properties of the EVKB, not of the card; per-module config is
+mostly TX power tables and antenna settings, which are applied long after CMD5.
+But it is not a zero-risk assumption, and it is worth noting that NXP appears
+not to validate a MAYA-W1 M.2 card on this EVK at all.
