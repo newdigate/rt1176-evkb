@@ -292,8 +292,9 @@ Repo-wide gates in `tools/`:
 - `license-audit.sh` — proves no copyleft source is compiled into firmware
   (header sweep + binary-provenance check + link-manifest depfile audit). The
   tree is permissive-only — MIT/BSD, plus **Apache-2.0 in exactly two files**
-  (`VGLite/vg_lite_flat.{c,h}`, the Bézier flatteners `vg_lite.c` calls from its
-  stroke path); every inherited LGPL file has a clean-room rewrite. Don't
+  (`VGLite/vg_lite_flat.{c,h}`, recorded in that repo's `NOTICE` — the Bézier
+  flatteners `vg_lite.c` calls from its stroke path, so they do link); every
+  inherited LGPL file has a clean-room rewrite. Don't
   introduce GPL/LGPL/MPL code or dependencies, and don't vendor a prebuilt
   binary without licence text beside it.
   ★ **Green does NOT mean "this tree is MIT".** The audit greps for COPYLEFT,
