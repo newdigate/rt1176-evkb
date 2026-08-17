@@ -1,0 +1,18 @@
+vglite_lvgl_test -- QEMU (mimxrt1170-evk), software build (EVKB_VGLITE=OFF)
+================================================================================
+2026-08-17. The gate's captured UART, verbatim. This is the SOFTWARE renderer:
+QEMU has no GC355, and the GPU path is a separate BUILD, not a runtime branch
+(LVGL registers draw units at compile time -- see the sketch header). The
+golden 0x513C4DB8 is the software one; the GPU build's 0xC3C6171A lives in
+transcript_hw_evkb.txt and the two are never reconciled.
+================================================================================
+
+VGLITE_LVGL_BEGIN
+PANEL_OK
+VGLITE_CHIP_ID=0xNOTBUILT
+VGLITE_INIT=NOTBUILT err=0 reason=software_build
+VGLITE_LVGL=SOFTWARE
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+KNOB_GRID_SUM_SW=0x513C4DB8
+VGLITE_LVGL_DONE
