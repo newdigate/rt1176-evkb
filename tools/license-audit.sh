@@ -37,11 +37,24 @@ $LIB_ROOT/SynthUI $LIB_ROOT/VGLite"}
 # VGLite joined 2026-08-16 with display/vglite_probe, the first example to link
 # it. It is the first VENDORED third-party driver in this list rather than a
 # newdigate fork, so the sweep is doing more than coverage bookkeeping here:
-# NXP/Vivante ship VGLite under MIT (VENDORING.md records what was taken and
-# from where), and Part 1 re-proves that on every run against the actual files.
+# NXP/Vivante ship VGLite permissively (VENDORING.md records what was taken and
+# from where), and Part 1 re-proves no copyleft on every run against the actual
+# files.
 # Nothing under tools/nxp-oracle/ is vendored SDK — it is a CMakeLists, a linker
 # script and a README that point at an out-of-tree MCUXpresso install — so no
 # NXP-EULA source enters this tree with it.
+# ★ It is also this list's first NON-MIT entry, and the way that surfaced is
+# worth keeping. VGLite/vg_lite_flat.{c,h} are Apache-2.0 (Raph Levien /
+# Nicolas Silva / NXP 2022) and compile into firmware — vg_lite.c calls their
+# Bézier flatteners from its stroke path. This audit passed throughout, exactly
+# as designed: $COPYLEFT matches GPL/LGPL/MPL, and Apache-2.0 is none of those.
+# So a green run means NO COPYLEFT, not "everything here is MIT". If you need
+# the latter, survey per file:
+#   for f in $(git ls-files '*.c' '*.h'); do \
+#     printf '%-46s %s\n' "$f" "$(grep -m1 -o 'MIT License\|Apache License' "$f")"; done
+# Do NOT add Apache-2.0 to $COPYLEFT to "cover" this — it is permissive, and
+# making the copyleft check fail on permissive licences would destroy the
+# meaning of the one signal this script exists to give.
 # SynthUI joined 2026-08-16 with display/synthui_knob_test, the first example to
 # link it. Same finding as the three below, caught before it fired: its widget
 # sources enter the link manifest, so Part 2 would report them OUTSIDE SWEPT

@@ -291,9 +291,17 @@ gate was genuinely added.
 Repo-wide gates in `tools/`:
 - `license-audit.sh` — proves no copyleft source is compiled into firmware
   (header sweep + binary-provenance check + link-manifest depfile audit). The
-  tree is deliberately MIT/BSD-only; every inherited LGPL file has a clean-room
-  rewrite. Don't introduce GPL/LGPL/MPL code or dependencies, and don't vendor a
-  prebuilt binary without licence text beside it.
+  tree is permissive-only — MIT/BSD, plus **Apache-2.0 in exactly two files**
+  (`VGLite/vg_lite_flat.{c,h}`, the Bézier flatteners `vg_lite.c` calls from its
+  stroke path); every inherited LGPL file has a clean-room rewrite. Don't
+  introduce GPL/LGPL/MPL code or dependencies, and don't vendor a prebuilt
+  binary without licence text beside it.
+  ★ **Green does NOT mean "this tree is MIT".** The audit greps for COPYLEFT,
+  and Apache-2.0 is not copyleft — so it passed, correctly, while VGLite's own
+  README claimed "MIT throughout" and was wrong for a day. The audit answers
+  *is there copyleft here*, not *is each repo the licence it advertises*. The
+  second question needs a per-file survey; VGLite's `VENDORING.md` carries the
+  one-liner that does it, and that is the check to run when vendoring anything.
   An entry may name a **build directory** (`examples/…/build-rt1062:target`)
   rather than an example directory, so a second board's build of the same
   example gets its own depfile walk. It needs one: `EVKB_BOARD=rt1062` links a
