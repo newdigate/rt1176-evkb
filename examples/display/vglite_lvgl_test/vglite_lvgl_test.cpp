@@ -56,6 +56,29 @@ EXTMEM __attribute__((aligned(64))) static uint8_t vglite_pool[VGLITE_POOL_BYTES
 #define TESS_H 256
 #endif
 
+#if LV_USE_LOG
+/* Diagnostic builds only (-DLV_USE_LOG=1): capture LVGL's log stream into a
+ * RAM ring readable over SWD, because the backend explains every skipped or
+ * failed draw via LV_LOG_WARN/ERROR and the bench VCOM cannot be assumed.
+ * Read it with:  gdb ... -ex 'x/s swd_log'  (or dump SWD_LOG_BYTES at the
+ * symbol). swd_log_pos never wraps; the tail is simply dropped -- a bounded
+ * diagnostic beats a clever one. */
+#define SWD_LOG_BYTES 8192
+extern "C" {
+volatile uint32_t swd_log_pos = 0;
+char swd_log[SWD_LOG_BYTES];
+}
+static void swd_log_cb(lv_log_level_t level, const char *buf)
+{
+    (void)level;
+    uint32_t p = swd_log_pos;
+    while (*buf && p < SWD_LOG_BYTES - 1) swd_log[p++] = *buf++;
+    if (p < SWD_LOG_BYTES - 1) swd_log[p++] = '\n';
+    swd_log[p] = '\0';
+    swd_log_pos = p;
+}
+#endif
+
 static const float               col_angle[4] = { -105.0f, -35.0f, 35.0f, 105.0f };
 static const lv_state_t          col_state[4] = { LV_STATE_DEFAULT, LV_STATE_PRESSED,
                                                   LV_STATE_FOCUSED, LV_STATE_DISABLED };
@@ -65,6 +88,71 @@ static const synthui_knob_mode_t row_mode[4]  = { SYNTHUI_KNOB_MODE_ENDLESS,
                                                   SYNTHUI_KNOB_MODE_ARC };
 
 static bool s_gpu = false;
+
+#ifdef GRADPROBE
+/* Diagnostic scene, built only when -DGRADPROBE (separate build dir, never
+ * a golden). Isolates the knob face's ingredients after the 4x4 scene showed
+ * the GPU painting every face a flat out-of-gamut colour: each tile is ONE
+ * primitive with known colors at a known place, so a framebuffer dump turns
+ * "the face looks wrong" into per-primitive arithmetic. Tiles, top to
+ * bottom at x=285, 150x150, 160 pitch:
+ *   0 rect, vertical gradient FCFBF6->E7E7F1 (the exact face gradient)
+ *   1 + radius=CIRCLE
+ *   2 circle, SOLID FCFBF6 (no gradient)
+ *   3 circle, gradient + border (the full face recipe)
+ *   4 solid MAGENTA rect + centred FDFDF9@140 disc (the cap over known dst)
+ *   5 rect, vertical gradient FF0000->0000FF (saturated signature)
+ *   6 rect, vertical gradient 000000->FFFFFF (ramp shape)
+ *   7 rect, HORIZONTAL gradient FF0000->0000FF (direction check) */
+static lv_obj_t *probe_tile(lv_obj_t *scr, int i, uint32_t c0, uint32_t c1,
+                            lv_grad_dir_t dir, int32_t radius, int32_t border)
+{
+    lv_obj_t *o = lv_obj_create(scr);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_size(o, 150, 150);
+    lv_obj_set_pos(o, 285, 5 + i * 160);
+    lv_obj_set_style_radius(o, radius, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(o, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(o, lv_color_hex(c0), LV_PART_MAIN);
+    if (dir != LV_GRAD_DIR_NONE) {
+        lv_obj_set_style_bg_grad_color(o, lv_color_hex(c1), LV_PART_MAIN);
+        lv_obj_set_style_bg_grad_dir(o, dir, LV_PART_MAIN);
+    }
+    if (border > 0) {
+        lv_obj_set_style_border_width(o, border, LV_PART_MAIN);
+        lv_obj_set_style_border_color(o, lv_color_hex(0x2b2e5c), LV_PART_MAIN);
+        lv_obj_set_style_border_opa(o, LV_OPA_COVER, LV_PART_MAIN);
+    }
+    return o;
+}
+
+static lv_obj_t *build_grid(void)
+{
+    lv_obj_t *scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x101820), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+
+    probe_tile(scr, 0, 0xFCFBF6, 0xE7E7F1, LV_GRAD_DIR_VER, 0, 0);
+    probe_tile(scr, 1, 0xFCFBF6, 0xE7E7F1, LV_GRAD_DIR_VER, LV_RADIUS_CIRCLE, 0);
+    probe_tile(scr, 2, 0xFCFBF6, 0,        LV_GRAD_DIR_NONE, LV_RADIUS_CIRCLE, 0);
+    probe_tile(scr, 3, 0xFCFBF6, 0xE7E7F1, LV_GRAD_DIR_VER, LV_RADIUS_CIRCLE, 4);
+    lv_obj_t *dst = probe_tile(scr, 4, 0xFF00FF, 0, LV_GRAD_DIR_NONE, 0, 0);
+    {
+        lv_obj_t *cap = lv_obj_create(dst);
+        lv_obj_remove_style_all(cap);
+        lv_obj_set_size(cap, 100, 100);
+        lv_obj_center(cap);
+        lv_obj_set_style_radius(cap, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(cap, lv_color_hex(0xFDFDF9), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(cap, 140, LV_PART_MAIN);
+    }
+    probe_tile(scr, 5, 0xFF0000, 0x0000FF, LV_GRAD_DIR_VER, 0, 0);
+    probe_tile(scr, 6, 0x000000, 0xFFFFFF, LV_GRAD_DIR_VER, 0, 0);
+    probe_tile(scr, 7, 0xFF0000, 0x0000FF, LV_GRAD_DIR_HOR, 0, 0);
+    return scr;
+}
+
+#else /* !GRADPROBE -- the real scene, the one goldens are recorded against */
 
 static lv_obj_t *build_grid(void)
 {
@@ -92,6 +180,8 @@ static lv_obj_t *build_grid(void)
     }
     return scr;
 }
+
+#endif /* GRADPROBE */
 
 void setup()
 {
@@ -137,6 +227,9 @@ void setup()
     Serial1.printf("VGLITE_LVGL=%s\n", s_gpu ? "GPU" : "SOFTWARE");
 
     lvgl_rt1176_begin();
+#if LV_USE_LOG
+    lv_log_register_print_cb(swd_log_cb);
+#endif
     lvgl_mipi_panel_create(Display);
 
     lv_screen_load(build_grid());

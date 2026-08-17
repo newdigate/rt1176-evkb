@@ -107,7 +107,7 @@ include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
 # teensy_declare_library(NAME <subdir under TEENSY_LIB_ROOT> URL REF <sub-path
 # inside the fetched repo>). NAME is what examples pass to
 # import_evkb_library()/evkb_library_dir() (matches the existing call sites).
-teensy_declare_library(cores          teensy-cores/${EVKB_CORE_SUBDIR} https://github.com/newdigate/teensy-cores    5bcae781b6c0e451f073298ddf7e1cd859f3e4de ${EVKB_CORE_SUBDIR})
+teensy_declare_library(cores          teensy-cores/${EVKB_CORE_SUBDIR} https://github.com/newdigate/teensy-cores    67bdcb42c3ac48ae52a3e76c537a06808909a7f5 ${EVKB_CORE_SUBDIR})
 teensy_declare_library(Wire           Wire                 https://github.com/newdigate/Wire            19babd18b83bc2f9ddbd16f6afefcbb42558530d .)
 teensy_declare_library(SPI            SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
 teensy_declare_library(PXP            PXP                  https://github.com/newdigate/PXP             5658e34885ff3a5cb5516a178ba60743e62a7517 .)
@@ -123,7 +123,7 @@ teensy_declare_library(nativeethernet NativeEthernet       https://github.com/ne
 teensy_declare_library(fnet           FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
 teensy_declare_library(lwip           lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
-teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            ea6c5a60584cfc0cf01603161702e7619e6797a6 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
+teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            f4c89ef5632a2d6223a8a1f6e34a825566129a21 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
 teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         e1320124ca55531eb0e8e6a358e6ed573bd1c612 .) # NOT Arduino-layout: use import_evkb_synthui(). Pushed 2026-08-17; the pin then moved to a REWRITTEN history (reference/rebirth/ dropped before going public), so every SHA before e132012 is unreachable.
 teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          87e27edf489c2b6154d8ba091b9d152d5dded6cf .) # NOT Arduino-layout: use import_evkb_vglite(). Pushed 2026-08-17. NXP's VGLite vendored verbatim (MIT, except vg_lite_flat.{c,h} which are Apache-2.0, see its NOTICE -- permissive, no copyleft) plus this tree's bare-metal port.
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
@@ -314,12 +314,56 @@ macro(import_evkb_lvgl)
             # buffers with these; the software defaults (stride 1, align 4) are
             # fine for a CPU renderer and feed the GPU misaligned rows, which
             # renders vector paths correctly while smearing every small blit.
+            # ★ LV_USE_VECTOR_GRAPHIC is REQUIRED for gradients, not an extra:
+            # lv_draw_vg_lite_fill.c compiles its gradient branch (and
+            # lv_vg_lite_grad.c compiles at all) only under it. Without it
+            # every gradient fill hits LV_LOG_WARN and is SKIPPED -- the build
+            # succeeds, solids render, and each gradient surface is simply
+            # absent, which presents as wrong COLOURS, not missing shapes:
+            # the knob face became its semi-transparent cap composited on the
+            # screen background. Found by a primitive-isolation scene
+            # (GRADPROBE) after two sessions of chasing blend/premultiply
+            # theories. ThorVG stays OFF; this enables only LVGL's own
+            # vector API, which the backend maps to the GPU.
+            # ★ The EXT linear-gradient path is DISABLED against this driver,
+            # by contract mismatch measured on silicon: the GC355 v7
+            # vg_lite_update_linear_grad() consumes grad->matrix (NXP's own
+            # example assigns it immediately before the call), but LVGL 9.4
+            # zeroes the item and only assigns the matrix at DRAW time -- so
+            # update sees a zero matrix, the transformed endpoints have
+            # length 0, and it returns INVALID_ARGUMENT. LVGL then trips its
+            # own create-failure assert (grad_item_pool_free, item->ctx) and
+            # the firmware halts: the symptom is a nearly-empty frame, not a
+            # bad gradient. LVGL's sequence fits the newer GC555-style API;
+            # this knob exists in LVGL precisely for that split. The basic
+            # 256-entry-ramp path (vg_lite_draw_grad) is the one this driver
+            # and LVGL agree on.
+            # ★ VLC_OP_CLOSE is removed from emitted paths ("Workaround for
+            # NXP", LVGL's words). Measured on the GC355: a rect carrying
+            # BOTH a gradient fill and a border -- the knob-face recipe --
+            # rendered its interior flooded with border colour plus banding
+            # and rightward streaks, while the identical borderless gradient
+            # beside it was pixel-perfect and every API call reported
+            # success. With CLOSE removed the same tile renders correctly.
+            # Isolated by the GRADPROBE scene, one primitive per tile.
             target_compile_definitions(LVGL PUBLIC
                 LV_USE_DRAW_VG_LITE=1
                 LV_USE_MATRIX=1
                 LV_USE_FLOAT=1
+                LV_USE_VECTOR_GRAPHIC=1
+                LV_VG_LITE_DISABLE_LINEAR_GRADIENT_EXT=1
+                LV_VG_LITE_DISABLE_VLC_OP_CLOSE=1
                 LV_DRAW_BUF_STRIDE_ALIGN=64
                 LV_DRAW_BUF_ALIGN=64)
+            # ★ The GPU-mode LVGL runs XIP from flash, not ITCM. Enabling
+            # LV_USE_VECTOR_GRAPHIC overflowed the 256K ITCM by 25K; on this
+            # path LVGL executes per draw-call (the GPU does the pixels), so
+            # flash residency is the cheap place to give that back.
+            # imxrt1176.ld routes `*libLVGL_flash.a:(.text*)` to .text.progmem
+            # BY THIS NAME -- rename here and there together. Software builds
+            # keep the default archive name and their ITCM placement, so the
+            # fps baseline is not quietly slowed to make the GPU build fit.
+            set_target_properties(LVGL PROPERTIES OUTPUT_NAME "LVGL_flash")
             target_link_libraries(LVGL PUBLIC VGLite)
         endif()
     endif()

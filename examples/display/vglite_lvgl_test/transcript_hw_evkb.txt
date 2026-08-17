@@ -1,9 +1,11 @@
 vglite_lvgl_test -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
 ================================================================================
 2026-08-17. LVGL's VG_LITE draw unit renders the 16-knob grid on the GC355.
-Text and tick marks CONFIRMED CLEAN after the alignment fix below.
-★ NOT YET CORRECT: residual GPU-ONLY artifacts remain. See the open section
-at the foot of this file. The golden below is NOT trustworthy as a golden.
+★ RESOLVED the same day: the artifacts this file spent most of its length on
+are FIXED -- three stacked root causes, none of them the leading hypotheses.
+See "RESOLVED" at the foot. GPU GOLDEN: 0xC3C6171A. The 0x15F05E35 below is
+the ARTIFACT frame's value, recorded and never adopted; the sections between
+here and the resolution are the (kept) investigation record.
 ================================================================================
 
 VGLITE_LVGL_BEGIN
@@ -125,3 +127,118 @@ LEADING HYPOTHESES, in the order worth testing, NEITHER TESTED:
 
 Hypothesis 2 is the cheapest to test and needs no rebuild: look at whether row 1
 (the second row down) is clean while rows 0, 2 and 3 band.
+
+[2026-08-17, later] Hypothesis 2 TESTED ON GLASS AND RULED OUT before the
+resolution below: the non-straddling row banded identically to the others.
+
+
+================================================================================
+RESOLVED: THE GPU RENDER IS CLEAN. 2026-08-17, same bench, three root causes.
+GPU GOLDEN: KNOB_GRID_SUM_GPU=0xC3C6171A          (supersedes nothing -- the
+artifact-frame value 0x15F05E35 was recorded and never adopted, correctly)
+SOFTWARE GOLDEN: 0x513C4DB8 -- UNCHANGED, re-verified in QEMU after every fix.
+================================================================================
+
+None of the leading hypotheses survived measurement. Not premultiply (the
+LVGL_SUPPORT=0 software-premultiply path was never the problem), not
+tessellation (ruled out on glass), not SCISSOR. The artifacts had THREE
+stacked causes, none guessable from the symptom list, all isolated by
+framebuffer dumps (tools/rt1170-screenshot.py, fixed this session) and a
+primitive-isolation scene (GRADPROBE, one draw-recipe per tile):
+
+1. GRADIENTS WERE NEVER DRAWN AT ALL. LV_USE_VECTOR_GRAPHIC defaulted to 0,
+   and the VG_LITE backend compiles its whole gradient machinery
+   (lv_vg_lite_grad.c, the gradient branch of lv_draw_vg_lite_fill.c) only
+   under it. Every gradient fill hit LV_LOG_WARN and was SKIPPED; with
+   logging off, invisibly. The "band" was never a wrong gradient -- it was
+   the knob face's ABSENCE: the semi-transparent cap composited straight
+   onto the screen background (FDFDF9 at 140/255 over 101820 computes to
+   0x929697; measured lower band 0x919596), with the crescent supplying the
+   upper zone's different colour. A colour error confined to a blended
+   region was exactly the premultiply signature -- and the blend was fine;
+   the surface underneath was missing.
+   ★ The build "succeeded" with the whole feature absent. Same lesson as
+   Phase 2a's zero-symbol objects: count symbols, not build exits --
+   lv_vg_lite_draw_grad_helper simply did not exist in the ELF.
+
+2. ENABLING IT UNCOVERED A DRIVER-CONTRACT MISMATCH THAT HALTED THE
+   FIRMWARE. LVGL 9.4's EXT linear-gradient path zeroes the item then
+   assigns the gradient matrix only at DRAW time; the GC355 v7 driver's
+   vg_lite_update_linear_grad() consumes grad->matrix at UPDATE time (NXP's
+   own vglite_layer example assigns the matrix immediately before calling
+   it). Update therefore saw a zero matrix, transformed endpoints of length
+   0, and returned INVALID_ARGUMENT -- after which LVGL's own create-failure
+   path trips an assert (grad_item_pool_free, item->ctx) and the firmware
+   halts: nearly-empty frame, then lockup (PC=0xFFFFFFFE). LVGL's sequence
+   fits the newer GC555-style API. Fix: LV_VG_LITE_DISABLE_LINEAR_GRADIENT_EXT=1
+   -- the knob LVGL ships for exactly this driver split -- routing all
+   gradients through the basic 256-entry-ramp path, which this driver and
+   LVGL agree on.
+
+3. VLC_OP_CLOSE CORRUPTS BORDERED GRADIENT RECTS ON THIS DRIVER. With
+   gradients finally drawing, a rect carrying BOTH a gradient fill and a
+   border -- the exact knob-face recipe -- rendered its interior flooded
+   with border colour plus banding and rightward streaks (the "glitching"),
+   while the identical borderless gradient tile beside it was pixel-perfect.
+   Every API call returned success; the LVGL log captured over SWD was
+   EMPTY. Fix: LV_VG_LITE_DISABLE_VLC_OP_CLOSE=1 ("Workaround for NXP",
+   LVGL's own words). Both artifact classes -- the band's remnant form and
+   the streaks -- vanished together.
+
+Plus one residual correctness fix measured after the frame looked right:
+the VG_LITE fill path DROPS dsc->opa for gradient fills (upstream LVGL does
+too, verified against master), so the DISABLED knobs' faces rendered fully
+opaque while every other primitive dimmed -- disabled face read 0xEFEFF1
+against software's 0xBBBDC0. Fixed in our LVGL fork by folding dsc->opa
+into the stop opacities (lv_draw_vg_lite_fill.c; upstream-shaped, worth
+offering upstream). After it: disabled face 0xBCBDC1 vs software 0xBBBDC0.
+
+FINAL A/B, measured on the dumped framebuffers (not by eye alone):
+  sw-vs-gpu mean |dRGB| = 0.79, pixels with |dRGB|>48 = 0.40%, and the
+  delta heatmap shows pure EDGE contours -- hardware AA vs LVGL mask
+  arithmetic, the difference the two-golden rule exists for. At the worst
+  point of this investigation those numbers were 27.2 mean / 10.2%.
+  The two goldens must still never be reconciled.
+
+VERIFICATION OF THE GOLDEN ITSELF: the host-side FNV-1a over the SWD dump
+of the SOFTWARE build's framebuffer reproduces the QEMU gate's golden
+0x513C4DB8 exactly, which proves the dump path measures precisely the bytes
+lvgl_sum_feed() checksums. The GPU golden 0xC3C6171A is the same computation
+over the GPU build's framebuffer, from a frame inspected as pixels at full
+resolution. The panel scans out this exact buffer; a human glance at the
+glass remains worthwhile as the final formality, but the pixels shown here
+ARE what is being scanned.
+
+THE TOOL THAT MADE THIS TRACTABLE: tools/rt1170-screenshot.py went from
+not-working to load-bearing this session (see its footer for the LinkServer
+accept()-contract diagnosis -- the port-liveness probe WAS the failure).
+With it, hypotheses fell at one flash cycle each instead of one
+flash-and-squint each; the decisive GRADPROBE observation ("gradient tiles
+missing entirely; solid tiles perfect; bordered-gradient tile corrupt") is
+not one an eye on the panel would have decomposed. Auto-geometry from the
+LCDIFv2 layer-0 descriptor turned out to matter immediately: the three
+builds' framebuffers sat at 0x80100040, 0x80200040 and 0x80300040, and the
+first hardcoded default produced a convincing shifted frame from the wrong
+address.
+
+DIAGNOSTIC SCAFFOLDING KEPT, both compiled out of golden builds:
+  - GRADPROBE (-DGRADPROBE): one-primitive-per-tile isolation scene.
+  - swd_log (-DLV_USE_LOG=1): LVGL's log stream into a RAM ring read over
+    SWD. Root cause 2's INVALID_ARGUMENT plus the full gradient parameter
+    dump came from this ring verbatim; with it, "no artifacts AND an empty
+    ring" became the strongest clean-render statement available with the
+    VCOM down.
+
+BENCH STATE AND PROTOCOL, learned the expensive way:
+  - The MCU-Link VCOM went silent early in the session (healthy images,
+    verified flashes, zero console bytes) and stayed silent; every
+    verification above is SWD-based. Physical replug is the likely fix.
+  - ★ A crashed/locked-up core makes the next `LinkServer flash load` FAIL
+    SILENTLY, and a wedged DAP then returns zeros for every read -- one
+    stale-image cycle here produced a perfectly reproducible "result" from
+    an image that was never flashed, and a "LCDIFv2 not configured" reading
+    that was a lie. Protocol now: wiretimedreset BEFORE flashing, `verify`
+    after every load, and treat all-zero register reads as "the DAP is
+    lying", never as data.
+  - crt_emu_cm_redlink stubs whose first gdb client vanished ignore
+    SIGTERM, hold the probe, and starve every later session: pkill -9.
