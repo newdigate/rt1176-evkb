@@ -1,5 +1,26 @@
 # M.2 Phase 0 + B1 (Serial2 on LPUART2) Implementation Plan
 
+> ## ⛔ DEFERRED 2026-08-17 — do not execute tasks 2-8 as written
+>
+> **Task 1 is done** (`8dcae1d`, corrected in `89f0ad3`). Everything after it is
+> on hold, and parts of it are now known to be wrong:
+>
+> * **Flow control must be removed, not implemented.** `R1866` (fitted) ties
+>   `BT_UART_RTS` to `ETHPHY_RST_B` on the RTL8211FDI gigabit PHY. Calling
+>   `setFlowControl(true)` — which Task 2's gate firmware does in `setup()` —
+>   **holds the PHY in reset**. Do not flash that firmware to the board.
+>   Task 4's `flowpins_t`, Task 5's `setFlowControl()` and Task 6's
+>   `UART2_FlowPins` are all superseded.
+> * **Serial2 has no consumer.** `R1901` is DNP, so the Bluetooth link is
+>   transmit-only and Track B is parked. `Serial2` itself remains correct and
+>   buildable; it is deferred under YAGNI, not cancelled.
+> * Task 8's premise that `BT_DISABLE#` must be asserted to stop the module
+>   fighting the loopback jumper is **unnecessary** — with `R1901` unpopulated
+>   the module cannot drive that pad at all.
+>
+> If Track B is revived by fitting `R1901`, re-derive tasks 2-8 from the updated
+> spec rather than executing this file. Board facts: `docs/m2-evkb-revc3.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Document the M.2/J54 board wiring, and add `Serial2` (LPUART2 — the
