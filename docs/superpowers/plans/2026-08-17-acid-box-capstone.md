@@ -1118,8 +1118,17 @@ Assert, in order:
 grep -q "PANEL_OK" "$OUT" || { echo "FAIL: panel"; exit 1; }
 grep -q "I2C_OK"   "$OUT" || { echo "FAIL: touch bring-up"; exit 1; }
 
-GOLD="0x00000000"   # PROVISIONAL until Task 8 eyes-on-silicon (Task 3 rule)
-grep -q "ACIDBOX_UI_SUM=$GOLD" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
+# ★ EYE-CHECK THE FRAME BEFORE ADOPTING THIS, with the QEMU monitor dump
+# proven in Task 3 (see synthui_step_test/transcript_qemu.txt): pmemsave the
+# LCDIFv2 scanout buffer, confirm the dump's own FNV equals what the firmware
+# printed, then LOOK at it. No hardware needed, so there is no excuse.
+#
+# ★ ANCHOR THE WHOLE VALUE (\r?$). Measured in Task 4: FNV-1a converges in its
+# low bits over a repeating 4-byte pattern, so a blank frame, an X=0 frame and
+# an X=0xFF frame ALL end in 9DC5. Only the top half discriminates, and an
+# unanchored grep would accept the blank screen this gate exists to reject.
+GOLD="0x00000000"   # replace with the measured value once the frame is seen
+grep -qE "ACIDBOX_UI_SUM=$GOLD\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
 grep -q "ACIDBOX_UI_SUM=0x9BC99DC5" "$OUT" \
     && { echo "FAIL: all-zero framebuffer (the anti-golden, by name)"; exit 1; }
 
@@ -1129,7 +1138,13 @@ grep -qE "STEP\[2\]=note33 gate1" "$OUT" \
 
 # Per-step RMS tables. Margins: sounding > 0.02, rest < 0.005 -- stated here
 # per the acid_bass_test precedent, with 4x separation between them.
-bar1=$(grep -m1 'ACIDBOX_BAR=1 ' "$OUT" | sed 's/.*RMS=\[//; s/\]//')
+#
+# ★ BAR 2, NOT BAR 1, is the first valid window (measured in Task 4): the
+# transport never emits tick 0 at phase 0, so step 0 first fires at the bar
+# seam and reads ~0.18 against 0.42+ in every later bar. Asserting bar 1
+# would either fail honestly or invite someone to lower the margin until it
+# passed -- which is how a real threshold gets destroyed.
+bar1=$(grep -m1 'ACIDBOX_BAR=2 ' "$OUT" | sed 's/.*RMS=\[//; s/\]//')
 last=$(grep 'ACIDBOX_BAR=' "$OUT" | tail -1 | sed 's/.*RMS=\[//; s/\]//')
 [ -n "$bar1" ] && [ -n "$last" ] || { echo "FAIL: no RMS tables captured"; exit 1; }
 
