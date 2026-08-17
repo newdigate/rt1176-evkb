@@ -125,7 +125,7 @@ teensy_declare_library(lwip           lwip                 https://github.com/ne
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
 teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            8c23d41272956254aec1ed7a5a201f51202e4f2b .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
 teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         e1320124ca55531eb0e8e6a358e6ed573bd1c612 .) # NOT Arduino-layout: use import_evkb_synthui(). Pushed 2026-08-17; the pin then moved to a REWRITTEN history (reference/rebirth/ dropped before going public), so every SHA before e132012 is unreachable.
-teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          e0ec0ddae24538bd14e644c9d3fa4e587e675317 .) # NOT Arduino-layout: use import_evkb_vglite(). Pushed 2026-08-17. NXP's VGLite vendored verbatim (MIT, except vg_lite_flat.{c,h} which are Apache-2.0, see its NOTICE -- permissive, no copyleft) plus this tree's bare-metal port.
+teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          87e27edf489c2b6154d8ba091b9d152d5dded6cf .) # NOT Arduino-layout: use import_evkb_vglite(). Pushed 2026-08-17. NXP's VGLite vendored verbatim (MIT, except vg_lite_flat.{c,h} which are Apache-2.0, see its NOTICE -- permissive, no copyleft) plus this tree's bare-metal port.
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 teensy_declare_library(Bounce2        Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).
@@ -351,7 +351,27 @@ macro(import_evkb_vglite)
              "${_evkb_vglite_dir}/VGLite"
              "${_evkb_vglite_dir}/VGLiteKernel"
              "${_evkb_vglite_dir}/port/baremetal")
-        target_compile_definitions(VGLite PUBLIC VG_DRIVER_SINGLE_THREAD=1)
+        # ★ HEADER_VERSION 7 selects the SILICON's capabilities at COMPILE time
+        # from Series/<chip>/<rev>/vg_lite_options.h, dispatched through
+        # VG_LITE_OPTIONS. The vendored VGLite/vg_lite_options.h is only a
+        # template (`<Series/GCID_REV_CID/vg_lite_options.h>`), so the real path
+        # must be supplied here or the driver's gcFEATURE_VG_* constants do not
+        # exist -- 70 compile errors, all "did you mean gcFEATURE_BIT_VG_...".
+        #
+        # ★ THE REVISION IS NOT COSMETIC. vg_lite_init() compares CHIPID,
+        # REVISION, CID and ECOID against the real registers and returns
+        # VG_LITE_NOT_SUPPORT on ANY mismatch. The two gc355 headers differ
+        # ONLY in REVISION (0x1215 vs 0x1216) -- every feature flag is
+        # identical -- so a wrong pick costs nothing but a clean, self-
+        # diagnosing init failure that prints both sides. vglite_probe reads
+        # the registers before init precisely so the board can settle it.
+        set(EVKB_VGLITE_SERIES "gc355/0x0_1216" CACHE STRING
+            "VGLite Series options dir: <chip>/<rev> under VGLite/Series")
+        # The dispatch header wants GCID_REV_CID and builds the include path
+        # itself; it #errors by name if unset, which is how this was found.
+        target_compile_definitions(VGLite PUBLIC
+            VG_DRIVER_SINGLE_THREAD=1
+            GCID_REV_CID=${EVKB_VGLITE_SERIES})
         target_link_libraries(VGLite PRIVATE teensy_flags)
         target_link_libraries(VGLite PUBLIC m)
     endif()

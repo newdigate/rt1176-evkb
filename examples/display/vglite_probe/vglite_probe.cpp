@@ -79,7 +79,7 @@ static void report_features(void)
      * driver or by shims. Phase 2 must settle it FIRST. */
     static const struct { vg_lite_feature_t bit; const char *name; } feats[] = {
         { gcFEATURE_BIT_VG_IM_INDEX_FORMAT,     "IM_INDEX_FORMAT"     },
-        { gcFEATURE_BIT_VG_PE_PREMULTIPLY,      "PE_PREMULTIPLY"      },
+        { gcFEATURE_BIT_VG_HW_PREMULTIPLY,      "HW_PREMULTIPLY"      },
         { gcFEATURE_BIT_VG_BORDER_CULLING,      "BORDER_CULLING"      },
         { gcFEATURE_BIT_VG_RGBA2_FORMAT,        "RGBA2_FORMAT"        },
         { gcFEATURE_BIT_VG_QUALITY_8X,          "QUALITY_8X"          },
@@ -178,7 +178,10 @@ void setup()
      * NXP's own examples sidestep this by allocating their render target with
      * vg_lite_allocate(); a target the application already owns -- like a
      * panel framebuffer -- has to be mapped instead. */
-    const vg_lite_error_t merr = vg_lite_map(&target);
+    /* HEADER_VERSION 7 gave vg_lite_map() a flag and an fd. The buffer is
+     * ordinary CPU memory owned by the display driver, not a dma-buf, so
+     * USER_MEMORY with fd 0 is the faithful translation of the v6 call. */
+    const vg_lite_error_t merr = vg_lite_map(&target, VG_LITE_MAP_USER_MEMORY, 0);
     Serial1.printf("VGLITE_MAP=%s err=%d\n",
                    merr == VG_LITE_SUCCESS ? "OK" : "FAIL", (int)merr);
 
