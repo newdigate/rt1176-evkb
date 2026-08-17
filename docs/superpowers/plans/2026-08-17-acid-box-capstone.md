@@ -1093,7 +1093,24 @@ The percent targets derive from Task 5's layout constants: ▶ center
 (8 + 2·88 + 41, 640 + 41) = (225, 681) → (31%, 53%); cutoff knob center
 (90, 165) → (12%, 13%). Re-derive these three if Task 5's geometry moves.
 
-- [ ] **Step 2: The gate.** `run_qemu.sh` — copy the shape of `lvgl_rk055_touch_test/run_qemu.sh` (gate-lib prologue, `gate_capture_path`, qrun, `-global imxrt-gt911.touch-script=$DIR/touch_script.txt` added to the QEMU line) and assert, in order:
+- [ ] **Step 2: The gate.** `run_qemu.sh` — copy the shape of
+`lvgl_rk055_touch_test/run_qemu.sh` (gate-lib prologue, `gate_capture_path`,
+qrun) plus the touch-script option.
+
+★ **Use the LONG `-global` form. The short form fails SILENTLY** (measured in
+Task 6): the device type is `imxrt.gt911` with a DOT, and
+`qemu_global_option()` splits the driver at the FIRST dot, so
+`-global imxrt.gt911.touch-script=FILE` parses as driver `imxrt`, property
+`gt911.touch-script`, matches nothing, and prints nothing — a nonexistent
+path passed that way boots happily instead of exiting 1, which would leave
+this gate asserting against the BUILT-IN script while appearing to use ours.
+The working form is:
+
+```sh
+-global driver=imxrt.gt911,property=touch-script,value="$DIR/touch_script.txt"
+```
+
+Assert, in order:
 
 ```bash
 # Codec token: match what acid_bass_test's transcript_qemu.txt records for
