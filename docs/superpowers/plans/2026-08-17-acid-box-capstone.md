@@ -27,8 +27,13 @@ Widgets before app, app-audio before app-UI, UI before touch gate. Every task le
 **Files:**
 - Create: `~/Development/SynthUI/src/synthui_knob_math.h`
 - Create: `~/Development/SynthUI/tests/knob_math_test.c`
-- Modify: `~/Development/SynthUI/src/synthui_knob.cpp` (constructor + one new static)
+- Create: `~/Development/SynthUI/tests/run.sh` (an unwired test rots; this is
+  the one command that runs the suite, and Task 3's gate work can call it)
+- Modify: `~/Development/SynthUI/src/synthui_knob.cpp` (struct member,
+  constructor flags, three new statics)
 - Modify: `~/Development/SynthUI/src/synthui_knob.h` (doc comment only)
+- Modify: `~/Development/SynthUI/README.md` (it still says the knob is
+  "rendering only, no touch" — this task makes that false)
 
 - [ ] **Step 1: Write the failing host test for the drag math**
 
@@ -37,33 +42,69 @@ Create `~/Development/SynthUI/tests/knob_math_test.c`:
 ```c
 /* Host-compiled unit test for the pure drag math -- no LVGL, no target.
  * Build: cc -o /tmp/knob_math_test tests/knob_math_test.c && /tmp/knob_math_test
+ * (or tests/run.sh)
+ * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT */
 #include "../src/synthui_knob_math.h"
+#undef NDEBUG          /* assertions must survive a -DNDEBUG build */
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
 
-static int near(float a, float b) { return fabsf(a - b) < 0.01f; }
+static int approx_eq(float a, float b) { return fabsf(a - b) < 0.01f; }
 
 int main(void)
 {
+    /* --- continuous drag ------------------------------------------------- */
     /* 200 px of upward drag (dy = -200) is a full 280-deg sweep: from the
      * minimum it lands exactly on the maximum. From center it clamps there. */
-    assert(near(synthui_knob_drag(-140.0f, -140.0f, 140.0f, 0.0f, -200), 140.0f));
-    assert(near(synthui_knob_drag(   0.0f, -140.0f, 140.0f, 0.0f, -200), 140.0f));
+    assert(approx_eq(synthui_knob_drag(-140.0f, -140.0f, 140.0f, -200), 140.0f));
+    assert(approx_eq(synthui_knob_drag(   0.0f, -140.0f, 140.0f, -200), 140.0f));
     /* Half a full stroke (-100 px) is half the sweep: -140 -> 0. */
-    assert(near(synthui_knob_drag(-140.0f, -140.0f, 140.0f, 0.0f, -100), 0.0f));
+    assert(approx_eq(synthui_knob_drag(-140.0f, -140.0f, 140.0f, -100), 0.0f));
     /* Downward drag decreases; clamps at min. */
-    assert(near(synthui_knob_drag(-100.0f, -140.0f, 140.0f, 0.0f, 200), -140.0f));
-    /* Detent mode snaps to the nearest multiple of detent_step. */
-    assert(near(synthui_knob_drag(0.0f, -140.0f, 140.0f, 35.0f, -20), 35.0f));
-    assert(near(synthui_knob_drag(0.0f, -140.0f, 140.0f, 35.0f, -5), 0.0f));
-    /* Zero drag is identity (no snap drift on touch-down). */
-    assert(near(synthui_knob_drag(17.0f, -140.0f, 140.0f, 0.0f, 0), 17.0f));
+    assert(approx_eq(synthui_knob_drag(-100.0f, -140.0f, 140.0f, 200), -140.0f));
+    /* Zero drag is identity. */
+    assert(approx_eq(synthui_knob_drag(17.0f, -140.0f, 140.0f, 0), 17.0f));
+    /* ★ The span, not a hardcoded 280, scales the delta: an asymmetric range
+     * of 270 deg moves 135 deg for half a stroke. Without this case a
+     * hardcoded sweep would pass every other assertion here. */
+    assert(approx_eq(synthui_knob_drag(0.0f, 0.0f, 270.0f, -100), 135.0f));
+
+    /* --- ★ ITERATIVE: the real call pattern, one poll at a time ----------
+     * The widget feeds this its own previous output ~100x/second. A slow
+     * drag MUST traverse; the version that snapped inside this function
+     * returned 0.0 here forever, and that defect is exactly what a
+     * single-call test cannot see. */
+    float pos = -140.0f;
+    for (int i = 0; i < 40; i++)
+        pos = synthui_knob_drag(pos, -140.0f, 140.0f, -5);
+    assert(approx_eq(pos, 140.0f));                    /* 40 x 5px = 200px */
+    assert(approx_eq(synthui_knob_snap(pos, -140.0f, 140.0f, 35.0f), 140.0f));
+
+    /* --- snapping, anchored on min_deg like the DRAWN lattice ------------ */
+    assert(approx_eq(synthui_knob_snap(  0.0f, -140.0f, 140.0f, 35.0f),   0.0f));
+    assert(approx_eq(synthui_knob_snap( 20.0f, -140.0f, 140.0f, 35.0f),  35.0f));
+    assert(approx_eq(synthui_knob_snap(  5.0f, -140.0f, 140.0f, 35.0f),   0.0f));
+    /* detent_step 0 is continuous -- pass-through. */
+    assert(approx_eq(synthui_knob_snap( 17.3f, -140.0f, 140.0f,  0.0f),  17.3f));
+    /* ★ NON-ALIGNED range: min is NOT a multiple of the step. Marks sit at
+     * -100,-70,-40,-10,+20,... so +25 must snap to +20, NOT to +30 (which is
+     * what anchoring the lattice at zero would give -- a pointer resting
+     * between drawn detents). */
+    assert(approx_eq(synthui_knob_snap( 25.0f, -100.0f, 100.0f, 30.0f),  20.0f));
+    /* Snap may not escape the range. */
+    assert(approx_eq(synthui_knob_snap( 99.0f, -100.0f, 100.0f, 30.0f), 100.0f));
+
     printf("knob_math: all PASS\n");
     return 0;
 }
 ```
+
+★ The `#undef NDEBUG` above `#include <assert.h>` is load-bearing: without it a
+`-DNDEBUG` build compiles every assertion out and the binary still prints
+`all PASS` and exits 0. This tree keeps `gate-vacuity.test.sh` precisely
+because a test that cannot fail is worse than no test.
 
 - [ ] **Step 2: Run it to make sure it fails**
 
@@ -80,33 +121,57 @@ Create `~/Development/SynthUI/src/synthui_knob_math.h`:
 /* synthui_knob_math.h - pure drag arithmetic for the knob's input layer.
  * Header-only and LVGL-free so a host compiler can unit-test it directly;
  * synthui_knob.cpp includes it for the real widget.
+ * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT */
-#pragma once
+#ifndef SYNTHUI_KNOB_MATH_H
+#define SYNTHUI_KNOB_MATH_H
 #include <math.h>
 
 /* Full sweep of (max_deg - min_deg) per this many pixels of vertical drag.
- * 200 px was chosen against the RK055's ~295 DPI: a comfortable thumb
- * stroke (~17 mm) covers the whole range, and one pixel is ~1.4 deg. */
+ * Sized against the RK055HDMIPI4MA0: 720x1280 on a 5.5" diagonal is ~267 DPI,
+ * so 200 px is a ~19 mm thumb stroke for the whole range. */
 #define SYNTHUI_KNOB_DRAG_FULL_PX 200.0f
 
-/* dy_px is SCREEN-space vertical delta (LVGL vect.y: positive = downward).
- * Upward drag increases the angle -- the touch-synth convention. detent_step
- * of 0 means continuous; otherwise the result snaps to the nearest multiple
- * (relative to 0), matching the widget's MODE_DETENTS drawing. */
-static inline float synthui_knob_drag(float angle_deg, float min_deg,
-                                      float max_deg, float detent_step,
-                                      int dy_px)
+/* Continuous drag position, NO quantisation. dy_px is SCREEN-space vertical
+ * delta (LVGL vect.y: positive = downward); upward drag increases the angle,
+ * the touch-synth convention.
+ *
+ * ★ SNAPPING IS DELIBERATELY NOT DONE HERE, and this is the whole design.
+ * The caller feeds this function its own previous output once per indev poll
+ * (~10 ms). Quantise that accumulator and every per-poll delta smaller than
+ * half a detent rounds straight back to where it started -- forever. Measured
+ * on the planned pitch knob (step 280/24 deg): a 480 px drag, more than twice
+ * the full-sweep stroke, moves it ZERO degrees below ~4.2 px/poll and slams
+ * to the rail above it. The knob keeps the unsnapped position and snaps only
+ * what it DISPLAYS -- see synthui_knob_snap. */
+static inline float synthui_knob_drag(float pos_deg, float min_deg,
+                                      float max_deg, int dy_px)
 {
     const float span = max_deg - min_deg;
-    float a = angle_deg - (float)dy_px * (span / SYNTHUI_KNOB_DRAG_FULL_PX);
+    float a = pos_deg - (float)dy_px * (span / SYNTHUI_KNOB_DRAG_FULL_PX);
     if (a < min_deg) a = min_deg;
     if (a > max_deg) a = max_deg;
-    if (detent_step > 0.0f)
-        a = roundf(a / detent_step) * detent_step;
+    return a;
+}
+
+/* Quantise a position onto the widget's DRAWN detent lattice. That lattice
+ * starts at min_deg (synthui_knob.cpp's draw loop places marks at
+ * min_deg + i*detent_step), NOT at zero: anchoring at zero agrees only when
+ * min_deg happens to be an exact multiple of detent_step, and leaves the
+ * pointer resting between drawn marks whenever it is not (range -100..100,
+ * step 30 snaps to +30 while marks sit at -10/+20/+50). detent_step <= 0
+ * means continuous. */
+static inline float synthui_knob_snap(float pos_deg, float min_deg,
+                                      float max_deg, float detent_step)
+{
+    if (detent_step <= 0.0f) return pos_deg;
+    float a = min_deg + roundf((pos_deg - min_deg) / detent_step) * detent_step;
     if (a < min_deg) a = min_deg;   /* snap may not escape the range */
     if (a > max_deg) a = max_deg;
     return a;
 }
+
+#endif /* SYNTHUI_KNOB_MATH_H */
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
@@ -124,41 +189,86 @@ In `~/Development/SynthUI/src/synthui_knob.cpp`, add near the other includes:
 #include "synthui_knob_math.h"
 ```
 
-Add this static handler (place beside the existing draw event callback; `synthui_knob_t` is the widget struct already defined in this file — use its real angle/min/max/detent members, whatever they are named there):
+Add ONE new member to `synthui_knob_t`, beside the existing angle state:
 
 ```c
-/* Vertical-drag input: accumulate the indev's per-poll vector while pressed.
- * PRESSING fires per indev read (10 ms under the GT911 binding), vect is the
- * delta since the previous read, so summing arrives at total drag without
- * storing a press-origin. Emits VALUE_CHANGED only when the EFFECTIVE angle
- * moved (a detent knob mid-detent stays silent). Draws nothing itself --
- * synthui_knob_set_angle() owns invalidation -- so the display path and the
- * pilot's five goldens are untouched by construction. */
+    float drag_pos;   /* unsnapped drag accumulator; see knob_input_pressing */
+```
+
+Add these static handlers (place beside the existing draw event callback; use the struct's real member names):
+
+```c
+/* ★ The accumulator is seeded HERE, not in the constructor, so a knob whose
+ * angle was set programmatically between touches (the app's step-select does
+ * exactly that) starts the next drag from where it is actually pointing. */
+static void knob_input_pressed(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_current_target_obj(e);
+    synthui_knob_t *k = (synthui_knob_t *)obj;
+    k->drag_pos = k->angle;
+}
+
+/* Vertical-drag input: LVGL's PRESSING fires per indev read (10 ms under the
+ * GT911 binding) and vect is the delta since the previous read, so the
+ * position accumulates without storing a press origin.
+ *
+ * ★ drag_pos is UNSNAPPED and the snap is applied only to what gets
+ * displayed. Quantising the accumulator instead is a knob that cannot be
+ * turned slowly: any per-poll delta under half a detent rounds back to its
+ * own start, forever (measured: 480 px of drag = 0 deg on the pitch knob).
+ *
+ * Draws nothing itself -- synthui_knob_set_angle() owns invalidation -- so
+ * the pilot's five goldens are untouched by construction. */
 static void knob_input_pressing(lv_event_t *e)
 {
-    lv_obj_t *obj = (lv_obj_t *)lv_event_get_target(e);
-    lv_indev_t *indev = lv_indev_active();
+    lv_obj_t *obj = lv_event_get_current_target_obj(e);
+    lv_indev_t *indev = lv_event_get_indev(e);
     if (indev == NULL) return;
     lv_point_t vect;
     lv_indev_get_vect(indev, &vect);
     if (vect.y == 0) return;
 
     synthui_knob_t *k = (synthui_knob_t *)obj;
+    k->drag_pos = synthui_knob_drag(k->drag_pos, k->min_deg, k->max_deg,
+                                    vect.y);
     const float detent =
         (k->mode == SYNTHUI_KNOB_MODE_DETENTS) ? k->detent_step : 0.0f;
-    const float next = synthui_knob_drag(k->angle, k->min_deg, k->max_deg,
-                                         detent, vect.y);
-    if (next == k->angle) return;
+    const float next = synthui_knob_snap(k->drag_pos, k->min_deg, k->max_deg,
+                                         detent);
+    if (next == k->angle) return;    /* mid-detent: moved, nothing to show */
     synthui_knob_set_angle(obj, next);
     lv_obj_send_event(obj, LV_EVENT_VALUE_CHANGED, NULL);
 }
+
+/* ★ REQUIRED by making the widget clickable, and predicted by this file's own
+ * note that touch would need it: knob_palette() recolours the crescent on
+ * LV_STATE_PRESSED, but this widget defines no local styles, so LVGL's style
+ * refresh finds SAME and never invalidates. Without this the press shows no
+ * feedback and -- worse -- the knob stays drawn in its pressed colour after
+ * release until some later angle change happens to repaint it. */
+static void knob_input_state(lv_event_t *e)
+{
+    lv_obj_invalidate(lv_event_get_current_target_obj(e));
+}
 ```
 
-In the widget constructor (where the existing event callbacks are attached), add:
+In the widget constructor: **remove `LV_OBJ_FLAG_CLICKABLE` from the existing
+remove-flags mask** (do not remove-then-re-add it — two adjacent lines that
+contradict each other leave the next reader unable to tell which is the
+mistake), also drop scroll chaining, and register the handlers:
 
 ```c
-    lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(obj, knob_input_pressing, LV_EVENT_PRESSING, NULL);
+    /* Not scrollable itself, and ★ SCROLL_CHAIN_VER off: PRESSING is
+     * delivered and THEN lv_indev_scroll_handler walks the parent chain, so
+     * inside any scrollable container a vertical drag would turn the knob and
+     * scroll the panel at once. lv_slider does the same for its axis. */
+    lv_obj_remove_flag(obj, (lv_obj_flag_t)(LV_OBJ_FLAG_SCROLLABLE |
+                                            LV_OBJ_FLAG_SCROLL_CHAIN_VER));
+    lv_obj_add_event_cb(obj, knob_input_pressed,  LV_EVENT_PRESSED,    NULL);
+    lv_obj_add_event_cb(obj, knob_input_pressing, LV_EVENT_PRESSING,   NULL);
+    lv_obj_add_event_cb(obj, knob_input_state,    LV_EVENT_PRESSED,    NULL);
+    lv_obj_add_event_cb(obj, knob_input_state,    LV_EVENT_RELEASED,   NULL);
+    lv_obj_add_event_cb(obj, knob_input_state,    LV_EVENT_PRESS_LOST, NULL);
 ```
 
 In `~/Development/SynthUI/src/synthui_knob.h`, extend the header comment for `synthui_knob_set_angle` with one line: `Emits nothing itself; the input layer (vertical drag, 200 px = full sweep) emits LV_EVENT_VALUE_CHANGED.`
@@ -176,12 +286,19 @@ Expected: `PASS` with all five mode goldens unchanged. If ANY golden moved, the 
 - [ ] **Step 7: Commit (SynthUI repo)**
 
 ```bash
-cd ~/Development/SynthUI && git add src/synthui_knob_math.h src/synthui_knob.cpp src/synthui_knob.h tests/knob_math_test.c && \
-  git commit -m "knob: vertical-drag input layer -- 200px full sweep, detent snap, VALUE_CHANGED
+cd ~/Development/SynthUI && git add -A && \
+  git commit -m "knob: vertical-drag input layer -- 200px full sweep, min-anchored detents
 
-Pure math in a host-testable header (tests/knob_math_test.c); the widget
-handler accumulates LV_EVENT_PRESSING vectors. Draws nothing: the pilot's
-five goldens verified bit-identical after the change."
+Pure math in a host-testable header (tests/knob_math_test.c, tests/run.sh);
+the widget accumulates LV_EVENT_PRESSING vectors into an UNSNAPPED drag
+position and snaps only what it displays -- quantising the accumulator
+instead makes a detent knob untouchable below half a detent per poll (480px
+of drag = 0 deg on the pitch knob). Snap is anchored on min_deg, where the
+renderer actually draws the marks. Clickable now, so PRESSED/RELEASED/
+PRESS_LOST invalidate: this widget defines no local styles, so LVGL's own
+style refresh never would, and the crescent would stay pressed-coloured
+after release. Draws nothing new: the pilot's five goldens verified
+bit-identical after the change."
 ```
 
 ### Task 2: SynthUI — the `synthui_step` widget
