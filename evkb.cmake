@@ -123,7 +123,7 @@ teensy_declare_library(nativeethernet NativeEthernet       https://github.com/ne
 teensy_declare_library(fnet           FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
 teensy_declare_library(lwip           lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
-teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            0219b8ec94bcadfd278eac8637126a0b1e508c06 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
+teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            8c23d41272956254aec1ed7a5a201f51202e4f2b .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
 teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         e1320124ca55531eb0e8e6a358e6ed573bd1c612 .) # NOT Arduino-layout: use import_evkb_synthui(). Pushed 2026-08-17; the pin then moved to a REWRITTEN history (reference/rebirth/ dropped before going public), so every SHA before e132012 is unreachable.
 teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          e0ec0ddae24538bd14e644c9d3fa4e587e675317 .) # NOT Arduino-layout: use import_evkb_vglite(). Pushed 2026-08-17. NXP's VGLite vendored verbatim (MIT, except vg_lite_flat.{c,h} which are Apache-2.0, see its NOTICE -- permissive, no copyleft) plus this tree's bare-metal port.
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
@@ -240,7 +240,25 @@ endmacro()
 #
 # The glob is *.c ONLY and must stay that way: src/libs/thorvg/ is 47 .cpp
 # files needing a config.h that is absent from a fresh clone.
+# import_evkb_lvgl([VGLITE])
+#
+# VGLITE opts this example into LVGL's VG_LITE draw unit on the GC355. It is
+# OPT-IN, not the default, because every existing display gate has recorded
+# SOFTWARE goldens and the GPU path will not reproduce them -- hardware
+# antialiasing is not LVGL's mask arithmetic. Two golden sets, never one.
 macro(import_evkb_lvgl)
+    # ★ ARGN must be copied into a real variable before IN_LIST. In a MACRO
+    # (not a function) ARGN is not a variable at all -- it is substituted
+    # textually -- so `if("VGLITE" IN_LIST ARGN)` never matches and the opt-in
+    # silently does nothing. That failure is invisible: the build SUCCEEDS,
+    # LVGL's 19 vg_lite objects compile to zero symbols each because
+    # LV_USE_DRAW_VG_LITE stayed 0, and the ELF simply has no GPU backend in
+    # it. Caught here only by counting symbols in those objects.
+    set(_evkb_lvgl_args ${ARGN})
+    set(_evkb_lvgl_vglite OFF)
+    if("VGLITE" IN_LIST _evkb_lvgl_args)
+        set(_evkb_lvgl_vglite ON)
+    endif()
     if(NOT TARGET LVGL)
         evkb_library_dir(LVGL _evkb_lvgl_dir)
         file(GLOB_RECURSE _evkb_lvgl_srcs CONFIGURE_DEPENDS
@@ -260,6 +278,50 @@ macro(import_evkb_lvgl)
         # Inert today (those paths are behind disabled config), but it turns a
         # confusing undefined-reference in Task 3/4 into a non-event.
         target_link_libraries(LVGL PUBLIC m)
+
+        if(_evkb_lvgl_vglite)
+            import_evkb_vglite()
+            evkb_library_dir(VGLite _evkb_vglite_dir)
+
+            # ★ THE FORMAT GUARD, and it lives HERE rather than in the shim.
+            # vg_lite_lvgl_compat.h shims VG_LITE_BGR888 / VG_LITE_BGRA5658,
+            # which LVGL RETURNS as the format a buffer is drawn with for
+            # LV_COLOR_FORMAT_RGB888 / ARGB8565. This driver hangs rather than
+            # erroring on a format it cannot parse, so producing one of those
+            # colour formats would stop the GPU with every status reporting
+            # success. Nothing produces them today only because every image
+            # decoder is off.
+            #
+            # It CANNOT be an #if in the shim: the shim is force-included
+            # (-include), i.e. ahead of the translation unit's own includes, so
+            # lv_conf.h has not been read and the macros are undefined there. A
+            # guard that cannot fire is worse than none -- it reads as
+            # protection. Configure time is the earliest point both are known.
+            file(READ "${_evkb_lvgl_dir}/port/lv_conf.h" _evkb_lv_conf)
+            foreach(_dec LV_USE_LODEPNG LV_USE_BMP LV_USE_TJPGD
+                         LV_BIN_DECODER_RAM_LOAD)
+                if(_evkb_lv_conf MATCHES "#define[ \t]+${_dec}[ \t]+1")
+                    message(FATAL_ERROR
+                        "import_evkb_lvgl(VGLITE): ${_dec} is enabled.\n"
+                        "An image decoder can emit LV_COLOR_FORMAT_RGB888 or "
+                        "ARGB8565, which LVGL maps to VG_LITE_BGR888 / "
+                        "VG_LITE_BGRA5658 -- names this driver does not have and "
+                        "which the compat shim only fakes. Handing a faked format "
+                        "to the GPU HANGS it silently.\n"
+                        "Fix by re-vendoring a VGLite that HAS those formats. Do "
+                        "NOT map them onto a similar one. See "
+                        "docs/superpowers/specs/2026-08-17-vglite-phase2-design.md §5.")
+                endif()
+            endforeach()
+
+            # PRIVATE is load-bearing: the VGLite target itself must compile
+            # against the UNSHIMMED headers, or the driver's own switch
+            # statements would see names they do not handle.
+            target_compile_options(LVGL PRIVATE
+                "-include" "${_evkb_vglite_dir}/port/baremetal/vg_lite_lvgl_compat.h")
+            target_compile_definitions(LVGL PUBLIC LV_USE_DRAW_VG_LITE=1)
+            target_link_libraries(LVGL PUBLIC VGLite)
+        endif()
     endif()
 endmacro()
 
