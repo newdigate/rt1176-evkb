@@ -21,18 +21,21 @@ import_evkb_lvgl()
 import_evkb_synthui()
 # panels/rk055 selects the panel; one MIPI-DSI host, one panel dir ever live.
 import_evkb_library(MipiDisplay soc panels/rk055)
-import_evkb_library(PXP)    # Display::fillScreen() paints via the PXP
+import_evkb_library(PXP)              # Display::fillScreen() paints via the PXP
+import_evkb_library(TouchPanel gt911) # controller chosen by the importer
 
 evkb_library_dir(LVGL _lvgl_dir)
 
 teensy_add_executable(acid_box
     acid_box.cpp
-    ${_lvgl_dir}/port/lvgl_mipi_panel.cpp)
+    ${_lvgl_dir}/port/lvgl_mipi_panel.cpp
+    ${_lvgl_dir}/port/lvgl_gt911_indev.cpp)
 # Audio's own dependency set (Wire/SPI/SdFat/SD/SerialFlash) is named exactly as
 # acid_bass_test names it -- import_evkb_audio_full() creates those targets but
-# does not link them.
+# does not link them.  Wire covers Wire2 = LPI2C5, shared by the codec and the
+# touch controller, so TouchPanel needs no bus import of its own.
 teensy_target_link_libraries(acid_box
-    cores Audio Wire SPI SdFat SD SerialFlash MipiDisplay PXP)
+    cores Audio Wire SPI SdFat SD SerialFlash MipiDisplay PXP TouchPanel)
 
 # SynthUI, LVGL and CMSIS-DSP are plain CMake static-lib targets (no `.o`
 # suffix on the target name), so they link via raw target_link_libraries on the
@@ -40,3 +43,9 @@ teensy_target_link_libraries(acid_box
 # why.  LVGL is named directly, not only pulled in transitively via SynthUI's
 # PUBLIC edge, because this target also compiles port/lvgl_mipi_panel.cpp itself.
 target_link_libraries(acid_box.elf SynthUI LVGL CMSIS-DSP stdc++ m)
+
+# GT911::read() is [[nodiscard]] and this tree carries no -Werror: without this
+# a dropped poll result in the indev port warns and the build SUCCEEDS.  Scoped
+# to this target, same rationale as lvgl_rk055_touch_test's identical line.
+target_compile_options(acid_box.elf
+                       PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Werror=unused-result>)

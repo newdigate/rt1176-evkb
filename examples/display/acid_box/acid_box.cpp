@@ -3,9 +3,10 @@
  * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT
  *
- * THIS COMMIT IS THE AUDIO HALF ONLY.  `build_ui()` is a dark-ground stub so
- * the file compiles, the first frame is deterministic and the panel chain is
- * exercised; the eight knobs, the step grid and the touch bindings land next.
+ * Audio core (previous commit) + layout-A UI and the glue between them.  The
+ * glue is deliberately THIN: every callback reads the widget, maps it, and
+ * writes the engine; no UI state mirrors engine state except the three
+ * `shown*` caches, which exist only to stop LVGL repainting unchanged text.
  *
  * BOOT STATE IS STOPPED AND SILENT, AND THAT IS A CONTRACT, NOT AN OMISSION.
  * The transport is configured (tempo, loop, looping) but never played, so
@@ -20,18 +21,19 @@
 #include <string.h>               // memset -- named explicitly, as the sibling
                                   // audio examples name <math.h>, rather than
                                   // relying on Arduino.h to drag it in.
+#include <math.h>                 // powf/logf/roundf/lroundf for the knob maps
+#include <stdio.h>                // snprintf -- INTEGER conversions only, below
 #include <Audio.h>
 // Audio.h pulls in every codec driver EXCEPT this one -- control_wm8960.h is
 // in its include list and control_wm8962.h is not, so the WM8962 header must be
 // named explicitly, exactly as acid_bass_test and audiooutput_i2s_test do.
 #include "control_wm8962.h"
+#include <Wire.h>                 // Wire2 = LPI2C5: codec AND touch controller
 #include "Display.h"
+#include "gt911.h"
 #include "lvgl_rt1176.h"
 #include "lvgl_mipi_panel.h"
-// Not used by the stub below, but compiled here deliberately: SynthUI's headers
-// have never before been preprocessed in the same translation unit as Audio.h,
-// and a collision between the two would be a Task-5 surprise discovered after
-// the audio work was already declared done.
+#include "lvgl_gt911_indev.h"
 #include "synthui_knob.h"
 #include "synthui_step.h"
 
@@ -227,17 +229,322 @@ static void audio_probe_poll(void)
 }
 
 /* --- UI ------------------------------------------------------------------- *
- * STUB FOR THIS COMMIT ONLY -- replaced wholesale by the knob/grid scene.
- * It still paints an OPAQUE ground over the whole screen, because that is what
- * makes every pixel of the frame defined and therefore makes ACIDBOX_UI_SUM a
- * checksum of something rather than of whatever the allocator left behind. */
+ *
+ * Layout A (spec §3.2) on the RK055's 720x1280 portrait frame: a transport bar,
+ * a 2x4 grid of sound knobs, the selected-step editor strip, and the 2x8 step
+ * lane.  Everything is placed with absolute coordinates, and those coordinates
+ * are the GATE's geometry as well as the picture's -- the touch script's tap
+ * percentages are derived from the constants below, so moving a widget moves a
+ * tap point.  Re-derive the three percentages in run_qemu.sh if any of the
+ * placement arithmetic here changes.
+ *
+ * The screen still paints an OPAQUE ground, for the reason the stub did: it is
+ * what makes every pixel of the frame defined, and therefore makes
+ * ACIDBOX_UI_SUM a checksum of the scene rather than of whatever the allocator
+ * left behind. */
+static lv_obj_t *stepCell[16];
+static lv_obj_t *playBtnLabel, *bpmLabel, *noteLabel, *accBtn, *sldBtn, *waveBtnLabel;
+static lv_obj_t *pitchKnob;
+static int selectedStep = 0;
+
+/* knob -> parameter maps (spec §4).  The knob's default range is -140..+140
+ * degrees, so the whole sweep is 280 degrees and t lands in [0,1]; the input
+ * layer clamps the drag to that range, so knob01() needs no clamp of its own. */
+static inline float knob01(lv_obj_t *k)
+{ return (synthui_knob_get_angle(k) + 140.0f) / 280.0f; }
+static inline float expmap(float t, float lo, float hi)
+{ return lo * powf(hi / lo, t); }
+
+/* Pitch map: 25 semitones C1(24)..C3(48), one detent each, so detent_step is
+ * 280/24 -- 24 intervals between 25 stops, not 25.  The knob snaps onto the
+ * lattice anchored at min_deg (synthui_knob_math.h), which is exactly the
+ * lattice these two functions assume. */
+static inline uint8_t angleToNote(float deg)
+{ return (uint8_t)(24 + (int)roundf((deg + 140.0f) / (280.0f / 24.0f))); }
+static inline float noteToAngle(uint8_t note)
+{
+    /* Clamped because seq.step() accepts the full 0..127 MIDI range while this
+     * knob only spans C1..C3: an out-of-range note would otherwise park the
+     * pointer outside the drawn end stops, drawing a position the user cannot
+     * reach and this map cannot round-trip. */
+    if (note < 24) note = 24;
+    if (note > 48) note = 48;
+    return -140.0f + (float)(note - 24) * (280.0f / 24.0f);
+}
+
+/* One callback per sound knob.  CUTOFF, DECAY and SLIDE T are exponential
+ * because they are frequency and time; the five 0..1 amounts are linear. */
+static void cbRes(lv_event_t *e){ acid.resonance (knob01((lv_obj_t *)lv_event_get_target(e))); }
+static void cbEnv(lv_event_t *e){ acid.envMod    (knob01((lv_obj_t *)lv_event_get_target(e))); }
+static void cbAcc(lv_event_t *e){ acid.accent    (knob01((lv_obj_t *)lv_event_get_target(e))); }
+static void cbDst(lv_event_t *e){ acid.distortion(knob01((lv_obj_t *)lv_event_get_target(e))); }
+static void cbSub(lv_event_t *e){ acid.subLevel  (knob01((lv_obj_t *)lv_event_get_target(e))); }
+static void cbDec(lv_event_t *e){ acid.decay    (expmap(knob01((lv_obj_t *)lv_event_get_target(e)), 0.03f, 2.0f)); }
+static void cbSld(lv_event_t *e){ acid.slideTime(expmap(knob01((lv_obj_t *)lv_event_get_target(e)), 0.01f, 0.3f)); }
+
+/* Cutoff also prints, because the gate's drag assertion needs a value it can
+ * order.  ★ print(float, digits), NOT printf("%.1f") -- see the identical note
+ * over the RMS table above: this tree links newlib's INTEGER-ONLY formatter and
+ * a %f conversion emits a NUL byte instead of digits, which would truncate the
+ * line and leave the gate parsing "CUTOFF=" with nothing after it. */
+static void cbCut(lv_event_t *e)
+{
+    const float hz = expmap(knob01((lv_obj_t *)lv_event_get_target(e)), 20.0f, 12000.0f);
+    acid.cutoff(hz);
+    CONSOLE.print("CUTOFF=");
+    CONSOLE.println(hz, 1);
+}
+
+static const char *noteName(uint8_t n)
+{
+    static const char *N[12] = {"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+    static char buf[8];
+    /* %s and %d only: integer conversions are all the linked formatter has. */
+    snprintf(buf, sizeof buf, "%s%d", N[n % 12], (int)(n / 12) - 1);
+    return buf;
+}
+
+/* Write the selected step's FULL state back as ONE seq.step() call and refresh
+ * its cell and the editor readouts.  The single write is the atomic transaction
+ * of spec §3.3: seq.step() takes its own __disable_irq() guard internally, so a
+ * four-field store is indivisible against the audio ISR, while four separate
+ * read-modify-writes would let the sequencer observe a half-edited step. */
+static void commit_selected(uint8_t note, bool gate, bool accent, bool slide)
+{
+    seq.step(selectedStep, note, gate, accent, slide);
+    synthui_step_set(stepCell[selectedStep], gate, accent, slide);
+    lv_label_set_text(noteLabel, gate ? noteName(note) : "--");
+    lv_obj_set_style_bg_color(accBtn, accent ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sldBtn, slide  ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
+    CONSOLE.printf("STEP[%d]=note%u gate%d acc%d sld%d\n",
+                   selectedStep, (unsigned)note,
+                   gate ? 1 : 0, accent ? 1 : 0, slide ? 1 : 0);
+}
+
+/* Pure VIEW change: moves the editor strip onto step i without touching the
+ * pattern, so it emits no STEP token.  A rest has note 0 in the preset, which
+ * is not a pitch the knob can show -- park it on A1 so the first pitch edit
+ * after un-resting starts somewhere musical. */
+static void select_step(int i)
+{
+    synthui_step_set_selected(stepCell[selectedStep], false);
+    selectedStep = i;
+    synthui_step_set_selected(stepCell[i], true);
+    const AcidStep st = seq.step(i);
+    synthui_knob_set_angle(pitchKnob, noteToAngle(st.note ? st.note : 33));
+    lv_label_set_text(noteLabel, st.gate ? noteName(st.note) : "--");
+    lv_obj_set_style_bg_color(accBtn, st.accent ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sldBtn, st.slide  ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
+}
+
+/* A tap does BOTH: it selects the cell for editing and toggles its gate.  One
+ * gesture, because on a 16-cell lane a select-then-toggle pair would double
+ * every pattern edit. */
+static void cbStepTap(lv_event_t *e)
+{
+    const int i = (int)(intptr_t)lv_event_get_user_data(e);
+    select_step(i);
+    const AcidStep st = seq.step(i);
+    commit_selected(st.note ? st.note : 33, !st.gate, st.accent, st.slide);
+}
+static void cbPitch(lv_event_t *e)
+{
+    const uint8_t note = angleToNote(synthui_knob_get_angle((lv_obj_t *)lv_event_get_target(e)));
+    const AcidStep st = seq.step(selectedStep);
+    commit_selected(note, st.gate, st.accent, st.slide);
+}
+static void cbAccBtn(lv_event_t *e)
+{ (void)e; const AcidStep st = seq.step(selectedStep); commit_selected(st.note, st.gate, !st.accent, st.slide); }
+static void cbSldBtn(lv_event_t *e)
+{ (void)e; const AcidStep st = seq.step(selectedStep); commit_selected(st.note, st.gate, st.accent, !st.slide); }
+
+static void cbPlay(lv_event_t *e)
+{
+    (void)e;
+    if (transport.playing()) transport.pause(); else transport.play();
+    CONSOLE.printf("PLAYING=%d\n", transport.playing() ? 1 : 0);
+}
+static void cbStop(lv_event_t *e)
+{ (void)e; transport.stop(); CONSOLE.println("PLAYING=0"); }
+static void cbTempoUp(lv_event_t *e)
+{ (void)e; transport.tempo(transport.tempo() + 1.0f); }
+static void cbTempoDn(lv_event_t *e)
+{ (void)e; transport.tempo(transport.tempo() - 1.0f); }
+static void cbWave(lv_event_t *e)
+{
+    (void)e;
+    /* Mirrors default_patch()'s WAVEFORM_SAWTOOTH; the voice keeps the truth,
+     * this only remembers which way to flip next. */
+    static bool square = false;
+    square = !square;
+    acid.waveform(square ? WAVEFORM_SQUARE : WAVEFORM_SAWTOOTH);
+    lv_label_set_text(waveBtnLabel, square ? "SQR" : "SAW");
+}
+
+/* 33 ms poller: cursor ring, play label, bpm readout (spec §3.3).
+ *
+ * ★ EVERY WRITE IS GUARDED BY A CHANGE TEST, AND NOT AS AN OPTIMISATION.
+ * lv_label_set_text() reallocates and invalidates unconditionally, so an
+ * unguarded poller would dirty two labels 30 times a second forever -- a
+ * permanent full-rate repaint on a panel whose software render costs tens of
+ * milliseconds.  The `shown*` caches start at values no reading can equal, so
+ * the first call always paints. */
+static int shownCursor  = -1;
+static int shownPlaying = -1;
+static int shownBpm10   = -1;
+static void ui_poll(lv_timer_t *t)
+{
+    (void)t;
+    /* Stopped means NO cursor, not "the cursor where it stopped": currentStep()
+     * keeps its last index after pause(), and a ring left burning on a paused
+     * box reads as a playhead that has stalled. */
+    const bool play = transport.playing();
+    const int  s    = play ? seq.currentStep() : -1;
+    if (s != shownCursor) {
+        if (shownCursor >= 0) synthui_step_set_cursor(stepCell[shownCursor], false);
+        if (s >= 0)           synthui_step_set_cursor(stepCell[s], true);
+        shownCursor = s;
+    }
+    if ((int)play != shownPlaying) {
+        shownPlaying = (int)play;
+        lv_label_set_text(playBtnLabel, play ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+    }
+    /* One decimal, assembled from INTEGERS: see cbCut's note on %f.  tempo() is
+     * clamped to 20..999 by the transport, so both halves stay non-negative. */
+    const int bpm10 = (int)lroundf(transport.tempo() * 10.0f);
+    if (bpm10 != shownBpm10) {
+        shownBpm10 = bpm10;
+        char b[16];
+        snprintf(b, sizeof b, "%d.%d", bpm10 / 10, bpm10 % 10);
+        lv_label_set_text(bpmLabel, b);
+    }
+}
+
+static lv_obj_t *mkbtn(lv_obj_t *par, const char *txt, lv_event_cb_t cb,
+                       lv_obj_t **labelOut)
+{
+    lv_obj_t *b = lv_button_create(par);
+    lv_obj_set_style_bg_color(b, lv_color_hex(0x232b3a), LV_PART_MAIN);
+    lv_obj_t *l = lv_label_create(b);
+    lv_label_set_text(l, txt);
+    lv_obj_center(l);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
+    if (labelOut) *labelOut = l;
+    return b;
+}
+static lv_obj_t *mkknob(lv_obj_t *scr, int col, int row, const char *name,
+                        float boot01, lv_event_cb_t cb)
+{
+    lv_obj_t *k = synthui_knob_create(scr);
+    lv_obj_set_size(k, 150, 150);
+    lv_obj_set_pos(k, 15 + col * 175, 90 + row * 185);
+    synthui_knob_set_mode(k, SYNTHUI_KNOB_MODE_BOUNDED);
+    synthui_knob_set_angle(k, boot01 * 280.0f - 140.0f);
+    lv_obj_add_event_cb(k, cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_t *l = lv_label_create(scr);
+    lv_label_set_text(l, name);
+    lv_obj_set_style_text_color(l, lv_color_hex(0x9aa0b8), LV_PART_MAIN);
+    lv_obj_set_pos(l, 15 + col * 175 + 50, 90 + row * 185 + 152);
+    return k;
+}
+
 static lv_obj_t *build_ui(void)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x101820), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+    /* ★ CROSS-AXIS SCROLL CHAINING, decided here (plan's Task-5 note).  The
+     * knob clears SCROLL_CHAIN_VER permanently but leaves SCROLL_CHAIN_HOR on,
+     * so a vertical drag that wanders far enough sideways can flip
+     * lv_indev_find_scroll_obj() to the horizontal axis and let a scrollable
+     * ancestor steal the press mid-turn (PRESS_LOST).  Nothing here is
+     * horizontally scrollable, but "nothing scrolls today" is a property of the
+     * layout and would evaporate the first time a widget is placed past the
+     * right edge.  Clearing the flag on the screen makes it structural.  If a
+     * knob is ever put inside a genuinely horizontally scrolling panel, port
+     * lv_slider's pattern -- remove the CROSS-axis flag only once the drag is
+     * established, restore it on RELEASED/PRESS_LOST -- rather than killing a
+     * legitimate swipe gesture outright. */
+    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* transport bar */
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, "ACID BOX");
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_pos(title, 15, 24);
+    lv_obj_set_pos(mkbtn(scr, "-", cbTempoDn, NULL), 300, 16);
+    bpmLabel = lv_label_create(scr);
+    lv_obj_set_style_text_color(bpmLabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_pos(bpmLabel, 356, 24);
+    lv_obj_set_pos(mkbtn(scr, "+", cbTempoUp, NULL), 420, 16);
+    lv_obj_t *play = mkbtn(scr, LV_SYMBOL_PLAY, cbPlay, &playBtnLabel);
+    lv_obj_set_pos(play, 540, 16);          /* centre (575,40) = the gate's ▶ */
+    lv_obj_set_size(play, 70, 48);
+    lv_obj_t *stop = mkbtn(scr, LV_SYMBOL_STOP, cbStop, NULL);
+    lv_obj_set_pos(stop, 626, 16);
+    lv_obj_set_size(stop, 70, 48);
+
+    /* Sound knobs.  Boot angles are the INVERSE of each map applied to
+     * default_patch()'s values, so the first frame shows the patch the engine
+     * is actually holding -- a knob drawn at a position its parameter is not at
+     * would make the very first drag jump. */
+    mkknob(scr, 0, 0, "CUTOFF",  logf(800.0f / 20.0f) / logf(12000.0f / 20.0f), cbCut);
+    mkknob(scr, 1, 0, "RESO",    0.55f, cbRes);
+    mkknob(scr, 2, 0, "ENV MOD", 0.60f, cbEnv);
+    mkknob(scr, 3, 0, "DECAY",   logf(0.28f / 0.03f) / logf(2.0f / 0.03f), cbDec);
+    mkknob(scr, 0, 1, "ACCENT",  0.70f, cbAcc);
+    mkknob(scr, 1, 1, "DIST",    0.15f, cbDst);
+    mkknob(scr, 2, 1, "SUB",     0.20f, cbSub);
+    mkknob(scr, 3, 1, "SLIDE T", logf(0.06f / 0.01f) / logf(0.3f / 0.01f), cbSld);
+
+    /* editor strip: pitch detent knob + note name + ACC/SLD toggles + SAW/SQR */
+    pitchKnob = synthui_knob_create(scr);
+    lv_obj_set_size(pitchKnob, 120, 120);
+    lv_obj_set_pos(pitchKnob, 15, 470);
+    synthui_knob_set_mode(pitchKnob, SYNTHUI_KNOB_MODE_DETENTS);
+    synthui_knob_set_detent_step(pitchKnob, 280.0f / 24.0f);
+    lv_obj_add_event_cb(pitchKnob, cbPitch, LV_EVENT_VALUE_CHANGED, NULL);
+    noteLabel = lv_label_create(scr);
+    lv_obj_set_style_text_color(noteLabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_pos(noteLabel, 150, 515);
+    accBtn = mkbtn(scr, "ACC", cbAccBtn, NULL);
+    lv_obj_set_pos(accBtn, 230, 505);
+    sldBtn = mkbtn(scr, "SLD", cbSldBtn, NULL);
+    lv_obj_set_pos(sldBtn, 340, 505);
+    lv_obj_t *wave = mkbtn(scr, "SAW", cbWave, &waveBtnLabel);
+    lv_obj_set_pos(wave, 560, 505);
+
+    /* step lane: 2x8 of 82 px cells at 88 pitch, y = 640/736.  Cell 2's centre
+     * is (225,681) -- the gate's edit target. */
+    for (int i = 0; i < 16; i++) {
+        lv_obj_t *c = synthui_step_create(scr);
+        lv_obj_set_size(c, 82, 82);
+        lv_obj_set_pos(c, 8 + (i % 8) * 88, 640 + (i / 8) * 96);
+        synthui_step_set(c, kPreset[i].gate, kPreset[i].accent, kPreset[i].slide);
+        lv_obj_add_event_cb(c, cbStepTap, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        stepCell[i] = c;
+    }
+    select_step(0);
+
+    /* ★ RUN THE POLLER ONCE BEFORE ARMING THE TIMER, or the boot golden is a
+     * race.  lv_timer_create() schedules the first callback one FULL period
+     * away, while the caller renders as soon as the first lv_timer_handler()
+     * returns; whether the 33 ms tick beat the first flush would then decide
+     * whether ACIDBOX_UI_SUM covers a bpm readout saying "128.0" or the
+     * lv_label default "Text".  Priming it here makes the first frame a
+     * function of engine state and nothing else. */
+    ui_poll(NULL);
+    lv_timer_create(ui_poll, 33, NULL);
     return scr;
 }
+
+/* --- touch ---------------------------------------------------------------- *
+ * D9 = GPIO_AD_01 = touch reset, D6 = GPIO_AD_00 = touch interrupt, both owned
+ * by GT911::begin(); the INT line is never attached to, exactly as
+ * lvgl_rk055_touch_test leaves it. */
+static constexpr uint8_t TOUCH_RST_PIN = 9;
+static constexpr uint8_t TOUCH_INT_PIN = 6;
+static GT911 touch(Wire2, TOUCH_RST_PIN, TOUCH_INT_PIN);
 
 void setup()
 {
@@ -262,7 +569,7 @@ void setup()
     }
 
     lvgl_rt1176_begin();
-    lvgl_mipi_panel_create(Display);
+    lv_display_t *disp = lvgl_mipi_panel_create(Display);
 
     load_preset();
     default_patch();
@@ -274,8 +581,8 @@ void setup()
                                         * leave a window running at 128. */
     pump.begin(pump_isr, 1000);        /* MICROseconds, Teensy convention: 1 kHz */
 
-    /* The stub scene is the FIRST refresh, so the sum below covers a
-     * whole-screen paint rather than whatever a partial repaint touched. */
+    /* The scene is the FIRST refresh, so the sum below covers a whole-screen
+     * paint rather than whatever a partial repaint touched. */
     lv_screen_load(build_ui());
     uint32_t t0 = millis();
     while (!lvgl_mipi_panel_frame_done() && (millis() - t0) < 5000)
@@ -284,6 +591,30 @@ void setup()
     lvgl_sum_feed(Display.framebuffer(), PANEL_FB_BYTES);
     CONSOLE.printf("ACIDBOX_UI_SUM=0x%08lX\n", (unsigned long)lvgl_sum_value());
     CONSOLE.printf("PLAYING=%d\n", transport.playing() ? 1 : 0);
+
+    /* Touch bring-up AFTER the golden, which is what keeps the golden a
+     * statement about the scene alone: no indev exists yet, so no contact can
+     * have moved a widget before the checksum was taken.  Wire2 is already open
+     * (wm.enable() begins it -- it is the codec's bus too); re-begin()ing it is
+     * lvgl_rk055_touch_test's proven sequence and states the ownership rather
+     * than inheriting it by luck. */
+    Wire2.begin();
+    Wire2.setClock(400000);
+    if (touch.begin()) {
+        CONSOLE.println("I2C_OK");
+        /* From here LVGL polls the part every 10 ms; in QEMU the model replays
+         * a script, on the bench a finger drives it. */
+        lvgl_gt911_indev_create(disp, touch);
+    } else {
+        /* Not fatal: the box keeps playing and drawing, it just cannot be
+         * touched.  The gate's verdict is the ABSENCE of I2C_OK, so a silent
+         * fallthrough is still caught -- but the diagnostics say which of the
+         * three failure modes it was without a second run. */
+        CONSOLE.printf("TOUCH_FAIL err=%s i2c=%u id=0x%08lX\n",
+                       GT911::errorName(touch.lastError()),
+                       (unsigned)touch.lastI2cStatus(),
+                       (unsigned long)touch.lastDeviceId());
+    }
     CONSOLE.println("ACIDBOX_DONE");
 }
 
