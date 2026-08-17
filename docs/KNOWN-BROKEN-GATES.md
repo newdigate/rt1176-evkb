@@ -1074,3 +1074,30 @@ Three things about this gate worth not rediscovering:
   nominal 8 s window ran ~18.7 s and collided with the CM7's receive timeout.
   The transcript truncated mid-sequence, which reads as a CM4 hang rather
   than a miscalibrated delay. Delays are now measured with DWT CYCCNT.
+
+## `rt1176:display/vglite_lvgl_test` — software-path gate; the GPU build has its own golden and it lives on silicon
+
+The example is ONE scene (a 4×4 `synthui_knob` grid) with TWO builds:
+`build/` (software renderer — what this QEMU gate runs, golden
+`0x513C4DB8`) and `build-vglite/` (LVGL's VG_LITE draw unit on the GC355 —
+silicon only, golden `0xC3C6171A` in `transcript_hw_evkb.txt`, verified by
+framebuffer dump over SWD).
+
+★ **Two golden sets, never reconciled.** Hardware antialiasing is not
+LVGL's mask arithmetic, and the GPU build carries `LV_USE_FLOAT=1`, so the
+two paths legitimately differ (measured: 0.40% of pixels, all at AA edges,
+mean |ΔRGB| 0.79). Copying either golden over the other would destroy the
+only evidence that the GPU renders differently at all. When one moves,
+re-verify THAT path on its own terms; do not "fix" the other to match.
+
+★ **A green QEMU gate here proves the software path and the one-source
+story — nothing about the GPU.** The GPU build is not even a runtime
+fallback of the gated ELF (LVGL registers its draw units at compile time;
+see the example header): it is a different binary, verified only on the
+board. The path split is build-time by design, and the gate's value is
+pinning the software renderer while GPU work churns the shared source.
+
+The phase's fps criterion (≥30 fps for the animating grid) was measured
+2026-08-17 and NOT met — software 2.83 fps, GPU 2.45 fps, GPU CPU-bound in
+per-task path construction (transcript, Task 9 section). The gate is
+correctness-only; no gate asserts a frame rate.

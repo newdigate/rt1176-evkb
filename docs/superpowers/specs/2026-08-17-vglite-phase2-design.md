@@ -1,6 +1,20 @@
 # VGLite Phase 2 — LVGL's VG_LITE draw unit on the GC355
 
-Date: 2026-08-17. Status: approved in session, pending implementation.
+Date: 2026-08-17. Status: **IMPLEMENTED 2026-08-17 — renders correctly;
+the §1 performance criterion is NOT MET.** The backend renders the 16-knob
+scene pixel-faithfully on the GC355 (GPU golden `0xC3C6171A`; 0.40% AA-edge
+divergence from software), which took four fixes beyond this spec's plan —
+see `examples/display/vglite_lvgl_test/transcript_hw_evkb.txt` for the full
+account. Measured fps on the animating grid (§6.3's method): software
+2.83 fps, **GPU 2.45 fps** — both fail ≥30 fps by >10×, and the GPU path is
+15% slower than the renderer it was meant to replace. Attribution measured:
+GC355 front end idle in every sample; the cost is CPU-side per-task path
+building and stroke tessellation in LVGL's VG_LITE unit (an animating
+knob's stroke parameters change every frame, so the stroke cache never
+hits). §4's risk framing held: the honest conclusion is that this
+backend's per-task model does not fit 150 px widget-style scenes at this
+clock; a future phase would need persistent per-widget paths submitted in
+one batch (driving vg_lite directly), not more knob-turning here.
 Phase 1 (foundation) is complete and hardware-verified — see
 `2026-08-16-vglite-gc355-design.md` and
 `examples/display/vglite_probe/transcript_hw_evkb.txt`.

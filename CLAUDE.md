@@ -106,7 +106,8 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **94 gates** (93 before
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **95 gates** (94 before
+VGLite Phase 2 added `display/vglite_lvgl_test`; 93 before
 VGLite Phase 1 added `display/vglite_probe`; 92 before the
 SynthUI Knob pilot added `display/synthui_knob_test`; 91 before the
 step sequencer added `audio/step_seq_test`; 90 before the
@@ -124,13 +125,25 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **94 passed, 0 failed, 0 SKIP**, or
-**93 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **95 passed, 0 failed, 0 SKIP**, or
+**94 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
-✅ **Measured 2026-08-16: 94 passed, 0 failed, 0 SKIP.** A fully clean sweep on
-the merge of VGLite Phase 1, `rt1176:dualcore/cm4_audio_test` included. Note the
+✅ **Measured 2026-08-16 (pre-Phase-2 baseline): 94 passed, 0 failed, 0 SKIP.**
+A fully clean sweep on the merge of VGLite Phase 1,
+`rt1176:dualcore/cm4_audio_test` included. Note the
 runner prints only non-zero categories, so `gates: 94 passed` with exit 0 IS
-`94 / 0 / 0` — don't go looking for the zeros.
+`94 / 0 / 0` — don't go looking for the zeros. Re-measure at 95 on the
+VGLite Phase 2 merge and update this line with the result.
+
+★ **`display/vglite_lvgl_test` gates the SOFTWARE build of a two-build
+example.** The GPU build (`build-vglite/`, LVGL's VG_LITE unit on the GC355)
+is silicon-only with its OWN golden (`0xC3C6171A`) — two golden sets, never
+reconciled (hardware AA ≠ LVGL mask arithmetic, and the GPU build carries
+`LV_USE_FLOAT=1`). The Phase-2 fps criterion was measured and NOT met
+(software 2.83 fps, GPU 2.45 fps, CPU-bound in the backend's per-task path
+construction) — the GPU path is pixel-correct but not an optimisation as it
+stands; `docs/superpowers/specs/2026-08-17-vglite-phase2-design.md` has the
+verdict and the follow-up shape.
 
 ★ **No gate is SKIP-class any more.** For one day `display/synthui_knob_test`
 and `display/vglite_probe` were: SynthUI and VGLite were unpushed, their import
@@ -290,13 +303,25 @@ gate was genuinely added.
 
 Repo-wide gates in `tools/`:
 - `license-audit.sh` — proves no copyleft source is compiled into firmware
-  (header sweep + binary-provenance check + link-manifest depfile audit). The
-  tree is permissive-only — MIT/BSD, plus **Apache-2.0 in exactly two files**
-  (`VGLite/vg_lite_flat.{c,h}`, recorded in that repo's `NOTICE` — the Bézier
-  flatteners `vg_lite.c` calls from its stroke path, so they do link); every
-  inherited LGPL file has a clean-room rewrite. Don't
+  (header sweep + binary-provenance check + non-UTF-8-source check +
+  link-manifest depfile audit). The
+  tree is permissive-only — MIT/BSD; every
+  inherited LGPL file has a clean-room rewrite. (The former Apache-2.0
+  exception, `VGLite/vg_lite_flat.{c,h}`, no longer exists: the v7 SDK
+  re-vendor of 2026-08-17 has no such files and VGLite is MIT throughout —
+  its `NOTICE` records the history.) Don't
   introduce GPL/LGPL/MPL code or dependencies, and don't vendor a prebuilt
   binary without licence text beside it.
+  ★ **Part 1 also fails on any tracked non-UTF-8 C/C++ source** (added
+  2026-08-17): `grep -I` classifies such files as binary and silently skips
+  them, so a source file in another encoding is a file the copyleft sweep
+  never reads — the same hole as an unlicensed binary, through a different
+  door. The SDK v7 VGLite drop shipped `vg_lite_stroke.c` in ISO-8859-1 and
+  FNET carried 16 cp1252 files; all are transcoded and the check now keeps
+  it that way. When vendoring, transcode with
+  `iconv -f WINDOWS-1252 -t UTF-8` (not ISO-8859-1 — that mapping turns
+  cp1252 smart quotes into INVISIBLE C1 controls that pass the audit while
+  silently corrupting comments; measured, then fixed, in FNET).
   ★ **Green does NOT mean "this tree is MIT".** The audit greps for COPYLEFT,
   and Apache-2.0 is not copyleft — so it passed, correctly, while VGLite's own
   README claimed "MIT throughout" and was wrong for a day. The audit answers

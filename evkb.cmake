@@ -120,12 +120,12 @@ teensy_declare_library(SD             PaulS_SD             https://github.com/ne
 teensy_declare_library(SerialFlash    SerialFlash          https://github.com/newdigate/SerialFlash     2b6f24168c1ca97af1138c4a5b10255b39c4ad0b .)
 teensy_declare_library(ethernet       Ethernet             https://github.com/newdigate/Ethernet        eebbfebc699a1500864236db21d17abf3cf7535a .)
 teensy_declare_library(nativeethernet NativeEthernet       https://github.com/newdigate/NativeEthernet  7f5d881d5da80540177caea760d895780478b128 .)
-teensy_declare_library(fnet           FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
+teensy_declare_library(fnet           FNET/src             https://github.com/newdigate/FNET            41deb998e16195cf317a2a0f3f889d33451a57ab src)
 teensy_declare_library(lwip           lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
 teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            afb9789ed430614b74eb6ae946da6062485964cd .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
 teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         e1320124ca55531eb0e8e6a358e6ed573bd1c612 .) # NOT Arduino-layout: use import_evkb_synthui(). Pushed 2026-08-17; the pin then moved to a REWRITTEN history (reference/rebirth/ dropped before going public), so every SHA before e132012 is unreachable.
-teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          87e27edf489c2b6154d8ba091b9d152d5dded6cf .) # NOT Arduino-layout: use import_evkb_vglite(). Pushed 2026-08-17. NXP's VGLite vendored verbatim (MIT, except vg_lite_flat.{c,h} which are Apache-2.0, see its NOTICE -- permissive, no copyleft) plus this tree's bare-metal port.
+teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          3119701c6f4f3dcf1de6d03ca1138c83e6005652 .) # NOT Arduino-layout: use import_evkb_vglite(). NXP's VGLite vendored verbatim plus this tree's bare-metal port. Since the v7 (SDK 26.06 LTS) re-vendor it is MIT THROUGHOUT -- the Apache-2.0 vg_lite_flat.{c,h} pair no longer exists upstream; NOTICE records the history.
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 teensy_declare_library(Bounce2        Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).
