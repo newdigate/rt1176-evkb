@@ -254,3 +254,62 @@ rail in the expected DIRECTION. TP33 sits on `NVCC_SD` and would settle it in
 seconds. A functional alternative needing no meter: fit a microSD and run
 `sd_test` with `useIoVoltage1V8(true)` — a 3.3 V card should FAIL at 1.8 V, and
 if it passes regardless, the rail is not moving.
+
+## Pin-by-pin audit: M2-MAYA-W1 card vs EVKB J54
+
+Done 2026-08-17 after the MIPI-display precedent, where a connector that looked
+compatible was not. Card side from the datasheet pin tables (UBX-22004354 R05
+Tables 4/5), board side from the RevC3 netlist. All 75 pins compared
+mechanically.
+
+**Verdict: no connector mismatch.** Everything the card actually uses is
+correctly mapped, and no signal direction conflicts.
+
+### Correct — every pin that matters
+
+| Card pins | Function | EVKB |
+|---|---|---|
+| 9, 11, 13, 15, 17, 19 | SDIO CLK/CMD/D0–D3 | uSDHC1, all series R fitted |
+| 2, 4, 72, 74 | 3.3 V supply | `WL_3V3` (all four) |
+| 1,7,18,33,39,45,51,57,63,69,75 | GND | GND |
+| 32, 36 | UART_RXD, UART_CTS — card **inputs** | driven from U354 (MCU→module) |
+| 22, 34 | UART_TXD, UART_RTS — card **outputs** | read via U355 (module→MCU) |
+| 20 | UART_WAKE# — card **output**, 3.3 V | direct to `GPIO_AD_27`, no shifter (datasheet says 3.3 V — correct) |
+| 21 | SDIO_WAKE# — card **output** | via U355 (module→MCU), then J104 |
+| 42 | VENDOR_DEF3 = DEV_BT_WAKE — card **input** | driven via U354 (MCU→module) |
+| 54, 56 | BT_INDEPENDENT_RESET, PDn — card **inputs**, 3.3 V | driven / pulled high |
+
+**No contention anywhere.** Every card output lands on a board input path, every
+card input is fed from a board output path. Direction and voltage domain agree
+on all of them.
+
+### The one genuine disagreement — DEV_WLAN_WAKE
+
+| | Card says | EVKB does |
+|---|---|---|
+| pin 40 (`VENDOR_DEF2`) | **DEV_WLAN_WAKE**, an input: "platform wakes the Wi-Fi radio, active low" | `VEN_DEF2` → **TP48 test point only — undriven** |
+| pin 66 (`UIM_SWP/PERST1#`) | **NC** | drives `WL_DEV_WAKE_1V8` from U354 |
+
+The EVKB puts WL_DEV_WAKE on pin 66, where this card has nothing; the card wants
+it on pin 40, where the EVKB has only a test point. The two disagree about where
+that signal lives.
+
+**This does not explain the enumeration failure** — DEV_WLAN_WAKE is a wake
+sideband, not required to answer CMD5, and an undriven input with an internal
+pull-up sits inactive. But it is a real board/card discrepancy and would matter
+for low-power work.
+
+### Board signals that go nowhere (card pin is NC)
+
+Harmless, but worth knowing before debugging any of them:
+
+| Pin | EVKB drives | Card |
+|---|---|---|
+| 23 | `WIFI_RST_B` via U354 (`GPIO_AD_16`) | **NC** — all the reset sequencing was a no-op |
+| 50 | 32.768 kHz from `Y2` via `R823` | **NC** — retires the "sleep clock missing" theory outright |
+| 58, 60 | LPI2C5 (`Wire2`) | **NC** |
+| 66 | `WL_DEV_WAKE_1V8` | **NC** (see above) |
+| 6, 16 | `WIFI_LED1_B`, `BT_LED2_B` | **NC** — so the board LEDs never light from this card, and their being dark means nothing |
+
+That last row matters: D18/D19 were listed earlier in this file as a free visual
+smoke test. **They are not** — this card does not connect them.
