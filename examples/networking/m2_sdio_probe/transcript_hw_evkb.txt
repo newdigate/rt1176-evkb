@@ -3,94 +3,119 @@ M.2 SDIO probe — hardware run on the MIMXRT1170-EVKB
 
 Date:    2026-08-17
 Board:   MIMXRT1170-EVKB RevC3
-Card:    u-blox M2-MAYA-W161-00C (NXP IW416) in M.2 socket J54
+Card:    u-blox M2-MAYA-W161-00C (NXP IW416) in M.2 socket J54, seated and
+         screwed down (confirmed physically)
 microSD: J15 confirmed EMPTY (shares uSDHC1 with J54 — see docs/m2-evkb-revc3.md)
 Console: MCU-LINK VCOM @ 115200
 Flash:   LinkServer 26.6.137, `flash ... load` then `verify` (both VCOM-free)
 
 RESULT: NEGATIVE — the module does not respond to CMD5.
-        The host side is proven healthy. The module contributes nothing.
+        The host side is now verified correct in every respect that firmware
+        can reach. Four hypotheses were tested on the bench and refuted.
 
-Captured output
----------------
+Final captured output
+---------------------
 
     RT1176 M.2 SDIO probe up
     m2_wifi_reset=released
     sdio_begin=cmd5-no-response rc=-6
     int_status=0x18000 r4=0x0
+    rst_pads: sdio_rst dr=1 psr=1 | wl_rst dr=1 psr=1 | gdir=0x40008000
     pres_state=0xFF888088 cmd_high=1 dat_levels=0xF card_inserted=0
     probe_done
-    alive=0
-    alive=1
-    ...
 
-What this proves about the HOST side
-------------------------------------
+What is PROVEN about the host side
+----------------------------------
 
-`pres_state=0xFF888088` is read through the USDHC1 pads themselves, so it is
-evidence about real wires, not about firmware intent:
+Controller and pads match NXP's own board support for this EVK
+(mcuxsdk examples/_boards/evkbmimxrt1170):
 
-  bit 31:24 DLSL = 0xFF  all four (of eight) DAT lines idle HIGH
-  bit 23    CLSL = 1     CMD idles HIGH — the R373 10K pull-up to NVCC_SD works
-  bit 19    WPSPL= 1     write-protect switch level
-  bit 15    TSCD = 1
-  bit 7     SDOFF= 1     SD clock gated off while idle (normal)
+  BOARD_SDMMC_SDIO_HOST_BASEADDR = USDHC1            <- same controller
+  SDIO_RST = GPIO_AD_16 (ball N17) as GPIO9_IO15     <- same pad
+  WL_RST   = GPIO_AD_31 (ball J17) as GPIO9_IO30     <- same pad
+  BOARD_SDMMC_SD_IO_VOLTAGE_CONTROL_TYPE = kSD_IOVoltageCtrlByHost
+                                                     <- 3.3V initial is correct
+
+`rst_pads: ... dr=1 psr=1` for both lines, with SION forced on so PSR reflects
+the actual pin. Both resets are released AND CONFIRMED HIGH AT THE PIN. This is
+not "we wrote a register and hoped".
+
+`pres_state=0xFF888088`, read through the USDHC1 pads themselves:
+
+  bit 31:24 DLSL = 0xFF  all DAT lines idle HIGH
+  bit 23    CLSL = 1     CMD idles HIGH — the R373 10K pull-up works
   bit 3     SDSTB = 1    SD clock stable
+  bit 7     SDOFF = 1    clock gated while idle (normal)
 
-Therefore all of the following are RULED OUT:
+Ruled out: pads not muxed, NVCC_SD rail dead, anything holding the bus low,
+module dragging lines down, clock divider unstable.
 
-  * pads not muxed to USDHC1        — line levels could not be read otherwise
-  * NVCC_SD rail dead               — pull-ups are pulling the bus high
-  * something holding the bus low   — every line idles high
-  * clock not configured            — SDSTB set, INITA self-cleared
-  * module unpowered pulling lines  — no line is being held down
-
-`int_status=0x18000` = ERR(15) | CTOE(16): command timeout, and CC never sets.
-The controller sent CMD5 and nothing answered. (QEMU reports 0x18001 for the
-same situation — it additionally sets CC, which the silicon correctly does not.)
+`int_status=0x18000` = ERR(15) | CTOE(16). The controller sends CMD5 and nothing
+answers; CC never sets. (QEMU reports 0x18001 — it also sets CC, which the
+silicon correctly does not.)
 
 Hypotheses tested and REFUTED
 -----------------------------
 
 1. Missing initialisation clocks.
-   `begin()` used `delayMicroseconds(2000)` where SdFat's hardware-proven
-   SdioTeensy uses `SYS_CTRL[INITA]`. i.MX USDHC gates SD_CLK while idle, so
-   the delay emitted zero clocks. FIXED — INITA now sent and confirmed to
-   self-clear (no INIT_CLK_STUCK). Did not change the outcome.
+   begin() used delayMicroseconds(2000) where SdFat's hardware-proven
+   SdioTeensy uses SYS_CTRL[INITA]. i.MX USDHC gates SD_CLK while idle, so the
+   delay emitted zero clocks. FIXED — INITA now sent, confirmed to self-clear.
+   Real defect. Not this defect.
 
-2. Module held in reset.
-   GPIO_AD_16 -> J54 pin 23 (WIFI_RST_B) has NO pull resistor on either the
-   3V3 or 1V8 side, so the pad floats at POR. The probe now drives it low for
-   10 ms, releases it high, and waits 100 ms before enumerating, through a
-   level shifter confirmed enabled (U354 OE# = GND) and pointed A->B (DIR
-   pulled to WL_3V3 via R1797). Did not change the outcome.
+2. Module held in reset (single line, GPIO3/ALT5).
+   GPIO_AD_16 -> J54 pin 23 has no pull resistor on either side, so it floats
+   at POR. Drove it via GPIO3/ALT5. Read-back was inconclusive because SION was
+   off. Real defect. Not this defect.
 
-Remaining candidates, in order
-------------------------------
+3. Wrong reset instance and sequence.
+   NXP drives BOTH lines via GPIO9 (ALT10), not GPIO3: SDIO_RST high, wait
+   100 ms, WL_RST high, wait 100 ms. Replicated exactly, plus SION so the pads
+   could be read back. Both now confirmed high at the pin. Not this defect.
 
-1. PHYSICAL SEATING. M.2 cards sit at an angle until the retaining screw pulls
-   them flat; an inserted-but-unscrewed card can make partial or no contact.
-   Every host-side signal checks out and the module contributes nothing at all,
-   which is exactly what a card that is not making contact looks like.
-   NOT YET RULED OUT — requires physical inspection.
+4. USDHC clock root.
+   SdFat's RT1176 branch — and this driver, inheriting its note — take
+   SYS_PLL2_PFD2 (mux 4, div 2 -> 198 MHz) while ASSUMING the boot ROM left
+   PFD2 at 396 MHz; the imxrt1176 core's startup.c never programs PLL2. NXP
+   does not assume it: BOARD_USDHC1ClockConfiguration() calls CLOCK_InitSysPll2()
+   and CLOCK_InitPfd(kCLOCK_PllSys2, kCLOCK_Pfd2, 24) first.
+   The trap is that a wrong root is nearly invisible — SDSTB asserts either way,
+   so the controller looks healthy while the card sees the wrong frequency.
+   Switched to OSC_24M (mux 1, undivided), which is always running and
+   boot-independent, with BASE_CLOCK matched. Kept, because it removes an
+   assumption. Not this defect either.
 
-2. SDIO I/O VOLTAGE. Every other M.2 signal on this board is level-shifted to
-   1.8V (U354/U355); the six SDIO lines are the only ones wired straight to the
-   MCU. NVCC_SD is selected by U311 (NX3L1G53GT SPDT analog switch) under
-   `SD1_VSELECT` from the MCU, and defaults to the 3.3V leg. If this card's
-   SDIO is 1.8V-only, it would sit silent exactly like this.
-   Counter-argument: standard SDIO begins at 3.3V and negotiates down, so a
-   compliant card should answer CMD5 at 3.3V. NOT YET INVESTIGATED.
+NOTE ON REASONING: hypothesis 4 was initially dismissed on the grounds that
+SDSTB asserted and INITA self-cleared. That was wrong. SDSTB proves the divider
+is stable, NOT that the frequency is what the driver believes. The dismissal
+cost a cycle; the note is here so the next person does not repeat it.
 
-3. The 32.768 kHz sleep clock on J54 pin 50 (from Y2 via R823, both fitted,
+What is left
+------------
+
+Firmware has now replicated NXP's documented path for this board. The remaining
+candidates are physical or card-specific and cannot be settled from firmware:
+
+1. The card is not making contact, or is faulty. It is seated and screwed, but
+   "screwed down" and "all 75 contacts mating" are not the same claim.
+2. The 32.768 kHz sleep clock on J54 pin 50 (from Y2 via R823, both fitted,
    Y2 powered from WL_3V3). Some combo parts will not leave internal reset
-   without it. NOT YET MEASURED.
+   without it. Never measured.
+3. Something specific to this u-blox card versus the NXP/Murata M.2 cards NXP
+   validates against.
+
+Next steps that would actually decide it:
+  * A scope on J54 pin 9 (CLK) and pin 11 (CMD) during the CMD5 attempt: does
+    the clock reach the connector, and does anything drive CMD?
+  * A scope or counter on J54 pin 50 to confirm Y2 is oscillating.
+  * Swap in a known-good M.2 card, or try this card in a known-good host.
 
 Not suspected
 -------------
 
-The USDHC clock root. `docs/superpowers/plans` and SdFat's RT1176 branch both
-carry a HARDWARE-VERIFY note that CLOCK_ROOT58 <- SYS_PLL2_PFD2 depends on
-boot-ROM state this core never programs. SDSTB asserting and INITA self-clearing
-both require a working root clock, so that note — while still true in general —
-does not explain this failure.
+The SDIO I/O voltage. Every other M.2 signal is level-shifted to 1.8V while the
+six SDIO lines run straight to the MCU, which invites the theory that NVCC_SD
+must be switched to 1.8V (it is selectable — U311, an NX3L1G53GT SPDT switch,
+under SD1_VSELECT). But NXP configures kSD_IOVoltageCtrlByHost, which is the
+UHS switch performed AFTER identification, and standard SDIO begins at 3.3V.
+The default 3.3V leg is correct for CMD5.

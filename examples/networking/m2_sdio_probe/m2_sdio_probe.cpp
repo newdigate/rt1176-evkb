@@ -28,19 +28,53 @@ static SdioHost sdio;
 // on 2026-08-17 left it undriven and CMD5 timed out (int_status=0x18000,
 // ERR|CTOE, with CC never setting).
 //
-// Pad defines are local because the core header stops at GPIO_AD_14.  Offsets
-// are the RM's: SW_MUX_CTL_PAD_GPIO_AD_16 at 14Ch, IOMUXC base 0x400E8000.
-// ALT5 = GPIO_MUX3_IO15 -> GPIO3_IO15 (RM 12.x pad table, line 20107).
-#define M2_WIFI_RST_MUX (*(volatile uint32_t *)0x400E814Cu)
-#define M2_WIFI_RST_BIT 15
+// This now mirrors NXP's own BOARD_InitPinsM2() + BOARD_WIFI_BT_Enable(true)
+// for evkbmimxrt1170 (mcuxsdk examples/_boards/evkbmimxrt1170/wifi_bt_config.c),
+// which is the authoritative working reference for this board and card class:
+//
+//   SDIO_RST = GPIO_AD_16 (ball N17) as GPIO9_IO15   <- IOMUXC_GPIO_AD_16_GPIO9_IO15
+//   WL_RST   = GPIO_AD_31 (ball J17) as GPIO9_IO30   <- IOMUXC_GPIO_AD_31_GPIO9_IO30
+//   both initialised as outputs driven LOW, then:
+//     SDIO_RST = 1; wait 100 ms; WL_RST = 1; wait 100 ms
+//
+// Two things this corrects from the first attempt: the pad is muxed to GPIO9
+// (ALT10), not GPIO3 (ALT5) -- NXP drives the fast alias -- and BOTH lines are
+// sequenced, 100 ms apart, rather than one.
+//
+// WL_RST is driven even though R404 is DNP on RevC3 (so GPIO_AD_31 does not
+// reach J54 pin 56, which sits high on R829 regardless).  Matching the
+// reference exactly is worth more than saving one register write, and the pad
+// is otherwise idle -- though note it is also Arduino D12/MISO.
+//
+// Pad mux registers are local defines because the core header stops at
+// GPIO_AD_14.  RM offsets: GPIO_AD_16 at 14Ch, GPIO_AD_31 at 188h, IOMUXC base
+// 0x400E8000.  ALT10 = 0xA.
+#define M2_SDIO_RST_MUX (*(volatile uint32_t *)0x400E814Cu)   // GPIO_AD_16
+#define M2_WL_RST_MUX   (*(volatile uint32_t *)0x400E8188u)   // GPIO_AD_31
+#define M2_SDIO_RST_BIT 15
+#define M2_WL_RST_BIT   30
 
 static void m2ReleaseWifiReset() {
-    M2_WIFI_RST_MUX = 5u;                          // ALT5 = GPIO3_IO15
-    GPIO3_GDIR |= (1u << M2_WIFI_RST_BIT);         // output
-    GPIO3_DR_CLEAR = (1u << M2_WIFI_RST_BIT);      // assert reset (active low)
+    // SION (bit 4) forces the input path on so GPIO9_PSR reflects the actual
+    // pin.  NXP passes 0 here because it never reads these back; we do, and
+    // without SION a PSR read of 0 says nothing about the pad's real level.
+    M2_SDIO_RST_MUX = 0x10u | 0xAu;                 // SION | ALT10 = GPIO9_IO15
+    M2_WL_RST_MUX   = 0x10u | 0xAu;                 // SION | ALT10 = GPIO9_IO30
+    GPIO9_GDIR |= (1u << M2_SDIO_RST_BIT) | (1u << M2_WL_RST_BIT);
+    GPIO9_DR_CLEAR = (1u << M2_SDIO_RST_BIT) | (1u << M2_WL_RST_BIT);
     delay(10);
-    GPIO3_DR_SET = (1u << M2_WIFI_RST_BIT);        // release
-    delay(100);                                    // let the module boot
+    GPIO9_DR_SET = (1u << M2_SDIO_RST_BIT);         // SDIO_RST high
+    delay(100);
+    GPIO9_DR_SET = (1u << M2_WL_RST_BIT);           // then WL_RST high
+    delay(100);
+}
+
+// Read the pads back through GPIO9_PSR.  The first attempt drove GPIO3 and had
+// no way to tell whether the level actually reached the pin -- which is exactly
+// the thing that needed proving.
+static uint32_t m2ResetPadLevels() {
+    return ((GPIO9_PSR >> M2_SDIO_RST_BIT) & 1u) |
+           (((GPIO9_PSR >> M2_WL_RST_BIT) & 1u) << 1);
 }
 
 static const char *statusName(SdioHost::Status s) {
@@ -80,6 +114,22 @@ static void reportProbe() {
     // something is holding CMD down -- a dead rail or an unpowered module --
     // and no amount of protocol work will help.
     uint32_t ps = sdio.lastPresState();
+    // DR is what we asked for; PSR is what the pin is doing.  If DR reads 1 and
+    // PSR reads 0, GPIO9 is not the instance that owns this pad and the drive
+    // is going nowhere -- which is a completely different problem from a module
+    // that is out of reset and simply not answering.
+    uint32_t pads = m2ResetPadLevels();
+    Serial1.print("rst_pads: sdio_rst dr=");
+    Serial1.print((GPIO9_DR >> M2_SDIO_RST_BIT) & 1u);
+    Serial1.print(" psr=");
+    Serial1.print(pads & 1u);
+    Serial1.print(" | wl_rst dr=");
+    Serial1.print((GPIO9_DR >> M2_WL_RST_BIT) & 1u);
+    Serial1.print(" psr=");
+    Serial1.print((pads >> 1) & 1u);
+    Serial1.print(" | gdir=0x");
+    Serial1.println(GPIO9_GDIR, HEX);
+
     Serial1.print("pres_state=0x");
     Serial1.print(ps, HEX);
     Serial1.print(" cmd_high=");

@@ -116,23 +116,37 @@ and the pads behind them (`GPIO_EMC_B2_13..16`) run through **fitted**
 audio would mean lifting SDRAM data lines. Treat this interface as unavailable.
 (The `J79`–`J82` jumper defaults are moot given the DNP resistors.)
 
-## Reset lines — read this before writing any control code
+## Reset lines — settled against NXP's own board support
 
-There is no MCU control over `W_DISABLE1#` (pin 56): `R404` is DNP, so the pin
-sits at WL_3V3 through a 10K pull-up permanently. The two lines the MCU *can*
-drive are `GPIO_AD_15` → pin 54 and `GPIO_AD_16` → pin 23.
+Names reconciled with `mcuxsdk/examples/_boards/evkbmimxrt1170` (`pin_mux.h`,
+`wifi_bt_config.c`), which is the authoritative software view of this socket:
+
+| NXP name | MCU pad | GPIO used by NXP | J54 | Schematic net |
+|---|---|---|---|---|
+| `SDIO_RST` | `GPIO_AD_16` (ball N17) | **GPIO9_IO15** (ALT10) | 23 | `WIFI_RST_B` |
+| `WL_RST` | `GPIO_AD_31` (ball J17) | **GPIO9_IO30** (ALT10) | 56 | `WL_RST#` — **but R404 is DNP**, so this pad does not reach the connector on RevC3; pin 56 sits high on `R829` regardless |
+
+**The required sequence** (`BOARD_WIFI_BT_Enable(true)`) is: both lines
+initialised as outputs driven **low**, then `SDIO_RST` high → wait **100 ms** →
+`WL_RST` high → wait **100 ms**. NXP drives the **fast** GPIO alias (GPIO9,
+ALT10), not GPIO3/ALT5.
 
 `GPIO_AD_16` has **no pull resistor anywhere** — its net has exactly two nodes,
 `R835.2` and `U354.3`, and the 1V8 side is likewise unpulled. At POR the pad is
 a high-Z input feeding a 74AVC8T245 input, so the module's reset state is
-genuinely **indeterminate until firmware drives it**. `BT_RST#` is better
-defined: 10K `R832` to WL_3V3.
+indeterminate until firmware drives it. `BT_RST#` is better defined: 10K `R832`
+to WL_3V3.
 
-The module-side meaning of pin 23, and whether the two lines need a particular
-assertion order, is **unconfirmed** — the u-blox M.2 card user guide's pinout is
-an image, not extractable text. Driving both high is very likely correct but is
-a guess until the board says otherwise. Resolve it empirically and record the
-result here.
+**Reading these pads back requires SION.** Mux value `0x1A` (SION | ALT10), not
+`0x0A`. With SION off, `GPIO9_PSR` reads 0 whatever the pin is doing — which
+looks exactly like a drive that failed. Cost a debug cycle on 2026-08-17.
+
+★ **Doing all of the above is still not sufficient to enumerate the
+M2-MAYA-W161.** With both resets confirmed high *at the pin*, the bus idling
+high, INITA sent and the clock root taken from OSC_24M, the module does not
+answer CMD5. See `examples/networking/m2_sdio_probe/transcript_hw_evkb.txt` for
+the full evidence and the four refuted hypotheses. The open questions are
+physical: contact, and whether Y2's 32.768 kHz on pin 50 is oscillating.
 
 ## Module LEDs
 
