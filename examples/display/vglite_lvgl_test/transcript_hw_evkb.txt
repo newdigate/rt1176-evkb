@@ -1,7 +1,9 @@
 vglite_lvgl_test -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
 ================================================================================
 2026-08-17. LVGL's VG_LITE draw unit renders the 16-knob grid on the GC355.
-Text and tick marks CONFIRMED CLEAN on glass by a human eye.
+Text and tick marks CONFIRMED CLEAN after the alignment fix below.
+★ NOT YET CORRECT: residual GPU-ONLY artifacts remain. See the open section
+at the foot of this file. The golden below is NOT trustworthy as a golden.
 ================================================================================
 
 VGLITE_LVGL_BEGIN
@@ -14,7 +16,11 @@ LVGL_BYTES=3686400
 KNOB_GRID_SUM_GPU=0x15F05E35
 VGLITE_LVGL_DONE
 
-GPU GOLDEN: 0x15F05E35.  SOFTWARE GOLDEN: 0x513C4DB8 (in run_qemu.sh).
+GPU value: 0x15F05E35 -- RECORDED, NOT ADOPTED AS A GOLDEN. It is the checksum
+of a frame that still contains artifacts (below), and freezing it would bake
+them in as expected output.
+SOFTWARE GOLDEN: 0x513C4DB8 (in run_qemu.sh) -- this one IS adopted; the CPU
+render is clean on glass.
 ★ These two must NEVER be reconciled. Hardware antialiasing is not LVGL's mask
 arithmetic, and the GPU build additionally carries LV_USE_FLOAT=1, so
 coordinates round differently. Copying one over the other to green a gate would
@@ -71,3 +77,51 @@ reproducibility, never correctness.
 METHOD: flashed VCOM-free (load -> verify -> attach reader -> reset).
 Note an M.2 MAYA-W161 card is fitted to this board; two SWD connect failures
 earlier in the session were cleared by resetting the debugger port.
+
+
+================================================================================
+OPEN: RESIDUAL GPU-ONLY ARTIFACTS (2026-08-17)
+================================================================================
+
+The 16-pixel alignment fix cleared the mangled text and the smeared ticks. It
+did NOT clear everything. Still present on the GPU path:
+
+  - some glitching artifacts
+  - the LOWER PART of each knob face is a slightly different colour, a band
+    rather than a smooth transition
+
+★ ESTABLISHED BY A/B ON THE SAME PANEL, which is what makes this a GPU finding
+rather than a widget one: the SOFTWARE build of the IDENTICAL scene, from
+identical SynthUI widget code, renders CLEAN -- no glitches, no colour band.
+Confirmed by eye, both builds, same session, same board. So the artifacts are
+in the VG_LITE draw path, not in synthui_knob's drawing.
+
+That A/B was worth doing rather than assuming. The colour band sits at roughly
+the same height within every knob, which superficially looks like a per-widget
+effect -- exactly the reading that would have sent the next person to debug the
+widget. The software render refutes it.
+
+LEADING HYPOTHESES, in the order worth testing, NEITHER TESTED:
+
+1. ALPHA / PREMULTIPLY on the shading overlay. gcFEATURE_BIT_VG_LVGL_SUPPORT
+   reads 0 on this silicon, so LVGL premultiplies in SOFTWARE
+   (lv_draw_vg_lite_img.c:66). The knob's face shading is drawn as a
+   semi-transparent overlay -- "lighter and darker depending on the angle" --
+   and a blend or premultiply mismatch there would tint exactly one region of
+   the face while leaving opaque geometry correct. This matches the symptom
+   most closely: it is a COLOUR error confined to a blended area, with every
+   opaque path right.
+
+2. TESSELLATION TILING. The buffer is 256x256 over a 720x1280 screen, so the
+   GPU renders in bands with boundaries at y=256, 512, 768, 1024. Knob rows sit
+   at y=120, 295, 470, 645 with height 150, so rows 0, 2 and 3 STRADDLE a
+   boundary and row 1 does not. If the band edge is the cause, row 1 should be
+   clean and the others not -- a cheap discriminating observation to make on
+   glass before changing anything.
+
+3. SCISSOR. gcFEATURE_BIT_VG_SCISSOR reads 1, so lv_draw_vg_lite.c:141 now
+   takes a path that was dead under the old driver. Newly-live code is worth
+   suspecting on principle.
+
+Hypothesis 2 is the cheapest to test and needs no rebuild: look at whether row 1
+(the second row down) is clean while rows 0, 2 and 3 band.
