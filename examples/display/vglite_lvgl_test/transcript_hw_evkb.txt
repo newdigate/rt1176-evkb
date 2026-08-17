@@ -1,0 +1,73 @@
+vglite_lvgl_test -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
+================================================================================
+2026-08-17. LVGL's VG_LITE draw unit renders the 16-knob grid on the GC355.
+Text and tick marks CONFIRMED CLEAN on glass by a human eye.
+================================================================================
+
+VGLITE_LVGL_BEGIN
+PANEL_OK
+VGLITE_CHIP_ID=0x00000355
+VGLITE_INIT=OK err=0
+VGLITE_LVGL=GPU
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+KNOB_GRID_SUM_GPU=0x15F05E35
+VGLITE_LVGL_DONE
+
+GPU GOLDEN: 0x15F05E35.  SOFTWARE GOLDEN: 0x513C4DB8 (in run_qemu.sh).
+★ These two must NEVER be reconciled. Hardware antialiasing is not LVGL's mask
+arithmetic, and the GPU build additionally carries LV_USE_FLOAT=1, so
+coordinates round differently. Copying one over the other to green a gate would
+discard the only evidence that the GPU is doing something different at all.
+
+================================================================================
+THE BUG THIS TRANSCRIPT EXISTS FOR: 16-PIXEL BLIT ALIGNMENT
+================================================================================
+
+FIRST GPU RUN, sum=0xB1A12E39. Every token said success -- INIT=OK,
+FLUSHED=PASS, LVGL_BYTES=3686400 (a full 720x1280x4 paint), and a stable
+checksum that was neither blank nor equal to the software one. On glass:
+
+  - knob GEOMETRY was correct. Crescents were crescents (NOT full rings, so
+    the arc-clamp failure did not return under LV_USE_FLOAT), faces, rings,
+    detent ticks and all four states rendered right.
+  - the TITLE TEXT was mangled: glyphs fragmented and overlapping.
+  - TICK MARKS smeared, each trailing repeated horizontal streaks rightward.
+
+Vector paths clean, small BLITS corrupt. A per-row smear is the signature of a
+stride mismatch on a blit source.
+
+DIAGNOSIS came from dumping all 65 v7 feature bits (see vglite_probe's
+transcript): gcFEATURE_BIT_VG_16PIXELS_ALIGN = 1. The GC355 requires
+16-pixel-aligned blit sources. Phase 2a's compat shim had ANSWERED 0 for that
+bit -- an invented value, and the wrong one -- and even after the re-vendor
+made the real value visible, LVGL was still allocating glyph and layer buffers
+with the SOFTWARE renderer's defaults from port/lv_conf.h:
+LV_DRAW_BUF_STRIDE_ALIGN 1 and LV_DRAW_BUF_ALIGN 4.
+
+FIX: the VGLITE build sets both to 64 (16 px x 4 B at LV_COLOR_DEPTH 32).
+Measured after: sum changed to 0x15F05E35, and text and ticks are clean.
+
+★ ONE ASSERTION HAD TO BE RELAXED, and it was too strict rather than wrong.
+port/lvgl_mipi_panel.cpp asserted LV_DRAW_BUF_STRIDE_ALIGN == 1 because DIRECT
+mode makes LVGL write the scanout buffer at its own stride, so padding would
+skew every line. But the real invariant is that the panel pitch not get padded,
+and 720 x 4 = 2880 = 45 x 64 -- so a 64-byte alignment pads nothing here. The
+assertion is now PANEL_PITCH_BYTES % LV_DRAW_BUF_STRIDE_ALIGN == 0, which is
+the property actually required. Keeping == 1 would have forced a false choice
+between a correct GPU blit path and a correct direct-render panel when the
+arithmetic says both hold.
+
+Verified the software path is untouched: its golden is still 0x513C4DB8 and its
+QEMU gate still passes.
+
+★ WHAT CAUGHT THIS, because it is the reusable part. The checksum was stable,
+non-blank, and different from software -- everything a gate looks for. Two more
+checks passed too: LVGL_FLUSHED=PASS and a full-screen LVGL_BYTES. All of that
+is consistent with a corrupted frame. Only a human looking at the panel found
+it. Same lesson as the knob pilot's arc clamp: a determinism check certifies
+reproducibility, never correctness.
+
+METHOD: flashed VCOM-free (load -> verify -> attach reader -> reset).
+Note an M.2 MAYA-W161 card is fitted to this board; two SWD connect failures
+earlier in the session were cleared by resetting the debugger port.

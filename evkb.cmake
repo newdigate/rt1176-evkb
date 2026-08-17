@@ -308,10 +308,18 @@ macro(import_evkb_lvgl)
             # at 0, and the GPU example gets its own set. Flipping it globally
             # would move goldens tree-wide and each would need re-confirming on
             # glass.
+            # ★ 64-byte draw-buffer stride, because the GC355 reports
+            # gcFEATURE_BIT_VG_16PIXELS_ALIGN=1 (measured on silicon) and 16 px
+            # x 4 B at LV_COLOR_DEPTH 32 is 64. LVGL allocates glyph and layer
+            # buffers with these; the software defaults (stride 1, align 4) are
+            # fine for a CPU renderer and feed the GPU misaligned rows, which
+            # renders vector paths correctly while smearing every small blit.
             target_compile_definitions(LVGL PUBLIC
                 LV_USE_DRAW_VG_LITE=1
                 LV_USE_MATRIX=1
-                LV_USE_FLOAT=1)
+                LV_USE_FLOAT=1
+                LV_DRAW_BUF_STRIDE_ALIGN=64
+                LV_DRAW_BUF_ALIGN=64)
             target_link_libraries(LVGL PUBLIC VGLite)
         endif()
     endif()
