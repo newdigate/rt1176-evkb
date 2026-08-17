@@ -161,3 +161,34 @@ working paths and did not mention the Ethernet PHY collisions. Both errors came
 from reading the netlist without re-checking the BOM on those specific
 resistors — the same check that was correctly applied to the SDIO rows. If you
 add a row here, check populate status for every series resistor on the path.
+
+## Power sequencing — why the MAYA-W1's 1.15 ms rule does not apply here
+
+The G2 Nano board (`~/Development/DEV-G2-NANO`, `kicad/power.kicad_sch`) carries
+this note against its MAYA-W1:
+
+> "1.8V supply must be delayed by at least 1.15ms for the MAYA-W1"
+
+That is a real constraint, but it belongs to a **module-down** design, where the
+host supplies the bare module BOTH rails and must therefore sequence them.
+
+On this board the M.2 card is supplied **3.3 V only**:
+
+    J54 pins 2, 4, 72, 74 = WL_3V3      (the only supply pins on the connector)
+    VDD_1V8 does NOT reach J54
+
+The card generates its own 1.8 V internally, so the sequencing is handled on the
+card and cannot be got wrong by the host. Checked because it looked like a
+promising explanation for the M2-MAYA-W161 not enumerating; it is not one.
+
+Two things it IS worth knowing:
+
+* `L26` (90 Ω) on J54 pins 3/5 is a common-mode choke on the USB pair, not power.
+* `VDD_1V8` still matters board-side: it powers U354/U355 (every M.2 control
+  signal is level-shifted through them) and U311's 1.8 V leg. It is a board rail,
+  not a module rail.
+
+Related, and established elsewhere in this file: `WL_3V3` reaches the card
+through ferrite `L49` from `SENSOR_3V3` with **no switch**, so firmware cannot
+power-cycle the module at all. Only a board power cycle or physical removal
+re-powers it.
