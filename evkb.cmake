@@ -124,8 +124,8 @@ teensy_declare_library(fnet           FNET/src             https://github.com/ne
 teensy_declare_library(lwip           lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
 teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            959cd97d56ec81b5baf2e09686ecb1a3a00a42c6 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
-teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         a1b6da7572a9125f901a9d9d26fc371e7689e672 .) # LOCAL-ONLY (unpushed): resolves under TEENSY_LIB_ROOT; fresh clones fail here until SynthUI's first push -- same class as the qemu2-local gate deps. Not Arduino-layout for imports: use import_evkb_synthui().
-teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          f539ff4b0a5c964c3d3ae85d7195be0e791b55de .) # LOCAL-ONLY (unpushed): resolves under TEENSY_LIB_ROOT; fresh clones fail here until VGLite's first push. Not Arduino-layout: use import_evkb_vglite().
+teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         e1320124ca55531eb0e8e6a358e6ed573bd1c612 .) # NOT Arduino-layout: use import_evkb_synthui(). Pushed 2026-08-17; the pin then moved to a REWRITTEN history (reference/rebirth/ dropped before going public), so every SHA before e132012 is unreachable.
+teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          f539ff4b0a5c964c3d3ae85d7195be0e791b55de .) # NOT Arduino-layout: use import_evkb_vglite(). Pushed 2026-08-17. NXP's VGLite (MIT) vendored verbatim plus this tree's bare-metal port.
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 teensy_declare_library(Bounce2        Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).
@@ -275,11 +275,9 @@ endmacro()
 # fails on the multi-threaded entry points.
 macro(import_evkb_vglite)
     if(NOT TARGET VGLite)
-        if(TEENSY_FORCE_FETCH OR NOT EXISTS "${TEENSY_LIB_ROOT}/VGLite/inc")
-            message(FATAL_ERROR "import_evkb_vglite(): VGLite is LOCAL-ONLY "
-                "(unpushed) -- its pinned URL cannot be fetched yet. Expected a "
-                "checkout at ${TEENSY_LIB_ROOT}/VGLite.")
-        endif()
+        # Pushed 2026-08-17, so this resolves like any other library: local
+        # checkout first, pinned fetch otherwise. The LOCAL-ONLY FATAL_ERROR
+        # guard that stood here until then is gone.
         evkb_library_dir(VGLite _evkb_vglite_dir)
         file(GLOB _evkb_vglite_srcs CONFIGURE_DEPENDS
              "${_evkb_vglite_dir}/VGLite/*.c"
@@ -304,23 +302,13 @@ endmacro()
 # them.  PUBLIC LVGL so consumers get lvgl.h and -lm transitively.
 macro(import_evkb_synthui)
     if(NOT TARGET SynthUI)
-        # SynthUI is LOCAL-ONLY (unpushed): the pinned URL/SHA above are
-        # documentary and cannot be fetched yet. teensy_resolve_library() (what
-        # evkb_library_dir() calls) reads TEENSY_FORCE_FETCH, not
-        # EVKB_FORCE_FETCH directly -- evkb.cmake folds the latter into the
-        # former near the top of this file, so TEENSY_FORCE_FETCH is the one
-        # actually in effect here. Guard before evkb_library_dir() runs, or a
-        # fresh clone / -DEVKB_FORCE_FETCH=ON configure would fall into the CPM
-        # fetch branch and hang on an interactive git credential prompt instead
-        # of failing loudly.
-        if(TEENSY_FORCE_FETCH OR NOT EXISTS "${TEENSY_LIB_ROOT}/SynthUI/src")
-            message(FATAL_ERROR "import_evkb_synthui(): SynthUI is LOCAL-ONLY "
-                "(unpushed) -- its pinned URL cannot be fetched yet. Expected a "
-                "checkout at ${TEENSY_LIB_ROOT}/SynthUI (TEENSY_LIB_ROOT "
-                "defaults to ~/Development; set it if SynthUI lives elsewhere). "
-                "Force-fetch (-DEVKB_FORCE_FETCH=ON / -DTEENSY_FORCE_FETCH=ON) "
-                "is not supported for this library yet.")
-        endif()
+        # Pushed 2026-08-17, so this resolves like any other library: local
+        # checkout first, pinned fetch otherwise. The LOCAL-ONLY FATAL_ERROR
+        # guard that stood here until then is gone.
+        # ★ The pinned SHA moved by more than a commit at that push: the repo's
+        # history was rewritten to drop reference/rebirth/ (rights unclear)
+        # before it went public, so every SynthUI SHA before e132012 is
+        # unreachable. Don't "restore" an older pin from git history here.
         import_evkb_lvgl()
         evkb_library_dir(SynthUI _evkb_synthui_dir)
         file(GLOB _evkb_synthui_src CONFIGURE_DEPENDS

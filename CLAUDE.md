@@ -132,15 +132,19 @@ the merge of VGLite Phase 1, `rt1176:dualcore/cm4_audio_test` included. Note the
 runner prints only non-zero categories, so `gates: 94 passed` with exit 0 IS
 `94 / 0 / 0` — don't go looking for the zeros.
 
-★ **Two gates are now SKIP-class on a fresh clone** — `display/synthui_knob_test`
-and `display/vglite_probe` — a different failure mode from every other
-documented exception, and the reason `docs/KNOWN-BROKEN-GATES.md` has an entry
-for each. SynthUI and VGLite are both unpushed, so `import_evkb_synthui()` /
-`import_evkb_vglite()` FATAL_ERROR, the examples cannot configure at all, and
-the runner reports `(not built)` — invisible in the pass/fail columns and
-visible only in the SKIP count. A fresh-clone sweep therefore reports **2 SKIP**;
-check the NAMES against those two before concluding a sweep under-reported. On
-this bench both checkouts exist, so both build and pass like any other gate.
+★ **No gate is SKIP-class any more.** For one day `display/synthui_knob_test`
+and `display/vglite_probe` were: SynthUI and VGLite were unpushed, their import
+macros raised `FATAL_ERROR`, and a fresh clone reported `2 SKIP` — invisible in
+the pass/fail columns. **Both repos were pushed public on 2026-08-17** and both
+now build from the pin, verified with `-DEVKB_FORCE_FETCH=ON` (the knob's five
+goldens came back bit-for-bit from GitHub-fetched sources). `0 SKIP` is
+therefore achievable on a clean machine again, which is what makes it worth
+asserting. `docs/KNOWN-BROKEN-GATES.md` keeps the resolved entry, because the
+next unfetchable library re-creates the class — and its lesson: a SKIP hides in
+a count, while every other exception in that file shows up RED and by name.
+★ **SynthUI's history was REWRITTEN before it went public** (`reference/rebirth/`
+dropped, rights unclear), so every SynthUI SHA before `e132012` is unreachable.
+A pin recovered from this repo's own git history will not fetch.
 
 ★ **A green `display/vglite_probe` does NOT mean the GPU works.** QEMU has no
 GC355 model, so that gate asserts the GPU-ABSENT fallback — the same ELF

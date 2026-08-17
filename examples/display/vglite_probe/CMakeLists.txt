@@ -9,9 +9,6 @@ set(TEENSY_VERSION 117 CACHE STRING "")
 
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 
-# On a fresh clone this FATAL_ERRORs by design -- VGLite is unpushed, so the
-# example cannot configure and its gate reports SKIP rather than a failure.
-# See docs/KNOWN-BROKEN-GATES.md.
 import_evkb_vglite()
 # panels/rk055 selects the panel; one MIPI-DSI host, one panel dir ever live.
 import_evkb_library(MipiDisplay soc panels/rk055)

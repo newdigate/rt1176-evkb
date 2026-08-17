@@ -11,10 +11,6 @@ set(TEENSY_VERSION 117 CACHE STRING "")
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 
 import_evkb_lvgl()
-# Fresh clone (no $TEENSY_LIB_ROOT/SynthUI checkout): import_evkb_synthui()
-# FATAL_ERRORs by design, so this example cannot configure and its gate
-# reports SKIP -- see docs/KNOWN-BROKEN-GATES.md (entry lands with the
-# gate's docs task).
 import_evkb_synthui()
 # panels/rk055 selects the panel; one MIPI-DSI host, one panel dir ever live.
 import_evkb_library(MipiDisplay soc panels/rk055)

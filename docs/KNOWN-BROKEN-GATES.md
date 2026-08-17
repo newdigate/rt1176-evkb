@@ -231,34 +231,36 @@ transcript".
 
 ---
 
-## `rt1176:display/synthui_knob_test` — SKIP on a fresh clone, by design
+## SKIP-class gates — ✅ RESOLVED 2026-08-17, and the class is now empty
 
-★ **This is the tree's first SKIP-class local-only dependency, and SKIP is a
-different animal from the RED ones above.** The example links the `SynthUI`
-sibling library, which is **unpushed** — it exists only as a local checkout at
-`$TEENSY_LIB_ROOT/SynthUI`. `import_evkb_synthui()` raises `FATAL_ERROR` when
-that checkout is absent (or under `-DEVKB_FORCE_FETCH=ON`, whose pinned URL does
-not exist yet), so on a fresh clone the example **cannot configure at all** →
-no `build/synthui_knob_test.elf` → the runner reports **SKIP `(not built)`**,
-not a failure.
+For one day this file carried two entries of a kind it had never had before:
+`display/synthui_knob_test` and `display/vglite_probe` could not configure at
+all on a fresh clone, because `SynthUI` and `VGLite` were unpushed and their
+import macros raised `FATAL_ERROR`. No ELF meant the runner reported **SKIP
+`(not built)`** rather than a failure.
 
-**Why the distinction matters enough to write down.** The other local-only
-dependencies (`rt1062:audio/audioinput_i2s_test`, `usb/usb_descriptor_survey`,
-`dualcore/cm4_usb_irq_probe`) all *build*; only QEMU behaviour differs, so they
-surface as REDs and every one of them is documented above as an expected red.
-This one is invisible in the pass/fail columns and shows up only in the SKIP
-count — and `0 SKIP` is precisely the number CLAUDE.md calls load-bearing,
-because it is what says the sweep covered everything rather than quietly
-measuring less. Someone on a clean machine seeing `N-1 passed, 0 failed, 1 SKIP`
-needs to be able to tell this expected gap from a sweep that under-reported.
+**Both repos were pushed on 2026-08-17** (`newdigate/SynthUI`,
+`newdigate/VGLite`, both public, both MIT), the `evkb.cmake` pins were bumped
+and the FATAL_ERROR guards deleted. Verified the only way that means anything —
+a `-DEVKB_FORCE_FETCH=ON` configure of both examples, which ignores the local
+checkouts and fetches from GitHub. Both built, and the knob's five goldens came
+back **bit-for-bit identical** from fetched sources
+(`ALL=0x8E1F9956`, `ENDLESS=0xBF7FAB41`, `BOUNDED=0x7D77023E`,
+`DETENTS=0xBEF7F8CE`, `ARC=0xAAE57894`).
 
-**On this bench it is not skipped**: the checkout exists, so the gate builds,
-runs and passes like any other. The fix that removes this entry is pushing
-SynthUI to `github.com/newdigate/SynthUI` and bumping the `evkb.cmake` pin —
-after which the fetch path works and a fresh clone builds it like anything else.
+★ **Keep the distinction this entry existed to draw, because the next
+local-only library will re-create it.** A SKIP is invisible in the pass/fail
+columns. Every other documented exception here *builds* and merely behaves
+differently under QEMU, so it shows up RED, by name. A SKIP-class gate shows up
+only in a count — and `0 SKIP` is exactly the number CLAUDE.md calls
+load-bearing, because it is what says the sweep covered everything instead of
+quietly measuring less. If you add a library that cannot be fetched, write its
+entry here the same way, and say how many SKIPs a fresh clone should expect.
 
-The example's `CMakeLists.txt` carries a comment pointing here, so whoever's
-configure just died reads the explanation at the point of failure.
+★ **SynthUI's history was rewritten before it went public** (dropping
+`reference/rebirth/`, whose rights are unclear), so every SynthUI SHA before
+`e132012` is unreachable. A pin restored from this repo's git history will not
+fetch.
 
 ## `rt1176:display/vglite_probe` — QEMU gates the FALLBACK, not the GPU
 
@@ -302,12 +304,9 @@ each catch what the others miss.
 pixels** — hardware antialiasing differs from LVGL's mask arithmetic. Two
 golden sets, never one. Do not "fix" a mismatch by copying one over the other.
 
-Also SKIP-class on a fresh clone, exactly like `display/synthui_knob_test`
-above: VGLite is unpushed, so `import_evkb_vglite()` FATAL_ERRORs, the example
-cannot configure, and the runner reports SKIP `(not built)` rather than a
-failure. The same reasoning applies about `0 SKIP` being the load-bearing
-number — and with two SKIP-class examples now, a fresh-clone sweep reports
-`2 SKIP`, so check the NAMES before concluding the sweep under-reported.
+This gate was SKIP-class on a fresh clone until 2026-08-17, when `VGLite` was
+pushed public and the FATAL_ERROR guard came out — see the resolved SKIP-class
+entry above. It builds from the pin now, verified with `-DEVKB_FORCE_FETCH=ON`.
 
 ## Rules for this list
 
