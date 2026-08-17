@@ -33,7 +33,12 @@ $LIB_ROOT/USBHost_t36 $LIB_ROOT/FNET $LIB_ROOT/lwip \
 $LIB_ROOT/CMSIS-DSP $LIB_ROOT/CMSIS_6 $LIB_ROOT/SerialFlash \
 $LIB_ROOT/PXP $LIB_ROOT/MipiDisplay $LIB_ROOT/LVGL \
 $LIB_ROOT/EEPROM $LIB_ROOT/ILI9341_t3 $LIB_ROOT/TouchPanel $LIB_ROOT/Bounce2 \
-$LIB_ROOT/SynthUI $LIB_ROOT/VGLite"}
+$LIB_ROOT/SynthUI $LIB_ROOT/VGLite $LIB_ROOT/M2Radio"}
+# M2Radio joined 2026-08-17 with networking/m2_sdio_probe, the first example to
+# link it. MIT, nothing vendored — its sdio/ is written against the RT1176
+# USDHC register map, not copied from an SDK. It is in this list for the same
+# reason every other entry is: the firmware compiles from it, so Part 1 must
+# sweep it or the audit passes by measuring less.
 # VGLite joined 2026-08-16 with display/vglite_probe, the first example to link
 # it. It is the first VENDORED third-party driver in this list rather than a
 # newdigate fork, so the sweep is doing more than coverage bookkeeping here:
@@ -293,6 +298,7 @@ examples/framework/wprogram_parity_test:wprogram_parity_test \
 examples/gpio-analog/analog_test:analog_test examples/gpio-analog/dac_test:dac_test \
 examples/gpio-analog/irq_attach_test:irq_attach_test examples/networking/enet_test:enet_test \
 examples/networking/ethernet_test:ethernet_test examples/networking/lwip_test:lwip_test \
+examples/networking/m2_sdio_probe:m2_sdio_probe \
 examples/networking/native_ethernet_test:native_ethernet_test \
 examples/serial/serial_test:serial_test examples/serial/serial_test_rx:serial_test_rx \
 examples/serial/serial_test/build-rt1062:serial_test \

@@ -106,7 +106,8 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **94 gates** (93 before
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **95 gates** (94 before the
+M.2 SDIO probe added `networking/m2_sdio_probe`; 93 before
 VGLite Phase 1 added `display/vglite_probe`; 92 before the
 SynthUI Knob pilot added `display/synthui_knob_test`; 91 before the
 step sequencer added `audio/step_seq_test`; 90 before the
@@ -124,13 +125,27 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **94 passed, 0 failed, 0 SKIP**, or
-**93 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **95 passed, 0 failed, 0 SKIP**, or
+**94 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
-✅ **Measured 2026-08-16: 94 passed, 0 failed, 0 SKIP.** A fully clean sweep on
-the merge of VGLite Phase 1, `rt1176:dualcore/cm4_audio_test` included. Note the
-runner prints only non-zero categories, so `gates: 94 passed` with exit 0 IS
-`94 / 0 / 0` — don't go looking for the zeros.
+✅ **Measured 2026-08-17: 95 passed, 0 failed, 0 SKIP.** A fully clean sweep on
+the M2Radio/`networking/m2_sdio_probe` merge, `rt1176:dualcore/cm4_audio_test`
+included. Note the runner prints only non-zero categories, so `gates: 95 passed`
+with exit 0 IS `95 / 0 / 0` — don't go looking for the zeros.
+
+★ **That sweep was run through a SHORT PATH SYMLINK, and it had to be.** Four
+gates open a QEMU monitor UNIX socket at `$DIR/mon.sock`
+(`cm4_usb_irq_probe`, `cm4_usb_enum_probe`, `cm4_usb_audio_probe`,
+`cm4_graph_usb_capstone`). macOS caps `sun_path` at **104 bytes**, and in a
+checkout named `rt1176-evkb-m2-maya-w161` those paths are 106–111 bytes, so all
+four die with `OSError: AF_UNIX path too long` — before QEMU is even contacted.
+They pass unchanged via `ln -s <repo> /tmp/ev` and running the sweep from
+`/tmp/ev` (52 bytes). **This is a property of where the clone lives, not of the
+firmware**: the same ELF and the same gate script pass or fail purely on the
+length of the directory name above them. `~/Development/rt1170/evkb` is 93 bytes
+and fits, which is why this has never been seen before. Diagnose it by
+`echo -n "$DIR/mon.sock" | wc -c` rather than by reading the Python traceback,
+which names neither the path nor the limit.
 
 ★ **No gate is SKIP-class any more.** For one day `display/synthui_knob_test`
 and `display/vglite_probe` were: SynthUI and VGLite were unpushed, their import
