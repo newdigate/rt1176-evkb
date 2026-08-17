@@ -1,0 +1,76 @@
+sd_test — hardware run on the MIMXRT1170-EVKB
+==============================================
+
+Date:   2026-08-17
+Board:  MIMXRT1170-EVKB RevC3
+Card:   microSD in J15 (a Raspberry Pi boot card)
+M.2:    J54 EMPTY — the M.2 card was removed for this run. J15 and J54 share
+        uSDHC1 (see docs/m2-evkb-revc3.md); only one device may be on the bus.
+Flash:  LinkServer 26.6.137, `flash ... load` (VCOM-free)
+
+RESULT: PASS
+
+Why this run exists
+-------------------
+
+This example had no hardware transcript. It was run as the CONTROL for the M.2
+investigation in examples/networking/m2_sdio_probe: the M2-MAYA-W161 does not
+answer CMD5, and this establishes whether the shared uSDHC1 bus is at fault.
+
+Captured output
+---------------
+
+    ==== SD re-verify (RT1176 / USDHC) ====
+    SD.begin OK
+    root listing:
+      overlays/
+      start_cd.elf  685572 B
+      EFI/
+      start.elf  2878340 B
+      start_db.elf  4855080 B
+      SDVERIFY.TXT  23 B
+      LICENSE.oracle  18974 B
+      start_x.elf  3792520 B
+      config.txt  1743 B
+      fixup_cd.dat  2644 B
+      fixup.dat  6729 B
+      bcm2710-rpi-3-b-plus.dtb  27082 B
+      ...
+      COPYING.linux  18693 B
+    root entries: 31
+    read back: 'RT1176 SD OK 2026-07-14'
+    write/read MATCH
+    RESULT: PASS
+
+Full SD initialisation, a 31-entry directory listing off a real filesystem, a
+file written and read back byte-identical.
+
+What this proves
+----------------
+
+The uSDHC1 path is good on silicon, end to end, at a physical connector on the
+SAME NETS that reach the M.2 socket:
+
+  * USDHC1 controller, its clocking and its command engine
+  * the GPIO_SD_B1_00..05 pads and their mux
+  * the pull-ups on CMD and DATA
+  * the bus as far as a connector, at real data rates, with CRC intact
+
+It also settles a question left open in the M.2 investigation: SdFat's RT1176
+branch drives the USDHC1 root from SYS_PLL2_PFD2 while ASSUMING the boot ROM
+left PFD2 at ~396 MHz. This run passes with that assumption in force, so on this
+board the boot ROM DOES leave PFD2 up. M2Radio's SdioHost was switched to
+OSC_24M to remove the assumption; that remains a reasonable robustness choice,
+but the PLL2 path is confirmed available and should be restored when throughput
+matters — 24 MHz is ample for enumeration and firmware download, not for
+sustained Wi-Fi traffic.
+
+Bearing on the M.2 result
+-------------------------
+
+Combined with:
+  * m2_sdio_probe — the IW416 never answers CMD5, bus idling high, and
+  * NXP's own wifi_cli — hangs at "Initialize WLAN Driver" on the same board,
+
+this control removes the host from suspicion entirely. The uSDHC1 bus works.
+The fault is the M.2 card or the M.2 socket.

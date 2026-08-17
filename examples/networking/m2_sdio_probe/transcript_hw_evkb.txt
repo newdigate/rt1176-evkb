@@ -195,3 +195,47 @@ SDIO wiring are properties of the EVKB, not of the card; per-module config is
 mostly TX power tables and antenna settings, which are applied long after CMD5.
 But it is not a zero-risk assumption, and it is worth noting that NXP appears
 not to validate a MAYA-W1 M.2 card on this EVK at all.
+
+=====================================================
+CONTROL: microSD on the same uSDHC1 bus — PASS
+=====================================================
+
+Date: 2026-08-17 (same session). M.2 card REMOVED, microSD in J15.
+
+J54's pins are physically inaccessible on this board, so the shared bus was
+probed where it IS accessible: the microSD socket J15 carries the same nets
+(J15.3 = SD1_CMD, J15.5 = CLK via R376, J15.7/8/1/2 = SD1_D0..D3).
+
+examples/storage-memory/sd_test: full SD init, a 31-entry root listing off a
+real filesystem, a file written and read back byte-identical. RESULT: PASS.
+Full transcript in that example's own transcript_hw_evkb.txt.
+
+FINAL CONCLUSION
+----------------
+
+Three results together:
+
+  1. m2_sdio_probe   — IW416 never answers CMD5; bus idles high; both resets
+                       confirmed high AT THE PIN.
+  2. NXP wifi_cli    — NXP's own reference stack, their firmware, their board
+                       support, hangs at "Initialize WLAN Driver" on this board.
+  3. sd_test         — a microSD on the SAME uSDHC1 nets initialises, lists,
+                       writes and verifies. PASS.
+
+The host is exonerated: controller, pads, clock root, pull-ups and the physical
+bus all work at a connector, at real data rates, with CRC intact.
+
+THE FAULT IS THE M.2 CARD OR THE M.2 SOCKET. It is not the uSDHC1 bus, not the
+clock, not the reset sequence, and not M2Radio's SdioHost.
+
+Also settled: sd_test passes with SdFat's SYS_PLL2_PFD2 assumption in force, so
+the boot ROM DOES leave PFD2 up on this board. Hypothesis 4 in the section above
+was correctly refuted. SdioHost's move to OSC_24M stays as a robustness choice,
+but the PLL2 path is available and should be restored when throughput matters.
+
+Remaining, in order of what to try next:
+  * Inspect the M.2 socket and the card's edge contacts while the card is out.
+  * Try the M2-MAYA-W161 in a different host, or a different M.2 card in J54.
+  * If a scope becomes available, J15 is the accessible probe point for the
+    shared bus; Y2 pin 1 carries the 32.768 kHz that reaches J54 pin 50, and
+    Y2 pins 3/4 carry WL_3V3 — the module's supply, never yet measured.
