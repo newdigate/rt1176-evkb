@@ -266,3 +266,52 @@ is no further firmware-only test that discriminates.
 The open question is now exactly one binary: is the CARD dead, or is the
 SOCKET dead? Firmware cannot answer it. It needs either a second M.2 card in
 this socket, or this card in a second host.
+
+=====================================================
+1.8 V SDIO TEST — no change
+=====================================================
+
+Date: 2026-08-17 (same session). microSD OUT, M.2 card in.
+
+Prompted by a good question: NXP's SDK has a UBX-MAYA-W1-USD config — would
+building that help, given J15 and J54 share the bus? It would not: the USD path
+defines WIFI_BT_USE_USD_INTERFACE and drives CONTROLLER_RESET = GPIO3 pin 9
+(= GPIO_AD_10, Arduino A0 on this board), leaving the M.2 card's SDIO_RST and
+WL_RST undriven — the state our very first probe run already tested and failed.
+
+But comparing the two configs turned up something both share:
+
+    #elif defined(WIFI_IW416_BOARD_UBX_MAYA_W1_USD)
+    #define SD8978
+    #define SDMMCHOST_OPERATION_VOLTAGE_1V8      <-- and the same in MURATA_1XK_M2
+
+NXP run these modules' SDIO at 1.8 V. This driver had only ever used the 3.3 V
+default. The switch is real and MCU-controllable on this board:
+
+    GPIO_AD_34 (ball J16) ALT4 = USDHC1_VSELECT
+      -> R168 (FITTED) -> SD1_VSELECT -> U311.5 (NX3L1G53GT SPDT)
+      -> selects VDD_1V8 (pin 6) or SENSOR_3V3 (pins 7/8) onto SD1_POSV
+      -> R1977 -> NVCC_SD
+
+and it is SAFE rather than a level mismatch, because NVCC_SD feeds both the bus
+pull-ups (R373/374/375) AND the MCU's own NVCC_SD1 pad supply (ball D14, via
+R375) — the whole bus moves together. (NVCC_SD2, ball G13, is a separate domain
+on FLASH_VCC and is unaffected.)
+
+Implemented as SdioHost::useIoVoltage1V8(), applied inside begin() after RSTA
+clears VEND_SPEC, then VEND_SPEC[1] = VSELECT.
+
+Result: unchanged.
+
+    sdio_begin=cmd5-no-response rc=-6
+    int_status=0x18000 r4=0x0
+
+The card is equally silent at 1.8 V and at 3.3 V.
+
+CAVEAT: without a meter on TP33 (which sits directly on NVCC_SD) it cannot be
+proven the rail actually moved. The evidence that it did is indirect — the bus
+still idles high afterwards, which needs live pull-ups on a live rail. Anyone
+with a multimeter should confirm at TP33 before treating 1.8 V as ruled out.
+
+The capability is kept but defaults OFF: J15 is the same bus and a 3.3 V-only
+microSD must not meet a 1.8 V rail.

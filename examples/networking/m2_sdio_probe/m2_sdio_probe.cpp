@@ -171,6 +171,17 @@ void setup() {
     m2ReleaseWifiReset();
     Serial1.println("m2_wifi_reset=released");
 
+    // NXP define SDMMCHOST_OPERATION_VOLTAGE_1V8 for EVERY IW416 module config
+    // in their SDK -- the Murata 1XK M.2 and the u-blox MAYA-W1 USD alike -- so
+    // 1.8 V was tried here on 2026-08-17.  It made no difference: the card is
+    // equally silent at both voltages.
+    //
+    // Left at the 3.3 V default deliberately.  J15 (microSD) is the same bus,
+    // and a 3.3 V-only card there must not meet a 1.8 V rail.  Flip this to
+    // true only with J15 empty:
+    //     sdio.useIoVoltage1V8(true);
+    Serial1.println("sdio_io_voltage=3v3");
+
     SdioHost::Status st = sdio.begin();
     g_status = st;
     reportProbe();
