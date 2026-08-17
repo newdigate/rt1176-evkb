@@ -25,33 +25,38 @@ grep -q "PANEL_OK" "$OUT" || { echo "FAIL: panel bring-up"; exit 1; }
 
 # ★ WHAT THIS GATE PROVES, AND WHAT IT DOES NOT.
 #
-# QEMU has no GC355 model, so this asserts the SOFTWARE path: that a binary
-# built WITH LVGL's VG_LITE draw unit compiled in still detects an absent GPU
-# and renders the scene in software. That is the one-image-two-paths contract,
-# and it is a real assertion -- vg_lite_init() SPINS rather than failing on
-# absent hardware, so a regression that dropped the chip-ID probe would hang
-# here and fail by timeout.
+# It runs the SOFTWARE build (build/, EVKB_VGLITE=OFF). The GPU build lives in
+# build-vglite/ and is silicon-only, because LVGL's VG_LITE draw unit registers
+# in lv_init() whether or not a GPU exists and then claims tasks it cannot
+# execute -- see the example's header comment for the measurement.
 #
-# It proves NOTHING about the GPU path. That is silicon-only and lives in
-# transcript_hw_evkb.txt. See docs/KNOWN-BROKEN-GATES.md.
-grep -qE "VGLITE_CHIP_ID=0x[0-9A-F]{8}\r?$" "$OUT" || \
-    { echo "FAIL: no chip-ID probe result"; exit 1; }
-grep -q "VGLITE_INIT=ABSENT" "$OUT" || \
-    { echo "FAIL: expected VGLITE_INIT=ABSENT under QEMU (no GC355 model)"; exit 1; }
+# So this gates the SCENE and the software renderer, and it is the baseline the
+# fps comparison is measured against. It proves NOTHING about the GPU path;
+# that lives in transcript_hw_evkb.txt. See docs/KNOWN-BROKEN-GATES.md.
+grep -q "VGLITE_INIT=NOTBUILT" "$OUT" || \
+    { echo "FAIL: expected the software build (EVKB_VGLITE=OFF)"; exit 1; }
 grep -q "VGLITE_LVGL=SOFTWARE" "$OUT" || \
-    { echo "FAIL: expected the SOFTWARE render path under QEMU"; exit 1; }
+    { echo "FAIL: expected the SOFTWARE render path"; exit 1; }
 
-# The scene actually painted: whole-screen flush, not a partial repaint.
+# The scene painted the whole screen rather than a partial repaint.
 grep -q "LVGL_FLUSHED=PASS" "$OUT" || { echo "FAIL: LVGL never flushed a frame"; exit 1; }
 grep -q "LVGL_BYTES=3686400" "$OUT" || \
     { echo "FAIL: first refresh did not paint the whole 720x1280x4 screen"; exit 1; }
 
-# ★ SOFTWARE golden. The GPU path produces DIFFERENT pixels by construction --
-# hardware antialiasing is not LVGL's mask arithmetic, and this build runs with
-# LV_USE_FLOAT=1 so coordinates round differently. Two goldens, never one; the
-# GPU value is recorded in transcript_hw_evkb.txt and must NOT be copied here.
-grep -q "KNOB_GRID_SUM_SW=0x1C5D9DE4" "$OUT" || \
+# ★ THE BLACK-SCREEN GUARD, and it is not hypothetical -- it is the defect this
+# example was written on top of. 0x9BC99DC5 is exactly the FNV-1a of 3686400
+# zero bytes, and the first version of this scene produced it while reporting
+# LVGL_FLUSHED=PASS and a full-screen LVGL_BYTES. Those two prove a flush
+# HAPPENED and covered the screen, never that anything was DRAWN in it. Assert
+# the blank value by name so the failure says what it is.
+grep -q "KNOB_GRID_SUM_SW=0x9BC99DC5" "$OUT" && \
+    { echo "FAIL: framebuffer is ALL ZEROS -- flushed, but nothing drawn"; exit 1; }
+
+# ★ SOFTWARE golden. The GPU build produces DIFFERENT pixels by construction
+# (hardware AA is not LVGL's masks, and that build carries LV_USE_FLOAT=1), so
+# its value is recorded in transcript_hw_evkb.txt and must NOT be copied here.
+grep -q "KNOB_GRID_SUM_SW=0x513C4DB8" "$OUT" || \
     { echo "FAIL: software grid golden"; exit 1; }
 
 grep -q "VGLITE_LVGL_DONE" "$OUT" || { echo "FAIL: no completion token"; exit 1; }
-echo "PASS: LVGL VG_LITE backend, software fallback verified"
+echo "PASS: knob grid renders, software path"

@@ -10,12 +10,34 @@ set(TEENSY_VERSION 117 CACHE STRING "")
 
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 
-# ★ VGLITE is what makes this example different from synthui_knob_test. It
-# enables LV_USE_DRAW_VG_LITE, and with it LV_USE_MATRIX and LV_USE_FLOAT --
-# the backend needs both, and LV_USE_FLOAT MOVES PIXELS (lv_value_precise_t
-# becomes float). That is why this is a separate example rather than a flag on
-# the existing one: synthui_knob_test keeps its software goldens untouched.
-import_evkb_lvgl(VGLITE)
+# ★ BUILD-TIME PATH SPLIT, not a runtime one, and the reason is a measured
+# defect rather than taste.
+#
+# LVGL registers its draw units in lv_init() (lv_init.c:236 and :300) and does
+# so UNCONDITIONALLY when LV_USE_DRAW_VG_LITE is 1. With the backend compiled
+# in but the GPU absent -- which is every QEMU run, since vg_lite_init() SPINS
+# on absent hardware and must not be called -- the VG_LITE unit still registers
+# and still CLAIMS draw tasks. They then go nowhere. Measured: a full-screen
+# flush reporting LVGL_FLUSHED=PASS and LVGL_BYTES=3686400 with a framebuffer
+# whose checksum is exactly the FNV of all zeros. There is no automatic
+# software fallback once the unit is compiled in.
+#
+#   build/         EVKB_VGLITE=OFF  software. What the QEMU gate runs, and the
+#                                   baseline the fps comparison is measured
+#                                   against -- same scene, same build system.
+#   build-vglite/  EVKB_VGLITE=ON   GPU. Silicon only; its golden lives in
+#                                   transcript_hw_evkb.txt.
+#
+# The two produce DIFFERENT pixels by construction: hardware antialiasing is
+# not LVGL's mask arithmetic, and the GPU build also carries LV_USE_FLOAT=1
+# (required by LV_USE_MATRIX, which the backend needs), so coordinates round
+# differently. Two goldens, never one.
+option(EVKB_VGLITE "Build the GPU path: LVGL's VG_LITE draw unit on the GC355" OFF)
+if(EVKB_VGLITE)
+    import_evkb_lvgl(VGLITE)
+else()
+    import_evkb_lvgl()
+endif()
 import_evkb_synthui()
 import_evkb_library(MipiDisplay soc panels/rk055)
 import_evkb_library(PXP)    # Display::fillScreen() paints via the PXP
@@ -31,4 +53,11 @@ teensy_target_link_libraries(vglite_lvgl_test cores MipiDisplay PXP)
 # teensy_target_link_libraries() rewrites names to <name>.o and would lose
 # their PUBLIC include dirs. LVGL is named directly as well as transitively
 # because this target compiles port/lvgl_mipi_panel.cpp itself.
-target_link_libraries(vglite_lvgl_test.elf SynthUI LVGL VGLite stdc++)
+# VGLite only in the GPU build. Linking it into the software build would drag
+# the driver in for nothing and blur exactly the distinction this split exists
+# to keep.
+if(EVKB_VGLITE)
+    target_link_libraries(vglite_lvgl_test.elf SynthUI LVGL VGLite stdc++)
+else()
+    target_link_libraries(vglite_lvgl_test.elf SynthUI LVGL stdc++)
+endif()

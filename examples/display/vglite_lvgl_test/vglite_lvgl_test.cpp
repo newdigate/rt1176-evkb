@@ -3,21 +3,30 @@
  * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT
  *
- * ONE BINARY, TWO PATHS, and the whole point of the example is that it takes
- * whichever is real:
- *   - Silicon: the GC355 answers its chip ID, vg_lite_init() succeeds, and
- *     LVGL renders through VG_LITE. VGLITE_LVGL=GPU.
- *   - QEMU: there is no GC355 model, the chip-ID probe reads 0, init is never
- *     attempted, and LVGL falls back to its software renderer.
- *     VGLITE_LVGL=SOFTWARE.
+ * ★ TWO BUILDS, NOT ONE BINARY. An earlier draft of this file claimed a
+ * runtime fallback and was WRONG, in a way worth recording because everything
+ * reported success:
  *
- * ★ THE TWO PATHS DO NOT PRODUCE THE SAME PIXELS, and that is expected rather
- * than a defect: hardware antialiasing is not LVGL's mask arithmetic, and this
- * build also runs with LV_USE_FLOAT=1 (required by LV_USE_MATRIX, which the
- * backend needs), so coordinates round differently from every software gate in
- * the tree. The gate therefore records ONE golden PER PATH and never
- * reconciles them. Copying one over the other to make a gate green would throw
- * away the only evidence that the GPU is doing something different.
+ *   LVGL registers its draw units in lv_init() (lv_init.c:236, :300) and does
+ *   so unconditionally when LV_USE_DRAW_VG_LITE is 1. On absent hardware the
+ *   VG_LITE unit still registers and still CLAIMS draw tasks -- which then go
+ *   nowhere, because vg_lite_init() was never called (it SPINS on absent
+ *   hardware, so calling it is not an option). Measured under QEMU:
+ *   LVGL_FLUSHED=PASS, LVGL_BYTES=3686400 -- a full-screen flush -- and a
+ *   framebuffer whose checksum was exactly the FNV of all zeros. A black
+ *   screen that passed every liveness check.
+ *
+ * So the path is chosen at BUILD time:
+ *   build/         (EVKB_VGLITE=OFF)  software. The QEMU gate, and the fps
+ *                                     baseline -- same scene, same toolchain.
+ *   build-vglite/  (EVKB_VGLITE=ON)   GPU. Silicon only.
+ *
+ * ★ THE TWO DO NOT PRODUCE THE SAME PIXELS, by construction: hardware
+ * antialiasing is not LVGL's mask arithmetic, and the GPU build carries
+ * LV_USE_FLOAT=1 (required by LV_USE_MATRIX, which the backend needs) so
+ * coordinates round differently. ONE GOLDEN PER BUILD, never reconciled.
+ * Copying one over the other to green a gate throws away the only evidence
+ * that the GPU is doing anything different.
  *
  * The scene is the 4x4 grid deliberately: it is the workload the Phase 1 spec
  * set the >=30 fps criterion against, so the fps variant (FPSBENCH) measures
@@ -29,19 +38,23 @@
 #include "lvgl_mipi_panel.h"
 #include "synthui_knob.h"
 
+#if LV_USE_DRAW_VG_LITE
 extern "C" {
 #include "vg_lite.h"
 #include "vg_lite_platform.h"
 }
+#endif
 
 /* Same pool siting and reasoning as vglite_probe: EXTMEM, not DMAMEM. OCRAM is
  * 512K and already spoken for, so a 2 MB pool there overflows the region at
  * link time; SDRAM at 0x80000000 is reachable by the GPU as a bus master
  * exactly as the framebuffer is. */
+#if LV_USE_DRAW_VG_LITE
 #define VGLITE_POOL_BYTES (2u * 1024u * 1024u)
 EXTMEM __attribute__((aligned(64))) static uint8_t vglite_pool[VGLITE_POOL_BYTES];
 #define TESS_W 256
 #define TESS_H 256
+#endif
 
 static const float               col_angle[4] = { -105.0f, -35.0f, 35.0f, 105.0f };
 static const lv_state_t          col_state[4] = { LV_STATE_DEFAULT, LV_STATE_PRESSED,
@@ -94,24 +107,33 @@ void setup()
     }
     Display.fillScreen(0x0000);
 
+#if LV_USE_DRAW_VG_LITE
     /* ★ ASK BEFORE COMMITTING. vg_lite_init() SPINS on absent hardware rather
-     * than returning an error, so the chip-ID probe is what makes one binary
-     * safe on both paths -- see vglite_probe's transcript. */
+     * than returning an error, so the chip-ID probe is what keeps this build
+     * safe to boot anywhere -- see vglite_probe's transcript. But note it is
+     * NOT a fallback: if the GPU is missing here the scene renders BLACK,
+     * because LVGL has already registered the VG_LITE draw unit in lv_init()
+     * and that unit claims tasks it cannot execute. That is why the software
+     * path is a separate BUILD, not a runtime branch. */
     vg_lite_init_mem(VGLITE_RT1176_REGISTER_BASE, 0u, vglite_pool, VGLITE_POOL_BYTES);
     const uint32_t chip_id = vg_lite_hal_probe_chip_id();
     Serial1.printf("VGLITE_CHIP_ID=0x%08lX\n", (unsigned long)chip_id);
-
     if (chip_id != 0u) {
         const vg_lite_error_t err = vg_lite_init(TESS_W, TESS_H);
         s_gpu = (err == VG_LITE_SUCCESS);
         Serial1.printf("VGLITE_INIT=%s err=%d\n", s_gpu ? "OK" : "FAIL", (int)err);
-        /* ★ A mismatch here is self-diagnosing: vg_lite_init() compares
+        /* ★ A mismatch is self-diagnosing: vg_lite_init() compares
          * CHIPID/REVISION/CID/ECOID against the silicon and prints BOTH sides
-         * before returning VG_LITE_NOT_SUPPORT. If this says FAIL, read the
-         * lines above it and set EVKB_VGLITE_SERIES accordingly. */
+         * before returning VG_LITE_NOT_SUPPORT. Read the lines above and set
+         * EVKB_VGLITE_SERIES accordingly. */
     } else {
         Serial1.println("VGLITE_INIT=ABSENT err=0 reason=no_chip_id");
+        Serial1.println("VGLITE_LVGL_NOGPU=FATAL");   /* the gate must not see this pass */
     }
+#else
+    Serial1.println("VGLITE_CHIP_ID=0xNOTBUILT");
+    Serial1.println("VGLITE_INIT=NOTBUILT err=0 reason=software_build");
+#endif
     Serial1.printf("VGLITE_LVGL=%s\n", s_gpu ? "GPU" : "SOFTWARE");
 
     lvgl_rt1176_begin();
