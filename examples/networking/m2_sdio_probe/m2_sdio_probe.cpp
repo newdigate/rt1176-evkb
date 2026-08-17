@@ -113,6 +113,13 @@ static void reportProbe() {
     // to NVCC_SD), so an idle healthy bus reads cmd_high=1.  cmd_high=0 means
     // something is holding CMD down -- a dead rail or an unpowered module --
     // and no amount of protocol work will help.
+    Serial1.print("vsel: vend_spec=0x");
+    Serial1.print(sdio.lastVendSpec(), HEX);
+    Serial1.print(" (bit1=");
+    Serial1.print((sdio.lastVendSpec() >> 1) & 1u);
+    Serial1.print(") mux=0x");
+    Serial1.println(sdio.lastVselMux(), HEX);
+
     uint32_t ps = sdio.lastPresState();
     // DR is what we asked for; PSR is what the pin is doing.  If DR reads 1 and
     // PSR reads 0, GPIO9 is not the instance that owns this pad and the drive
@@ -180,7 +187,8 @@ void setup() {
     // and a 3.3 V-only card there must not meet a 1.8 V rail.  Flip this to
     // true only with J15 empty:
     //     sdio.useIoVoltage1V8(true);
-    Serial1.println("sdio_io_voltage=3v3");
+    sdio.useIoVoltage1V8(true);
+    Serial1.println("sdio_io_voltage=1v8_requested");
 
     SdioHost::Status st = sdio.begin();
     g_status = st;

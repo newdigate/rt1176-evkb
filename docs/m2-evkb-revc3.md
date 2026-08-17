@@ -192,3 +192,65 @@ Related, and established elsewhere in this file: `WL_3V3` reaches the card
 through ferrite `L49` from `SENSOR_3V3` with **no switch**, so firmware cannot
 power-cycle the module at all. Only a board power cycle or physical removal
 re-powers it.
+
+## What the M2-MAYA-W1 datasheet settles (UBX-22004354 R05)
+
+Read 2026-08-17. Three facts that firmware must not get wrong, and one that
+retires a whole line of investigation.
+
+### Boot configuration is ON THE CARD — there is nothing for the host to drive
+
+Host-interface and firmware-boot selection is `CONFIG[1:0]` on the MAYA-W1
+module, set by resistors on the M.2 card itself:
+
+    R34 = DNI  -> CONFIG[1] = 1   (internal pull-up)
+    R35 = 51k  -> CONFIG[0] = 0   (pulled to GND)
+    => "10" = Wi-Fi over SDIO, Bluetooth over UART, 1 SDIO function
+
+That is the default and it is what we want. `CONFIG[1:0]` is **not routed to the
+M.2 connector**, so no host GPIO affects it.
+
+### J54 pin 23 (`SDIO_RESET#`) is NOT CONNECTED on this card
+
+The datasheet pin table gives pin 23 pin-type **NC**. NXP call it
+`WLAN_INDEPENDENT_RESET` and the EVKB wires `GPIO_AD_16` to it, but the
+M2-MAYA-W1 does not connect it.
+
+**Everything this repo did driving `GPIO_AD_16` was therefore a no-op**, however
+carefully sequenced. Kept in the probe only because it matches NXP's reference
+and is harmless.
+
+### PDn is J54 pin 56, and it is already correct
+
+Pin 56 `W_DISABLE1#` is NXP's **PDn**: "High = normal mode, Low = full
+power-down", a 3.3 V input. On RevC3 it sits high through the 10K `R829` to
+WL_3V3 (`R404` being DNP is irrelevant — the pull-up is what holds it). The
+module is in normal mode and the host cannot change that.
+
+### VIO_SD defaults to 1.8 V — the host must switch NVCC_SD
+
+§2.2: "All bus speed modes are supplied from the SDIO I/O power supply (by
+default set to 1.8 V)." §6 confirms `VIO_SD` defaults to 1.8 V from the card's
+own DC-DC, changeable to 3.3 V only by moving a 0 Ω resistor from R24 to R25 on
+the card.
+
+Table 9 gives the card's absolute maximum input as `VIO + 0.4` = **2.2 V**, so
+the EVKB's default 3.3 V `NVCC_SD` is out of spec against a stock card. This is
+exactly why NXP define `SDMMCHOST_OPERATION_VOLTAGE_1V8` for every IW416 module.
+
+`SdioHost::useIoVoltage1V8()` implements the switch, and the register readback
+confirms it takes effect (`vend_spec` bit 1 set, `mux=0x4` = ALT4
+USDHC1_VSELECT). **It does not make this card respond.**
+
+### Where that leaves it
+
+With boot config correct on-card, PDn held high, the SDIO rail switched to the
+1.8 V the card expects, and NXP's own stack failing identically, every
+configurable thing is in the state the datasheet asks for. The card remains
+silent. See `examples/networking/m2_sdio_probe/transcript_hw_evkb.txt`.
+
+One thing still unproven without a meter: that `VEND_SPEC[1]` actually moves the
+rail in the expected DIRECTION. TP33 sits on `NVCC_SD` and would settle it in
+seconds. A functional alternative needing no meter: fit a microSD and run
+`sd_test` with `useIoVoltage1V8(true)` — a 3.3 V card should FAIL at 1.8 V, and
+if it passes regardless, the rail is not moving.
