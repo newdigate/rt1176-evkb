@@ -136,3 +136,98 @@ Report the fps whatever it says.
 - Enabling ThorVG, NemaGFX, or `LV_USE_VG_LITE_DRIVER` (the pruned
   dual-licensed copy — see `LVGL/NOTICE`).
 - Touch/interaction work on the knob.
+
+---
+
+## 8. Re-vendor scope (measured 2026-08-17, after §4's shim hit its limit)
+
+§4 chose the shim and §5 warned it might not reach. It did not: the shim closed
+the *name* gap, and the first real compile then failed on a *functional API*
+gap — `vg_lite_stroke_t` and the whole stroke API absent, `vg_lite_draw_pattern`
+taking 11 arguments upstream against our 10, `VG_LITE_PATTERN_REPEAT` absent,
+and a hard `#error` because our gradient table is smaller than
+`LV_GRADIENT_MAX_STOPS`. **Stroking settles it: the knob's arc is a stroke, so a
+backend without it is not the feature.** Macros cannot supply missing code.
+
+**Source, already on this machine:**
+`~/Development/mcuxsdk-ws/mcuxsdk/middleware/vglite/driver` — MCUXpresso SDK
+**v26.06.00-LTS**, the same release the LVGL tree was vendored from, so the
+provenance story stays consistent.
+
+**It clears every blocker, measured:**
+
+| | ours | SDK |
+|---|---|---|
+| `VGLITE_HEADER_VERSION` | 6 | 7 |
+| `gcFEATURE_BIT_VG_*` | 9 | 66 |
+| `vg_lite_stroke_t` | absent | present |
+| `VG_LITE_PATTERN_REPEAT` | absent | present |
+| `VLC_MAX_GRADIENT_STOPS` | undefined | 16 |
+| `vg_lite_draw_pattern` params | 10 | 11 |
+
+**The compat shim goes to ZERO names.** Re-run of the Task 1 extractor against
+the SDK headers: 0 missing features, 0 missing enums. Keep
+`tools/vglite-lvgl-names.py` anyway — it is what proves that, and what catches
+the next LVGL bump.
+
+### Port work is small, and the reason is worth recording
+
+An intermediate reading of the evidence looked alarming: the SDK driver has no
+`vg_lite_os.h`, declares no `vg_lite_os_submit`/`wait`, and has **zero**
+occurrences of `VG_DRIVER_SINGLE_THREAD` — which reads as "the submit/wait
+abstraction was deleted, port rewrite required". **That was wrong, and reading
+the actual submit path is what corrected it:**
+
+```c
+vg_lite_hal_poke(VG_LITE_HW_CMDBUF_ADDRESS, physical);
+vg_lite_hal_poke(VG_LITE_HW_CMDBUF_SIZE, (size + 7) / 8);
+```
+
+— byte-for-byte the same two registers our single-thread path already pokes, and
+completion still runs through `vg_lite_hal_wait_interrupt`, which our port
+already implements. The abstraction did not move the mechanism; it removed a
+layer we were already bypassing.
+
+| item | cost |
+|---|---|
+| 4 new HAL functions (`map_memory`, `unmap_memory`, `operation_cache`, `memory_export`) | NXP's own port: **4–7 lines each** |
+| `vg_lite_hal_map` gains `flags`, `bytes`, `dma_buf_fd` | NXP's port `(void)`s all three — add and ignore |
+| `vg_lite_hal_allocate_contiguous` gains `pool`, `klogical` | clamp `pool` (as NXP does), `klogical = logical` in a single address space |
+| `vg_lite_os_fopen`/`fclose` | **zero** — only `vg_lite_dump.c`/`dumpAPI.c` use them, and we do not vendor those |
+| our single-thread `vg_lite_os_*` scaffolding | loses its callers; keep `malloc`/`free` (the driver uses them 48/46×), demote the rest to static helpers |
+
+A few dozen lines. The ISR-counter and bounded-wait logic Phase 1 paid for
+survives — it moves under `vg_lite_hal_wait_interrupt` rather than being rewritten.
+
+### Licence: the position improves
+
+No copyleft. **The Apache-2.0 pair disappears** — the new driver has no
+`vg_lite_flat.{c,h}` — so VGLite becomes MIT-only and `NOTICE` simplifies.
+
+★ **One hazard, and it is the kind this tree exists to catch.**
+`VGLite/vg_lite_stroke.c` is **ISO-8859-1, not UTF-8**. Plain `grep` treats it
+as binary and skips it, and `tools/license-audit.sh` Part 1 greps with `-I`,
+*ignore binary files*. Proven directly: `grep -I` finds nothing in that file,
+`grep -a` finds Vivante's MIT text. Vendoring it as-is puts a source file into
+the tree that **the copyleft sweep silently never reads** — the same hole the
+`nema_gfx` unlicensed-binary rule was written to close, arriving through a
+different door. It is MIT, so nothing is wrong today; the audit simply could not
+tell you so. Fix on vendoring (transcode to UTF-8) or teach Part 1 about
+non-UTF-8 text. One file.
+
+### Risks
+
+1. **The feature table becomes truthful for 66 bits**, so LVGL will take paths
+   previously forced off. That is the point, but it is new behaviour, not just
+   new names — and it is where a GPU-vs-software pixel difference will show up.
+2. **Phase 1's silicon result must be re-proven first** — `vglite_probe`'s
+   golden `0x45465405`, `TIMEOUTS=0`, and eyes on glass. Nothing downstream is
+   trustworthy until the new driver renders the blue square.
+3. Signature drift beyond the four above is possible in code paths the compile
+   has not reached yet.
+
+### What survives from the shim attempt
+
+`tools/vglite-lvgl-names.py` and its gate, the `lv_conf.h` `#ifndef` opt-in
+guard, `import_evkb_lvgl(VGLITE)` and its configure-time format guard, and the
+`IN_LIST ARGN` fix. All are needed either way.
