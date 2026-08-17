@@ -239,3 +239,30 @@ Remaining, in order of what to try next:
   * If a scope becomes available, J15 is the accessible probe point for the
     shared bus; Y2 pin 1 carries the 32.768 kHz that reaches J54 pin 50, and
     Y2 pins 3/4 carry WL_3V3 — the module's supply, never yet measured.
+
+=====================================================
+RE-SEAT TEST — no change
+=====================================================
+
+Date: 2026-08-17 (same session). microSD removed, M.2 card unplugged and
+re-plugged, sd_test image replaced with m2_sdio_probe.
+
+    sdio_begin=cmd5-no-response rc=-6
+    int_status=0x18000 r4=0x0
+    rst_pads: sdio_rst dr=1 psr=1 | wl_rst dr=1 psr=1 | gdir=0x40008000
+    pres_state=0xFF888088 cmd_high=1 dat_levels=0xF card_inserted=0
+
+Byte-for-byte identical to the runs before the card was disturbed. An
+intermittent or partial contact was the most hopeful remaining explanation and
+it is now ruled out: re-seating a marginal connector almost always perturbs
+SOMETHING, and nothing moved.
+
+Note on what pres_state can and cannot tell us here: with the microSD gone, the
+DAT and CMD lines still idle high, but that is the board's own pull-ups (R373
+and friends) and would read the same with J54 empty. The MCU has no way to
+distinguish "card present but silent" from "card absent" on this bus, so there
+is no further firmware-only test that discriminates.
+
+The open question is now exactly one binary: is the CARD dead, or is the
+SOCKET dead? Firmware cannot answer it. It needs either a second M.2 card in
+this socket, or this card in a second host.
