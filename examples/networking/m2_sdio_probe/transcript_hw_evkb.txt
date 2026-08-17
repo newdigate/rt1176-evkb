@@ -1,0 +1,96 @@
+M.2 SDIO probe — hardware run on the MIMXRT1170-EVKB
+=====================================================
+
+Date:    2026-08-17
+Board:   MIMXRT1170-EVKB RevC3
+Card:    u-blox M2-MAYA-W161-00C (NXP IW416) in M.2 socket J54
+microSD: J15 confirmed EMPTY (shares uSDHC1 with J54 — see docs/m2-evkb-revc3.md)
+Console: MCU-LINK VCOM @ 115200
+Flash:   LinkServer 26.6.137, `flash ... load` then `verify` (both VCOM-free)
+
+RESULT: NEGATIVE — the module does not respond to CMD5.
+        The host side is proven healthy. The module contributes nothing.
+
+Captured output
+---------------
+
+    RT1176 M.2 SDIO probe up
+    m2_wifi_reset=released
+    sdio_begin=cmd5-no-response rc=-6
+    int_status=0x18000 r4=0x0
+    pres_state=0xFF888088 cmd_high=1 dat_levels=0xF card_inserted=0
+    probe_done
+    alive=0
+    alive=1
+    ...
+
+What this proves about the HOST side
+------------------------------------
+
+`pres_state=0xFF888088` is read through the USDHC1 pads themselves, so it is
+evidence about real wires, not about firmware intent:
+
+  bit 31:24 DLSL = 0xFF  all four (of eight) DAT lines idle HIGH
+  bit 23    CLSL = 1     CMD idles HIGH — the R373 10K pull-up to NVCC_SD works
+  bit 19    WPSPL= 1     write-protect switch level
+  bit 15    TSCD = 1
+  bit 7     SDOFF= 1     SD clock gated off while idle (normal)
+  bit 3     SDSTB = 1    SD clock stable
+
+Therefore all of the following are RULED OUT:
+
+  * pads not muxed to USDHC1        — line levels could not be read otherwise
+  * NVCC_SD rail dead               — pull-ups are pulling the bus high
+  * something holding the bus low   — every line idles high
+  * clock not configured            — SDSTB set, INITA self-cleared
+  * module unpowered pulling lines  — no line is being held down
+
+`int_status=0x18000` = ERR(15) | CTOE(16): command timeout, and CC never sets.
+The controller sent CMD5 and nothing answered. (QEMU reports 0x18001 for the
+same situation — it additionally sets CC, which the silicon correctly does not.)
+
+Hypotheses tested and REFUTED
+-----------------------------
+
+1. Missing initialisation clocks.
+   `begin()` used `delayMicroseconds(2000)` where SdFat's hardware-proven
+   SdioTeensy uses `SYS_CTRL[INITA]`. i.MX USDHC gates SD_CLK while idle, so
+   the delay emitted zero clocks. FIXED — INITA now sent and confirmed to
+   self-clear (no INIT_CLK_STUCK). Did not change the outcome.
+
+2. Module held in reset.
+   GPIO_AD_16 -> J54 pin 23 (WIFI_RST_B) has NO pull resistor on either the
+   3V3 or 1V8 side, so the pad floats at POR. The probe now drives it low for
+   10 ms, releases it high, and waits 100 ms before enumerating, through a
+   level shifter confirmed enabled (U354 OE# = GND) and pointed A->B (DIR
+   pulled to WL_3V3 via R1797). Did not change the outcome.
+
+Remaining candidates, in order
+------------------------------
+
+1. PHYSICAL SEATING. M.2 cards sit at an angle until the retaining screw pulls
+   them flat; an inserted-but-unscrewed card can make partial or no contact.
+   Every host-side signal checks out and the module contributes nothing at all,
+   which is exactly what a card that is not making contact looks like.
+   NOT YET RULED OUT — requires physical inspection.
+
+2. SDIO I/O VOLTAGE. Every other M.2 signal on this board is level-shifted to
+   1.8V (U354/U355); the six SDIO lines are the only ones wired straight to the
+   MCU. NVCC_SD is selected by U311 (NX3L1G53GT SPDT analog switch) under
+   `SD1_VSELECT` from the MCU, and defaults to the 3.3V leg. If this card's
+   SDIO is 1.8V-only, it would sit silent exactly like this.
+   Counter-argument: standard SDIO begins at 3.3V and negotiates down, so a
+   compliant card should answer CMD5 at 3.3V. NOT YET INVESTIGATED.
+
+3. The 32.768 kHz sleep clock on J54 pin 50 (from Y2 via R823, both fitted,
+   Y2 powered from WL_3V3). Some combo parts will not leave internal reset
+   without it. NOT YET MEASURED.
+
+Not suspected
+-------------
+
+The USDHC clock root. `docs/superpowers/plans` and SdFat's RT1176 branch both
+carry a HARDWARE-VERIFY note that CLOCK_ROOT58 <- SYS_PLL2_PFD2 depends on
+boot-ROM state this core never programs. SDSTB asserting and INITA self-clearing
+both require a working root clock, so that note — while still true in general —
+does not explain this failure.
