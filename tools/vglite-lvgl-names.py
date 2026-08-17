@@ -37,10 +37,13 @@ LIB = os.environ.get("TEENSY_LIB_ROOT", os.path.expanduser("~/Development"))
 BACKEND = os.path.join(LIB, "LVGL", "lvgl", "src", "draw", "vg_lite")
 # Every header a consumer sees via `#include <vg_lite.h>`. If the port grows
 # another public header, add it here or its names look "missing".
-HEADERS = [
-    os.path.join(LIB, "VGLite", "inc", "vg_lite.h"),
-    os.path.join(LIB, "VGLite", "inc", "vg_lite_hal.h"),
-]
+# ★ Layout moved at HEADER_VERSION 7: vg_lite_hal.h left inc/ for VGLiteKernel/,
+# and vg_lite_text.h is gone. Globbing rather than listing files means a future
+# move does not silently shrink the "have" set -- which would report names as
+# MISSING that the driver actually defines, i.e. send someone shimming things
+# that already exist.
+HEADERS = (sorted(glob.glob(os.path.join(LIB, "VGLite", "inc", "*.h"))) +
+           sorted(glob.glob(os.path.join(LIB, "VGLite", "VGLiteKernel", "*.h"))))
 
 FEATURE_RE = re.compile(r"\bgcFEATURE_BIT_VG_\w+")
 FEATURE_MACRO_RE = re.compile(r"FEATURE_ENUM_TO_STRING\((\w+)\)")

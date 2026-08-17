@@ -123,7 +123,7 @@ teensy_declare_library(nativeethernet NativeEthernet       https://github.com/ne
 teensy_declare_library(fnet           FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
 teensy_declare_library(lwip           lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
-teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            8c23d41272956254aec1ed7a5a201f51202e4f2b .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
+teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            ea6c5a60584cfc0cf01603161702e7619e6797a6 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
 teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         e1320124ca55531eb0e8e6a358e6ed573bd1c612 .) # NOT Arduino-layout: use import_evkb_synthui(). Pushed 2026-08-17; the pin then moved to a REWRITTEN history (reference/rebirth/ dropped before going public), so every SHA before e132012 is unreachable.
 teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          87e27edf489c2b6154d8ba091b9d152d5dded6cf .) # NOT Arduino-layout: use import_evkb_vglite(). Pushed 2026-08-17. NXP's VGLite vendored verbatim (MIT, except vg_lite_flat.{c,h} which are Apache-2.0, see its NOTICE -- permissive, no copyleft) plus this tree's bare-metal port.
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
@@ -283,43 +283,35 @@ macro(import_evkb_lvgl)
             import_evkb_vglite()
             evkb_library_dir(VGLite _evkb_vglite_dir)
 
-            # ★ THE FORMAT GUARD, and it lives HERE rather than in the shim.
-            # vg_lite_lvgl_compat.h shims VG_LITE_BGR888 / VG_LITE_BGRA5658,
-            # which LVGL RETURNS as the format a buffer is drawn with for
-            # LV_COLOR_FORMAT_RGB888 / ARGB8565. This driver hangs rather than
-            # erroring on a format it cannot parse, so producing one of those
-            # colour formats would stop the GPU with every status reporting
-            # success. Nothing produces them today only because every image
-            # decoder is off.
+            # ★ NO COMPAT SHIM, AND NO IMAGE-DECODER GUARD -- both retired with
+            # the HEADER_VERSION 7 re-vendor, and it matters WHY rather than
+            # just that they went.
             #
-            # It CANNOT be an #if in the shim: the shim is force-included
-            # (-include), i.e. ahead of the translation unit's own includes, so
-            # lv_conf.h has not been read and the macros are undefined there. A
-            # guard that cannot fire is worse than none -- it reads as
-            # protection. Configure time is the earliest point both are known.
-            file(READ "${_evkb_lvgl_dir}/port/lv_conf.h" _evkb_lv_conf)
-            foreach(_dec LV_USE_LODEPNG LV_USE_BMP LV_USE_TJPGD
-                         LV_BIN_DECODER_RAM_LOAD)
-                if(_evkb_lv_conf MATCHES "#define[ \t]+${_dec}[ \t]+1")
-                    message(FATAL_ERROR
-                        "import_evkb_lvgl(VGLITE): ${_dec} is enabled.\n"
-                        "An image decoder can emit LV_COLOR_FORMAT_RGB888 or "
-                        "ARGB8565, which LVGL maps to VG_LITE_BGR888 / "
-                        "VG_LITE_BGRA5658 -- names this driver does not have and "
-                        "which the compat shim only fakes. Handing a faked format "
-                        "to the GPU HANGS it silently.\n"
-                        "Fix by re-vendoring a VGLite that HAS those formats. Do "
-                        "NOT map them onto a similar one. See "
-                        "docs/superpowers/specs/2026-08-17-vglite-phase2-design.md §5.")
-                endif()
-            endforeach()
-
-            # PRIVATE is load-bearing: the VGLite target itself must compile
-            # against the UNSHIMMED headers, or the driver's own switch
-            # statements would see names they do not handle.
-            target_compile_options(LVGL PRIVATE
-                "-include" "${_evkb_vglite_dir}/port/baremetal/vg_lite_lvgl_compat.h")
-            target_compile_definitions(LVGL PUBLIC LV_USE_DRAW_VG_LITE=1)
+            # The shim existed because LVGL 9.4 referenced 47 names the old
+            # driver did not define. v7 defines all 47, measured by
+            # tools/vglite-lvgl-names.py, which is kept precisely to prove that
+            # and to catch the next LVGL bump reopening a gap.
+            #
+            # The decoder guard existed because two SHIMMED names --
+            # VG_LITE_BGR888 and VG_LITE_BGRA5658 -- were live format
+            # selections, and handing a faked format to this GPU hangs it
+            # silently. v7 has both formats for real, so the hazard is gone with
+            # its cause. A check kept past its reason reads as protection and
+            # is worse than none.
+            # LV_USE_MATRIX is REQUIRED by the backend (lv_matrix_t is declared
+            # only under it, and the backend's headers use it by value), and it
+            # in turn requires LV_USE_FLOAT.
+            #
+            # ★ LV_USE_FLOAT CHANGES PIXELS -- lv_value_precise_t becomes float,
+            # so angles and coordinates round differently. That is exactly why
+            # this is opt-in: every software gate keeps goldens recorded with it
+            # at 0, and the GPU example gets its own set. Flipping it globally
+            # would move goldens tree-wide and each would need re-confirming on
+            # glass.
+            target_compile_definitions(LVGL PUBLIC
+                LV_USE_DRAW_VG_LITE=1
+                LV_USE_MATRIX=1
+                LV_USE_FLOAT=1)
             target_link_libraries(LVGL PUBLIC VGLite)
         endif()
     endif()
