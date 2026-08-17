@@ -242,3 +242,65 @@ BENCH STATE AND PROTOCOL, learned the expensive way:
     lying", never as data.
   - crt_emu_cm_redlink stubs whose first gdb client vanished ignore
     SIGTERM, hold the probe, and starve every later session: pkill -9.
+
+
+================================================================================
+TASK 9 -- THE NUMBER. 2026-08-17. The >=30 fps criterion is NOT MET.
+================================================================================
+
+Method: -DFPSBENCH variant (separate build dirs; the golden ELFs untouched --
+GPU golden re-verified bit-for-bit, 0xC3C6171A, after every config change).
+An lv_timer rotates all 16 knob angles every 15 ms -- each set_angle
+invalidates its knob, so every refresh carries all-sixteen damage, the
+workload the criterion names -- and LVGL's own REFR_START/REFR_READY display
+events bracket each refresh with micros(). 64 samples per path, read over
+SWD. A companion counter proved each refresh completes inside ONE
+lv_timer_handler pass (fpsbench_loops all zero), so the interval is the
+synchronous render cost, not scheduler artifact.
+
+  path      mean        worst       fps
+  software  353.1 ms    356.7 ms    2.83
+  GPU       407.7 ms    408.7 ms    2.45      <- 15% SLOWER than software
+
+Both paths fail the >=30 fps (<=33 ms) criterion by more than 10x, and the
+GPU path LOSES to the software renderer on the exact scene this phase was
+built to accelerate. Attribution, measured not guessed: the GC355 front end
+read IDLE (AQHiIdle bit 0 = 1) in every mid-run sample, the refresh is
+single-pass synchronous, and vg_lite wait-timeout counters stayed 0 -- the
+~400 ms is CPU-side path/stroke construction and per-task submit overhead,
+not rasterisation. LVGL's VG_LITE unit rebuilds float paths and
+CPU-tessellates every stroked arc per task per frame (the stroke cache
+cannot help: an ANIMATING knob's stroke parameters differ every frame, so
+every lookup misses); the scene is ~240 small tasks/frame and the per-task
+CPU cost simply exceeds what rasterising 150 px primitives costs the CPU
+directly. Raising the flush batch (LV_VG_LITE_FLUSH_MAX_COUNT 8 -> 256)
+changed nothing (407.4 vs 407.7 ms), killing the batching-overhead theory.
+
+TWO MORE DEFECTS FOUND BY THE BENCH, both now handled:
+
+1. ★ STROKE-CACHE LIVELOCK. At the default LV_VG_LITE_STROKE_CACHE_CNT=32,
+   the SECOND animated refresh livelocked -- CPU cycling draw-task and heap
+   code forever, GPU idle, LVGL log EMPTY, every status green. The scene
+   draws more distinct strokes per frame than 32; at the eviction boundary
+   the cache never converges. 128 runs 64/64 refreshes. Set in evkb.cmake
+   for VGLITE builds. The golden frame is unaffected (a first frame never
+   evicts) -- re-verified bit-for-bit after the change.
+
+2. ★ REPEATED lv_refr_now() FROM SETUP CONTEXT IS NOT A VALID BENCH. Two
+   earlier bench shapes drove lv_refr_now in a loop (full-screen invalidate,
+   then animated damage) and BOTH wedged around the third repaint -- the
+   software build once pinned on a single SDRAM strb that the debug AP could
+   not read either (an SEMC-level stall; the bench notes' power-budget
+   suspicion with the M.2 card fitted remains the leading theory, unproven),
+   the GPU builds in the stroke-cache livelock above. The free-running
+   timer-driven form is the one every long-lived build demonstrably
+   sustains, and is also the honest workload.
+
+The criterion verdict stands as measured: PHASE 2 AS IT STANDS DOES NOT MEET
+ITS PERFORMANCE CRITERION. What would plausibly change the number, for a
+future phase, in order of expected value: (a) driving vg_lite directly for
+the knob's primitives (persistent pre-built paths per knob, one submit per
+frame) instead of LVGL's per-task rebuild; (b) LVGL's static path caching /
+lv_obj-level render caching if adopted upstream; (c) profiling the 400 ms
+properly once a VCOM or SWO channel is available. None of these are in
+Phase 2's scope.

@@ -56,6 +56,84 @@ EXTMEM __attribute__((aligned(64))) static uint8_t vglite_pool[VGLITE_POOL_BYTES
 #define TESS_H 256
 #endif
 
+#ifdef FPSBENCH
+/* Task-9 measurement variant (-DFPSBENCH, separate build dir; never a
+ * golden). Times FPSBENCH_N full-scene repaints of the 16-knob grid --
+ * lv_obj_invalidate() then lv_refr_now() bracketed by micros() -- the same
+ * method Phase 1 used for its software figure. Results land in a RAM array
+ * read over SWD (the bench VCOM cannot be assumed) and go to Serial1 too. */
+#define FPSBENCH_N 64
+extern "C" {
+volatile uint32_t fpsbench_us[FPSBENCH_N];   /* per-refresh render+flush time */
+volatile uint32_t fpsbench_loops[FPSBENCH_N]; /* lv_timer_handler passes/refresh */
+volatile uint32_t fpsbench_loopct = 0;       /* incremented by loop() */
+volatile uint32_t fpsbench_i = 0;            /* refreshes completed */
+volatile uint32_t fpsbench_done = 0;
+}
+static lv_obj_t *fpsbench_knob[16];
+static uint32_t  fpsbench_t0;
+
+/* ★ Measured in the NORMAL operating mode -- loop() free-running, an lv_timer
+ * rotating every knob's angle (each set_angle invalidates its knob, so every
+ * refresh carries all-16 damage: the workload the >=30 fps criterion names) --
+ * instrumented from LVGL's own REFR_START/REFR_READY display events. Two
+ * earlier drafts drove lv_refr_now() from a bench loop, full-screen
+ * invalidate and animated damage alike, and BOTH LIVELOCKED around the third
+ * repaint (software: pinned on one SDRAM strb the DAP could not read either;
+ * GPU: cycling draw-task/heap code forever, GPU idle, LVGL log EMPTY). The
+ * free-running mode is the one every long-lived build demonstrably sustains;
+ * repeated setup-context lv_refr_now() is not, and is not the promised
+ * workload either. Not chased further. */
+static void fpsbench_anim_cb(lv_timer_t *t)
+{
+    (void)t;
+    static uint32_t step = 0;
+    step++;
+    for (int k = 0; k < 16; k++)
+        /* (k%4)*70-105 = col_angle[k%4]; declared later in the file */
+        synthui_knob_set_angle(fpsbench_knob[k],
+                               (float)((k % 4) * 70 - 105)
+                               + (float)((step * 7u) % 90u));
+}
+static uint32_t fpsbench_loop0;
+static void fpsbench_refr_cb(lv_event_t *e)
+{
+    const lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_REFR_START) {
+        fpsbench_t0 = micros();
+        fpsbench_loop0 = fpsbench_loopct;
+    }
+    else if (code == LV_EVENT_REFR_READY && !fpsbench_done) {
+        const uint32_t i = fpsbench_i;
+        if (i < FPSBENCH_N) {
+            fpsbench_us[i] = micros() - fpsbench_t0;
+            fpsbench_loops[i] = fpsbench_loopct - fpsbench_loop0;
+            fpsbench_i = i + 1;
+        }
+        if (i + 1 >= FPSBENCH_N) {
+            uint32_t worst = 0, sum = 0;
+            for (uint32_t n = 0; n < FPSBENCH_N; n++) {
+                sum += fpsbench_us[n];
+                if (fpsbench_us[n] > worst) worst = fpsbench_us[n];
+            }
+            Serial1.printf("FPSBENCH_N=%u\n", (unsigned)FPSBENCH_N);
+            Serial1.printf("FPSBENCH_MEAN_US=%lu\n",
+                           (unsigned long)(sum / FPSBENCH_N));
+            Serial1.printf("FPSBENCH_WORST_US=%lu\n", (unsigned long)worst);
+            fpsbench_done = 1;
+        }
+    }
+}
+static void fpsbench_arm(void)
+{
+    lv_display_add_event_cb(lv_display_get_default(), fpsbench_refr_cb,
+                            LV_EVENT_REFR_START, NULL);
+    lv_display_add_event_cb(lv_display_get_default(), fpsbench_refr_cb,
+                            LV_EVENT_REFR_READY, NULL);
+    lv_timer_create(fpsbench_anim_cb, 15, NULL);
+}
+#endif
+
 #if LV_USE_LOG
 /* Diagnostic builds only (-DLV_USE_LOG=1): capture LVGL's log stream into a
  * RAM ring readable over SWD, because the backend explains every skipped or
@@ -176,6 +254,9 @@ static lv_obj_t *build_grid(void)
             synthui_knob_set_angle(k, col_angle[c]);
             if (col_state[c] != LV_STATE_DEFAULT) lv_obj_add_state(k, col_state[c]);
             lv_obj_set_pos(k, 15 + c * 175, 120 + r * 175);
+#ifdef FPSBENCH
+            fpsbench_knob[r * 4 + c] = k;
+#endif
         }
     }
     return scr;
@@ -246,10 +327,16 @@ void setup()
      * in a transcript or a diff. */
     Serial1.printf("KNOB_GRID_SUM_%s=0x%08lX\n", s_gpu ? "GPU" : "SW",
                    (unsigned long)lvgl_sum_value());
+#ifdef FPSBENCH
+    fpsbench_arm();     /* measurement happens in loop(), the normal mode */
+#endif
     Serial1.println("VGLITE_LVGL_DONE");
 }
 
 void loop()
 {
+#ifdef FPSBENCH
+    fpsbench_loopct++;
+#endif
     lvgl_rt1176_loop();
 }

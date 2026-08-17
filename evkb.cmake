@@ -123,7 +123,7 @@ teensy_declare_library(nativeethernet NativeEthernet       https://github.com/ne
 teensy_declare_library(fnet           FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
 teensy_declare_library(lwip           lwip                 https://github.com/newdigate/lwip            03dddc67f73113e2beb3807e290a368d5cb7cfe0 .)
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
-teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            f4c89ef5632a2d6223a8a1f6e34a825566129a21 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
+teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            afb9789ed430614b74eb6ae946da6062485964cd .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
 teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         e1320124ca55531eb0e8e6a358e6ed573bd1c612 .) # NOT Arduino-layout: use import_evkb_synthui(). Pushed 2026-08-17; the pin then moved to a REWRITTEN history (reference/rebirth/ dropped before going public), so every SHA before e132012 is unreachable.
 teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          87e27edf489c2b6154d8ba091b9d152d5dded6cf .) # NOT Arduino-layout: use import_evkb_vglite(). Pushed 2026-08-17. NXP's VGLite vendored verbatim (MIT, except vg_lite_flat.{c,h} which are Apache-2.0, see its NOTICE -- permissive, no copyleft) plus this tree's bare-metal port.
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
@@ -346,6 +346,12 @@ macro(import_evkb_lvgl)
             # beside it was pixel-perfect and every API call reported
             # success. With CLOSE removed the same tile renders correctly.
             # Isolated by the GRADPROBE scene, one primitive per tile.
+            # ★ Stroke cache 128, not the default 32: the 16-knob scene draws
+            # more distinct strokes per frame than 32, and at that boundary
+            # the SECOND animated refresh LIVELOCKED -- CPU cycling
+            # draw-task/heap code forever, GPU idle, LVGL log empty, every
+            # status green. At 128 the same scene ran 64/64 refreshes. The
+            # golden frame is unaffected (first frame never evicts).
             target_compile_definitions(LVGL PUBLIC
                 LV_USE_DRAW_VG_LITE=1
                 LV_USE_MATRIX=1
@@ -353,6 +359,7 @@ macro(import_evkb_lvgl)
                 LV_USE_VECTOR_GRAPHIC=1
                 LV_VG_LITE_DISABLE_LINEAR_GRADIENT_EXT=1
                 LV_VG_LITE_DISABLE_VLC_OP_CLOSE=1
+                LV_VG_LITE_STROKE_CACHE_CNT=128
                 LV_DRAW_BUF_STRIDE_ALIGN=64
                 LV_DRAW_BUF_ALIGN=64)
             # ★ The GPU-mode LVGL runs XIP from flash, not ITCM. Enabling
