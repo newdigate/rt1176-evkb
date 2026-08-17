@@ -77,6 +77,65 @@ static uint32_t m2ResetPadLevels() {
            (((GPIO9_PSR >> M2_WL_RST_BIT) & 1u) << 1);
 }
 
+// ---------------------------------------------------------------------------
+// BT_WAKE_HOST watch.  J54 pin 20 (UART_WAKE#) is the ONLY card->host signal on
+// this connector that actually reaches the MCU:
+//
+//   J54.20 -> R811 (0R, fitted) -> BT_WAKE_B_3V3 -> R238 (0R, fitted)
+//          -> U19.N16 = GPIO_AD_27      (no level shifter -- pin 20 is 3.3 V)
+//
+// Pin 21 (SDIO_WAKE#) is populated but blocked at jumper J104, open by default.
+// Pin 22 (the BT UART TX) dies at R1901, which is DNP. So this pin is the only
+// way this card could ever tell us it is alive.
+//
+// The datasheet calls it open-drain, active low, "Pullup required on platform"
+// -- and the EVKB provides none (the net holds only R238, R811 and the MCU
+// ball), so the internal pull-up is doing that job here.
+//
+// A static read cannot distinguish "card idle" from "card absent": both read
+// high. What IS diagnostic is a LOW at any point -- only a live card can pull
+// this down. So latch it.
+// GPIO_AD_27 mux 0x400E8178, pad 0x400E83BC (RM stride from GPIO_AD_16 at
+// 0x400E814C / 0x400E8390). ALT10 = GPIO9_IO26 (AD_n -> bit n-1, the same rule
+// that gives NXP's AD_16 -> IO15 and AD_31 -> IO30).
+#define M2_BT_WAKE_MUX (*(volatile uint32_t *)0x400E8178u)
+#define M2_BT_WAKE_PAD (*(volatile uint32_t *)0x400E83BCu)
+#define M2_BT_WAKE_BIT 26
+
+static volatile bool g_btWakeEverLow = false;
+
+static void m2WatchBtWakeInit() {
+    M2_BT_WAKE_MUX = 0x10u | 0xAu;   // SION | ALT10 = GPIO9_IO26
+    M2_BT_WAKE_PAD = 0x04u;          // pull-up enabled (bits[3:2]=01)
+    GPIO9_GDIR &= ~(1u << M2_BT_WAKE_BIT);   // input
+}
+
+static bool m2BtWakeLevel() { return (GPIO9_PSR >> M2_BT_WAKE_BIT) & 1u; }
+
+// Decisive control. A single reading cannot tell "held low by the card" from
+// "my pull-up never took effect". Read the pin under an internal pull-UP and
+// then under an internal pull-DOWN:
+//
+//   up=1 down=0  -> pin is FLOATING: nothing external drives it (card idle/absent)
+//   up=0 down=0  -> something ACTIVELY HOLDS IT LOW  (only a powered card can)
+//   up=1 down=1  -> something actively holds it high
+//
+// RT1176 SW_PAD_CTL bits[3:2] PULL: 01=up, 10=down, 11=none (same encoding
+// SdFat uses for the SD pads: 0x04 pull-up, 0x08 pull-down).
+static void m2BtWakeProbe(bool *up, bool *down, uint32_t *padRead) {
+    M2_BT_WAKE_PAD = 0x04u;            // pull-up
+    delayMicroseconds(500);
+    *up = m2BtWakeLevel();
+    M2_BT_WAKE_PAD = 0x08u;            // pull-down
+    delayMicroseconds(500);
+    *down = m2BtWakeLevel();
+    M2_BT_WAKE_PAD = 0x04u;            // leave it pulled up
+    delayMicroseconds(500);
+    *padRead = M2_BT_WAKE_PAD;         // prove the writes stick at all
+}
+
+static void m2PollBtWake() { if (!m2BtWakeLevel()) g_btWakeEverLow = true; }
+
 static const char *statusName(SdioHost::Status s) {
     switch (s) {
         case SdioHost::OK:               return "ok";
@@ -119,6 +178,20 @@ static void reportProbe() {
     Serial1.print((sdio.lastVendSpec() >> 1) & 1u);
     Serial1.print(") mux=0x");
     Serial1.println(sdio.lastVselMux(), HEX);
+
+    bool wu=false, wd=false; uint32_t wpad=0;
+    m2BtWakeProbe(&wu, &wd, &wpad);
+    Serial1.print("bt_wake(pin20): pullup_reads=");
+    Serial1.print(wu);
+    Serial1.print(" pulldown_reads=");
+    Serial1.print(wd);
+    Serial1.print(" pad=0x");
+    Serial1.print(wpad, HEX);
+    Serial1.print(" ever_low=");
+    Serial1.print(g_btWakeEverLow ? 1 : 0);
+    Serial1.print(" -> ");
+    Serial1.println(wu==wd ? (wu ? "HELD HIGH externally" : "HELD LOW externally -- something is driving it")
+                           : "floating (nothing drives it)");
 
     uint32_t ps = sdio.lastPresState();
     // DR is what we asked for; PSR is what the pin is doing.  If DR reads 1 and
@@ -175,6 +248,7 @@ void setup() {
     while (!Serial1) {}
     Serial1.println("RT1176 M.2 SDIO probe up");
 
+    m2WatchBtWakeInit();
     m2ReleaseWifiReset();
     Serial1.println("m2_wifi_reset=released");
 
@@ -201,6 +275,7 @@ void loop() {
     // Heartbeat: proves the image is still running after the probe rather than
     // having wedged in it.  A fallback gate without this cannot tell "took the
     // fallback" from "died".
+    m2PollBtWake();
     Serial1.print("alive=");
     Serial1.println(n++);
     // Re-report every 5 s so a reader attached at any moment sees the result,

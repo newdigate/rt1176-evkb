@@ -315,3 +315,73 @@ with a multimeter should confirm at TP33 before treating 1.8 V as ruled out.
 
 The capability is kept but defaults OFF: J15 is the same bus and a 3.3 V-only
 microSD must not meet a 1.8 V rail.
+
+=====================================================
+*** THE CARD IS ALIVE *** — BT_WAKE_HOST held low
+=====================================================
+
+Date: 2026-08-17 (same session). First positive evidence of life from the card.
+
+J54 pin 20 (UART_WAKE# / NXP BT_WAKE_HOST) is the ONLY card->host signal on this
+connector that reaches the MCU:
+
+    J54.20 -> R811 (0R, FITTED) -> BT_WAKE_B_3V3 -> R238 (0R, FITTED)
+           -> U19.N16 = GPIO_AD_27          (no level shifter; pin 20 is 3.3 V)
+
+Pin 21 (SDIO_WAKE#) is populated but blocked at jumper J104, open by default.
+Pin 22 (BT UART TX) dies at R1901, which is DNP. So pin 20 is the only channel.
+
+The EVKB provides NO pull-up on that net (its only members are R238, R811 and
+the MCU ball), and the datasheet calls the pin open-drain, "Pullup required on
+platform" -- so the MCU's internal pull-up does that job.
+
+Measurement, with the pad configured as an input:
+
+    bt_wake(pin20): pullup_reads=0 pulldown_reads=0 pad=0x4 ever_low=1
+      -> HELD LOW externally
+
+The control is what makes this conclusive. A single low reading could just mean
+the internal pull-up never took effect. Reading under pull-UP and then pull-DOWN
+separates the cases:
+
+    up=1 down=0 -> floating, nothing drives it
+    up=0 down=0 -> something ACTIVELY HOLDS IT LOW   <-- what we see
+    up=1 down=1 -> something actively holds it high
+
+`pad=0x4` confirms the pad writes stick, and `gdir=0x40008000` (bits 15 and 30
+only) confirms bit 26 is an input, so the MCU is not driving it.
+
+WHY THIS MEANS THE CARD IS POWERED AND RUNNING
+----------------------------------------------
+
+Per the datasheet (Figure 8), UART_WAKE# is driven by the card's on-board
+NTB0104 level shifter, whose output-enable is tied to the card's VIO through
+R12. If the card's internal 1.8 V DC-DC were not running, that shifter would be
+DISABLED and its output high-Z -- and our internal pull-up would read HIGH.
+
+It reads LOW. So the card has 3.3 V, its internal DC-DC is up, its VIO rail is
+up, the on-card shifter is enabled, and it is actively asserting BT_WAKE_HOST.
+
+The only thing on that net besides the MCU is the card, so nothing else can be
+responsible.
+
+WHAT THIS OVERTURNS
+-------------------
+
+Every earlier section of this transcript concluded "the card or the socket is
+dead". That conclusion is now WRONG and is retained above only as the record of
+how the investigation ran. The card is neither dead nor failing to make contact:
+it is powered, running, and driving a pin the host can see.
+
+The socket is also at least partly proven: pin 20 is making contact.
+
+WHAT IT DOES NOT EXPLAIN
+------------------------
+
+Why the WLAN side never answers CMD5. The card being alive makes that harder to
+explain, not easier -- it removes the simplest available answer.
+
+Worth noting BT_WAKE_HOST asserted low is what an NXP BT controller does when it
+has something to say to the host. This card may be sitting in its boot ROM
+waiting for a firmware download over UART -- which on this board it can never
+receive an answer to, because R1901 is DNP.
