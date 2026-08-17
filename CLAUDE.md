@@ -128,12 +128,13 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 `usb/usb_descriptor_survey`). The target is **95 passed, 0 failed, 0 SKIP**, or
 **94 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
-✅ **Measured 2026-08-16 (pre-Phase-2 baseline): 94 passed, 0 failed, 0 SKIP.**
-A fully clean sweep on the merge of VGLite Phase 1,
-`rt1176:dualcore/cm4_audio_test` included. Note the
-runner prints only non-zero categories, so `gates: 94 passed` with exit 0 IS
-`94 / 0 / 0` — don't go looking for the zeros. Re-measure at 95 on the
-VGLite Phase 2 merge and update this line with the result.
+✅ **Measured 2026-08-17: 95 passed, 0 failed, 0 SKIP.** A fully clean sweep
+on the merge of VGLite Phase 2 (`display/vglite_lvgl_test` added),
+`rt1176:dualcore/cm4_audio_test` included, with `LICENSE-AUDIT: PASS` the
+same day — the new gate's manifest walked at 24663 dep paths. Note the
+runner prints only non-zero categories, so `gates: 95 passed` with exit 0 IS
+`95 / 0 / 0` — don't go looking for the zeros. (Previous baseline
+2026-08-16: 94/0/0 on the Phase 1 merge.)
 
 ★ **`display/vglite_lvgl_test` gates the SOFTWARE build of a two-build
 example.** The GPU build (`build-vglite/`, LVGL's VG_LITE unit on the GC355)
