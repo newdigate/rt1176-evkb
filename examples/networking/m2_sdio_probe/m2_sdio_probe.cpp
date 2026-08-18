@@ -9,6 +9,7 @@
 // gate asserts the NO-IO-FUNCTION fallback.  That is a real test of the failure
 // path, and nothing more.  Positive evidence lives in transcript_hw_evkb.txt.
 #include <Arduino.h>
+#include <ctype.h>
 #include <SdioHost.h>
 #include <SdioFunc.h>
 #include <Iw416.h>
@@ -60,6 +61,24 @@ static uint8_t g_wpaRatesLen = 0;
 static SdioHost::Status g_assoc = SdioHost::CMD_TIMEOUT;
 static SdioHost::Status g_connect = SdioHost::CMD_TIMEOUT;
 static uint8_t g_assocAttempts = 0;   // attempts until connect, or the cap
+
+// Compare two SSIDs by their alphanumeric characters only, case-insensitively.
+// iPhone hotspot SSIDs ("Nicholas's iPhone") carry a typographic apostrophe
+// (UTF-8 E2 80 99) and spaces the user cannot easily type into a build flag, so
+// an exact strcmp against -DM2RADIO_WIFI_SSID would miss the beacon.  The scan's
+// SSID bytes stay authoritative for the PMK salt and the association.
+static bool ssidLooseMatch(const char *a, const char *b) {
+    while (*a && *b) {
+        while (*a && !isalnum((unsigned char)*a)) a++;
+        while (*b && !isalnum((unsigned char)*b)) b++;
+        if (!*a || !*b) break;
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
+        a++; b++;
+    }
+    while (*a && !isalnum((unsigned char)*a)) a++;
+    while (*b && !isalnum((unsigned char)*b)) b++;
+    return *a == 0 && *b == 0;
+}
 #endif
 #endif
 
@@ -733,14 +752,18 @@ void setup() {
                 // IE), then hand the firmware the passphrase.  Monitor mode is
                 // already disabled by captureMonitor() above.
                 for (uint8_t i = 0; i < g_scanCount; i++) {
-                    if (strcmp(g_scanAps[i].ssid, M2_WIFI_SSID) == 0) {
+                    if (ssidLooseMatch(g_scanAps[i].ssid, M2_WIFI_SSID)) {
                         g_wpaApIdx = i;
                         g_wpaRsnLen = g_scanAps[i].rsnLen;
                         g_wpaRatesLen = g_scanAps[i].ratesLen;
                         break;
                     }
                 }
-                g_supp = iw416.setPassphrase(M2_WIFI_SSID, M2_WIFI_PSK);
+                // Derive the PMK from the SCANNED SSID bytes (authoritative --
+                // exact beacon bytes incl. any typographic apostrophe), not the
+                // user-typed build flag, so the PBKDF2 salt is always right.
+                if (g_wpaApIdx >= 0)
+                    g_supp = iw416.setPassphrase(g_scanAps[g_wpaApIdx].ssid, M2_WIFI_PSK);
                 // W6 stage 2: associate to the target.  For WPA2 the firmware
                 // runs the 4-way handshake inside this call using the PMK just
                 // cached, so success means associated AND authenticated.

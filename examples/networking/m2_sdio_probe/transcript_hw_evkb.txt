@@ -948,3 +948,73 @@ are not the AP's actual PSK -- e.g. the value is the WPS PIN / router serial /
 admin password from the same label rather than the WiFi key, or the key is
 longer than 8 chars, or it was changed from the printed default.  Nothing in
 firmware or driver remains to change; the credential is the last variable.
+
+=====================================================
+W6 CORRECTION: it is NOT the password -- the handshake is a code issue
+=====================================================
+
+Date: 2026-08-18.  The user set up an iPhone personal hotspot ("Nicholas's
+iPhone", WPA2, password known-good, "Maximize Compatibility" ON so it is on
+2.4 GHz) as a controlled test with a definitely-correct credential.
+
+    scan_ap3: bssid=F2:7D:F1:55:82:7D rssi=-66 ch=6 sec=wpa2 ssid="Nicholas's iPhone"
+    wpa_target="Nicholas's iPhone" found=1  creds: ssid_len=17 psk_len=9
+    associate=ok cap_info=0x431 assoc_status=0
+    connect=cmd-crc last_event=0x8 (EVENT_DEAUTHENTICATED)
+    post_assoc: data_frames=0 eapol_seen=0
+
+RESULT: with a KNOWN-CORRECT password at a STRONG signal (-66 dBm), association
+still succeeds and the 4-way handshake still fails the same way.  This REFUTES
+the earlier "it must be the wrong PSK" conclusion for BOTH networks.  The
+handshake failure is a CODE / firmware-integration issue, not the credential.
+(The earlier exhaustive "it's the password" reasoning was wrong; the user's
+controlled test is what proved it.)
+
+Two iPhone-specific fixes landed and are hardware-verified working:
+* ssidLooseMatch(): match the target SSID by alphanumerics only -- iPhone
+  SSIDs carry a typographic apostrophe (U+2019) the build flag cannot express.
+  found=1 confirms it matched the beacon.
+* PMK salt now uses the SCANNED SSID bytes (authoritative beacon bytes incl.
+  the curly apostrophe), not the user-typed flag -- so PBKDF2's salt is always
+  the exact broadcast SSID.
+
+Still open -- the 4-way handshake.  Embedded supplicant confirmed
+(eapol_seen=0).  Tried and REFUTED: adding the Auth-type TLV
+(TLV_TYPE_AUTH_TYPE 0x011F = AssocAgentAuth_Open, which NXP's
+wlan_update_rsn_ie maps PSK to) -- association still succeeds, handshake still
+deauths.  So the missing piece is elsewhere in how the embedded supplicant is
+engaged/keyed.  Candidates not yet tried: the RSN-IE rewrite that
+wlan_update_rsn_ie performs (PMF/RSN-caps normalisation, cipher/AKM
+reselection); a KEY_MATERIAL (0x005e) step; or the SUPPLICANT_PMK needing the
+BSSID / a different action/order.  NOTE the honest method failure here: the
+"password" conclusion was reached by ruling out code causes and asserting the
+remainder; a controlled known-good credential (this hotspot) should have been
+requested BEFORE concluding, not after.
+
+Hardware note: the MCU-Link probe grew unreliable after ~24 flash cycles this
+session (LinkServer 'run' exiting right after probe-select, DAP connect
+errors, board left halted).  A USB replug recovered it once; it needs another.
+
+--- W6: deauth reason codes captured (auth-TLV build, post power-cycle) ---
+
+    iPhone   "Nicholas's iPhone": associate=ok cap_info=0x431  deauth event_info=0x94820002 -> reason 2 (prev auth not valid)
+    Onestream "OnestreamQJN7":    associate=ok cap_info=0x1411 deauth event_info=0x2078000F -> reason 15 (4-way handshake timeout)
+
+Both associate cleanly and both deauth during/after the handshake, with a
+KNOWN-CORRECT password on the iPhone.  The two differ in reason (2 vs 15),
+but both are post-association auth failures the embedded supplicant is not
+completing.  Adding the Auth-type TLV did not change it.
+
+Leading remaining candidate: I echo the RAW beacon RSN IE into the ASSOCIATE
+request.  NXP's wlan_cmd_802_11_associate instead passes it through
+wlan_update_rsn_ie(), which reselects a single pairwise/AKM suite and
+normalises the RSN Capabilities (PMF/MFPC/MFPR) bits from pmpriv->pmfcfg
+(set by wlan_set_pmfcfg before connect).  The iPhone hotspot is a modern
+WPA2/WPA3-PMF AP, so its beacon RSN caps likely differ from what the STA must
+present -- a strong reason-2 candidate.  OnestreamQJN7 (plain PSK, no PMF,
+reason 15) suggests a second factor too.  Next session: reproduce
+wlan_update_rsn_ie (or at least set RSN caps + a single AKM) and add
+wlan_set_pmfcfg, rather than echoing the beacon IE.
+
+Probe note: the MCU-Link needed a full power-cycle (not just replug) to
+recover after ~24 flash cycles; it is stable again after that.
