@@ -1126,9 +1126,22 @@ void setup() {
                 g_11nCfg = iw416.set11nCfg();
                 g_amsdu  = iw416.amsduAggrCtrl();
                 g_scan = iw416.scan(g_scanAps, 16, &g_scanCount);
+#ifdef M2_WITH_MONITOR
                 // W5: capture raw 802.11 frames in monitor mode for 3 s.
+                // ★ OFF BY DEFAULT since W8: NET_MONITOR enable/disable before
+                // ASSOCIATE leaves this firmware's managed RX-to-host delivery
+                // permanently dead (fw erratum, A/B-proven on silicon with the
+                // ring-fixed driver: monitor run -> rx_data stays 0 forever;
+                // monitor skipped -> DHCP binds in 2 sends and pings flow).
+                // NXP's own stack never exercises NET_MONITOR, so this path is
+                // unvalidated fw territory.  Build with -DM2_WITH_MONITOR for
+                // the W5 capture evidence, but not when the data path matters.
                 g_monitor = iw416.captureMonitor(g_monFrames, 6, &g_monCount,
                                                  3000, g_monChannel);
+#else
+                g_monitor = SdioHost::OK;
+                g_monCount = 0;
+#endif
 #if HAVE_WIFI_CREDS
                 // W6 stage 1: locate the target SSID in the scan (for its RSN
                 // IE), then hand the firmware the passphrase.  Monitor mode is
@@ -1211,6 +1224,12 @@ void loop() {
         Serial1.print(" tx_data="); Serial1.print(iw416.dataTxCount());
         Serial1.print(" tx_last="); Serial1.print(statusName(g_lastDataTx));
         Serial1.print(" wr_bitmap=0x"); Serial1.print(iw416.lastWrBitmap(), HEX);
+        // W8 ring state: which of the 32 data ports TX/RX will use next, and
+        // how often the RX ring had to resync (0 expected).
+        Serial1.print(" ring=");
+        Serial1.print(iw416.txPort()); Serial1.print('/');
+        Serial1.print(iw416.rxPort()); Serial1.print('/');
+        Serial1.print(iw416.rxRingResyncs());
         // Init evidence repeated here because the wifi loop never re-runs
         // reportProbe: a cmd-timeout in any of these three is the first thing
         // to suspect when TX buffers leak.

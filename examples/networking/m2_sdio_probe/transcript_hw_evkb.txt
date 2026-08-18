@@ -1302,3 +1302,84 @@ ARP responder and ping keepalive are already in the loop).
 
 Also fixed this session: pollLink treats EVENT_LINK_LOST (0x3) as a drop --
 without it the probe held connected=1 for minutes after the AP was rebooted.
+
+================================================================================
+W8 RESULT: WPA2 + DHCP + ping END TO END.  Three independent faults, all
+resolved: (1) the antenna (physical, W7's diagnosis was right), (2) a
+16-vs-32 data-port RING bug in the host driver, (3) a NET_MONITOR firmware
+erratum.  W7's "should DHCP-bind with no code change" was WRONG -- two of the
+three faults were still ahead of it.
+================================================================================
+Date: 2026-08-18 (evening).  Rig: same ESP8266 SoftAP oracle (OPEN first, then
+WPA2-PSK), dual serial capture.  Driver at M2Radio 17fc353 + this session's
+ring fix.
+
+1) RF IS FIXED (user reseated/attached the antenna).  NXP wifi_cli:
+   wlan-scan reads ESP8266TEST at -61 dBm (was -81..-84); our probe's own
+   scan -53/-54.  Reference connect: "authenticated" -> DHCP lease
+   192.168.4.2 -> ping -c 4 192.168.4.1 = 4/4, 7-28 ms.  First DHCP lease
+   this card ever completed.
+
+2) But the probe (W7 build, unchanged) STILL had a dead data path at -61 dBm:
+   wr_bitmap walked 0xFFFF->0x0 over 16 sends (tx dead), rx_data=0, while
+   wifi_cli on the same silicon DHCPed.  W7's "blocker is the RADIO" was only
+   the first fault of three.
+
+3) ROOT CAUSE A -- the 32-port ring (host driver bug, now fixed).
+   Method: rebuilt wifi_cli with CONFIG_WIFI_IO_DEBUG=1 (flag lives in
+   examples/_boards/evkbmimxrt1170/wifi_examples/wifi_cli/wifi_config/
+   wifi_config.h -- the middleware defaults are overridden per-board) and
+   captured a working connect+DHCP at the SDIO level.  The trace shows:
+     * mp_wr_bitmap is 32 bits (0xFFFFFFFF; mlan MAX_PORT=32 for SD8978).
+     * TX ports are consumed sequentially 0,1,2..31 and the firmware frees
+       them LAZILY IN A BATCH -- NXP's own bits 0-3 stayed consumed through
+       20+ idle seconds.  The host must keep writing successive ports and
+       wrap at 32; "wait for the lowest 16 bits" starves forever.
+     * RX uploads are ALSO a ring: the ESP's 1 Hz broadcast arrives as
+       rd_bitmap=0x100, 0x200, 0x400, 0x800... one port per packet.
+   Our driver read only RD/WR_BITMAP_L/U (16 bits) and picked lowest-set.
+   The W5 monitor capture had consumed RX ring slots 0..15 (16 frames --
+   which is also why it worked), so EVERY managed-mode upload afterwards
+   (EAPOL msg1, DHCP OFFERs, broadcasts) landed on ports 16..31, invisible
+   to the host, until the fw's upload ring filled and it stopped uploading.
+   FIX (M2Radio iw416): 32-bit bitmaps (regs 0x10-0x13/0x14-0x17), ring
+   counters m_txPort/m_rxPort (reset on fw download), readRingPacket()
+   drains uploads in ring order into a scratch that always consumes the
+   slot; sendDataFrame waits for the RING port's bit, not "any bit".
+   Measured: tx ring wraps 31->0 and wr_bitmap snaps back to 0xFFFFFFFF
+   (the batch free), tx_last=ok indefinitely.
+
+4) ROOT CAUSE B -- NET_MONITOR wedges managed RX (firmware erratum, avoided).
+   A/B with the SAME ring-fixed driver:
+     * monitor phase run before associate: rx ring parked, rd_bitmap never
+       shows a bit, rx_data=0 forever (fw uploads nothing post-monitor).
+     * monitor phase skipped: first uploads arrive DURING the post-assoc
+       diag window (data_frames=3), DHCP binds in 2 sends.
+   NXP's stack never issues NET_MONITOR, so this fw path is unvalidated.
+   The probe now compiles the W5 monitor phase OUT by default
+   (-DM2_WITH_MONITOR restores it for capture work; do not combine with
+   data-path testing).
+
+5) OPEN AP, ring fix + no monitor: dhcp=bound 192.168.4.2 in 2 sends,
+   lease 43200, ping 32/32, rx_data=99+ (1 Hz broadcasts + echo replies),
+   rx_drop=0, ring resyncs=0, link held the whole window.
+
+6) WPA2 (the W6/W7 milestone, COMPLETE): ESP flipped to WPA2-PSK ch6.
+   Scan shows rsn_len=26; SUPPLICANT_PMK caches the PMK (fp=52D690D0);
+   ASSOCIATE with the normalised RSN IE returns cap_info=0x11 status=0; and
+   EVENT_PORT_RELEASE (0x2B) arrives 13 ms after associate -- THE 4-WAY
+   HANDSHAKE COMPLETED.  eapol_seen=0: the EMBEDDED SUPPLICANT ran it
+   internally, vindicating W6's original conclusion.  The W7 reason-15
+   deauths were the RF fault killing EAPOL at data rates, nothing else.
+   Then dhcp=bound 192.168.4.100 in 2 sends, ping 40/39 (40th in flight)
+   over the encrypted link, rx_data=122, rx_drop=0, no deauth across the
+   full 90 s window.  The ~11.6 s drop is gone.
+
+Flash note: LinkServer 26.6.137 `flash ... load` programs at ~1.2 MB/s via
+the SFDP flash driver and prints progress; plain `run` loaded the same image
+at ~2 kB/s with NO output for 8+ minutes (looks exactly like a hung probe).
+Use `flash ... load` + its built-in reset; a subsequent read of the VCOM
+finds the CLI/probe already running.
+
+QEMU gate: still green after all of the above (asserts the no-IO-function
+fallback; none of this code runs in QEMU).
