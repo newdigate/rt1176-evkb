@@ -103,6 +103,27 @@ static void default_patch(void)
     acid.level(0.5f);              /* fixed; no knob (spec §4) */
 }
 
+/* --- DIAGNOSTIC SCAFFOLDING, build-diag/ ONLY ---------------------------- *
+ * Compiled in only under -DACIDBOX_DIAG=1, which the shipped build/ (and so the
+ * gate, and so the golden ELF) never sets.  It exists to answer one question
+ * over SWD while the MCU-Link VCOM is dead: WHERE IN setup() IS THE FIRMWARE AT
+ * A GIVEN MILLISECOND.  A debugger halt reports a frozen systick that is
+ * INDISTINGUISHABLE from a firmware freeze, so the only way to tell "died at t"
+ * from "was halted at t" is to know what setup() is legitimately doing at t.
+ * Everything here is volatile and read by symbol; nothing prints, because the
+ * VCOM is a separate bench fault. */
+#ifdef ACIDBOX_DIAG
+volatile uint32_t g_diag_t[16];        /* setup() checkpoint timestamps, ms */
+volatile uint32_t g_diag_n;            /* how many checkpoints have been passed */
+volatile float    g_diag_rms[16];      /* per-step peak RMS, NEVER cleared */
+volatile uint32_t g_diag_bars;         /* bars completed since the diag play() */
+volatile uint32_t g_diag_played;       /* millis() at the synthetic play()      */
+static inline void diag_mark(void)
+{ if (g_diag_n < 16) g_diag_t[g_diag_n++] = millis(); }
+#else
+#define diag_mark() ((void)0)
+#endif
+
 /* --- note-event pump: PIT context, immune to UI frame time ---------------- *
  *
  * WHY AN ISR AT ALL: the drain must not be delayed by an LVGL frame, and a
@@ -195,6 +216,11 @@ static void audio_probe_poll(void)
     if (rms.available()) {
         const float v = rms.read();
         if (v > stepPeakRms[s]) stepPeakRms[s] = v;
+#ifdef ACIDBOX_DIAG
+        /* Same peak, but NEVER cleared at the bar seam, so an SWD read that
+         * lands mid-bar still sees a whole measured table. */
+        if (v > g_diag_rms[s]) g_diag_rms[s] = v;
+#endif
     }
     if (s != lastSeenStep) {
         /* 15 -> 0 is the loop seam.  Anchoring on the seam rather than on
@@ -202,6 +228,9 @@ static void audio_probe_poll(void)
          * has been filled, so no line can carry a half-measured window. */
         if (s == 0 && lastSeenStep == 15) {
             barsDone++;
+#ifdef ACIDBOX_DIAG
+            g_diag_bars = barsDone;
+#endif
             CONSOLE.printf("ACIDBOX_BAR=%lu RMS=[", (unsigned long)barsDone);
             /* ★ print(float, digits), NOT printf("%.4f"), AND THAT IS NOT A
              * STYLE CHOICE. Print::printf goes through newlib's vsnprintf, and
@@ -551,14 +580,18 @@ void setup()
     CONSOLE.begin(115200);
     delay(200);
     CONSOLE.println("ACIDBOX_BEGIN");
+    diag_mark();               /* after CONSOLE.begin + delay(200) */
 
     AudioMemory(24);
+    diag_mark();               /* after AudioMemory(24) */
     const bool codec = wm.enable();
     wm.volume(0.6f);
     CONSOLE.println(codec ? "CODEC_OK" : "CODEC_FAIL");
+    diag_mark();               /* after wm.enable() + volume */
 
     const bool panel = Display.begin();
     CONSOLE.println(panel ? "PANEL_OK" : "PANEL_FAIL");
+    diag_mark();               /* after Display.begin() */
     if (!panel) {
         /* No lv_init() happened, so loop()'s lv_timer_handler() returns
          * immediately -- the same contract the sibling display examples use.
@@ -569,28 +602,36 @@ void setup()
     }
 
     lvgl_rt1176_begin();
+    diag_mark();               /* after lvgl_rt1176_begin() */
     lv_display_t *disp = lvgl_mipi_panel_create(Display);
+    diag_mark();               /* after lvgl_mipi_panel_create() */
 
     load_preset();
     default_patch();
     transport.tempo(128.0f);
     transport.loop(0.0f, 1.0f);        /* one bar == the 384-tick pattern */
     transport.looping(true);
+    diag_mark();               /* after preset + patch + transport cfg */
     pump.priority(224);                /* BEFORE begin(): see pump_isr's note.
                                         * priority() applied afterwards would
                                         * leave a window running at 128. */
     pump.begin(pump_isr, 1000);        /* MICROseconds, Teensy convention: 1 kHz */
+    diag_mark();               /* after pump.begin() */
 
     /* The scene is the FIRST refresh, so the sum below covers a whole-screen
      * paint rather than whatever a partial repaint touched. */
     lv_screen_load(build_ui());
+    diag_mark();               /* after build_ui() + screen load */
     uint32_t t0 = millis();
     while (!lvgl_mipi_panel_frame_done() && (millis() - t0) < 5000)
         lvgl_rt1176_loop();
     lvgl_sum_reset();
+    diag_mark();               /* after the frame_done wait loop */
     lvgl_sum_feed(Display.framebuffer(), PANEL_FB_BYTES);
+    diag_mark();               /* after the 3.6 MB checksum   == :591 pre-diag */
     CONSOLE.printf("ACIDBOX_UI_SUM=0x%08lX\n", (unsigned long)lvgl_sum_value());
     CONSOLE.printf("PLAYING=%d\n", transport.playing() ? 1 : 0);
+    diag_mark();               /* after the two console printfs */
 
     /* Touch bring-up AFTER the golden, which is what keeps the golden a
      * statement about the scene alone: no indev exists yet, so no contact can
@@ -600,7 +641,10 @@ void setup()
      * than inheriting it by luck. */
     Wire2.begin();
     Wire2.setClock(400000);
-    if (touch.begin()) {
+    diag_mark();               /* after Wire2.begin()/setClock() == :602 pre-diag */
+    const bool touchOk = touch.begin();
+    diag_mark();               /* after touch.begin()          == :603 pre-diag */
+    if (touchOk) {
         CONSOLE.println("I2C_OK");
         /* From here LVGL polls the part every 10 ms; in QEMU the model replays
          * a script, on the bench a finger drives it. */
@@ -615,11 +659,23 @@ void setup()
                        (unsigned)touch.lastI2cStatus(),
                        (unsigned long)touch.lastDeviceId());
     }
+    diag_mark();               /* setup() COMPLETE */
     CONSOLE.println("ACIDBOX_DONE");
 }
 
 void loop()
 {
+#ifdef ACIDBOX_DIAG
+    /* Synthetic play, diagnostic build only.  The shipped contract is BOOT
+     * SILENT and this must not be allowed to soften that claim -- so it lives
+     * behind the definition build/ never sets, and it starts the transport
+     * FOUR SECONDS IN, purely so the audio path can be MEASURED over SWD
+     * (g_diag_rms) while the VCOM carries nothing. */
+    if (!g_diag_played && millis() >= 4000) {
+        g_diag_played = millis();
+        transport.play();
+    }
+#endif
     lvgl_rt1176_loop();
     audio_probe_poll();
 }

@@ -408,6 +408,45 @@ boot output. `tools/rt1170-flash.sh` wraps flash + console;
 `tools/rt1170-qemu.sh` boots an arbitrary image in QEMU outside the gate
 harness.
 
+★ **A DEBUGGER-HALTED CORE IS INDISTINGUISHABLE FROM DEAD FIRMWARE, AND THE
+EVIDENCE LOOKS DAMNING.** This cost a full session on `display/acid_box`, which
+was written up as a CM7 lockup at 1.739 s and merged as such; the firmware was
+healthy the whole time and now runs 15 minutes on the bench. Three separate
+LinkServer behaviours conspire, and none of them announces itself:
+
+- `gdbserver --attach` reports a **fake stop** and returns **0 for every core
+  register** while the target runs on — so `$sp = $lr = 0` is the normal
+  reading of a RUNNING core, not a corrupted one. Memory reads in that mode are
+  live and trustworthy; **writes are silently dropped**, debug registers
+  included.
+- A probe-latched `C_HALT` **survives `wiretimedreset`**. The core never
+  re-runs startup, so `systick_millis_count` keeps its old DTCM value and every
+  later read returns the SAME number — which reads exactly like a reproducible
+  freeze at that millisecond. Watch systick **restart from ~0** or you are
+  re-reading a corpse that was never a corpse.
+- Every connect script arms all seven **DEMCR vector catches** (`0x010007F0`),
+  and vector catch halts the core *instead of* running the handler. So "a
+  breakpoint on `fault_isr` was never hit" is the EXPECTED result with or
+  without a fault.
+
+**Read `DHCSR` (0xE000EDF0) FIRST, every time** — bit 17 `S_HALT`, bit 19
+`S_LOCKUP`, bit 24 `S_RETIRE_ST`; `0x01010001` is healthy-running,
+`0x00030003` is halted-by-debugger. Then `CFSR`/`HFSR` (0xE000ED28/2C): both
+zero means no fault was ever taken, and that is readable even when registers
+are not. `tools/rt1170-swdprobe.py --health` prints the whole block; its
+docstring carries the full account. Corroborate a frozen counter with a
+SECOND clock (an audio graph's sample counter tracking systick to
+milliseconds over minutes is far stronger than either alone) before believing
+any freeze.
+
+★ **Never `pkill -9` a LinkServer session mid-flash-program.** Doing so left the
+target unreachable at the wire level — `Wire not connected` and
+`Hardware interface transfer error` on every transfer, `dapinfo` included —
+while the MCU-Link itself still enumerated perfectly over USB. No software
+recovery worked; a full board **power cycle** was required. Note also that
+`LinkServer run` is silent for a minute or more while it programs: silent is
+not hung.
+
 ## Architecture
 
 - **`imxrt1176/` (in the `teensy-cores` sibling repo)** — the core: startup
