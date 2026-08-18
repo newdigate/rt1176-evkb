@@ -32,7 +32,10 @@ static uint16_t g_hwVersion = 0;
 // strings exist in this image.
 static SdioHost::Status g_macCtrl = SdioHost::CMD_TIMEOUT;
 static SdioHost::Status g_scan    = SdioHost::CMD_TIMEOUT;
-static Iw416::ScanResult g_scanAps[8];
+// W6 step 1: survey enough of the band to tell whether ANY open AP is in
+// range (an open AP is the only kind association can reach without a key
+// exchange).  16 entries covers a typical bench.
+static Iw416::ScanResult g_scanAps[16];
 static uint8_t g_scanCount = 0;
 // W5: monitor-mode capture on channel 4 (where W4 found the AP).  Real
 // 802.11 frames off the air -- a beacon whose BSSID/SSID match the scan is
@@ -482,6 +485,11 @@ static void reportProbe() {
             Serial1.print(g_scanAps[i].rssi);
             Serial1.print(" ch=");
             Serial1.print(g_scanAps[i].channel);
+            // W6 step 1: security class decides which APs are association
+            // candidates -- only "open" needs no key exchange.
+            static const char *secName[] = { "open", "wep", "wpa", "wpa2" };
+            Serial1.print(" sec=");
+            Serial1.print(secName[g_scanAps[i].security & 3]);
             Serial1.print(" ssid=\"");
             Serial1.print(g_scanAps[i].ssid);
             Serial1.println("\"");
@@ -627,7 +635,7 @@ void setup() {
                 // W4: enable the MAC (NXP's init order), then scan.
                 g_macCtrl = iw416.macControl(Iw416::MAC_RX_ON | Iw416::MAC_TX_ON |
                                              Iw416::MAC_ETHERNETII);
-                g_scan = iw416.scan(g_scanAps, 8, &g_scanCount);
+                g_scan = iw416.scan(g_scanAps, 16, &g_scanCount);
                 // W5: capture raw 802.11 frames in monitor mode for 3 s.
                 g_monitor = iw416.captureMonitor(g_monFrames, 6, &g_monCount,
                                                  3000, g_monChannel);

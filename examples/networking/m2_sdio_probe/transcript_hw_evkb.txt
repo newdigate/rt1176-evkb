@@ -826,3 +826,35 @@ that reason -- the same instrument-first discipline W3 and W4 used.
 Association (auth + assoc + WPA2) is deferred to W6, where an OPEN test AP can
 be stood up deliberately; monitor mode needed nothing external and proved the
 data path first.
+
+=====================================================
+W6 STEP 1 — SCAN SECURITY SURVEY — NO OPEN AP IN RANGE
+=====================================================
+
+Date: 2026-08-18.  Design: docs/superpowers/specs/2026-08-18-m2-w6-associate-design.md
+
+    scan=ok num=3
+    scan_ap0: bssid=78:20:51:8F:19:5E rssi=-81 ch=4 sec=wpa2 ssid="OnestreamQJN7"
+    scan_ap1: bssid=7A:20:51:4F:19:5E rssi=-80 ch=4 sec=wpa2 ssid=""
+    scan_ap2: bssid=7A:20:51:5F:19:5E rssi=-80 ch=4 sec=wpa2 ssid=""
+
+The scan now classifies each BSS OPEN / WEP / WPA / WPA2 from the beacon
+capability Privacy bit (0x0010) and the RSN (IE 48) / WPA (vendor 00:50:F2:01)
+IEs.  The classification is un-fakeable: sec=wpa2 comes from finding the RSN IE
+in each live beacon, which the firmware does not announce.
+
+VERDICT: all three APs in range are WPA2.  There is NO open AP to associate to.
+
+Why this matters for W6: association without a key exchange only works against
+an OPEN network.  Joining "OnestreamQJN7" would require the WPA2 4-way EAPOL
+handshake (PMK/PTK) -- a large, separate phase -- plus its password.  So W6
+steps 2-4 (ASSOCIATE 0x0012, TX over WR_BITMAP, DHCP/ARP round-trip) are
+BLOCKED on external input: either the user stands up an OPEN AP (a phone
+hotspot with no password) in range, or authorises the WPA2 path with a
+credential.
+
+This is why only step 1 was implemented.  This project ships only what silicon
+verifies (the two-gate rule); association cannot be verified with no AP to
+join, and writing untested ASSOCIATE/TX firmware would violate that discipline.
+Step 1 is the AP-independent part -- verifiable now, and it produced the datum
+that decides whether the rest can proceed (it cannot, autonomously).
