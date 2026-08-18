@@ -23,6 +23,10 @@ extern const uint8_t iw416_fw[];
 extern const uint32_t iw416_fw_len;
 static SdioHost::Status g_fwStatus = SdioHost::CMD_TIMEOUT;
 static bool g_fwAttempted = false;
+static SdioHost::Status g_hwSpec = SdioHost::CMD_TIMEOUT;
+static uint8_t  g_mac[6] = {0};
+static uint32_t g_fwRelease = 0;
+static uint16_t g_hwVersion = 0;
 #endif
 
 // ---------------------------------------------------------------------------
@@ -393,6 +397,22 @@ static void reportProbe() {
         Serial1.println("fw_download=skipped (no blob supplied)");
 #endif
 
+        Serial1.print("hw_spec=");
+        Serial1.print(statusName(g_hwSpec));
+        if (g_hwSpec == SdioHost::OK) {
+            Serial1.print(" mac=");
+            for (int i = 0; i < 6; i++) {
+                if (g_mac[i] < 0x10) Serial1.print('0');
+                Serial1.print(g_mac[i], HEX);
+                if (i < 5) Serial1.print(':');
+            }
+            Serial1.print(" fw_release=0x");
+            Serial1.print(g_fwRelease, HEX);
+            Serial1.print(" hw_version=0x");
+            Serial1.print(g_hwVersion, HEX);
+        }
+        Serial1.println();
+
         Serial1.print("io_functions=");
         Serial1.println(sdio.ioFunctionCount());
         Serial1.print("rca=0x");
@@ -456,6 +476,12 @@ void setup() {
     if (g_iwStatus == SdioHost::OK) {
         g_fwAttempted = true;
         g_fwStatus = iw416.downloadFirmware(iw416_fw, iw416_fw_len);
+        if (g_fwStatus == SdioHost::OK) {
+            // Firmware is running: re-read the I/O port, then talk to it.
+            (void)iw416.refreshIoPort();
+            delay(50);
+            g_hwSpec = iw416.getHwSpec(g_mac, &g_fwRelease, &g_hwVersion);
+        }
     }
 #endif
     reportProbe();
