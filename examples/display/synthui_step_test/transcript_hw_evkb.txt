@@ -1,0 +1,35 @@
+synthui_step_test -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
+================================================================================
+2026-08-18. PASS. The silicon framebuffer is BIT-IDENTICAL to the QEMU golden.
+    silicon FNV-1a over the live scanout buffer : 0xCE619CE1
+    QEMU golden (run_qemu.sh)                   : 0xCE619CE1
+Two independent renderers, same 3,686,400 bytes. That is a stronger statement
+than "reproducible": it is agreement between implementations, which a golden
+recorded twice on one of them can never give you.
+================================================================================
+
+METHOD. The MCU-Link VCOM carried ZERO bytes throughout this session (see the
+acid_box transcript -- it is a bench fault, not a firmware one), so the usual
+UART tokens could not be captured. Everything below is SWD-based and needs no
+serial:
+
+  - flashed VCOM-free: wiretimedreset -> flash load -> flash verify (4/4
+    sections "File matches flash") -> wiretimedreset
+  - tools/rt1170-screenshot.py dumped the LIVE scanout buffer over SWD.
+    Reported FBINFO addr=0x80100040 w=720 h=1280 pitch=2880 -- read from the
+    LCDIFv2 layer-0 descriptor, so it is what the panel is actually scanning.
+  - host-side FNV-1a over those bytes == the gate's golden, above.
+  - LIVENESS, which a still frame cannot show: systick_millis_count read
+    22640 and still advancing ~22 s after reset. The image runs; it has not
+    rendered once and died.
+
+EYES ON GLASS. All sixteen state combinations distinct and correct: empty,
+gated, gated+accent (round dot, top-right), gated+slide (bar, bottom edge),
+all three, cursor-on-empty, cursor-on-gated, everything -- and the same eight
+again with the white SELECTED outline. The cursor ring is drawn INSET, and row
+1's last three cells confirm why: ring and outline are both visible at once,
+which is exactly the case that matters (the playhead crossing the edited step).
+
+WHAT THIS DOES AND DOES NOT PROVE. It proves the widget's drawing is correct on
+real silicon and pixel-identical to the software renderer. It says nothing
+about touch (this scene has no input) -- that is acid_box's job.
