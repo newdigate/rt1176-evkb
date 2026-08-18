@@ -51,6 +51,7 @@ static SdioHost sdio;
 // 0x400E8000.  ALT10 = 0xA.
 #define M2_SDIO_RST_MUX (*(volatile uint32_t *)0x400E814Cu)   // GPIO_AD_16
 #define M2_WL_RST_MUX   (*(volatile uint32_t *)0x400E8188u)   // GPIO_AD_31
+#define M2_WL_RST_PAD   (*(volatile uint32_t *)0x400E83CCu)   // GPIO_AD_31 pad ctl
 #define M2_SDIO_RST_BIT 15
 #define M2_WL_RST_BIT   30
 
@@ -65,8 +66,12 @@ static void m2ReleaseWifiReset() {
     delay(10);
     GPIO9_DR_SET = (1u << M2_SDIO_RST_BIT);         // SDIO_RST high
     delay(100);
-    GPIO9_DR_SET = (1u << M2_WL_RST_BIT);           // then WL_RST high
-    delay(100);
+    GPIO9_DR_SET = (1u << M2_WL_RST_BIT);           // then WL_RST / PDn high
+    // With R404 bridged this pad finally reaches PDn (J54 pin 56), so the line
+    // above is a real power-up out of full power-down.  The datasheet calls PDn
+    // "Full Power-down for the Wi-Fi/BT radio"; a module leaving it needs far
+    // longer than the 100 ms that was here to boot its ROM and start its UART.
+    delay(1000);
 }
 
 // Read the pads back through GPIO9_PSR.  The first attempt drove GPIO3 and had
@@ -187,6 +192,21 @@ static const uint8_t HCI_RESET[] = { 0x01, 0x03, 0x0C, 0x00 };
 #define M2_BT_RST_MUX (*(volatile uint32_t *)0x400E8148u)
 #define M2_BT_RST_BIT 14
 
+// Continuity test for R404 (GPIO_AD_31 -> the PDn chain), bridged by hand on
+// 2026-08-18.  The far side of R404 carries the 10K pull-up R829 to WL_3V3, so:
+//   up=1 down=1 -> DRIVEN HIGH by R829: the bridge conducts
+//   up=1 down=0 -> FLOATING: the bridge is not conducting
+// (the MCU's internal pulls are weaker than 10K, so R829 wins when connected)
+static void m2R404Continuity(bool *up, bool *down) {
+    M2_WL_RST_MUX = 0x10u | 0xAu;                 // SION | ALT10 = GPIO9_IO30
+    GPIO9_GDIR &= ~(1u << M2_WL_RST_BIT);         // input, so we can sense R829
+    M2_WL_RST_PAD = 0x04u; delayMicroseconds(500);   // internal pull-up
+    *up = (GPIO9_PSR >> M2_WL_RST_BIT) & 1u;
+    M2_WL_RST_PAD = 0x08u; delayMicroseconds(500);   // internal pull-down
+    *down = (GPIO9_PSR >> M2_WL_RST_BIT) & 1u;
+    M2_WL_RST_PAD = 0x0Cu; delayMicroseconds(500);   // no pull, leave to R829
+}
+
 static void m2PulseBtReset() {
     M2_BT_RST_MUX = 0xAu;                      // ALT10 = GPIO9_IO14
     GPIO9_GDIR |= (1u << M2_BT_RST_BIT);
@@ -236,6 +256,8 @@ static const char *statusName(SdioHost::Status s) {
 
 static SdioHost::Status g_status = SdioHost::CMD5_NO_RESPONSE;
 static bool g_rxUp = false, g_rxDown = false;
+static bool g_r404Up = false, g_r404Down = false;
+static bool g_rxAfterPdn = false; static uint32_t g_rxEdgesAfterPdn = 0;
 
 // Re-emitted periodically from loop().  The probe result is produced once in
 // setup(), but on a board shared with another session you rarely get to attach
@@ -266,6 +288,19 @@ static void reportProbe() {
 
     bool wu=false, wd=false; uint32_t wpad=0;
     m2BtWakeProbe(&wu, &wd, &wpad);
+    Serial1.print("r404_bridge: pullup_reads=");
+    Serial1.print(g_r404Up);
+    Serial1.print(" pulldown_reads=");
+    Serial1.print(g_r404Down);
+    Serial1.print(" -> ");
+    Serial1.println(g_r404Up==g_r404Down ? "DRIVEN HIGH by R829 -- bridge conducts"
+                                         : "FLOATING -- bridge NOT conducting");
+
+    Serial1.print("after_pdn_cycle: rx_any_high=");
+    Serial1.print(g_rxAfterPdn);
+    Serial1.print(" rx_edges=");
+    Serial1.println(g_rxEdgesAfterPdn);
+
     Serial1.print("r1901_bridge: pullup_reads=");
     Serial1.print(g_rxUp);
     Serial1.print(" pulldown_reads=");
@@ -347,11 +382,15 @@ void setup() {
     // LPUART2 -> J54 pin 32 (card UART_RXD).  TX only in practice: the card's
     // reply path dies at R1901, which is DNP on this board.  No flow control --
     // CTS/RTS are the gigabit PHY's interrupt and reset lines here.
+    m2R404Continuity(&g_r404Up, &g_r404Down);
     m2RxContinuity(&g_rxUp, &g_rxDown);
     Serial2.begin(115200);
     Serial1.println("serial2=up_115200");
 
     m2ReleaseWifiReset();
+    // Immediately after the PDn power-up, watch the card's UART TX for any
+    // sign of a booting module: its line should leave the stuck-low state.
+    m2WatchRxLine(400, &g_rxAfterPdn, &g_rxEdgesAfterPdn);
     Serial1.println("m2_wifi_reset=released");
 
     // NXP define SDMMCHOST_OPERATION_VOLTAGE_1V8 for EVERY IW416 module config

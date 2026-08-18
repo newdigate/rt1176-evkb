@@ -509,3 +509,83 @@ It is the only untested control left, and its failure mode is an exact match for
 the symptom.
 
 Note GPIO_AD_31 is also Arduino D12/MISO, so driving it affects header SPI.
+
+=====================================================
+*** SUCCESS *** — R404 bridged, the card ENUMERATES
+=====================================================
+
+Date: 2026-08-18. R404 (GPIO_AD_31 -> the PDn chain, DNP from the factory)
+fitted by hand with a solder bridge, after R1901.
+
+    sdio_begin=ok rc=0
+    int_status=0x1 r4=0x90FF8000
+    io_functions=1
+    rca=0x1
+    cccr_rev=0x3
+    manfid=0x2DF
+    cardid=0x9158
+
+`manfid=0x2DF` is the Marvell/NXP SDIO manufacturer code; `cardid=0x9158` is the
+88W8978/IW416-family device ID. BOTH ARE READ OFF THE WIRE from the card's CIS
+tuple chain -- this firmware contains neither value. `r4=0x90FF8000` decodes as
+C=1 (ready), 1 IO function, OCR window 0xFF8000, matching the datasheet's
+"Number of SDIO functions: 1 (Wi-Fi)".
+
+Corroborating signals, both previously stuck low, both now correct:
+
+    bt_wake(pin20): pullup_reads=1 pulldown_reads=1 -> HELD HIGH externally
+    after_pdn_cycle: rx_any_high=1 rx_edges=26
+
+BT_WAKE_HOST released, and the card's UART TX produced 26 edges during the
+power-up window -- the Bluetooth boot ROM transmitting.
+
+ROOT CAUSE
+----------
+
+**PDn (J54 pin 56, W_DISABLE1#) needed an actual asserted-LOW transition, and
+R404 being DNP made that impossible.**
+
+The pin was never "wrong": R829's 10K pull-up held it at the logic-high "normal
+mode" level the datasheet asks for, which is why every static check passed. But
+the module had come up in a state it could not leave, and with R404 unpopulated
+GPIO_AD_31 was disconnected, so no firmware could assert PDn to power-cycle it.
+The radio sat in that state indefinitely with every output at zero.
+
+Bridging R404 let m2ReleaseWifiReset() drive PDn low, then high, then wait ~1 s
+for the ROM to boot. That is the whole fix.
+
+Why this was so hard to see:
+
+* A held-high-by-pull-up PDn looks identical to a driven-high PDn on every
+  measurement available from the host.
+* Every card->host signal was DRIVEN low, not floating, which correctly proved
+  the card's DC-DC and level shifters were powered -- and misleadingly suggested
+  the module behind them was merely faulty.
+* NXP's own wifi_cli fails identically on this board, because it drives
+  BOARD_INITPINSM2_WL_RST_GPIO = GPIO9_IO30 = GPIO_AD_31, which without R404
+  reaches nothing. NXP's software is correct; the RevC3 board's DNP defeats it.
+
+WHAT THIS BOARD NEEDS FOR AN M.2 Wi-Fi CARD
+--------------------------------------------
+
+Two 0402 0 Ω resistors, both DNP from the factory:
+
+| Ref   | Connects                          | Without it |
+|-------|-----------------------------------|------------|
+| R404  | GPIO_AD_31 -> PDn (J54 pin 56)    | **The radio can never be power-cycled and does not boot. Fatal.** |
+| R1901 | U355 -> BT_UART_RXD (J54 pin 22)  | Bluetooth HCI is transmit-only; no reply can ever be read |
+
+R404 is the one that matters for Wi-Fi. R1901 is required for Bluetooth and was
+also what made the diagnosis possible, by turning the card's UART TX line from
+invisible into observable.
+
+Note GPIO_AD_31 is also Arduino D12/MISO, and GPIO_DISP_B2_11 (the BT UART RX)
+is Arduino D0 -- both header pins are now committed to the M.2 card.
+
+SUPERSEDES
+----------
+
+Every "the card or the socket is dead" conclusion earlier in this transcript is
+wrong, as is the later "the MAYA-W1 module is faulty". The card was fine
+throughout. They are kept above as the record of how the investigation actually
+ran, including the wrong turns.
