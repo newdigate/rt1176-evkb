@@ -732,3 +732,43 @@ Note on the hang the handoff warned about: it was never reproduced after the
 recovery image (same begin() unmask, no getHwSpec) ran clean, so the hang
 lived in the getHwSpec path -- most plausibly the CMD53 to a command port
 that "new mode" had never enabled, wedging the card mid-transfer.
+
+=====================================================
+W4 — 802.11 SCAN — REAL SSIDs OFF THE AIR
+=====================================================
+
+Date: 2026-08-18.  Design: docs/superpowers/specs/2026-08-18-m2-w4-scan-design.md
+
+    mac_ctrl=ok
+    scan=ok num=3
+    scan_ap0: bssid=78:20:51:8F:19:5E rssi=-74 ch=4 ssid="OnestreamQJN7"
+    scan_ap1: bssid=7A:20:51:4F:19:5E rssi=-75 ch=4 ssid=""
+    scan_ap2: bssid=7A:20:51:5F:19:5E rssi=-75 ch=4 ssid=""
+
+"OnestreamQJN7" is a real nearby ISP router heard over the antenna -- the
+string exists nowhere in this image, the same un-fakeable standard as W1's
+CIS ids and W3's MAC.  ap1/ap2 are its hidden multi-BSS siblings: same BSSID
+base with the locally-administered bit set (78:20:51 -> 7A:20:51), same
+channel, same signal.  All of W1..W4 pass in a single boot.
+
+Sequence that worked, first try (per the design doc):
+
+    FUNC_INIT -> GET_HW_SPEC -> MAC_CONTROL(0x0028, action=0x0013
+    RX_ON|TX_ON|ETHERNETII) -> 802_11_SCAN(0x0006, bss_mode=ANY,
+    ChanList TLV ch 1..13 active, 100 ms dwell)
+
+The single response (1536 bytes = 6 blocks, resp_cmd=0x8006 resp_result=0)
+arrived well inside the 15 s wait; the default 2 s would have been enough for
+this bench but is NOT guaranteed -- 13 channels x 100 ms is 1.3 s before
+firmware overhead, so scan() keeps its own deadline.
+
+Response parsed per wlan_interpret_bss_desc_with_ie(): per set
+[u16 beacon_size][6 BSSID][1 RSSI][8 ts][2 interval][2 cap][IEs], SSID from
+IE 0, channel from DS Param Set IE 3.  Parsing is bounded by the SDIOPkt's
+own size field, not CMD_RD_LEN -- the read is block-padded and the tail of
+the last block is garbage.
+
+One reporting caveat, deliberate: the resp_*/cmd_rd_len fields in the
+hw_spec line show the LAST command-port packet, which after W4 is the scan
+response (0x8006/1536), not GET_HW_SPEC's.  They are live evidence, not a
+per-command record.

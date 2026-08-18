@@ -27,6 +27,13 @@ static SdioHost::Status g_hwSpec = SdioHost::CMD_TIMEOUT;
 static uint8_t  g_mac[6] = {0};
 static uint32_t g_fwRelease = 0;
 static uint16_t g_hwVersion = 0;
+// W4: MAC_CONTROL then one active scan of 2.4 GHz ch 1-13.  Real nearby
+// SSIDs on the console are the un-fakeable assertion -- none of those
+// strings exist in this image.
+static SdioHost::Status g_macCtrl = SdioHost::CMD_TIMEOUT;
+static SdioHost::Status g_scan    = SdioHost::CMD_TIMEOUT;
+static Iw416::ScanResult g_scanAps[8];
+static uint8_t g_scanCount = 0;
 #endif
 
 // ---------------------------------------------------------------------------
@@ -445,6 +452,33 @@ static void reportProbe() {
             Serial1.print(g_hwVersion, HEX);
         }
         Serial1.println();
+
+        // W4: the scan.  resp_* above already carries the last reply header,
+        // so a failure here names itself.  num is what the card reported;
+        // the listing caps at the 8 the example keeps.
+        Serial1.print("mac_ctrl=");
+        Serial1.println(statusName(g_macCtrl));
+        Serial1.print("scan=");
+        Serial1.print(statusName(g_scan));
+        Serial1.print(" num=");
+        Serial1.println(iw416.scanSetsSeen());
+        for (uint8_t i = 0; i < g_scanCount; i++) {
+            Serial1.print("scan_ap");
+            Serial1.print(i);
+            Serial1.print(": bssid=");
+            for (int b = 0; b < 6; b++) {
+                if (g_scanAps[i].bssid[b] < 0x10) Serial1.print('0');
+                Serial1.print(g_scanAps[i].bssid[b], HEX);
+                if (b < 5) Serial1.print(':');
+            }
+            Serial1.print(" rssi=-");
+            Serial1.print(g_scanAps[i].rssi);
+            Serial1.print(" ch=");
+            Serial1.print(g_scanAps[i].channel);
+            Serial1.print(" ssid=\"");
+            Serial1.print(g_scanAps[i].ssid);
+            Serial1.println("\"");
+        }
 #else
         // Everything above -- download and host commands alike -- needs the
         // blob, and g_hwSpec/g_mac only exist when it was supplied.  Keeping
@@ -524,6 +558,12 @@ void setup() {
             delay(50);
             (void)iw416.enableHostInt();
             g_hwSpec = iw416.getHwSpec(g_mac, &g_fwRelease, &g_hwVersion);
+            if (g_hwSpec == SdioHost::OK) {
+                // W4: enable the MAC (NXP's init order), then scan.
+                g_macCtrl = iw416.macControl(Iw416::MAC_RX_ON | Iw416::MAC_TX_ON |
+                                             Iw416::MAC_ETHERNETII);
+                g_scan = iw416.scan(g_scanAps, 8, &g_scanCount);
+            }
         }
     }
 #endif
