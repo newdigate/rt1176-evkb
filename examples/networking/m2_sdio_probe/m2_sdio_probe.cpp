@@ -636,6 +636,14 @@ static void reportProbe() {
         Serial1.print(iw416.assocCapInfo(), HEX);
         Serial1.print(" assoc_status=");
         Serial1.println(iw416.assocStatus());
+        // The normalised RSN IE actually sent: last 2 bytes are the RSN caps,
+        // which should read 8000 (MFPC=1, MFPR=0) after the PMF rewrite.
+        Serial1.print("assoc_rsn_ie=");
+        for (uint8_t b = 0; b < iw416.assocRsnIeLen(); b++) {
+            if (iw416.assocRsnIe()[b] < 0x10) Serial1.print('0');
+            Serial1.print(iw416.assocRsnIe()[b], HEX);
+        }
+        Serial1.println();
         // W6 stage 3: the handshake result.  connect=ok means
         // EVENT_PORT_RELEASE arrived -- the WPA2 4-way handshake completed and
         // the port is authorized, which only happens with the correct PSK.

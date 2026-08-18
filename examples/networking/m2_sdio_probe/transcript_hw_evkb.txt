@@ -1018,3 +1018,46 @@ wlan_set_pmfcfg, rather than echoing the beacon IE.
 
 Probe note: the MCU-Link needed a full power-cycle (not just replug) to
 recover after ~24 flash cycles; it is stable again after that.
+
+--- W6: RSN-IE fix implemented + byte-verified, but handshake STILL fails ---
+
+Date: 2026-08-18.  Implemented the RSN-IE normalisation NXP's
+wlan_update_rsn_ie() performs (single cipher/AKM, RSN caps PMF bits forced to
+the STA's own MFPC=1/MFPR=0).  Byte-verified on hardware:
+
+    OnestreamQJN7:      assoc_rsn_ie=...000FAC02 8000   (caps 0x0080, MFPC=1)
+    "Nicholas's iPhone": assoc_rsn_ie=...000FAC02 8C00  (caps 0x008C, MFPC=1,
+                         MFPR=0, beacon replay-counter bits 0x0C preserved)
+
+The produced RSN IE is exactly what NXP would send.  But the 4-way handshake
+STILL FAILS on the KNOWN-GOOD iPhone hotspot (-71 dBm): associate=ok
+assoc_status=0, then EVENT_DEAUTHENTICATED reason 2.  OnestreamQJN7 likewise
+(reason 15).  So the RSN-IE/PMF fix -- though correct and necessary -- is NOT
+sufficient.
+
+Three targeted fixes have now been tried and REFUTED (all correct per NXP,
+none fixed the handshake):
+  1. Auth-type TLV (0x011F).
+  2. RSN-IE normalisation + PMF caps (this one; byte-verified).
+  3. Removing the pre-associate deauth (tested "deauth clears the PMK cache" --
+     it does not; handshake failed identically).
+
+STOP-AND-QUESTION-THE-ARCHITECTURE POINT (per systematic-debugging: 3+ failed
+fixes => the model is wrong, not the details).  The working model has been
+"SUPPLICANT_PMK caches the PMK, then ASSOCIATE with a correct RSN IE makes the
+firmware's EMBEDDED supplicant run the 4-way handshake."  Everything in that
+model is now byte-correct and the credential is known-good, yet no handshake.
+So the model is incomplete.  The leading fundamental question:
+
+  * Does sduartIW416_wlan_bt.bin actually CONTAIN an embedded supplicant, or is
+    it built expecting a HOST supplicant (CONFIG_WPA_SUPP)?  If host-side, then
+    SUPPLICANT_PMK is accepted-but-inert, no supplicant ever runs, EAPOL is
+    (or should be) forwarded to the host, and the AP deauths when we never
+    answer.  "eapol_seen=0 / data_frames=0" is consistent with EITHER an
+    embedded supplicant (handshake internal, invisible) OR no supplicant at
+    all -- it does not distinguish them.
+
+The un-fakeable way to distinguish: watch the AP side.  An ESP32 in SoftAP
+mode with EAPOL logging would show whether our STA sends handshake message 2
+at all (-> supplicant runs, keying issue) or nothing (-> no supplicant in this
+blob, need host-side EAPOL or a different firmware).  The user has an ESP.

@@ -35,21 +35,43 @@ out: password, SSID salt (uses scanned beacon bytes now), plumbing
 (ssid_len/psk_len exact), PMF/SHA256 for OnestreamQJN7 (plain PSK), host-vs-
 embedded supplicant (embedded).
 
-## First thing to try in W7
+## The RSN-IE fix is DONE and byte-verified — and it was NOT sufficient
 
-`associate()` currently echoes the **raw beacon RSN IE** into the ASSOCIATE
-request. NXP's `wlan_cmd_802_11_associate` instead runs it through
-`wlan_update_rsn_ie()` (mlan_join.c), which:
-1. Reselects a single pairwise cipher and a single AKM suite (by preference).
-2. Normalises the RSN Capabilities field (PMF MFPC/MFPR bits) from
-   `pmpriv->pmfcfg`, which NXP sets via `wlan_set_pmfcfg(mfpc, mfpr)` before
-   connecting.
+`buildAssocRsnIe()` now reproduces `wlan_update_rsn_ie()`: single cipher/AKM +
+RSN-caps PMF bits forced to MFPC=1/MFPR=0. Hardware-verified bytes
+(`assoc_rsn_ie=...000FAC02 8000`/`8C00`). It did NOT fix the handshake: the
+**known-good iPhone hotspot** still `associate=ok` then deauth (reason 2).
+Three fixes now refuted (auth TLV, RSN-IE/PMF, deauth-order).
 
-Reproduce that (or, minimally: build a clean RSN IE with one AKM + one cipher
-and RSN caps set for no-PMF, and add the equivalent of `wlan_set_pmfcfg`).
-The iPhone (modern WPA2/WPA3-PMF) giving reason 2 points squarely here.
-Consider also `HostCmd_CMD_802_11_KEY_MATERIAL` (0x005e) if the RSN-IE fix is
-not enough.
+## STOP — question the model (this is where W7 starts)
+
+The model "SUPPLICANT_PMK caches the PMK → ASSOCIATE with a correct RSN IE →
+the firmware's embedded supplicant runs the 4-way handshake" is byte-correct
+end to end and the credential is known-good, yet no handshake. So the model is
+incomplete. Do NOT add a fourth blind TLV/flag. Resolve the fundamental
+question first:
+
+**Does `sduartIW416_wlan_bt.bin` actually run an embedded supplicant, or is
+the handshake expected on the host?** `SUPPLICANT_PMK` returns success and is
+not `CONFIG_WPA_SUPP`-gated, which suggests embedded — but success could be
+vacuous. `eapol_seen=0 / data_frames=0` does not distinguish "embedded
+supplicant, handshake internal" from "no supplicant, nothing happens".
+
+### The decisive diagnostic: watch the AP side
+
+Stand up an **ESP32 as a WPA2 SoftAP** with EAPOL/hostapd-style logging (the
+user has an ESP). Point the probe at it and read the AP's log:
+* STA associates and sends **EAPOL msg 2** → the embedded supplicant IS
+  running; the failure is keying/MIC → dig into SUPPLICANT_PMK (is the PMK
+  actually derived? try sending a precomputed PMK via the PMK TLV instead of a
+  passphrase; check the exact SSID bytes used as PBKDF2 salt on the AP side).
+* STA associates and sends **nothing** → no supplicant in this blob → either
+  run the 4-way handshake on the host (implement EAPOL: PMK via PBKDF2, PTK,
+  MIC via HMAC, install keys with `HostCmd_CMD_802_11_KEY_MATERIAL` 0x005e),
+  or obtain an IW416 firmware variant built with the embedded supplicant.
+
+Only after that split is known should code change. An mbedtls/PBKDF2+EAPOL
+host supplicant is a large phase; confirm it is needed before starting.
 
 Instrumentation already in place to guide it: `diagConnect()` reports the
 deauth reason (`lastEventInfo` low 16 bits) and EAPOL presence; the probe
