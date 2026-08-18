@@ -1061,3 +1061,34 @@ The un-fakeable way to distinguish: watch the AP side.  An ESP32 in SoftAP
 mode with EAPOL logging would show whether our STA sends handshake message 2
 at all (-> supplicant runs, keying issue) or nothing (-> no supplicant in this
 blob, need host-side EAPOL or a different firmware).  The user has an ESP.
+
+--- W6: ESP8266 test AP -- failure reproduces against a controlled AP ---
+
+Date: 2026-08-18.  Flashed an ESP8266 (arduino-cli, esp8266:esp8266 core) as
+a controlled WPA2-PSK SoftAP ("ESP8266TEST", ch 6) and pointed the M.2 probe
+at it:
+
+    M.2:  found=1 rsn_len=26  associate=ok cap_info=0x11 assoc_status=0
+          connect=cmd-crc  last_event=0x8 event_info=0xF3860006  -> reason 6
+    ESP:  softAP OK, but STATIONS=0 throughout, no station-connected event.
+
+So the 4-way handshake fails against a THIRD, fully-controlled, simple AP too.
+That rules OUT anything AP-specific (iPhone quirks, ISP router) and confirms
+the failure is CARD/FIRMWARE-side and reproducible everywhere.  Deauth reason
+now 6 ("class-2 frame from a nonauthenticated STA") -- a hint the 802.11 auth
+step may not be completing before association, though the reason differs per
+AP (iPhone 2, ESP 6, Onestream 15).
+
+Attempted to see the over-the-air truth (does the card even TX auth/assoc/
+EAPOL?) with the ESP8266 in PROMISCUOUS mode.  Dead end: the ESP8266 sniffer
+delivered NO frames to the callback even in a validation build that printed
+all management frames incl. beacons.  ESP8266 promiscuous mode (Arduino core
+3.1.2) is too limited/quirky for this; an ESP32 (full promiscuous) or a
+monitor-mode Wireshark capture is the right instrument.
+
+NET: the WPA2 4-way handshake is a firmware-integration wall.  Association is
+solid everywhere; the embedded supplicant is accepted (SUPPLICANT_PMK result
+0) but never completes the handshake, on every AP, with a known-good
+credential.  The un-answered question -- does the card transmit EAPOL msg 2 --
+needs a proper packet capture (ESP32/Wireshark) or NXP's exact working
+bare-metal connect sequence for this IW416 blob.

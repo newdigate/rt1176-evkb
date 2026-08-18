@@ -57,21 +57,37 @@ not `CONFIG_WPA_SUPP`-gated, which suggests embedded — but success could be
 vacuous. `eapol_seen=0 / data_frames=0` does not distinguish "embedded
 supplicant, handshake internal" from "no supplicant, nothing happens".
 
-### The decisive diagnostic: watch the AP side
+### Done: ESP8266 test AP -- failure reproduces (card-side, not AP-specific)
 
-Stand up an **ESP32 as a WPA2 SoftAP** with EAPOL/hostapd-style logging (the
-user has an ESP). Point the probe at it and read the AP's log:
-* STA associates and sends **EAPOL msg 2** → the embedded supplicant IS
-  running; the failure is keying/MIC → dig into SUPPLICANT_PMK (is the PMK
-  actually derived? try sending a precomputed PMK via the PMK TLV instead of a
-  passphrase; check the exact SSID bytes used as PBKDF2 salt on the AP side).
-* STA associates and sends **nothing** → no supplicant in this blob → either
-  run the 4-way handshake on the host (implement EAPOL: PMK via PBKDF2, PTK,
-  MIC via HMAC, install keys with `HostCmd_CMD_802_11_KEY_MATERIAL` 0x005e),
-  or obtain an IW416 firmware variant built with the embedded supplicant.
+An ESP8266 WPA2 SoftAP was flashed (arduino-cli `esp8266:esp8266`, sketch in
+scratch) and the probe pointed at it: `associate=ok` then deauth (reason 6),
+`stations=0` on the AP. So the handshake fails against a controlled simple AP
+too -- it is firmware/card-side and reproducible on every AP (iPhone reason 2,
+ESP reason 6, Onestream reason 15), with a known-good credential.
 
-Only after that split is known should code change. An mbedtls/PBKDF2+EAPOL
-host supplicant is a large phase; confirm it is needed before starting.
+### The decisive diagnostic still needed: watch the frames
+
+The open question is whether the card TRANSMITS EAPOL msg 2. The ESP8266 could
+not answer it: its SoftAP API only surfaces fully-connected stations, and its
+**promiscuous/sniffer mode delivered no frames** (Arduino core 3.1.2 -- too
+limited). Use instead:
+* an **ESP32** in promiscuous mode (proper full-frame delivery), or
+* a **monitor-mode Wireshark** capture on ch 4/6 (a Mac with an adapter, or
+  `airport`/`tcpdump` in monitor mode), filtered on the card MAC
+  `6C:1D:EB:91:0C:45`.
+
+Read the exchange:
+* card sends auth-req → assoc-req → **EAPOL msg 2** then AP drops it → the
+  embedded supplicant runs; the bug is keying/MIC → check SUPPLICANT_PMK (try
+  a precomputed PMK via the PMK TLV; verify the exact SSID salt), OR
+* card sends auth/assoc but **no EAPOL** → no supplicant in this blob → run the
+  4-way handshake on the host (PBKDF2 + EAPOL + MIC + `KEY_MATERIAL` 0x005e) or
+  get an IW416 firmware variant with the embedded supplicant. Large phase --
+  confirm first.
+
+The reason-6 clue (nonauthenticated STA) also warrants trying a separate
+AUTHENTICATE (0x0011) before ASSOCIATE, but only as a hypothesis backed by
+what the frame capture shows -- do not add it blind (that would be fix #4).
 
 Instrumentation already in place to guide it: `diagConnect()` reports the
 deauth reason (`lastEventInfo` low 16 bits) and EAPOL presence; the probe
