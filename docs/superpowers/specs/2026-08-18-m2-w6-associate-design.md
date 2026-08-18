@@ -27,32 +27,70 @@ says so three times. So W6 splits:
 See `examples/networking/m2_sdio_probe/transcript_hw_evkb.txt` (W6 section) for
 the measured survey. Each `scan_ap` line now carries `sec=open|wep|wpa|wpa2`.
 
-## Steps 2–4, ready to build once a target exists
+## Decision (2026-08-18): WPA2 to "OnestreamQJN7"
 
-Sequence (NXP `wlan_cmd_802_11_associate`, `mlan_sta_cmd.c`):
+The step-1 survey found NO open AP in range — all three reachable APs are
+WPA2. Asked how to proceed, the user chose **WPA2 to "OnestreamQJN7"**
+(BSSID 78:20:51:8F:19:5E, ch 4). So W6's target is a WPA2-PSK network.
 
-1. From the chosen scan entry: BSSID, channel, capability, supported-rates IE,
-   and (for WPA2) the RSN IE — all already captured by the step-1 scan.
-2. **ASSOCIATE (0x0012)** — TLVs: SSID, PHY param (channel), rates, RSN (WPA2
-   only), plus the capability word. Open-system auth is folded in on this
-   firmware; confirm whether a separate AUTHENTICATE (0x0011) is needed.
-   `resp_result` and the association-result IE name a reject.
-3. On success, data frames flow on the DATA ports (RX already proven by W5's
-   `readDataPacket`; associated frames are ethernet-typed, not 802DOT11 — an
-   802.3/LLC payload behind the RxPD). TX: poll WR_BITMAP (0x14–0x17),
+### The WPA2 path is tractable — the firmware has an embedded supplicant
+
+Researched in NXP's `mlan_sta_cmd.c`: `HostCmd_CMD_802_11_SUPPLICANT_PMK`
+(**0x00C4**) takes an SSID + **Passphrase** TLV (`MrvlIEtypes_Passphrase_t`),
+and the firmware derives the PMK (PBKDF2 internally) and runs the 4-way EAPOL
+handshake itself. So the host does **no** WPA2 crypto — no PBKDF2, no
+PTK/MIC, no EAPOL state machine. This is the difference between a medium phase
+and a very large one, and it is why WPA2 here is only somewhat bigger than the
+open case.
+
+### Sequence
+
+1. **SUPPLICANT_PMK (0x00C4) SET** — TLVs: SSID (`OnestreamQJN7`), Passphrase
+   (the PSK). Firmware caches the derived PMK for that SSID.
+2. From the step-1 scan entry: BSSID, channel, capability, supported-rates IE,
+   and the RSN IE — all already captured.
+3. **ASSOCIATE (0x0012)** — TLVs: SSID, PHY param (channel), rates, the RSN
+   IE, capability. The firmware associates AND completes the 4-way handshake
+   using the cached PMK. `resp_result` / the assoc-result IE name a reject
+   (and a wrong PSK shows here).
+4. Data frames then flow on the DATA ports (RX proven by W5's
+   `readDataPacket`; associated frames are ethernet-typed, an 802.3/LLC
+   payload behind the RxPD — not 802DOT11). TX: poll WR_BITMAP (0x14–0x17),
    CMD53-write an MLAN_TYPE_DATA packet with a TxPD header to `ioport|port`.
-4. Un-fakeable proof: a broadcast ARP or DHCP DISCOVER out, and the reply
-   (DHCP OFFER, or an ARP for our address) captured via `readDataPacket`.
+5. Un-fakeable proof: a DHCP DISCOVER out, DHCP OFFER back (the AP's DHCP
+   server hands us an IP) — captured via `readDataPacket`. A successful
+   handshake + a routable IP from the real AP is unforgeable.
 
-**Scope for the next session:** OPEN association + one DHCP/ARP round-trip
-FIRST. WPA2 (EAPOL 4-way, PMK/PTK) is a separate, larger phase after that.
+### The passphrase — how it is supplied, and never committed
 
-## What the user must provide
+The PSK is a credential. It is supplied the same way the NXP firmware blob is:
+a **configure-time CMake cache variable**, compiled into the test image, and
+kept out of git. Never pasted into chat, never written to a tracked file.
 
-The next session needs, from the user: an OPEN AP in range (a phone hotspot
-set to no-password, or a spare router with an open SSID), and its SSID. If the
-step-1 survey shows an open AP already present, that AP can be the target with
-the user's confirmation.
+    cmake -B build -DCMAKE_TOOLCHAIN_FILE=... \
+      -DM2RADIO_IW416_FW=<blob> \
+      -DM2RADIO_WIFI_SSID="OnestreamQJN7" \
+      -DM2RADIO_WIFI_PSK="<the password>"
+
+The example gates the WPA2 attempt on both being set (absent → the probe stops
+after the W5 monitor block, exactly as the no-blob build stops after
+enumerate). The QEMU gate never sees these and stays green.
+
+## Blockers before implementation can be verified
+
+Two things only the user can provide, both hard prerequisites:
+
+1. **The PSK for OnestreamQJN7**, via `-DM2RADIO_WIFI_PSK` (not chat).
+2. **Confirmation the network is the user's to join.** "Onestream" is a UK
+   ISP and the SSID looks like a default ISP-router name; connecting to a
+   WPA2 network is authorised only by its owner. The user's selection of it
+   is a strong signal, but it is worth an explicit confirmation.
+
+Until the PSK is available the association firmware is **not written** — this
+project ships only what silicon verifies, and WPA2 association cannot be
+verified without the credential. When the PSK is supplied, steps 1–5 above are
+a straight execution + one hardware run, following NXP's `mlan_sta_cmd.c`
+exactly (the same method W3–W5 used).
 
 ## What does not change
 
