@@ -1,120 +1,115 @@
-# Continue M.2 Wi-Fi bring-up (W7: finish the WPA2 4-way handshake)
+# Continue M.2 Wi-Fi bring-up (W7: keep the link alive + data path / DHCP)
 
 u-blox **M2-MAYA-W161** (NXP **IW416**/SD8978) on **MIMXRT1170-EVKB RevC3**,
 repo `~/Development/rt1176-evkb-m2-maya-w161`, branch **`m2-phase0-serial2`**.
 Driver in sibling `~/Development/M2Radio` (master, pushed, pinned in
-`evkb.cmake` at `d33871a`).
+`evkb.cmake` at **`a32f9b3`**).
 
-**Read first:** `examples/networking/m2_sdio_probe/transcript_hw_evkb.txt`
-(W6 section, especially the "CORRECTION" and reason-code entries) and
-`docs/superpowers/specs/2026-08-18-m2-w6-associate-design.md`.
+**Read first:** `examples/networking/m2_sdio_probe/transcript_hw_evkb.txt` —
+the **"W6 RESULT: WPA2 CONNECTION WORKS"** section at the very end.
 
 ## Where things stand
 
 | Phase | State |
 |---|---|
 | W1–W5 | ✅ enumerate, firmware, host cmds, scan, monitor RX |
-| W6 — WPA2 associate | ✅ **associates cleanly** (assoc_status=0); ⚠️ 4-way handshake does not complete |
+| W6 — WPA2 connect | ✅ **DONE.** Associates, completes the 4-way handshake, **connects**. Independently confirmed by an AP-side oracle. |
+| W7 — keep link + data path | ⬜ link takes a periodic deauth ~10 s after connect; no L3 traffic yet |
 
-## The open problem (this is NOT the password)
+## W6 is finished — the card connects to Wi-Fi
 
-Association to a WPA2 AP succeeds (`assoc_status=0`, real cap_info). The
-embedded supplicant is confirmed (no EAPOL forwarded to the host,
-`eapol_seen=0`). But the 4-way handshake fails and the AP deauthenticates:
+The IW416 associates (`assoc_status=0`, real `cap_info=0x11`), the **embedded
+supplicant completes the WPA2 4-way handshake**, and the card **connects**.
+Proven by an **independent oracle**: a controlled **ESP8266 WPA2 SoftAP**
+(sketch fires `onStationConnected` only *after* the handshake) reported
+`AP: STA CONNECTED mac=6C:1D:EB:91:0C:45` + `stations=1` for the card, held
+stably. This is the first Wi-Fi connection by this M.2 card on this board.
 
-* iPhone hotspot "Nicholas's iPhone" — **known-correct password, −66 dBm** —
-  deauth **reason 2** (prev auth not valid).
-* OnestreamQJN7 — deauth **reason 15** (4-way handshake timeout).
+### Two HOST bugs were hiding it (both fixed)
 
-A controlled test with a known-good credential (the iPhone hotspot the user
-set up) **refuted** the earlier "wrong PSK" conclusion. It is a code /
-firmware-integration gap in how the embedded supplicant is engaged/keyed.
+1. **This firmware never emits `EVENT_PORT_RELEASE` (0x2B).** Connect success is
+   signalled by `ASSOCIATE` returning `assoc_status==0`; the handshake runs
+   internally (no EAPOL to the host). Waiting for a port release mis-scored a
+   real connect as a timeout. The connect event actually seen post-assoc is
+   `0x17` (EVENT_WMM_STATUS_CHANGE) at ~1 ms — benign, not the connect signal.
+2. **Re-associating in a loop tore the link down.** The earlier "connects then
+   drops after ~1–4 s" (iPhone) and the ~9.6 s connect/drop churn (ESP) were the
+   probe re-associating every pass. Fixed model: **connect ONCE, then service
+   the link** (`wpaServiceLink` in `m2_sdio_probe.cpp`) — drain events/data,
+   watch for a real deauth, reconnect only on drop.
 
-Already tried and REFUTED: adding the Auth-type TLV (0x011F = Open). Ruled
-out: password, SSID salt (uses scanned beacon bytes now), plumbing
-(ssid_len/psk_len exact), PMF/SHA256 for OnestreamQJN7 (plain PSK), host-vs-
-embedded supplicant (embedded).
+## The W7 open problem: link drops ~10 s after connect
 
-## The RSN-IE fix is DONE and byte-verified — and it was NOT sufficient
+With the connect-once/hold firmware the link is stable for ~**10 s**, then takes
+a **real deauth** and the card reconnects cleanly (`reassocs` climbs):
 
-`buildAssocRsnIe()` now reproduces `wlan_update_rsn_ie()`: single cipher/AKM +
-RSN-caps PMF bits forced to MFPC=1/MFPR=0. Hardware-verified bytes
-(`assoc_rsn_ie=...000FAC02 8000`/`8C00`). It did NOT fix the handshake: the
-**known-good iPhone hotspot** still `associate=ok` then deauth (reason 2).
-Three fixes now refuted (auth TLV, RSN-IE/PMF, deauth-order).
+* `last_event=0x8` (DEAUTHENTICATED), `event_info` low byte **`0x0F` = reason 15**
+  (4-way-handshake timeout), sometimes **`0x06`** (class-2 frame from
+  nonauthenticated STA).
+* Connected duration is a very round **~10.0 s** every time → it is a **timer**,
+  not jitter.
 
-## STOP — question the model (this is where W7 starts)
+**Leading hypothesis:** the AP drops a station that sends **no L3 traffic**
+(no DHCP / ARP / null-data keepalive). Real STAs DHCP immediately after connect,
+which keeps them active. Our probe does nothing at L3 yet. This is exactly the
+W7 data path — so building it both tests the hypothesis and is the milestone.
 
-The model "SUPPLICANT_PMK caches the PMK → ASSOCIATE with a correct RSN IE →
-the firmware's embedded supplicant runs the 4-way handshake" is byte-correct
-end to end and the credential is known-good, yet no handshake. So the model is
-incomplete. Do NOT add a fourth blind TLV/flag. Resolve the fundamental
-question first:
+**Not yet ruled out:** a supplicant rekey / group-key maintenance gap (would
+also present as reason 15). A cheap disambiguator: point the card at an **OPEN**
+ESP AP (no encryption). If it then stays connected indefinitely → the drop is
+WPA2-maintenance-specific; if it still drops at ~10 s → it's an idle/data-path
+drop. (The probe already handles open APs: `rsnLen==0` → no RSN IE, auth Open.)
 
-**Does `sduartIW416_wlan_bt.bin` actually run an embedded supplicant, or is
-the handshake expected on the host?** `SUPPLICANT_PMK` returns success and is
-not `CONFIG_WPA_SUPP`-gated, which suggests embedded — but success could be
-vacuous. `eapol_seen=0 / data_frames=0` does not distinguish "embedded
-supplicant, handshake internal" from "no supplicant, nothing happens".
+## W7 plan (suggested)
 
-### Done: ESP8266 test AP -- failure reproduces (card-side, not AP-specific)
+1. **Data-path TX (TxPD).** Send a frame down the data port: build a `TxPD`
+   header + 802.3 frame, write over the WR_BITMAP port (mirror the RX path in
+   `Iw416::diagConnect`/`watchConnect` which already reads RxPD + WR/RD bitmaps).
+2. **DHCP DISCOVER** as the first real frame → get an IP from the AP
+   (ESP AP is `192.168.4.1`, DHCP server active). A DHCP round-trip is the W7
+   proof, and the traffic should also stop the ~10 s idle deauth.
+3. If DHCP alone doesn't hold the link, add a periodic **null-data / ARP
+   keepalive** in `wpaServiceLink`'s connected branch.
 
-An ESP8266 WPA2 SoftAP was flashed (arduino-cli `esp8266:esp8266`, sketch in
-scratch) and the probe pointed at it: `associate=ok` then deauth (reason 6),
-`stations=0` on the AP. So the handshake fails against a controlled simple AP
-too -- it is firmware/card-side and reproducible on every AP (iPhone reason 2,
-ESP reason 6, Onestream reason 15), with a known-good credential.
+## The test rig (recreate it)
 
-### The decisive diagnostic still needed: watch the frames
+* **ESP8266 SoftAP** as controlled AP + oracle. Board on `/dev/cu.usbserial-0001`,
+  flashed via `arduino-cli` (`esp8266:esp8266:generic`, core 3.1.2). Sketch was
+  in session scratch `esp_ap/esp_ap.ino`: `WiFi.softAP(SSID, PSK, 6)`, WPA2-PSK,
+  logs `onSoftAPModeStationConnected/Disconnected` + `stations=N` every 2 s.
+  SSID **`ESP8266TEST`**, a throwaway **12-char** PSK (WPA2 needs ≥8) — **kept
+  out of git**; recreate the sketch and rebuild the probe with matching creds.
+  `onStationConnected` fires only after the 4-way handshake → un-fakeable proof.
+* **Probe creds** are compiled in via
+  `cmake -B build -DM2RADIO_WIFI_SSID="ESP8266TEST" -DM2RADIO_WIFI_PSK="<psk>"`
+  → gitignored `build/wifi_creds.h` (`HAVE_WIFI_CREDS`). **Never commit the PSK.**
+* **Read both serials at once** to correlate card state vs AP truth — the dual
+  reader used this session lived at `/tmp/dual_read.py`.
 
-The open question is whether the card TRANSMITS EAPOL msg 2. The ESP8266 could
-not answer it: its SoftAP API only surfaces fully-connected stations, and its
-**promiscuous/sniffer mode delivered no frames** (Arduino core 3.1.2 -- too
-limited). Use instead:
-* an **ESP32** in promiscuous mode (proper full-frame delivery), or
-* a **monitor-mode Wireshark** capture on ch 4/6 (a Mac with an adapter, or
-  `airport`/`tcpdump` in monitor mode), filtered on the card MAC
-  `6C:1D:EB:91:0C:45`.
+## Operational gotchas learned this session (important)
 
-Read the exchange:
-* card sends auth-req → assoc-req → **EAPOL msg 2** then AP drops it → the
-  embedded supplicant runs; the bug is keying/MIC → check SUPPLICANT_PMK (try
-  a precomputed PMK via the PMK TLV; verify the exact SSID salt), OR
-* card sends auth/assoc but **no EAPOL** → no supplicant in this blob → run the
-  4-way handshake on the host (PBKDF2 + EAPOL + MIC + `KEY_MATERIAL` 0x005e) or
-  get an IW416 firmware variant with the embedded supplicant. Large phase --
-  confirm first.
+* **Flashing: use plain `LinkServer flash … load`, NOT `--erase-all`.**
+  `--erase-all` mass-erases the whole **64 MB** QSPI NOR and is slow; killing it
+  mid-erase looks *exactly* like a hung/unreachable probe (stalls at "Selected
+  probe", 0-byte crt_emu output). Plain `load` sector-erases only what it writes
+  (~7 sectors, ~3 s). Diagnose "stuck flash" by reading the full crt_emu log
+  (it reaches "Mass erasing Flash" then your timeout kills it) — the SWD connect
+  itself is fine (`LinkServer probes` returns instantly).
+* `LinkServer run` writes its detailed progress to a **temp `.out` file that it
+  buffers until exit**, so `run`'s top-level log looks stuck at 3 lines while it
+  is actually programming. Don't judge `run` progress by that log.
+* VCOM-free while programming (unchanged rule). Board = MCU-Link VCOM
+  `/dev/cu.usbmodem5DQ2DDHVWO5EI3` @115200.
+* The card's setup() takes ~20–30 s (firmware download). It connects once in
+  setup, then loop() holds/services the link.
 
-The reason-6 clue (nonauthenticated STA) also warrants trying a separate
-AUTHENTICATE (0x0011) before ASSOCIATE, but only as a hypothesis backed by
-what the frame capture shows -- do not add it blind (that would be fix #4).
+## Files
 
-Instrumentation already in place to guide it: `diagConnect()` reports the
-deauth reason (`lastEventInfo` low 16 bits) and EAPOL presence; the probe
-prints `wpa_rsn_ie=` (the captured beacon RSN IE bytes) — decode the AKM
-suite and RSN caps to see exactly what to present.
-
-## Test setup that works
-
-* iPhone Personal Hotspot with **Maximize Compatibility ON** (forces 2.4 GHz;
-  the scan is 2.4 GHz only). It shows up as `scan_ap` `sec=wpa2`, ~−66 dBm.
-* Configure from `examples/networking/m2_sdio_probe/`:
-  `-DM2RADIO_WIFI_SSID="Nicholas's iPhone" -DM2RADIO_WIFI_PSK="<pwd>"` (straight
-  apostrophe is fine — `ssidLooseMatch` handles the beacon's curly one).
-* Success signal: `connect=ok last_event=0x2b` (EVENT_PORT_RELEASE), then W7b:
-  data TX (TxPD over WR_BITMAP) + a DHCP round-trip.
-
-## Hardware gotcha (cost real time in W6)
-
-The MCU-Link probe grows unreliable after ~20+ flash cycles: `LinkServer run`
-exits right after probe-select, flash fails with `Could not connect to core`,
-board left halted. A **full power-cycle** (not just a USB replug) recovers it.
-Prefer `flash ... load` (auto-runs via "restart on reset") over `run` when the
-probe is being flaky. Avoid `--erase-all` when not needed — the 64 MB mass
-erase is slow.
-
-## Unchanged constraints
-
-Blob + PSK via configure-time flags, never committed (build*/ is gitignored;
-verified). J15 empty. QEMU gate asserts module-absent; keep green. After
-M2Radio changes: push, then bump the `evkb.cmake` pin.
+* `~/Development/M2Radio/iw416/Iw416.{h,cpp}` — driver. New: `watchConnect()`
+  (full-window event watcher + event log). `associate()`, `setPassphrase()`,
+  `queryPmk()`, `buildAssocRsnIe()`, `scan()` all working.
+* `examples/networking/m2_sdio_probe/m2_sdio_probe.cpp` — `wpaServiceLink()`
+  connect-once/hold state machine; `wifi: connected=… assoc_status=…` report in
+  loop().
+* Security: user's own AP; **Wi-Fi PSKs must never be committed** — only via
+  `-DM2RADIO_WIFI_PSK` into the gitignored build header.
