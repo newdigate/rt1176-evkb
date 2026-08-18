@@ -1230,3 +1230,75 @@ Flashing note: LinkServer `flash ... load --erase-all` mass-erases the whole
 64 MB QSPI NOR and is SLOW; killing it mid-erase looks exactly like a hung
 probe. Plain `flash ... load` sector-erases only what it writes (~7 sectors,
 ~3 s). Use plain load; never --erase-all here unless a full wipe is intended.
+
+================================================================================
+W7 RESULT: data path built and exercised; blocker is the RADIO, not software --
+the module's RF path is ~50 dB down (adjacent AP reads -84 dBm) -- CHECK THE
+ANTENNA.  And the W6 conclusion is CORRECTED: the WPA2 handshake never
+completed; the ~10 s drop was never an idle timeout.
+================================================================================
+Date: 2026-08-18.  Rig: ESP8266 SoftAP "ESP8266TEST" ch6 (same oracle sketch,
+recreated), first WPA2-PSK then OPEN; dual serial capture (EVKB VCOM + ESP)
+on one timeline.
+
+New driver surface (M2Radio iw416, this session): sendDataFrame() (SDIOPkt +
+22-byte TxPD, exact NXP process_pkt_hdrs framing, WR_BITMAP port select),
+pollLink() (single HOST_INT_STATUS read servicing data RX + events, LINK_LOST/
+DEAUTH/DISASSOC -> drop), reconfigureTxBuffers() (0xD9), set11nCfg() (0xCD),
+amsduAggrCtrl() (0xDF).  New probe surface: a full hand-rolled IPv4 layer --
+DHCP client (DISCOVER/OFFER/REQUEST/ACK), ARP responder, ICMP echo tx/rx --
+run from wpaServiceLink's connected branch.  All of it works down to the wire;
+none of it could complete a round trip.  Evidence chain:
+
+1) WPA2 (ESP AP): connect -> hold ~11.6 s -> deauth reason 15, every cycle,
+   17 reassociations observed.  During the hold, every DHCP DISCOVER was
+   CMD53-accepted but the card NEVER freed the TX buffer: WR_BITMAP went
+   0xFFFF -> 0xFFFC -> ... -> 0x0 (one bit per send, none returned), then TX
+   dead (cmd-timeout).  rx_data=0 always.
+
+2) OPEN AP (the handoff's disambiguator): the link holds INDEFINITELY (69+
+   service passes, no deauth) and the firmware emits EVENT_PORT_RELEASE (0x2B)
+   at connect.  Two W6 conclusions corrected on the spot:
+     * This firmware DOES emit 0x2B -- just never on our WPA2 attempts,
+       because the 4-way handshake never completed.  Reason 15 meant exactly
+       what it says: the AP timed out waiting for EAPOL msg 2.
+     * The ESP's onSoftAPModeStationConnected fires at ASSOCIATION, not after
+       the handshake (it fired on WPA2 runs whose handshake provably died).
+       The W6 "STA CONNECTED = handshake done" oracle premise was wrong; W6's
+       real achievement is association + PMK derivation, not a full connect.
+   The ~10 s drop was therefore NEVER an idle/data timeout -- open sessions
+   idle for minutes without traffic and hold.
+
+3) With the port RELEASED (open AP), data is dead BOTH ways: TX buffers still
+   leak one per send, and 1 Hz UDP broadcasts from the AP (dedicated ESP
+   sketch revision) never reach the host (rx_data=0 across minutes, AP holding
+   stations=1).  Host-side init parity with NXP (RECONFIGURE_TX_BUFF, 11N_CFG,
+   AMSDU_AGGR_CTRL, MAC_CONTROL 0x0213) accepted (cfg=ok/ok/ok) and changed
+   nothing.  TX framing verified byte-identical to NXP's process_pkt_hdrs /
+   wifi_send_fw_data (same SDIOPkt size, TxPD offsets, ioport+port addressing,
+   256-byte blocks).
+
+4) EXONERATION OF THE HOST DRIVER: NXP's own wifi_cli (mcuxsdk build_wifi_m2/
+   wifi_cli_cm7.elf, built 2026-08-17; driver v1.3.r49.p7, fw 16.92.21.p155.2)
+   was flashed and driven over the VCOM against the same open AP:
+   "authenticated to network", then stuck at "Station connecting" forever --
+   no DHCP lease.  The reference stack fails EXACTLY like ours.
+
+5) THE SMOKING GUN: wifi_cli's wlan-scan reads the ESP8266 -- ON THE SAME
+   BENCH -- at rssi -84 dBm (repeated scans -81..-84).  An adjacent AP should
+   read -20..-40.  The RF path is ~50 dB down, which explains every symptom
+   at once: 1 Mbps management frames survive (scan/auth/assoc all work), the
+   EAPOL exchange and all data-rate traffic die in the noise (reason 15 on
+   WPA2; TX retry-death holding SDIO buffers; no RX ever).  wlan-set-antcfg
+   1 / 2 / 0xFFFF changed nothing (-81..-84 on all), so it is not a firmware
+   antenna-select fix -- it is physical.
+
+ACTION REQUIRED (hardware): inspect the M2-MAYA-W161 card's antenna -- the
+module uses MHF4/U.FL connectors; check a pigtail/antenna is actually attached
+and seated on ANT0 (and whether the card variant expects an onboard antenna at
+all).  Software is DONE up to the first real RF: the moment the link budget is
+sane, the existing probe should DHCP-bind with no code change (retry logic,
+ARP responder and ping keepalive are already in the loop).
+
+Also fixed this session: pollLink treats EVENT_LINK_LOST (0x3) as a drop --
+without it the probe held connected=1 for minutes after the AP was rebooted.

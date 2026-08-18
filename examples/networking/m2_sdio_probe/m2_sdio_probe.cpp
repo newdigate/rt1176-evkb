@@ -38,6 +38,11 @@ static uint16_t g_hwVersion = 0;
 // strings exist in this image.
 static SdioHost::Status g_macCtrl = SdioHost::CMD_TIMEOUT;
 static SdioHost::Status g_scan    = SdioHost::CMD_TIMEOUT;
+// W7: the TX-buffer-size negotiation the data path depends on, and the rest
+// of NXP's unconditional post-GET_HW_SPEC init.
+static SdioHost::Status g_txBufCfg = SdioHost::CMD_TIMEOUT;
+static SdioHost::Status g_11nCfg   = SdioHost::CMD_TIMEOUT;
+static SdioHost::Status g_amsdu    = SdioHost::CMD_TIMEOUT;
 // W6 step 1: survey enough of the band to tell whether ANY open AP is in
 // range (an open AP is the only kind association can reach without a key
 // exchange).  16 entries covers a typical bench.
@@ -350,6 +355,275 @@ static bool g_rxAfterPdn = false; static uint32_t g_rxEdgesAfterPdn = 0;
 static bool     g_wifiConnected = false;
 static uint16_t g_linkServiceN  = 0;   // service passes while connected (uptime)
 
+// ---------------------------------------------------------------------------
+// W7: minimal IPv4 data path over the connected link.  Three protocols, all
+// hand-rolled here because the probe asserts BYTES, not a stack:
+//   * DHCP client (DISCOVER/OFFER/REQUEST/ACK) -- the W7 milestone.  An IP
+//     handed out by the AP's own DHCP server is un-fakeable: the lease values
+//     exist only on the AP.
+//   * ARP responder -- without it the AP cannot map our IP to our MAC, so
+//     nothing the AP routes to us (ICMP replies included) would ever arrive.
+//   * ICMP echo to the AP every 2 s once bound -- a full round trip through
+//     the encrypted data path, and a keepalive that should also defeat the
+//     ~10 s idle deauth W6 left behind.
+// TX goes through Iw416::sendDataFrame (TxPD framing); RX arrives as 802.3
+// frames from Iw416::pollLink.  UDP checksum is 0 (legal on IPv4); IP/ICMP
+// checksums are computed.
+
+static uint8_t  g_frameRx[1536];
+static uint8_t  g_frameTx[1536];
+static uint8_t  g_ip[4] = {0}, g_offerIp[4] = {0}, g_serverIp[4] = {0}, g_gwIp[4] = {0};
+static uint32_t g_leaseSecs = 0;
+enum DhcpState : uint8_t { DHCP_INIT = 0, DHCP_DISCOVERING, DHCP_REQUESTING, DHCP_BOUND };
+static uint8_t  g_dhcp = DHCP_INIT;
+static uint8_t  g_xid[4] = {0};
+static uint32_t g_dhcpTxMs = 0;
+static uint16_t g_dhcpTx = 0;
+static uint16_t g_arpTx = 0;
+static uint16_t g_pingTx = 0, g_pingRx = 0, g_echoRx = 0;
+static uint16_t g_rxEth = 0, g_rxIp4 = 0;
+static uint16_t g_ipId = 1;
+static uint32_t g_pingTxMs = 0;
+static uint16_t g_pingSeq = 0;
+static SdioHost::Status g_lastDataTx = SdioHost::CMD_TIMEOUT;
+
+static const char *dhcpStateName(uint8_t s) {
+    switch (s) {
+        case DHCP_DISCOVERING: return "discovering";
+        case DHCP_REQUESTING:  return "requesting";
+        case DHCP_BOUND:       return "bound";
+    }
+    return "init";
+}
+
+// RFC 1071 checksum over `len` bytes (big-endian words, odd byte padded).
+static uint16_t ipChecksum(const uint8_t *p, uint16_t len) {
+    uint32_t sum = 0;
+    for (uint16_t i = 0; i + 1 < len; i += 2) sum += (uint32_t)((p[i] << 8) | p[i + 1]);
+    if (len & 1) sum += (uint32_t)(p[len - 1] << 8);
+    while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+    return (uint16_t)~sum;
+}
+
+// One DHCP frame: broadcast 802.3 + IPv4(0.0.0.0 -> 255.255.255.255) + UDP
+// 68->67 + fixed 300-byte BOOTP.  msgType 1 = DISCOVER, 3 = REQUEST (adds the
+// offered-IP and server-id options).  The BOOTP broadcast flag is set: we have
+// no IP for the server to unicast to.
+static uint16_t netBuildDhcp(uint8_t *f, uint8_t msgType) {
+    const uint16_t BOOTP_LEN = 300;
+    const uint16_t udpLen = 8 + BOOTP_LEN;
+    const uint16_t ipLen  = 20 + udpLen;
+    memset(f, 0, 14 + ipLen);
+    memset(f, 0xFF, 6);
+    memcpy(f + 6, g_mac, 6);
+    f[12] = 0x08; f[13] = 0x00;
+    uint8_t *ip  = f + 14;
+    uint8_t *udp = ip + 20;
+    uint8_t *bp  = udp + 8;
+    bp[0] = 1; bp[1] = 1; bp[2] = 6;                 // BOOTREQUEST, ethernet, hlen 6
+    memcpy(&bp[4], g_xid, 4);
+    bp[10] = 0x80;                                   // flags: broadcast the reply
+    memcpy(&bp[28], g_mac, 6);                       // chaddr
+    bp[236] = 0x63; bp[237] = 0x82; bp[238] = 0x53; bp[239] = 0x63;
+    uint8_t *o = bp + 240;
+    *o++ = 53; *o++ = 1; *o++ = msgType;
+    if (msgType == 3) {
+        *o++ = 50; *o++ = 4; memcpy(o, g_offerIp, 4);  o += 4;   // requested IP
+        *o++ = 54; *o++ = 4; memcpy(o, g_serverIp, 4); o += 4;   // server id
+    }
+    *o++ = 55; *o++ = 3; *o++ = 1; *o++ = 3; *o++ = 6;   // want: mask, router, dns
+    *o++ = 0xFF;
+    udp[1] = 68; udp[3] = 67;                        // ports (high bytes stay 0)
+    udp[4] = (uint8_t)(udpLen >> 8); udp[5] = (uint8_t)udpLen;
+    ip[0] = 0x45;
+    ip[2] = (uint8_t)(ipLen >> 8); ip[3] = (uint8_t)ipLen;
+    ip[4] = (uint8_t)(g_ipId >> 8); ip[5] = (uint8_t)g_ipId; g_ipId++;
+    ip[8] = 64; ip[9] = 17;                          // ttl, UDP
+    memset(&ip[16], 0xFF, 4);                        // src stays 0.0.0.0
+    uint16_t ck = ipChecksum(ip, 20);
+    ip[10] = (uint8_t)(ck >> 8); ip[11] = (uint8_t)ck;
+    return (uint16_t)(14 + ipLen);
+}
+
+static void netSendDhcp(uint8_t msgType) {
+    uint16_t n = netBuildDhcp(g_frameTx, msgType);
+    g_lastDataTx = iw416.sendDataFrame(g_frameTx, n);
+    if (g_lastDataTx == SdioHost::OK) g_dhcpTx++;
+    g_dhcpTxMs = millis();
+}
+
+// ICMP echo request to the AP (dst MAC = the BSSID -- the AP itself), 24-byte
+// pattern payload, id 0x1176.  The reply is counted in g_pingRx.
+static void netSendPing() {
+    const uint8_t PAY = 24;
+    const uint16_t icmpLen = 8 + PAY;
+    const uint16_t ipLen   = 20 + icmpLen;
+    uint8_t *f = g_frameTx;
+    memcpy(f, g_scanAps[g_wpaApIdx].bssid, 6);
+    memcpy(f + 6, g_mac, 6);
+    f[12] = 0x08; f[13] = 0x00;
+    uint8_t *ip = f + 14;
+    memset(ip, 0, ipLen);
+    ip[0] = 0x45;
+    ip[2] = (uint8_t)(ipLen >> 8); ip[3] = (uint8_t)ipLen;
+    ip[4] = (uint8_t)(g_ipId >> 8); ip[5] = (uint8_t)g_ipId; g_ipId++;
+    ip[8] = 64; ip[9] = 1;                           // ttl, ICMP
+    memcpy(&ip[12], g_ip, 4);
+    memcpy(&ip[16], g_serverIp, 4);
+    uint16_t ck = ipChecksum(ip, 20);
+    ip[10] = (uint8_t)(ck >> 8); ip[11] = (uint8_t)ck;
+    uint8_t *ic = ip + 20;
+    ic[0] = 8;                                       // echo request
+    ic[4] = 0x11; ic[5] = 0x76;                      // id 0x1176
+    g_pingSeq++;
+    ic[6] = (uint8_t)(g_pingSeq >> 8); ic[7] = (uint8_t)g_pingSeq;
+    for (uint8_t i = 0; i < PAY; i++) ic[8 + i] = (uint8_t)('a' + (i % 26));
+    ck = ipChecksum(ic, icmpLen);
+    ic[2] = (uint8_t)(ck >> 8); ic[3] = (uint8_t)ck;
+    g_lastDataTx = iw416.sendDataFrame(f, (uint16_t)(14 + ipLen));
+    if (g_lastDataTx == SdioHost::OK) g_pingTx++;
+    g_pingTxMs = millis();
+}
+
+// BOOTP reply handler: OFFER -> REQUEST, ACK -> bound, NAK -> start over.
+static void netHandleDhcp(const uint8_t *bp, uint16_t blen) {
+    if (blen < 244) return;
+    if (bp[0] != 2) return;                          // BOOTREPLY only
+    if (memcmp(&bp[4], g_xid, 4) != 0) return;       // not our transaction
+    if (!(bp[236] == 0x63 && bp[237] == 0x82 && bp[238] == 0x53 && bp[239] == 0x63)) return;
+    uint8_t msg = 0;
+    const uint8_t *sid = nullptr, *router = nullptr;
+    uint32_t lease = 0;
+    const uint8_t *o = bp + 240, *end = bp + blen;
+    while (o < end && *o != 0xFF) {
+        if (*o == 0) { o++; continue; }              // pad
+        if (o + 2 > end) break;
+        uint8_t t = o[0], l = o[1];
+        if (o + 2 + l > end) break;
+        const uint8_t *v = o + 2;
+        if      (t == 53 && l >= 1) msg = v[0];
+        else if (t == 54 && l >= 4) sid = v;
+        else if (t ==  3 && l >= 4) router = v;
+        else if (t == 51 && l >= 4)
+            lease = ((uint32_t)v[0] << 24) | ((uint32_t)v[1] << 16) |
+                    ((uint32_t)v[2] << 8) | v[3];
+        o += 2 + l;
+    }
+    if (msg == 2 && g_dhcp == DHCP_DISCOVERING) {            // OFFER
+        memcpy(g_offerIp, &bp[16], 4);                       // yiaddr
+        if (sid) memcpy(g_serverIp, sid, 4);
+        netSendDhcp(3);
+        g_dhcp = DHCP_REQUESTING;
+    } else if (msg == 5 && g_dhcp == DHCP_REQUESTING) {      // ACK
+        memcpy(g_ip, &bp[16], 4);
+        if (router) memcpy(g_gwIp, router, 4);
+        g_leaseSecs = lease;
+        g_dhcp = DHCP_BOUND;
+    } else if (msg == 6) {                                   // NAK
+        g_dhcp = DHCP_INIT;
+    }
+}
+
+// Dispatch one received 802.3 frame.
+static void netHandleFrame(const uint8_t *f, uint16_t len) {
+    g_rxEth++;
+    if (len < 14) return;
+    uint16_t et = (uint16_t)((f[12] << 8) | f[13]);
+    if (et == 0x0806) {                              // ARP
+        if (len < 42) return;
+        uint16_t op = (uint16_t)((f[20] << 8) | f[21]);
+        // Answer requests for OUR ip only, and only once bound -- answering
+        // the server's pre-OFFER probe would read as "address in use".
+        if (op == 1 && g_dhcp == DHCP_BOUND && memcmp(f + 38, g_ip, 4) == 0) {
+            uint8_t *r = g_frameTx;
+            memcpy(r, f + 6, 6);                     // back to the asker
+            memcpy(r + 6, g_mac, 6);
+            r[12] = 0x08; r[13] = 0x06;
+            uint8_t *a = r + 14;
+            a[0] = 0; a[1] = 1; a[2] = 8; a[3] = 0; a[4] = 6; a[5] = 4;
+            a[6] = 0; a[7] = 2;                      // reply
+            memcpy(a + 8, g_mac, 6);
+            memcpy(a + 14, g_ip, 4);
+            memcpy(a + 18, f + 22, 10);              // target = asker's sha+spa
+            g_lastDataTx = iw416.sendDataFrame(r, 42);
+            if (g_lastDataTx == SdioHost::OK) g_arpTx++;
+        }
+        return;
+    }
+    if (et != 0x0800 || len < 34) return;            // IPv4 below here
+    g_rxIp4++;
+    const uint8_t *ip = f + 14;
+    if ((ip[0] >> 4) != 4) return;
+    uint8_t ihl = (uint8_t)((ip[0] & 0xF) * 4);
+    uint16_t ipTotal = (uint16_t)((ip[2] << 8) | ip[3]);
+    if (ihl < 20 || 14 + ipTotal > len || ihl + 8 > ipTotal) return;
+    const uint8_t *pay = ip + ihl;
+    uint16_t payLen = (uint16_t)(ipTotal - ihl);
+    if (ip[9] == 17) {                               // UDP
+        uint16_t dport = (uint16_t)((pay[2] << 8) | pay[3]);
+        if (dport == 68 && payLen >= 8 + 240) netHandleDhcp(pay + 8, (uint16_t)(payLen - 8));
+    } else if (ip[9] == 1 && payLen >= 8) {          // ICMP
+        if (pay[0] == 0) {                           // echo reply
+            if (pay[4] == 0x11 && pay[5] == 0x76) g_pingRx++;
+        } else if (pay[0] == 8 && g_dhcp == DHCP_BOUND &&
+                   memcmp(&ip[16], g_ip, 4) == 0) {  // echo request to us
+            uint16_t n = (uint16_t)(14 + ipTotal);
+            memcpy(g_frameTx, f, n);
+            uint8_t *r = g_frameTx;
+            memcpy(r, f + 6, 6); memcpy(r + 6, g_mac, 6);
+            uint8_t *rip = r + 14;
+            memcpy(&rip[12], &ip[16], 4); memcpy(&rip[16], &ip[12], 4);
+            rip[10] = rip[11] = 0;
+            uint16_t ck = ipChecksum(rip, ihl);
+            rip[10] = (uint8_t)(ck >> 8); rip[11] = (uint8_t)ck;
+            uint8_t *ric = rip + ihl;
+            ric[0] = 0; ric[2] = ric[3] = 0;         // echo reply, redo checksum
+            ck = ipChecksum(ric, payLen);
+            ric[2] = (uint8_t)(ck >> 8); ric[3] = (uint8_t)ck;
+            g_lastDataTx = iw416.sendDataFrame(r, n);
+            if (g_lastDataTx == SdioHost::OK) g_echoRx++;
+        }
+    }
+}
+
+// Restart the IPv4 layer (fresh xid, no lease) -- on every (re)connect.
+static void netReset() {
+    g_dhcp = DHCP_INIT;
+    memset(g_ip, 0, 4); memset(g_offerIp, 0, 4);
+    memset(g_serverIp, 0, 4); memset(g_gwIp, 0, 4);
+    g_leaseSecs = 0;
+    uint32_t ms = millis();
+    g_xid[0] = (uint8_t)(g_mac[4] ^ (uint8_t)(ms >> 8));
+    g_xid[1] = (uint8_t)(g_mac[5] ^ (uint8_t)ms);
+    g_xid[2] = (uint8_t)(ms >> 16);
+    g_xid[3] = (uint8_t)(ms >> 24) | 1;
+}
+
+// One connected-window service pass: drain RX into the handlers, run the DHCP
+// state machine timers, ping when bound.  Sets *droppedOut on a real deauth.
+static void netServicePass(uint32_t windowMs, bool *droppedOut) {
+    *droppedOut = false;
+    uint32_t start = millis();
+    while ((millis() - start) < windowMs) {
+        uint16_t flen = 0;
+        bool dropped = false;
+        SdioHost::Status s = iw416.pollLink(g_frameRx, sizeof(g_frameRx), &flen, &dropped, 50);
+        if (dropped) { *droppedOut = true; return; }
+        if (s == SdioHost::OK && flen) netHandleFrame(g_frameRx, flen);
+        uint32_t now = millis();
+        if (g_dhcp == DHCP_INIT) {
+            netSendDhcp(1);
+            g_dhcp = DHCP_DISCOVERING;
+        } else if (g_dhcp == DHCP_DISCOVERING && now - g_dhcpTxMs > 3000) {
+            netSendDhcp(1);                          // re-DISCOVER
+        } else if (g_dhcp == DHCP_REQUESTING && now - g_dhcpTxMs > 3000) {
+            netSendDhcp(3);                          // re-REQUEST
+        } else if (g_dhcp == DHCP_BOUND && now - g_pingTxMs > 2000) {
+            netSendPing();
+        }
+    }
+}
+
 static void wpaServiceLink() {
     if (!g_wifiConnected) {
         // (Re)connect: cache the PMK, associate once.  A short watch after the
@@ -364,17 +638,16 @@ static void wpaServiceLink() {
             // CMD_CRC = a deauth/mic arrived -> rejected; OK/TIMEOUT -> up.
             g_wifiConnected = (w != SdioHost::CMD_CRC);
             g_connect = g_wifiConnected ? SdioHost::OK : SdioHost::CMD_CRC;
-            if (g_wifiConnected) g_linkServiceN = 0;
+            if (g_wifiConnected) { g_linkServiceN = 0; netReset(); }
         } else {
             g_wifiConnected = false;
         }
     } else {
-        // Connected: service WITHOUT re-associating.  watchConnect with no
-        // preceding associate is a pure monitor -- it drains the data port and
-        // watches command-port events, returning CMD_CRC only if a real deauth/
-        // disassoc drops us.  Otherwise the link stays up (proven: stations=1).
-        SdioHost::Status w = iw416.watchConnect(3000);
-        if (w == SdioHost::CMD_CRC) g_wifiConnected = false;
+        // Connected: service WITHOUT re-associating -- drain RX into the W7
+        // IPv4 layer (DHCP/ARP/ICMP above) and watch for a real deauth.
+        bool dropped = false;
+        netServicePass(3000, &dropped);
+        if (dropped) g_wifiConnected = false;
         else g_linkServiceN++;
     }
 }
@@ -554,6 +827,12 @@ static void reportProbe() {
         // W4: the scan.  resp_* above already carries the last reply header,
         // so a failure here names itself.  num is what the card reported;
         // the listing caps at the 8 the example keeps.
+        Serial1.print("tx_buf_cfg=");
+        Serial1.print(statusName(g_txBufCfg));
+        Serial1.print(" 11n_cfg=");
+        Serial1.print(statusName(g_11nCfg));
+        Serial1.print(" amsdu=");
+        Serial1.println(statusName(g_amsdu));
         Serial1.print("mac_ctrl=");
         Serial1.println(statusName(g_macCtrl));
         Serial1.print("scan=");
@@ -832,9 +1111,20 @@ void setup() {
             (void)iw416.enableHostInt();
             g_hwSpec = iw416.getHwSpec(g_mac, &g_fwRelease, &g_hwVersion);
             if (g_hwSpec == SdioHost::OK) {
-                // W4: enable the MAC (NXP's init order), then scan.
+                // W7: negotiate the host TX buffer size BEFORE anything else
+                // touches the data path -- NXP's init order (GET_HW_SPEC ->
+                // RECONFIGURE_TX_BUFF -> MAC_CONTROL).  Without it the fw
+                // never consumes a data write: each send permanently ate one
+                // WR_BITMAP port (0xFFFF -> 0x0 over 16 sends, measured).
+                g_txBufCfg = iw416.reconfigureTxBuffers(2048);
+                // W4: enable the MAC (NXP's init order), then scan.  RTS_CTS
+                // matches NXP's wlan_prepare_mac_control_cmd exactly (0x0213).
                 g_macCtrl = iw416.macControl(Iw416::MAC_RX_ON | Iw416::MAC_TX_ON |
-                                             Iw416::MAC_ETHERNETII);
+                                             Iw416::MAC_ETHERNETII | Iw416::MAC_RTS_CTS);
+                // W7: the rest of NXP's unconditional init -- 11N_CFG then
+                // AMSDU_AGGR_CTRL (wlan_fw_init_cfg order).
+                g_11nCfg = iw416.set11nCfg();
+                g_amsdu  = iw416.amsduAggrCtrl();
                 g_scan = iw416.scan(g_scanAps, 16, &g_scanCount);
                 // W5: capture raw 802.11 frames in monitor mode for 3 s.
                 g_monitor = iw416.captureMonitor(g_monFrames, 6, &g_monCount,
@@ -896,6 +1186,38 @@ void loop() {
         Serial1.print(" uptime_passes="); Serial1.print(g_linkServiceN);
         Serial1.print(" last_event=0x"); Serial1.print(iw416.lastEvent(), HEX);
         Serial1.print(" event_info=0x"); Serial1.print(iw416.lastEventInfo(), HEX);
+        Serial1.println();
+        // W7 data path.  ip/server/lease come from the AP's DHCP server -- the
+        // firmware knows none of these values.  ping=tx/rx is a full encrypted
+        // round trip; wr_bitmap names the card's free TX ports (0 = the card
+        // never freed a buffer, i.e. TX is not being accepted).
+        Serial1.print("net: dhcp="); Serial1.print(dhcpStateName(g_dhcp));
+        Serial1.print(" ip=");
+        for (int i = 0; i < 4; i++) { Serial1.print(g_ip[i]); if (i < 3) Serial1.print('.'); }
+        Serial1.print(" server=");
+        for (int i = 0; i < 4; i++) { Serial1.print(g_serverIp[i]); if (i < 3) Serial1.print('.'); }
+        Serial1.print(" gw=");
+        for (int i = 0; i < 4; i++) { Serial1.print(g_gwIp[i]); if (i < 3) Serial1.print('.'); }
+        Serial1.print(" lease="); Serial1.print(g_leaseSecs);
+        Serial1.print(" dhcp_tx="); Serial1.print(g_dhcpTx);
+        Serial1.print(" ping="); Serial1.print(g_pingTx);
+        Serial1.print('/'); Serial1.print(g_pingRx);
+        Serial1.print(" arp_tx="); Serial1.print(g_arpTx);
+        Serial1.print(" echo_rx="); Serial1.print(g_echoRx);
+        Serial1.print(" rx_eth="); Serial1.print(g_rxEth);
+        Serial1.print(" rx_ip4="); Serial1.print(g_rxIp4);
+        Serial1.print(" rx_data="); Serial1.print(iw416.rxDataCount());
+        Serial1.print(" rx_drop="); Serial1.print(iw416.rxDropped());
+        Serial1.print(" tx_data="); Serial1.print(iw416.dataTxCount());
+        Serial1.print(" tx_last="); Serial1.print(statusName(g_lastDataTx));
+        Serial1.print(" wr_bitmap=0x"); Serial1.print(iw416.lastWrBitmap(), HEX);
+        // Init evidence repeated here because the wifi loop never re-runs
+        // reportProbe: a cmd-timeout in any of these three is the first thing
+        // to suspect when TX buffers leak.
+        Serial1.print(" cfg=");
+        Serial1.print(statusName(g_txBufCfg)); Serial1.print('/');
+        Serial1.print(statusName(g_11nCfg));   Serial1.print('/');
+        Serial1.print(statusName(g_amsdu));
         Serial1.println();
         return;    // keep this loop tight -- skip the BT-wake probing below
     }
