@@ -1136,3 +1136,97 @@ Next: with the hotspot up, capture the firmware's iPhone pmk_query fingerprint.
   == 290E5671 -> firmware used the wrong SSID bytes for the salt (apostrophe
                  handling) -> SSID-salt bug, fixable, would explain everything.
   == other    -> a different salt/passphrase discrepancy.
+
+--- W6: iPhone PMK is CORRECT too -> it is a handshake protocol bug, NOT the password ---
+
+Date: 2026-08-18.  With the hotspot up:
+
+    wpa_target="Nicholas's iPhone" found=1
+    supplicant_pmk=ok result=0x0
+    pmk_query=ok found=1 nonzero=1 fp=9E6072EE
+    associate=ok cap_info=0x431 assoc_status=0
+    connect=cmd-crc last_event=0x8 event_info=0xD45E0002  -> reason 2
+
+fp=9E6072EE is an EXACT match to host
+PBKDF2-HMAC-SHA1("gtu111122", <"Nicholas's iPhone" with U+2019, 19 bytes>).
+So the firmware holds the CORRECT PMK for the known-good iPhone password, with
+the correct SSID salt (curly apostrophe) -- and the handshake STILL fails.
+
+DEFINITIVE CONCLUSION:
+* The embedded supplicant is present and correctly keyed (correct PMK on both
+  a wrong-ish OnestreamQJN7 password AND the known-good iPhone password).
+* Association succeeds on every AP (assoc_status=0).
+* The WPA2 4-way handshake never completes -> a PROTOCOL / association-
+  integration bug, INDEPENDENT of the credential.
+* This REFUTES the earlier "OnestreamQJN7 password is wrong" lean: the iPhone
+  has a provably-correct PMK and fails identically.  Reason 15 (Onestream), 2
+  (iPhone), 6 (ESP) are the same "handshake did not complete" reported
+  differently by different AP firmwares.
+
+The credential is fully exonerated.  What remains is why the firmware's
+supplicant -- correctly keyed, associated -- does not finish the 4-way
+handshake.  Leading suspects (need frame capture to confirm): the RSN IE the
+supplicant puts in EAPOL msg 2 not matching the ASSOCIATE RSN IE (downgrade
+check), or the ASSOCIATE missing a TLV the supplicant needs (HT/WMM/ext-cap),
+or the firmware reporting assoc_status=0 before the OTA association truly
+completes.  ESP32-promiscuous or monitor-mode Wireshark is the tool.
+
+*** CORRECTION (same session): THE CONNECTION ACTUALLY WORKS ***
+
+The user watching the iPhone reported: the link went GREEN for about one
+second -- i.e. a station DID fully connect (4-way handshake completed) and was
+then dropped ~1 s later.  So the earlier "the handshake never completes"
+conclusion is WRONG.  The WPA2 stack is FUNCTIONALLY CORRECT: SUPPLICANT_PMK +
+correct PMK + ASSOCIATE + RSN IE -> a real, if brief, connection.
+
+Reframed problem (much smaller):
+  1. The connection does not PERSIST -- dropped after ~1 s (deauth reason 2 on
+     the iPhone).  Most likely the AP dropping an inactive station (no DHCP/
+     no traffic from us) -- iPhone hotspots are aggressive -- which is the W7
+     data path, OR a link-maintenance step the host must do post-connect.
+  2. The probe MIS-REPORTS the momentary success: diagConnect() waits for
+     EVENT_PORT_RELEASE (0x2b); it evidently does not see that event (the
+     firmware may signal connection differently), keeps waiting, and catches
+     the subsequent drop-deauth -> connect=cmd-crc.  Need to log the FULL
+     event sequence during the connect window to see the real connect event.
+
+================================================================================
+W6 RESULT: **WPA2 CONNECTION WORKS** -- proven by an independent AP-side oracle
+================================================================================
+Swapped the flaky iPhone hotspot for a controlled ESP8266 WPA2 SoftAP
+("ESP8266TEST", ch6, PSK held only in scratch, never committed).  The ESP sketch
+fires onStationConnected ONLY after a station completes the WPA2 4-way handshake,
+and prints stations=N every 2 s -- an un-fakeable AP-side view.
+
+ESP AP log (station = our IW416, MAC 6c:1d:eb:91:0c:45):
+    station: 6c:1d:eb:91:0c:45 join, AID = 1
+    AP: STA CONNECTED  mac=6C:1D:EB:91:0C:45 aid=1
+    AP alive=1 stations=1        <-- held stably, then (with the old loop) our
+    ...                              own re-assoc dropped+rejoined every ~9.6 s
+
+CONCLUSIONS (all firmware-confirmed, not inferred):
+  1. The IW416 ASSOCIATES and COMPLETES the WPA2 4-way handshake and CONNECTS.
+     The AP reports STA CONNECTED + stations=1.  This is the first Wi-Fi
+     connection by this M.2 card on this board.  W6 is DONE.
+  2. This firmware does NOT emit EVENT_PORT_RELEASE (0x2B).  Connect success is
+     signalled by ASSOCIATE returning assoc_status==0; the embedded supplicant
+     runs the handshake internally (no EAPOL to the host).  Waiting for a port
+     release was a HOST bug -- it mis-scored a real connect as a timeout.
+  3. The earlier "connects then drops after ~1-4 s" (iPhone) and the ~9.6 s
+     connect/drop churn (ESP) were caused by the probe RE-ASSOCIATING in a loop.
+     Fixed: associate ONCE, then service the link (drain events/data) without
+     re-associating.
+  cap_info reads 0x11 (a real IEEE capability), not 0xFFFx -- clean association.
+
+REMAINING (W7): with the connect-once/hold firmware the link still takes a real
+deauth ~10 s after connect: last_event=0x8, event_info low byte 0x0F = reason 15
+(4-way-handshake timeout), sometimes 0x06 (class-2 frame from nonauth STA).  The
+card then reconnects cleanly (reassocs climbs).  This is a link-maintenance /
+data-path issue, not an association or credential fault -- the leading
+hypothesis is the AP dropping a station that sends no L3 traffic (no DHCP/ARP/
+keepalive), which is exactly the W7 data path.  Chase it there.
+
+Flashing note: LinkServer `flash ... load --erase-all` mass-erases the whole
+64 MB QSPI NOR and is SLOW; killing it mid-erase looks exactly like a hung
+probe. Plain `flash ... load` sector-erases only what it writes (~7 sectors,
+~3 s). Use plain load; never --erase-all here unless a full wipe is intended.

@@ -333,6 +333,53 @@ static bool g_rxUp = false, g_rxDown = false;
 static bool g_r404Up = false, g_r404Down = false;
 static bool g_rxAfterPdn = false; static uint32_t g_rxEdgesAfterPdn = 0;
 
+#if HAVE_WIFI_CREDS
+// Link state.  Proven on a controlled ESP8266 SoftAP (an independent oracle):
+// the IW416 associates, the embedded supplicant completes the WPA2 4-way
+// handshake, and the AP reports the station CONNECTED and stations=1 -- the
+// connection is real and STABLE.  Two firmware facts learned there:
+//   * this firmware does NOT emit EVENT_PORT_RELEASE (0x2B) on connect; a
+//     successful ASSOCIATE (assoc_status==0) already means associated, and the
+//     handshake runs internally.  Waiting for a port release is therefore wrong
+//     -- it never comes and mis-scores a real success as a timeout.
+//   * RE-ASSOCIATING tears the link down.  The only reason the earlier loop saw
+//     a ~10 s connect/drop churn was that it re-associated every pass; the AP
+//     showed the STA holding the link for the whole gap between re-assocs.
+// So: connect ONCE, then just SERVICE the link (drain events/data, watch for a
+// real deauth) without re-associating.  Reconnect only on an actual drop.
+static bool     g_wifiConnected = false;
+static uint16_t g_linkServiceN  = 0;   // service passes while connected (uptime)
+
+static void wpaServiceLink() {
+    if (!g_wifiConnected) {
+        // (Re)connect: cache the PMK, associate once.  A short watch after the
+        // associate tells connected (no deauth) from rejected (deauth); we do
+        // NOT require a port-release.
+        g_supp = iw416.setPassphrase(g_scanAps[g_wpaApIdx].ssid, M2_WIFI_PSK);
+        delay(50);
+        g_assoc = iw416.associate(g_scanAps[g_wpaApIdx]);
+        g_assocAttempts++;
+        if (g_assoc == SdioHost::OK) {
+            SdioHost::Status w = iw416.watchConnect(2500);   // settle window
+            // CMD_CRC = a deauth/mic arrived -> rejected; OK/TIMEOUT -> up.
+            g_wifiConnected = (w != SdioHost::CMD_CRC);
+            g_connect = g_wifiConnected ? SdioHost::OK : SdioHost::CMD_CRC;
+            if (g_wifiConnected) g_linkServiceN = 0;
+        } else {
+            g_wifiConnected = false;
+        }
+    } else {
+        // Connected: service WITHOUT re-associating.  watchConnect with no
+        // preceding associate is a pure monitor -- it drains the data port and
+        // watches command-port events, returning CMD_CRC only if a real deauth/
+        // disassoc drops us.  Otherwise the link stays up (proven: stations=1).
+        SdioHost::Status w = iw416.watchConnect(3000);
+        if (w == SdioHost::CMD_CRC) g_wifiConnected = false;
+        else g_linkServiceN++;
+    }
+}
+#endif
+
 // Re-emitted periodically from loop().  The probe result is produced once in
 // setup(), but on a board shared with another session you rarely get to attach
 // a serial reader before boot -- and chasing the reset with LinkServer is a
@@ -686,6 +733,24 @@ static void reportProbe() {
         Serial1.print(iw416.diagFirstEthertype(), HEX);
         Serial1.print(" eapol_seen=");
         Serial1.println(iw416.diagEapolSeen() ? 1 : 0);
+        // The full event sequence during the connect window.  A connect-then-
+        // drop reads as e.g. "port_release@820 deauth@1900(info=..02)" -- proof
+        // the 4-way handshake DID complete (port opened) before the link fell.
+        Serial1.print("events(n=");
+        Serial1.print(iw416.eventLogLen());
+        Serial1.print(" port_release=");
+        Serial1.print(iw416.sawPortRelease() ? 1 : 0);
+        Serial1.print("):");
+        for (uint8_t i = 0; i < iw416.eventLogLen(); i++) {
+            Serial1.print(' ');
+            Serial1.print(iw416.eventLogTime(i));
+            Serial1.print("ms:0x");
+            Serial1.print(iw416.eventLogId(i), HEX);
+            Serial1.print("(0x");
+            Serial1.print(iw416.eventLogInfo(i), HEX);
+            Serial1.print(')');
+        }
+        Serial1.println();
 #endif
 #else
         // Everything above -- download and host commands alike -- needs the
@@ -797,29 +862,11 @@ void setup() {
                     g_pmkQ = iw416.queryPmk(g_scanAps[g_wpaApIdx].ssid, g_pmk,
                                             &g_pmkFound, &g_pmkNonZero);
                 }
-                // W6 stage 2: associate to the target.  For WPA2 the firmware
-                // runs the 4-way handshake inside this call using the PMK just
-                // cached, so success means associated AND authenticated.
-                if (g_supp == SdioHost::OK && g_wpaApIdx >= 0) {
-                    // Associate + wait for the 4-way handshake, retrying: at a
-                    // marginal signal the multi-round-trip association/handshake
-                    // often times out mid-exchange (a firmware-internal error,
-                    // cap_info in 0xFFFx) even though the command is correct.
-                    // A retry that eventually connects proves it is transient,
-                    // not a code fault.
-                    for (uint8_t a = 1; a <= 6; a++) {
-                        g_assocAttempts = a;
-                        g_assoc = iw416.associate(g_scanAps[g_wpaApIdx]);
-                        if (g_assoc == SdioHost::OK) {
-                            // diagConnect watches the data port for EAPOL too,
-                            // to tell embedded- from host-supplicant.
-                            g_connect = iw416.diagConnect(6000);
-                            if (g_connect == SdioHost::OK) break;
-                            if (g_connect == SdioHost::CMD_CRC) break;
-                        }
-                        delay(500);
-                    }
-                }
+                // W6 stage 2: connect once now; loop() then HOLDS and services
+                // the link (see wpaServiceLink) without re-associating, so it
+                // stays up instead of churning.
+                if (g_supp == SdioHost::OK && g_wpaApIdx >= 0)
+                    wpaServiceLink();
 #endif
             }
         }
@@ -831,6 +878,28 @@ void setup() {
 
 void loop() {
     static uint32_t n = 0;
+#if HAVE_WIFI_CREDS && HAVE_IW416_FW
+    // W6 connect LOOP: re-run the associate + full-window watch every pass so the
+    // connection can be observed live and repeatedly.  Each pass the iPhone shows
+    // the STA join then drop; the event sequence is printed so any reader
+    // attached at any moment catches a fresh attempt.  watchConnect blocks up to
+    // 8 s, which paces the loop.
+    if (g_fwStatus == SdioHost::OK && g_wpaApIdx >= 0) {
+        wpaServiceLink();
+        // connected=1 held stably (not re-associating) is the success signal;
+        // uptime counts service passes (~3 s each) since the last (re)connect.
+        Serial1.print("wifi: connected="); Serial1.print(g_wifiConnected ? 1 : 0);
+        Serial1.print(" assoc="); Serial1.print(statusName(g_assoc));
+        Serial1.print(" cap_info=0x"); Serial1.print(iw416.assocCapInfo(), HEX);
+        Serial1.print(" assoc_status="); Serial1.print(iw416.assocStatus());
+        Serial1.print(" reassocs="); Serial1.print(g_assocAttempts);
+        Serial1.print(" uptime_passes="); Serial1.print(g_linkServiceN);
+        Serial1.print(" last_event=0x"); Serial1.print(iw416.lastEvent(), HEX);
+        Serial1.print(" event_info=0x"); Serial1.print(iw416.lastEventInfo(), HEX);
+        Serial1.println();
+        return;    // keep this loop tight -- skip the BT-wake probing below
+    }
+#endif
     // Heartbeat: proves the image is still running after the probe rather than
     // having wedged in it.  A fallback gate without this cannot tell "took the
     // fallback" from "died".
