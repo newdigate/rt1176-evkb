@@ -379,6 +379,24 @@ static void reportProbe() {
         Serial1.print(" requested_len=");
         Serial1.println(iw416.requestedLen());
 
+        // begin()-time evidence.  fw_pre is the status scratch BEFORE the
+        // config writes -- it separates "the writes changed it" from "it was
+        // already like that".  Each cfg register prints pre->post around its
+        // read-modify-write; a post value missing the requested bit is a
+        // register that did not take the write.
+        Serial1.print("iw416_cfg: fw_pre=0x");
+        Serial1.print(iw416.fwStatusPre(), HEX);
+        static const char *cfgNames[Iw416::CFG_REG_COUNT] = {"d9", "c4", "c5", "r04", "d8"};
+        for (int i = 0; i < Iw416::CFG_REG_COUNT; i++) {
+            Serial1.print(' ');
+            Serial1.print(cfgNames[i]);
+            Serial1.print("=0x");
+            Serial1.print(iw416.cfgPre()[i], HEX);
+            Serial1.print("->0x");
+            Serial1.print(iw416.cfgPost()[i], HEX);
+        }
+        Serial1.println();
+
 #if HAVE_IW416_FW
         Serial1.print("fw_download=");
         Serial1.print(g_fwAttempted ? statusName(g_fwStatus) : "not-attempted");
@@ -393,12 +411,27 @@ static void reportProbe() {
         Serial1.print(" fw_status=0x");
         uint16_t fs = 0; (void)iw416.readFwStatus(&fs);
         Serial1.println(fs, HEX);
-#else
-        Serial1.println("fw_download=skipped (no blob supplied)");
-#endif
 
         Serial1.print("hw_spec=");
         Serial1.print(statusName(g_hwSpec));
+        // Response-path evidence, whatever the outcome: every HOST_INT_STATUS
+        // bit ever seen (reads clear it, so this is a union), and the length
+        // the command port last published.  cmd-timeout + int_seen=0x0 means
+        // the card never flagged anything; int_seen without bit 6 means it
+        // flagged the wrong port; a zero cmd_rd_len means the flag came but
+        // the length register did not update.
+        Serial1.print(" int_seen=0x");
+        Serial1.print(iw416.intStatusSeen(), HEX);
+        Serial1.print(" cmd_rd_len=");
+        Serial1.print(iw416.lastCmdRdLen());
+        // Header of the last command-port packet: type 1 = command response,
+        // 3 = event.  For GET_HW_SPEC the answer is type=1 cmd=0x8003 result=0.
+        Serial1.print(" resp_type=");
+        Serial1.print(iw416.lastRespType());
+        Serial1.print(" resp_cmd=0x");
+        Serial1.print(iw416.lastRespCmd(), HEX);
+        Serial1.print(" resp_result=");
+        Serial1.print(iw416.lastRespResult());
         if (g_hwSpec == SdioHost::OK) {
             Serial1.print(" mac=");
             for (int i = 0; i < 6; i++) {
@@ -412,6 +445,13 @@ static void reportProbe() {
             Serial1.print(g_hwVersion, HEX);
         }
         Serial1.println();
+#else
+        // Everything above -- download and host commands alike -- needs the
+        // blob, and g_hwSpec/g_mac only exist when it was supplied.  Keeping
+        // this whole report inside the guard is what keeps the no-blob build
+        // (fresh machine, QEMU gate) compiling.
+        Serial1.println("fw_download=skipped (no blob supplied)");
+#endif
 
         Serial1.print("io_functions=");
         Serial1.println(sdio.ioFunctionCount());
@@ -477,9 +517,12 @@ void setup() {
         g_fwAttempted = true;
         g_fwStatus = iw416.downloadFirmware(iw416_fw, iw416_fw_len);
         if (g_fwStatus == SdioHost::OK) {
-            // Firmware is running: re-read the I/O port, then talk to it.
+            // Firmware is running: re-read the I/O port, unmask the card's
+            // interrupts (only now -- NXP's sd_wifi_post_init does this after
+            // FIRMWARE_READY, never during the bootloader phase), then talk.
             (void)iw416.refreshIoPort();
             delay(50);
+            (void)iw416.enableHostInt();
             g_hwSpec = iw416.getHwSpec(g_mac, &g_fwRelease, &g_hwVersion);
         }
     }

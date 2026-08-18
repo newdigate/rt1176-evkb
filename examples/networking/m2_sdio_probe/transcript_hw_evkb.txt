@@ -660,3 +660,75 @@ Other things worth knowing
       -DM2RADIO_IW416_FW=<sdk>/components/conn_fwloader/fw_bin/inc/IW416/sduartIW416_wlan_bt.bin.inc
   Without it the example builds and reports `fw_download=skipped`, so the QEMU
   gate is unaffected on a machine with no SDK.
+
+=====================================================
+W3 — HOST COMMAND INTERFACE — GET_HW_SPEC ANSWERS
+=====================================================
+
+Date: 2026-08-18.
+
+    iw416_cfg: fw_pre=0x0 d9=0x0->0x1 c4=0x0->0x4 c5=0x0->0x1 r04=0x0->0xFF d8=0x0->0x10
+    fw_download=ok sent=402288/411064 chunks=417 last_req=0 fw_status=0xFEDC
+    hw_spec=ok int_seen=0xC2 cmd_rd_len=256 resp_type=1 resp_cmd=0x8003 resp_result=0
+    mac=6C:1D:EB:91:0C:45 fw_release=0x9B105C15 hw_version=0x7201
+
+resp_cmd=0x8003 is GET_HW_SPEC (0x0003) with HostCmd_RET_BIT set, result=0.
+The MAC is READ OFF THE CARD over the command port -- 6C:1D:EB is a u-blox
+OUI, and none of those bytes exist in this firmware.  int_seen=0xC2 is
+DN_LD (0x02) | CMD_PORT_UPLD (0x40) | CMD_PORT_DNLD (0x80): the card acked
+our command download and flagged its reply on the command port's own bits.
+
+WHAT WAS MISSING: the SD8978 "new mode" init block, whole
+---------------------------------------------------------
+
+NXP's wlan_sdio_init_ioport() (wifidriver/sdio.c, SD8978 arm) runs six writes
+before the firmware download, and the W3 attempts had none of them:
+
+    HOST_INT_MASK  (0x08)  = 0x00      everything MASKED until fw is running
+    CARD_CONFIG_2_1(0xD9) |= 0x01      CMD53 "new mode" -- cmd port exists
+    CMD_CONFIG_0   (0xC4) |= 0x04      publish reply length in CMD_RD_LEN_0/1
+    CMD_CONFIG_1   (0xC5) |= 0x01      cmd-port ready auto-reset after CMD53
+    HOST_INT_RSR   (0x04) |= 0xFF      HOST_INT_STATUS becomes clear-on-READ
+    CARD_MISC_CFG  (0xD8) |= 0x10      data-path ready auto-reset
+
+HIM_ENABLE (0xC3) is written only AFTER FIRMWARE_READY -- NXP's
+sd_wifi_post_init() -- now Iw416::enableHostInt().  All six registers read 0x00
+pre-write on this card and took their bits exactly (the iw416_cfg line above is
+those read-backs).
+
+THE FOUR BUGS, EACH PAID FOR
+-----------------------------
+
+1. HOST_INT_STATUS was being WRITTEN (~mask, "write-1-to-clear" -- a guess).
+   NXP never writes that register anywhere in the tree: with HOST_INT_RSR set
+   it clears on READ.  The ~mask write (0xBE) was garbage on every axis.
+
+2. Reply length was read from RD_LEN_P0 (0x18/0x19).  That is the DATA port's
+   length register; a command-port reply publishes at CMD_RD_LEN_0/1
+   (0xC0/0xC1), and only when CMD_CONFIG_0 bit 2 is set.  cmd-timeout forever.
+
+3. Commands were sent ~50 ms after the last download chunk.  The bootloader
+   had jumped but the firmware was still booting: the probe's own
+   downloadFirmware() returned OK on the "stopped asking" path WITHOUT waiting
+   for FIRMWARE_READY, and a host command into a booting firmware KILLS it --
+   fw_status settles at 0xF00B instead of 0xFEDC and no interrupt ever fires
+   again (int_seen=0x0).  The READY poll now runs on every exit path, which is
+   also what makes fw_download=ok mean what it says.  NXP's
+   sdio_post_fwdnld_check_conn_ready() polls up to 5 s before anything else
+   may touch the card.
+
+4. The first packet on the command port was taken on faith as the answer.  It
+   is not: the port also carries the FUNC_INIT response and EVENT packets, and
+   GET_HW_SPEC parsed one of those as "success" with mac=00:00:00:00:00:00.
+   waitCmdResp() now discards packets until [pkttype]=1 and [command]=cmd|0x8000.
+
+Bugs 1-2 were the handoff's two suspects, confirmed in that order; bugs 3-4
+were found by the new instrumentation (int_seen / cmd_rd_len / fw_pre / resp_*
+in the report), not by guessing: each failing flash produced the evidence that
+named the next bug.
+
+Note on the hang the handoff warned about: it was never reproduced after the
+~mask write and the premature HIM_ENABLE-in-begin() were removed.  The W2
+recovery image (same begin() unmask, no getHwSpec) ran clean, so the hang
+lived in the getHwSpec path -- most plausibly the CMD53 to a command port
+that "new mode" had never enabled, wedging the card mid-transfer.
