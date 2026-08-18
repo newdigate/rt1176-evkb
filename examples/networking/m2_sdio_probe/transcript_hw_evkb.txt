@@ -589,3 +589,74 @@ Every "the card or the socket is dead" conclusion earlier in this transcript is
 wrong, as is the later "the MAYA-W1 module is faulty". The card was fine
 throughout. They are kept above as the record of how the investigation actually
 ran, including the wrong turns.
+
+=====================================================
+W2 — CMD53 + FIRMWARE DOWNLOAD — FIRMWARE_READY
+=====================================================
+
+Date: 2026-08-18.
+
+    iw416_begin=ok ioport=0x10000 fw_status=0xFEDC card_status=0xD requested_len=0
+    fw_download=ok sent=402288/411064 chunks=417 last_req=0 fw_status=0xFEDC
+
+0xFEDC is FIRMWARE_READY. The IW416 firmware is downloaded and running.
+card_status=0xD is DN_LD_CARD_RDY | CARD_IO_READY.
+
+`sent` stops short of the image size because the bootloader stopped asking at
+402288 bytes and jumped -- the "want == 0 after progress means done" path,
+which is how NXP's loop terminates too.
+
+How it was built
+----------------
+
+  SdioHost::cmd53Read/Write   CMD53 block mode, PIO through the USDHC data port
+  SdioFunc                    CCCR function enable + block size
+  Iw416                       card registers + the download handshake
+
+Protocol follows NXP's mcuxsdk wifi_nxp (sdio_nxp_abs/fwdnld_sdio.c,
+BSD-3-Clause). Nothing vendored -- independent implementation of the documented
+sequence.
+
+THE BUG THAT COST THE MOST: the wrong CARD_STATUS_REG
+------------------------------------------------------
+
+NXP's own fwdnld_sdio.c says:
+
+    /* Read CARD_STATUS_REG (0X30) FN =1 */
+
+**0x30 is the SD8801 address.** SD8978/IW416 uses CARD_TO_HOST_EVENT_REG =
+**0x5C** (mlan_sdio_defs.h, the SD8978 arm). The comment is stale by a chip
+generation, and the code around it resolves the macro correctly -- so only the
+comment is wrong, and only a reader following the comment gets burned.
+
+The failure mode is nasty: reading 0x30 returns 0x00 forever, so the
+card-readiness gate never fires. Without that gate the host writes whenever the
+length register happens to be non-zero, into a card that is not listening.
+EVERY CHUNK STILL REPORTS SUCCESS and the entire image transfers. Only the final
+validation fails.
+
+That produced two complete, plausible-looking downloads that ended in
+fw_status=0x1:
+
+    sdIW416_wlan.bin.inc        sent=279164/279164 chunks=2795  fw_status=0x1
+    sduartIW416_wlan_bt.bin.inc sent=411064/411064 chunks=568   fw_status=0x1
+
+Note the chunk counts differ wildly between images, which looked like meaningful
+protocol behaviour and was not. Adding the 0x5C gate fixed it immediately:
+417 chunks, fw_status=0xFEDC.
+
+Other things worth knowing
+--------------------------
+
+* The bootloader asks for **2049** bytes at a time. A 2048-byte staging buffer
+  fails on the very first large request; give it headroom.
+* The firmware array must go in **.progmem**. The imxrt1176 linker script folds
+  `.rodata*` into `.data`, which lives in DTCM (256K) -- a 273 KB const array
+  there overflows the region and the link fails with ".bss is not within region
+  DTCM". Note `FLASHMEM` is `#define FLASHMEM` (empty) in AudioStream.h and does
+  NOT do this job; `__attribute__((section(".progmem")))` does.
+* The blob is NOT in this repo. It is NXP LA_OPT-licensed binary, supplied at
+  configure time:
+      -DM2RADIO_IW416_FW=<sdk>/components/conn_fwloader/fw_bin/inc/IW416/sduartIW416_wlan_bt.bin.inc
+  Without it the example builds and reports `fw_download=skipped`, so the QEMU
+  gate is unaffected on a machine with no SDK.

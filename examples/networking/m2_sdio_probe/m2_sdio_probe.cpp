@@ -10,8 +10,20 @@
 // path, and nothing more.  Positive evidence lives in transcript_hw_evkb.txt.
 #include <Arduino.h>
 #include <SdioHost.h>
+#include <SdioFunc.h>
+#include <Iw416.h>
 
 static SdioHost sdio;
+static SdioFunc sdioFunc(sdio);
+static Iw416 iw416(sdio, sdioFunc);
+static SdioHost::Status g_iwStatus = SdioHost::CMD5_NO_RESPONSE;
+
+#if HAVE_IW416_FW
+extern const uint8_t iw416_fw[];
+extern const uint32_t iw416_fw_len;
+static SdioHost::Status g_fwStatus = SdioHost::CMD_TIMEOUT;
+static bool g_fwAttempted = false;
+#endif
 
 // ---------------------------------------------------------------------------
 // M.2 module power-up.  This is board/module knowledge, NOT SDIO-host
@@ -349,6 +361,38 @@ static void reportProbe() {
     Serial1.println((ps >> 16) & 1);
 
     if (st == SdioHost::OK) {
+        // W2: function 1 up, block size 256, and the bootloader's own view of
+        // itself.  requested_len != 0 means the card is in download mode and
+        // telling us how many bytes to send -- the milestone before any blob.
+        Serial1.print("iw416_begin=");
+        Serial1.print(statusName(g_iwStatus));
+        Serial1.print(" ioport=0x");
+        Serial1.print(iw416.ioPort(), HEX);
+        Serial1.print(" fw_status=0x");
+        Serial1.print(iw416.fwStatus(), HEX);
+        Serial1.print(" card_status=0x");
+        Serial1.print(iw416.cardStatus(), HEX);
+        Serial1.print(" requested_len=");
+        Serial1.println(iw416.requestedLen());
+
+#if HAVE_IW416_FW
+        Serial1.print("fw_download=");
+        Serial1.print(g_fwAttempted ? statusName(g_fwStatus) : "not-attempted");
+        Serial1.print(" sent=");
+        Serial1.print(iw416.bytesSent());
+        Serial1.print("/");
+        Serial1.print(iw416_fw_len);
+        Serial1.print(" chunks=");
+        Serial1.print(iw416.chunksSent());
+        Serial1.print(" last_req=");
+        Serial1.print(iw416.lastRequest());
+        Serial1.print(" fw_status=0x");
+        uint16_t fs = 0; (void)iw416.readFwStatus(&fs);
+        Serial1.println(fs, HEX);
+#else
+        Serial1.println("fw_download=skipped (no blob supplied)");
+#endif
+
         Serial1.print("io_functions=");
         Serial1.println(sdio.ioFunctionCount());
         Serial1.print("rca=0x");
@@ -407,6 +451,13 @@ void setup() {
 
     SdioHost::Status st = sdio.begin();
     g_status = st;
+    if (st == SdioHost::OK) g_iwStatus = iw416.begin();
+#if HAVE_IW416_FW
+    if (g_iwStatus == SdioHost::OK) {
+        g_fwAttempted = true;
+        g_fwStatus = iw416.downloadFirmware(iw416_fw, iw416_fw_len);
+    }
+#endif
     reportProbe();
     Serial1.println("probe_done");
 }
