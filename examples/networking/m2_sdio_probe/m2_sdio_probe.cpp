@@ -58,6 +58,11 @@ static SdioHost::Status g_supp = SdioHost::CMD_TIMEOUT;
 static int     g_wpaApIdx = -1;     // index into g_scanAps of the target, or -1
 static uint8_t g_wpaRsnLen = 0;
 static uint8_t g_wpaRatesLen = 0;
+// PMK read-back: the decisive test of whether the embedded supplicant derived
+// a usable key from the passphrase.
+static SdioHost::Status g_pmkQ = SdioHost::CMD_TIMEOUT;
+static bool g_pmkFound = false, g_pmkNonZero = false;
+static uint8_t g_pmk[32] = {0};
 static SdioHost::Status g_assoc = SdioHost::CMD_TIMEOUT;
 static SdioHost::Status g_connect = SdioHost::CMD_TIMEOUT;
 static uint8_t g_assocAttempts = 0;   // attempts until connect, or the cap
@@ -627,6 +632,20 @@ static void reportProbe() {
         Serial1.print(statusName(g_supp));
         Serial1.print(" result=0x");
         Serial1.println(iw416.lastSuppResult(), HEX);
+        // Decisive: did the firmware actually derive a PMK from the passphrase?
+        // pmk_found=1 nonzero=1 -> embedded supplicant present + keyed (the
+        // handshake bug is elsewhere).  found=0 or zero -> SUPPLICANT_PMK is
+        // inert -> no embedded supplicant in this blob.  First 4 PMK bytes are
+        // printed only as a non-secret fingerprint for correlation.
+        Serial1.print("pmk_query=");
+        Serial1.print(statusName(g_pmkQ));
+        Serial1.print(" found=");
+        Serial1.print(g_pmkFound ? 1 : 0);
+        Serial1.print(" nonzero=");
+        Serial1.print(g_pmkNonZero ? 1 : 0);
+        Serial1.print(" fp=");
+        for (int i = 0; i < 4; i++) { if (g_pmk[i] < 0x10) Serial1.print('0'); Serial1.print(g_pmk[i], HEX); }
+        Serial1.println();
         // W6 stage 2: association.  assoc_status=0 means the 802.11
         // association AND (for WPA2) the 4-way handshake completed -- a wrong
         // PSK shows here as a non-zero status.
@@ -770,8 +789,14 @@ void setup() {
                 // Derive the PMK from the SCANNED SSID bytes (authoritative --
                 // exact beacon bytes incl. any typographic apostrophe), not the
                 // user-typed build flag, so the PBKDF2 salt is always right.
-                if (g_wpaApIdx >= 0)
+                if (g_wpaApIdx >= 0) {
                     g_supp = iw416.setPassphrase(g_scanAps[g_wpaApIdx].ssid, M2_WIFI_PSK);
+                    // Give the firmware time to run PBKDF2, then read the PMK
+                    // back -- the decisive embedded-supplicant test.
+                    delay(300);
+                    g_pmkQ = iw416.queryPmk(g_scanAps[g_wpaApIdx].ssid, g_pmk,
+                                            &g_pmkFound, &g_pmkNonZero);
+                }
                 // W6 stage 2: associate to the target.  For WPA2 the firmware
                 // runs the 4-way handshake inside this call using the PMK just
                 // cached, so success means associated AND authenticated.

@@ -1092,3 +1092,47 @@ solid everywhere; the embedded supplicant is accepted (SUPPLICANT_PMK result
 credential.  The un-answered question -- does the card transmit EAPOL msg 2 --
 needs a proper packet capture (ESP32/Wireshark) or NXP's exact working
 bare-metal connect sequence for this IW416 blob.
+
+=====================================================
+W6 BREAKTHROUGH: the embedded supplicant derives the CORRECT PMK
+=====================================================
+
+Date: 2026-08-18.  Source-dive path.  Traced NXP's full WPA2-PSK connect
+sequence (wlan.c start_association -> configure_security -> wrapper_wifi_assoc):
+the command sequence is exactly ours (SUPPLICANT_PMK -> ASSOCIATE, no
+post-association command; the firmware runs the handshake autonomously).  So
+no missing command.  That pointed to the decisive test: is SUPPLICANT_PMK
+actually working?
+
+Added queryPmk() -- SUPPLICANT_PMK action GET with an SSID TLV reads back the
+cached PMK (PMK TLV 0x0144).  Hardware result (OnestreamQJN7):
+
+    supplicant_pmk=ok result=0x0
+    pmk_query=ok found=1 nonzero=1 fp=2609FF11
+
+The firmware DERIVED a non-zero 32-byte PMK.  And it is the CORRECT one:
+
+    host: PBKDF2-HMAC-SHA1("88195419", "OnestreamQJN7", 4096, 32)
+        = 2609ff11 f8f76123 ... (fingerprint 2609FF11)  -- EXACT MATCH.
+
+So, definitively:
+* The embedded supplicant IS present in sduartIW416_wlan_bt.bin.
+* It derives the PMK by standard PBKDF2-HMAC-SHA1, correct salt (SSID),
+  correct passphrase.  Not inert, not a keying bug.
+
+IMPLICATION FOR OnestreamQJN7: the firmware holds the provably-correct PMK for
+"88195419", yet the handshake fails with reason 15 (4-way handshake timeout =
+MIC mismatch).  The only way that happens is if the AP's real password is NOT
+"88195419".  So OnestreamQJN7's "88195419" is almost certainly WRONG (the one
+value the user triple-checked -- but the firmware maths exonerates the code and
+points at the credential).
+
+STILL TO VERIFY -- the iPhone (reason 2, known-good password "gtu111122").
+Reference PMK fingerprints for that password:
+    curly-apostrophe SSID (19 bytes, U+2019, as broadcast) -> 9E6072EE
+    straight-apostrophe SSID (17 bytes)                    -> 290E5671
+Next: with the hotspot up, capture the firmware's iPhone pmk_query fingerprint.
+  == 9E6072EE -> PMK correct -> reason-2 is a genuine post-key protocol bug.
+  == 290E5671 -> firmware used the wrong SSID bytes for the salt (apostrophe
+                 handling) -> SSID-salt bug, fixable, would explain everything.
+  == other    -> a different salt/passphrase discrepancy.
