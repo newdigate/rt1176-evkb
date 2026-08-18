@@ -14,6 +14,50 @@ checked against the BOM, not just the netlist — a net existing in the schemati
 says nothing about whether the resistor on it is fitted. Three of the signals
 that look connected are not.
 
+## ★ REQUIRED REWORK: two DNP resistors must be bridged
+
+**An M.2 Wi-Fi card does not work on a stock RevC3 board.** Two 0402 0 Ω
+resistors are DNP from the factory and must be fitted. Established on
+2026-08-18 by bridging them and watching an M2-MAYA-W161 go from totally silent
+to fully enumerating.
+
+| Ref | Connects | Consequence if absent |
+|---|---|---|
+| **R404** | `GPIO_AD_31` → PDn chain → J54 pin 56 (`W_DISABLE1#`) | **FATAL.** The radio can never be power-cycled and never boots. |
+| **R1901** | `U355` → `BT_UART_RXD` → J54 pin 22 | Bluetooth HCI is transmit-only; no reply can ever be read |
+
+### Why R404 is fatal, and why it is so hard to diagnose
+
+PDn is "Full Power-down for the Wi-Fi/BT radio: High = normal, Low = full
+power-down". With R404 unpopulated, `GPIO_AD_31` is disconnected and pin 56
+merely rests on the 10K pull-up `R829` — which holds it at exactly the logic
+high the datasheet asks for. **Every static check therefore passes.** But a
+module that has come up in a bad state can only be recovered by asserting PDn
+low, and without R404 no firmware can do that. The radio sits there with every
+output at zero, indefinitely.
+
+The symptom is deeply misleading: all card→host signals (`SDIO_CMD`,
+`UART_TXD` pin 22, `BT_WAKE_HOST` pin 20) are **driven** low, not floating —
+which correctly proves the card's DC-DC and level shifters are alive, and
+wrongly suggests the module behind them is faulty.
+
+**This also defeats NXP's own software.** `BOARD_WIFI_BT_Enable()` drives
+`BOARD_INITPINSM2_WL_RST_GPIO` = `GPIO9_IO30` = `GPIO_AD_31`. On a stock RevC3
+that write reaches nothing, so `wifi_cli` hangs at "Initialize WLAN Driver". The
+SDK is correct; the board's DNP defeats it.
+
+### The working sequence, after the rework
+
+    PDn (GPIO_AD_31 / GPIO9_IO30, ALT10) LOW    >= 10 ms
+    PDn HIGH
+    wait ~1 s for the ROM to boot
+    then enumerate SDIO
+
+Verified result: `manfid=0x2DF cardid=0x9158 io_functions=1 rca=0x1 cccr_rev=0x3`.
+
+Note both bridges commit an Arduino header pin: `GPIO_AD_31` is D12/MISO, and
+the BT UART RX pad `GPIO_DISP_B2_11` is D0.
+
 ## The three facts that will bite you
 
 ### 1. uSDHC1 carries TWO card sockets
@@ -124,7 +168,7 @@ Names reconciled with `mcuxsdk/examples/_boards/evkbmimxrt1170` (`pin_mux.h`,
 | NXP name | MCU pad | GPIO used by NXP | J54 | Schematic net |
 |---|---|---|---|---|
 | `SDIO_RST` | `GPIO_AD_16` (ball N17) | **GPIO9_IO15** (ALT10) | 23 | `WIFI_RST_B` |
-| `WL_RST` | `GPIO_AD_31` (ball J17) | **GPIO9_IO30** (ALT10) | 56 | `WL_RST#` — **but R404 is DNP**, so this pad does not reach the connector on RevC3; pin 56 sits high on `R829` regardless |
+| `WL_RST` / **PDn** | `GPIO_AD_31` (ball J17) | **GPIO9_IO30** (ALT10) | 56 | `WL_RST#`. R404 is DNP from the factory — **bridge it**, see the REQUIRED REWORK section at the top. This is the master power-down and the card does not boot without it. |
 
 **The required sequence** (`BOARD_WIFI_BT_Enable(true)`) is: both lines
 initialised as outputs driven **low**, then `SDIO_RST` high → wait **100 ms** →
