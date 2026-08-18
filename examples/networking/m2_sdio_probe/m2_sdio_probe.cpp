@@ -584,6 +584,14 @@ static void reportProbe() {
         Serial1.print(g_wpaRsnLen);
         Serial1.print(" rates_len=");
         Serial1.println(g_wpaRatesLen);
+        // LENGTHS ONLY (never the PSK value): confirms the credential plumbing
+        // delivered exactly the expected byte counts -- ssid_len!=13 or
+        // psk_len!=8 would be a plumbing/whitespace bug; correct lengths mean
+        // the PMK inputs are right and reason 15 is the PSK VALUE not matching.
+        Serial1.print("creds: ssid_len=");
+        Serial1.print((int)strlen(M2_WIFI_SSID));
+        Serial1.print(" psk_len=");
+        Serial1.println((int)strlen(M2_WIFI_PSK));
         // Dump the target's RSN IE so the AKM suite and RSN Capabilities are
         // visible: this separates "wrong PSK" (plain PSK AKM 00-0F-AC-02, PMF
         // clear -> reason 15 means the password) from a PMF/SHA256 requirement
@@ -622,6 +630,16 @@ static void reportProbe() {
         // near the IEEE reason: 0x0F = 4-way handshake timeout (wrong PSK).
         Serial1.print(" event_info=0x");
         Serial1.println(iw416.lastEventInfo(), HEX);
+        // Embedded- vs host-supplicant: if EAPOL (ethertype 0x888E) frames
+        // arrive on the data port after association, the firmware expects the
+        // HOST to run the 4-way handshake -- which this driver does not, so the
+        // handshake would time out regardless of the (correct) password.
+        Serial1.print("post_assoc: data_frames=");
+        Serial1.print(iw416.diagDataFrames());
+        Serial1.print(" first_ethertype=0x");
+        Serial1.print(iw416.diagFirstEthertype(), HEX);
+        Serial1.print(" eapol_seen=");
+        Serial1.println(iw416.diagEapolSeen() ? 1 : 0);
 #endif
 #else
         // Everything above -- download and host commands alike -- needs the
@@ -737,11 +755,10 @@ void setup() {
                         g_assocAttempts = a;
                         g_assoc = iw416.associate(g_scanAps[g_wpaApIdx]);
                         if (g_assoc == SdioHost::OK) {
-                            g_connect = iw416.waitForConnect(6000);
+                            // diagConnect watches the data port for EAPOL too,
+                            // to tell embedded- from host-supplicant.
+                            g_connect = iw416.diagConnect(6000);
                             if (g_connect == SdioHost::OK) break;
-                            // A deauth/MIC during the handshake (CMD_CRC) is a
-                            // definitive failure -- typically a wrong PSK.
-                            // Retrying only hammers the AP, so stop.
                             if (g_connect == SdioHost::CMD_CRC) break;
                         }
                         delay(500);

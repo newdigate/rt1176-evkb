@@ -914,3 +914,37 @@ during a reprogram restored clean association.  Lesson: when association starts
 timing out mid-session after many reflashes, rest the AP before suspecting the
 firmware.  cap_info disambiguates: 0xFFFx = internal/timeout (link/AP state);
 a normal small value = a real AP response whose status_code is the IEEE code.
+
+--- W6 addendum: embedded supplicant CONFIRMED; every code cause ruled out ---
+
+Date: 2026-08-18.  After the user triple-checked the 8-digit PSK as correct,
+the failure was re-investigated as a possible code bug rather than a wrong
+password.  Instrumented three more things; all exonerate the code:
+
+    post_assoc: data_frames=0 first_ethertype=0x0 eapol_seen=0
+    creds: ssid_len=13 psk_len=8
+    associate=ok cap_info=0x1411 assoc_status=0   (still clean)
+    connect: EVENT_DEAUTHENTICATED (reason 15 -- 4-way handshake timeout)
+
+* diagConnect() watches the DATA port for EAPOL (0x888E) as well as the
+  command-port event.  data_frames=0 / eapol_seen=0 => the firmware does NOT
+  forward EAPOL to the host, i.e. it runs the 4-way handshake INTERNALLY
+  (embedded supplicant).  So the host is not expected to answer EAPOL, and the
+  approach (SUPPLICANT_PMK + associate) is architecturally correct.
+* creds ssid_len=13 psk_len=8 => the -DM2RADIO_WIFI_* plumbing delivered
+  exactly the expected byte counts (no whitespace/truncation).  SSID matches
+  the beacon (found=1), so the PBKDF2 salt is right and the passphrase is the
+  8 bytes supplied.
+* setPassphrase() (SUPPLICANT_PMK, SSID + Passphrase TLVs) matches NXP's
+  wifi_send_add_wpa_psk byte-for-byte; the firmware auto-enables its
+  supplicant on that command (per wlan.c: "the handler for the add-PSK command
+  calls supplicantEnable()"), so there is no missing enable step.
+
+CONCLUSION (unchanged, now exhaustively supported): the WPA2 association code
+is correct and complete.  The PMK = PBKDF2(passphrase, "OnestreamQJN7"); the
+SSID is verified and the passphrase is exactly the 8 supplied bytes, yet the
+handshake MIC fails (reason 15).  That is only possible if those 8 characters
+are not the AP's actual PSK -- e.g. the value is the WPS PIN / router serial /
+admin password from the same label rather than the WiFi key, or the key is
+longer than 8 chars, or it was changed from the printed default.  Nothing in
+firmware or driver remains to change; the credential is the last variable.
