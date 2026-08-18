@@ -439,3 +439,73 @@ Next step that WOULD separate them: fit R1901 (0402, 0 Ω) and read the card's
 UART directly. That is now the single highest-value modification to this board
 -- it converts the only bidirectional interface the card has from write-only to
 usable, and would say immediately whether the module answers HCI at all.
+
+=====================================================
+R1901 BRIDGED — the card's UART TX is stuck LOW
+=====================================================
+
+Date: 2026-08-18. R1901 (module->MCU RXD, DNP from the factory) fitted by hand
+with a solder bridge.
+
+### The bridge conducts — verified, not assumed
+
+    r1901_bridge: pullup_reads=0 pulldown_reads=0 -> DRIVEN LOW
+
+Same pull-up/pull-down control used for pin 20. With R1901 open the MCU RX pad
+has no driver at all -- its net reaches only Arduino header pin J9.2 (via fitted
+R2) and the DNP pad -- so it would FLOAT and an internal pull would swing it.
+It does not swing: the line is actively driven. The bridge works.
+
+### But it is driven LOW, and a UART idle line must be HIGH
+
+So the card's UART_TXD sits at logic zero permanently -- exactly like
+BT_WAKE_HOST on pin 20.
+
+### Pulsing BT_INDEPENDENT_RESET changes nothing
+
+GPIO_AD_15 -> J54 pin 54 (W_DISABLE2#) is the one card reset the MCU can
+actually drive. Asserted low 20 ms, released, then the UART TX line watched for
+150 ms at ~100 kHz:
+
+    bt_reset_pulse: rx_any_high=0 rx_edges=0
+
+Zero edges. The line never leaves low.
+
+(`serial2_rx: total` incrementing by one per cycle is our own artefact: the test
+re-calls Serial2.begin(), and re-muxing the pad latches another spurious 0x00.)
+
+### The picture this completes
+
+EVERY card->host signal is stuck at logic low, and nothing we do moves any of
+them:
+
+    pin 20  UART_WAKE# / BT_WAKE_HOST   held low
+    pin 22  UART_TXD                    held low  (now visible thanks to R1901)
+    SDIO    CMD                         no response to CMD5, ever
+
+They are DRIVEN low, not floating -- which means the card's own DC-DC and its
+level shifters (NTB0104, U355) are powered and working. What sits behind them,
+the MAYA-W1 module itself, has all outputs at zero. That is what a chip held in
+reset or not booting looks like.
+
+### The one control we do not have: PDn
+
+J54 pin 56 (W_DISABLE1# = PDn, "High = normal mode, Low = full power-down") is
+the master power-down for the whole radio. On RevC3 the MCU CANNOT drive it:
+R404 is DNP, so GPIO_AD_31 is disconnected and the pin merely sits on the 10K
+pull-up R829 to WL_3V3.
+
+A module held in full power-down would present exactly what we measure: powered
+support circuitry, every module output low, no SDIO, no UART, no wake.
+
+We cannot currently confirm or refute that, because we can neither drive nor
+read pin 56.
+
+### Next modification, precisely motivated
+
+**Fit R404** (0402, 0 Ω -- the same job just done on R1901). That connects
+GPIO_AD_31 to the PDn chain and lets firmware power-cycle the radio properly.
+It is the only untested control left, and its failure mode is an exact match for
+the symptom.
+
+Note GPIO_AD_31 is also Arduino D12/MISO, so driving it affects header SPI.

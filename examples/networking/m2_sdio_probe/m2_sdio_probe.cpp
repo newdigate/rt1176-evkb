@@ -156,6 +156,70 @@ static void m2BtWakeSample(uint32_t iters, bool *anyHigh, uint32_t *edges) {
 // kind of thing that makes an NXP controller assert BT_WAKE_HOST.
 static const uint8_t HCI_RESET[] = { 0x01, 0x03, 0x0C, 0x00 };
 
+// Continuity test for the LPUART2 RX path, run BEFORE Serial2.begin() takes the
+// pad.  R1901 (module->MCU RXD) is DNP from the factory and was bridged by hand
+// on 2026-08-18; this says whether the bridge actually conducts.
+//
+// With R1901 open, the MCU RX pad has no driver -- its net reaches only
+// Arduino header pin J9.2 (via fitted R2) and the DNP pad -- so it FLOATS, and
+// an internal pull-up/pull-down will swing it.
+// With R1901 bridged, U355's output drives it, and a UART idle line sits HIGH,
+// so neither internal pull can move it.
+//
+//   up=1 down=0 -> FLOATING: the bridge is not conducting
+//   up=1 down=1 -> DRIVEN HIGH: bridge good, U355 powered, line idle
+//   up=0 down=0 -> DRIVEN LOW: bridge good but the line is held low (break/BREAK)
+//
+// GPIO_DISP_B2_11 is GPIO5_IO12 at ALT5 (docs/arduino-header-revc3.md: D0).
+#define M2_RX_MUX (*(volatile uint32_t *)0x400E8240u)
+#define M2_RX_PAD (*(volatile uint32_t *)0x400E8484u)
+#define M2_RX_BIT 12
+
+// BT_INDEPENDENT_RESET (J54 pin 54, W_DISABLE2#) is driven from GPIO_AD_15
+// (ball M14, the "SPDIF_IN" pad) through R209/R834, with a 10K pull-up R832 --
+// so it idles HIGH = not reset, and we have never touched it.
+//
+// Now that R1901 is bridged we can SEE the card's UART TX line, so a reset
+// pulse becomes a real experiment: if the module is alive at all, resetting its
+// Bluetooth block should make that line do SOMETHING -- at minimum leave its
+// stuck-low state, at best emit the NXP boot-ROM download request.
+// GPIO_AD_15 mux 0x400E8148, pad 0x400E838C; ALT10 = GPIO9_IO14 (AD_n -> bit n-1).
+#define M2_BT_RST_MUX (*(volatile uint32_t *)0x400E8148u)
+#define M2_BT_RST_BIT 14
+
+static void m2PulseBtReset() {
+    M2_BT_RST_MUX = 0xAu;                      // ALT10 = GPIO9_IO14
+    GPIO9_GDIR |= (1u << M2_BT_RST_BIT);
+    GPIO9_DR_CLEAR = (1u << M2_BT_RST_BIT);    // assert reset (active low)
+    delay(20);
+    GPIO9_DR_SET = (1u << M2_BT_RST_BIT);      // release
+}
+
+// Watch the card's UART TX pad as a GPIO for `ms` milliseconds.
+static void m2WatchRxLine(uint32_t ms, bool *anyHigh, uint32_t *edges) {
+    M2_RX_MUX = 0x10u | 0x5u;                  // SION | ALT5 = GPIO5_IO12
+    GPIO5_GDIR &= ~(1u << M2_RX_BIT);
+    M2_RX_PAD = 0x04u;
+    bool prev = (GPIO5_PSR >> M2_RX_BIT) & 1u; bool hi = prev; uint32_t e = 0;
+    for (uint32_t i = 0; i < ms * 100; i++) {  // ~10us per sample
+        bool now = (GPIO5_PSR >> M2_RX_BIT) & 1u;
+        if (now != prev) { e++; prev = now; }
+        if (now) hi = true;
+        delayMicroseconds(10);
+    }
+    *anyHigh = hi; *edges = e;
+}
+
+static void m2RxContinuity(bool *up, bool *down) {
+    M2_RX_MUX = 0x10u | 0x5u;                 // SION | ALT5 = GPIO5_IO12
+    GPIO5_GDIR &= ~(1u << M2_RX_BIT);         // input
+    M2_RX_PAD = 0x04u;  delayMicroseconds(500);   // pull-up
+    *up = (GPIO5_PSR >> M2_RX_BIT) & 1u;
+    M2_RX_PAD = 0x08u;  delayMicroseconds(500);   // pull-down
+    *down = (GPIO5_PSR >> M2_RX_BIT) & 1u;
+    M2_RX_PAD = 0x04u;  delayMicroseconds(500);
+}
+
 static const char *statusName(SdioHost::Status s) {
     switch (s) {
         case SdioHost::OK:               return "ok";
@@ -171,6 +235,7 @@ static const char *statusName(SdioHost::Status s) {
 }
 
 static SdioHost::Status g_status = SdioHost::CMD5_NO_RESPONSE;
+static bool g_rxUp = false, g_rxDown = false;
 
 // Re-emitted periodically from loop().  The probe result is produced once in
 // setup(), but on a board shared with another session you rarely get to attach
@@ -201,6 +266,15 @@ static void reportProbe() {
 
     bool wu=false, wd=false; uint32_t wpad=0;
     m2BtWakeProbe(&wu, &wd, &wpad);
+    Serial1.print("r1901_bridge: pullup_reads=");
+    Serial1.print(g_rxUp);
+    Serial1.print(" pulldown_reads=");
+    Serial1.print(g_rxDown);
+    Serial1.print(" -> ");
+    Serial1.println(g_rxUp==g_rxDown ? (g_rxUp ? "DRIVEN HIGH -- bridge conducts, line idle"
+                                               : "DRIVEN LOW -- bridge conducts, line held low")
+                                     : "FLOATING -- bridge NOT conducting");
+
     Serial1.print("bt_wake(pin20): pullup_reads=");
     Serial1.print(wu);
     Serial1.print(" pulldown_reads=");
@@ -273,6 +347,7 @@ void setup() {
     // LPUART2 -> J54 pin 32 (card UART_RXD).  TX only in practice: the card's
     // reply path dies at R1901, which is DNP on this board.  No flow control --
     // CTS/RTS are the gigabit PHY's interrupt and reset lines here.
+    m2RxContinuity(&g_rxUp, &g_rxDown);
     Serial2.begin(115200);
     Serial1.println("serial2=up_115200");
 
@@ -324,6 +399,17 @@ void loop() {
         // R2, so it is a floating header pin picking up interference.
         static uint32_t rxTotal = 0; static int lastByte = -1;
         while (Serial2.available()) { lastByte = Serial2.read(); rxTotal++; }
+        // Pulse BT_INDEPENDENT_RESET and watch the card's UART TX line for any
+        // sign of life. This is the first test with visibility of that line.
+        bool rHi=false; uint32_t rEdges=0;
+        m2PulseBtReset();
+        m2WatchRxLine(150, &rHi, &rEdges);
+        Serial1.print("bt_reset_pulse: rx_any_high=");
+        Serial1.print(rHi);
+        Serial1.print(" rx_edges=");
+        Serial1.println(rEdges);
+        Serial2.begin(115200);                  // hand the pad back to LPUART2
+
         Serial1.print("] serial2_rx: total=");
         Serial1.print(rxTotal);
         Serial1.print(" last=0x");
