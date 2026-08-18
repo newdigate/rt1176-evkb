@@ -1,6 +1,45 @@
 # Acid Box — the audio+display integration capstone
 
-Date: 2026-08-17. Status: approved in session, pending implementation.
+Date: 2026-08-17. Status: **IMPLEMENTED and QEMU-verified 2026-08-18;
+hardware verification still OWED.**
+
+Measured on merge day: full sweep **97 passed, 0 failed, 0 SKIP** (serial,
+`rt1176:dualcore/cm4_audio_test` green first try), `LICENSE-AUDIT: PASS` with
+both new gates' link manifests walked (`display/acid_box` 25691 dep paths,
+`display/synthui_step_test` 24667), each GATES entry mutation-tested so the
+drift check is proven to name it. SynthUI's additions are pushed
+(`f630966`) and the pin in `evkb.cmake` re-resolves under
+`-DEVKB_FORCE_FETCH=ON`.
+
+**Hardware is the outstanding half of the two-gate rule** (§5.2): the bench
+precondition named there — the MCU-Link VCOM's physical replug — was still
+unmet, so nothing in this design has been heard through headphones or seen on
+the glass of a real EVKB. Per this tree's standing rule a QEMU pass is
+necessary and not sufficient, and every device this example touches (WM8962,
+RK055, GT911) is modelled. The honest claim today is "QEMU-verified".
+
+Two deliberate departures from §5.1, both recorded rather than quietly
+absorbed:
+
+- **§5.1.3–4 planned an audio CHECKSUM golden; the gate ships windowed
+  per-step RMS instead.** The integration assertion is the same idea and a
+  stronger one — the same step index reads silent (`< 0.005`) in a bar that
+  completed before the injected tap and sounding (`> 0.02`) in a bar that
+  provably opened after it — but it is stated as thresholds with measured
+  headroom either side (gated steps 0.36–0.44, rests 0.0001–0.0006) rather
+  than as two bit-goldens. That follows the `acid_bass_test` convention for
+  float DSP. A second consequence found in Task 4: bar 1 is not a usable
+  window, because the transport records boundaries strictly inside
+  `(from, to]` and so never emits tick 0 at phase 0.
+- **§5.1's plan-time worry about drag injection did not materialise.** The
+  qemu2 GT911 model takes press-move-release, so the CUTOFF drag is
+  QEMU-covered too — asserted as ≥ 3 strictly decreasing samples, strictly so
+  that a knob latching on its first PRESSING cannot pass.
+
+★ **The gate is RED on a fresh clone by design.** The injected gestures come
+from a `touch-script` property that lives only in the local qemu2 tree, kept
+out of this repo by the GPL one-way firewall. See
+`docs/KNOWN-BROKEN-GATES.md` for the standing arrangement.
 
 ## 1. Goal
 

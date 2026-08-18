@@ -273,6 +273,7 @@ examples/audio/i2s_int_test:i2s_int_test examples/audio/sai_rx_test:sai_rx_test 
 examples/audio/sd_wav_play_test:sd_wav_play_test \
 examples/audio/step_seq_test:step_seq_test examples/audio/tone_test:tone_test \
 examples/audio/transport_test:transport_test \
+examples/display/acid_box:acid_box \
 examples/display/camera_preview_synth:camera_preview_synth \
 examples/display/lvgl_ili9341_test:lvgl_ili9341_test \
 examples/display/lvgl_pxp_copy_bench:lvgl_pxp_copy_bench \
@@ -288,6 +289,7 @@ examples/display/rk055_panel_test:rk055_panel_test \
 examples/display/rk055_touch_test:rk055_touch_test \
 examples/display/rpi_panel_test:rpi_panel_test \
 examples/display/synthui_knob_test:synthui_knob_test \
+examples/display/synthui_step_test:synthui_step_test \
 examples/display/vglite_lvgl_test:vglite_lvgl_test \
 examples/display/vglite_probe:vglite_probe \
 examples/dualcore/cm4_audio_test:cm4_audio_test \

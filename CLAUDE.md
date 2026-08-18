@@ -106,7 +106,9 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **95 gates** (94 before
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **97 gates** (96 before the
+Acid Box capstone added its integration gate `display/acid_box`; 95 before the
+same capstone added `display/synthui_step_test`; 94 before
 VGLite Phase 2 added `display/vglite_lvgl_test`; 93 before
 VGLite Phase 1 added `display/vglite_probe`; 92 before the
 SynthUI Knob pilot added `display/synthui_knob_test`; 91 before the
@@ -125,16 +127,25 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **95 passed, 0 failed, 0 SKIP**, or
-**94 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **97 passed, 0 failed, 0 SKIP**, or
+**96 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
-✅ **Measured 2026-08-17: 95 passed, 0 failed, 0 SKIP.** A fully clean sweep
-on the merge of VGLite Phase 2 (`display/vglite_lvgl_test` added),
-`rt1176:dualcore/cm4_audio_test` included, with `LICENSE-AUDIT: PASS` the
-same day — the new gate's manifest walked at 24663 dep paths. Note the
-runner prints only non-zero categories, so `gates: 95 passed` with exit 0 IS
-`95 / 0 / 0` — don't go looking for the zeros. (Previous baseline
-2026-08-16: 94/0/0 on the Phase 1 merge.)
+★ **That target is for THIS machine.** `display/acid_box` joins the standing
+fresh-clone-red set: its injected gestures come from the `touch-script`
+property on qemu2's `imxrt.gt911`, a LOCAL-ONLY change kept off this repo by
+the GPL firewall, exactly like `sai1-rxinject` and the rt1062 halves of
+`usb/usb_descriptor_survey` and `dualcore/cm4_usb_irq_probe`. A clean clone
+sees it red for that reason and not as a regression.
+
+✅ **Measured 2026-08-18: 97 passed, 0 failed, 0 SKIP.** A fully clean serial
+sweep on the Acid Box capstone branch (`display/synthui_step_test` and
+`display/acid_box` added), `rt1176:dualcore/cm4_audio_test` included and green
+in 3 s on the first run — no re-run needed. `LICENSE-AUDIT: PASS` the same day,
+with both new manifests walked: `display/acid_box` at 25691 dep paths and
+`display/synthui_step_test` at 24667. Note the runner prints only non-zero
+categories, so `gates: 97 passed` with exit 0 IS `97 / 0 / 0` — don't go
+looking for the zeros. (Previous baselines 2026-08-17: 95/0/0 on the VGLite
+Phase 2 merge; 2026-08-16: 94/0/0 on the Phase 1 merge.)
 
 ★ **`display/vglite_lvgl_test` gates the SOFTWARE build of a two-build
 example.** The GPU build (`build-vglite/`, LVGL's VG_LITE unit on the GC355)
