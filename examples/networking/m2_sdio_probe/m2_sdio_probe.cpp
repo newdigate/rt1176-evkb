@@ -12,6 +12,11 @@
 #include <SdioHost.h>
 #include <SdioFunc.h>
 #include <Iw416.h>
+#if HAVE_WIFI_CREDS
+// Generated at configure time from -DM2RADIO_WIFI_SSID/-DM2RADIO_WIFI_PSK.
+// Lives only in the (gitignored) build dir -- the PSK is never committed.
+#include "wifi_creds.h"
+#endif
 
 static SdioHost sdio;
 static SdioFunc sdioFunc(sdio);
@@ -44,6 +49,18 @@ static const uint8_t g_monChannel = 4;
 static SdioHost::Status g_monitor = SdioHost::CMD_TIMEOUT;
 static Iw416::MonitorFrame g_monFrames[6];
 static uint8_t g_monCount = 0;
+#if HAVE_WIFI_CREDS
+// W6 stage 1: hand the firmware the passphrase for the target SSID.  The
+// scan entry that matches M2_WIFI_SSID carries the RSN IE that ASSOCIATE
+// (stage 2) will echo back.
+static SdioHost::Status g_supp = SdioHost::CMD_TIMEOUT;
+static int     g_wpaApIdx = -1;     // index into g_scanAps of the target, or -1
+static uint8_t g_wpaRsnLen = 0;
+static uint8_t g_wpaRatesLen = 0;
+static SdioHost::Status g_assoc = SdioHost::CMD_TIMEOUT;
+static SdioHost::Status g_connect = SdioHost::CMD_TIMEOUT;
+static uint8_t g_assocAttempts = 0;   // attempts until connect, or the cap
+#endif
 #endif
 
 // ---------------------------------------------------------------------------
@@ -552,6 +569,60 @@ static void reportProbe() {
             }
             Serial1.println();
         }
+
+#if HAVE_WIFI_CREDS
+        // W6 stage 1: the target found in the scan (with its RSN IE), and the
+        // firmware's acceptance of the passphrase.  supp=ok result=0 means the
+        // embedded supplicant took the PSK; rsn_len>0 means the RSN IE that
+        // ASSOCIATE (stage 2) needs was captured.  The PSK itself is never
+        // printed.
+        Serial1.print("wpa_target=\"");
+        Serial1.print(M2_WIFI_SSID);
+        Serial1.print("\" found=");
+        Serial1.print(g_wpaApIdx >= 0 ? 1 : 0);
+        Serial1.print(" rsn_len=");
+        Serial1.print(g_wpaRsnLen);
+        Serial1.print(" rates_len=");
+        Serial1.println(g_wpaRatesLen);
+        // Dump the target's RSN IE so the AKM suite and RSN Capabilities are
+        // visible: this separates "wrong PSK" (plain PSK AKM 00-0F-AC-02, PMF
+        // clear -> reason 15 means the password) from a PMF/SHA256 requirement
+        // this minimal ASSOCIATE would need to handle (a code gap).
+        if (g_wpaApIdx >= 0) {
+            Serial1.print("wpa_rsn_ie=");
+            for (uint8_t b = 0; b < g_scanAps[g_wpaApIdx].rsnLen; b++) {
+                if (g_scanAps[g_wpaApIdx].rsnIe[b] < 0x10) Serial1.print('0');
+                Serial1.print(g_scanAps[g_wpaApIdx].rsnIe[b], HEX);
+            }
+            Serial1.println();
+        }
+        Serial1.print("supplicant_pmk=");
+        Serial1.print(statusName(g_supp));
+        Serial1.print(" result=0x");
+        Serial1.println(iw416.lastSuppResult(), HEX);
+        // W6 stage 2: association.  assoc_status=0 means the 802.11
+        // association AND (for WPA2) the 4-way handshake completed -- a wrong
+        // PSK shows here as a non-zero status.
+        Serial1.print("associate=");
+        Serial1.print(statusName(g_assoc));
+        Serial1.print(" cap_info=0x");
+        Serial1.print(iw416.assocCapInfo(), HEX);
+        Serial1.print(" assoc_status=");
+        Serial1.println(iw416.assocStatus());
+        // W6 stage 3: the handshake result.  connect=ok means
+        // EVENT_PORT_RELEASE arrived -- the WPA2 4-way handshake completed and
+        // the port is authorized, which only happens with the correct PSK.
+        Serial1.print("connect=");
+        Serial1.print(statusName(g_connect));
+        Serial1.print(" attempts=");
+        Serial1.print(g_assocAttempts);
+        Serial1.print(" last_event=0x");
+        Serial1.print(iw416.lastEvent(), HEX);
+        // For last_event=0x8 (DEAUTHENTICATED) the low bytes of event_info are
+        // near the IEEE reason: 0x0F = 4-way handshake timeout (wrong PSK).
+        Serial1.print(" event_info=0x");
+        Serial1.println(iw416.lastEventInfo(), HEX);
+#endif
 #else
         // Everything above -- download and host commands alike -- needs the
         // blob, and g_hwSpec/g_mac only exist when it was supplied.  Keeping
@@ -639,6 +710,44 @@ void setup() {
                 // W5: capture raw 802.11 frames in monitor mode for 3 s.
                 g_monitor = iw416.captureMonitor(g_monFrames, 6, &g_monCount,
                                                  3000, g_monChannel);
+#if HAVE_WIFI_CREDS
+                // W6 stage 1: locate the target SSID in the scan (for its RSN
+                // IE), then hand the firmware the passphrase.  Monitor mode is
+                // already disabled by captureMonitor() above.
+                for (uint8_t i = 0; i < g_scanCount; i++) {
+                    if (strcmp(g_scanAps[i].ssid, M2_WIFI_SSID) == 0) {
+                        g_wpaApIdx = i;
+                        g_wpaRsnLen = g_scanAps[i].rsnLen;
+                        g_wpaRatesLen = g_scanAps[i].ratesLen;
+                        break;
+                    }
+                }
+                g_supp = iw416.setPassphrase(M2_WIFI_SSID, M2_WIFI_PSK);
+                // W6 stage 2: associate to the target.  For WPA2 the firmware
+                // runs the 4-way handshake inside this call using the PMK just
+                // cached, so success means associated AND authenticated.
+                if (g_supp == SdioHost::OK && g_wpaApIdx >= 0) {
+                    // Associate + wait for the 4-way handshake, retrying: at a
+                    // marginal signal the multi-round-trip association/handshake
+                    // often times out mid-exchange (a firmware-internal error,
+                    // cap_info in 0xFFFx) even though the command is correct.
+                    // A retry that eventually connects proves it is transient,
+                    // not a code fault.
+                    for (uint8_t a = 1; a <= 6; a++) {
+                        g_assocAttempts = a;
+                        g_assoc = iw416.associate(g_scanAps[g_wpaApIdx]);
+                        if (g_assoc == SdioHost::OK) {
+                            g_connect = iw416.waitForConnect(6000);
+                            if (g_connect == SdioHost::OK) break;
+                            // A deauth/MIC during the handshake (CMD_CRC) is a
+                            // definitive failure -- typically a wrong PSK.
+                            // Retrying only hammers the AP, so stop.
+                            if (g_connect == SdioHost::CMD_CRC) break;
+                        }
+                        delay(500);
+                    }
+                }
+#endif
             }
         }
     }

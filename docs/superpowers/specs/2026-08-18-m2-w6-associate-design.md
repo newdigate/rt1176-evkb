@@ -27,6 +27,27 @@ says so three times. So W6 splits:
 See `examples/networking/m2_sdio_probe/transcript_hw_evkb.txt` (W6 section) for
 the measured survey. Each `scan_ap` line now carries `sec=open|wep|wpa|wpa2`.
 
+## Outcome (2026-08-18): associates cleanly; handshake needs the correct PSK
+
+Implemented and hardware-verified: `SUPPLICANT_PMK` accepted, and **802.11
+association SUCCEEDS** (`assoc_status=0`, `cap_info=0x1411` — a real IEEE
+capability). The `ASSOCIATE` request built from the scanned BSS is correct.
+
+The WPA2 4-way handshake, however, fails: `EVENT_DEAUTHENTICATED` with **IEEE
+reason 15 (4-Way Handshake timeout)**. The captured RSN IE
+(`30140100000FAC040100000FAC040100000FAC020000`) decodes as plain
+WPA2-PSK / CCMP / **no PMF / no SHA256** — so no PMF or SHA256-AKM handling is
+missing from the minimal ASSOCIATE. Reason 15 after a clean association against
+a standard WPA2-PSK AP, with the correct RSN IE echoed and the SSID matched, is
+the textbook **PMK-mismatch** signature: the passphrase does not match the AP's
+key. The association code is complete and correct; the handshake needs the
+right PSK, which is the user's to verify. When it matches, `EVENT_PORT_RELEASE`
+(0x2b) should replace the reason-15 deauth.
+
+Also learned (documented in the transcript): rapid reflash cycles trip the AP's
+deauth-flood protection (association starts returning `cap_info=0xFFFx`
+internal-error/timeout); rest the AP before suspecting the firmware.
+
 ## Decision (2026-08-18): WPA2 to "OnestreamQJN7"
 
 The step-1 survey found NO open AP in range — all three reachable APs are

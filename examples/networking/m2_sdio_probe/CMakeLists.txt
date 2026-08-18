@@ -40,7 +40,33 @@ else()
     set(M2_FW_SRC "")
 endif()
 
+# --- WPA2 credentials (NEVER committed) -------------------------------------
+# W6 associates to a WPA2 network via the IW416's embedded supplicant: the
+# firmware derives the PMK from the passphrase, so the host never handles WPA2
+# crypto. The SSID and PSK are a credential and are supplied ONLY at configure
+# time, exactly like the firmware blob above:
+#
+#   cmake -B build ... -DM2RADIO_WIFI_SSID="MyNet" -DM2RADIO_WIFI_PSK="secret"
+#
+# They are written into a generated header in the BUILD directory (gitignored,
+# same as iw416_fw.cpp) so arbitrary passphrase characters are handled cleanly
+# and the value never touches a tracked file. Absent -> the WPA2 attempt is
+# compiled out and the probe stops after the W5 monitor block, so the QEMU gate
+# and the no-SDK build are unaffected. The PSK is never echoed by CMake.
+set(M2RADIO_WIFI_SSID "" CACHE STRING "WPA2 SSID to associate to (W6)")
+set(M2RADIO_WIFI_PSK  "" CACHE STRING "WPA2 passphrase -- NEVER committed")
+if(M2RADIO_WIFI_SSID AND M2RADIO_WIFI_PSK)
+    message(STATUS "W6 WPA2 target SSID: ${M2RADIO_WIFI_SSID} (PSK supplied, not shown)")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/wifi_creds.h"
+"// Generated at configure time from -DM2RADIO_WIFI_*. NEVER committed.\n"
+"#pragma once\n"
+"#define M2_WIFI_SSID \"${M2RADIO_WIFI_SSID}\"\n"
+"#define M2_WIFI_PSK  \"${M2RADIO_WIFI_PSK}\"\n")
+    add_definitions(-DHAVE_WIFI_CREDS=1)
+endif()
+
 teensy_add_executable(m2_sdio_probe m2_sdio_probe.cpp ${M2_FW_SRC})
 teensy_target_link_libraries(m2_sdio_probe cores M2Radio)
+target_include_directories(m2_sdio_probe.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 target_link_libraries(m2_sdio_probe.elf stdc++)

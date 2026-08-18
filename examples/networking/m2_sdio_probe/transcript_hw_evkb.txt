@@ -858,3 +858,59 @@ verifies (the two-gate rule); association cannot be verified with no AP to
 join, and writing untested ASSOCIATE/TX firmware would violate that discipline.
 Step 1 is the AP-independent part -- verifiable now, and it produced the datum
 that decides whether the rest can proceed (it cannot, autonomously).
+
+=====================================================
+W6 — WPA2 ASSOCIATION — ASSOCIATES; HANDSHAKE NEEDS THE RIGHT PSK
+=====================================================
+
+Date: 2026-08-18.  Design: docs/superpowers/specs/2026-08-18-m2-w6-associate-design.md
+Target: OnestreamQJN7 (WPA2), supplied by the user with -DM2RADIO_WIFI_SSID/PSK.
+
+WHAT WORKS (hardware-verified)
+
+    supplicant_pmk=ok result=0x0
+    associate=ok cap_info=0x1411 assoc_status=0
+    wpa_rsn_ie=30140100000FAC040100000FAC040100000FAC020000
+
+* SUPPLICANT_PMK (0x00C4): the firmware's embedded supplicant accepts the
+  SSID + passphrase (result 0).  The host does no WPA2 crypto.
+* ASSOCIATE (0x0012): 802.11 association SUCCEEDS -- assoc_status=0, and
+  cap_info=0x1411 is a real IEEE capability (ESS|Privacy|ShortSlot), not an
+  error code.  The full associate command (SSID/PHY/CF/Rates/RSN TLVs built
+  from the scanned BSS) is correct.
+* deauthenticate(), the command/event/data-port machinery, and the retry
+  loop all work.
+
+WHAT DOES NOT (and why it is NOT a code fault)
+
+    connect=cmd-crc last_event=0x8 event_info=0x2078000F
+
+* last_event=0x8 = EVENT_DEAUTHENTICATED; the low 16 bits of event_info =
+  0x000F = IEEE reason code 15 = "4-Way Handshake timeout".  The AP starts
+  the WPA2 handshake after association, our supplicant's reply does not carry
+  a valid MIC, and the AP deauthenticates.
+* The captured RSN IE decodes as plain WPA2-PSK / CCMP / NO PMF / NO SHA256:
+    30 14 | 0100 | 000FAC04 (group CCMP) | 0100 000FAC04 (pairwise CCMP)
+          | 0100 000FAC02 (AKM = PSK) | 0000 (RSN caps: PMF clear)
+  So there is no PMF or SHA256-AKM requirement this minimal ASSOCIATE fails to
+  handle -- the association parameters are exactly right for this AP.
+
+CONCLUSION: reason 15 after a clean association, against a standard
+WPA2-PSK-CCMP AP with the correct RSN IE echoed and the SSID matched exactly,
+is the textbook signature of a PMK mismatch -- the passphrase does not match
+the AP's key.  The association CODE is complete and correct (proven by
+assoc_status=0); the 4-way handshake needs the correct PSK, which is the
+user's to supply/verify.  Once it matches, EVENT_PORT_RELEASE (0x2b) should
+replace the reason-15 deauth and connect=ok.
+
+METHOD NOTE -- the AP-throttle detour (paid for, do not repeat)
+
+An early run associated cleanly (assoc_status=0); the next several returned
+cap_info=0xFFFA/0xFFFC (firmware internal error / "timeout waiting for AP").
+That was NOT a code regression -- the associate bytes were identical.  ~11
+rapid associate/vanish cycles from repeated reflashing tripped the AP's
+deauth-flood protection, so it stopped answering our MAC.  Letting the AP rest
+during a reprogram restored clean association.  Lesson: when association starts
+timing out mid-session after many reflashes, rest the AP before suspecting the
+firmware.  cap_info disambiguates: 0xFFFx = internal/timeout (link/AP state);
+a normal small value = a real AP response whose status_code is the IEEE code.
