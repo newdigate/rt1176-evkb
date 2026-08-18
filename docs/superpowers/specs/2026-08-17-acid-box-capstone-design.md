@@ -11,12 +11,32 @@ drift check is proven to name it. SynthUI's additions are pushed
 (`f630966`) and the pin in `evkb.cmake` re-resolves under
 `-DEVKB_FORCE_FETCH=ON`.
 
-**Hardware is the outstanding half of the two-gate rule** (§5.2): the bench
-precondition named there — the MCU-Link VCOM's physical replug — was still
-unmet, so nothing in this design has been heard through headphones or seen on
-the glass of a real EVKB. Per this tree's standing rule a QEMU pass is
-necessary and not sufficient, and every device this example touches (WM8962,
-RK055, GT911) is modelled. The honest claim today is "QEMU-verified".
+**Hardware, attempted 2026-08-18 — the UI is PROVEN, the instrument is NOT.**
+Full account in `examples/display/acid_box/transcript_hw_evkb.txt`.
+
+- ✅ The boot frame is **pixel-identical to the QEMU golden on silicon**
+  (`0xD3BC88D7` both sides), and the step lane matches `kPreset[]` cell for
+  cell by eye. The widget layer, the layout arithmetic and the preset load are
+  correct on real hardware. `synthui_step_test` likewise reproduced its golden
+  `0xCE619CE1` bit-for-bit and runs stably.
+- ❌ **The CM7 then LOCKS UP at ~1.739 s**: `PC=0xFFFFFFFE`, systick frozen,
+  `GT911::begin` never entered (`_err=None`, `_i2cStatus=0` — the I2C
+  transaction never happened) while `s_sum` holds its correct final value,
+  bracketing the death between `acid_box.cpp:591` and `:603`. It is
+  app-specific, not the bench: `synthui_step_test` ran to 22.6 s on the same
+  board in the same session. No fault handler ran, which narrows it to a fault
+  that could not be stacked or was taken with faults masked.
+- ❌ Nothing has been **heard**. §5.2's by-ear ritual and touch-on-glass are
+  both still owed, and are blocked behind the lockup.
+- ⚠ Separately, the MCU-Link VCOM carries **zero bytes for two independent
+  images** and survived a physical replug, so no UART tokens were capturable;
+  every hardware claim above is SWD-derived. Useful precedent: framebuffer
+  dumps plus symbol reads were enough to prove the UI and characterise the
+  lockup without a serial console at all.
+
+So §1's goal is **not met on hardware yet**. The QEMU gate covers the same
+ground in software and passes; per this tree's standing rule that is necessary
+and not sufficient.
 
 Two deliberate departures from §5.1, both recorded rather than quietly
 absorbed:
