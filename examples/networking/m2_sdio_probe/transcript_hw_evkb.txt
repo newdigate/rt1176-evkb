@@ -772,3 +772,57 @@ One reporting caveat, deliberate: the resp_*/cmd_rd_len fields in the
 hw_spec line show the LAST command-port packet, which after W4 is the scan
 response (0x8006/1536), not GET_HW_SPEC's.  They are live evidence, not a
 per-command record.
+
+=====================================================
+W5 — DATA-PATH RX (MONITOR MODE) — REAL 802.11 FRAMES
+=====================================================
+
+Date: 2026-08-18.  Design: docs/superpowers/specs/2026-08-18-m2-w5-monitor-design.md
+
+    monitor=ok result=0x0 frames=16 ch=4
+    mon_dbg: uploads=17 reads=16 status_or=0x1 bitmap_or=0xFFFF rxtype_or=0x5 last_pkttype=0x0
+    mon_fr0: fc=0x80 ta=78:20:51:8F:19:5E rssi=-81 len=425 bssid=78:20:51:8F:19:5E ssid="OnestreamQJN7"
+    mon_fr1: fc=0x80 ta=7A:20:51:4F:19:5E rssi=-82 len=338 bssid=7A:20:51:4F:19:5E ssid=""
+    mon_fr2: fc=0x80 ta=7A:20:51:5F:19:5E rssi=-82 len=338 bssid=7A:20:51:5F:19:5E ssid=""
+    mon_fr3: fc=0x94 ta=F8:0D:60:34:50:08 rssi=-73 len=28
+    mon_fr4: fc=0x80 ta=78:20:51:8F:19:5E rssi=-82 len=425 bssid=78:20:51:8F:19:5E ssid="OnestreamQJN7"
+
+A BEACON (fc=0x80) from BSSID 78:20:51:8F:19:5E / SSID "OnestreamQJN7" -- the
+exact AP W4's scan reported -- captured LIVE off the air in monitor mode, plus
+a Block Ack control frame (fc=0x94) from an Apple device (F8:0D:60). The
+mgmt|ctrl|data filter (0x07) is working. This is the data-path RX proof: raw
+802.11 frames the firmware pulled from the air and DMA'd up the SDIO data port.
+
+How it works (design doc has the full layout):
+
+    NET_MONITOR (0x0102, action SET, activity 1, filter 0x07, ch 4) -- accepted
+      resp_cmd=0x8102 result=0.  The firmware DOES carry CONFIG_NET_MONITOR.
+    Then the reusable data-port read: poll HOST_INT_STATUS for UP_LD (bit 0,
+      the DATA port -- distinct from the command port's bit 6), read RD_BITMAP
+      (0x10/0x11), take the lowest set port, length from RD_LEN_P<n>
+      (0x18 + 2n), CMD53-read at ioport|n.
+    Each buffer: [u16 size][u16 pkttype=0 DATA] then RxPD; the 802.11 frame is
+      at INTF_HEADER_LEN + rx_pkt_offset, length rx_pkt_length, rx_pkt_type =
+      PKT_TYPE_802DOT11 (5). RSSI dBm = snr - nf (RxPD).
+
+THE frames=0 THAT WAS NOT A BUG
+--------------------------------
+
+The FIRST W5 flash reported frames=0 with monitor=ok result=0. It was tempting
+to treat that as a driver bug and start changing the RX path.  Instead the
+capture was instrumented (mon_dbg: uploads / reads / bitmap_or / rxtype_or /
+last_pkttype) and reflashed.  The counters are PURELY observational -- they
+cannot make frames appear -- and the next window captured 16.  So the zero was
+never code: it was a transient.  The AP is marginal this session (-81..-85 dBm,
+vs -74 when W4 ran), and a 3 s window caught a fade.  The RX code was correct
+throughout.
+
+The lasting value: mon_dbg makes a zero self-diagnosing.  uploads=0 -> quiet
+air (no firmware upload).  uploads>0 reads=0 -> interrupt/bitmap mismatch.
+reads>0 rxtype_or without bit 0x5 -> frames arrive but not as 802DOT11.  A bare
+frames=0 is ambiguous; the counters are not.  They are kept in the driver for
+that reason -- the same instrument-first discipline W3 and W4 used.
+
+Association (auth + assoc + WPA2) is deferred to W6, where an OPEN test AP can
+be stood up deliberately; monitor mode needed nothing external and proved the
+data path first.

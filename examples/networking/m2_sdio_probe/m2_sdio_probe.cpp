@@ -34,6 +34,13 @@ static SdioHost::Status g_macCtrl = SdioHost::CMD_TIMEOUT;
 static SdioHost::Status g_scan    = SdioHost::CMD_TIMEOUT;
 static Iw416::ScanResult g_scanAps[8];
 static uint8_t g_scanCount = 0;
+// W5: monitor-mode capture on channel 4 (where W4 found the AP).  Real
+// 802.11 frames off the air -- a beacon whose BSSID/SSID match the scan is
+// the un-fakeable proof of the data-path RX.
+static const uint8_t g_monChannel = 4;
+static SdioHost::Status g_monitor = SdioHost::CMD_TIMEOUT;
+static Iw416::MonitorFrame g_monFrames[6];
+static uint8_t g_monCount = 0;
 #endif
 
 // ---------------------------------------------------------------------------
@@ -479,6 +486,64 @@ static void reportProbe() {
             Serial1.print(g_scanAps[i].ssid);
             Serial1.println("\"");
         }
+
+        // W5: monitor-mode capture.  fc=0x80 is a beacon; a beacon whose
+        // bssid/ssid match a scan_ap line above, captured live off the air,
+        // is the data-path RX proof.  frames=0 is reported honestly.
+        Serial1.print("monitor=");
+        Serial1.print(statusName(g_monitor));
+        Serial1.print(" result=0x");
+        Serial1.print(iw416.lastMonResult(), HEX);
+        Serial1.print(" frames=");
+        Serial1.print(iw416.framesSeen());
+        Serial1.print(" ch=");
+        Serial1.println(g_monChannel);
+        // Locate a frames=0: uploads=0 -> firmware sent nothing on the data
+        // port; reads>0 with rxtype_or not showing 0x5 -> data arrives but not
+        // as PKT_TYPE_802DOT11; status_or/bitmap_or show which bits ever set.
+        Serial1.print("mon_dbg: uploads=");
+        Serial1.print(iw416.dbgUploads());
+        Serial1.print(" reads=");
+        Serial1.print(iw416.dbgReads());
+        Serial1.print(" status_or=0x");
+        Serial1.print(iw416.dbgStatusOr(), HEX);
+        Serial1.print(" bitmap_or=0x");
+        Serial1.print(iw416.dbgBitmapOr(), HEX);
+        Serial1.print(" rxtype_or=0x");
+        Serial1.print(iw416.dbgRxTypeOr(), HEX);
+        Serial1.print(" last_pkttype=0x");
+        Serial1.println(iw416.dbgLastPktType(), HEX);
+        for (uint8_t i = 0; i < g_monCount; i++) {
+            Serial1.print("mon_fr");
+            Serial1.print(i);
+            Serial1.print(": fc=0x");
+            Serial1.print(g_monFrames[i].frameControl, HEX);
+            Serial1.print(" ta=");
+            for (int b = 0; b < 6; b++) {
+                if (g_monFrames[i].ta[b] < 0x10) Serial1.print('0');
+                Serial1.print(g_monFrames[i].ta[b], HEX);
+                if (b < 5) Serial1.print(':');
+            }
+            Serial1.print(" rssi=-");
+            Serial1.print(g_monFrames[i].rssi);
+            Serial1.print(" len=");
+            Serial1.print(g_monFrames[i].len);
+            // BSSID + SSID are meaningful only for beacon (0x80) / probe
+            // response (0x50); print them when present.
+            uint8_t sub = (uint8_t)(g_monFrames[i].frameControl & 0xFC);
+            if (sub == 0x80 || sub == 0x50) {
+                Serial1.print(" bssid=");
+                for (int b = 0; b < 6; b++) {
+                    if (g_monFrames[i].bssid[b] < 0x10) Serial1.print('0');
+                    Serial1.print(g_monFrames[i].bssid[b], HEX);
+                    if (b < 5) Serial1.print(':');
+                }
+                Serial1.print(" ssid=\"");
+                Serial1.print(g_monFrames[i].ssid);
+                Serial1.print("\"");
+            }
+            Serial1.println();
+        }
 #else
         // Everything above -- download and host commands alike -- needs the
         // blob, and g_hwSpec/g_mac only exist when it was supplied.  Keeping
@@ -563,6 +628,9 @@ void setup() {
                 g_macCtrl = iw416.macControl(Iw416::MAC_RX_ON | Iw416::MAC_TX_ON |
                                              Iw416::MAC_ETHERNETII);
                 g_scan = iw416.scan(g_scanAps, 8, &g_scanCount);
+                // W5: capture raw 802.11 frames in monitor mode for 3 s.
+                g_monitor = iw416.captureMonitor(g_monFrames, 6, &g_monCount,
+                                                 3000, g_monChannel);
             }
         }
     }
