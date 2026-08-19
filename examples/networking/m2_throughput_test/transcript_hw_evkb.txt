@@ -1,0 +1,51 @@
+m2_throughput_test -- hardware verification on the real MIMXRT1170-EVKB RevC3
+==============================================================================
+Date: 2026-08-19.  Card: u-blox M2-MAYA-W161 (IW416/SD8978), antenna fixed in
+W8, IEEE PS ON (the W10 workaround; delay_to_ps=1000 keeps the card awake
+under load).  Driver: M2Radio @ 60280af (W11 bus counters), lwip @ the W11
+lwipopts bump (TCP_WND/TCP_SND_BUF = 8*MSS).
+
+Rig: the user's HOUSE AP, not the bench ESP -- first association against a
+real WMM AP.  EVKB joins "OnestreamQJN7" (2.4 GHz side), DHCP 192.168.1.102;
+peer is the Mac at 192.168.1.101 on the same router's 5 GHz side
+("OnestreamQJN7_5G", 802.11ac ch36, WPA2 Personal).  The Mac runs
+tput_peer.py and its own byte counts + wall clock are the authoritative
+numbers (the board cannot fake them); board serial lines are cross-checks.
+House PSK handled per the standing rule: session scratchpad -> CMake cache
+-> generated gitignored header only.
+
+W11 BASELINE (before any bottleneck fix):
+
+    Mac (authoritative)                          board cross-check
+    TPUT tcp-rx mbps=9.69                        tcp_rx bytes=12124160 ms=10114 kbps=9590
+    TPUT tcp-tx mbps=4.91                        tcp_tx bytes=6141952  ms=10012 kbps=4907
+    TPUT udp-rx mbps=7.33 (delivered)            STATS rx=6544 (board: 7.20 Mbps/10182 ms)
+    TPUT udp-tx mbps=6.72 loss=0.0%              udp_tx tx=6032 drops=0 ms=10000 kbps=6755
+
+  * tcp-rx is BYTE-EXACT both sides (12,124,160) -- the cross-check discipline
+    from W9 carried over.
+  * udp-rx "loss=98.6%" is the Mac over-offering (~516 Mbps of sendto against
+    a ~10 Mbps link); the DELIVERED 7.33 Mbps is the meaningful figure.
+  * udp-tx: 6032/6032 datagrams arrived -- zero loss board->Mac.
+  * ps= stayed enabled and cycling all run (1/29/20/19/0 by the end);
+    reconnects=0; the first WMM-AP association held throughout.  (The W10
+    erratum regime -- sparse + PS off -- was never entered.)
+
+ATTRIBUTION (from the new bus counters, full 4-test window):
+
+    c53:   +33,472 data CMD53s moving 43.9 MB block-padded = 1,311 B avg
+           -> exactly ONE frame per CMD53, no aggregation.
+    c52tx: +85,680 -> ~5.6 CMD52s per TX frame (wr_bitmap re-reads).
+    c52svc: ~1,000/s at IDLE (HOST_INT_STATUS poll, 1 CMD52 per pass)
+           -> the main loop turns at only ~1 kHz, i.e. EACH SDIO COMMAND
+           COSTS ~1 ms software-inclusive.
+    Sustained active rate: 33,472 frames / ~40 s of tests = ~840 frames/s
+           ~= 1.2 ms per frame -> at ~1.4 KB/frame that IS the measured
+           5-10 Mbps.  The bus transactions per frame, not the air link,
+           are the ceiling.
+
+  The one-fix conclusion (W11 Task 5): amortize the bitmap CMD52s over the
+  ring.  W8's reference trace already proved the fw contract allows it --
+  NXP's host writes successive TX ports from ONE wr_bitmap read while the
+  fw batch-frees at ring top, and RX uploads land on successive ports
+  drainable from ONE rd_bitmap read.  Our driver re-reads per frame.
