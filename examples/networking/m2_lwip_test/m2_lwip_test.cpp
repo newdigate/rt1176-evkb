@@ -163,10 +163,39 @@ static bool wifiConnect() {
 #endif
 }
 
+// M.2 board bring-up preamble, from m2_sdio_probe (W2/W3 evidence there):
+// release SDIO_RST (GPIO_AD_16 = GPIO9.15) then WL_RST/PDn (GPIO_AD_31 =
+// GPIO9.30, reaching PDn via the hand-bridged R404), with the 1 s ROM-boot
+// wait PDn requires, and switch the SDIO pads to 1.8 V.  Without this the
+// card either stays in full power-down or is left in the PREVIOUS image's
+// state and never answers CMD5 -- measured on silicon during W9 bring-up:
+// this exact example fell to the fallback path until the preamble was added.
+#define M2_SDIO_RST_MUX (*(volatile uint32_t *)0x400E814Cu)   // GPIO_AD_16
+#define M2_WL_RST_MUX   (*(volatile uint32_t *)0x400E8188u)   // GPIO_AD_31
+#define M2_SDIO_RST_BIT 15
+#define M2_WL_RST_BIT   30
+
+static void m2ReleaseWifiReset() {
+    M2_SDIO_RST_MUX = 0x10u | 0xAu;                 // SION | ALT10 = GPIO9_IO15
+    M2_WL_RST_MUX   = 0x10u | 0xAu;                 // SION | ALT10 = GPIO9_IO30
+    GPIO9_GDIR |= (1u << M2_SDIO_RST_BIT) | (1u << M2_WL_RST_BIT);
+    GPIO9_DR_CLEAR = (1u << M2_SDIO_RST_BIT) | (1u << M2_WL_RST_BIT);
+    delay(10);
+    GPIO9_DR_SET = (1u << M2_SDIO_RST_BIT);         // SDIO_RST high
+    delay(100);
+    GPIO9_DR_SET = (1u << M2_WL_RST_BIT);           // then WL_RST / PDn high
+    delay(1000);                                    // PDn exit needs ROM boot time
+}
+
 void setup() {
     Serial1.begin(115200);
     delay(50);
     Serial1.println("RT1176 M.2 lwip test up");
+
+    m2ReleaseWifiReset();
+    Serial1.println("m2_wifi_reset=released");
+    sdio.useIoVoltage1V8(true);
+    Serial1.println("sdio_io_voltage=1v8_requested");
 
     s_sdioSt = sdio.begin();
     Serial1.print("sdio_begin="); Serial1.print(statusName(s_sdioSt));

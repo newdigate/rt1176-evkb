@@ -1,0 +1,61 @@
+m2_lwip_test -- hardware verification on the real MIMXRT1170-EVKB RevC3
+========================================================================
+Date: 2026-08-19.  Card: u-blox M2-MAYA-W161 (IW416/SD8978) in J54, antenna
+fixed in W8.  Driver: M2Radio @ the W9 ring/serviceLink/netif commits.
+Oracle: ESP8266 SoftAP "ESP8266TEST", WPA2-PSK, ch6, 192.168.4.1, running
+the session sketch (1 Hz UDP broadcast to :4711, WiFiServer TCP echo on
+:4712, station-event + echo logging on its own serial port).  Dual serial
+capture on one timeline (EVKB MCU-Link VCOM + ESP CP2102).
+
+VERDICT: PASS.  lwip's own DHCP client bound in ~3 s and the raw-API TCP
+echo client ran the whole 3-minute window CLEAN: 86 connects, 86 byte-exact
+echoes, 0 failures, 0 reconnects, RX rings healthy throughout.
+
+Boot (the capture attached mid-boot; the pre-attach lines are the banner,
+m2_wifi_reset=released, sdio_io_voltage=1v8_requested, sdio_begin=ok, and
+the fw download -- identical in shape to m2_sdio_probe's):
+
+    [   7.73] EVKB connect=ok last_event=0x2B          <- WPA2 handshake done
+    [   7.73] EVKB lwip_netif_up
+    [   7.73] EVKB lwip_probe_done
+    [   7.73] EVKB lwip: ip=0.0.0.0 tcp=0/0/0 rx=0 tx=1 ring=1/3/0 reconnects=0
+    [  10.78] EVKB lwip: ip=192.168.4.100 tcp=2/2/0 rx=12 tx=10 ring=10/15/0 reconnects=0
+
+DHCP was lwip's dhcp_start() -- the hand-rolled netlite from m2_sdio_probe
+is not compiled into this example at all.
+
+Steady state, one line per ~3 s; tcp=<attempts>/<byte-exact echoes>/<fails>.
+The ok-counter tracks the attempt-counter one-for-one the entire window:
+
+    [  46.74] EVKB lwip: ip=192.168.4.100 tcp=20/20/0 rx=102 tx=64 ring=0/9/0 reconnects=0
+        ... (every intermediate line the same shape, ok == attempts, fails == 0) ...
+    [ 169.91] EVKB lwip: ip=192.168.4.100 tcp=81/81/0 rx=407 tx=247 ring=23/26/0 reconnects=0
+    [ 178.71] EVKB lwip: ip=192.168.4.100 tcp=86/86/0 rx=431 tx=262 ring=6/18/0 reconnects=0
+
+ESP side of the same timeline (one accept-echo-close per client cycle, 87
+accepts logged, the 87th in flight when the capture window closed):
+
+    [   8.01] ESP  AP: TCP echo 14 bytes
+    [  10.07] ESP  AP: TCP echo 14 bytes
+    ...  (~0.5 Hz, unbroken through the window)
+
+Notes:
+
+* The echo payload is "M2LWIP hello <n>" with a per-attempt counter, and the
+  client verifies the echo BYTE-EXACT (pbuf_memcmp) before counting ok -- an
+  ESP-side fabrication or truncation would count as fail, and none did.
+* ring=T/R/n cycles through the full 32-port SDIO rings with resyncs
+  pinned at 0 -- the W8 ring model holding at ~4 pkt/s TCP + 1 Hz broadcast.
+* Found during this bring-up: the example initially OMITTED the M.2 board
+  preamble (SDIO_RST/WL_RST release + 1.8 V pad switch, m2_sdio_probe's
+  W2/W3 work) and fell to the device-absent fallback on silicon while its
+  QEMU gate stayed green -- QEMU has no card either way, so it CANNOT see
+  this class of omission.  The preamble now lives at the top of setup()
+  with a comment carrying the lesson.  "QEMU pass is necessary, never
+  sufficient", instance N+1.
+* The firmware idle RX-death erratum (sparse traffic, IEEE PS off, dies
+  stochastically at ~14-44 min -- see the W8/W9 soak record in
+  m2_sdio_probe's transcript and the W10 handoff) is NOT hit inside this
+  3-minute window; at this example's ~5 pkt/s it also sits above the
+  observed sparse-traffic trigger regime.  The PS-enable workaround is W10
+  driver work.
