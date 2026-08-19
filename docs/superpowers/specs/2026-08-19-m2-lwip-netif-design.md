@@ -29,12 +29,15 @@ The Wi-Fi sibling of the lwip repo's `port/ethernetif.c`, living in M2Radio
 * `low_level_output`: `pbuf_copy_partial` the chain into a static frame
   buffer, `sendDataFrame()`.  lwip err codes: driver `OK` → `ERR_OK`,
   anything else → `ERR_IF` (lwip retries/timers handle the rest).
-* `bool iw416NetifPoll(struct netif *)` — one service pass: drain
-  `pollLink()` frames (each → `pbuf_alloc(PBUF_RAW, len, PBUF_POOL)`,
-  copy, `netif->input`), map a link drop to `netif_set_link_down` and
-  return false so the app can re-connect.  No RTOS, no IRQs: called from
-  `loop()` alongside `sys_check_timeouts()`, exactly the `lwip_test`
-  pattern.
+* `bool iw416NetifPoll(struct netif *)` — one service pass: deliver every
+  pending frame (each → `pbuf_alloc(PBUF_RAW, len, PBUF_POOL)`, copy,
+  `netif->input`), map a link drop to `netif_set_link_down` and return
+  false so the app can re-connect.  No RTOS, no IRQs: called from `loop()`
+  alongside `sys_check_timeouts()`, exactly the `lwip_test` pattern.
+  (Implementation note, settled at planning: `pollLink()` copies only the
+  FIRST frame per pass and drops the rest by contract, so the driver grows
+  a sink-based `Iw416::serviceLink()` that hands EVERY frame to a callback;
+  `pollLink()` is reimplemented on top of it unchanged for the probe.)
 
 ### 2. `Iw416::connectStation(ssid, psk)` — driver convenience
 
