@@ -122,12 +122,20 @@ static void rxErr(void *, err_t) {         // pcb already freed by lwip
 // are.  Costs 4 CMD52s and is only reached on a stall, so it cannot perturb
 // a healthy run.
 static void freezeDump(const char *why) {
+    // bmOk distinguishes "the fw is offering nothing" from "the bus read
+    // failed" -- both used to print rd_bitmap=0x0, which would send the next
+    // investigation card-side on what is actually a dead bus.
+    bool bmOk = false;
+    uint32_t bm = iw416.probeRdBitmap(&bmOk);
     Serial1.print("tput: FREEZE ("); Serial1.print(why);
-    Serial1.print(") rd_bitmap=0x"); Serial1.print(iw416.probeRdBitmap(), HEX);
+    Serial1.print(") rd_bitmap=0x"); Serial1.print(bm, HEX);
+    Serial1.print(bmOk ? "" : "(BUS READ FAILED)");
     Serial1.print(" wr_bitmap=0x");  Serial1.print(iw416.lastWrBitmap(), HEX);
     Serial1.print(" ring=");         Serial1.print(iw416.txPort());
     Serial1.print("/");              Serial1.print(iw416.rxPort());
     Serial1.print("/");              Serial1.print(iw416.rxRingResyncs());
+    Serial1.print(" stranded=");     Serial1.print(iw416.rxStrandedRecovered());
+    Serial1.print(" drainerr=");     Serial1.print(iw416.rxDrainErrors());
     Serial1.print(" c53=");          Serial1.print(iw416.cmd53Count());
     Serial1.print(" rx_data=");      Serial1.print(iw416.rxDataCount());
     Serial1.print(" rx_drop=");      Serial1.print(iw416.rxDropped());
@@ -590,7 +598,24 @@ void loop() {
             Serial1.print(",c53:");       Serial1.print(iw416.cmd53Count());
             Serial1.print('/');           Serial1.print(iw416.cmd53Bytes());
             Serial1.print(" state=");      Serial1.print(st);
-            Serial1.print(" reconnects="); Serial1.println(s_reconnects);
+            Serial1.print(" reconnects=");  Serial1.print(s_reconnects);
+            // W12 fault-#5 signature.  stranded= counts uploads the driver's
+            // safety net recovered after an upload interrupt was lost.  The
+            // INTERESTING reading is non-zero on an otherwise healthy run:
+            // it means the sticky-interrupt fix (layer 1) still missed one
+            // and the net (layer 2) papered over it.  0 is the healthy value.
+            // drainerr= is how to read a non-zero stranded=: the drain's
+            // error exit deliberately clears the upload bit (to avoid a hot
+            // spin on a failing CMD53) and leaves the net to recover it.  If
+            // drainerr tracks stranded one-for-one, the strands are that
+            // by-design path; if stranded EXCEEDS drainerr, a genuine
+            // layer-1 loss path remains.  resyncs= is the third to watch:
+            // the W12 follow-up widened the net to fire on any pending
+            // upload (not just one at our own ring slot), which can resync
+            // the ring backwards over a stale bit.
+            Serial1.print(" stranded=");    Serial1.print(iw416.rxStrandedRecovered());
+            Serial1.print(" drainerr=");    Serial1.print(iw416.rxDrainErrors());
+            Serial1.print(" resyncs=");     Serial1.println(iw416.rxRingResyncs());
         }
     } else {
         // Fallback (QEMU / no card / no fw): prove the image stays alive.
