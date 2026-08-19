@@ -120,10 +120,12 @@ static bool ssidLooseMatch(const char *a, const char *b) {
 // (ALT10), not GPIO3 (ALT5) -- NXP drives the fast alias -- and BOTH lines are
 // sequenced, 100 ms apart, rather than one.
 //
-// WL_RST is driven even though R404 is DNP on RevC3 (so GPIO_AD_31 does not
-// reach J54 pin 56, which sits high on R829 regardless).  Matching the
-// reference exactly is worth more than saving one register write, and the pad
-// is otherwise idle -- though note it is also Arduino D12/MISO.
+// WL_RST genuinely reaches PDn (J54 pin 56): R404 shipped DNP on RevC3 but
+// was HAND-BRIDGED on this board (see the r404_bridge probe below, which
+// proves conduction at runtime), so the drive here is a real power-down
+// control, not just reference-matching.  This paragraph once said the
+// opposite -- it predated the bridging -- and was left stale until W10.
+// Note the pad is also Arduino D12/MISO.
 //
 // Pad mux registers are local defines because the core header stops at
 // GPIO_AD_14.  RM offsets: GPIO_AD_16 at 14Ch, GPIO_AD_31 at 188h, IOMUXC base
@@ -638,17 +640,17 @@ static void wpaServiceLink() {
         // NOT require a port-release.
         g_supp = iw416.setPassphrase(g_scanAps[g_wpaApIdx].ssid, M2_WIFI_PSK);
         delay(50);
-        g_assoc = iw416.associate(g_scanAps[g_wpaApIdx]);
+        // W10: the reconnect goes through connectStation so IEEE PS is
+        // (re-)enabled on every association -- the fw idle RX-death
+        // workaround.  ps_enable= makes the enable's outcome visible
+        // (ieeePsEnabled() is the reliable signal; see the driver docs).
+        g_assoc = iw416.connectStation(g_scanAps[g_wpaApIdx].ssid, M2_WIFI_PSK);
         g_assocAttempts++;
-        if (g_assoc == SdioHost::OK) {
-            SdioHost::Status w = iw416.watchConnect(2500);   // settle window
-            // CMD_CRC = a deauth/mic arrived -> rejected; OK/TIMEOUT -> up.
-            g_wifiConnected = (w != SdioHost::CMD_CRC);
-            g_connect = g_wifiConnected ? SdioHost::OK : SdioHost::CMD_CRC;
-            if (g_wifiConnected) { g_linkServiceN = 0; netReset(); }
-        } else {
-            g_wifiConnected = false;
-        }
+        Serial1.print("ps_enable=");
+        Serial1.println(iw416.ieeePsEnabled() ? "ok" : "FAILED");
+        g_wifiConnected = (g_assoc == SdioHost::OK);
+        g_connect = g_assoc;
+        if (g_wifiConnected) { g_linkServiceN = 0; netReset(); }
     } else {
         // Connected: service WITHOUT re-associating -- drain RX into the W7
         // IPv4 layer (DHCP/ARP/ICMP above) and watch for a real deauth.
