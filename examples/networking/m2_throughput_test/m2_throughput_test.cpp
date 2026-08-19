@@ -135,7 +135,9 @@ static void freezeDump(const char *why) {
     Serial1.print("/");              Serial1.print(iw416.rxPort());
     Serial1.print("/");              Serial1.print(iw416.rxRingResyncs());
     Serial1.print(" stranded=");     Serial1.print(iw416.rxStrandedRecovered());
+    Serial1.print("/");              Serial1.print(iw416.rxDesyncRecovered());
     Serial1.print(" drainerr=");     Serial1.print(iw416.rxDrainErrors());
+    Serial1.print(" notready=");     Serial1.print(iw416.rxSlotNotReady());
     Serial1.print(" c53=");          Serial1.print(iw416.cmd53Count());
     Serial1.print(" rx_data=");      Serial1.print(iw416.rxDataCount());
     Serial1.print(" rx_drop=");      Serial1.print(iw416.rxDropped());
@@ -609,12 +611,27 @@ void loop() {
             // spin on a failing CMD53) and leaves the net to recover it.  If
             // drainerr tracks stranded one-for-one, the strands are that
             // by-design path; if stranded EXCEEDS drainerr, a genuine
-            // layer-1 loss path remains.  resyncs= is the third to watch:
-            // the W12 follow-up widened the net to fire on any pending
-            // upload (not just one at our own ring slot), which can resync
-            // the ring backwards over a stale bit.
+            // layer-1 loss path remains.  MEASURED in W12: stranded 3-7 per
+            // ~100 blasts with drainerr == 0, so the by-design explanation is
+            // refuted and a real loss path remains.
+            //
+            // W13 added two readings for exactly that.  stranded= is now
+            // ALIGNED/DESYNC: the second number counts recoveries at a slot
+            // other than our own ring position (an interrupt lost AND the ring
+            // desynced), which nothing recovered before and which the net now
+            // enters only after positively reading a NON-ZERO length there --
+            // a set rd_bitmap bit alone is not evidence on this firmware.
+            // notready= is the residual hypothesis: a set bitmap bit whose
+            // RD_LEN reads 0, which readRingPacket reports with the same
+            // CMD_TIMEOUT it uses for "ring empty", so the drain believes it
+            // finished and clears the upload interrupt.  If notready >=
+            // stranded the hypothesis is supported; notready == 0 with
+            // stranded > 0 kills it.  resyncs= is the thrash canary: it must
+            // stay small now that stale bits are no longer chased.
             Serial1.print(" stranded=");    Serial1.print(iw416.rxStrandedRecovered());
+            Serial1.print("/");             Serial1.print(iw416.rxDesyncRecovered());
             Serial1.print(" drainerr=");    Serial1.print(iw416.rxDrainErrors());
+            Serial1.print(" notready=");    Serial1.print(iw416.rxSlotNotReady());
             Serial1.print(" resyncs=");     Serial1.println(iw416.rxRingResyncs());
         }
     } else {
