@@ -1,9 +1,21 @@
 # Continue M.2 Wi-Fi (W10: PS workaround for the fw idle erratum; stack polish)
 
+> **STATUS 2026-08-19: W10 STEP 1 IS DONE AND PROVEN.** IEEE PS is
+> implemented in M2Radio (`connectStation()` enables it on every
+> association; commits `a5d682e..c4f3940`, pushed, pin bumped) and the
+> decisive soak PASSED: ~100 min sparse-traffic PS-on, 2949/2949 pings,
+> zero RX stall, PS counters cycling, confirmfails=0, seqmm=0.  **The
+> canonical erratum record now lives in
+> `examples/networking/m2_sdio_probe/transcript_hw_evkb.txt` (W10
+> section)** — the table below is the historical copy.  Still open from
+> this doc: interrupt-driven SDIO (DAT1), throughput, the optional
+> house-AP arm, optional PSK rotation, and the waitCmdResp clear-hole
+> hardening (noted in the transcript; the soak never tripped it).
+
 u-blox **M2-MAYA-W161** (IW416/SD8978) on **MIMXRT1170-EVKB RevC3**, repo
 `~/Development/rt1176-evkb-m2-maya-w161`, branch **`m2-phase0-serial2`**.
 Driver sibling `~/Development/M2Radio` (master, pushed, pinned at
-**`eeabe28`**).
+**`c4f3940`**).
 
 **Read first:** `examples/networking/m2_lwip_test/transcript_hw_evkb.txt`
 (the W9 proof) and the erratum record below.
