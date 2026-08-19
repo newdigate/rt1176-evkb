@@ -106,7 +106,11 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **98 gates** (97 before W14's
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **101 gates** (98 before W14
+phase 2 added `networking/m2_rx_demo` and its THREE gates at once —
+`run_qemu.sh` (card-absent fallback), `run_qemu_ring.sh` (the W8 32-slot-ring
+regression) and `run_qemu_stranded.sh` (the W12 stranded-upload regression);
+97 before W14's
 QEMU IW416 card model added a SECOND gate to `networking/m2_sdio_probe` —
 `run_qemu_wifi.sh`, the first example in the tree to own two; 96 before W11's
 throughput example added `networking/m2_throughput_test`; 95 before W9's
@@ -129,8 +133,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **98 passed, 0 failed, 0 SKIP**, or
-**97 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **101 passed, 0 failed, 0 SKIP**, or
+**100 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
 ★ **A gate id now carries a `[variant]` suffix when — and only when — its
 example directory holds more than one `run_qemu*.sh`.** W14 made
@@ -146,8 +150,16 @@ the worst outcome this runner can have, so discovery now suffixes the variants �
 Directories with exactly one script are untouched, so all 97 pre-existing ids are
 byte-identical (diffed, not assumed), including the ~38 already named for what
 they test (`run_qemu_lwip.sh`, `run_qemu_usb.sh`, …).
+W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
+THREE scripts, and lists as `rt1176:networking/m2_rx_demo`,
+`…/m2_rx_demo[ring]` and `…/m2_rx_demo[stranded]`.
 
-✅ **Measured 2026-08-19: 98 passed, 0 failed, 0 SKIP** (`gates: 98 passed`,
+✅ **Measured 2026-08-19: 101 passed, 0 failed, 0 SKIP** (`gates: 101 passed`,
+exit 0), on the W14 phase-2b regression gates, run via `/tmp/ev`,
+`rt1176:dualcore/cm4_audio_test` included and green.
+
+The previous count's measurement, kept per convention:
+✅ Measured 2026-08-19: 98 passed, 0 failed, 0 SKIP (`gates: 98 passed`,
 exit 0), on the W14 IW416-model gate, run via `/tmp/ev`,
 `rt1176:dualcore/cm4_audio_test` included and green.
 

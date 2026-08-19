@@ -1,0 +1,38 @@
+==== captured UART ====
+RT1176 M.2 RX demo up
+sdio_begin=ok r4=0x90FF8000
+iw416_begin=ok ioport=0x10000 fw_status=0xFEDC
+hw_spec=ok mac=6C:1D:EB:91:0C:45 fw_release=0x9B105C15 hw_version=0x7201
+demo_ready
+svc frames=0 rx_data=0 rd_bitmap=0x0 wr_bitmap=0x0 ring=0/0/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC2 tx=0 c53=0
+rx_frame 1: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=1 from_slot=16 rx_port_now=17
+rx_frame 2: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=2 from_slot=17 rx_port_now=18
+rx_frame 3: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=3 from_slot=18 rx_port_now=19
+rx_frame 4: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=4 from_slot=19 rx_port_now=20
+rx_frame 5: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=5 from_slot=20 rx_port_now=21
+rx_frame 6: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=6 from_slot=21 rx_port_now=22
+rx_frame 7: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=7 from_slot=22 rx_port_now=23
+tx=ok wr_bitmap=0xFFFFFFFF tx_port_now=1
+rx_frame 8: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=8 from_slot=23 rx_port_now=24
+rx_frame 9: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=9 from_slot=24 rx_port_now=25
+rx_frame 10: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=10 from_slot=25 rx_port_now=26
+svc frames=10 rx_data=10 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFF ring=1/26/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=1 c53=11
+rx_frame 11: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=11 from_slot=26 rx_port_now=27
+rx_frame 12: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=12 from_slot=27 rx_port_now=28
+rx_frame 13: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=13 from_slot=28 rx_port_now=29
+rx_frame 14: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=14 from_slot=29 rx_port_now=30
+rx_frame 15: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=15 from_slot=30 rx_port_now=31
+rx_frame 16: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=16 from_slot=31 rx_port_now=0
+svc frames=16 rx_data=16 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFF ring=1/0/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=1 c53=17
+tx=ok wr_bitmap=0xFFFFFFFE tx_port_now=2
+svc frames=16 rx_data=16 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFE ring=2/0/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=2 c53=18
+svc frames=16 rx_data=16 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFE ring=2/0/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=2 c53=18
+tx=ok wr_bitmap=0xFFFFFFFC tx_port_now=3
+svc frames=16 rx_data=16 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFC ring=3/0/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=3 c53=19
+svc frames=16 rx_data=16 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFC ring=3/0/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=3 c53=19
+tx=ok wr_bitmap=0xFFFFFFF8 tx_port_now=4
+svc frames=16 rx_data=16 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/0/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=4 c53=20
+svc frames=16 rx_data=16 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/0/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=4 c53=20
+demo_done frames=16 rx_data=16 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/0/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=4 c53=20
+alive=1
+PASS: all 16 uploads on ring slots 16-31 delivered in order (W8 regression gate)

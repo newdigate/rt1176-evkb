@@ -1,0 +1,7 @@
+==== captured UART ====
+RT1176 M.2 RX demo up
+sdio_begin=cmd5-no-response r4=0x0
+demo_result=no-card
+alive=1
+alive=2
+PASS: card-absent fallback clean — cmd5-no-response, no ready, no frames

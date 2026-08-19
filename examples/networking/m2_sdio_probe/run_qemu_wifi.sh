@@ -31,6 +31,12 @@
 #     clear-on-read and frame injection are Phase 2 (design doc:
 #     docs/superpowers/specs/2026-08-19-w14-qemu-iw416-design.md). Only Phase 2
 #     can catch a W8- or W12-class bug; this gate would not have caught either.
+#     Phase 2 now EXISTS and lives next door: networking/m2_rx_demo's
+#     run_qemu_ring.sh (W8, the 32-slot ring) and run_qemu_stranded.sh (W12,
+#     the stranded upload), both demonstrated red against a deliberately
+#     un-fixed driver. If you came here looking for data-path coverage, that is
+#     where it is — do not add it to this gate, whose whole value is that it
+#     asserts enumeration alone and needs no blob.
 #   * The model is not silicon. Its request sizes are a uniform chunk (silicon's
 #     are image-derived — it publishes 2049, which is why requested_len is
 #     deliberately NOT asserted below), its CCCR I/O-ready is immediate where a

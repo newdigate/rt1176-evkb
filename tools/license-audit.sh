@@ -344,6 +344,7 @@ examples/gpio-analog/analog_test:analog_test examples/gpio-analog/dac_test:dac_t
 examples/gpio-analog/irq_attach_test:irq_attach_test examples/networking/enet_test:enet_test \
 examples/networking/ethernet_test:ethernet_test examples/networking/lwip_test:lwip_test \
 examples/networking/m2_lwip_test:m2_lwip_test \
+examples/networking/m2_rx_demo:m2_rx_demo \
 examples/networking/m2_sdio_probe:m2_sdio_probe \
 examples/networking/m2_throughput_test:m2_throughput_test \
 examples/networking/native_ethernet_test:native_ethernet_test \

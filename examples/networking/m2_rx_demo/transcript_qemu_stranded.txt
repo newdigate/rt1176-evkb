@@ -1,0 +1,32 @@
+==== captured UART ====
+RT1176 M.2 RX demo up
+sdio_begin=ok r4=0x90FF8000
+iw416_begin=ok ioport=0x10000 fw_status=0xFEDC
+hw_spec=ok mac=6C:1D:EB:91:0C:45 fw_release=0x9B105C15 hw_version=0x7201
+demo_ready
+svc frames=0 rx_data=0 rd_bitmap=0x0 wr_bitmap=0x0 ring=0/0/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC2 tx=0 c53=0
+rx_frame 1: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=1 from_slot=0 rx_port_now=1
+rx_frame 2: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=2 from_slot=1 rx_port_now=2
+tx=ok wr_bitmap=0xFFFFFFFF tx_port_now=1
+rx_frame 3: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=3 from_slot=2 rx_port_now=3
+svc frames=3 rx_data=3 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFF ring=1/3/0 stranded=3/0 drainerr=0 notready=0 int_seen=0xC2 tx=1 c53=4
+rx_frame 4: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=4 from_slot=3 rx_port_now=4
+rx_frame 5: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=5 from_slot=4 rx_port_now=5
+rx_frame 6: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=6 from_slot=5 rx_port_now=6
+svc frames=6 rx_data=6 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFF ring=1/6/0 stranded=6/0 drainerr=0 notready=0 int_seen=0xC2 tx=1 c53=7
+rx_frame 7: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=7 from_slot=6 rx_port_now=7
+rx_frame 8: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=8 from_slot=7 rx_port_now=8
+tx=ok wr_bitmap=0xFFFFFFFE tx_port_now=2
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFE ring=2/8/0 stranded=8/0 drainerr=0 notready=0 int_seen=0xC2 tx=2 c53=10
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFE ring=2/8/0 stranded=8/0 drainerr=0 notready=0 int_seen=0xC2 tx=2 c53=10
+tx=ok wr_bitmap=0xFFFFFFFC tx_port_now=3
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFC ring=3/8/0 stranded=8/0 drainerr=0 notready=0 int_seen=0xC2 tx=3 c53=11
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFC ring=3/8/0 stranded=8/0 drainerr=0 notready=0 int_seen=0xC2 tx=3 c53=11
+tx=ok wr_bitmap=0xFFFFFFF8 tx_port_now=4
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/8/0 stranded=8/0 drainerr=0 notready=0 int_seen=0xC2 tx=4 c53=12
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/8/0 stranded=8/0 drainerr=0 notready=0 int_seen=0xC2 tx=4 c53=12
+tx=ok wr_bitmap=0xFFFFFFF0 tx_port_now=5
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF0 ring=5/8/0 stranded=8/0 drainerr=0 notready=0 int_seen=0xC2 tx=5 c53=13
+demo_done frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF0 ring=5/8/0 stranded=8/0 drainerr=0 notready=0 int_seen=0xC2 tx=5 c53=13
+alive=1
+PASS: 8 uploads recovered with HOST_INT_UP_LD never raised, rxStrandedRecovered()=8 (W12 regression gate)
