@@ -311,3 +311,59 @@ residuals stay OPEN and documented rather than explained away:
   1. an unidentified layer-1 loss path (stranded>0, drainerr=0);
   2. the desync variant of the fault, which the net covers only when the
      firmware's pending upload happens to sit at our own ring slot.
+
+------------------------------------------------------------------------------
+W13: both residuals closed.  The leftover `stranded` is NOT a host bug -- every
+host-side mechanism for losing the interrupt has now been refuted by a counter.
+------------------------------------------------------------------------------
+Date: 2026-08-19 (late).  Driver M2Radio 7aec26b, run through the new
+tools/wifi-soak.sh (this was its first real use).
+
+RESULT: 80 blasts, ONE firmware life, 0 freezes, 1.78 GB moved.
+
+    stranded=3/0   drainerr=0   notready=0   resyncs=14703
+
+RESIDUAL #1 -- three hypotheses, all killed by measurement, in order:
+  1. "the strands are the drain's by-design error-exit clears"
+     -> REFUTED W12: drainerr stayed 0 while stranded climbed.
+  2. "readHostResp branches on its own read, so a shelved CMD_PORT_UPLD is
+     never consumed" (review item M5)
+     -> REFUTED BY INSPECTION, by the implementer, against my instruction:
+        readHostResp accumulates HOST_INT_UP_LD but never branches on it and
+        never clears it, so that shape can strand a COMMAND-port bit only,
+        never a data upload.  The fix landed anyway (it is correct, and the
+        command port has no bitmap to recover from) -- but it is not this.
+  3. "readRingPacket returns CMD_TIMEOUT for both 'bitmap empty' and 'bit set
+     but RD_LEN reads 0', so the drain treats a false-empty as complete and
+     clears the upload bit -- stranding with NO bus error"
+     -> REFUTED THIS RUN: notready=0 with stranded=3.  The drain never once
+        exited on a false empty.  (Instrumented before implementing, exactly
+        because hypothesis 1 had already died that way.)
+
+  With all five HOST_INT_STATUS readers verified to accumulate into
+  m_intPending, and all three host-side loss mechanisms refuted, the
+  remaining explanation is that THE FIRMWARE DOES NOT ALWAYS RAISE
+  HOST_INT_UP_LD for an upload it has queued.  We are not losing the
+  interrupt; there was no interrupt.  If that is right the safety net is not
+  papering over a host bug -- it is the correct and only fix, and
+  `stranded` is a measure of firmware behaviour, not of our defects.
+  Rate: 3 per 80 blasts (~1.4 GB).  Recovery latency <= 64 ms.  NOT further
+  chased: three refutations is enough to stop guessing, and the next
+  evidence would need a bus analyser, not another counter.
+
+RESIDUAL #2 -- desync variant, CLOSED with a positive check.
+  The net now probes the candidate slot's OWN length register before acting
+  (RD_LEN is per-slot: 0x18 + (port<<1), verified against NXP's
+  SDIO_RD_LEN_P0_L + (port<<1)); a stale bitmap bit with zero length is
+  ignored -- no drain, no resync, no counter, ring pointer unmoved.  This is
+  what the W12 `bm != 0` widening should have been.  desync recoveries: 0
+  this run (the variant is real but rare; the check costs 2 CMD52s only when
+  the bitmap is non-empty and our own slot is clear).
+
+RESYNCS, finally understood: 14703 over 80 blasts = ~184/blast, in line with
+  every previous run (~50-230).  Crucially notready=0 means every one of
+  those resyncs then read a REAL packet.  So the ring position routinely
+  lags the firmware and the resync path productively corrects it -- it is
+  normal operation, not damage.  My W12 reading of this counter as "thrash"
+  was wrong twice over (once from comparing absolute counts across unequal
+  runs, once from assuming the resyncs were finding nothing).
