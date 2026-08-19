@@ -113,7 +113,11 @@ fault.  Same day, same rig.
    is a conditional confirm (defer while the data path is active), and
    PS-on would then be safe in BOTH regimes.
 
-3) STANDING TENSION until W12 resolves it: PS ON is required for idle
+3) [WITHDRAWN by W12 -- there is NO PS-vs-load tension.  PS off does not
+   help busy links (it freezes at the same 25% rate), so PS should simply
+   stay ON everywhere: it fixes the idle erratum and costs nothing under
+   load.  Original text follows.]
+   STANDING TENSION until W12 resolves it: PS ON is required for idle
    links (W10 erratum: sparse+PS-off dies in 1-44 min) but kills busy-RX
    links (this fault); PS OFF is the reverse.  A deployment must pick per
    workload.  The committed example keeps PS ON (connectStation default),
@@ -183,3 +187,69 @@ blast that dies.  Reflashing per boot is what W11 failed to hold constant.
   fw's upload port drifting out of sync would produce exactly a pinned-c53,
   fw-still-associated freeze.  Instrument ring=T/R/resyncs + rd_bitmap into
   the freeze dump and reproduce, before changing any code.
+
+------------------------------------------------------------------------------
+W12: FAULT #5 ROOT-CAUSED.  Not PS, not the AP, not the card: a HOST-SIDE
+lost-interrupt bug.  Uploads are stranded when a clear-on-read status bit is
+consumed by a path that does not drain them.
+------------------------------------------------------------------------------
+
+THE CAPTURE (instrumented freeze dump, fired by the 30 s stall valve):
+
+    tput: FREEZE (tcp_rx stall) rd_bitmap=0x20000 wr_bitmap=0xFFFFF800
+          ring=12/17/339 c53=26493 rx_data=17616 rx_drop=0 ps=0/26/16
+
+Read it carefully, because it eliminates every earlier theory at once:
+  * rd_bitmap=0x20000 -> the FIRMWARE has an upload waiting on port 17.
+    The card is alive and offering data.  Not a card-side death.
+  * ring=12/17/... -> the host's own next RX port is ALSO 17.  Host and fw
+    AGREE.  So this is NOT ring desync (the W8 fault) -- the host is
+    parked on exactly the right port and simply never looks.
+  * c53 pinned (26493, unchanged for the rest of the run) -> the host
+    issued NO data CMD53 at all.  Combined with rx_drop=0 this also rules
+    out lwip pbuf exhaustion, which would show frames read and dropped.
+
+MECHANISM: HOST_INT_STATUS (fn1 0x0C) is configured CLEAR-ON-READ.
+serviceLink() drains the data ring only when it sees HOST_INT_UP_LD in ITS
+OWN read (Iw416.cpp ~1195).  But four other paths read the same register and
+throw the data bit away -- above all readHostResp() (~238), which polls it
+every 1 ms while waiting for a command reply, keeping only CMD_PORT_UPLD.
+If an upload's interrupt lands in one of those reads it is consumed and
+lost; the fw does not re-raise an interrupt for an upload that is already
+pending; the frame is stranded in the ring forever and host-visible RX is
+dead until the card is re-downloaded.  rxRingResyncs=339 in the dump is the
+ring model repeatedly patching over the same lossage.
+
+WHY IT LOOKED LIKE EVERYTHING ELSE (three wrong theories, in order):
+  1. "IEEE PS + busy RX" (W11) -- PS commands are host commands, and every
+     host command opens a readHostResp() window, so PS-on genuinely does
+     create extra chances to lose the bit.  But so does any other command,
+     which is why the PS-off arm froze at the same rate.
+  2. "Repeated connections" (W12 morning) -- more blasts = more command
+     traffic = more windows.  A real correlation, not a cause.
+  3. "Poor RF" (W12 midday) -- retries change timing and lengthen the
+     windows.  Again a modulator, not the cause.
+  All three are the same underlying race seen through different lenses.
+  The freeze rate rose and fell with anything that changed how often a
+  data upload could coincide with a command's status poll.
+
+THE FIX (M2Radio, W12): two layers.
+  1. Never discard interrupt bits.  A sticky m_intPending accumulates the
+     bits from EVERY HOST_INT_STATUS reader; serviceLink() consumes them
+     and clears a bit only once it has actually serviced that condition.
+     (This is what NXP's mlan does: interrupt status is accumulated and
+     processed in the main loop, never dropped at the observation site.)
+  2. Self-healing net: on quiet passes, periodically compare the ring's
+     current port against rd_bitmap directly and drain if the fw is
+     holding something, counting rxStrandedRecovered().  Non-zero means an
+     interrupt was lost and the net caught it; a healthy build reads 0.
+     This class of bug has now bitten twice (W8 ring, W12 stranded
+     uploads), so the data path no longer trusts a single edge indication.
+
+METHOD NOTE: this was found by INSTRUMENTING THE FAILURE, not by reasoning
+about it.  Three plausible mechanisms had already been argued convincingly
+and all three were wrong; a single dump of rd_bitmap + ring position at the
+moment of the freeze settled it in one shot.  The dump reads only the
+bitmap registers and deliberately never touches HOST_INT_STATUS -- reading
+that register to diagnose the fault would have consumed the very bits under
+investigation and caused the stall it was meant to explain.

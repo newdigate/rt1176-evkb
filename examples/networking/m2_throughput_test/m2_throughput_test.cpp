@@ -114,11 +114,34 @@ static void rxErr(void *, err_t) {         // pcb already freed by lwip
     s_rxPcb = nullptr;
     Serial1.println("tput: tcp_rx aborted");
 }
+// W12 freeze dump.  Fault #5 wedges host-visible RX after a boot's first
+// blast; the discriminating question is whether the FIRMWARE is still
+// offering uploads.  rd_bitmap != 0 with rx flat => the fw is uploading and
+// OUR ring position has desynced (host-side bug).  rd_bitmap == 0 => the fw
+// stopped uploading (card-side).  ring=T/R/resyncs shows where we think we
+// are.  Costs 4 CMD52s and is only reached on a stall, so it cannot perturb
+// a healthy run.
+static void freezeDump(const char *why) {
+    Serial1.print("tput: FREEZE ("); Serial1.print(why);
+    Serial1.print(") rd_bitmap=0x"); Serial1.print(iw416.probeRdBitmap(), HEX);
+    Serial1.print(" wr_bitmap=0x");  Serial1.print(iw416.lastWrBitmap(), HEX);
+    Serial1.print(" ring=");         Serial1.print(iw416.txPort());
+    Serial1.print("/");              Serial1.print(iw416.rxPort());
+    Serial1.print("/");              Serial1.print(iw416.rxRingResyncs());
+    Serial1.print(" c53=");          Serial1.print(iw416.cmd53Count());
+    Serial1.print(" rx_data=");      Serial1.print(iw416.rxDataCount());
+    Serial1.print(" rx_drop=");      Serial1.print(iw416.rxDropped());
+    Serial1.print(" ps=");           Serial1.print(iw416.psState());
+    Serial1.print("/");              Serial1.print(iw416.psSleeps());
+    Serial1.print("/");              Serial1.println(iw416.psWakes());
+}
+
 // Safety valve: one connection at a time means a peer that vanishes without
 // FIN or RST would wedge the service forever.  30 s with no data -> abort.
 static err_t rxPoll(void *, struct tcp_pcb *pcb) {
     if (millis() - s_rxLastMs > 30000u) {
         Serial1.println("tput: tcp_rx stalled -- abort");
+        freezeDump("tcp_rx stall");
         s_rxPcb = nullptr;
         tputClearCallbacks(pcb);           // else tcp_abort re-enters rxErr
         tcp_abort(pcb);
