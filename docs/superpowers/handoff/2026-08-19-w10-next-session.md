@@ -94,9 +94,10 @@ scratch (e.g. `house_psk.txt`) — NEVER into the repo. Ask before running.
   broadcast :4711, **TCP echo server :4712**, logging on serial. Sketch in
   session scratch `esp_ap/` (recreate: see W9 handoff's description or the
   transcript).
-* EVKB: left running `m2_lwip_test` (bound at 192.168.4.100, ~0.5 Hz TCP
-  echoes + broadcasts ≈ 5 pkt/s — ABOVE the sparse-death regime, so it
-  should hold; its `lwip:` line is the soak instrument. If `rx=` freezes
-  overnight anyway, that's new data: the erratum bites at 5 pkt/s too.)
+* EVKB: left running the W10 soak build of `m2_sdio_probe` (PS on,
+  connected at 192.168.4.100, 2 s pings — the sparse regime, held ~100 min
+  clean; its `net:` line with `ps=` counters is the soak instrument).
+  Note it predates the 96d9915 follow-ups (stale-BSSID ping fix) — reflash
+  before any AP-swap testing.
 * Flash with `LinkServer flash … load` only (plain `run` = ~2 kB/s silent).
 * Sweep from `/tmp/ev` (sun_path); audit with `LICENSE_AUDIT_EVKB=$(pwd)`.
