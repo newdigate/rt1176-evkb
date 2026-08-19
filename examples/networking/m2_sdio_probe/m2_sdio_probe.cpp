@@ -1237,6 +1237,17 @@ void loop() {
         Serial1.print(iw416.txPort()); Serial1.print('/');
         Serial1.print(iw416.rxPort()); Serial1.print('/');
         Serial1.print(iw416.rxRingResyncs());
+        // W10 PS soak instrument: ps=<state>/<sleeps>/<wakes>/<hostwakes>/
+        // <confirmfails> seqmm=<n>.  sleeps flatlining while the link idles =
+        // the HOST_POWER_UP latch defeating PS (watch for it); confirmfails>0
+        // = the confirm send path failing; seqmm>0 = the fw not echoing
+        // seq_num faithfully (would demand the action-based match fallback).
+        Serial1.print(" ps="); Serial1.print(iw416.psState());
+        Serial1.print('/');    Serial1.print(iw416.psSleeps());
+        Serial1.print('/');    Serial1.print(iw416.psWakes());
+        Serial1.print('/');    Serial1.print(iw416.psHostWakes());
+        Serial1.print('/');    Serial1.print(iw416.psConfirmFails());
+        Serial1.print(" seqmm="); Serial1.print(iw416.seqMismatches());
         // Init evidence repeated here because the wifi loop never re-runs
         // reportProbe: a cmd-timeout in any of these three is the first thing
         // to suspect when TX buffers leak.
