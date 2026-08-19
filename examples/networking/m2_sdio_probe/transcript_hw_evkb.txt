@@ -1383,3 +1383,75 @@ finds the CLI/probe already running.
 
 QEMU gate: still green after all of the above (asserts the no-IO-function
 fallback; none of this code runs in QEMU).
+
+================================================================================
+W10 RESULT: the fw idle RX-death erratum is CHARACTERIZED and WORKED AROUND.
+IEEE power-save (NXP's default, which our driver never enabled) is the fix:
+95 min sparse-traffic soak PS-on, 2949/2949 pings, zero RX stall.
+================================================================================
+Date: 2026-08-19.  Rig: same ESP8266 SoftAP oracle (WPA2-PSK ch6, 1 Hz UDP
+broadcast :4711, TCP echo :4712), dual serial capture.  Driver at M2Radio
+c4f3940 (PS_MODE_ENH + sleep-confirm + wake handshake + 8-bit seq wrap).
+
+1) THE ERRATUM (fault #4, discovered in W9's soaks).  With IEEE PS OFF and
+   sparse traffic, the firmware's data-path RX dies stochastically.  The
+   death is FIRMWARE-level: once dead, even its own EAPOL reception is gone
+   (reason-15 loops against a freshly rebooted AP), only a card
+   reset/re-download revives it; an AP reset does not.  All arms
+   silicon-measured 2026-08-19 against the same ESP oracle:
+
+   | Arm                        | PS  | Traffic     | Outcome                       |
+   |----------------------------|-----|-------------|-------------------------------|
+   | M2Radio probe (overnight)  | off | ~1.5 pkt/s  | dead at ~44 min / 3972 frames |
+   | M2Radio probe (soak 2)     | off | ~1.5 pkt/s  | dead at ~19.7 min, clean cliff|
+   | M2Radio probe (this sess.) | off | ~1.5 pkt/s  | dead at ~66 s (see note 3)    |
+   | M2Radio probe (stress)     | off | ~11 pkt/s   | CLEAN 10 min / 6331 frames    |
+   | NXP wifi_cli               | off | ~1.5 pkt/s  | dead at ~14.4 min, identically|
+   | NXP wifi_cli               | ON  | ~1.5 pkt/s  | CLEAN 60 min, 172/172 cycles  |
+
+   Observed onsets now span ~1 to ~44 min.  Busy traffic (~11 pkt/s) is
+   immune.  wifi_cli dying identically PS-off exonerates our host driver;
+   wifi_cli surviving PS-on (NXP's default -- why they never see this)
+   named the workaround.
+
+2) THE WORKAROUND (M2Radio driver work, commits a5d682e..c4f3940):
+   HostCmd 0x00E4 PS_MODE_ENH (EN_AUTO_PS, BITMAP_STA_PS, the 14-byte
+   ps_param TLV 0x0172, mode=auto, delay_to_ps=1000) sent by
+   connectStation() after every association; EVENT_PS_SLEEP (0x0B) answered
+   with sleep-confirm (action=5, resp_ctrl=1); EVENT_PS_AWAKE (0x0A)
+   counted and the fn1 HOST_POWER_UP bit cleared; sendHostCmd/sendDataFrame
+   wake a sleeping card first (CMD52 0x02 -> fn1 reg 0).  Command sequence
+   numbers now wrap at 8 bits and match masked -- mlan's high byte is
+   bss_num/bss_type, and a 16-bit compare hard-fails at command #256, which
+   PS's event chatter reaches quickly.
+
+3) FALSE START, worth keeping: the first PS-on soak attempt showed
+   ps=0/0/0/0/0 and died at ~66 s -- the probe's reconnect path predated
+   connectStation() and never enabled PS at all.  Two lessons: the ps=
+   counters on the status line are the proof the workaround is ACTIVE (a
+   silent enable is indistinguishable from none), and the erratum's onset
+   variance extends down to ~1 min.  The probe now connects via
+   connectStation() and prints ps_enable=ok/FAILED on every association.
+
+4) THE DECISIVE SOAK (PS on, sparse ~1.5 pkt/s -- the killing regime):
+   ~100 min on one association (5-min verify window + 95-min logged soak),
+   1865 status lines, and every counter healthy end to end:
+
+     [   2.06] net: ... ping=149/149   rx_data=310  ps=1/451/301/301/0   seqmm=0
+     [5697.88] net: ... ping=2949/2949 rx_data=5918 ps=1/8566/5716/5774/0 seqmm=0
+
+   * ping 2949/2949 -- 2800 echo round-trips inside the window, ZERO lost
+     (24 lines show sent=ok+1, all in-flight, none a loss).
+   * rx_data climbed monotonically; a 4-min-stall detector armed the whole
+     time never fired.  This soak alone is 2x the longest observed PS-off
+     survival and ~90x the shortest.
+   * PS machinery cycled throughout: +8115 sleeps, +5415 wakes, +5473 host
+     wakes, confirmfails=0.  No wake-latch signature (that would be sleeps
+     flat with hostwakes stalled -- the known clear-hole in waitCmdResp's
+     discard loop, left unhardened since the soak never tripped it).
+   * seqmm=0 across ~14k commands -- the 8-bit wrap handling is clean.
+   * reassocs never moved, dhcp stayed bound, tx_last=ok throughout.
+
+VERDICT: PASS.  IEEE PS is the standing workaround; every association in
+probe and lwip stacks now goes through connectStation() and gets it.  The
+erratum record above supersedes the copy in the W10 handoff doc.
