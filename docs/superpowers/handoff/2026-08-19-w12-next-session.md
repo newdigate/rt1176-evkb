@@ -14,15 +14,18 @@ the REVERTED ring-view fix), **lwip `c6b2548`** (8*MSS windows).
   4-cell measurement rig (TCP/UDP × TX/RX), Mac-authoritative, byte-exact
   cross-checks, re-runnable without reflash. Sweep = **97 gates** (measured
   97/0/0 on close-out). House-AP rig: EVKB on `OnestreamQJN7` (2.4 GHz),
-  Mac peer on the `_5G` side, WPA2, house PSK in session-scratch/gitignored
-  caches ONLY.
+  Mac peer on the `_5G` side, WPA2. W11's own handling of the house PSK was
+  scratchpad + gitignored caches only — but see the CREDENTIAL EXPOSURE
+  section below: an EARLIER phase had already committed it.
 * **Baseline capability (PS-on, the lucky clean run):** tcp-rx 9.69 /
   tcp-tx 4.91 / udp-rx 7.33 delivered / udp-tx 6.72 Mbps. 2.4 GHz air
   variance spans ~4.8-9.7 on identical configs — treat as a floor.
 * **Driver bus counters** (M2Radio): cmd52PollsTx/Svc, cmd53Count/Bytes/
   ByteMode + accessors; reset per fw download. They attributed the ceiling:
-  ONE frame per CMD53, ~5.6 CMD52/TX frame, ~1 ms per SDIO command
-  software-inclusive, ~840 frames/s sustained.
+  ONE frame per CMD53, ~5.6 CMD52/TX frame, **~10 bus commands per frame at
+  ~0.1 ms each** (measured under load; the idle ~1 kHz c52svc rate is
+  serviceLink's own `delay(1)` pacing, NOT command cost — don't budget
+  DAT1/aggregation gains off that number), ~840 frames/s sustained.
 * **A failed fix, kept as history:** cached bitmap views (M2Radio `3a34d2d`,
   REVERTED in `e03d0c5`). Counter-proven regression: burst-then-dry-wait
   vs the fw's batchy free cadence + delay(1) poll granularity ≈ 5 ms/frame.
@@ -56,6 +59,26 @@ a repeat of the W10 sparse soak still clean (don't regress the idle fix!).
 An mcuxsdk cross-read of `wlan_send_sleep_confirm` / `ps_sleep_confirmed`
 gating logic is the reference (same place the W10 byte layouts came from).
 
+## ⚠ CREDENTIAL EXPOSURE — do this before any other W12 work
+
+Found by W11's final review, verified on silicon-era evidence:
+`examples/networking/m2_sdio_probe/transcript_hw_evkb.txt` committed, in
+W6, **the user's live home Wi-Fi password** (3 occurrences) and **a live
+iPhone-hotspot password** (2). W6 excused the first as "almost certainly
+WRONG" — W11 disproved that by associating to OnestreamQJN7 with exactly
+that value.
+
+* **Redacted at HEAD** in W11 (with a correction note in that file).
+* **Still in PUSHED history** on `github.com/newdigate/rt1176-evkb`
+  (branch `m2-phase0-serial2`) — a redaction commit does NOT remove it.
+* **The only real fix is ROTATION** at the router and the phone. The user
+  has been told; if they have not rotated, say so again before starting.
+* Optional additionally: history scrub (`git filter-repo` + force-push) —
+  destructive to a published branch, so ONLY on explicit user instruction.
+* Standing rule this violated, now explicit: a captured credential is
+  redacted BEFORE it is committed, and "we think this value is wrong" is
+  never a reason to commit it.
+
 ## Also open (ranked)
 
 * **DAT1 interrupt-driven SDIO service** — now doubly motivated: kills the
@@ -65,8 +88,10 @@ gating logic is the reference (same place the W10 byte layouts came from).
   unlock beyond ~10 Mbps; W13+ scale.
 * waitCmdResp clear-hole hardening (W10 note; soak signature psSleeps flat
   + psHostWakes stalled — never yet observed).
-* PSK rotation (bench PSK in history at b80ecdc), house PSK stays
-  scratchpad-only.
+* PSK rotation — see the CREDENTIAL EXPOSURE section above (house + hotspot
+  passwords, the urgent ones). The bench ESP PSK is also in history at
+  b80ecdc, but it is a throwaway on a bench-only AP: lowest priority of the
+  three.
 
 ## The test rig (state as left)
 

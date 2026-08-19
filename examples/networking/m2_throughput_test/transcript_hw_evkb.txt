@@ -36,11 +36,15 @@ ATTRIBUTION (from the new bus counters, full 4-test window):
     c53:   +33,472 data CMD53s moving 43.9 MB block-padded = 1,311 B avg
            -> exactly ONE frame per CMD53, no aggregation.
     c52tx: +85,680 -> ~5.6 CMD52s per TX frame (wr_bitmap re-reads).
-    c52svc: ~1,000/s at IDLE (HOST_INT_STATUS poll, 1 CMD52 per pass)
-           -> the main loop turns at only ~1 kHz, i.e. EACH SDIO COMMAND
-           COSTS ~1 ms software-inclusive.
+    c52svc: ~1,000/s at IDLE -- but that is NOT a command-cost measurement:
+           serviceLink's quiet path runs delay(1) per pass (Iw416.cpp), so
+           the idle 1 kHz is the DELAY pacing the loop, not the bus.
+           Measured under load instead (tcp-rx window, 5.98 s, all three
+           counters): 63,029 commands = ~10,500/s -> ~0.1 ms per SDIO
+           command software-inclusive.
     Sustained active rate: 33,472 frames / ~40 s of tests = ~840 frames/s
-           ~= 1.2 ms per frame -> at ~1.4 KB/frame that IS the measured
+           ~= 1.2 ms per frame, consistent with ~10 bus commands per frame
+           at ~0.1 ms each -> at ~1.4 KB/frame that IS the measured
            5-10 Mbps.  The bus transactions per frame, not the air link,
            are the ceiling.
 
@@ -59,8 +63,9 @@ fault.  Same day, same rig.
    cached wr/rd bitmap views to amortize the 4-CMD52 bitmap reads across the
    ring (the contract NXP's host demonstrably uses).  Result on silicon:
    EVERY cell fell -- tcp-rx 9.69->6.93, tcp-tx 4.91->1.44, udp-tx
-   6.72->2.27 Mbps.  The counters say why: c52tx went from ~5.6 to ~22
-   CMD52s/frame (udp-tx phase: +46,144 polls for 2,104 frames).  The cached
+   6.72->2.27 Mbps.  The counters say why, comparing the SAME phase
+   (udp-tx): 8.6 CMD52s/frame before (52,140/6,032) vs 21.9 after
+   (+46,144 polls for 2,104 frames) -- a 2.5x regression.  The cached
    view lets the host burn all ring credits in a fast burst, then sit in the
    dry-wait poll loop (delay(1) per iteration, ~5 ms/frame) while the fw
    frees ports at its own batchy cadence.  The pre-fix read-per-frame
@@ -79,13 +84,16 @@ fault.  Same day, same rig.
              fired; then 100% ping loss; even idle broadcast RX dead).
      PS ON : control #2 -- froze at ~1.0 MB, same signature.
      PS OFF: tcp-rx x3  -- ALL CLEAN (7.60 / 8.10 / 4.83 Mbps).
-     PS ON : tcp-rx x3  -- one completed (2.72 Mbps), two froze.
+     PS ON : tcp-rx x3  -- one completed (2.72 Mbps, degraded), then a
+             freeze; the third attempt hit an already-dead RX path, so it
+             is DOA rather than an independent trial.
 
    Signature matches the W10 erratum (RX dead incl. broadcasts, assoc
    held, no self-recovery, card reset revives) but the REGIME IS THE
-   OPPOSITE: sustained ~7-10 Mbps RX with PS enabled.  Score: PS-off 3/3
-   clean, PS-on 1/5 across the day (the W11 baseline's clean PS-on matrix
-   was the lucky draw).
+   OPPOSITE: sustained ~7-10 Mbps RX with PS enabled.  Honest score:
+   PS-off 3/3 clean; PS-on froze in 3 independent boots and completed
+   1 of 4 fresh trials (+1 DOA).  The W11 baseline's clean PS-on matrix
+   was the lucky draw.
    MECHANISM HYPOTHESIS (unverified, W12's first job): our W10 PS code
    sends the sleep-confirm UNCONDITIONALLY on EVENT_PS_SLEEP -- mlan
    defers the confirm while RX/TX is pending.  Confirming sleep while the

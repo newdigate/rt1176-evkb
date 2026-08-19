@@ -1112,7 +1112,7 @@ cached PMK (PMK TLV 0x0144).  Hardware result (OnestreamQJN7):
 
 The firmware DERIVED a non-zero 32-byte PMK.  And it is the CORRECT one:
 
-    host: PBKDF2-HMAC-SHA1("88195419", "OnestreamQJN7", 4096, 32)
+    host: PBKDF2-HMAC-SHA1("<REDACTED-house-psk>", "OnestreamQJN7", 4096, 32)
         = 2609ff11 f8f76123 ... (fingerprint 2609FF11)  -- EXACT MATCH.
 
 So, definitively:
@@ -1121,13 +1121,25 @@ So, definitively:
   correct passphrase.  Not inert, not a keying bug.
 
 IMPLICATION FOR OnestreamQJN7: the firmware holds the provably-correct PMK for
-"88195419", yet the handshake fails with reason 15 (4-way handshake timeout =
+"<REDACTED-house-psk>", yet the handshake fails with reason 15 (4-way handshake timeout =
 MIC mismatch).  The only way that happens is if the AP's real password is NOT
-"88195419".  So OnestreamQJN7's "88195419" is almost certainly WRONG (the one
+"<REDACTED-house-psk>".  So OnestreamQJN7's "<REDACTED-house-psk>" is almost certainly WRONG (the one
 value the user triple-checked -- but the firmware maths exonerates the code and
 points at the credential).
 
-STILL TO VERIFY -- the iPhone (reason 2, known-good password "gtu111122").
+★ W11 CORRECTION (2026-08-19), and it matters for SECURITY, not just history:
+that PSK was RIGHT all along.  W11 associated to OnestreamQJN7 with exactly
+this value and ran a full throughput matrix over it (see
+m2_throughput_test/transcript_hw_evkb.txt).  W6's reason-15 was the fw idle
+RX-death erratum's EAPOL death (fault #4, W10), not a bad password.
+CONSEQUENCE: the three occurrences above were the user's LIVE home Wi-Fi
+password, committed in plaintext to a PUBLIC repo, and the two below were a
+live phone-hotspot password.  Both are redacted at HEAD as of W11 but REMAIN
+IN PUSHED GIT HISTORY -- rotation at the AP/phone is the only real fix.
+The lesson for this repo: a captured credential must be redacted BEFORE the
+commit, and "we think this one is wrong" is never a reason to commit it.
+
+STILL TO VERIFY -- the iPhone (reason 2, known-good password "<REDACTED-hotspot-psk>").
 Reference PMK fingerprints for that password:
     curly-apostrophe SSID (19 bytes, U+2019, as broadcast) -> 9E6072EE
     straight-apostrophe SSID (17 bytes)                    -> 290E5671
@@ -1148,7 +1160,7 @@ Date: 2026-08-18.  With the hotspot up:
     connect=cmd-crc last_event=0x8 event_info=0xD45E0002  -> reason 2
 
 fp=9E6072EE is an EXACT match to host
-PBKDF2-HMAC-SHA1("gtu111122", <"Nicholas's iPhone" with U+2019, 19 bytes>).
+PBKDF2-HMAC-SHA1("<REDACTED-hotspot-psk>", <"Nicholas's iPhone" with U+2019, 19 bytes>).
 So the firmware holds the CORRECT PMK for the known-good iPhone password, with
 the correct SSID salt (curly apostrophe) -- and the handshake STILL fails.
 

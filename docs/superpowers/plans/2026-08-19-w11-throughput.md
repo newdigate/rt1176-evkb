@@ -191,4 +191,4 @@ git commit -m "networking: m2_throughput_test -- passive TCP/UDP blast services 
 - [x] Push `~/Development/lwip` and `~/Development/M2Radio`; bump BOTH pins in `evkb.cmake`; verify with a `-DEVKB_FORCE_FETCH=ON` configure of the new example.
 - [x] Sweep from `/tmp/ev`: expect **97 passed, 0 failed, 0 SKIP** (or 96/1/0 only if the known nondeterministic dual-core gate is the red one).  Update CLAUDE.md's gate count + measured line.
 - [x] `LICENSE_AUDIT_EVKB=$(pwd) ./tools/license-audit.sh` → PASS.
-- [x] W12 handoff doc; final branch review of controller-authored commits; commit + push branch.
+- [x] W12 handoff doc; final branch review of controller-authored commits (done: CHANGES REQUIRED -> doc fixes landed, incl. the credential-exposure finding); commit + push branch.
