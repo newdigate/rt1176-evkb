@@ -49,3 +49,58 @@ ATTRIBUTION (from the new bus counters, full 4-test window):
   NXP's host writes successive TX ports from ONE wr_bitmap read while the
   fw batch-frees at ring top, and RX uploads land on successive ports
   drainable from ONE rd_bitmap read.  Our driver re-reads per frame.
+
+------------------------------------------------------------------------------
+W11 Task 5: the one fix REGRESSED and was reverted; the attempt exposed a NEW
+fault.  Same day, same rig.
+------------------------------------------------------------------------------
+
+1) THE FIX ATTEMPT (M2Radio 3a34d2d, reviewed+approved, reverted same day):
+   cached wr/rd bitmap views to amortize the 4-CMD52 bitmap reads across the
+   ring (the contract NXP's host demonstrably uses).  Result on silicon:
+   EVERY cell fell -- tcp-rx 9.69->6.93, tcp-tx 4.91->1.44, udp-tx
+   6.72->2.27 Mbps.  The counters say why: c52tx went from ~5.6 to ~22
+   CMD52s/frame (udp-tx phase: +46,144 polls for 2,104 frames).  The cached
+   view lets the host burn all ring credits in a fast burst, then sit in the
+   dry-wait poll loop (delay(1) per iteration, ~5 ms/frame) while the fw
+   frees ports at its own batchy cadence.  The pre-fix read-per-frame
+   pattern was ACCIDENTALLY LOAD-BEARING: it paced the host to exactly the
+   fw's sustainable rate, so the first read nearly always hit.  Lesson: on
+   this fw, amortizing bitmap reads needs interrupt-driven free notification
+   (DAT1) or mlan-style deep TX queueing -- not a passive cache.
+   Reverted (M2Radio revert commit); revert-run counters confirmed the
+   pre-fix idle signature returned.
+
+2) FAULT #5, discovered by the revert's control run: IEEE PS + BUSY RX
+   kills the fw's RX path.  Repeatable A/B/A, all on the reverted
+   (known-good W10) driver, fresh fw download each boot:
+
+     PS ON : control #1 -- tcp-rx froze mid-run at 5.5 MB (stall valve
+             fired; then 100% ping loss; even idle broadcast RX dead).
+     PS ON : control #2 -- froze at ~1.0 MB, same signature.
+     PS OFF: tcp-rx x3  -- ALL CLEAN (7.60 / 8.10 / 4.83 Mbps).
+     PS ON : tcp-rx x3  -- one completed (2.72 Mbps), two froze.
+
+   Signature matches the W10 erratum (RX dead incl. broadcasts, assoc
+   held, no self-recovery, card reset revives) but the REGIME IS THE
+   OPPOSITE: sustained ~7-10 Mbps RX with PS enabled.  Score: PS-off 3/3
+   clean, PS-on 1/5 across the day (the W11 baseline's clean PS-on matrix
+   was the lucky draw).
+   MECHANISM HYPOTHESIS (unverified, W12's first job): our W10 PS code
+   sends the sleep-confirm UNCONDITIONALLY on EVENT_PS_SLEEP -- mlan
+   defers the confirm while RX/TX is pending.  Confirming sleep while the
+   fw has uploads queued plausibly wedges its RX path.  If true, the fix
+   is a conditional confirm (defer while the data path is active), and
+   PS-on would then be safe in BOTH regimes.
+
+3) STANDING TENSION until W12 resolves it: PS ON is required for idle
+   links (W10 erratum: sparse+PS-off dies in 1-44 min) but kills busy-RX
+   links (this fault); PS OFF is the reverse.  A deployment must pick per
+   workload.  The committed example keeps PS ON (connectStation default),
+   which is safe for its idle-between-tests life; expect tcp-rx freezes
+   if you blast it repeatedly -- reflash revives.
+
+4) Numbers caveat, now measured: 2.4 GHz air variance on identical
+   configs spans ~4.8-9.7 Mbps run to run.  The W11 table is a capability
+   floor, not a precision benchmark; the REGRESSION verdict in (1) rests
+   on the counter mechanism, not the Mbps deltas alone.
