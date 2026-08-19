@@ -116,7 +116,7 @@ teensy_declare_library(MipiDisplay    MipiDisplay          https://github.com/ne
 teensy_declare_library(TouchPanel     TouchPanel           https://github.com/newdigate/TouchPanel      d20499c707290985379cb407689eca7f2c14fd08 .) # controller chosen by the importer: import_evkb_library(TouchPanel gt911)
 teensy_declare_library(Audio          Audio                https://github.com/newdigate/Audio           ca1d10fe77afed819d8c2cf01f2a7c714830765f .)
 teensy_declare_library(SdFat          SdFat                https://github.com/newdigate/SdFat           681bfcf83d05beb943e3d905f15d8181bf9072c7 .)
-teensy_declare_library(M2Radio        M2Radio              https://github.com/newdigate/M2Radio         e03d0c570c1bf14b1b16eaf2a820f865389ce412 .) # subdir chosen by the importer: import_evkb_library(M2Radio sdio iw416 [lwip])
+teensy_declare_library(M2Radio        M2Radio              https://github.com/newdigate/M2Radio         84c25208d38aafa38ef3d4a2fc3c85ff368c7087 .) # subdir chosen by the importer: import_evkb_library(M2Radio sdio iw416 [lwip])
 teensy_declare_library(SD             PaulS_SD             https://github.com/newdigate/SD              e28c549918ea34ffb2942fd84deffc7c76a89880 .)
 teensy_declare_library(SerialFlash    SerialFlash          https://github.com/newdigate/SerialFlash     2b6f24168c1ca97af1138c4a5b10255b39c4ad0b .)
 teensy_declare_library(ethernet       Ethernet             https://github.com/newdigate/Ethernet        eebbfebc699a1500864236db21d17abf3cf7535a .)
