@@ -106,7 +106,8 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **96 gates** (95 before W9's
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **97 gates** (96 before W11's
+throughput example added `networking/m2_throughput_test`; 95 before W9's
 lwip-over-Wi-Fi bridge added `networking/m2_lwip_test`; 94 before the
 M.2 SDIO probe added `networking/m2_sdio_probe`; 93 before
 VGLite Phase 1 added `display/vglite_probe`; 92 before the
@@ -126,12 +127,17 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **96 passed, 0 failed, 0 SKIP**, or
-**95 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **97 passed, 0 failed, 0 SKIP**, or
+**96 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
-✅ **Measured 2026-08-19: 96 passed, 0 failed, 0 SKIP** (`gates: 96 passed`,
-exit 0), on the W9 lwip-bridge close-out, run via `/tmp/ev`,
+✅ **Measured 2026-08-19: 97 passed, 0 failed, 0 SKIP** (`gates: 97 passed`,
+exit 0), on the W11 throughput close-out, run via `/tmp/ev`,
 `rt1176:dualcore/cm4_audio_test` included and green.
+
+The previous count's measurement, kept per convention:
+✅ Measured 2026-08-19 (earlier same week): 96 passed, 0 failed, 0 SKIP
+(`gates: 96 passed`, exit 0), on the W9 lwip-bridge close-out, run via
+`/tmp/ev`, `rt1176:dualcore/cm4_audio_test` included and green.
 
 The previous count's measurement, kept for its notes:
 ✅ **Measured 2026-08-17: 95 passed, 0 failed, 0 SKIP.** A fully clean sweep on
