@@ -64,6 +64,14 @@ scratch (e.g. `house_psk.txt`) — NEVER into the repo. Ask before running.
   session scratch logs `soak_run2.txt` / `soak_wifi_cli_psoff.txt` /
   `soak_wifi_cli_pson.txt` / `stress_run1.txt`).
 * Interrupt-driven SDIO service (DAT1) to replace CMD52 status polling.
+* Stale comment cleanup: `m2_sdio_probe.cpp` ~lines 123-126 still says
+  R404 "is DNP... does not reach J54 pin 56" — predates the hand-bridging;
+  the code below it (and m2_lwip_test's preamble comment) has it right.
+* The bench PSK appeared in plaintext in the committed W9 plan doc until
+  redacted at HEAD (still in git history, commit b80ecdc). It is a
+  throwaway for the bench-only ESP AP; rotate it (new value in the
+  gitignored caches + ap_creds.h, reflash ESP + both examples) if that
+  history bothers anyone.
 * Throughput: iperf-style UDP/TCP blast; the ring code has seen ~5 pkt/s.
 * lwip netif follow-ups noted in review: none blocking.
 

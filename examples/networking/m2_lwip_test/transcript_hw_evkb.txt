@@ -54,8 +54,9 @@ Notes:
   with a comment carrying the lesson.  "QEMU pass is necessary, never
   sufficient", instance N+1.
 * The firmware idle RX-death erratum (sparse traffic, IEEE PS off, dies
-  stochastically at ~14-44 min -- see the W8/W9 soak record in
-  m2_sdio_probe's transcript and the W10 handoff) is NOT hit inside this
+  stochastically at ~14-44 min -- full A/B record in
+  docs/superpowers/handoff/2026-08-19-w10-next-session.md; promoting it
+  into m2_sdio_probe's transcript is W10 work) is NOT hit inside this
   3-minute window; at this example's ~5 pkt/s it also sits above the
   observed sparse-traffic trigger regime.  The PS-enable workaround is W10
   driver work.

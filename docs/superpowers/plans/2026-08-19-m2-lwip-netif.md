@@ -624,7 +624,7 @@ Expected: clean configure (both libraries resolved locally) and `[100%] Built ta
 ```bash
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake \
   -DM2RADIO_IW416_FW=$HOME/Development/mcuxsdk-ws/mcuxsdk/components/conn_fwloader/fw_bin/inc/IW416/sduartIW416_wlan_bt.bin.inc \
-  -DM2RADIO_WIFI_SSID=ESP8266TEST -DM2RADIO_WIFI_PSK=esptest12345
+  -DM2RADIO_WIFI_SSID=ESP8266TEST -DM2RADIO_WIFI_PSK=<the bench PSK, from the probe build's gitignored CMakeCache>
 cmake --build build
 ```
 Expected: `IW416 firmware: ...bin.inc` in the configure log; clean build. (Creds live only in the gitignored CMakeCache; the PSK is the bench ESP's throwaway.)
@@ -785,7 +785,7 @@ cd <scratchpad>
 arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2 esp_ap
 arduino-cli upload --fqbn esp8266:esp8266:nodemcuv2 -p /dev/cu.usbserial-0001 esp_ap
 ```
-Expected: `Hash of data verified.` The AP restarts as WPA2 "ESP8266TEST" with the echo server listening. (`ap_creds.h` defines `AP_PSK "esptest12345"`; never commit it anywhere.)
+Expected: `Hash of data verified.` The AP restarts as WPA2 "ESP8266TEST" with the echo server listening. (`ap_creds.h` defines `AP_PSK` with the bench PSK; never commit it anywhere.)
 
 ---
 
