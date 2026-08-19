@@ -387,6 +387,13 @@ static uint32_t g_pingTxMs = 0;
 static uint16_t g_pingSeq = 0;
 static SdioHost::Status g_lastDataTx = SdioHost::CMD_TIMEOUT;
 
+// Ping keepalive period.  2 s is the soak default; -DM2_PING_INTERVAL_MS=100
+// turns the probe into a ~20 frame/s RX stress for chasing the W9 firmware
+// RX-death (rx froze at 3972 frames after ~45 min at the 2 s rate).
+#ifndef M2_PING_INTERVAL_MS
+#define M2_PING_INTERVAL_MS 2000
+#endif
+
 static const char *dhcpStateName(uint8_t s) {
     switch (s) {
         case DHCP_DISCOVERING: return "discovering";
@@ -618,7 +625,7 @@ static void netServicePass(uint32_t windowMs, bool *droppedOut) {
             netSendDhcp(1);                          // re-DISCOVER
         } else if (g_dhcp == DHCP_REQUESTING && now - g_dhcpTxMs > 3000) {
             netSendDhcp(3);                          // re-REQUEST
-        } else if (g_dhcp == DHCP_BOUND && now - g_pingTxMs > 2000) {
+        } else if (g_dhcp == DHCP_BOUND && now - g_pingTxMs > M2_PING_INTERVAL_MS) {
             netSendPing();
         }
     }
