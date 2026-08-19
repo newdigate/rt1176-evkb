@@ -18,6 +18,19 @@ TOOL=/Applications/ARM_10/bin
 # PARTS are: license-audit.test.sh drives the checks against throwaway trees so
 # the negative tests need no gate builds and no network. Nothing in normal use
 # sets them.
+# ★ The default below names ONE specific checkout, not "wherever this script
+# lives" — despite the "Run from anywhere" line above, which is true of the
+# script's invocation but NOT of what it audits. A checkout under a different
+# directory name (e.g. a parallel session clone such as
+# rt1176-evkb-m2-maya-w161) is a DIFFERENT tree with its own build/ output and
+# its own uncommitted state; running this script bare from inside it silently
+# audits $HOME/Development/rt1170/evkb instead and reports that tree's gates
+# as MISSING BUILD (they were never built there) while never seeing the real
+# checkout's work at all. Same class of trap as the mon.sock AF_UNIX path
+# length documented in CLAUDE.md: a hardcoded assumption about ONE checkout's
+# location that a same-repo, different-directory clone silently violates.
+# Always pass LICENSE_AUDIT_EVKB=$(pwd) (or the checkout's absolute path) when
+# running from anywhere but the canonical clone.
 EVKB=${LICENSE_AUDIT_EVKB:-$HOME/Development/rt1170/evkb}
 # Sibling-checkout root — the same TEENSY_LIB_ROOT the build resolves against
 # (evkb.cmake / teensy-cmake-macros). The audit must sweep the SAME trees the
@@ -33,7 +46,8 @@ $LIB_ROOT/USBHost_t36 $LIB_ROOT/FNET $LIB_ROOT/lwip \
 $LIB_ROOT/CMSIS-DSP $LIB_ROOT/CMSIS_6 $LIB_ROOT/SerialFlash \
 $LIB_ROOT/PXP $LIB_ROOT/MipiDisplay $LIB_ROOT/LVGL \
 $LIB_ROOT/EEPROM $LIB_ROOT/ILI9341_t3 $LIB_ROOT/TouchPanel $LIB_ROOT/Bounce2 \
-$LIB_ROOT/SynthUI $LIB_ROOT/VGLite $LIB_ROOT/M2Radio"}
+$LIB_ROOT/SynthUI $LIB_ROOT/VGLite $LIB_ROOT/M2Radio \
+$LIB_ROOT/mcuxsdk-ws/mcuxsdk/components/conn_fwloader/fw_bin"}
 # M2Radio joined 2026-08-17 with networking/m2_sdio_probe, the first example to
 # link it. MIT, nothing vendored — its sdio/ is written against the RT1176
 # USDHC register map, not copied from an SDK. It is in this list for the same
@@ -69,6 +83,30 @@ $LIB_ROOT/SynthUI $LIB_ROOT/VGLite $LIB_ROOT/M2Radio"}
 # check (below) found their sources in link manifests while Part 1 never swept
 # them — 7, 3 and 2 dep paths respectively. Adding a repo here is always the
 # answer to that finding; never exempt a source tree from the sweep.
+# conn_fwloader/fw_bin joined 2026-08-19 with networking/m2_lwip_test's Part 2
+# OUTSIDE SWEPT ROOTS finding (also latent, unfired, in m2_sdio_probe since
+# 2026-08-17 — the depfile walk had simply never run against the right EVKB
+# before now, see the note by EVKB's default above). Unlike every other entry
+# here, this is NOT a permissively-licensed repo: it is NXP's IW416 firmware
+# blob tree from the local MCUXpresso SDK workspace, under
+# LA_OPT_NXP_Software_License (fw_bin/LICENSE.txt) — a redistributable BINARY
+# licence, not an open-source one. It is deliberately NOT vendored into this
+# repo (see m2_sdio_probe/CMakeLists.txt's "IW416 firmware blob (NOT
+# vendored)" comment): the .bin.inc it compiles in comes from
+# -DM2RADIO_IW416_FW=<path under here>, supplied only at configure time on a
+# machine that has the SDK. The root is scoped to fw_bin itself, NOT its
+# conn_fwloader parent, because fw_bin is where NXP's own LICENSE.txt sits and
+# is also its own git repo (has a .git of its own) — the tightest root the
+# binary-provenance check and the copyleft sweep can both reason about
+# correctly; conn_fwloader's other sources (fsl_loader.c etc.) never feed any
+# example's link manifest and are intentionally left unswept. Sweeping it is
+# not vacuous: fw_bin tracks no .a/.o/.so/.dylib/.lib (binary-provenance finds
+# nothing to demand licence text for), and the copyleft-header grep is clean
+# except for SBOM.spdx.json, excluded below — it is SPDX metadata, not code,
+# and its one match is boilerplate ("...such as the BSD License, Apache
+# License or the GNU Lesser General Public License...") naming LGPL as an
+# example of "an applicable open source license" in a generic disclaimer
+# sentence, not a licence grant over anything here.
 
 # Allowlist (extended regex), each entry justified:
 #   cores/teensy/, cores/teensy3/
@@ -190,8 +228,15 @@ case "$PARTS" in *1*) ;; *) REPOS="" ;; esac
 echo "== Part 1: repo copyleft-header sweep"
 for r in $REPOS; do
   [ -d "$r" ] || continue
+  # SBOM.spdx.json (conn_fwloader/fw_bin, joined 2026-08-19): an SPDX metadata
+  # document, not code. Its one COPYLEFT match is a generic disclaimer
+  # sentence naming LGPL as an example of "an applicable open source
+  # license", not a grant over anything in this tree — same false-positive
+  # class as the LICENSE*/COPYING*/*.md excludes already here, just a name
+  # those globs don't happen to cover.
   hits=$(grep -rIlz --exclude-dir=.git --exclude='*.img' --exclude='LICENSE*' \
-         --exclude='COPYING*' --exclude='*.md' -E "$COPYLEFT" "$r" 2>/dev/null \
+         --exclude='COPYING*' --exclude='*.md' --exclude='SBOM.spdx.json' \
+         -E "$COPYLEFT" "$r" 2>/dev/null \
          | tr '\0' '\n' | grep -vE "$ALLOW" || true)
   if [ -n "$hits" ]; then
     echo "COPYLEFT header, not allowlisted:"
