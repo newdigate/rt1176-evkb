@@ -298,6 +298,7 @@ examples/framework/wprogram_parity_test:wprogram_parity_test \
 examples/gpio-analog/analog_test:analog_test examples/gpio-analog/dac_test:dac_test \
 examples/gpio-analog/irq_attach_test:irq_attach_test examples/networking/enet_test:enet_test \
 examples/networking/ethernet_test:ethernet_test examples/networking/lwip_test:lwip_test \
+examples/networking/m2_lwip_test:m2_lwip_test \
 examples/networking/m2_sdio_probe:m2_sdio_probe \
 examples/networking/native_ethernet_test:native_ethernet_test \
 examples/serial/serial_test:serial_test examples/serial/serial_test_rx:serial_test_rx \

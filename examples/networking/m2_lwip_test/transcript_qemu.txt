@@ -1,0 +1,9 @@
+RT1176 M.2 lwip test up
+m2_wifi_reset=released
+sdio_io_voltage=1v8_requested
+sdio_begin=cmd5-no-response rc=-6
+int_status=0x18001
+iw416_init=cmd-timeout fw=cmd-timeout
+lwip_probe_done
+alive=1
+alive=2
