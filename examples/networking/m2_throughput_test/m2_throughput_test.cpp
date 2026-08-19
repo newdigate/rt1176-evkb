@@ -385,9 +385,21 @@ static const char *statusName(SdioHost::Status s) {
     return "unknown";
 }
 
+// IEEE power save is ON by default -- it is the W10 workaround for the fw
+// IDLE RX-death erratum, and this example idles between tests.  Build with
+// -DM2_PS_OFF=1 to associate with PS disabled: that is the controlled arm of
+// the W12 fault-#5 A/B (RX freezes under repeated blasts), and it exists as a
+// build flag so the comparison is reproducible without editing this file.
+// Do NOT ship PS off: sparse links die in 1-44 min without it.
+#ifndef M2_PS_OFF
+#define M2_PS_OFF 0
+#endif
+
 static bool wifiConnect() {
 #if defined(HAVE_WIFI_CREDS)
-    SdioHost::Status c = iw416.connectStation(M2_WIFI_SSID, M2_WIFI_PSK);
+    SdioHost::Status c = iw416.connectStation(M2_WIFI_SSID, M2_WIFI_PSK, 3,
+                                              /*psOn=*/M2_PS_OFF ? false : true);
+    Serial1.print("ps_mode="); Serial1.println(M2_PS_OFF ? "OFF(A/B arm)" : "on");
     Serial1.print("connect="); Serial1.print(statusName(c));
     Serial1.print(" last_event=0x"); Serial1.println(iw416.lastEvent(), HEX);
     return c == SdioHost::OK;

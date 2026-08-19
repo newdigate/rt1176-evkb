@@ -76,7 +76,19 @@ fault.  Same day, same rig.
    Reverted (M2Radio revert commit); revert-run counters confirmed the
    pre-fix idle signature returned.
 
-2) FAULT #5, discovered by the revert's control run: IEEE PS + BUSY RX
+2) FAULT #5 -- ⚠ THIS SECTION'S ORIGINAL CONCLUSION WAS WRONG.  It read
+   "IEEE PS + busy RX kills the fw's RX path"; W12 disproved that the next
+   morning with a controlled matrix (see the W12 section at the end of this
+   file).  PS is EXONERATED: the freeze rate is the same with PS off.  The
+   real pattern is REPEATED CONNECTIONS within one firmware life -- a boot's
+   FIRST blast has never once frozen (0/13), later blasts freeze ~35%.
+   The original text is kept below unedited, because HOW it went wrong is
+   the lesson: the A/B/A that produced it gave the PS-off arm a fresh boot
+   and the PS-on arms repeat runs, so it compared PS against boot-freshness
+   and read the result as PS.  A confound, not a measurement.
+
+   --- original W11 text, superseded ---
+   FAULT #5, discovered by the revert's control run: IEEE PS + BUSY RX
    kills the fw's RX path.  Repeatable A/B/A, all on the reverted
    (known-good W10) driver, fresh fw download each boot:
 
@@ -112,3 +124,62 @@ fault.  Same day, same rig.
    configs spans ~4.8-9.7 Mbps run to run.  The W11 table is a capability
    floor, not a precision benchmark; the REGRESSION verdict in (1) rests
    on the counter mechanism, not the Mbps deltas alone.
+
+------------------------------------------------------------------------------
+W12: fault #5 RE-CHARACTERIZED.  Power save is NOT involved.  The trigger is
+REPEATED CONNECTIONS within one firmware life.
+------------------------------------------------------------------------------
+Date: 2026-08-19 (next morning).  Same rig, same house AP, same ELF except
+the PS build flag.  Method: a scripted matrix (scratchpad fault5_multi.sh)
+that reflashes per boot -- so every boot starts from a fresh fw download --
+then runs N consecutive 10 s tcp-rx blasts, recording the ORDINAL of the
+blast that dies.  Reflashing per boot is what W11 failed to hold constant.
+
+  ARM A (PS ON, connectStation default), 4 boots x up to 4 blasts:
+    boot1: 11.12 PASS | FREEZE(2nd)
+    boot2: 7.23 / 10.27 / 13.68 / 13.31 -- all PASS
+    boot3: 13.55 / 13.42 PASS | FREEZE(3rd)
+    boot4: 13.62 / 13.52 / 13.74 PASS | FREEZE(4th)
+      -> 3 freezes / 13 blasts
+
+  ARM B (PS OFF, -DM2_PS_OFF=1, verified on the wire by the boot line
+  "ps_mode=OFF(A/B arm)"), same shape:
+    boot1: 13.09 PASS | FREEZE(2nd)
+    boot2: 13.70 PASS | FREEZE(2nd)
+    boot3: 13.23 / 12.28 / 9.80 PASS | FREEZE(4th)
+    boot4: 2.95 / 7.76 / 14.00 / 11.10 -- all PASS
+      -> 3 freezes / 12 blasts
+
+  PLUS an earlier single-blast-per-boot arm (PS on, 5 boots): 5/5 PASS.
+
+  POOLED, by position within the firmware life:
+    FIRST blast of a boot :  0 freezes / 13   (0%)
+    LATER blasts          :  6 freezes / 17   (~35%)
+
+  CONCLUSIONS:
+  * PS on vs PS off: 23% vs 25% freeze rate -- INDISTINGUISHABLE.  The W11
+    claim is withdrawn; the PS-conditional-sleep-confirm fix it implied was
+    never implemented, which is the one piece of luck in this story.
+  * The surviving signal is POSITION IN THE FIRMWARE LIFE, not PS and not
+    load: a fresh fw download always survives its first blast; something
+    accumulates across TCP connections / repeated blasts and eventually
+    wedges host-visible RX.
+  * Freeze signature (unchanged from W11): c53 data-CMD53 counter PINNED
+    (the host stops reading uploads at all -- so this is NOT lwip pbuf
+    exhaustion, which would show frames still being read and dropped),
+    rx flat, association held, stall valve fires, only a reflash revives.
+  * Throughput note: this matrix peaked at 13.7 Mbps vs W11's 9.69 -- the
+    W11 table's ceiling was partly air conditions, and the "5-10 Mbps"
+    figure should be read as ~3-14 Mbps depending on the 2.4 GHz band's
+    mood.  The per-frame bus-cost attribution is unaffected.
+
+  METHOD LESSON (the reason W11 got it wrong): when a fault is stochastic,
+  an A/B whose arms differ in ANY other respect -- here, one arm got fresh
+  boots and the other did not -- measures the difference you did not intend.
+  Reflash per trial, randomize nothing you can hold fixed, and report the
+  trial ordinal, not just the pass/fail count.
+
+  NEXT (W12 continues): the ring is the prime suspect -- our m_rxPort vs the
+  fw's upload port drifting out of sync would produce exactly a pinned-c53,
+  fw-still-associated freeze.  Instrument ring=T/R/resyncs + rd_bitmap into
+  the freeze dump and reproduce, before changing any code.
