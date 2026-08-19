@@ -32,15 +32,32 @@ else()
     set(M2_FW_SRC "")
 endif()
 
-# --- Wi-Fi credentials (never committed; live only in CMakeCache) -----------
+# --- Wi-Fi credentials (NEVER committed) -- same pattern as m2_sdio_probe ---
+# connectStation() needs an SSID + WPA2 passphrase to bring the station up.
+# The SSID and PSK are a credential and are supplied ONLY at configure time,
+# exactly like the firmware blob above:
+#
+#   cmake -B build ... -DM2RADIO_WIFI_SSID="MyNet" -DM2RADIO_WIFI_PSK="secret"
+#
+# They are written into a generated header in the BUILD directory (gitignored,
+# same as iw416_fw.cpp) so arbitrary passphrase characters are handled cleanly
+# and the value never touches a tracked file, a compile command line, or a
+# make fragment. Absent -> the Wi-Fi connect attempt is compiled out and the
+# example falls back to the alive= heartbeat, so the QEMU gate and the no-SDK
+# build are unaffected. The PSK is never echoed by CMake.
 set(M2RADIO_WIFI_SSID "" CACHE STRING "Target AP SSID")
-set(M2RADIO_WIFI_PSK  "" CACHE STRING "Target AP WPA2 passphrase")
-if(M2RADIO_WIFI_SSID)
-    add_definitions(-DHAVE_WIFI_CREDS=1
-                    -DM2_WIFI_SSID="${M2RADIO_WIFI_SSID}"
-                    -DM2_WIFI_PSK="${M2RADIO_WIFI_PSK}")
+set(M2RADIO_WIFI_PSK  "" CACHE STRING "Target AP WPA2 passphrase -- NEVER committed")
+if(M2RADIO_WIFI_SSID AND M2RADIO_WIFI_PSK)
+    message(STATUS "Wi-Fi target SSID: ${M2RADIO_WIFI_SSID} (PSK supplied, not shown)")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/wifi_creds.h"
+"// Generated at configure time from -DM2RADIO_WIFI_*. NEVER committed.\n"
+"#pragma once\n"
+"#define M2_WIFI_SSID \"${M2RADIO_WIFI_SSID}\"\n"
+"#define M2_WIFI_PSK  \"${M2RADIO_WIFI_PSK}\"\n")
+    add_definitions(-DHAVE_WIFI_CREDS=1)
 endif()
 
 teensy_add_executable(m2_lwip_test m2_lwip_test.cpp ${M2_FW_SRC})
 teensy_target_link_libraries(m2_lwip_test cores M2Radio lwip)
+target_include_directories(m2_lwip_test.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(m2_lwip_test.elf stdc++)

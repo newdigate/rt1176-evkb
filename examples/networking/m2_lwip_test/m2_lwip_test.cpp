@@ -16,6 +16,11 @@
 #include "SdioFunc.h"
 #include "Iw416.h"
 #include "Iw416Netif.h"
+#if HAVE_WIFI_CREDS
+// Generated at configure time from -DM2RADIO_WIFI_SSID/-DM2RADIO_WIFI_PSK.
+// Lives only in the (gitignored) build dir -- the PSK is never committed.
+#include "wifi_creds.h"
+#endif
 #include "lwip/init.h"
 #include "lwip/netif.h"
 #include "lwip/timeouts.h"
@@ -46,20 +51,45 @@ static uint16_t s_expectLen = 0;
 static bool     s_busy = false;
 static uint32_t s_started = 0, s_lastKick = 0;
 
+// Clear the pcb's callbacks before closing it.  Once tcp_arg/tcp_recv/tcp_err
+// are cleared, a tcp_close() that fails and falls back to tcp_abort() will
+// NOT reach echoErr (its callbacks are already gone) -- the bookkeeping is
+// done inline below instead.  (tcpKick's own timeout-triggered tcp_abort()
+// runs on a pcb whose callbacks are still attached at that point, since this
+// function is never called before echoRecv fires -- so that path still ends
+// up in echoErr unchanged.)
+static void closeEcho(struct tcp_pcb *pcb) {
+    tcp_arg(pcb, nullptr);
+    tcp_recv(pcb, nullptr);
+    tcp_err(pcb, nullptr);
+    if (tcp_close(pcb) != ERR_OK) tcp_abort(pcb);
+    s_pcb = nullptr;
+    s_busy = false;
+}
+
 static err_t echoRecv(void *, struct tcp_pcb *pcb, struct pbuf *p, err_t) {
     if (p == nullptr) {                        // remote closed before data
-        tcp_close(pcb); s_pcb = nullptr; s_busy = false; s_tcpFail++;
+        s_tcpFail++;
+        closeEcho(pcb);
         return ERR_OK;
     }
+    // Single-segment assumption: pbuf_memcmp over p->tot_len only equals the
+    // flat s_expect buffer when the whole reply landed in one pbuf. Fine at
+    // this size (<=24 bytes); a multi-segment echo would read as a mismatch
+    // and count as a fail, not a crash.
     bool ok = (p->tot_len == s_expectLen) &&
               (pbuf_memcmp(p, 0, s_expect, s_expectLen) == 0);
     tcp_recved(pcb, p->tot_len);
     pbuf_free(p);
     if (ok) s_tcpOk++; else s_tcpFail++;
-    tcp_close(pcb); s_pcb = nullptr; s_busy = false;
+    closeEcho(pcb);
     return ERR_OK;
 }
 static err_t echoConnected(void *, struct tcp_pcb *pcb, err_t) {
+    // tcp_write/tcp_output failures are not checked here on purpose: any
+    // write that doesn't make it out just means echoRecv never fires, and
+    // that folds into the 5 s timeout in tcpKick() (-> tcp_abort -> echoErr
+    // -> counted as a fail) rather than needing a separate error path.
     tcp_write(pcb, s_expect, s_expectLen, TCP_WRITE_FLAG_COPY);
     tcp_output(pcb);
     return ERR_OK;
@@ -73,6 +103,9 @@ static void tcpKick() {
         return;
     }
     if (millis() - s_lastKick < 2000) return;
+    // The 2 s cadence -> ~0.5 Hz of actively-closed sockets riding lwip's
+    // TIME_WAIT reaper (tcp_kill_timewait) against MEMP_NUM_TCP_PCB=5. That
+    // is expected churn from this test client, not a pcb leak.
     s_lastKick = millis();
     ip4_addr_t dst; IP4_ADDR(&dst, 192, 168, 4, 1);
     s_pcb = tcp_new();
@@ -90,6 +123,7 @@ static void tcpKick() {
 // --- bring-up ----------------------------------------------------------------
 static SdioHost::Status s_sdioSt = SdioHost::CMD_TIMEOUT;
 static SdioHost::Status s_iwSt   = SdioHost::CMD_TIMEOUT;
+static SdioHost::Status s_fwSt   = SdioHost::CMD_TIMEOUT;
 static bool s_haveCard = false;
 
 static const char *statusName(SdioHost::Status s) {
@@ -130,40 +164,56 @@ void setup() {
 #if defined(HAVE_IW416_FW)
     if (s_sdioSt == SdioHost::OK) {
         s_iwSt = iw416.begin();
-        if (s_iwSt == SdioHost::OK &&
-            iw416.downloadFirmware(iw416_fw, iw416_fw_len) == SdioHost::OK) {
-            (void)iw416.refreshIoPort();
-            delay(50);
-            (void)iw416.enableHostInt();
-            uint32_t fwRel = 0; uint16_t hwVer = 0;
-            if (iw416.getHwSpec(g_mac, &fwRel, &hwVer) == SdioHost::OK) {
-                (void)iw416.reconfigureTxBuffers(2048);
-                (void)iw416.macControl(Iw416::MAC_RX_ON | Iw416::MAC_TX_ON |
-                                       Iw416::MAC_ETHERNETII | Iw416::MAC_RTS_CTS);
-                (void)iw416.set11nCfg();
-                (void)iw416.amsduAggrCtrl();
-                s_haveCard = true;
+        if (s_iwSt == SdioHost::OK) {
+            s_fwSt = iw416.downloadFirmware(iw416_fw, iw416_fw_len);
+            if (s_fwSt == SdioHost::OK) {
+                (void)iw416.refreshIoPort();
+                delay(50);
+                (void)iw416.enableHostInt();
+                uint32_t fwRel = 0; uint16_t hwVer = 0;
+                if (iw416.getHwSpec(g_mac, &fwRel, &hwVer) == SdioHost::OK) {
+                    (void)iw416.reconfigureTxBuffers(2048);
+                    (void)iw416.macControl(Iw416::MAC_RX_ON | Iw416::MAC_TX_ON |
+                                           Iw416::MAC_ETHERNETII | Iw416::MAC_RTS_CTS);
+                    (void)iw416.set11nCfg();
+                    (void)iw416.amsduAggrCtrl();
+                    s_haveCard = true;
+                }
             }
         }
     }
+    // Visible bench-failure checkpoint between sdio_begin= and
+    // lwip_probe_done: a stall past this line with s_haveCard still false
+    // pinpoints init vs. firmware-download vs. GET_HW_SPEC without a debugger.
+    if (!s_haveCard) {
+        Serial1.print("iw416_init="); Serial1.print(statusName(s_iwSt));
+        Serial1.print(" fw="); Serial1.println(statusName(s_fwSt));
+    }
 #endif
 
-    if (s_haveCard && wifiConnect()) {
-        s_linkUp = true;
+    if (s_haveCard) {
+        // Bring the netif up unconditionally: even if the FIRST connect
+        // attempt below fails, the stack stays primed so loop()'s !s_linkUp
+        // branch can retry wifiConnect() and call netif_set_link_up() +
+        // dhcp_start() itself once a later attempt succeeds.
         lwip_init();
         netif_add(&s_netif, IP4_ADDR_ANY4, IP4_ADDR_ANY4, IP4_ADDR_ANY4,
                   &iw416, iw416NetifInit, ethernet_input);
         netif_set_default(&s_netif);
         netif_set_up(&s_netif);
-        dhcp_start(&s_netif);
         s_lwipUp = true;
-        Serial1.println("lwip_netif_up");
+        if (wifiConnect()) {
+            s_linkUp = true;
+            dhcp_start(&s_netif);
+            Serial1.println("lwip_netif_up");
+        }
     }
     Serial1.println("lwip_probe_done");
 }
 
 void loop() {
     static uint32_t lastBeat = 0, lastStat = 0, beats = 0;
+    static uint32_t lastReconnectAttempt = 0;
 
     if (s_lwipUp) {
         if (s_linkUp && !iw416NetifPoll(&s_netif)) {
@@ -171,12 +221,18 @@ void loop() {
             dhcp_stop(&s_netif);
             Serial1.println("link_down");
         }
-        if (!s_linkUp && wifiConnect()) {
-            s_linkUp = true;
-            s_reconnects++;
-            netif_set_link_up(&s_netif);
-            dhcp_start(&s_netif);
-            Serial1.println("link_reup");
+        // Throttle reconnect attempts: a scan+associate attempt takes
+        // seconds on its own, so retry at most every 5 s rather than letting
+        // a dead AP turn every loop() pass into a fresh 15 s scan.
+        if (!s_linkUp && millis() - lastReconnectAttempt >= 5000) {
+            lastReconnectAttempt = millis();
+            if (wifiConnect()) {
+                s_linkUp = true;
+                s_reconnects++;
+                netif_set_link_up(&s_netif);
+                dhcp_start(&s_netif);
+                Serial1.println("link_reup");
+            }
         }
         sys_check_timeouts();
         if (s_linkUp && dhcp_supplied_address(&s_netif)) tcpKick();
