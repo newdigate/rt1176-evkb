@@ -14,7 +14,7 @@ import_evkb_library(lwip
 # M2Radio: sdio + iw416 as the probe, PLUS the lwip netif glue subdir.
 import_evkb_library(M2Radio sdio iw416 lwip)
 
-# --- IW416 firmware blob (NOT vendored) -------------------------------------
+# --- IW416 firmware blob (NOT vendored) -- same rules as m2_sdio_probe ------
 set(M2RADIO_IW416_FW "" CACHE FILEPATH "IW416 firmware .bin.inc from an NXP SDK")
 if(M2RADIO_IW416_FW AND EXISTS "${M2RADIO_IW416_FW}")
     message(STATUS "IW416 firmware: ${M2RADIO_IW416_FW}")
