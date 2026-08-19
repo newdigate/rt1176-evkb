@@ -253,3 +253,61 @@ moment of the freeze settled it in one shot.  The dump reads only the
 bitmap registers and deliberately never touches HOST_INT_STATUS -- reading
 that register to diagnose the fault would have consumed the very bits under
 investigation and caused the stall it was meant to explain.
+
+------------------------------------------------------------------------------
+W12 FIX VERIFIED ON SILICON -- and two of my own analyses of the RESIDUALS
+were wrong.  Recorded in full because the errors are the instructive part.
+------------------------------------------------------------------------------
+
+THE FIX WORKS.  Three independent 20-25 min soaks, each on ONE firmware
+life, against a fault that previously killed RX within 1-3 blasts:
+
+    driver / net width        blasts  freezes  MB moved   stranded  drainerr
+    2f8c814 (narrow net)        110      0      1524        4          n/a
+    84c2520 (widened net)       110      0      1137        7           0
+    84c2520 + my narrowing       87      0      1481        3           0
+
+  c53 (data CMD53s) climbed monotonically in all three -- the un-fakeable
+  signal, since the freeze signature was that exact counter frozen.
+
+RESIDUAL 1: stranded != 0 with drainerr == 0.  My hypothesis was that the
+  leftover strands were the drain's BY-DESIGN error-exit clears, recovered
+  by the net.  REFUTED: drainerr stayed 0 while stranded reached 7.  So a
+  genuine layer-1 loss path remains -- an upload interrupt is still being
+  lost somewhere the sticky-bit accumulator does not cover.  UNIDENTIFIED
+  and OPEN.  Impact is bounded: the net recovers it within ~64 ms, which is
+  why the link stays healthy, but "healthy" here means a backstop is doing
+  work that layer 1 should have made unnecessary.
+  (Candidate to chase next: the command-port analogue the review flagged as
+  M5 -- readHostResp branches on its OWN read rather than the accumulator,
+  so a CMD_PORT_UPLD shelved by readDataPacket is recorded but never
+  consumed.  Not live on today's call graph, but the same shape.)
+
+RESIDUAL 2 -- MY ERROR, twice over.  I read resyncs=6150 (widened net) next
+  to the pre-fix freeze dump's resyncs=339 and concluded the widened net was
+  thrashing the ring over stale bitmap bits.  I narrowed it back and wrote a
+  code comment asserting "SILICON REFUTED IT".  Then the narrowed build
+  measured resyncs=12390 -- HIGHER.  The comparison was invalid: 339 came
+  from a run of ~1.5 blasts, 6150 from 110.  Per blast:
+
+      pre-fix ~226   widened 56   narrowed 142
+
+  Resync rate is a PRE-EXISTING property of the ring model (tens to
+  hundreds per blast), it is not a regression, and the widened net is if
+  anything the better of the two.  My narrowing was reverted; the driver
+  stands at the reviewed 84c2520.
+  TWO LESSONS, both already in this file's history and both re-learned:
+   * Never compare absolute counters across runs of different length.  This
+     is the same class of error as W11's confounded PS A/B -- I built a
+     conclusion on a comparison whose arms were not comparable.
+   * A conclusion asserted in a CODE COMMENT is worse than one in a log: it
+     outlives the run that produced it and reads as established fact.  That
+     comment was committed for minutes before the next measurement killed
+     it.
+
+STATUS: the fix lands (fault #5 goes from "RX dead, needs reflash, within
+1-3 blasts" to "300+ blasts across three soaks, zero freezes").  Both
+residuals stay OPEN and documented rather than explained away:
+  1. an unidentified layer-1 loss path (stranded>0, drainerr=0);
+  2. the desync variant of the fault, which the net covers only when the
+     firmware's pending upload happens to sit at our own ring slot.
