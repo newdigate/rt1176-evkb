@@ -269,6 +269,33 @@ needs the `sai1-rxinject` binding, qemu2 `2141a5d781`), its rt1062 half depends
 on LOCAL-ONLY qemu2 changes, so **a fresh clone sees it red for that reason
 too**; that is the GPL firewall working, not a regression.
 
+★ **W14 put FOUR more gates in that class, and it is the largest such group.**
+`networking/m2_sdio_probe[wifi]` and all three `networking/m2_rx_demo` gates
+need the **IW416 SDIO card model** (`hw/sd/iw416-sdio.c`, qemu2 `0056068fae`,
+enabled by `-machine mimxrt1170-evk,m2-wifi=on`). Stock QEMU has no such
+device, so on a machine without that qemu2 tree they go RED — not SKIP, and
+not a firmware regression. Diagnose by checking the machine accepts the
+property at all (`qemu-system-arm -machine mimxrt1170-evk,help`), not by
+reading the firmware. Note `m2_rx_demo`'s plain `run_qemu.sh` is exempt: it
+asserts the card-ABSENT fallback and passes on stock QEMU like every other
+m2_* gate.
+★ **Why those gates exist at all**: until W14 the entire SDIO ring/interrupt
+layer had ZERO automated coverage — every m2_* gate asserted the card was
+absent, so both of this subsystem's serious bugs (the W8 32-port ring, the
+W12 stranded uploads) would pass a fully green sweep, and both cost days of
+hand-run silicon soaks to find. `m2_rx_demo[ring]` and `[stranded]` are
+regression gates for exactly those two, and **each was DEMONSTRATED to fail
+against a deliberately re-broken driver** before being trusted (the
+demonstrations are quoted in each gate's header). A regression gate never
+shown to fail is decoration.
+★ **`[stranded]` covers the ring SAFETY NET, not the sticky accumulator** —
+measured, not assumed: reverting the accumulator alone leaves the gate GREEN,
+because `suppress-updl` means the interrupt is never raised and there is
+nothing to accumulate. Removing the safety net reds it. Do not read a green
+`[stranded]` as "the W12 layer-1 fix is fine"; nothing in this tree can
+express that variant, because nothing can force one of the driver's five
+HOST_INT_STATUS readers to run at the deciding instant.
+
 ★ **The RT1062 USB host needs the CCM_ANALOG SET/CLR/TOG aliases modelled.**
 `hw/misc/imxrt1060_anatop.c` treated the `base+0x4/+0x8/+0xC` words as ordinary
 storage rather than alias ports onto the base register, so every alias write
