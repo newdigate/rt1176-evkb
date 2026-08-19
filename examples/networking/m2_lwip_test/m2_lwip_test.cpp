@@ -16,7 +16,7 @@
 #include "SdioFunc.h"
 #include "Iw416.h"
 #include "Iw416Netif.h"
-#if HAVE_WIFI_CREDS
+#if defined(HAVE_WIFI_CREDS)
 // Generated at configure time from -DM2RADIO_WIFI_SSID/-DM2RADIO_WIFI_PSK.
 // Lives only in the (gitignored) build dir -- the PSK is never committed.
 #include "wifi_creds.h"
@@ -58,20 +58,33 @@ static uint32_t s_started = 0, s_lastKick = 0;
 // runs on a pcb whose callbacks are still attached at that point, since this
 // function is never called before echoRecv fires -- so that path still ends
 // up in echoErr unchanged.)
-static void closeEcho(struct tcp_pcb *pcb) {
+//
+// Returns the err_t the CALLER (a raw-API callback) must return to lwip:
+// after the tcp_abort() fallback the pcb is gone, and ERR_ABRT is how the
+// raw-API contract tells tcp_input that -- returning ERR_OK there would leave
+// tcp_input touching a freed pcb.  Only echoRecv calls this today, and it
+// propagates the return value straight through; a hypothetical caller
+// outside a raw-API callback (none exists here) would have no tcp_input to
+// signal and could ignore the return value.
+static err_t closeEcho(struct tcp_pcb *pcb) {
     tcp_arg(pcb, nullptr);
     tcp_recv(pcb, nullptr);
     tcp_err(pcb, nullptr);
-    if (tcp_close(pcb) != ERR_OK) tcp_abort(pcb);
+    if (tcp_close(pcb) != ERR_OK) {
+        tcp_abort(pcb);
+        s_pcb = nullptr;
+        s_busy = false;
+        return ERR_ABRT;
+    }
     s_pcb = nullptr;
     s_busy = false;
+    return ERR_OK;
 }
 
 static err_t echoRecv(void *, struct tcp_pcb *pcb, struct pbuf *p, err_t) {
     if (p == nullptr) {                        // remote closed before data
         s_tcpFail++;
-        closeEcho(pcb);
-        return ERR_OK;
+        return closeEcho(pcb);
     }
     // Single-segment assumption: pbuf_memcmp over p->tot_len only equals the
     // flat s_expect buffer when the whole reply landed in one pbuf. Fine at
@@ -82,8 +95,7 @@ static err_t echoRecv(void *, struct tcp_pcb *pcb, struct pbuf *p, err_t) {
     tcp_recved(pcb, p->tot_len);
     pbuf_free(p);
     if (ok) s_tcpOk++; else s_tcpFail++;
-    closeEcho(pcb);
-    return ERR_OK;
+    return closeEcho(pcb);
 }
 static err_t echoConnected(void *, struct tcp_pcb *pcb, err_t) {
     // tcp_write/tcp_output failures are not checked here on purpose: any
@@ -228,6 +240,10 @@ void loop() {
             lastReconnectAttempt = millis();
             if (wifiConnect()) {
                 s_linkUp = true;
+                // Also reached when the BOOT-TIME connect in setup() failed
+                // and this is the first success afterward: on such a run
+                // reconnects=1 means "first successful association", not a
+                // link that dropped and came back.
                 s_reconnects++;
                 netif_set_link_up(&s_netif);
                 dhcp_start(&s_netif);
