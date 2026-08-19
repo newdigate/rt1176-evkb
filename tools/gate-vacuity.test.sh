@@ -4,7 +4,8 @@
 # Companion to license-audit.test.sh, and written for the same reason: a check
 # that cannot be shown to fire is not a check. These cases pin the two defects
 # swept out of all 68 runners on 2026-07-29, both of which had the property that
-# the gate looked fine while proving nothing.
+# the gate looked fine while proving nothing — plus a third class (case 3) that
+# arrived with the first gate asserting a device WORKS rather than is absent.
 #
 #   1. A dead QEMU must fail BY NAME. `kill $P` under `set -e` fails when QEMU
 #      has already exited, errexit fires, and the gate dies before any assertion
@@ -113,5 +114,39 @@ for spec in "examples/dualcore/cm4_wire_int_master_test:irqcnt" \
     # start, so this is tidiness, not correctness.
     rm -f "$EVKB/$rel"/*.uart
 done
+
+# --- 3. a "the device WORKS" gate must fail on the device-absent capture ----
+# networking/m2_sdio_probe is the first example carrying two gates that assert
+# OPPOSITE outcomes: run_qemu.sh wants the card-absent fallback (a plain SD
+# memory card ignores CMD5), run_qemu_wifi.sh wants real enumeration against
+# QEMU's opt-in IW416 model. The enumeration gate is worthless if it passes
+# whether or not `-machine m2-wifi=on` took effect, and that is not a
+# theoretical worry: the two runs share an ELF and a directory, and the fallback
+# capture is what you get by dropping one machine property.
+#
+# Fixture is that gate's own committed transcript with the one line swapped for
+# the fallback the sibling gate asserts.
+wifi_rel="examples/networking/m2_sdio_probe"
+wifi_src="$EVKB/$wifi_rel/transcript_qemu_wifi.txt"
+if [ ! -f "$wifi_src" ]; then
+    echo "SKIP: absent_card_fails_wifi_gate (no transcript)"
+else
+    sed 's/^sdio_begin=ok rc=0/sdio_begin=cmd5-no-response rc=-6/' "$wifi_src" > "$WORK/m2.absent"
+    run_gate "$wifi_rel" "run_qemu_wifi.sh" "$WORK/m2.absent"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1                                      # must not pass
+    echo "$OUT_TEXT" | grep -q "the card-absent fallback ran" || result=1   # and name it
+    report "absent_card_fails_wifi_gate" $result
+
+    # Over-correction guard, as above: the untouched transcript must still pass.
+    cp "$wifi_src" "$WORK/m2.green"
+    run_gate "$wifi_rel" "run_qemu_wifi.sh" "$WORK/m2.green"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_m2_sdio_probe_wifi" $result
+
+    # This gate's captures live in the board build dir (gate_capture_path), not
+    # beside the sources, so the fabricated ones are cleaned from there.
+    rm -f "$EVKB/$wifi_rel"/build/wifi.uart
+fi
 
 exit $FAILED

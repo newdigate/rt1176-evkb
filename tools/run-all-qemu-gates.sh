@@ -144,8 +144,31 @@ while IFS= read -r gate; do
     else
         _boards=rt1176
     fi
+    # An example with MORE THAN ONE run_qemu*.sh gets a "[variant]" suffix per
+    # script, taken from the part of the filename after "run_qemu"; the bare
+    # run_qemu.sh keeps the plain id. Directories holding exactly one script are
+    # untouched, so every pre-existing id -- including the ~38 that are named for
+    # what they test (run_qemu_lwip.sh, run_qemu_usb.sh, ...) -- is byte-identical
+    # to what it was.
+    #
+    # This is not cosmetic. The id IS the slug, and the slug names the .result
+    # and .log files, so two gates in one directory wrote the SAME result file:
+    # the second overwrote the first, and the summary loop then read that one
+    # file once per duplicate line in `order`. A failing gate beside a passing
+    # one in the same directory therefore reported as TWO PASSES. The header
+    # above says "one gate per example directory, so the id stays unique
+    # regardless of the script's filename" -- that invariant held by accident
+    # until networking/m2_sdio_probe gained a second gate (2026-08-19, the
+    # card-absent fallback plus the IW416-model enumeration), and its violation
+    # is silent and green, which is the worst failure this runner can have.
+    _nsh=$( set -- "$dir"/run_qemu*.sh; echo $# )
+    _var=""
+    if [ "$_nsh" -gt 1 ]; then
+        _var=$(basename "$gate" .sh); _var=${_var#run_qemu}; _var=${_var#_}
+        [ -z "$_var" ] || _var="[$_var]"
+    fi
     for _b in $_boards; do
-        id="$_b:$ex"
+        id="$_b:$ex$_var"
         matches "$id" || continue
         GATES="$GATES$id	$gate"$'\n'
         NGATES=$((NGATES + 1))

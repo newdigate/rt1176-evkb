@@ -106,7 +106,9 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **97 gates** (96 before W11's
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **98 gates** (97 before W14's
+QEMU IW416 card model added a SECOND gate to `networking/m2_sdio_probe` —
+`run_qemu_wifi.sh`, the first example in the tree to own two; 96 before W11's
 throughput example added `networking/m2_throughput_test`; 95 before W9's
 lwip-over-Wi-Fi bridge added `networking/m2_lwip_test`; 94 before the
 M.2 SDIO probe added `networking/m2_sdio_probe`; 93 before
@@ -127,10 +129,30 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **97 passed, 0 failed, 0 SKIP**, or
-**96 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **98 passed, 0 failed, 0 SKIP**, or
+**97 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
-✅ **Measured 2026-08-19: 97 passed, 0 failed, 0 SKIP** (`gates: 97 passed`,
+★ **A gate id now carries a `[variant]` suffix when — and only when — its
+example directory holds more than one `run_qemu*.sh`.** W14 made
+`networking/m2_sdio_probe` the first such example (`run_qemu.sh` asserts the
+card-ABSENT fallback, `run_qemu_wifi.sh` asserts real enumeration against the
+opt-in IW416 model), and it exposed a masking bug in the sweep runner: the id is
+the slug, the slug names the `.result` file, so two gates in one directory wrote
+the SAME file and the summary read it twice. Measured before the fix, with one
+of the two deliberately failing: `gates: 2 passed`, **exit 0**, with the FAIL
+line printed right there above the summary. A failing gate reported as a pass is
+the worst outcome this runner can have, so discovery now suffixes the variants —
+`rt1176:networking/m2_sdio_probe` and `rt1176:networking/m2_sdio_probe[wifi]`.
+Directories with exactly one script are untouched, so all 97 pre-existing ids are
+byte-identical (diffed, not assumed), including the ~38 already named for what
+they test (`run_qemu_lwip.sh`, `run_qemu_usb.sh`, …).
+
+✅ **Measured 2026-08-19: 98 passed, 0 failed, 0 SKIP** (`gates: 98 passed`,
+exit 0), on the W14 IW416-model gate, run via `/tmp/ev`,
+`rt1176:dualcore/cm4_audio_test` included and green.
+
+The previous count's measurement, kept per convention:
+✅ Measured 2026-08-19: 97 passed, 0 failed, 0 SKIP (`gates: 97 passed`,
 exit 0), on the W11 throughput close-out, run via `/tmp/ev`,
 `rt1176:dualcore/cm4_audio_test` included and green.
 
@@ -366,10 +388,12 @@ Repo-wide gates in `tools/`:
 - `gate-lib.test.sh` — tests for the gate runner lifecycle library.
 - `gate-vacuity.test.sh` — negative tests proving the *gates themselves* fail
   when they should: a run that produced no UART must fail by name rather than
-  die silently or blame the firmware, and a missing counter token must not read
-  as proof the good outcome happened. Drives real runners against a fake QEMU
+  die silently or blame the firmware, a missing counter token must not read
+  as proof the good outcome happened, and — added with W14 — a gate asserting a
+  device WORKS must fail on the device-ABSENT capture, or it would pass whether
+  or not the model was enabled. Drives real runners against a fake QEMU
   (via `qrun`'s `REAL_QEMU` hook) using each gate's committed
-  `transcript_qemu.txt` as the fixture, so it needs no prior gate run — but it
+  `transcript_qemu*.txt` as the fixture, so it needs no prior gate run — but it
   does need the examples it covers built.
 
 ## Flash / run on hardware
