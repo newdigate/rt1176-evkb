@@ -86,7 +86,27 @@ def udp_rx(ip):
     # Mac blasts seq'd datagrams, then asks the board how many arrived.
     # loss% = 1 - board_rx/sent.  mbps is the DELIVERED rate: board-counted
     # datagrams x payload over this side's wall clock.
+    #
+    # Protocol: an explicit acked "TPUT RESET" zeroes the board's counters
+    # BEFORE any data is in flight (so there is no reset-vs-late-tail race),
+    # and "TPUT STATS?" is purely idempotent -- a lost STATS reply just means
+    # the retry reads the same counters, never a phantom 100%-loss run.
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(1.0)
+    reset_ok = False
+    for _ in range(3):
+        try:
+            s.sendto(b"TPUT RESET", (ip, UDP_PORT))
+            while True:
+                b, _ = s.recvfrom(2048)
+                if b.startswith(b"TPUT RESETOK"):
+                    reset_ok = True
+                    break
+        except socket.timeout:
+            continue
+        break
+    if not reset_ok:
+        print("udp-rx: WARN no RESETOK from board; counters may be stale")
     payload = bytearray(b"\xa5" * UDP_PAYLOAD)
     sent = 0
     t0 = time.monotonic()
@@ -99,7 +119,7 @@ def udp_rx(ip):
             time.sleep(0.001)
     secs = time.monotonic() - t0
     rx = hi = None
-    s.settimeout(1.0)
+    board_ms = 0
     for _ in range(3):                 # STATS? is itself a datagram: retry
         try:
             s.sendto(b"TPUT STATS?", (ip, UDP_PORT))
@@ -108,6 +128,7 @@ def udp_rx(ip):
                 if b.startswith(b"TPUT STATS "):
                     kv = dict(f.split(b"=", 1) for f in b.split()[2:])
                     rx, hi = int(kv[b"rx"]), int(kv[b"hi"])
+                    board_ms = int(kv.get(b"ms", b"0"))
                     break
         except (socket.timeout, ValueError, KeyError, IndexError):
             continue
@@ -120,8 +141,13 @@ def udp_rx(ip):
     if rx is None:
         print("udp-rx: sent=%d in %.2f s; WARN no STATS reply from board" % (sent, secs))
     else:
-        print("udp-rx: sent=%d board-rx=%d hi=%d in %.2f s -> %.2f Mbps delivered, loss=%.1f%%"
-              % (sent, rx, hi, secs, r["mbps"], loss))
+        # board_ms is the board's own first->last datagram span: its rate is
+        # the cross-check on ours, not the reported figure.
+        xcheck = (" (board: %.2f Mbps over %d ms)"
+                  % (mbps(rx * UDP_PAYLOAD, board_ms / 1000.0), board_ms)
+                  if board_ms else "")
+        print("udp-rx: sent=%d board-rx=%d hi=%d in %.2f s -> %.2f Mbps delivered, loss=%.1f%%%s"
+              % (sent, rx, hi, secs, r["mbps"], loss, xcheck))
     return r
 
 
@@ -189,8 +215,15 @@ def main():
             for i, (name, fn) in enumerate(TESTS):
                 if i:
                     time.sleep(2)      # let the previous run's state settle
-                results.append(fn(args.ip))
+                try:                   # one dead service must not kill the rest
+                    results.append(fn(args.ip))
+                except OSError as e:
+                    print("%s: ERROR %s" % (name, e), file=sys.stderr)
+                    results.append({"test": name, "failed": str(e)})
             for r in results:
+                if "failed" in r:
+                    print("TPUT %s FAILED (%s)" % (r["test"], r["failed"]))
+                    continue
                 line = "TPUT %s mbps=%.2f" % (r["test"], r["mbps"])
                 if r.get("loss") is not None:
                     line += " loss=%.1f%%" % r["loss"]

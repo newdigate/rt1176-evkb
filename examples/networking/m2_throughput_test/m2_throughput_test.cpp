@@ -7,8 +7,8 @@
 //   :5002 TCP TX source -- peer connects; board blasts a 1 KiB pattern for
 //                          TX_BLAST_MS, then reports once the last byte acks.
 //   :5003 UDP           -- data datagrams (BE32 seq + 0xA5 fill) are counted;
-//                          "TPUT STATS?" / "TPUT GO <secs>" control datagrams
-//                          drive the udp-rx / udp-tx runs.
+//                          "TPUT RESET" / "TPUT STATS?" / "TPUT GO <secs>"
+//                          control datagrams drive the udp-rx / udp-tx runs.
 // All services stay armed between tests; each test re-runs without a reflash.
 //
 // QEMU proof (run_qemu.sh): the DEVICE-ABSENT path -- QEMU's SD memory card
@@ -69,12 +69,15 @@ static uint32_t tputKbps(uint32_t nbytes, uint32_t ms) {
 // returning ERR_OK there would leave tcp_input touching a freed pcb.  A
 // caller outside a raw-API callback (loop()'s drained-TX path) has no
 // tcp_input to signal and ignores the return value.
-static err_t tputClose(struct tcp_pcb *pcb) {
+static void tputClearCallbacks(struct tcp_pcb *pcb) {
     tcp_arg(pcb, nullptr);
     tcp_recv(pcb, nullptr);
     tcp_sent(pcb, nullptr);
     tcp_err(pcb, nullptr);
     tcp_poll(pcb, nullptr, 0);
+}
+static err_t tputClose(struct tcp_pcb *pcb) {
+    tputClearCallbacks(pcb);
     if (tcp_close(pcb) != ERR_OK) {
         tcp_abort(pcb);
         return ERR_ABRT;
@@ -117,6 +120,7 @@ static err_t rxPoll(void *, struct tcp_pcb *pcb) {
     if (millis() - s_rxLastMs > 30000u) {
         Serial1.println("tput: tcp_rx stalled -- abort");
         s_rxPcb = nullptr;
+        tputClearCallbacks(pcb);           // else tcp_abort re-enters rxErr
         tcp_abort(pcb);
         return ERR_ABRT;                   // pcb gone; tcp_input must know
     }
@@ -196,6 +200,7 @@ static err_t txPoll(void *, struct tcp_pcb *pcb) {
     if (millis() - s_txStartMs > (uint32_t)TX_BLAST_MS * 3u) {
         Serial1.println("tput: tcp_tx stalled -- abort");
         s_txPcb = nullptr; s_txBlasting = false;
+        tputClearCallbacks(pcb);           // else tcp_abort re-enters txErr
         tcp_abort(pcb);
         return ERR_ABRT;                   // pcb gone; tcp_input must know
     }
@@ -220,7 +225,11 @@ static err_t txAccept(void *, struct tcp_pcb *np, err_t err) {
 // are control; everything else is data (BE32 seq at offset 0).  A data seq
 // can never read as control: byte 4 of a data datagram is 0xA5, never ' '.
 static struct udp_pcb *s_udp = nullptr;
-static uint32_t s_udpRxCount = 0, s_udpRxHi = 0, s_udpRxStartMs = 0;
+// udp-rx run state.  Start/last stamp the first->last data-datagram span,
+// reported as ms= in the STATS reply (the board-side cross-check on the
+// peer's delivered-rate figure).  Counters are zeroed ONLY by "TPUT RESET".
+static uint32_t s_udpRxCount = 0, s_udpRxHi = 0;
+static uint32_t s_udpRxStartMs = 0, s_udpRxLastMs = 0;
 static bool     s_udpRxTiming = false;
 // udp-tx (GO) run state.  The callback only ARMS this; the blast itself runs
 // in loop() -- a 30 s send loop inside a udp_recv callback would starve the
@@ -247,12 +256,25 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
     head[got] = '\0';
     if (got >= 5 && memcmp(head, "TPUT ", 5) == 0) {         // control
         if (strcmp(head, "TPUT STATS?") == 0) {
-            char msg[48];
-            snprintf(msg, sizeof(msg), "TPUT STATS rx=%lu hi=%lu",
-                     (unsigned long)s_udpRxCount, (unsigned long)s_udpRxHi);
+            // PURELY idempotent: report only, never reset.  A dropped reply
+            // (or a pbuf_alloc failure in udpSendText) must let the peer's
+            // retry read the SAME counters -- resetting here would turn one
+            // lost reply into a phantom 100%-loss run.
+            uint32_t ms = s_udpRxTiming ? (s_udpRxLastMs - s_udpRxStartMs) : 0;
+            char msg[64];
+            snprintf(msg, sizeof(msg), "TPUT STATS rx=%lu hi=%lu ms=%lu",
+                     (unsigned long)s_udpRxCount, (unsigned long)s_udpRxHi,
+                     (unsigned long)ms);
             udpSendText(addr, port, msg);
             Serial1.println(msg);
-            s_udpRxCount = 0; s_udpRxHi = 0; s_udpRxTiming = false;  // fresh run
+        } else if (strcmp(head, "TPUT RESET") == 0) {
+            // Explicit, acked reset.  The peer sends this BEFORE it starts
+            // blasting -- no data is in flight yet, so there is no race
+            // between the reset and a late-arriving tail from the same run.
+            // Re-sending RESET after a lost RESETOK is harmless (idempotent).
+            s_udpRxCount = 0; s_udpRxHi = 0; s_udpRxTiming = false;
+            udpSendText(addr, port, "TPUT RESETOK");
+            Serial1.println("tput: udp_rx reset");
         } else if (strncmp(head, "TPUT GO ", 8) == 0) {
             long secs = strtol(head + 8, nullptr, 10);
             if (secs < 1)  secs = 1;
@@ -267,10 +289,11 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
         pbuf_free(p);
         return;
     }
-    // data datagram: count it, track the highest BE32 seq, first one starts
-    // the clock (the clock only feeds the peer's cross-check; the peer's own
-    // wall clock is the measurement).
+    // data datagram: count it, track the highest BE32 seq; the first one
+    // starts the span clock and every one advances it (feeds STATS ms= --
+    // the cross-check; the peer's own wall clock stays the measurement).
     if (!s_udpRxTiming) { s_udpRxTiming = true; s_udpRxStartMs = millis(); }
+    s_udpRxLastMs = millis();
     s_udpRxCount++;
     if (p->tot_len >= 4) {
         uint8_t s[4];
@@ -531,7 +554,8 @@ void loop() {
             Serial1.print(",c52svc:");    Serial1.print(iw416.cmd52PollsSvc());
             Serial1.print(",c53:");       Serial1.print(iw416.cmd53Count());
             Serial1.print('/');           Serial1.print(iw416.cmd53Bytes());
-            Serial1.print(" state=");     Serial1.println(st);
+            Serial1.print(" state=");      Serial1.print(st);
+            Serial1.print(" reconnects="); Serial1.println(s_reconnects);
         }
     } else {
         // Fallback (QEMU / no card / no fw): prove the image stays alive.
