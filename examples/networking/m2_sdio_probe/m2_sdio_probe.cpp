@@ -468,7 +468,10 @@ static void netSendPing() {
     const uint16_t icmpLen = 8 + PAY;
     const uint16_t ipLen   = 20 + icmpLen;
     uint8_t *f = g_frameTx;
-    memcpy(f, g_scanAps[g_wpaApIdx].bssid, 6);
+    // connectedAp(), not the setup-scan cache: a reconnect re-scans inside
+    // connectStation, so after an AP swap the cached BSSID is the DEAD one
+    // (pings to it would freeze rx while connected=1 -- erratum lookalike).
+    memcpy(f, iw416.connectedAp().bssid, 6);
     memcpy(f + 6, g_mac, 6);
     f[12] = 0x08; f[13] = 0x00;
     uint8_t *ip = f + 14;
@@ -635,15 +638,13 @@ static void netServicePass(uint32_t windowMs, bool *droppedOut) {
 
 static void wpaServiceLink() {
     if (!g_wifiConnected) {
-        // (Re)connect: cache the PMK, associate once.  A short watch after the
-        // associate tells connected (no deauth) from rejected (deauth); we do
-        // NOT require a port-release.
-        g_supp = iw416.setPassphrase(g_scanAps[g_wpaApIdx].ssid, M2_WIFI_PSK);
-        delay(50);
-        // W10: the reconnect goes through connectStation so IEEE PS is
-        // (re-)enabled on every association -- the fw idle RX-death
-        // workaround.  ps_enable= makes the enable's outcome visible
-        // (ieeePsEnabled() is the reliable signal; see the driver docs).
+        // W10: the reconnect goes through connectStation, which does the
+        // whole scan->PMK->associate->watch sequence itself (so no separate
+        // setPassphrase here) and (re-)enables IEEE PS on every association
+        // -- the fw idle RX-death workaround.  ps_enable= makes the enable's
+        // outcome visible (ieeePsEnabled() is the reliable signal).
+        // (g_supp keeps the setup-time SUPPLICANT_PMK diagnostic; the
+        // reconnect's own passphrase-set happens inside connectStation.)
         g_assoc = iw416.connectStation(g_scanAps[g_wpaApIdx].ssid, M2_WIFI_PSK);
         g_assocAttempts++;
         Serial1.print("ps_enable=");
