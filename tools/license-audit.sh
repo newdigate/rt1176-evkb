@@ -251,6 +251,26 @@ for r in $REPOS; do
     continue
   fi
   tracked=$(git -C "$r" ls-files 2>/dev/null || true)
+
+  # ★ Non-UTF-8 source is INVISIBLE to the copyleft sweep: grep -I classifies
+  # it as binary and silently skips it, so a source file in any other text
+  # encoding is a file this audit never reads. Not hypothetical: the SDK v7
+  # VGLite drop shipped vg_lite_stroke.c in ISO-8859-1 — MIT-licensed, but
+  # the sweep could not have said so, the same hole the unlicensed-binary
+  # rule closes for .a files, arriving through a different door. The rule is
+  # therefore "every tracked C/C++ source must be sweep-readable", enforced
+  # with the same iconv test used when that file was transcoded on vendoring.
+  nonutf=$(printf '%s\n' "$tracked" | grep -E '\.(c|h|cpp|hpp|cc|cxx)$' \
+           | while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      iconv -f UTF-8 -t UTF-8 "$r/$f" >/dev/null 2>&1 || printf '%s\n' "$r/$f"
+    done)
+  if [ -n "$nonutf" ]; then
+    echo "NON-UTF-8 SOURCE (the copyleft sweep cannot read it — transcode it):"
+    echo "$nonutf"
+    fail=1
+  fi
+
   bins=$(printf '%s\n' "$tracked" | grep -iE "$BINARY_EXT" | grep -vE "$BIN_ALLOW" || true)
   [ -n "$bins" ] || continue
   # Only computed when the repo actually tracks binaries, so the common case
@@ -303,6 +323,7 @@ examples/audio/i2s_int_test:i2s_int_test examples/audio/sai_rx_test:sai_rx_test 
 examples/audio/sd_wav_play_test:sd_wav_play_test \
 examples/audio/step_seq_test:step_seq_test examples/audio/tone_test:tone_test \
 examples/audio/transport_test:transport_test \
+examples/display/acid_box:acid_box \
 examples/display/camera_preview_synth:camera_preview_synth \
 examples/display/lvgl_ili9341_test:lvgl_ili9341_test \
 examples/display/lvgl_pxp_copy_bench:lvgl_pxp_copy_bench \
@@ -318,6 +339,8 @@ examples/display/rk055_panel_test:rk055_panel_test \
 examples/display/rk055_touch_test:rk055_touch_test \
 examples/display/rpi_panel_test:rpi_panel_test \
 examples/display/synthui_knob_test:synthui_knob_test \
+examples/display/synthui_step_test:synthui_step_test \
+examples/display/vglite_lvgl_test:vglite_lvgl_test \
 examples/display/vglite_probe:vglite_probe \
 examples/dualcore/cm4_audio_test:cm4_audio_test \
 examples/dualcore/cm4_audiostream_test:cm4_audiostream_test \

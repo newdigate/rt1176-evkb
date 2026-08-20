@@ -1,0 +1,92 @@
+acid_box -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
+================================================================================
+2026-08-18. ★ PARTIAL: THE UI IS PROVEN ON SILICON, THE INSTRUMENT IS NOT.
+The scene renders correctly and its checksum matches the QEMU golden
+BIT-FOR-BIT -- and then the CM7 LOCKS UP at ~1.739 s, before touch is
+initialised. Nothing has been heard through headphones. The example is
+QEMU-verified and hardware-INCOMPLETE, and the gate says so.
+================================================================================
+
+WHAT IS PROVEN ON SILICON
+
+  silicon FNV-1a over the live scanout buffer : 0xD3BC88D7
+  QEMU golden (run_qemu.sh, ACIDBOX_UI_SUM)   : 0xD3BC88D7
+  -> the boot frame is pixel-identical across two independent renderers.
+
+Read by eye off the dumped framebuffer (tools/rt1170-screenshot.py, LCDIFv2
+layer-0 descriptor reported addr=0x80100040 720x1280 pitch=2880):
+  - title, tempo readout showing 128.0, -/+ buttons, play and stop
+  - all eight knobs present, labelled, each at its computed boot angle
+  - editor strip on step 0: detent lattice, pointer at A1, ACC lit, SAW
+  - ★ the step lane matches kPreset[] CELL FOR CELL: fills on
+    0,1,3,4,6,7,8,10,11,12,13,15; empty on 2,5,9,14; accent dots on 0,7,12;
+    slide bars on 3,10,15; white selection outline on step 0; no cursor ring
+    (transport stopped, as designed).
+So the widget layer, the layout arithmetic and the preset load are all correct
+on real hardware.
+
+================================================================================
+★ THE DEFECT: CM7 LOCKUP AT ~1.739 s, APP-SPECIFIC
+================================================================================
+
+  systick_millis_count : 1739, FROZEN (identical across 20 s of wall time)
+  $pc                  : 0xFFFFFFFE  -- the Cortex-M LOCKUP vector
+  $lr, $sp             : 0
+  touch object         : _begun=false, _devId=0, _i2cStatus=0, _err=None
+  s_sum                : 0xD3BC88D7  -- the CORRECT final value
+
+Read those together and they bracket the failure tightly. The checksum loop
+RAN TO COMPLETION (s_sum holds its final, correct value), and GT911::begin was
+never entered (_err is None and _i2cStatus is 0 -- not a failed I2C
+transaction, an I2C transaction that never happened). So the core died between
+acid_box.cpp:591 and :603.
+
+★ IT IS NOT THE BENCH. A/B on the same board, same session, same probe:
+  synthui_step_test : systick 22640 and ADVANCING, image healthy
+  acid_box          : systick 1739, FROZEN, PC=0xFFFFFFFE
+Same panel, same SDRAM, same flash procedure, minutes apart. Whatever this is,
+it is something acid_box does and the step test does not -- audio (AudioMemory,
+WM8962 over Wire2/LPI2C5, I2S), the 1 kHz IntervalTimer note pump at priority
+224, or the touch bring-up on that same I2C bus.
+
+★ NO FAULT HANDLER RAN. A hardware breakpoint on fault_isr was never hit, and
+PC is the lockup vector rather than a handler address. A fault that escalates
+straight to LOCKUP without its handler executing is the signature of a fault
+that could not even be stacked, or of a fault taken while faults are masked --
+which is a much narrower class than "it crashed" and is where the next
+session should start. Note the pump ISR and the sequencer's setters both take
+__disable_irq() guards, and the pump is running throughout the whole UI build.
+
+★ A DEBUG-MODE RESET LOCKS UP EARLIER than a free-running one: a hardware
+breakpoint at acid_box.cpp:592 was never reached under `monitor reset`, while
+free-running boots reliably reach 1739 ms and complete the checksum. Whatever
+this is, it is timing- or state-sensitive, so do not trust a single
+observation -- and note that debug mode also runs the connect script that
+wakes the CM4, which the free-running path does not.
+
+================================================================================
+SEPARATE BENCH FAULT: THE MCU-LINK VCOM CARRIES NO DATA
+================================================================================
+
+The port enumerates (/dev/cu.usbmodem5DQ2DDHVWO5EI3) and opens, but delivers
+ZERO bytes -- with DSR and CTS both low -- for TWO INDEPENDENT IMAGES
+(acid_box and synthui_step_test). A second image printing nothing is what
+makes this a bridge fault rather than a firmware one; it had already been dead
+for a day before this session and survived a physical replug.
+
+Consequence for this transcript: no UART tokens could be captured for either
+example, so every claim above is SWD-derived (framebuffer dumps, symbol reads,
+core registers). That turned out to be enough to prove the UI and to
+characterise the lockup, which is worth knowing for the next time the VCOM
+dies: the serial console is a convenience, not the only oracle.
+
+================================================================================
+STILL OWED
+================================================================================
+  - the lockup, root-caused and fixed
+  - the by-ear ritual: preset line through headphones, cutoff swept under a
+    finger, a tapped step heard entering the loop, ACC/SLD audible
+  - touch confirmed on glass (a human tap moving the cursor and the pattern)
+None of these can be claimed today. The QEMU gate covers the same ground in
+software and passes; per this tree's standing rule that is necessary and not
+sufficient, and this file is the record of the half that is missing.

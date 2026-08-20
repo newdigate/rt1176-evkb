@@ -1,0 +1,280 @@
+acid_box — QEMU transcript
+Recorded 2026-08-18, branch acid-box, machine mimxrt1170-evk (qemu2 working tree).
+Capstone plan: docs/superpowers/plans/2026-08-17-acid-box-capstone.md, Task 7.
+
+================================================================================
+WHAT THIS GATE PROVES
+================================================================================
+Touch -> pattern -> SOUND, end to end, in one run:
+
+  * the box boots with the right picture (FNV-1a golden over the whole 720x1280
+    XRGB8888 framebuffer, taken before the input device exists),
+  * it boots SILENT (no bar line ahead of the play tap),
+  * an injected finger presses PLAY and the sequencer starts,
+  * an injected finger taps step cell 2 -- a REST in the preset -- and the
+    firmware writes the pattern (STEP[2]=note33 gate1),
+  * and the AUDIO graph's own per-step RMS table changes at exactly that step:
+    silent in a window that closed before the tap, sounding in a window that
+    opened after it,
+  * an injected drag turns the CUTOFF knob and the filter follows, strictly
+    downward.
+
+WHAT IT DOES NOT PROVE.  QEMU renders LVGL in software and models the WM8962
+rather than driving one, so nothing here is a statement about the RK055 panel,
+the codec's analogue path, or the GT911 on real glass.  Silicon confirmation is
+owed and is the capstone plan's Task 8.
+
+★ LOCAL-ONLY QEMU DEPENDENCY.  The gestures are injected through qemu2's
+`imxrt.gt911` `touch-script` property, which is not upstream.  A fresh clone
+sees this gate red for that reason alone -- the same class as `sai1-rxinject`
+and the rt1062 half of `usb_descriptor_survey`.  That is the GPL firewall
+working, not a regression.
+
+================================================================================
+THE PASSING RUN  (./run_qemu.sh, idle host, 18 s wall)
+================================================================================
+==== captured UART ====
+ACIDBOX_BEGIN
+CODEC_OK
+PANEL_OK
+ACIDBOX_UI_SUM=0xD3BC88D7
+PLAYING=0
+I2C_OK
+ACIDBOX_DONE
+PLAYING=1
+ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3732,0.0001,0.3851,0.4102,0.3934,0.0002,0.3808,0.3704,0.4201,0.3924,0.0002,0.3916]
+ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3646,0.4297,0.3885,0.0002,0.3876]
+STEP[2]=note33 gate1 acc0 sld0
+ACIDBOX_BAR=3 RMS=[0.4275,0.3866,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3677,0.3708,0.4237,0.3894,0.0005,0.3879]
+ACIDBOX_BAR=4 RMS=[0.4292,0.3813,0.3928,0.3753,0.3739,0.0003,0.3823,0.4175,0.3883,0.0002,0.3804,0.3704,0.4288,0.3916,0.0001,0.3879]
+ACIDBOX_BAR=5 RMS=[0.4263,0.3844,0.3925,0.3727,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3887]
+CUTOFF=527.8
+CUTOFF=348.3
+CUTOFF=237.3
+CUTOFF=156.6
+CUTOFF=103.3
+ACIDBOX_BAR=6 RMS=[0.4298,0.3893,0.3854,0.3726,0.3742,0.0001,0.3899,0.3860,0.3926,0.0001,0.3975,0.3730,0.3937,0.4018,0.0002,0.3784]
+pre-edit  window: ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,...]
+post-edit window: ACIDBOX_BAR=5 RMS=[0.4263,0.3844,0.3925,...]
+PASS: acid box -- boot golden, injected play/edit/drag, step 2 silent before the tap and sounding after
+
+READ THE THIRD COLUMN, which is step 2:
+
+    bar 1  0.0001   preset rest
+    bar 2  0.0001   preset rest        <- the gate's pre-edit window
+    -------------------------------- STEP[2]=note33 gate1 (the injected tap)
+    bar 3  0.0003   the bar the tap landed INSIDE: step 2 had already played
+    bar 4  0.3928   sounding
+    bar 5  0.3925   sounding           <- the gate's post-edit window
+    -------------------------------- the cutoff drag
+    bar 6  0.3854   still sounding at a ~100 Hz filter
+
+Bar 3 is the reason the gate takes the LAST bar before the drag rather than the
+first bar after the tap, and the reason it insists on seeing at least two of
+them: a bar whose window was already open when the finger landed is not evidence
+either way, and treating it as evidence would make the gate fail intermittently
+for a reason that has nothing to do with the firmware.
+
+MARGINS: sounding > 0.02, rest < 0.005 -- 4x separation between the two
+thresholds, the acid_bass_test convention for float DSP (measured windows with
+margin, never bit-goldens).  The measured room either side is far larger: gated
+steps read 0.36..0.44, which is 18x the sounding floor, and rests read
+0.0001..0.0006, which is 8x under the rest ceiling.  Neither number may be moved
+to make a run pass.
+
+★ BAR 1 IS NOT A VALID WINDOW and the capture above shows why: step 0 reads
+0.1843 in bar 1 against 0.42+ in every bar after it.  The transport records
+boundaries strictly inside (from, to], so it never emits tick 0 at phase 0 and
+step 0 first fires at the loop seam.  The gate refuses a bar-1 pre-edit window by
+name ("pad 2 too short") instead of lowering the 0.02 floor to accommodate it.
+
+================================================================================
+THE TOUCH SCRIPT — generated, never hand-counted
+================================================================================
+Regenerate with exactly this, run from the example directory (this is the block
+that produced the committed touch_script.txt; 636 instants):
+
+  {
+    echo "# acid_box gate script -- GENERATED, never hand-counted.  Regenerate with"
+    echo "# the block quoted in run_qemu.sh's header (and in transcript_qemu.txt)."
+    ... header comment lines ...
+    for i in $(seq 25);  do echo R; done     # pad 1
+    echo "P 80 3"; echo R                    # tap PLAY
+    for i in $(seq 300); do echo R; done     # pad 2
+    echo "P 31 53"; echo R                   # tap STEP CELL 2
+    for i in $(seq 300); do echo R; done     # pad 3
+    echo "P 12 13"; echo "P 12 14"; echo "P 12 15"
+    echo "P 12 16"; echo "P 12 17"; echo "P 12 18"
+    echo R                                   # drag CUTOFF down
+  } > touch_script.txt
+
+(The committed file carries the full header comments; the instants are exactly
+the ones above.  `grep -cE '^(P|R|\.)' touch_script.txt` == 636.)
+
+★ THE CADENCE IS 20 ms, NOT THE 40 ms THE PLAN SAYS.  Read out of the model, not
+assumed: IMXRT_GT911_STEP_MS == 20 in
+~/Development/qemu2/include/hw/i2c/imxrt_gt911.h:195, with INT_PULSE_MS == 1
+carved out of it by imxrt_gt911_tick()'s two-phase timer.  The pads follow from
+that and one audio constant:
+
+    bar    = 16 sixteenths at 128 BPM      = 1.875 s AUDIO time
+    wall   = 1.875 / 0.81                  ~ 2.31 s   (this tree's measured
+                                                       QEMU audio clock ratio)
+    instants per bar = 2.31 s / 20 ms      ~ 116
+
+    pad 1 =  25 instants ~ 0.5 s   settle after the first frame
+    pad 2 = 300 instants ~ 6.0 s   ~ 2.6 bars before the edit
+    pad 3 = 300 instants ~ 6.0 s   ~ 2.6 bars between the edit and the drag
+
+Confirmed against the run above: the play tap lands, bars 1 and 2 complete, the
+edit lands during bar 3, bars 4 and 5 complete, the drag lands.  Exactly the
+2.6-bar spacing the arithmetic predicts.
+
+20 ms is a FLOOR, not a period: imxrt_gt911_tick() refuses to advance while the
+previous instant is unread, so a guest busy with a full-screen software render
+stretches an instant instead of dropping it.  Load can therefore only make the
+pads LONGER in audio time -- more bars in each window -- which is the safe
+direction for every assertion here.  Measured (see "under load" below).
+
+GEOMETRY.  The three tap points are percentages of the 720x1280 panel, derived
+from acid_box.cpp's absolute placement:
+
+    PLAY         pos(540,16) size(70,48)     -> 540..610 x  16..64
+                 (80%, 3%)  = pixel (576, 38)                    inside
+    step cell 2  pos(8+2*88, 640) size(82,82)-> 184..266 x 640..722
+                 (31%, 53%) = pixel (223,678)                    inside
+    CUTOFF knob  pos(15,90) size(150,150)    ->  15..165 x  90..240
+                 (12%, 13%) = pixel ( 86,166)                    inside
+
+★ THE DRAG STOPS AT 18% (y=230) ON PURPOSE.  synthui_knob does not set
+LV_OBJ_FLAG_PRESS_LOCK, so LVGL re-runs its hit test on every read while the
+press is held: a sample past the knob's bottom edge (y=240) would hand the press
+to a different object and end the drag as PRESS_LOST with no further CUTOFF
+lines.  1% of the panel is 12.8 px and the widget turns 280 deg per 200 px
+(SYNTHUI_KNOB_DRAG_FULL_PX), so each 1% sample is ~18 deg: five prints, and the
+knob does not reach its end stop, which is what keeps them strictly decreasing
+rather than flattening onto a clamp.
+
+================================================================================
+THE BOOT GOLDEN — the frame was LOOKED AT
+================================================================================
+ACIDBOX_UI_SUM=0xD3BC88D7, FNV-1a over the whole 3686400-byte framebuffer.
+
+This tree does not record a golden for a frame nobody has seen (the knob pilot's
+clamped arc and the VGLite GPU frame were both perfectly reproducible AND visibly
+wrong), so the frame was dumped out of QEMU's monitor and inspected:
+
+  qemu-system-arm -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on \
+      -kernel build/acid_box.elf -display none -serial file:/tmp/fb.uart \
+      -global driver=imxrt.gt911,property=touch-script,value=/tmp/notouch.txt \
+      -monitor unix:/tmp/acidmon.sock,server,nowait &
+  sleep 12
+  printf 'xp/1wx 0x4080820c\n' | nc -U /tmp/acidmon.sock     # -> 0x80100040
+  printf 'pmemsave 0x80100040 0x384000 "/tmp/fb.raw"\n' | nc -U /tmp/acidmon.sock
+  python3 -c "from PIL import Image; \
+    Image.frombytes('RGB',(720,1280),open('/tmp/fb.raw','rb').read(), \
+                    'raw','BGRX',2880).save('/tmp/fb.png')"
+
+★ DUMP IT WITH A NO-TOUCH SCRIPT (/tmp/notouch.txt = a comment plus 40 `R`
+lines), and this is not a detail.  With NO touch-script property the model
+replays its BUILT-IN gesture table, whose taps and drag land on whatever
+acid_box happens to have at those coordinates.  Measured: the same ELF dumped
+that way checksums 0xE7B69CAA -- a perfectly stable value for a frame that has
+been silently poked.  The first attempt at this eye-check did exactly that and
+the mismatch is the only reason it was noticed.  A "the golden does not
+reproduce" panic starts here.
+
+★ THE MONITOR SOCKET PATH MUST BE SHORT.  A Unix socket path is capped at 104
+bytes; a session scratchpad path blew it and QEMU exited 1 with the whole
+diagnosis in the -D log ("UNIX socket path ... is too long") and nothing on the
+console.  /tmp/acidmon.sock.
+
+VERIFIED: the dump's own FNV-1a is 0xD3BC88D7 -- equal to what the firmware
+printed -- so the inspected image IS this golden's frame.  (The same script also
+reproduces the anti-golden as a control: FNV-1a over 3686400 zero bytes is
+0x9BC99DC5, the value the gate rejects by name.)
+
+WHAT THE EYE CHECKED, at 1x and at 2x on the two knob rows:
+  * transport bar: "ACID BOX", -, "128.0", +, a PLAY glyph (not PAUSE: the box
+    is stopped), STOP.
+  * all 8 sound knobs at the boot angles default_patch() implies, in the right
+    order: DECAY ~9 deg < RESO ~14 < CUTOFF ~21.5 < ENV MOD ~28 on the top row;
+    ACCENT ~+56, DIST ~-98, SUB ~-84, SLIDE T ~+7.5 on the second.  (At 1x the
+    ENV MOD pointer reads as upper-LEFT and looks wrong; at 2x it is plainly
+    upper-right.  Zoom before believing a knob is misplaced.)
+  * editor strip on step 0: pitch knob, note "A1" (= 33), ACC lit, SLD dark,
+    SAW -- exactly kPreset[0].
+  * the 2x8 lane, cell for cell against kPreset: bright cells at 0,1,3,4,6,7 /
+    8,10,11,12,13,15; dark at 2,5,9,14; accent dots on 0,7,12; slide underlines
+    on 3,10,15; the white selection border on cell 0.
+
+★ ANCHORING (\r?$) IS LOAD-BEARING and was mutation-tested, not assumed: FNV-1a
+converges in its low bits over a repeating 4-byte pattern, so a blank frame, an
+X=0 frame and an X=0xFF frame all end in 9DC5.  See vacuity proof (b2).
+
+================================================================================
+VACUITY PROOFS — the gate demonstrably fails
+================================================================================
+Every one of these was run; the quoted line is the gate's actual output and each
+exited 1.
+
+(a) sentinel golden.  0xD3BC88D7 -> 0xDEADBEEF:
+        FAIL: UI golden
+
+(b) one-nibble mutation.  0xD3BC88D7 -> 0xD3BC88D6:
+        FAIL: UI golden
+
+(b2) THE ANCHOR ITSELF.  Golden truncated to a PREFIX of the real value,
+     0xD3BC88D7 -> 0xD3BC88D -- which an unanchored grep would happily accept:
+        FAIL: UI golden
+     This is what proves the `\r?$` is doing work rather than decorating.
+
+(c) touch_script.txt renamed away.  Two measurements, because there are two
+    independent guards and only testing the outer one would leave the real
+    question open:
+
+    c1, gate as committed:
+        FAIL: touch script missing at .../acid_box/touch_script.txt -- every injected gesture is gone
+
+    c2, with the pre-flight check DELETED from a copy of the runner, to confirm
+    the gate still cannot pass vacuously without it:
+        ==== QEMU stderr (-D log) ====
+        qemu-system-arm: gt911: cannot read touch script '.../touch_script.txt': Failed to open file ...: No such file or directory
+        FAIL: no UART capture at .../build/acid_box.uart -- QEMU produced no serial output (did it start?)
+
+    So the model is fatal on a missing script (imxrt_gt911_load_script ->
+    error_report + exit(1)) exactly as Task 6 intended, and the pre-flight only
+    buys a better first line -- "no UART capture" is also what a firmware that
+    never booted looks like.
+
+(e) THE SHARPEST ONE, and it is not in the plan's list: the committed script
+    with ONLY the step-2 tap removed and the instant count preserved (25 R,
+    play, 602 R, drag).  Everything else about the run is identical:
+        FAIL: step-2 tap never wrote the pattern
+    and the step-2 column of all six bars in that run reads
+        0.0001 0.0001 0.0003 0.0003 0.0003 0.0001
+    i.e. silent throughout.  The 0.39 in the passing run is caused by the tap
+    and by nothing else -- not by the transport starting, not by the drag, and
+    not by anything the firmware does on its own.
+
+(d) everything restored:
+        PASS: acid box -- boot golden, injected play/edit/drag, step 2 silent before the tap and sounding after
+
+UNDER LOAD.  Re-run with 6 spinners on an 8-core host: PASS, pre-edit window
+bar 2, post-edit window bar 4 (bar 5 idle).  The windows MOVE and the gate does
+not care, which is the point of selecting them by position relative to the
+STEP token rather than by a pinned bar number.  The guards that would fire if a
+pad ever became too short name the pad ("pad 2 too short", "pad 3 too short",
+"the post-edit window is not provably post-edit") rather than failing as a
+mysterious RMS mismatch.
+
+================================================================================
+TIMING BUDGET
+================================================================================
+Idle wall time 18 s: ~4.5 s boot (panel bring-up + one 720x1280 software render
++ touch bring-up), then ~13 s of script.  The runner does not sleep a fixed
+window -- it polls for the third CUTOFF line, which is the last scripted
+gesture, then waits 2 s for the tail of the drag.  Ceiling 120 s (240 x 0.5 s),
+QRUN_TIMEOUT 150 s, gate_init's default 600 s backstop above that.  The poll
+also breaks on `kill -0` failing, so a fatal model error costs 0.5 s rather than
+the whole ceiling -- which is what makes proof (c2) above quick.

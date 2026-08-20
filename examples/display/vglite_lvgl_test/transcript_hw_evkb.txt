@@ -1,0 +1,306 @@
+vglite_lvgl_test -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
+================================================================================
+2026-08-17. LVGL's VG_LITE draw unit renders the 16-knob grid on the GC355.
+★ RESOLVED the same day: the artifacts this file spent most of its length on
+are FIXED -- three stacked root causes, none of them the leading hypotheses.
+See "RESOLVED" at the foot. GPU GOLDEN: 0xC3C6171A. The 0x15F05E35 below is
+the ARTIFACT frame's value, recorded and never adopted; the sections between
+here and the resolution are the (kept) investigation record.
+================================================================================
+
+VGLITE_LVGL_BEGIN
+PANEL_OK
+VGLITE_CHIP_ID=0x00000355
+VGLITE_INIT=OK err=0
+VGLITE_LVGL=GPU
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+KNOB_GRID_SUM_GPU=0x15F05E35
+VGLITE_LVGL_DONE
+
+GPU value: 0x15F05E35 -- RECORDED, NOT ADOPTED AS A GOLDEN. It is the checksum
+of a frame that still contains artifacts (below), and freezing it would bake
+them in as expected output.
+SOFTWARE GOLDEN: 0x513C4DB8 (in run_qemu.sh) -- this one IS adopted; the CPU
+render is clean on glass.
+★ These two must NEVER be reconciled. Hardware antialiasing is not LVGL's mask
+arithmetic, and the GPU build additionally carries LV_USE_FLOAT=1, so
+coordinates round differently. Copying one over the other to green a gate would
+discard the only evidence that the GPU is doing something different at all.
+
+================================================================================
+THE BUG THIS TRANSCRIPT EXISTS FOR: 16-PIXEL BLIT ALIGNMENT
+================================================================================
+
+FIRST GPU RUN, sum=0xB1A12E39. Every token said success -- INIT=OK,
+FLUSHED=PASS, LVGL_BYTES=3686400 (a full 720x1280x4 paint), and a stable
+checksum that was neither blank nor equal to the software one. On glass:
+
+  - knob GEOMETRY was correct. Crescents were crescents (NOT full rings, so
+    the arc-clamp failure did not return under LV_USE_FLOAT), faces, rings,
+    detent ticks and all four states rendered right.
+  - the TITLE TEXT was mangled: glyphs fragmented and overlapping.
+  - TICK MARKS smeared, each trailing repeated horizontal streaks rightward.
+
+Vector paths clean, small BLITS corrupt. A per-row smear is the signature of a
+stride mismatch on a blit source.
+
+DIAGNOSIS came from dumping all 65 v7 feature bits (see vglite_probe's
+transcript): gcFEATURE_BIT_VG_16PIXELS_ALIGN = 1. The GC355 requires
+16-pixel-aligned blit sources. Phase 2a's compat shim had ANSWERED 0 for that
+bit -- an invented value, and the wrong one -- and even after the re-vendor
+made the real value visible, LVGL was still allocating glyph and layer buffers
+with the SOFTWARE renderer's defaults from port/lv_conf.h:
+LV_DRAW_BUF_STRIDE_ALIGN 1 and LV_DRAW_BUF_ALIGN 4.
+
+FIX: the VGLITE build sets both to 64 (16 px x 4 B at LV_COLOR_DEPTH 32).
+Measured after: sum changed to 0x15F05E35, and text and ticks are clean.
+
+★ ONE ASSERTION HAD TO BE RELAXED, and it was too strict rather than wrong.
+port/lvgl_mipi_panel.cpp asserted LV_DRAW_BUF_STRIDE_ALIGN == 1 because DIRECT
+mode makes LVGL write the scanout buffer at its own stride, so padding would
+skew every line. But the real invariant is that the panel pitch not get padded,
+and 720 x 4 = 2880 = 45 x 64 -- so a 64-byte alignment pads nothing here. The
+assertion is now PANEL_PITCH_BYTES % LV_DRAW_BUF_STRIDE_ALIGN == 0, which is
+the property actually required. Keeping == 1 would have forced a false choice
+between a correct GPU blit path and a correct direct-render panel when the
+arithmetic says both hold.
+
+Verified the software path is untouched: its golden is still 0x513C4DB8 and its
+QEMU gate still passes.
+
+★ WHAT CAUGHT THIS, because it is the reusable part. The checksum was stable,
+non-blank, and different from software -- everything a gate looks for. Two more
+checks passed too: LVGL_FLUSHED=PASS and a full-screen LVGL_BYTES. All of that
+is consistent with a corrupted frame. Only a human looking at the panel found
+it. Same lesson as the knob pilot's arc clamp: a determinism check certifies
+reproducibility, never correctness.
+
+METHOD: flashed VCOM-free (load -> verify -> attach reader -> reset).
+Note an M.2 MAYA-W161 card is fitted to this board; two SWD connect failures
+earlier in the session were cleared by resetting the debugger port.
+
+
+================================================================================
+OPEN: RESIDUAL GPU-ONLY ARTIFACTS (2026-08-17)
+================================================================================
+
+The 16-pixel alignment fix cleared the mangled text and the smeared ticks. It
+did NOT clear everything. Still present on the GPU path:
+
+  - some glitching artifacts
+  - the LOWER PART of each knob face is a slightly different colour, a band
+    rather than a smooth transition
+
+★ ESTABLISHED BY A/B ON THE SAME PANEL, which is what makes this a GPU finding
+rather than a widget one: the SOFTWARE build of the IDENTICAL scene, from
+identical SynthUI widget code, renders CLEAN -- no glitches, no colour band.
+Confirmed by eye, both builds, same session, same board. So the artifacts are
+in the VG_LITE draw path, not in synthui_knob's drawing.
+
+That A/B was worth doing rather than assuming. The colour band sits at roughly
+the same height within every knob, which superficially looks like a per-widget
+effect -- exactly the reading that would have sent the next person to debug the
+widget. The software render refutes it.
+
+LEADING HYPOTHESES, in the order worth testing, NEITHER TESTED:
+
+1. ALPHA / PREMULTIPLY on the shading overlay. gcFEATURE_BIT_VG_LVGL_SUPPORT
+   reads 0 on this silicon, so LVGL premultiplies in SOFTWARE
+   (lv_draw_vg_lite_img.c:66). The knob's face shading is drawn as a
+   semi-transparent overlay -- "lighter and darker depending on the angle" --
+   and a blend or premultiply mismatch there would tint exactly one region of
+   the face while leaving opaque geometry correct. This matches the symptom
+   most closely: it is a COLOUR error confined to a blended area, with every
+   opaque path right.
+
+2. TESSELLATION TILING. The buffer is 256x256 over a 720x1280 screen, so the
+   GPU renders in bands with boundaries at y=256, 512, 768, 1024. Knob rows sit
+   at y=120, 295, 470, 645 with height 150, so rows 0, 2 and 3 STRADDLE a
+   boundary and row 1 does not. If the band edge is the cause, row 1 should be
+   clean and the others not -- a cheap discriminating observation to make on
+   glass before changing anything.
+
+3. SCISSOR. gcFEATURE_BIT_VG_SCISSOR reads 1, so lv_draw_vg_lite.c:141 now
+   takes a path that was dead under the old driver. Newly-live code is worth
+   suspecting on principle.
+
+Hypothesis 2 is the cheapest to test and needs no rebuild: look at whether row 1
+(the second row down) is clean while rows 0, 2 and 3 band.
+
+[2026-08-17, later] Hypothesis 2 TESTED ON GLASS AND RULED OUT before the
+resolution below: the non-straddling row banded identically to the others.
+
+
+================================================================================
+RESOLVED: THE GPU RENDER IS CLEAN. 2026-08-17, same bench, three root causes.
+GPU GOLDEN: KNOB_GRID_SUM_GPU=0xC3C6171A          (supersedes nothing -- the
+artifact-frame value 0x15F05E35 was recorded and never adopted, correctly)
+SOFTWARE GOLDEN: 0x513C4DB8 -- UNCHANGED, re-verified in QEMU after every fix.
+================================================================================
+
+None of the leading hypotheses survived measurement. Not premultiply (the
+LVGL_SUPPORT=0 software-premultiply path was never the problem), not
+tessellation (ruled out on glass), not SCISSOR. The artifacts had THREE
+stacked causes, none guessable from the symptom list, all isolated by
+framebuffer dumps (tools/rt1170-screenshot.py, fixed this session) and a
+primitive-isolation scene (GRADPROBE, one draw-recipe per tile):
+
+1. GRADIENTS WERE NEVER DRAWN AT ALL. LV_USE_VECTOR_GRAPHIC defaulted to 0,
+   and the VG_LITE backend compiles its whole gradient machinery
+   (lv_vg_lite_grad.c, the gradient branch of lv_draw_vg_lite_fill.c) only
+   under it. Every gradient fill hit LV_LOG_WARN and was SKIPPED; with
+   logging off, invisibly. The "band" was never a wrong gradient -- it was
+   the knob face's ABSENCE: the semi-transparent cap composited straight
+   onto the screen background (FDFDF9 at 140/255 over 101820 computes to
+   0x929697; measured lower band 0x919596), with the crescent supplying the
+   upper zone's different colour. A colour error confined to a blended
+   region was exactly the premultiply signature -- and the blend was fine;
+   the surface underneath was missing.
+   ★ The build "succeeded" with the whole feature absent. Same lesson as
+   Phase 2a's zero-symbol objects: count symbols, not build exits --
+   lv_vg_lite_draw_grad_helper simply did not exist in the ELF.
+
+2. ENABLING IT UNCOVERED A DRIVER-CONTRACT MISMATCH THAT HALTED THE
+   FIRMWARE. LVGL 9.4's EXT linear-gradient path zeroes the item then
+   assigns the gradient matrix only at DRAW time; the GC355 v7 driver's
+   vg_lite_update_linear_grad() consumes grad->matrix at UPDATE time (NXP's
+   own vglite_layer example assigns the matrix immediately before calling
+   it). Update therefore saw a zero matrix, transformed endpoints of length
+   0, and returned INVALID_ARGUMENT -- after which LVGL's own create-failure
+   path trips an assert (grad_item_pool_free, item->ctx) and the firmware
+   halts: nearly-empty frame, then lockup (PC=0xFFFFFFFE). LVGL's sequence
+   fits the newer GC555-style API. Fix: LV_VG_LITE_DISABLE_LINEAR_GRADIENT_EXT=1
+   -- the knob LVGL ships for exactly this driver split -- routing all
+   gradients through the basic 256-entry-ramp path, which this driver and
+   LVGL agree on.
+
+3. VLC_OP_CLOSE CORRUPTS BORDERED GRADIENT RECTS ON THIS DRIVER. With
+   gradients finally drawing, a rect carrying BOTH a gradient fill and a
+   border -- the exact knob-face recipe -- rendered its interior flooded
+   with border colour plus banding and rightward streaks (the "glitching"),
+   while the identical borderless gradient tile beside it was pixel-perfect.
+   Every API call returned success; the LVGL log captured over SWD was
+   EMPTY. Fix: LV_VG_LITE_DISABLE_VLC_OP_CLOSE=1 ("Workaround for NXP",
+   LVGL's own words). Both artifact classes -- the band's remnant form and
+   the streaks -- vanished together.
+
+Plus one residual correctness fix measured after the frame looked right:
+the VG_LITE fill path DROPS dsc->opa for gradient fills (upstream LVGL does
+too, verified against master), so the DISABLED knobs' faces rendered fully
+opaque while every other primitive dimmed -- disabled face read 0xEFEFF1
+against software's 0xBBBDC0. Fixed in our LVGL fork by folding dsc->opa
+into the stop opacities (lv_draw_vg_lite_fill.c; upstream-shaped, worth
+offering upstream). After it: disabled face 0xBCBDC1 vs software 0xBBBDC0.
+
+FINAL A/B, measured on the dumped framebuffers (not by eye alone):
+  sw-vs-gpu mean |dRGB| = 0.79, pixels with |dRGB|>48 = 0.40%, and the
+  delta heatmap shows pure EDGE contours -- hardware AA vs LVGL mask
+  arithmetic, the difference the two-golden rule exists for. At the worst
+  point of this investigation those numbers were 27.2 mean / 10.2%.
+  The two goldens must still never be reconciled.
+
+VERIFICATION OF THE GOLDEN ITSELF: the host-side FNV-1a over the SWD dump
+of the SOFTWARE build's framebuffer reproduces the QEMU gate's golden
+0x513C4DB8 exactly, which proves the dump path measures precisely the bytes
+lvgl_sum_feed() checksums. The GPU golden 0xC3C6171A is the same computation
+over the GPU build's framebuffer, from a frame inspected as pixels at full
+resolution. The panel scans out this exact buffer; a human glance at the
+glass remains worthwhile as the final formality, but the pixels shown here
+ARE what is being scanned.
+
+THE TOOL THAT MADE THIS TRACTABLE: tools/rt1170-screenshot.py went from
+not-working to load-bearing this session (see its footer for the LinkServer
+accept()-contract diagnosis -- the port-liveness probe WAS the failure).
+With it, hypotheses fell at one flash cycle each instead of one
+flash-and-squint each; the decisive GRADPROBE observation ("gradient tiles
+missing entirely; solid tiles perfect; bordered-gradient tile corrupt") is
+not one an eye on the panel would have decomposed. Auto-geometry from the
+LCDIFv2 layer-0 descriptor turned out to matter immediately: the three
+builds' framebuffers sat at 0x80100040, 0x80200040 and 0x80300040, and the
+first hardcoded default produced a convincing shifted frame from the wrong
+address.
+
+DIAGNOSTIC SCAFFOLDING KEPT, both compiled out of golden builds:
+  - GRADPROBE (-DGRADPROBE): one-primitive-per-tile isolation scene.
+  - swd_log (-DLV_USE_LOG=1): LVGL's log stream into a RAM ring read over
+    SWD. Root cause 2's INVALID_ARGUMENT plus the full gradient parameter
+    dump came from this ring verbatim; with it, "no artifacts AND an empty
+    ring" became the strongest clean-render statement available with the
+    VCOM down.
+
+BENCH STATE AND PROTOCOL, learned the expensive way:
+  - The MCU-Link VCOM went silent early in the session (healthy images,
+    verified flashes, zero console bytes) and stayed silent; every
+    verification above is SWD-based. Physical replug is the likely fix.
+  - ★ A crashed/locked-up core makes the next `LinkServer flash load` FAIL
+    SILENTLY, and a wedged DAP then returns zeros for every read -- one
+    stale-image cycle here produced a perfectly reproducible "result" from
+    an image that was never flashed, and a "LCDIFv2 not configured" reading
+    that was a lie. Protocol now: wiretimedreset BEFORE flashing, `verify`
+    after every load, and treat all-zero register reads as "the DAP is
+    lying", never as data.
+  - crt_emu_cm_redlink stubs whose first gdb client vanished ignore
+    SIGTERM, hold the probe, and starve every later session: pkill -9.
+
+
+================================================================================
+TASK 9 -- THE NUMBER. 2026-08-17. The >=30 fps criterion is NOT MET.
+================================================================================
+
+Method: -DFPSBENCH variant (separate build dirs; the golden ELFs untouched --
+GPU golden re-verified bit-for-bit, 0xC3C6171A, after every config change).
+An lv_timer rotates all 16 knob angles every 15 ms -- each set_angle
+invalidates its knob, so every refresh carries all-sixteen damage, the
+workload the criterion names -- and LVGL's own REFR_START/REFR_READY display
+events bracket each refresh with micros(). 64 samples per path, read over
+SWD. A companion counter proved each refresh completes inside ONE
+lv_timer_handler pass (fpsbench_loops all zero), so the interval is the
+synchronous render cost, not scheduler artifact.
+
+  path      mean        worst       fps
+  software  353.1 ms    356.7 ms    2.83
+  GPU       407.7 ms    408.7 ms    2.45      <- 15% SLOWER than software
+
+Both paths fail the >=30 fps (<=33 ms) criterion by more than 10x, and the
+GPU path LOSES to the software renderer on the exact scene this phase was
+built to accelerate. Attribution, measured not guessed: the GC355 front end
+read IDLE (AQHiIdle bit 0 = 1) in every mid-run sample, the refresh is
+single-pass synchronous, and vg_lite wait-timeout counters stayed 0 -- the
+~400 ms is CPU-side path/stroke construction and per-task submit overhead,
+not rasterisation. LVGL's VG_LITE unit rebuilds float paths and
+CPU-tessellates every stroked arc per task per frame (the stroke cache
+cannot help: an ANIMATING knob's stroke parameters differ every frame, so
+every lookup misses); the scene is ~240 small tasks/frame and the per-task
+CPU cost simply exceeds what rasterising 150 px primitives costs the CPU
+directly. Raising the flush batch (LV_VG_LITE_FLUSH_MAX_COUNT 8 -> 256)
+changed nothing (407.4 vs 407.7 ms), killing the batching-overhead theory.
+
+TWO MORE DEFECTS FOUND BY THE BENCH, both now handled:
+
+1. ★ STROKE-CACHE LIVELOCK. At the default LV_VG_LITE_STROKE_CACHE_CNT=32,
+   the SECOND animated refresh livelocked -- CPU cycling draw-task and heap
+   code forever, GPU idle, LVGL log EMPTY, every status green. The scene
+   draws more distinct strokes per frame than 32; at the eviction boundary
+   the cache never converges. 128 runs 64/64 refreshes. Set in evkb.cmake
+   for VGLITE builds. The golden frame is unaffected (a first frame never
+   evicts) -- re-verified bit-for-bit after the change.
+
+2. ★ REPEATED lv_refr_now() FROM SETUP CONTEXT IS NOT A VALID BENCH. Two
+   earlier bench shapes drove lv_refr_now in a loop (full-screen invalidate,
+   then animated damage) and BOTH wedged around the third repaint -- the
+   software build once pinned on a single SDRAM strb that the debug AP could
+   not read either (an SEMC-level stall; the bench notes' power-budget
+   suspicion with the M.2 card fitted remains the leading theory, unproven),
+   the GPU builds in the stroke-cache livelock above. The free-running
+   timer-driven form is the one every long-lived build demonstrably
+   sustains, and is also the honest workload.
+
+The criterion verdict stands as measured: PHASE 2 AS IT STANDS DOES NOT MEET
+ITS PERFORMANCE CRITERION. What would plausibly change the number, for a
+future phase, in order of expected value: (a) driving vg_lite directly for
+the knob's primitives (persistent pre-built paths per knob, one submit per
+frame) instead of LVGL's per-task rebuild; (b) LVGL's static path caching /
+lv_obj-level render caching if adopted upstream; (c) profiling the 400 ms
+properly once a VCOM or SWO channel is available. None of these are in
+Phase 2's scope.

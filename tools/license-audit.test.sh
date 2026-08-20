@@ -461,4 +461,23 @@ test_repos_coverage_covered_passes() {
 }
 test_repos_coverage_covered_passes; report test_repos_coverage_covered_passes $?
 
+# --- non-UTF-8 source blind spot ---------------------------------------------
+# The motivating shape: SDK v7 VGLite shipped vg_lite_stroke.c in ISO-8859-1.
+# grep -I classifies such a file as BINARY and skips it, so the copyleft sweep
+# never reads it — MIT or GPL alike. The audit must therefore refuse
+# non-UTF-8 source outright. The file below is the exact shape: perfectly
+# ordinary C with one latin-1 byte (0xE9, 'é') in a comment.
+test_non_utf8_source_fires() {
+    r=$(new_repo nonutf8)
+    printf '/* Copyright (c) R\351my. MIT: permission is hereby granted. */\nint x;\n' \
+        > "$r/latin1.c"
+    git -C "$r" add -A 2>/dev/null
+    out=$(run_part1 "$r"); rc=$?
+    [ $rc -ne 0 ] \
+        && echo "$out" | grep -q 'NON-UTF-8 SOURCE' \
+        && echo "$out" | grep -q 'latin1.c' \
+        && echo "$out" | grep -q 'LICENSE-AUDIT: FAIL'
+}
+test_non_utf8_source_fires; report test_non_utf8_source_fires $?
+
 exit $FAILED

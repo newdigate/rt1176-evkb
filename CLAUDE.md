@@ -106,8 +106,17 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **105 gates** (102 before W16
-added THREE more to `networking/m2_rx_demo` — `run_qemu_rxaggr.sh` and
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **108 gates**, and the count
+is the MERGE of two independent lines that both branched from 94: the display
+capstone line added THREE (`display/vglite_lvgl_test`, then
+`display/synthui_step_test` and `display/acid_box` from the Acid Box capstone,
+reaching 97 on its own), and the M.2 Wi-Fi line added ELEVEN, reaching 105 on
+its own. 94 + 3 + 11 = 108, and that arithmetic was CHECKED against the
+runner rather than trusted: `-l` reports 108 on the merged tree.
+
+The M.2 line's own chain, kept because each step says what the gate is for:
+
+W16 added THREE more to `networking/m2_rx_demo` — `run_qemu_rxaggr.sh` and
 `run_qemu_txaggr.sh` for multiport aggregation in each direction, and
 `run_qemu_regfallback.sh` for the driver's detection of the one thing W16
 assumes about the card and cannot verify; 101 before W15
@@ -141,8 +150,15 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **102 passed, 0 failed, 0 SKIP**, or
-**101 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **108 passed, 0 failed, 0 SKIP**, or
+**107 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+
+★ **That target is for THIS machine.** `display/acid_box` joins the standing
+fresh-clone-red set: its injected gestures come from the `touch-script`
+property on qemu2's `imxrt.gt911`, a LOCAL-ONLY change kept off this repo by
+the GPL firewall, exactly like `sai1-rxinject` and the rt1062 halves of
+`usb/usb_descriptor_survey` and `dualcore/cm4_usb_irq_probe`. A clean clone
+sees it red for that reason and not as a regression.
 
 ★ **A gate id now carries a `[variant]` suffix when — and only when — its
 example directory holds more than one `run_qemu*.sh`.** W14 made
@@ -162,6 +178,26 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-08-20: 108 passed, 0 failed, 0 SKIP** (`gates: 108 passed`,
+exit 0) on the MERGE of the M.2 Wi-Fi line into master, run via `/tmp/ev`,
+`rt1176:dualcore/cm4_audio_test` green and `display/acid_box` green (so this
+machine does carry the local-only `touch-script` qemu2 change its gate needs).
+Nothing had to be re-run. That merge reconciled two lines that had both moved
+`evkb.cmake` pins: `cores` and `lwip` kept the M.2 line's SHAs and `fnet` took
+master's, each decided by asking the library's own history which SHA was the
+DESCENDANT rather than by picking a side. The lwip one mattered — master's pin
+is an ancestor of the M.2 line's, and what sits between them is the W11
+lwipopts bump (TCP_WND / TCP_SND_BUF = 8*MSS) the throughput work depends on.
+
+The two pre-merge baselines, both kept:
+✅ Measured 2026-08-18: 97 passed, 0 failed, 0 SKIP — a fully clean serial
+sweep on the Acid Box capstone branch (`display/synthui_step_test` and
+`display/acid_box` added), `rt1176:dualcore/cm4_audio_test` green in 3 s on the
+first run. `LICENSE-AUDIT: PASS` the same day with both new manifests walked:
+`display/acid_box` at 25691 dep paths, `display/synthui_step_test` at 24667.
+(Earlier: 2026-08-17 95/0/0 on the VGLite Phase 2 merge; 2026-08-16 94/0/0 on
+Phase 1.)
 
 ✅ **Measured 2026-08-20: 105 passed, 0 failed, 0 SKIP**, on the W16
 aggregation work, run via `/tmp/ev`, `rt1176:dualcore/cm4_audio_test` included
@@ -229,6 +265,16 @@ length of the directory name above them. `~/Development/rt1170/evkb` is 93 bytes
 and fits, which is why this has never been seen before. Diagnose it by
 `echo -n "$DIR/mon.sock" | wc -c` rather than by reading the Python traceback,
 which names neither the path nor the limit.
+
+★ **`display/vglite_lvgl_test` gates the SOFTWARE build of a two-build
+example.** The GPU build (`build-vglite/`, LVGL's VG_LITE unit on the GC355)
+is silicon-only with its OWN golden (`0xC3C6171A`) — two golden sets, never
+reconciled (hardware AA ≠ LVGL mask arithmetic, and the GPU build carries
+`LV_USE_FLOAT=1`). The Phase-2 fps criterion was measured and NOT met
+(software 2.83 fps, GPU 2.45 fps, CPU-bound in the backend's per-task path
+construction) — the GPU path is pixel-correct but not an optimisation as it
+stands; `docs/superpowers/specs/2026-08-17-vglite-phase2-design.md` has the
+verdict and the follow-up shape.
 
 ★ **No gate is SKIP-class any more.** For one day `display/synthui_knob_test`
 and `display/vglite_probe` were: SynthUI and VGLite were unpushed, their import
@@ -443,13 +489,25 @@ gate was genuinely added.
 
 Repo-wide gates in `tools/`:
 - `license-audit.sh` — proves no copyleft source is compiled into firmware
-  (header sweep + binary-provenance check + link-manifest depfile audit). The
-  tree is permissive-only — MIT/BSD, plus **Apache-2.0 in exactly two files**
-  (`VGLite/vg_lite_flat.{c,h}`, recorded in that repo's `NOTICE` — the Bézier
-  flatteners `vg_lite.c` calls from its stroke path, so they do link); every
-  inherited LGPL file has a clean-room rewrite. Don't
+  (header sweep + binary-provenance check + non-UTF-8-source check +
+  link-manifest depfile audit). The
+  tree is permissive-only — MIT/BSD; every
+  inherited LGPL file has a clean-room rewrite. (The former Apache-2.0
+  exception, `VGLite/vg_lite_flat.{c,h}`, no longer exists: the v7 SDK
+  re-vendor of 2026-08-17 has no such files and VGLite is MIT throughout —
+  its `NOTICE` records the history.) Don't
   introduce GPL/LGPL/MPL code or dependencies, and don't vendor a prebuilt
   binary without licence text beside it.
+  ★ **Part 1 also fails on any tracked non-UTF-8 C/C++ source** (added
+  2026-08-17): `grep -I` classifies such files as binary and silently skips
+  them, so a source file in another encoding is a file the copyleft sweep
+  never reads — the same hole as an unlicensed binary, through a different
+  door. The SDK v7 VGLite drop shipped `vg_lite_stroke.c` in ISO-8859-1 and
+  FNET carried 16 cp1252 files; all are transcoded and the check now keeps
+  it that way. When vendoring, transcode with
+  `iconv -f WINDOWS-1252 -t UTF-8` (not ISO-8859-1 — that mapping turns
+  cp1252 smart quotes into INVISIBLE C1 controls that pass the audit while
+  silently corrupting comments; measured, then fixed, in FNET).
   ★ **Green does NOT mean "this tree is MIT".** The audit greps for COPYLEFT,
   and Apache-2.0 is not copyleft — so it passed, correctly, while VGLite's own
   README claimed "MIT throughout" and was wrong for a day. The audit answers
