@@ -378,7 +378,16 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
             // The bus counters as ONE line the peer can difference across a
             // blast.  Everything here is cumulative and per-firmware-life, so
             // the peer must consume deltas -- see TPUT MODE above.
-            char msg[160];
+            // ★ 320, NOT 160.  At 160 this reply TRUNCATED mid-"cardints=",
+            // silently dropping cardints/isr/sigen/sten/ist -- and the peer's
+            // dict.get(k, 0) turned every missing field into a ZERO.  That
+            // produced a confident, entirely false reading ("isr=0 cardints=0,
+            // INT_SIGNAL_EN=0x0, CINT not-armed") which was then reasoned
+            // about at length.  A truncated message is not a measurement.
+            // This is the same fault the tree's own gate-vacuity test exists
+            // to catch: a MISSING counter token must never read as proof that
+            // the good outcome did not happen.
+            char msg[320];
             snprintf(msg, sizeof(msg),
                      "TPUT BUS total=%lu regs=%lu c52=%lu c53rx=%lu c53tx=%lu "
                      "rxslots=%lu txslots=%lu frames=%lu stranded=%lu "

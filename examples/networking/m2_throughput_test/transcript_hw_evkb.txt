@@ -778,3 +778,94 @@ WHAT THIS MEANS FOR THE NUMBERS ALREADY RECORDED: nothing changes.  The 27-30x
   blast-level load under interrupt mode runs correctly on silicon and the
   interrupt does not fire.  Its measured value remains the IDLE win (W15: 12x;
   re-measured here as 8.6 register reads/s against ~1,000).
+
+------------------------------------------------------------------------------
+W16 ON THE HOUSE AP -- and a RETRACTION: "the irq arm never took an interrupt"
+was MY OWN TRUNCATED BUFFER, not a measurement.
+------------------------------------------------------------------------------
+Date: 2026-08-20.  Rig: the house router, board on OnestreamQJN7 (2.4 GHz, ch
+4) at 192.168.1.102, Mac on OnestreamQJN7_5G (ch 36) at 192.168.1.101.  TWO
+RADIOS, no shared airtime -- W11's rig, and the first bench in W16 where the
+peer did not have to leave its own network.  Both ESP boards unplugged (the
+C6's HT40 on ch 6 spans ch 4-8 and would have sat on top of the house AP).
+
+★ THE RETRACTION, first, because a wrong conclusion is already in this file.
+  The previous section concluded that the interrupt arm "reported cardints=0"
+  and therefore "demonstrated NOTHING about interrupt-driven service", and
+  reasoned at length about DAT1 never being sampled under load.  THAT IS
+  WRONG.  The board's `TPUT BUS?` reply was built with snprintf into a
+  char[160] and the string had outgrown it: the wire carried
+
+      'TPUT BUS total=339949 ... drainerr=0 split=0 card'   (159 chars)
+
+  -- truncated mid-"cardints=", so cardints, isr, sigen, sten and ist never
+  arrived, and the peer's dict.get(k, 0) turned every missing field into a
+  ZERO.  Measured properly, with char[320]:
+
+      isr=3007  cardints=3007   for 3104 frames  = 0.97 interrupts per frame
+
+  DAT1 fires under sustained load, roughly once per frame, and serviceLink
+  consumes every single assertion (isr == cardints exactly).  W15's open item
+  -- "blast-level load under interrupt mode on silicon" -- is CLOSED, and
+  closed POSITIVELY.
+  THE LESSON IS THE TREE'S OWN, arrived at from the other side: a MISSING
+  counter must never read as proof that the good outcome did not happen.  That
+  is exactly what tools/gate-vacuity.test.sh exists to enforce on the QEMU
+  gates, and the peer had no such guard.  It does now: _bus() knows every
+  field the board owes it and REFUSES to return a dict with holes.
+
+  A second instrument was lying in the same direction, and is now not
+  reported at all: INT_SIGNAL_EN read via `TPUT BUS?` shows 0x0 in interrupt
+  mode ALWAYS.  Not a controller fault -- a sampling-point fault.  That
+  handler runs inside lwip's udp_recv, which serviceLink calls from its own
+  sink, so it reads the register from INSIDE a service pass, after the ISR has
+  masked CINT and before the end-of-pass re-arm.  Read from loop() instead, on
+  the serial line, the same instant reads
+
+      cardints=3068 isr=3068 usdhc=0x0/0x157F71FF/0x100
+
+  -- bit 8 set, armed, exactly as it should be.
+
+THE MEASUREMENTS, two runs of the three-arm A/B on this rig:
+
+  run A   arm                          frames    bus  cmd/frame  slots  Mbps
+          pre-W16 (CMD52, polled)         995 121269    121.88      0   1.06
+          W16 (reg port + aggr, polled)  2878  21756      7.56     93   3.32
+          W16 + irq mode                 2656   7884      2.97    110   3.07
+
+  run B   pre-W16 (CMD52, polled)        3553 149892     42.19      0   4.11
+          W16 (reg port + aggr, polled)  2976  21866      7.35     70   3.45
+          W16 + irq mode                 3104   9139      2.94    144   3.59
+
+COMMANDS PER FRAME: the win is consistent and large.  42-122 -> ~7.4 -> ~2.9,
+  i.e. 5.7x-16x for the register port and 14x-41x with interrupt mode on top.
+  The W16 arms are stable across both runs (7.56/7.35 and 2.97/2.94) while the
+  pre-W16 arm swings 121.88 -> 42.19 -- because its number is dominated by
+  fixed polling divided by however many frames the air delivered, which is the
+  same reason absolute cmd/frame is not portable between runs.
+
+AGGREGATION IS FINALLY DOING SOMETHING: 0 -> 70..93 -> 110..144 slots.  In the
+  irq arm that is 144/3104 = 4.6% of frames, against ~1% on the ESP8266 bench.
+  The mechanism is the predicted one: interrupt mode makes the host look LESS
+  OFTEN (1.49 poll commands per frame against 5.87 polled), so frames have a
+  chance to accumulate in the ring before it looks.  Still a long way from the
+  regime where aggregation dominates, and this rig does not reach it.
+
+★ THROUGHPUT: STILL NO DEMONSTRATED WIN, and the two runs are why.
+  The pre-W16 arm measured 1.06 Mbps in run A and 4.11 Mbps in run B -- the
+  SAME arm, same rig, minutes apart, a 3.9x spread that reverses the sign of
+  the comparison.  Run A alone looks like a 3x improvement; run B alone looks
+  like a regression.  Neither is a finding.  This is precisely the 2x-4x
+  2.4 GHz variance this file has warned about since W11, and it is why the
+  standing rule is that a verdict rests on the counter mechanism and never on
+  an Mbps delta.
+  What can be said: nothing here reaches W11's 9.69 Mbps on the same router,
+  by any arm.  Whether that is the air (ch 4 is busy), the board's position,
+  or something in the intervening drivers is NOT established, and it would
+  take a many-run distribution rather than another single blast to establish.
+
+HEALTH: stranded 10/7/18 (run B), 0/11/14 (run A); resyncs, notready, drainerr
+  and split all 0 everywhere.  Both directions of the stranded difference
+  appear across the two runs, and the PRE-W16 arm strands too, so nothing here
+  supports "W16 strands more".  The absolute rate is well above W13's 3 per
+  1.78 GB and stays OPEN, as it did on the ESP8266 bench.

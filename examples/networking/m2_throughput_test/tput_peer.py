@@ -260,6 +260,18 @@ def _reachable(ip):
     return ("ok", "")
 
 
+# Every field the board is expected to report.  ★ A MISSING FIELD MUST NOT
+# READ AS ZERO.  The board's reply was once truncated by a too-small buffer and
+# lost its last five fields; dict.get(k, 0) turned them into zeros and the
+# summary confidently reported "isr=0 cardints=0, CINT not-armed" about a run
+# that had measured no such thing.  Absence and zero are different answers, and
+# conflating them is exactly what gate-vacuity.test.sh exists to prevent on the
+# QEMU side.
+_BUS_FIELDS = ("total", "regs", "c52", "c53rx", "c53tx", "rxslots", "txslots",
+               "frames", "stranded", "resyncs", "notready", "drainerr", "split",
+               "cardints", "isr", "sigen", "sten", "ist")
+
+
 def _bus(ip):
     """One snapshot of the board's cumulative bus counters, as a dict."""
     line = _ctrl(ip, "TPUT BUS?", "TPUT BUS")
@@ -272,6 +284,13 @@ def _bus(ip):
             out[k] = int(v, 0)     # base 0: the uSDHC regs arrive as 0x...
         except ValueError:
             pass
+    missing = [k for k in _BUS_FIELDS if k not in out]
+    if missing:
+        print("ab: the board's BUS reply is missing %s -- it is %d chars and"
+              % (",".join(missing), len(line)), file=sys.stderr)
+        print("    almost certainly TRUNCATED.  Refusing to report zeros for"
+              " fields that never arrived.", file=sys.stderr)
+        return None
     return out
 
 
@@ -376,23 +395,24 @@ def ab(ip):
     print("      BOTH zero in an 'interrupt' arm means no interrupt was involved,")
     print("      whatever the command count did -- the win came from somewhere else.")
     for a in arms:
-        raw = a.get("raw", {})
-        sigen = raw.get("sigen", 0)
-        armed = "ARMED" if (sigen & 0x100) else "not-armed"
-        print("  %-38s isr=%-5d cardints=%-5d INT_SIGNAL_EN=0x%X (CINT %s)"
-              % (a["label"], a.get("isr", 0), a.get("cardints", 0), sigen, armed))
+        f = a.get("frames", 0)
+        isr = a.get("isr", 0)
+        print("  %-38s isr=%-6d cardints=%-6d (%.2f per frame)"
+              % (a["label"], isr, a.get("cardints", 0), (isr / f) if f else 0.0))
     irq = arms[-1] if arms else {}
-    if irq.get("isr", 0) == 0:
-        raw = irq.get("raw", {})
-        if raw.get("sigen", 0) & 0x100:
-            print("\n  -> CINT signalling IS armed and the ISR never ran: the card did not")
-            print("     assert DAT1, or the controller never sampled it.  A 4-bit SDIO card")
-            print("     interrupt is only sampled between transfers, and under sustained")
-            print("     load the driver clears the card's status almost as soon as it rises.")
-        elif raw:
-            print("\n  -> CINT signalling is NOT armed, so no interrupt could have been")
-            print("     delivered.  Either the enable never reached the register, or the")
-            print("     ISR masked it and nothing re-armed it.")
+    if irq.get("isr", 0) == 0 and irq.get("frames", 0):
+        print("\n  -> the irq arm took NO interrupt.  Check the board's SERIAL line for")
+        print("     usdhc=<st>/<sten>/<sigen>: bit 8 of sigen set means armed-but-silent,")
+        print("     clear means the enable never reached the controller.")
+    # ★ sigen is NOT reported here, deliberately.  The TPUT BUS? handler runs
+    # inside lwip's udp_recv, which serviceLink calls from its own sink -- so
+    # it samples INT_SIGNAL_EN from INSIDE a service pass, after the ISR has
+    # masked CINT and before the end-of-pass re-arm.  It therefore reads 0x0
+    # every time in interrupt mode, which is a property of the sampling point
+    # and not of the controller.  Printing it here once produced a confident
+    # "CINT not-armed" for a run whose ISR fired 3007 times.  The honest place
+    # to read it is the board's serial status line, which is emitted from
+    # loop() -- outside serviceLink -- and reads 0x100.
     print("\nhealth deltas (both arms must stay clean):")
     for a in arms:
         print("  %-34s stranded=%d resyncs=%d notready=%d drainerr=%d split=%d"
