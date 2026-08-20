@@ -1,0 +1,70 @@
+RT1176 M.2 RX demo up
+sdio_begin=ok r4=0x90FF8000
+iw416_begin=ok ioport=0x10000 fw_status=0xFEDC
+hw_spec=ok mac=6C:1D:EB:91:0C:45 fw_release=0x9B105C15 hw_version=0x7201
+demo_ready
+svc frames=0 rx_data=0 rd_bitmap=0x0 wr_bitmap=0x0 ring=0/0/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC2 tx=0 c53=0 c52svc=4 cardints=0 c53regs=101/0 bus=105 c53rx=0 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+rx_frame 1: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=1 from_slot=0 rx_port_now=8
+rx_frame 2: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=2 from_slot=1 rx_port_now=8
+rx_frame 3: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=3 from_slot=2 rx_port_now=8
+rx_frame 4: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=4 from_slot=3 rx_port_now=8
+rx_frame 5: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=5 from_slot=4 rx_port_now=8
+rx_frame 6: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=6 from_slot=5 rx_port_now=8
+rx_frame 7: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=7 from_slot=6 rx_port_now=8
+rx_frame 8: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=8 from_slot=7 rx_port_now=8
+tx=ok wr_bitmap=0xFFFFFFFF tx_port_now=1
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFF ring=1/8/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=1 c53=2 c52svc=8 cardints=0 c53regs=1093/1 bus=1104 c53rx=1 rxaggr=1/8 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFF ring=1/8/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=1 c53=2 c52svc=12 cardints=0 c53regs=2103/1 bus=2118 c53rx=1 rxaggr=1/8 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+tx=ok wr_bitmap=0xFFFFFFFE tx_port_now=2
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFE ring=2/8/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=2 c53=3 c52svc=16 cardints=0 c53regs=3113/2 bus=3134 c53rx=1 rxaggr=1/8 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFE ring=2/8/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=2 c53=3 c52svc=20 cardints=0 c53regs=4123/2 bus=4148 c53rx=1 rxaggr=1/8 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+tx=ok wr_bitmap=0xFFFFFFFC tx_port_now=3
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFC ring=3/8/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=3 c53=4 c52svc=24 cardints=0 c53regs=5133/3 bus=5164 c53rx=1 rxaggr=1/8 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFC ring=3/8/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=3 c53=4 c52svc=28 cardints=0 c53regs=6143/3 bus=6178 c53rx=1 rxaggr=1/8 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+tx=ok wr_bitmap=0xFFFFFFF8 tx_port_now=4
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/8/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=4 c53=5 c52svc=32 cardints=0 c53regs=7153/4 bus=7194 c53rx=1 rxaggr=1/8 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+svc frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/8/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=4 c53=5 c52svc=36 cardints=0 c53regs=8163/4 bus=8208 c53rx=1 rxaggr=1/8 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+demo_done frames=8 rx_data=8 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/8/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=4 c53=5 c52svc=40 cardints=0 c53regs=8769/4 bus=8818 c53rx=1 rxaggr=1/8 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+irq_mode=1 host_cardint=1
+
+------------------------------------------------------------------------------
+W16 RX MULTIPORT AGGREGATION -- what this capture is, and the baseline it beat
+------------------------------------------------------------------------------
+Date: 2026-08-20.  Driver M2Radio b44877c, model qemu2 7e17eff5d3.
+Gate: run_qemu_rxaggr.sh (see its header for the assertions and for the
+deliberately-broken run that proved it can go red).
+
+Eight uploads are burst onto ring slots 0..7 (inject-period-ms=0, so all eight
+are resident before the host next looks) and the host must deliver every one,
+in order, paired with the slot the CARD chose.
+
+    demo_done frames=8 rx_data=8 rd_bitmap=0x0 ... c53rx=1 rxaggr=1/8
+
+  c53rx=1     ONE data CMD53 carried all eight frames.
+  rxaggr=1/8  one CMD53 covered more than one slot, and it covered eight.
+  stranded=0/0 drainerr=0 notready=0 split=0  -- the W12/W13 health set
+              untouched, and no packet's SDIOPkt size disagreed with the slot
+              length the card published for it.
+
+MEASURED BASELINE, same image, same burst, same model, with the driver's
+AGGR_PKT_LIMIT set to 1 (i.e. exactly the pre-W16 behaviour):
+
+    demo_done frames=8 rx_data=8 ... c53rx=8 rxaggr=0/0
+
+  -- eight frames, eight commands.  Every DELIVERY assertion in the gate
+  passed in that run; only the counters moved.  That is why the gate asserts
+  both halves: one-command-per-frame is correct, just not faster, and a gate
+  that checked delivery alone would have blessed it.
+
+AND THE OTHER SEVEN COMMANDS PER FRAME.  Before W16 each of those eight frames
+ALSO cost four CMD52s to read the rd-bitmap, two to read its RD_LEN, and one
+for HOST_INT_STATUS.  Those are gone too -- not aggregated, replaced: the
+multiport register port returns all of it in one byte-mode CMD53 (c53regs= in
+the same line).  So the burst went from 8 x (7 CMD52 + 1 CMD53) to 1 register
+read + 1 data CMD53.
+
+WHAT THIS DOES NOT SAY.  Nothing here is silicon.  The aggregated address
+encoding and the register port are both read off NXP's driver, and QEMU agrees
+with us because we wrote both ends.  W15 phase 3 is the standing warning: a
+model written from the same reading as the driver will agree with the driver
+and both can be wrong together.  The silicon run is the gate that decides.

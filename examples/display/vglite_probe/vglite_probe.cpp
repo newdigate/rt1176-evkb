@@ -77,16 +77,78 @@ static void report_features(void)
      * this driver's enum (VGLITE_HEADER_VERSION 6). Wiring LVGL's backend to
      * this driver will not compile until that is reconciled, by a newer NXP
      * driver or by shims. Phase 2 must settle it FIRST. */
+    /* ★ THE FULL v7 TABLE, all 65 bits, generated from the vendored enum.
+     * The old driver defined 9 and the Phase 2a shim invented ZERO for the
+     * rest, so every bit below except those 9 has never been read off this
+     * silicon. Three of them change LVGL's behaviour directly and are the
+     * reason this dump exists: 16PIXELS_ALIGN (whether blit sources must be
+     * padded), LVGL_SUPPORT (hardware premultiply vs software), and SCISSOR. */
     static const struct { vg_lite_feature_t bit; const char *name; } feats[] = {
-        { gcFEATURE_BIT_VG_IM_INDEX_FORMAT,     "IM_INDEX_FORMAT"     },
-        { gcFEATURE_BIT_VG_PE_PREMULTIPLY,      "PE_PREMULTIPLY"      },
-        { gcFEATURE_BIT_VG_BORDER_CULLING,      "BORDER_CULLING"      },
-        { gcFEATURE_BIT_VG_RGBA2_FORMAT,        "RGBA2_FORMAT"        },
-        { gcFEATURE_BIT_VG_QUALITY_8X,          "QUALITY_8X"          },
-        { gcFEATURE_BIT_VG_RADIAL_GRADIENT,     "RADIAL_GRADIENT"     },
-        { gcFEATURE_BIT_VG_LINEAR_GRADIENT_EXT, "LINEAR_GRADIENT_EXT" },
-        { gcFEATURE_BIT_VG_COLOR_KEY,           "COLOR_KEY"           },
-        { gcFEATURE_BIT_VG_DITHER,              "DITHER"              },
+        { gcFEATURE_BIT_VG_IM_INDEX_FORMAT,          "IM_INDEX_FORMAT" },
+        { gcFEATURE_BIT_VG_SCISSOR,                  "SCISSOR" },
+        { gcFEATURE_BIT_VG_BORDER_CULLING,           "BORDER_CULLING" },
+        { gcFEATURE_BIT_VG_RGBA2_FORMAT,             "RGBA2_FORMAT" },
+        { gcFEATURE_BIT_VG_QUALITY_8X,               "QUALITY_8X" },
+        { gcFEATURE_BIT_VG_IM_FASTCLAER,             "IM_FASTCLAER" },
+        { gcFEATURE_BIT_VG_RADIAL_GRADIENT,          "RADIAL_GRADIENT" },
+        { gcFEATURE_BIT_VG_GLOBAL_ALPHA,             "GLOBAL_ALPHA" },
+        { gcFEATURE_BIT_VG_RGBA8_ETC2_EAC,           "RGBA8_ETC2_EAC" },
+        { gcFEATURE_BIT_VG_COLOR_KEY,                "COLOR_KEY" },
+        { gcFEATURE_BIT_VG_DOUBLE_IMAGE,             "DOUBLE_IMAGE" },
+        { gcFEATURE_BIT_VG_YUV_OUTPUT,               "YUV_OUTPUT" },
+        { gcFEATURE_BIT_VG_FLEXA,                    "FLEXA" },
+        { gcFEATURE_BIT_VG_24BIT,                    "24BIT" },
+        { gcFEATURE_BIT_VG_DITHER,                   "DITHER" },
+        { gcFEATURE_BIT_VG_USE_DST,                  "USE_DST" },
+        { gcFEATURE_BIT_VG_PE_CLEAR,                 "PE_CLEAR" },
+        { gcFEATURE_BIT_VG_IM_INPUT,                 "IM_INPUT" },
+        { gcFEATURE_BIT_VG_DEC_COMPRESS,             "DEC_COMPRESS" },
+        { gcFEATURE_BIT_VG_LINEAR_GRADIENT_EXT,      "LINEAR_GRADIENT_EXT" },
+        { gcFEATURE_BIT_VG_MASK,                     "MASK" },
+        { gcFEATURE_BIT_VG_MIRROR,                   "MIRROR" },
+        { gcFEATURE_BIT_VG_GAMMA,                    "GAMMA" },
+        { gcFEATURE_BIT_VG_NEW_BLEND_MODE,           "NEW_BLEND_MODE" },
+        { gcFEATURE_BIT_VG_STENCIL,                  "STENCIL" },
+        { gcFEATURE_BIT_VG_SRC_PREMULTIPLIED,        "SRC_PREMULTIPLIED" },
+        { gcFEATURE_BIT_VG_HW_PREMULTIPLY,           "HW_PREMULTIPLY" },
+        { gcFEATURE_BIT_VG_HW_PREMULTIPLY,           "HW_PREMULTIPLY" },
+        { gcFEATURE_BIT_VG_COLOR_TRANSFORMATION,     "COLOR_TRANSFORMATION" },
+        { gcFEATURE_BIT_VG_LVGL_SUPPORT,             "LVGL_SUPPORT" },
+        { gcFEATURE_BIT_VG_INDEX_ENDIAN,             "INDEX_ENDIAN" },
+        { gcFEATURE_BIT_VG_24BIT_PLANAR,             "24BIT_PLANAR" },
+        { gcFEATURE_BIT_VG_PIXEL_MATRIX,             "PIXEL_MATRIX" },
+        { gcFEATURE_BIT_VG_NEW_IMAGE_INDEX,          "NEW_IMAGE_INDEX" },
+        { gcFEATURE_BIT_VG_PARALLEL_PATHS,           "PARALLEL_PATHS" },
+        { gcFEATURE_BIT_VG_STRIPE_MODE,              "STRIPE_MODE" },
+        { gcFEATURE_BIT_VG_IM_DEC_INPUT,             "IM_DEC_INPUT" },
+        { gcFEATURE_BIT_VG_GAUSSIAN_BLUR,            "GAUSSIAN_BLUR" },
+        { gcFEATURE_BIT_VG_RECTANGLE_TILED_OUT,      "RECTANGLE_TILED_OUT" },
+        { gcFEATURE_BIT_VG_TESSELLATION_TILED_OUT,   "TESSELLATION_TILED_OUT" },
+        { gcFEATURE_BIT_VG_IM_REPEAT_REFLECT,        "IM_REPEAT_REFLECT" },
+        { gcFEATURE_BIT_VG_YUY2_INPUT,               "YUY2_INPUT" },
+        { gcFEATURE_BIT_VG_YUV_INPUT,                "YUV_INPUT" },
+        { gcFEATURE_BIT_VG_YUV_TILED_INPUT,          "YUV_TILED_INPUT" },
+        { gcFEATURE_BIT_VG_AYUV_INPUT,               "AYUV_INPUT" },
+        { gcFEATURE_BIT_VG_16PIXELS_ALIGN,           "16PIXELS_ALIGN" },
+        { gcFEATURE_BIT_VG_DEC_COMPRESS_2_0,         "DEC_COMPRESS_2_0" },
+        { gcFEATURE_BIT_VG_NV24_INPUT,               "NV24_INPUT" },
+        { gcFEATURE_BIT_VG_TILED_LIMIT,              "TILED_LIMIT" },
+        { gcFEATURE_BIT_VG_SRC_ADDRESS_16BYTES_ALIGNED, "SRC_ADDRESS_16BYTES_ALIGNED" },
+        { gcFEATURE_BIT_VG_SRC_ADDRESS_64BYTES_ALIGNED, "SRC_ADDRESS_64BYTES_ALIGNED" },
+        { gcFEATURE_BIT_VG_SRC_ADDRESS_DETAIL_ALIGNED, "SRC_ADDRESS_DETAIL_ALIGNED" },
+        { gcFEATURE_BIT_VG_SRC_ADDRESS_DETAIL_ALIGNED_1, "SRC_ADDRESS_DETAIL_ALIGNED_1" },
+        { gcFEATURE_BIT_VG_SRC_TILE_4PIXELS_ALIGNED, "SRC_TILE_4PIXELS_ALIGNED" },
+        { gcFEATURE_BIT_VG_SRC_BUF_ALINGED,          "SRC_BUF_ALINGED" },
+        { gcFEATURE_BIT_VG_DST_ADDRESS_64BYTES_ALIGNED, "DST_ADDRESS_64BYTES_ALIGNED" },
+        { gcFEATURE_BIT_VG_DST_ADDRESS_DETAIL_ALIGNED, "DST_ADDRESS_DETAIL_ALIGNED" },
+        { gcFEATURE_BIT_VG_DST_TILE_4PIXELS_ALIGNED, "DST_TILE_4PIXELS_ALIGNED" },
+        { gcFEATURE_BIT_VG_DST_BUF_ALIGNED,          "DST_BUF_ALIGNED" },
+        { gcFEATURE_BIT_VG_DST_24BIT_PLANAR_ALIGNED, "DST_24BIT_PLANAR_ALIGNED" },
+        { gcFEATURE_BIT_VG_DST_BUFLEN_ALIGNED,       "DST_BUFLEN_ALIGNED" },
+        { gcFEATURE_BIT_VG_FORMAT_SUPPORT_CHECK,     "FORMAT_SUPPORT_CHECK" },
+        { gcFEATURE_BIT_VG_YUV_ALIGNED_CHECK,        "YUV_ALIGNED_CHECK" },
+        { gcFEATURE_BIT_VG_512_PARALLEL_PATHS,       "512_PARALLEL_PATHS" },
+        { gcFEATURE_BIT_VG_DEC_COMPRESS_2_1,         "DEC_COMPRESS_2_1" },
     };
     for (unsigned i = 0; i < sizeof(feats) / sizeof(feats[0]); i++) {
         Serial1.printf("VGLITE_FEATURE %s=%lu\n", feats[i].name,
@@ -178,7 +240,10 @@ void setup()
      * NXP's own examples sidestep this by allocating their render target with
      * vg_lite_allocate(); a target the application already owns -- like a
      * panel framebuffer -- has to be mapped instead. */
-    const vg_lite_error_t merr = vg_lite_map(&target);
+    /* HEADER_VERSION 7 gave vg_lite_map() a flag and an fd. The buffer is
+     * ordinary CPU memory owned by the display driver, not a dma-buf, so
+     * USER_MEMORY with fd 0 is the faithful translation of the v6 call. */
+    const vg_lite_error_t merr = vg_lite_map(&target, VG_LITE_MAP_USER_MEMORY, 0);
     Serial1.printf("VGLITE_MAP=%s err=%d\n",
                    merr == VG_LITE_SUCCESS ? "OK" : "FAIL", (int)merr);
 

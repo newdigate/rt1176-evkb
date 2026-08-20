@@ -308,6 +308,81 @@ This gate was SKIP-class on a fresh clone until 2026-08-17, when `VGLite` was
 pushed public and the FATAL_ERROR guard came out — see the resolved SKIP-class
 entry above. It builds from the pin now, verified with `-DEVKB_FORCE_FETCH=ON`.
 
+## `rt1176:display/acid_box` — RED ON A FRESH CLONE BY DESIGN (local-only qemu2 dependency)
+
+**Status on this machine: GREEN, measured 2026-08-18.** **Status on a fresh
+clone: RED, and that is the licence firewall working, not a regression.**
+
+**What the gate proves.** Every other display gate in this tree stops at the
+framebuffer and every other audio gate stops at the samples; this one closes the
+loop between them. A scripted finger presses ▶, then a step cell, then drags the
+CUTOFF knob, and the assertion is that the per-step RMS table produced by the
+**audio** graph changes at exactly the step the finger touched: step 2 is a rest
+in the preset and reads silent (`< 0.005`) in a bar that completed *before* the
+tap, and reads sounding (`> 0.02`) in a bar that *opened after* it. Nothing
+short of touch → LVGL hit test → `cbStepTap` → `seq.step()` → the note pump →
+the voice → the analyzer can move that number. A dead touch path, a UI that
+repaints but writes no engine state, and a sequencer that ignores the write all
+land here as a red gate, and none of them is visible to a pixel golden or to an
+audio gate alone.
+
+The windows are rigorous by construction rather than by timing assumption: a bar
+line is emitted at the 15→0 seam after its whole window has been filled, so a
+bar printed before the STEP token is entirely pre-edit, and the gate requires
+**two** post-edit bars so the one it reads provably opened after the tap rather
+than containing it. Bar 1 is excluded by name — the transport records boundaries
+strictly inside `(from, to]`, so it never emits tick 0 at phase 0 and step 0
+reads ~0.18 there against 0.42+ in every later bar. Asserting bar 1 would either
+fail honestly or invite someone to lower the margin until it passed.
+
+★ **IT DEPENDS ON A LOCAL-ONLY qemu2 CHANGE.** The injected gestures come from
+the `touch-script` property on qemu2's `imxrt.gt911` model (qemu2
+`a2d5d9dd16`), which is not upstream and is not pinned anywhere in this repo.
+QEMU is GPL, so that change stays on this machine per the one-way firewall, and
+a fresh clone therefore sees this gate red for a reason that has nothing to do
+with the firmware. Same standing arrangement as the `sai1-rxinject` binding
+(`audio/audioinput_i2s_test`, rt1062 half) and the rt1062 halves of
+`usb/usb_descriptor_survey` and `dualcore/cm4_usb_irq_probe`. Do not "fix" it by
+vendoring the QEMU patch, and do not delete the gate to make a clean-clone sweep
+green — the red *is* the firewall reporting itself.
+
+The gate fails loudly rather than vacuously when the script is missing: QEMU's
+own refusal (`imxrt_gt911_load_script` → `error_report` + `exit(1)`) goes to
+stderr, which `qrun` redirects into the `-D` log, so the operator's first
+symptom would otherwise be "no UART capture" — indistinguishable from firmware
+that never booted. The gate pre-flights the file by name and dumps the `-D` log
+when the capture is empty.
+
+★ **THE `-global` LONG FORM IS MANDATORY.** `qemu_global_option()` splits the
+driver name at the FIRST dot, and the device type is `imxrt.gt911`, so
+`-global imxrt.gt911.touch-script=FILE` parses as driver `imxrt`, property
+`gt911.touch-script`, matches nothing, and prints **nothing**. A nonexistent
+path passed that way boots happily and the run silently asserts against the
+model's built-in script instead of ours. Measured during Task 6 of the capstone
+plan. Never shorten the line in `run_qemu.sh`.
+
+**QEMU renders in software, and silicon verification is still owed.** The UI
+golden `0xD3BC88D7` is FNV-1a over the whole 720x1280 XRGB8888 framebuffer taken
+from the LVGL **software** renderer — there is no GC355 model in QEMU (see the
+`vglite_probe` entry above), so this frame says nothing about the GPU path. The
+frame behind the golden was dumped with `pmemsave` from the QEMU monitor and
+eyeballed rather than merely reproduced (layout, all eight knob boot angles, the
+lane matching the preset cell-for-cell) — this tree does not record a golden for
+a frame nobody has seen, because the knob pilot's clamped arc and the first
+VGLite GPU frame were both perfectly reproducible AND visibly wrong. The
+anti-golden `0x9BC99DC5` (FNV of 3686400 zero bytes) is rejected by name, and
+the golden grep is anchored with `\r?$` because FNV-1a converges in its low bits
+over a repeating 4-byte pattern: blank, X=0 and X=0xFF frames all end in `9DC5`,
+so an unanchored match would accept the blank screen the assertion exists to
+reject.
+
+**Hardware run on the real EVKB is outstanding** (capstone plan Task 8, blocked
+on physical access at the time of writing). Per this tree's two-gate rule a QEMU
+pass is necessary but not sufficient, and that applies with full force here:
+the codec, the panel and the GT911 are all modelled. Until
+`transcript_hw_evkb.txt` exists beside the QEMU one, the honest claim is
+"QEMU-verified", not "verified".
+
 ## Rules for this list
 
 - **Do not delete, weaken, or `exit 0` a gate to get it off this list.** That defeats the entire
@@ -1074,3 +1149,30 @@ Three things about this gate worth not rediscovering:
   nominal 8 s window ran ~18.7 s and collided with the CM7's receive timeout.
   The transcript truncated mid-sequence, which reads as a CM4 hang rather
   than a miscalibrated delay. Delays are now measured with DWT CYCCNT.
+
+## `rt1176:display/vglite_lvgl_test` — software-path gate; the GPU build has its own golden and it lives on silicon
+
+The example is ONE scene (a 4×4 `synthui_knob` grid) with TWO builds:
+`build/` (software renderer — what this QEMU gate runs, golden
+`0x513C4DB8`) and `build-vglite/` (LVGL's VG_LITE draw unit on the GC355 —
+silicon only, golden `0xC3C6171A` in `transcript_hw_evkb.txt`, verified by
+framebuffer dump over SWD).
+
+★ **Two golden sets, never reconciled.** Hardware antialiasing is not
+LVGL's mask arithmetic, and the GPU build carries `LV_USE_FLOAT=1`, so the
+two paths legitimately differ (measured: 0.40% of pixels, all at AA edges,
+mean |ΔRGB| 0.79). Copying either golden over the other would destroy the
+only evidence that the GPU renders differently at all. When one moves,
+re-verify THAT path on its own terms; do not "fix" the other to match.
+
+★ **A green QEMU gate here proves the software path and the one-source
+story — nothing about the GPU.** The GPU build is not even a runtime
+fallback of the gated ELF (LVGL registers its draw units at compile time;
+see the example header): it is a different binary, verified only on the
+board. The path split is build-time by design, and the gate's value is
+pinning the software renderer while GPU work churns the shared source.
+
+The phase's fps criterion (≥30 fps for the animating grid) was measured
+2026-08-17 and NOT met — software 2.83 fps, GPU 2.45 fps, GPU CPU-bound in
+per-task path construction (transcript, Task 9 section). The gate is
+correctness-only; no gate asserts a frame rate.

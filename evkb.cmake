@@ -107,7 +107,7 @@ include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
 # teensy_declare_library(NAME <subdir under TEENSY_LIB_ROOT> URL REF <sub-path
 # inside the fetched repo>). NAME is what examples pass to
 # import_evkb_library()/evkb_library_dir() (matches the existing call sites).
-teensy_declare_library(cores          teensy-cores/${EVKB_CORE_SUBDIR} https://github.com/newdigate/teensy-cores    fcd22b0c58c4d9c8099b999e5eeb28b57593e441 ${EVKB_CORE_SUBDIR})
+teensy_declare_library(cores          teensy-cores/${EVKB_CORE_SUBDIR} https://github.com/newdigate/teensy-cores    fcd22b0c58c4d9c8099b999e5eeb28b57593e441 ${EVKB_CORE_SUBDIR}) # on cores MASTER since 2026-08-20 (the m2-serial2 branch was fast-forwarded into it); it carries imxrt1176 Serial2 on LPUART2, the M.2 Bluetooth HCI UART
 teensy_declare_library(Wire           Wire                 https://github.com/newdigate/Wire            19babd18b83bc2f9ddbd16f6afefcbb42558530d .)
 teensy_declare_library(SPI            SPI                  https://github.com/newdigate/SPI             eefd8798c74a727a09f38d34d79e1ab55c0110b3 .)
 teensy_declare_library(PXP            PXP                  https://github.com/newdigate/PXP             5658e34885ff3a5cb5516a178ba60743e62a7517 .)
@@ -116,17 +116,20 @@ teensy_declare_library(MipiDisplay    MipiDisplay          https://github.com/ne
 teensy_declare_library(TouchPanel     TouchPanel           https://github.com/newdigate/TouchPanel      d20499c707290985379cb407689eca7f2c14fd08 .) # controller chosen by the importer: import_evkb_library(TouchPanel gt911)
 teensy_declare_library(Audio          Audio                https://github.com/newdigate/Audio           ca1d10fe77afed819d8c2cf01f2a7c714830765f .)
 teensy_declare_library(SdFat          SdFat                https://github.com/newdigate/SdFat           681bfcf83d05beb943e3d905f15d8181bf9072c7 .)
-teensy_declare_library(M2Radio        M2Radio              https://github.com/newdigate/M2Radio         1e15f0bee7a001d8afec82ed5592bd28f0fa31da .) # subdir chosen by the importer: import_evkb_library(M2Radio sdio iw416 [lwip])
+teensy_declare_library(M2Radio        M2Radio              https://github.com/newdigate/M2Radio         c7d051068c55f9b8f33117939353c342b55195f8 .) # subdir chosen by the importer: import_evkb_library(M2Radio sdio iw416 [lwip])
 teensy_declare_library(SD             PaulS_SD             https://github.com/newdigate/SD              e28c549918ea34ffb2942fd84deffc7c76a89880 .)
 teensy_declare_library(SerialFlash    SerialFlash          https://github.com/newdigate/SerialFlash     2b6f24168c1ca97af1138c4a5b10255b39c4ad0b .)
 teensy_declare_library(ethernet       Ethernet             https://github.com/newdigate/Ethernet        eebbfebc699a1500864236db21d17abf3cf7535a .)
 teensy_declare_library(nativeethernet NativeEthernet       https://github.com/newdigate/NativeEthernet  7f5d881d5da80540177caea760d895780478b128 .)
-teensy_declare_library(fnet           FNET/src             https://github.com/newdigate/FNET            a50373d50e57778595eb388b7bfeaad79080a077 src)
+teensy_declare_library(fnet           FNET/src             https://github.com/newdigate/FNET            41deb998e16195cf317a2a0f3f889d33451a57ab src)
+# lwip: the M.2 branch's pin, NOT master's -- master's 03dddc67 is an ANCESTOR
+# of this one, and what sits between them is the W11 lwipopts bump
+# (TCP_WND / TCP_SND_BUF = 8*MSS) that the M.2 throughput work depends on.
 teensy_declare_library(lwip           lwip                 https://github.com/newdigate/lwip            c6b25488403d08fb5886d77e193d089c87b604c0 .)
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
-teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            0219b8ec94bcadfd278eac8637126a0b1e508c06 .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
-teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         e1320124ca55531eb0e8e6a358e6ed573bd1c612 .) # NOT Arduino-layout: use import_evkb_synthui(). Pushed 2026-08-17; the pin then moved to a REWRITTEN history (reference/rebirth/ dropped before going public), so every SHA before e132012 is unreachable.
-teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          943f50fdce45387f8c14aab8c0849ee3b6d73fc5 .) # NOT Arduino-layout: use import_evkb_vglite(). Pushed 2026-08-17. NXP's VGLite vendored verbatim (MIT, except vg_lite_flat.{c,h} which are Apache-2.0, see its NOTICE -- permissive, no copyleft) plus this tree's bare-metal port.
+teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            afb9789ed430614b74eb6ae946da6062485964cd .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
+teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         f6309669b634eee3050254c709a2d7517141b6a1 .) # NOT Arduino-layout: use import_evkb_synthui(). Pushed 2026-08-17; the pin then moved to a REWRITTEN history (reference/rebirth/ dropped before going public), so every SHA before e132012 is unreachable.
+teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          3119701c6f4f3dcf1de6d03ca1138c83e6005652 .) # NOT Arduino-layout: use import_evkb_vglite(). NXP's VGLite vendored verbatim plus this tree's bare-metal port. Since the v7 (SDK 26.06 LTS) re-vendor it is MIT THROUGHOUT -- the Apache-2.0 vg_lite_flat.{c,h} pair no longer exists upstream; NOTICE records the history.
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 teensy_declare_library(Bounce2        Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
 # ARM upstream (not Arduino-layout; consumed via import_evkb_cmsis_dsp below).
@@ -241,7 +244,25 @@ endmacro()
 #
 # The glob is *.c ONLY and must stay that way: src/libs/thorvg/ is 47 .cpp
 # files needing a config.h that is absent from a fresh clone.
+# import_evkb_lvgl([VGLITE])
+#
+# VGLITE opts this example into LVGL's VG_LITE draw unit on the GC355. It is
+# OPT-IN, not the default, because every existing display gate has recorded
+# SOFTWARE goldens and the GPU path will not reproduce them -- hardware
+# antialiasing is not LVGL's mask arithmetic. Two golden sets, never one.
 macro(import_evkb_lvgl)
+    # ★ ARGN must be copied into a real variable before IN_LIST. In a MACRO
+    # (not a function) ARGN is not a variable at all -- it is substituted
+    # textually -- so `if("VGLITE" IN_LIST ARGN)` never matches and the opt-in
+    # silently does nothing. That failure is invisible: the build SUCCEEDS,
+    # LVGL's 19 vg_lite objects compile to zero symbols each because
+    # LV_USE_DRAW_VG_LITE stayed 0, and the ELF simply has no GPU backend in
+    # it. Caught here only by counting symbols in those objects.
+    set(_evkb_lvgl_args ${ARGN})
+    set(_evkb_lvgl_vglite OFF)
+    if("VGLITE" IN_LIST _evkb_lvgl_args)
+        set(_evkb_lvgl_vglite ON)
+    endif()
     if(NOT TARGET LVGL)
         evkb_library_dir(LVGL _evkb_lvgl_dir)
         file(GLOB_RECURSE _evkb_lvgl_srcs CONFIGURE_DEPENDS
@@ -261,6 +282,101 @@ macro(import_evkb_lvgl)
         # Inert today (those paths are behind disabled config), but it turns a
         # confusing undefined-reference in Task 3/4 into a non-event.
         target_link_libraries(LVGL PUBLIC m)
+
+        if(_evkb_lvgl_vglite)
+            import_evkb_vglite()
+            evkb_library_dir(VGLite _evkb_vglite_dir)
+
+            # ★ NO COMPAT SHIM, AND NO IMAGE-DECODER GUARD -- both retired with
+            # the HEADER_VERSION 7 re-vendor, and it matters WHY rather than
+            # just that they went.
+            #
+            # The shim existed because LVGL 9.4 referenced 47 names the old
+            # driver did not define. v7 defines all 47, measured by
+            # tools/vglite-lvgl-names.py, which is kept precisely to prove that
+            # and to catch the next LVGL bump reopening a gap.
+            #
+            # The decoder guard existed because two SHIMMED names --
+            # VG_LITE_BGR888 and VG_LITE_BGRA5658 -- were live format
+            # selections, and handing a faked format to this GPU hangs it
+            # silently. v7 has both formats for real, so the hazard is gone with
+            # its cause. A check kept past its reason reads as protection and
+            # is worse than none.
+            # LV_USE_MATRIX is REQUIRED by the backend (lv_matrix_t is declared
+            # only under it, and the backend's headers use it by value), and it
+            # in turn requires LV_USE_FLOAT.
+            #
+            # ★ LV_USE_FLOAT CHANGES PIXELS -- lv_value_precise_t becomes float,
+            # so angles and coordinates round differently. That is exactly why
+            # this is opt-in: every software gate keeps goldens recorded with it
+            # at 0, and the GPU example gets its own set. Flipping it globally
+            # would move goldens tree-wide and each would need re-confirming on
+            # glass.
+            # ★ 64-byte draw-buffer stride, because the GC355 reports
+            # gcFEATURE_BIT_VG_16PIXELS_ALIGN=1 (measured on silicon) and 16 px
+            # x 4 B at LV_COLOR_DEPTH 32 is 64. LVGL allocates glyph and layer
+            # buffers with these; the software defaults (stride 1, align 4) are
+            # fine for a CPU renderer and feed the GPU misaligned rows, which
+            # renders vector paths correctly while smearing every small blit.
+            # ★ LV_USE_VECTOR_GRAPHIC is REQUIRED for gradients, not an extra:
+            # lv_draw_vg_lite_fill.c compiles its gradient branch (and
+            # lv_vg_lite_grad.c compiles at all) only under it. Without it
+            # every gradient fill hits LV_LOG_WARN and is SKIPPED -- the build
+            # succeeds, solids render, and each gradient surface is simply
+            # absent, which presents as wrong COLOURS, not missing shapes:
+            # the knob face became its semi-transparent cap composited on the
+            # screen background. Found by a primitive-isolation scene
+            # (GRADPROBE) after two sessions of chasing blend/premultiply
+            # theories. ThorVG stays OFF; this enables only LVGL's own
+            # vector API, which the backend maps to the GPU.
+            # ★ The EXT linear-gradient path is DISABLED against this driver,
+            # by contract mismatch measured on silicon: the GC355 v7
+            # vg_lite_update_linear_grad() consumes grad->matrix (NXP's own
+            # example assigns it immediately before the call), but LVGL 9.4
+            # zeroes the item and only assigns the matrix at DRAW time -- so
+            # update sees a zero matrix, the transformed endpoints have
+            # length 0, and it returns INVALID_ARGUMENT. LVGL then trips its
+            # own create-failure assert (grad_item_pool_free, item->ctx) and
+            # the firmware halts: the symptom is a nearly-empty frame, not a
+            # bad gradient. LVGL's sequence fits the newer GC555-style API;
+            # this knob exists in LVGL precisely for that split. The basic
+            # 256-entry-ramp path (vg_lite_draw_grad) is the one this driver
+            # and LVGL agree on.
+            # ★ VLC_OP_CLOSE is removed from emitted paths ("Workaround for
+            # NXP", LVGL's words). Measured on the GC355: a rect carrying
+            # BOTH a gradient fill and a border -- the knob-face recipe --
+            # rendered its interior flooded with border colour plus banding
+            # and rightward streaks, while the identical borderless gradient
+            # beside it was pixel-perfect and every API call reported
+            # success. With CLOSE removed the same tile renders correctly.
+            # Isolated by the GRADPROBE scene, one primitive per tile.
+            # ★ Stroke cache 128, not the default 32: the 16-knob scene draws
+            # more distinct strokes per frame than 32, and at that boundary
+            # the SECOND animated refresh LIVELOCKED -- CPU cycling
+            # draw-task/heap code forever, GPU idle, LVGL log empty, every
+            # status green. At 128 the same scene ran 64/64 refreshes. The
+            # golden frame is unaffected (first frame never evicts).
+            target_compile_definitions(LVGL PUBLIC
+                LV_USE_DRAW_VG_LITE=1
+                LV_USE_MATRIX=1
+                LV_USE_FLOAT=1
+                LV_USE_VECTOR_GRAPHIC=1
+                LV_VG_LITE_DISABLE_LINEAR_GRADIENT_EXT=1
+                LV_VG_LITE_DISABLE_VLC_OP_CLOSE=1
+                LV_VG_LITE_STROKE_CACHE_CNT=128
+                LV_DRAW_BUF_STRIDE_ALIGN=64
+                LV_DRAW_BUF_ALIGN=64)
+            # ★ The GPU-mode LVGL runs XIP from flash, not ITCM. Enabling
+            # LV_USE_VECTOR_GRAPHIC overflowed the 256K ITCM by 25K; on this
+            # path LVGL executes per draw-call (the GPU does the pixels), so
+            # flash residency is the cheap place to give that back.
+            # imxrt1176.ld routes `*libLVGL_flash.a:(.text*)` to .text.progmem
+            # BY THIS NAME -- rename here and there together. Software builds
+            # keep the default archive name and their ITCM placement, so the
+            # fps baseline is not quietly slowed to make the GPU build fit.
+            set_target_properties(LVGL PROPERTIES OUTPUT_NAME "LVGL_flash")
+            target_link_libraries(LVGL PUBLIC VGLite)
+        endif()
     endif()
 endmacro()
 
@@ -290,7 +406,27 @@ macro(import_evkb_vglite)
              "${_evkb_vglite_dir}/VGLite"
              "${_evkb_vglite_dir}/VGLiteKernel"
              "${_evkb_vglite_dir}/port/baremetal")
-        target_compile_definitions(VGLite PUBLIC VG_DRIVER_SINGLE_THREAD=1)
+        # ★ HEADER_VERSION 7 selects the SILICON's capabilities at COMPILE time
+        # from Series/<chip>/<rev>/vg_lite_options.h, dispatched through
+        # VG_LITE_OPTIONS. The vendored VGLite/vg_lite_options.h is only a
+        # template (`<Series/GCID_REV_CID/vg_lite_options.h>`), so the real path
+        # must be supplied here or the driver's gcFEATURE_VG_* constants do not
+        # exist -- 70 compile errors, all "did you mean gcFEATURE_BIT_VG_...".
+        #
+        # ★ THE REVISION IS NOT COSMETIC. vg_lite_init() compares CHIPID,
+        # REVISION, CID and ECOID against the real registers and returns
+        # VG_LITE_NOT_SUPPORT on ANY mismatch. The two gc355 headers differ
+        # ONLY in REVISION (0x1215 vs 0x1216) -- every feature flag is
+        # identical -- so a wrong pick costs nothing but a clean, self-
+        # diagnosing init failure that prints both sides. vglite_probe reads
+        # the registers before init precisely so the board can settle it.
+        set(EVKB_VGLITE_SERIES "gc355/0x0_1216" CACHE STRING
+            "VGLite Series options dir: <chip>/<rev> under VGLite/Series")
+        # The dispatch header wants GCID_REV_CID and builds the include path
+        # itself; it #errors by name if unset, which is how this was found.
+        target_compile_definitions(VGLite PUBLIC
+            VG_DRIVER_SINGLE_THREAD=1
+            GCID_REV_CID=${EVKB_VGLITE_SERIES})
         target_link_libraries(VGLite PRIVATE teensy_flags)
         target_link_libraries(VGLite PUBLIC m)
     endif()

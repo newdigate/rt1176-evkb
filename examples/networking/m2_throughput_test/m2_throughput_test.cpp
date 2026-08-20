@@ -8,6 +8,7 @@
 //                          TX_BLAST_MS, then reports once the last byte acks.
 //   :5003 UDP           -- data datagrams (BE32 seq + 0xA5 fill) are counted;
 //                          "TPUT RESET" / "TPUT STATS?" / "TPUT GO <secs>"
+//                          "TPUT MODE <0|1|2>" / "TPUT BUS?"  (W16 A/B)
 //                          control datagrams drive the udp-rx / udp-tx runs.
 // All services stay armed between tests; each test re-runs without a reflash.
 //
@@ -139,6 +140,9 @@ static void freezeDump(const char *why) {
     Serial1.print(" drainerr=");     Serial1.print(iw416.rxDrainErrors());
     Serial1.print(" notready=");     Serial1.print(iw416.rxSlotNotReady());
     Serial1.print(" c53=");          Serial1.print(iw416.cmd53Count());
+    // W16: a freeze dump has to say whether the register port was in use, or a
+    // fallback-to-CMD52 link would be diagnosed as an aggregation bug.
+    Serial1.print(" mpregs=");       Serial1.print(iw416.mpRegsUsable() ? 1 : 0);
     Serial1.print(" rx_data=");      Serial1.print(iw416.rxDataCount());
     Serial1.print(" rx_drop=");      Serial1.print(iw416.rxDropped());
     Serial1.print(" ps=");           Serial1.print(iw416.psState());
@@ -308,6 +312,147 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
             s_udpRxCount = 0; s_udpRxHi = 0; s_udpRxTiming = false;
             udpSendText(addr, port, "TPUT RESETOK");
             Serial1.println("tput: udp_rx reset");
+        } else if (strncmp(head, "TPUT MODE ", 10) == 0) {
+            // W16: flip the driver's two transport/aggregation switches at
+            // RUNTIME, so a throughput A/B runs both arms in ONE firmware life
+            // against the SAME AP.
+            //
+            // ★ THIS IS THE ONLY HONEST WAY TO JUDGE W16 ON THIS BENCH.  The
+            // W11 baseline table was measured against a house router with the
+            // board on 2.4 GHz and the Mac on the router's 5 GHz side -- two
+            // radios, no shared airtime.  The ESP8266 bench AP is one 2.4 GHz
+            // radio RELAYING both stations, so every byte crosses the air
+            // twice on the same channel.  Comparing a bench Mbps against that
+            // table measures the AP, not the driver -- the same class of error
+            // as W11's confounded PS A/B and W12's unequal-length counter
+            // comparison, both of which produced published wrong conclusions.
+            // Flipping the switch between two blasts minutes apart on one
+            // association removes the AP, the air, and the firmware life from
+            // the comparison.
+            //
+            //   TPUT MODE 0   pre-W16: CMD52 register transport, no batching
+            //   TPUT MODE 1   W16: register port + RX/TX aggregation, POLLED
+            //   TPUT MODE 2   W16 + W15 interrupt-driven service (DAT1)
+            //
+            // ★ MODE 2 EXISTS BECAUSE THE FIRST A/B SAID SO.  Arm 1's cost
+            // decomposed as 7.91 polling commands per frame plus 1.00 for the
+            // data itself -- the DATA path is already at its floor of one bus
+            // command per frame, and everything left is the service loop
+            // asking a quiet card whether it has work.  That is precisely what
+            // W15's interrupt mode removes, and W15 closed with "blast-level
+            // load under interrupt mode on silicon" explicitly NOT validated.
+            // One arm answers both.
+            //
+            // It should also make AGGREGATION matter, which it did not at 230
+            // frames/s: a polled loop running at ~1.8 kHz drains each frame
+            // before the next arrives, so runs are length 1 (measured: 1.19%
+            // of frames arrived batched).  Service on demand instead and
+            // frames accumulate between passes, which is the condition
+            // aggregation needs.  Stated as a PREDICTION here so the next run
+            // can refute it.
+            //
+            // The counters are NOT reset here -- the peer reads them either
+            // side of the blast and consumes the DELTA.  Resetting would
+            // invite exactly the absolute-counter comparison W12 got wrong.
+            const long mode = strtol(head + 10, nullptr, 10);
+            const bool on  = (mode != 0);
+            const bool irq = (mode >= 2);
+            iw416.useRegisterPort(on);
+            iw416.setRxAggregation(on);
+            iw416.setTxAggregation(on);
+            // Order matters on the way IN as well as out: setInterruptMode
+            // writes the card-side CCCR gate and arms the controller, and it
+            // early-outs when the mode is already what was asked for.
+            iw416.setInterruptMode(irq);
+            char msg[128];
+            snprintf(msg, sizeof(msg),
+                     "TPUT MODEOK w16=%d mpregs=%d rxaggr=%d txaggr=%d irq=%d/%d",
+                     on ? 1 : 0, iw416.mpRegsUsable() ? 1 : 0,
+                     iw416.rxAggregation() ? 1 : 0,
+                     iw416.txAggregation() ? 1 : 0,
+                     iw416.interruptMode() ? 1 : 0,
+                     sdio.cardIntEnabled() ? 1 : 0);
+            udpSendText(addr, port, msg);
+            Serial1.println(msg);
+        } else if (strncmp(head, "TPUT SET ", 9) == 0) {
+            // W16 bisect: the three switches INDEPENDENTLY.
+            //   TPUT SET <reg> <rxaggr> <txaggr> <irq>
+            // TPUT MODE moves all of them together, which is right for an A/B
+            // and useless for finding WHICH one is responsible when the A/B
+            // says the whole thing regressed.  It did: against the same AP
+            // minutes apart, W16 measured tcp-tx 0.57 against pre-W16's 4.24
+            // and udp-tx 2.72 against 9.10 -- so something in here costs
+            // throughput even while it cuts bus commands 14-41x.  W11 has the
+            // precedent and the warning: its bitmap cache also cut bus reads
+            // and cost 2.5x, because the reads were accidentally PACING the
+            // host to the firmware's credit cadence.
+            int r = 0, rx = 0, tx = 0, iq = 0;
+            if (sscanf(head + 9, "%d %d %d %d", &r, &rx, &tx, &iq) == 4) {
+                iw416.useRegisterPort(r != 0);
+                iw416.setRxAggregation(rx != 0);
+                iw416.setTxAggregation(tx != 0);
+                iw416.setInterruptMode(iq != 0);
+                char msg[128];
+                snprintf(msg, sizeof(msg),
+                         "TPUT SETOK reg=%d rxaggr=%d txaggr=%d irq=%d/%d",
+                         iw416.mpRegsUsable() ? 1 : 0,
+                         iw416.rxAggregation() ? 1 : 0,
+                         iw416.txAggregation() ? 1 : 0,
+                         iw416.interruptMode() ? 1 : 0,
+                         sdio.cardIntEnabled() ? 1 : 0);
+                udpSendText(addr, port, msg);
+                Serial1.println(msg);
+            }
+        } else if (strncmp(head, "TPUT BUS?", 9) == 0) {
+            // The bus counters as ONE line the peer can difference across a
+            // blast.  Everything here is cumulative and per-firmware-life, so
+            // the peer must consume deltas -- see TPUT MODE above.
+            // ★ 320, NOT 160.  At 160 this reply TRUNCATED mid-"cardints=",
+            // silently dropping cardints/isr/sigen/sten/ist -- and the peer's
+            // dict.get(k, 0) turned every missing field into a ZERO.  That
+            // produced a confident, entirely false reading ("isr=0 cardints=0,
+            // INT_SIGNAL_EN=0x0, CINT not-armed") which was then reasoned
+            // about at length.  A truncated message is not a measurement.
+            // This is the same fault the tree's own gate-vacuity test exists
+            // to catch: a MISSING counter token must never read as proof that
+            // the good outcome did not happen.
+            char msg[320];
+            snprintf(msg, sizeof(msg),
+                     "TPUT BUS total=%lu regs=%lu c52=%lu c53rx=%lu c53tx=%lu "
+                     "rxslots=%lu txslots=%lu frames=%lu stranded=%lu "
+                     "resyncs=%lu notready=%lu drainerr=%lu split=%lu "
+                     "cardints=%lu isr=%lu sigen=0x%lX sten=0x%lX ist=0x%lX",
+                     (unsigned long)iw416.busCommands(),
+                     (unsigned long)iw416.cmd53Regs(),
+                     (unsigned long)(iw416.cmd52PollsTx() + iw416.cmd52PollsSvc()),
+                     (unsigned long)iw416.cmd53Rx(),
+                     (unsigned long)iw416.cmd53Tx(),
+                     (unsigned long)iw416.rxAggrSlots(),
+                     (unsigned long)iw416.txAggrSlots(),
+                     (unsigned long)iw416.rxDataCount(),
+                     (unsigned long)iw416.rxStrandedRecovered(),
+                     (unsigned long)iw416.rxRingResyncs(),
+                     (unsigned long)iw416.rxSlotNotReady(),
+                     (unsigned long)iw416.rxDrainErrors(),
+                     (unsigned long)iw416.rxSplitMismatch(),
+                     (unsigned long)iw416.cardInts(),
+                     (unsigned long)sdio.cardIntCount(),
+                     // ★ THE uSDHC REGISTERS, IN THE UDP REPLY AND NOT ONLY ON
+                     // THE SERIAL CONSOLE.  Three bench runs in a row asked
+                     // "why is cardints 0" and three times the answer was on a
+                     // console that was not attached.  A diagnostic only the
+                     // operator can reach is a diagnostic that will be missing
+                     // exactly when it is needed.
+                     //   sigen bit8 SET, isr=0   -> armed; DAT1 never asserted
+                     //                              or never sampled
+                     //   sigen bit8 CLEAR, isr=0 -> never armed, or the ISR
+                     //                              masked it and nothing
+                     //                              re-armed
+                     (unsigned long)*(volatile uint32_t *)(0x40418000u + 0x38),
+                     (unsigned long)*(volatile uint32_t *)(0x40418000u + 0x34),
+                     (unsigned long)*(volatile uint32_t *)(0x40418000u + 0x30));
+            udpSendText(addr, port, msg);
+            Serial1.println(msg);
         } else if (strncmp(head, "TPUT GO ", 8) == 0) {
             long secs = strtol(head + 8, nullptr, 10);
             if (secs < 1)  secs = 1;
@@ -440,13 +585,29 @@ static const char *statusName(SdioHost::Status s) {
 #define M2_IRQ_MODE 0
 #endif
 
+// W16: enable interrupt mode this many ms AFTER the connect instead of at the
+// connect itself.  It exists to isolate ONE variable.
+//
+// The three-arm load A/B enabled interrupt mode MID-RUN (TPUT MODE 2) and came
+// back isr=0/cardints=0 -- no interrupt ever fired -- while the same driver
+// with M2_IRQ_MODE=1 (enable AT connect) and only the AP's broadcasts for
+// traffic reported isr=67 and an idle cost of 8.6 register reads per second.
+// Two things differ between those runs: WHEN the mode is enabled, and whether
+// there is load.  Building with -DM2_IRQ_LATE_MS=30000 changes only the
+// first, so a sparse run with it either reproduces isr=0 (the mid-run enable
+// is broken) or does not (leaving load as the explanation).  Guessing between
+// two confounded variables is how W11 concluded PS was killing RX.
+#ifndef M2_IRQ_LATE_MS
+#define M2_IRQ_LATE_MS 0
+#endif
+
 static bool wifiConnect() {
 #if defined(HAVE_WIFI_CREDS)
     SdioHost::Status c = iw416.connectStation(M2_WIFI_SSID, M2_WIFI_PSK, 3,
                                               /*psOn=*/M2_PS_OFF ? false : true);
     Serial1.print("ps_mode="); Serial1.println(M2_PS_OFF ? "OFF(A/B arm)" : "on");
 #if M2_IRQ_MODE
-    if (c == SdioHost::OK) {
+    if (c == SdioHost::OK && M2_IRQ_LATE_MS == 0) {
         // After begin() (long since done here): enableCardInt() must not run
         // before the controller reset in begin() or the enable is wiped.
         iw416.setInterruptMode(true);
@@ -582,6 +743,24 @@ void loop() {
                 Serial1.println("link_reup");
             }
         }
+#if M2_IRQ_MODE && M2_IRQ_LATE_MS
+        // The isolated variable: same call, same driver, later.
+        {
+            static bool lateDone = false;
+            static uint32_t lateFrom = 0;
+            if (!lateDone && s_linkUp) {
+                if (lateFrom == 0) lateFrom = millis();
+                if (millis() - lateFrom >= (uint32_t)M2_IRQ_LATE_MS) {
+                    iw416.setInterruptMode(true);
+                    lateDone = true;
+                    Serial1.print("irq_late_enable irq=");
+                    Serial1.print(iw416.interruptMode() ? 1 : 0);
+                    Serial1.print("/");
+                    Serial1.println(sdio.cardIntEnabled() ? 1 : 0);
+                }
+            }
+        }
+#endif
         sys_check_timeouts();
 
         // Bounded service pumps -- each does a small fixed amount of work per
@@ -620,6 +799,35 @@ void loop() {
             Serial1.print(",c52svc:");    Serial1.print(iw416.cmd52PollsSvc());
             Serial1.print(",c53:");       Serial1.print(iw416.cmd53Count());
             Serial1.print('/');           Serial1.print(iw416.cmd53Bytes());
+            // W16.  regs: the multiport register-port reads that replaced the
+            // seven CMD52s this driver used to pay per RX frame, split
+            // svc/tx.  rx/tx: data CMD53s by direction, so "commands per RX
+            // frame" is divisible on a link that also transmits.  aggr: slots
+            // carried by CMD53s that carried MORE THAN ONE -- 0/0 means no
+            // aggregation happened, whatever the throughput.  total is
+            // busCommands(), THE number to normalise per frame.
+            Serial1.print(",regs:");      Serial1.print(iw416.cmd53RegsSvc());
+            Serial1.print('/');           Serial1.print(iw416.cmd53RegsTx());
+            Serial1.print(",rxtx:");      Serial1.print(iw416.cmd53Rx());
+            Serial1.print('/');           Serial1.print(iw416.cmd53Tx());
+            Serial1.print(",aggr:");      Serial1.print(iw416.rxAggrSlots());
+            Serial1.print('/');           Serial1.print(iw416.txAggrSlots());
+            Serial1.print(",total:");     Serial1.print(iw416.busCommands());
+            // ★ THE DECISIVE W16 FIELD ON SILICON.  mpregs=1 means the card's
+            // multiport register port really does stream the register file for
+            // a fixed-address (OP Code 0) CMD53, which is what NXP's driver
+            // assumes and what nothing in this tree had ever measured.
+            // mpregs=0 means it does NOT -- the driver caught it against
+            // CARD_STATUS and fell back to CMD52, rej= carries what came back,
+            // and the link is alive but paying the pre-W16 price.
+            Serial1.print(" mpregs=");    Serial1.print(iw416.mpRegsUsable() ? 1 : 0);
+            Serial1.print("/0x");         Serial1.print(iw416.mpRegsRejected(), HEX);
+            Serial1.print("/");           Serial1.print(iw416.mpRegsErrors());
+            // The two transports' reading of register 0x5C at the same moment,
+            // as (register-port << 8) | CMD52.  Evidence for the record, not a
+            // verdict: 0x5C is CARD_TO_HOST_EVENT and it is live.
+            Serial1.print(" witness=0x");  Serial1.print(iw416.mpRegsWitness(), HEX);
+            Serial1.print(" split=");     Serial1.print(iw416.rxSplitMismatch());
             Serial1.print(" state=");      Serial1.print(st);
             Serial1.print(" reconnects=");  Serial1.print(s_reconnects);
             // W12 fault-#5 signature.  stranded= counts uploads the driver's
@@ -657,19 +865,34 @@ void loop() {
             // W15: DAT1 assertions serviced.  Stays 0 in polled mode; in irq
             // mode it climbing is the whole silicon-validation signal.
             Serial1.print(" cardints=");    Serial1.print(iw416.cardInts());
-#if M2_IRQ_MODE
-            // Silicon-validation forensics: the raw uSDHC interrupt regs.
-            // sigen bit8 present + cardints frozen  -> DAT1 never asserted
-            //   (or CINT status never latched: check sten bit8 + st bit8).
-            // sigen bit8 ABSENT + cardints frozen   -> the ISR fired and
-            //   masked signalling but serviceLink never took the flag.
+            // ★ THE DISCRIMINATOR, added after the first load A/B.  That run
+            // reported irq=1/1 (driver mode on, controller signalling on) and
+            // still ended with cardInts()=0 -- which by this tree's own rule
+            // (the [irq] gate asserts cardInts>0 precisely because "a driver
+            // that stayed polled reads 0") means the arm proved NOTHING about
+            // interrupt-driven service, however good its command count looked.
+            // cardInts() is serviceLink's TAKE count; SdioHost::cardIntCount()
+            // is the ISR's OWN count.  Together they split the three cases
+            // that a single zero conflates:
+            //   isr>0, take=0  -> the ISR fired and serviceLink never consumed
+            //                     the flag.  A driver bug.
+            //   isr=0, sigen bit8 SET -> controller armed, DAT1 never asserted
+            //                     or never sampled.  Under sustained load the
+            //                     bus is rarely idle, and a 4-bit SDIO card
+            //                     interrupt is only sampled between transfers.
+            //   isr=0, sigen bit8 CLEAR -> the ISR fired once, masked
+            //                     signalling, and nothing re-armed it.
+            Serial1.print(" isr=");         Serial1.print(sdio.cardIntCount());
+            // Raw uSDHC interrupt registers: INT_STATUS / INT_STATUS_EN /
+            // INT_SIGNAL_EN.  ★ NO LONGER behind M2_IRQ_MODE: interrupt mode
+            // is selected at RUNTIME now (TPUT MODE 2), so a build-time guard
+            // meant the one run that needed these forensics did not have them.
             Serial1.print(" usdhc=0x");
             Serial1.print(*(volatile uint32_t *)(0x40418000u + 0x30), HEX);
             Serial1.print("/0x");
             Serial1.print(*(volatile uint32_t *)(0x40418000u + 0x34), HEX);
             Serial1.print("/0x");
             Serial1.print(*(volatile uint32_t *)(0x40418000u + 0x38), HEX);
-#endif
             Serial1.println();
         }
     } else {

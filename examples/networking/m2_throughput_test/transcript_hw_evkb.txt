@@ -451,3 +451,559 @@ poll cadence), not the tick failing.  Practical consequence: on a board with
 flaky DAT1, irq mode may present as association-up/data-dead rather than
 slow -- the detection signal is cardints= frozen.  A deliberate test needs:
 CCCR write suppressed, PS OFF, a LAN peer, watch whether RX limps at ~64 ms.
+
+------------------------------------------------------------------------------
+W16: multiport aggregation.  The REGISTER PORT is validated on silicon -- and
+the check that was supposed to validate it was wrong, and silicon said so in
+one run.
+------------------------------------------------------------------------------
+Date: 2026-08-20.  Rig: ESP8266 bench AP (house creds rotated and retired), no
+LAN peer, so this is a SPARSE run: association, DHCP, PS chatter and the ESP's
+broadcasts.  Driver M2Radio b44877c+, model qemu2 7e17eff5d3.
+
+WHAT W16 CHANGED.  W11 measured this link's ceiling as ~10 SDIO bus commands
+per frame, one frame per CMD53.  W16 attacks that on two fronts: the multiport
+REGISTER PORT (one byte-mode CMD53 at fn1 address 0 returns HOST_INT_STATUS,
+both ring bitmaps, all 32 per-slot RD_LENs and the command-port length, in
+place of seven CMD52s) and multiport AGGREGATION (one CMD53 spanning several
+ring slots, both directions).  Only the first of the two is exercised by a
+sparse link; see "STILL OWED" at the end.
+
+ARM A -- THE FALSE POSITIVE, and it is the instructive part.
+
+The register port rests on one thing nothing in this tree had measured: NXP
+reads the register file with the CMD53 address held FIXED (OP Code 0), which
+for an ordinary SDIO function means "read one register 196 times".  Because
+that failure would be SILENT -- an all-zero snapshot is byte-identical to a
+healthy idle card -- the driver shipped with a sanity check.  The first version
+of that check compared the snapshot's byte at 0x5C against the cardStatus()
+value begin() had read by CMD52: "a register that cannot be zero".
+
+    tput: ip=192.168.4.100 ... regs:0/1,rxtx:8/3,aggr:0/0,total:66073
+          mpregs=0/0x40/0 ... stranded=1/0 drainerr=0 notready=0 resyncs=0
+
+  mpregs=0 -- rejected on the FIRST read, 0x40 where 0x0D was expected, and
+  the driver spent the whole run on the CMD52 fallback.
+
+THE CHECK WAS WRONG, NOT THE CARD.  Register 0x5C is CARD_TO_HOST_EVENT_REG.
+It means DN_LD_CARD_RDY|CARD_IO_READY (0x0D) to the BOOT ROM and UP_LD_CP_RDY
+(0x40) once firmware is running -- NXP's own mlan_sdio_defs.h says so.  The
+"constant" was a live register captured minutes earlier, in a different phase
+of the card's life.  A stale reference dressed as an invariant.
+
+  Replaced with a test of the FAILURE MODE rather than of any register's
+  value: is every byte of the 196 the same?  A port obeying OP Code 0
+  literally can produce nothing else; a running card's register file cannot be
+  uniform (32 RD_LENs read zero on an idle link while 0x5C carries the
+  command-port ready bits).  The live CMD52 reading is still taken, once, and
+  reported as mpRegsWitness() -- as EVIDENCE, never as a verdict.
+
+ARM B -- CORRECTED BUILD.  ~105 s, stable to the last digit across the run:
+
+    tput: ip=192.168.4.100 ps=1/113/58/57/0
+          bus=c52tx:0,c52svc:31,c53:65/18432,regs:104733/4,rxtx:61/4,
+              aggr:0/0,total:104833
+          mpregs=1/0x0/0 witness=0x4048 split=0 state=idle reconnects=0
+          stranded=0/0 drainerr=0 notready=0 resyncs=0 cardints=0
+
+  mpregs=1        THE MEASUREMENT.  This card's multiport register port DOES
+                  stream the register file for a fixed-address byte-mode
+                  CMD53.  NXP's driver assumes it; nothing in this tree had
+                  ever confirmed it; it is confirmed now.
+  witness=0x4048  what the two transports said about 0x5C at the same moment:
+                  0x40 through the register port, 0x48 through CMD52,
+                  microseconds apart.  Both are live CARD_TO_HOST_EVENT
+                  values.  That difference IS the reason arm A's check was
+                  invalid, preserved as evidence rather than argued.
+  c52tx:0 c52svc:31   the CMD52 polling storm is gone.  31 CMD52s in 105 s,
+                  against the ~1,070/s this driver used to poll at.
+  stranded/drainerr/notready/resyncs/split all 0.
+
+THE BUS-COST A/B, normalised per SERVICE PASS (both arms run the same
+delay(1)-paced loop, so a pass is the same unit in both):
+
+    arm A (CMD52 transport)   527,117 CMD52 over ~48k passes  = ~11 per pass
+    arm B (register port)     104,733 CMD53 over ~105k passes = ~1 per pass
+
+  Roughly ELEVEN bus commands per service pass become ONE.  Seven of those
+  eleven are the pre-W16 service poll proper (1 status + 4 rd-bitmap + 2
+  RD_LEN); the other four were the wr-bitmap read, which the service path no
+  longer does at all.
+  ★ HONEST CAVEAT: arm A's split between c52tx and c52svc was mis-attributed
+  (the fallback's wr-bitmap reads were counted as TX polling, which made an
+  idle link appear to do 191,607 CMD52s of TX polling for three transmitted
+  frames).  That bug was fixed after this measurement.  It moved commands
+  between two counters that are BOTH terms of the total, so the totals -- and
+  therefore the ratio above -- are unaffected.  Stated rather than quietly
+  omitted, because a counter that lies is exactly what W12's two wrong
+  conclusions were built on.
+
+STILL OWED, and it is the headline item:
+  * AGGREGATION ITSELF IS UNMEASURED ON SILICON.  `aggr:0/0` in every line
+    above, and that is CORRECT rather than a failure: a sparse link never has
+    two occupied ring slots at once, so there is nothing to aggregate.
+    Aggregation only helps when frames arrive faster than the host services
+    them, which needs blast-level load, which needs a peer on the bench AP's
+    LAN.  There was none this session.  Until that run happens, RX and TX
+    aggregation are proven in QEMU (gates [rxaggr]/[txaggr], each demonstrated
+    failing against a non-aggregating driver) and NOT on hardware.
+  * No Mbps number here at all.  A sparse link cannot produce one, and the
+    W11-W12 rule stands: any verdict rests on the counter mechanism, never on
+    an Mbps delta.
+  * TX aggregation remains DEFAULT OFF in the driver; the lwip netif enables
+    it and flushes every poll.  This run's three transmitted frames are DHCP
+    and ARP, so the TX batching path is barely touched.
+
+------------------------------------------------------------------------------
+W16 SILICON A/B: 6.4x fewer bus commands per frame -- and the win is the
+REGISTER PORT, not aggregation.  Throughput did not move, and that is the
+honest headline too.
+------------------------------------------------------------------------------
+Date: 2026-08-20.  ESP8266 bench AP, Mac as LAN peer, board at 192.168.4.101.
+Method: `tput_peer.py ab`, which runs tcp-rx TWICE on ONE association and ONE
+firmware life, flipping the driver's switches over UDP between blasts
+(`TPUT MODE 0|1`).  The AP, the air, the association and the firmware life are
+therefore identical in both arms -- the only way this bench can say anything,
+because the W11 baseline table was measured against a HOUSE ROUTER with the
+board on 2.4 GHz and the Mac on the router's 5 GHz side (two radios, no shared
+airtime), while the ESP is ONE 2.4 GHz radio relaying both stations.
+
+    arm                                    frames    bus  cmd/frame  slots  Mbps
+    pre-W16 (CMD52 transport, no batching)   2308  131953    57.17       0  2.66
+    W16 (register port + aggregation)        2353   20956     8.91      28  2.68
+
+    commands per frame: 57.17 -> 8.91  (6.4x fewer)
+
+  Both arms moved 1448-byte frames at the same rate (229.9 vs 231.6 frames/s),
+  which is what makes them comparable.
+
+THE DECOMPOSITION, and it closes to 0.4%:
+  W16 issued 20,956 - 2,353 = 18,603 register reads in 10.16 s = 1,831 service
+  passes per second.  Predict the pre-W16 arm from that SAME pass count at the
+  pre-W16 price of 7 CMD52 per pass (1 status + 4 rd-bitmap + 2 CMD_RD_LEN)
+  plus one data CMD53 per frame:  18,603 x 7 + 2,308 = 132,529.
+  Measured: 131,953.  **99.6% agreement.**
+  So the entire 6.4x is the multiport register port replacing seven CMD52s
+  with one CMD53 per service pass.  Nothing is left unexplained.
+
+AGGREGATION ENGAGED, AND CONTRIBUTED ALMOST NOTHING HERE: 28 slots out of
+  2,353 frames = 1.19%.  That is not a failure, it is the workload: at 230
+  frames/s a frame arrives every 4.3 ms while the polled service loop runs at
+  1.8 kHz, so the host drains each frame long before the next lands and every
+  run is length 1.  Aggregation needs frames to QUEUE.  (An earlier bench run
+  on the same rig reached aggr:86/2 -- 86 RX slots batched, and 2 TX frames in
+  one aggregated write -- so the path works under load; it is the opportunity
+  that is scarce, not the mechanism.)
+
+THROUGHPUT DID NOT MOVE: 2.66 -> 2.68 Mbps, which is noise.
+  ★ THIS IS NOT A DISAPPOINTING RESULT, IT IS A DIAGNOSTIC ONE.  W11 measured
+  the SDIO bus as the ceiling at 9.7 Mbps against a real AP.  This bench tops
+  out at 2.7 Mbps -- the ESP8266 SoftAP relaying two stations on one 2.4 GHz
+  radio -- so the bus was never the limiter in this test and no bus change
+  could have shown up as Mbps.  Cutting bus cost 6.4x on a link bounded
+  somewhere else buys nothing you can see here.  Whether it buys throughput at
+  the rates where W11 found the ceiling is UNANSWERED and needs an AP that can
+  carry >10 Mbps to the board.
+
+WHERE THE REMAINING COST IS, which points straight at the next experiment.
+  W16's 8.91 commands per frame splits as **7.91 polling + 1.00 data**.  The
+  DATA path is at its floor: one bus command per frame, which is what
+  aggregation exists to push below and what it will only reach when frames
+  queue.  Everything else is the service loop asking a quiet card whether it
+  has work -- which is exactly what W15's interrupt mode removes, and which
+  W15 closed with "blast-level load under interrupt mode on silicon" NOT
+  validated.  `TPUT MODE 2` (W16 + DAT1) was added for that arm.
+  PREDICTION, recorded so it can be refuted: mode 2 should cut the 7.91 hard,
+  AND should raise the aggregated share -- servicing on demand lets frames
+  accumulate between passes, which is the condition aggregation needs.
+
+HEALTH, and one OPEN observation:
+    pre-W16  stranded=1 resyncs=0 notready=0 drainerr=0 split=0
+    W16      stranded=3 resyncs=0 notready=0 drainerr=0 split=0
+  1 vs 3 is not a distinguishable difference at these counts, and split=0 in
+  both says the block-padding inference (model NOTE 11) held for every packet.
+  BUT BOTH ARMS ARE FAR ABOVE W13's RATE: W13 measured 3 strands per 1.78 GB;
+  this is 1 per 3.3 MB and 3 per 3.4 MB, i.e. 175x-520x more per byte.  Since
+  the PRE-W16 arm shows it too, it is unlikely to be a W16 regression -- but
+  arm 0 is not literally the old driver (same batch code bounded to one slot,
+  same latch accounting), so that is an argument, not a measurement.  OPEN:
+  worth a long soak, and worth remembering that `stranded` is W13's evidence
+  for FIRMWARE behaviour, so a rig with a different AP and a much lower data
+  rate is exactly the sort of thing that could move it.
+
+RIG GOTCHA, which cost one confused round trip: an ESP8266 SoftAP hands out
+  192.168.4.100 FIRST and a rebooted ESP has an EMPTY LEASE TABLE, so whichever
+  station asks first takes the address the board had.  After the AP was
+  rebooted the board came back on .101 and the peer aimed at .100 was talking
+  to the Mac itself.  tput_peer.py now detects that case by name instead of
+  reporting "is it the W16 image?", which is what it said the first time and
+  which sent a correct diagnosis chasing a firmware ghost.
+
+------------------------------------------------------------------------------
+W16 SILICON A/B, THREE ARMS: 30x fewer bus commands per frame -- and the arm
+that got there NEVER TOOK AN INTERRUPT.  Read the cardints column before the
+headline.
+------------------------------------------------------------------------------
+Date: 2026-08-20, same rig, board on 192.168.4.101.  `tput_peer.py ab`, three
+arms, one association, one firmware life.
+
+  arm                          frames    bus  cmd/frame   poll   data  slots  Mbps
+  pre-W16 (CMD52, polled)        1272 118640     93.27   91.77   1.50      0  1.44
+  W16 (reg port + aggr, polled)  1408  18065     12.83   11.33   1.50      3  1.60
+  W16 + irq mode (DAT1)          1364   4195      3.08    1.58   1.49     14  1.54
+
+  93.27 -> 12.83  (7.3x)      93.27 -> 3.08  (30.3x)
+
+★ AND THE ARM THAT REACHED 3.08 REPORTED cardints=0.
+
+  By this tree's own rule -- run_qemu_irq.sh asserts cardInts>0 precisely
+  because "a driver that stayed polled, or one whose controller-side enable
+  silently did not take, reads 0 here no matter how many frames it delivers"
+  -- that arm demonstrated NOTHING about interrupt-driven service.  It ran in
+  interrupt MODE (the ack read irq=1/1: driver flag on, uSDHC signalling on)
+  and never serviced a DAT1 assertion.  W15's open item, "blast-level load
+  under interrupt mode on silicon", IS STILL OPEN.  The 30x is real; the label
+  on it was wrong.
+
+WHAT ACTUALLY PRODUCED EACH STEP, from the poll/data split:
+
+  poll term  91.77 -> 11.33 -> 1.58      data term  1.50 -> 1.50 -> 1.49
+
+  * 91.77 -> 11.33 (8.1x) is the REGISTER PORT: seven CMD52s per service pass
+    become one CMD53.  Both arms ran the same pass rate (1,636 vs 1,569
+    passes/s), which is what makes the ratio a measurement.
+  * 11.33 -> 1.58 (7.2x) is NOT interrupts.  It is serviceLink declining to
+    read HOST_INT_STATUS on passes with nothing pending: the look rate falls
+    from 1,569/s to 211/s while the pass loop keeps running.  The wake-ups
+    come from the STICKY PENDING BIT, not from DAT1 -- and under tcp-rx that
+    bit is kept alive by the TX path's own register reads, because lwip
+    answers each delivered segment with an ACK from inside the sink and
+    sendDataFrame reads the card's registers to find a credit.
+  * the DATA term never moves: ~1.0 RX CMD53 per frame plus ~0.5 TX CMD53 per
+    ACK.  It is now 49% of arm 2's total cost.
+
+  HYPOTHESIS for cardints=0, NOT a finding: a 4-bit SDIO card interrupt is
+  only sampled between transfers, and under sustained load the bus is rarely
+  idle -- while the driver, servicing on the pending bit, clears the card's
+  status almost as soon as it rises.  DAT1 may never get a window.  The
+  instrument to settle it is now in the image: `isr=` (SdioHost::cardIntCount,
+  the ISR's OWN count) beside `cardints=` (serviceLink's TAKE count), plus the
+  raw uSDHC INT_STATUS/INT_STATUS_EN/INT_SIGNAL_EN, no longer behind the
+  M2_IRQ_MODE build flag -- which is why the run that needed them did not have
+  them.  Three cases it separates:
+      isr>0, cardints=0            -> ISR fired, serviceLink never consumed it
+      isr=0, sigen bit8 SET        -> armed, DAT1 never asserted or sampled
+      isr=0, sigen bit8 CLEAR      -> ISR fired once, masked, never re-armed
+
+THE AGGREGATION PREDICTION: directionally right, magnitude REFUTED.
+  W16's previous entry predicted that servicing on demand would raise the
+  aggregated share.  It did -- 3 slots -> 14, a 4.7x rise -- and it is still
+  1.0% of frames.  The reason is arithmetic and it generalises: aggregation
+  needs the host to look LESS OFTEN THAN FRAMES ARRIVE, and arm 2 still looked
+  211 times a second at 134 frames a second.  Runs stay length 1.
+  ★ SO THIS BENCH CANNOT DEMONSTRATE AGGREGATION, and no amount of tuning will
+  change that: at 134 frames/s the service loop will always outrun the
+  traffic.  W11's rig ran at 840 frames/s.  Aggregation's benefit scales with
+  frame rate relative to service rate, and this AP cannot supply the frames.
+
+ABSOLUTE cmd/frame IS NOT PORTABLE BETWEEN RUNS -- a worked example:
+  the SAME pre-W16 arm read 57.17 cmd/frame in the previous session and 93.27
+  in this one.  Nothing changed but the air: the frame rate fell from 230/s to
+  125/s while the pass rate stayed ~1,600/s, so the fixed polling cost was
+  divided among fewer frames.  Only WITHIN-RUN ratios mean anything.  This is
+  the same trap as comparing absolute counters across runs of different length
+  (W12, twice) wearing different clothes.
+
+HEALTH: stranded 0 / 0 / 2, everything else 0 across all three arms, split=0
+  throughout (the block-padding inference held for every packet).  The 2 is in
+  the irq arm only, which is the direction W15 warned about -- suppress the
+  per-pass read and the safety net has more to catch -- but n=2 is not a
+  measurement.  Note the previous session showed 1 and 3 on arms that here
+  show 0 and 0, which is the same point about small counts.
+
+------------------------------------------------------------------------------
+W16: WHY THE LOAD ARM NEVER TOOK AN INTERRUPT.  Two confounded variables,
+separated by two runs that needed no LAN peer at all.
+------------------------------------------------------------------------------
+Date: 2026-08-20.  The three-arm load A/B enabled interrupt mode MID-RUN and
+came back isr=0 / cardints=0: no interrupt fired, though the ack said irq=1/1.
+Two things differed from W15's validated run -- WHEN the mode was enabled, and
+whether there was load -- and guessing between two confounded variables is how
+W11 concluded that power save was killing RX.  So they were separated.
+
+RUN 1 -- enable AT CONNECT, sparse traffic (M2_IRQ_MODE=1, the W15 path, but
+on the W16 driver).  ~40 s, only the AP's broadcasts and PS chatter:
+
+    cardints=67 isr=67  usdhc=0x0/0x157F71FF/0x100
+    regs:344/5  total:365   stranded=0/0 drainerr=0 notready=0 resyncs=0
+
+  The ISR fires, serviceLink consumes EVERY assertion (isr == cardints, so
+  nothing is being flagged and dropped), CINT signalling is armed (bit 8 of
+  INT_SIGNAL_EN), and the idle service cost is 344 register reads in 40 s =
+  8.6/s against the ~1,000/s a polled build spends.
+  => W16 DID NOT BREAK INTERRUPT MODE.  W15's mechanism still works, now on
+  one CMD53 per look instead of seven CMD52s.
+
+RUN 2 -- enable MID-RUN, sparse traffic (-DM2_IRQ_LATE_MS=30000: same call,
+same driver, 30 s later).  The one variable changed, nothing else:
+
+    cardints=162 isr=162  usdhc=0x0/0x157F71FF/0x100
+
+  The register reads climb at ~1,000/s for the first 30 s and then flatten to
+  tens per second at the moment of the enable.
+  => THE MID-RUN ENABLE IS NOT BROKEN EITHER.
+
+WHICH LEAVES LOAD.  Under sustained tcp-rx the interrupt does not participate:
+  the driver is servicing the card through the STICKY PENDING BIT faster than
+  the card can signal.  DAT1 is a LEVEL derived from unmasked HOST_INT_STATUS
+  bits, our read CLEARS those bits, and a 4-bit SDIO card interrupt is only
+  sampled between transfers -- so on a bus that is busy 134 times a second and
+  read 211 times a second, the level may never survive long enough to be seen.
+  ★ STATED AS THE REMAINING HYPOTHESIS, not as a finding: what separates "never
+  asserted" from "never sampled" is INT_SIGNAL_EN bit 8 during the load arm,
+  and the BUS? reply now carries sigen/sten/ist so the next load run captures
+  it without a serial console.  Three bench runs in a row asked this question
+  and three times the answer was on a console that was not attached; a
+  diagnostic only the operator can reach is one that will be missing exactly
+  when it is needed.
+
+WHAT THIS MEANS FOR THE NUMBERS ALREADY RECORDED: nothing changes.  The 27-30x
+  is real and reproducible (84.12 -> 3.07 in the second load session, 93.27 ->
+  3.08 in the first).  Only the ATTRIBUTION changes, and it matters:
+    * ~8x of it is the register port,
+    * the rest is serviceLink declining to read status on passes with nothing
+      pending -- a benefit of interrupt MODE, not of interrupts,
+    * and DAT1's own contribution under load is, so far, zero.
+  W15's open item is therefore ANSWERED IN THE NEGATIVE rather than closed:
+  blast-level load under interrupt mode runs correctly on silicon and the
+  interrupt does not fire.  Its measured value remains the IDLE win (W15: 12x;
+  re-measured here as 8.6 register reads/s against ~1,000).
+
+------------------------------------------------------------------------------
+W16 ON THE HOUSE AP -- and a RETRACTION: "the irq arm never took an interrupt"
+was MY OWN TRUNCATED BUFFER, not a measurement.
+------------------------------------------------------------------------------
+Date: 2026-08-20.  Rig: the house router, board on OnestreamQJN7 (2.4 GHz, ch
+4) at 192.168.1.102, Mac on OnestreamQJN7_5G (ch 36) at 192.168.1.101.  TWO
+RADIOS, no shared airtime -- W11's rig, and the first bench in W16 where the
+peer did not have to leave its own network.  Both ESP boards unplugged (the
+C6's HT40 on ch 6 spans ch 4-8 and would have sat on top of the house AP).
+
+★ THE RETRACTION, first, because a wrong conclusion is already in this file.
+  The previous section concluded that the interrupt arm "reported cardints=0"
+  and therefore "demonstrated NOTHING about interrupt-driven service", and
+  reasoned at length about DAT1 never being sampled under load.  THAT IS
+  WRONG.  The board's `TPUT BUS?` reply was built with snprintf into a
+  char[160] and the string had outgrown it: the wire carried
+
+      'TPUT BUS total=339949 ... drainerr=0 split=0 card'   (159 chars)
+
+  -- truncated mid-"cardints=", so cardints, isr, sigen, sten and ist never
+  arrived, and the peer's dict.get(k, 0) turned every missing field into a
+  ZERO.  Measured properly, with char[320]:
+
+      isr=3007  cardints=3007   for 3104 frames  = 0.97 interrupts per frame
+
+  DAT1 fires under sustained load, roughly once per frame, and serviceLink
+  consumes every single assertion (isr == cardints exactly).  W15's open item
+  -- "blast-level load under interrupt mode on silicon" -- is CLOSED, and
+  closed POSITIVELY.
+  THE LESSON IS THE TREE'S OWN, arrived at from the other side: a MISSING
+  counter must never read as proof that the good outcome did not happen.  That
+  is exactly what tools/gate-vacuity.test.sh exists to enforce on the QEMU
+  gates, and the peer had no such guard.  It does now: _bus() knows every
+  field the board owes it and REFUSES to return a dict with holes.
+
+  A second instrument was lying in the same direction, and is now not
+  reported at all: INT_SIGNAL_EN read via `TPUT BUS?` shows 0x0 in interrupt
+  mode ALWAYS.  Not a controller fault -- a sampling-point fault.  That
+  handler runs inside lwip's udp_recv, which serviceLink calls from its own
+  sink, so it reads the register from INSIDE a service pass, after the ISR has
+  masked CINT and before the end-of-pass re-arm.  Read from loop() instead, on
+  the serial line, the same instant reads
+
+      cardints=3068 isr=3068 usdhc=0x0/0x157F71FF/0x100
+
+  -- bit 8 set, armed, exactly as it should be.
+
+THE MEASUREMENTS, two runs of the three-arm A/B on this rig:
+
+  run A   arm                          frames    bus  cmd/frame  slots  Mbps
+          pre-W16 (CMD52, polled)         995 121269    121.88      0   1.06
+          W16 (reg port + aggr, polled)  2878  21756      7.56     93   3.32
+          W16 + irq mode                 2656   7884      2.97    110   3.07
+
+  run B   pre-W16 (CMD52, polled)        3553 149892     42.19      0   4.11
+          W16 (reg port + aggr, polled)  2976  21866      7.35     70   3.45
+          W16 + irq mode                 3104   9139      2.94    144   3.59
+
+COMMANDS PER FRAME: the win is consistent and large.  42-122 -> ~7.4 -> ~2.9,
+  i.e. 5.7x-16x for the register port and 14x-41x with interrupt mode on top.
+  The W16 arms are stable across both runs (7.56/7.35 and 2.97/2.94) while the
+  pre-W16 arm swings 121.88 -> 42.19 -- because its number is dominated by
+  fixed polling divided by however many frames the air delivered, which is the
+  same reason absolute cmd/frame is not portable between runs.
+
+AGGREGATION IS FINALLY DOING SOMETHING: 0 -> 70..93 -> 110..144 slots.  In the
+  irq arm that is 144/3104 = 4.6% of frames, against ~1% on the ESP8266 bench.
+  The mechanism is the predicted one: interrupt mode makes the host look LESS
+  OFTEN (1.49 poll commands per frame against 5.87 polled), so frames have a
+  chance to accumulate in the ring before it looks.  Still a long way from the
+  regime where aggregation dominates, and this rig does not reach it.
+
+★ THROUGHPUT: STILL NO DEMONSTRATED WIN, and the two runs are why.
+  The pre-W16 arm measured 1.06 Mbps in run A and 4.11 Mbps in run B -- the
+  SAME arm, same rig, minutes apart, a 3.9x spread that reverses the sign of
+  the comparison.  Run A alone looks like a 3x improvement; run B alone looks
+  like a regression.  Neither is a finding.  This is precisely the 2x-4x
+  2.4 GHz variance this file has warned about since W11, and it is why the
+  standing rule is that a verdict rests on the counter mechanism and never on
+  an Mbps delta.
+  What can be said: nothing here reaches W11's 9.69 Mbps on the same router,
+  by any arm.  Whether that is the air (ch 4 is busy), the board's position,
+  or something in the intervening drivers is NOT established, and it would
+  take a many-run distribution rather than another single blast to establish.
+
+HEALTH: stranded 10/7/18 (run B), 0/11/14 (run A); resyncs, notready, drainerr
+  and split all 0 everywhere.  Both directions of the stranded difference
+  appear across the two runs, and the PRE-W16 arm strands too, so nothing here
+  supports "W16 strands more".  The absolute rate is well above W13's 3 per
+  1.78 GB and stays OPEN, as it did on the ESP8266 bench.
+
+------------------------------------------------------------------------------
+W16 BISECTED ON SILICON: RX AGGREGATION COSTS 4.6x THROUGHPUT.  It is W11
+happening again -- a change whose own counters are excellent and which is a
+net loss.  Default flipped to OFF (M2Radio 882221f).
+------------------------------------------------------------------------------
+Date: 2026-08-20.  House AP, board 192.168.1.102 on 2.4 GHz, Mac on 5 GHz.
+
+HOW IT WAS FOUND, and the two wrong turns on the way, because both are the
+same mistake and this file has recorded it before.
+
+  WRONG TURN 1.  Two `all` sweeps minutes apart appeared to show W16 losing on
+  every cell (tcp-tx 0.57 against pre-W16's 4.24, udp-tx 2.72 against 9.10).
+  A single unreplicated pair.  An ISOLATED udp-tx bisect, six configurations
+  with pre-W16 controls at BOTH ENDS, then measured 11.27 / 11.13 / 11.47 /
+  11.14 / 11.31 / 11.23 Mbps -- flat to within 3%, no TX regression from any
+  switch.  The paired sweep was not reproducible.
+  WRONG TURN 2 (earlier, retracted above): "the irq arm never took an
+  interrupt", which was a truncated UDP buffer.
+  Both were single readings believed too early.
+
+THE BISECT THAT WORKED -- one switch at a time, tcp-rx, controls either side:
+
+    all off (pre-W16)            10.96 Mbps
+    register port only           11.03        <- harmless, arguably free
+    + RX aggregation              2.39        <- 4.6x COLLAPSE
+    + TX aggregation              2.45
+    + interrupt mode              2.44
+    back to pre-W16              10.49        <- the air was fine throughout
+
+  Three consecutive arms at ~2.4 while the controls sit at ~10.7.  Not variance.
+
+AND THE AGGREGATION IS NOT FAILING.  Driver counters over the same blasts:
+
+    rxaggr OFF   frames=9253  c53rx=9253  reads/frame=1.00  bus/frame=3.01
+                 stranded=26   split=0 notready=0        10.74 Mbps
+    rxaggr ON    frames=2123  c53rx= 921  reads/frame=0.43  bus/frame=7.21
+                 stranded=139  split=0 notready=0         2.43 Mbps
+    rxaggr OFF   frames=10290 c53rx=10290 reads/frame=1.00 bus/frame=2.85
+                 stranded=22   split=0 notready=0        11.98 Mbps
+
+  0.43 data CMD53s per frame, 86% of frames arriving batched, split=0 -- the
+  reads are correct and cheap.  THE COST IS ELSEWHERE and the counters name it:
+  rxStrandedRecovered() 26 -> 139, a 23x rise PER FRAME.  Each is an upload the
+  W12/W13 safety net rescued at up to 64 ms.  139 of them do not fit in a
+  ten-second blast, and the frame rate duly falls 9253 -> 2123.
+
+MECHANISM -- leading hypothesis, NOT a finding, and the fix follows from it:
+  a multi-slot read holds the bus and CPU for milliseconds (eight 1.5 KB slots
+  is ~12 KB in one PIO transfer), while the drain works from a register
+  SNAPSHOT taken before it started.  Uploads the card queues DURING that window
+  are not in the snapshot, so the drain exits believing the ring is empty and
+  the pass clears HOST_INT_UP_LD on that stale view -- stranding them until the
+  net fires 64 ms later.  Bigger batch, longer window, more strands.  It
+  explains the sign, the size and the counter.
+  THE LIKELY FIX: stop clearing HOST_INT_UP_LD on stale evidence.  Take a FRESH
+  register read at the end of the drain and clear only if the ring is genuinely
+  empty; re-enter the drain if it is not.  One extra register read per drain,
+  against a 64 ms stall.  NOT ATTEMPTED YET -- measured first.
+
+ACTION TAKEN: RX aggregation default OFF, matching TX aggregation.  The
+  register port stays ON (free: 11.03 against 10.96) and interrupt mode stays
+  available.  m2_rx_demo turns RX aggregation back on explicitly, because three
+  of its gates exist to assert on aggregated reads and a gate that followed the
+  new default would test nothing while still passing.  All six re-verified.
+
+★ THE GENERAL LESSON, W11's restated: a change that provably cuts bus commands,
+  whose own counters look excellent, can still be a large net loss because of
+  how it perturbs the firmware's timing.  W11's bitmap cache cut reads and cost
+  2.5x by breaking pacing; this cuts reads and costs 4.6x by widening a race.
+  Commands per frame is necessary and NOT sufficient -- and the W16 sections
+  above celebrating a 14-41x reduction should be read with that in mind: the
+  reduction is real, and on this rig the link is faster without most of it.
+
+------------------------------------------------------------------------------
+W16 FIX: clear HOST_INT_UP_LD on FRESH evidence.  The 4.6x regression is gone
+AND stranding falls to ZERO -- including on the path that was stranding before
+aggregation existed.  M2Radio c7d0510.
+------------------------------------------------------------------------------
+Date: 2026-08-20.  House AP, board 192.168.1.102, Mac on 5 GHz.
+
+THE CHANGE.  The drain exhausts the register snapshot it started from and used
+to clear HOST_INT_UP_LD on that basis.  An exhausted snapshot is not an empty
+ring -- the snapshot predates the drain, and a drain takes milliseconds.  The
+pass now takes a FRESH register read AFTER the drain and clears only if BOTH
+the fresh HOST_INT_STATUS has no UP_LD and the fresh RD bitmap offers nothing
+at our ring slot.  One extra register-port command per drain against a 64 ms
+stall; on a read failure the bit is left set.
+
+BEFORE / AFTER, same bisect, pre-W16 controls at both ends:
+
+    before:  pre-W16 10.96 | +RX aggr  2.39 | ... | back to pre-W16 10.49
+    after:   pre-W16 13.68 | +RX aggr 13.76 | ... | back to pre-W16 14.08
+
+  Every arm now within 3% of every other, at 13.7-14.1 Mbps -- the top of this
+  card's documented 3-14 Mbps range, and above W11's 9.69 baseline.
+
+COUNTERS, and the part that was not expected:
+
+    rxaggr OFF  frames=11946 reads/frame=1.00 bus/frame=2.97 stranded=0  13.94
+    rxaggr ON   frames=11902 reads/frame=0.44 bus/frame=2.57 stranded=0  13.84
+    rxaggr OFF  frames=12126 reads/frame=1.00 bus/frame=2.95 stranded=0  14.14
+
+  ★ stranded=0 IN EVERY ARM.  It was 139 with aggregation and 22-26 WITHOUT it
+  before this change.  So the stale-snapshot clear was stranding uploads on
+  BOTH paths -- W16's snapshot introduced it (the pre-W16 code re-read the
+  bitmap per packet, always fresh) and aggregation merely widened the window
+  from microseconds to milliseconds.  The "pre-W16" arm in every measurement
+  above this section carried the same defect, which is why its stranded rate
+  was 175x-520x above W13's and why that anomaly was left OPEN twice.  It is
+  now closed, and the cause was ours.
+
+  The post-drain bitmap check is exactly what the 64 ms safety net does, done
+  inline on every drain for the price of one command.  The net has nothing left
+  to catch and STAYS -- W13's evidence that this firmware sometimes queues an
+  upload without raising the interrupt is unchanged, and a backstop that never
+  fires is the correct state for a backstop.
+
+WHAT THIS DOES AND DOES NOT SETTLE:
+  * SETTLED: RX aggregation is no longer a regression.  It works (0.44 data
+    CMD53s per frame, 88% of frames batched) and costs nothing.
+  * SETTLED: the elevated stranding seen throughout W16 was our bug, not the
+    firmware's.
+  * NOT SETTLED, and it is the honest headline: AGGREGATION STILL BUYS NO
+    THROUGHPUT.  All arms sit at ~13.9 Mbps.  It cannot, on this rig: the
+    REGISTER PORT alone already took the bus from saturated (12-15k commands/s,
+    at the ceiling W11 measured) to ~9% utilisation, so the link stopped being
+    bus-bound before aggregation was even switched on.  Aggregation trims
+    bus/frame 2.97 -> 2.57 on a bus with ten times that in hand.
+  * RX aggregation therefore stays DEFAULT OFF.  Not because it is broken --
+    it is now correct and free -- but because flipping a default on one
+    afternoon's bisect is what W15 declined to do for interrupt mode, and the
+    same reasoning applies.  A soak first.
+
+WHERE W16 ACTUALLY LANDED, stated plainly: the win is the REGISTER PORT, and it
+is a bus-cost win rather than a throughput win.  W11's "the bus transactions
+per frame, not the air link, are the ceiling" was true of the pre-W16 driver
+and is no longer true of anything.  The ~14 Mbps this rig reaches is the air.

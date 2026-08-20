@@ -29,3 +29,8 @@ docs/*.pdf
 # Gate monitor sockets (cm4_usb_irq_probe hotplugs via -monitor unix:).
 # Trap-cleaned on normal exit; this covers a SIGKILLed run leaving one behind.
 *.sock
+
+# Bench-AP credentials, generated from the RT1176 build cache. NEVER committed
+# -- this repo already leaked live Wi-Fi passwords once (W6, still in pushed
+# history), so the generated header is ignored before it is ever created.
+tools/esp32c6-benchap/ap_creds.h

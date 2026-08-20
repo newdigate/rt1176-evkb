@@ -1,0 +1,63 @@
+synthui_step_test -- QEMU (mimxrt1170-evk), software render
+================================================================================
+2026-08-17. The gate's captured UART, verbatim.
+GOLDEN: STEP_GRID_SUM=0xCE619CE1 -- and the frame behind it was LOOKED AT,
+not merely reproduced (method below). Silicon confirmation still owed.
+================================================================================
+
+SYNTHUI_STEP_BEGIN
+PANEL_OK
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+STEP_GRID_SUM=0xCE619CE1
+SYNTHUI_STEP_DONE
+PASS: SynthUI step widget render verified
+
+================================================================================
+★ LOOKING AT A QEMU GOLDEN WITHOUT HARDWARE -- the reusable part
+================================================================================
+
+This tree's rule is that a golden is never recorded for a frame nobody has
+seen: the knob pilot's arc clamp and the VGLite GPU frame were both perfectly
+reproducible AND visibly wrong. Until now that eye-check needed the board.
+It does not: QEMU's monitor will hand over the scanout buffer.
+
+  qemu-system-arm -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on \
+      -kernel build/synthui_step_test.elf -display none -serial null \
+      -monitor unix:/tmp/mon.sock,server,nowait &
+  sleep 12
+  printf 'xp/1wx 0x4080820c\n' | nc -U /tmp/mon.sock     # LCDIFv2 layer-0 ADDR
+  printf 'pmemsave 0x80100040 0x384000 "/tmp/fb.raw"\n' | nc -U /tmp/mon.sock
+  python3 -c "from PIL import Image; \
+    Image.frombytes('RGB',(720,1280),open('/tmp/fb.raw','rb').read(), \
+                    'raw','BGRX',2880).save('/tmp/fb.png')"
+
+Two traps, both met:
+  - ★ QUOTE the pmemsave filename. Unquoted, the monitor parses the path as an
+    expression and answers "invalid char 't' in expression" -- while writing
+    no file and returning nothing that looks like a failure to a script.
+  - The monitor echoes every character back, so a naive capture buries the
+    reply in terminal escapes; filter for the '^[0-9a-f]{8}: 0x' reply shape.
+
+★ THE DUMP IS PROVEN TO BE THIS GOLDEN'S FRAME, not merely a frame: the
+host-side FNV-1a over the dumped bytes computes 0xCE619CE1, exactly what the
+firmware printed from its own framebuffer. That equality is what makes the
+eye-check bind to the golden rather than to some other paint.
+
+WHAT WAS CONFIRMED BY EYE, all sixteen reachable combinations in one frame:
+  row 0: empty | gated | gated+accent | gated+slide | gated+accent+slide |
+         cursor-on-empty | cursor-on-gated | everything
+  row 1: the same eight, each additionally SELECTED
+Every state was distinct and correct: accent is a round dot top-right, slide a
+bar on the bottom edge, cursor a green ring, selected a white outline. The
+cursor ring is drawn INSET precisely so it stays visible inside the selected
+outline -- confirmed in row 1's last three cells, where both are on at once
+(the playhead crossing the edited step, the one moment both matter).
+
+STILL OWED: silicon. QEMU renders in software and the panel has failure modes
+this can never see -- Task 8 of the capstone plan dumps the same scene off the
+board with tools/rt1170-screenshot.py.
+
+VACUITY PROVEN (both restored afterwards):
+  - sentinel golden 0xDEADBEEF   -> FAIL: grid checksum
+  - one-nibble mutation ...CE0   -> FAIL: grid checksum

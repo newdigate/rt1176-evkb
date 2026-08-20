@@ -1,114 +1,121 @@
-==== captured UART ====
 RT1176 M.2 RX demo up
 sdio_begin=ok r4=0x90FF8000
 iw416_begin=ok ioport=0x10000 fw_status=0xFEDC
 hw_spec=ok mac=6C:1D:EB:91:0C:45 fw_release=0x9B105C15 hw_version=0x7201
 demo_ready
-svc frames=0 rx_data=0 rd_bitmap=0x0 wr_bitmap=0x0 ring=0/0/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC2 tx=0 c53=0 c52svc=109 cardints=0
+svc frames=0 rx_data=0 rd_bitmap=0x0 wr_bitmap=0x0 ring=0/0/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC2 tx=0 c53=0 c52svc=4 cardints=0 c53regs=101/0 bus=105 c53rx=0 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 1: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=1 from_slot=0 rx_port_now=1
 rx_frame 2: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=2 from_slot=1 rx_port_now=2
 rx_frame 3: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=3 from_slot=2 rx_port_now=3
 tx=ok wr_bitmap=0xFFFFFFFF tx_port_now=1
 rx_frame 4: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=4 from_slot=3 rx_port_now=4
-svc frames=4 rx_data=4 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFF ring=1/4/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=1 c53=5 c52svc=1014 cardints=0
+svc frames=4 rx_data=4 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFF ring=1/4/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=1 c53=5 c52svc=8 cardints=0 c53regs=923/1 bus=937 c53rx=4 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 5: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=5 from_slot=4 rx_port_now=5
 rx_frame 6: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=6 from_slot=5 rx_port_now=6
 rx_frame 7: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=7 from_slot=6 rx_port_now=7
-svc frames=7 rx_data=7 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFF ring=1/7/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=1 c53=8 c52svc=1917 cardints=0
+svc frames=7 rx_data=7 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFF ring=1/7/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=1 c53=8 c52svc=12 cardints=0 c53regs=1753/1 bus=1774 c53rx=7 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 8: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=8 from_slot=7 rx_port_now=8
 rx_frame 9: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=9 from_slot=8 rx_port_now=9
 tx=ok wr_bitmap=0xFFFFFFFE tx_port_now=2
 rx_frame 10: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=10 from_slot=9 rx_port_now=10
-svc frames=10 rx_data=10 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFE ring=2/10/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=2 c53=12 c52svc=2824 cardints=0
+svc frames=10 rx_data=10 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFE ring=2/10/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=2 c53=12 c52svc=16 cardints=0 c53regs=2584/2 bus=2614 c53rx=10 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 11: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=11 from_slot=10 rx_port_now=11
 rx_frame 12: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=12 from_slot=11 rx_port_now=12
 rx_frame 13: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=13 from_slot=12 rx_port_now=13
 rx_frame 14: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=14 from_slot=13 rx_port_now=14
-svc frames=14 rx_data=14 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFE ring=2/14/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=2 c53=16 c52svc=3681 cardints=0
+svc frames=14 rx_data=14 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFE ring=2/14/0 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=2 c53=16 c52svc=20 cardints=0 c53regs=3359/2 bus=3397 c53rx=14 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 15: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=15 from_slot=14 rx_port_now=15
 rx_frame 16: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=16 from_slot=15 rx_port_now=16
 tx=ok wr_bitmap=0xFFFFFFFC tx_port_now=3
 rx_frame 17: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=17 from_slot=0 rx_port_now=1
-svc frames=17 rx_data=17 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFC ring=3/1/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=3 c53=20 c52svc=4585 cardints=0
+svc frames=17 rx_data=17 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFC ring=3/1/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=3 c53=20 c52svc=24 cardints=0 c53regs=4186/3 bus=4233 c53rx=17 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 18: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=18 from_slot=1 rx_port_now=2
 rx_frame 19: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=19 from_slot=2 rx_port_now=3
 rx_frame 20: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=20 from_slot=3 rx_port_now=4
-svc frames=20 rx_data=20 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFC ring=3/4/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=3 c53=23 c52svc=5495 cardints=0
+svc frames=20 rx_data=20 rd_bitmap=0x0 wr_bitmap=0xFFFFFFFC ring=3/4/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=3 c53=23 c52svc=28 cardints=0 c53regs=5016/3 bus=5070 c53rx=20 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 21: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=21 from_slot=4 rx_port_now=5
 rx_frame 22: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=22 from_slot=5 rx_port_now=6
 rx_frame 23: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=23 from_slot=6 rx_port_now=7
 tx=ok wr_bitmap=0xFFFFFFF8 tx_port_now=4
 rx_frame 24: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=24 from_slot=7 rx_port_now=8
-svc frames=24 rx_data=24 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/8/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=4 c53=28 c52svc=6349 cardints=0
+svc frames=24 rx_data=24 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/8/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=4 c53=28 c52svc=32 cardints=0 c53regs=5791/4 bus=5855 c53rx=24 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 25: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=25 from_slot=8 rx_port_now=9
 rx_frame 26: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=26 from_slot=9 rx_port_now=10
 rx_frame 27: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=27 from_slot=10 rx_port_now=11
-svc frames=27 rx_data=27 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/11/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=4 c53=31 c52svc=7259 cardints=0
+svc frames=27 rx_data=27 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF8 ring=4/11/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=4 c53=31 c52svc=36 cardints=0 c53regs=6623/4 bus=6694 c53rx=27 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 28: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=28 from_slot=11 rx_port_now=12
 rx_frame 29: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=29 from_slot=12 rx_port_now=13
 tx=ok wr_bitmap=0xFFFFFFF0 tx_port_now=5
 rx_frame 30: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=30 from_slot=13 rx_port_now=14
-svc frames=30 rx_data=30 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF0 ring=5/14/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=5 c53=35 c52svc=8170 cardints=0
+svc frames=30 rx_data=30 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF0 ring=5/14/1 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=5 c53=35 c52svc=40 cardints=0 c53regs=7456/5 bus=7536 c53rx=30 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 31: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=31 from_slot=14 rx_port_now=15
 rx_frame 32: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=32 from_slot=15 rx_port_now=16
 rx_frame 33: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=33 from_slot=0 rx_port_now=1
 rx_frame 34: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=34 from_slot=1 rx_port_now=2
-svc frames=34 rx_data=34 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF0 ring=5/2/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=5 c53=39 c52svc=9032 cardints=0
-demo_done frames=34 rx_data=34 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF0 ring=5/2/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=5 c53=39 c52svc=9141 cardints=0
-irq_mode=1 host_cardint=1
+svc frames=34 rx_data=34 rd_bitmap=0x0 wr_bitmap=0xFFFFFFF0 ring=5/2/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=5 c53=39 c52svc=44 cardints=0 c53regs=8233/5 bus=8321 c53rx=34 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 35: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=35 from_slot=2 rx_port_now=3
 rx_frame 36: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=36 from_slot=3 rx_port_now=4
 tx=ok wr_bitmap=0xFFFFFFE0 tx_port_now=6
 rx_frame 37: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=37 from_slot=4 rx_port_now=5
-svc_irq frames=37 rx_data=37 rd_bitmap=0x0 wr_bitmap=0xFFFFFFE0 ring=6/5/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=6 c53=43 c52svc=9223 cardints=3
+svc frames=37 rx_data=37 rd_bitmap=0x0 wr_bitmap=0xFFFFFFE0 ring=6/5/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=6 c53=43 c52svc=48 cardints=0 c53regs=9065/6 bus=9162 c53rx=37 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 38: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=38 from_slot=5 rx_port_now=6
 rx_frame 39: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=39 from_slot=6 rx_port_now=7
+demo_done frames=39 rx_data=39 rd_bitmap=0x0 wr_bitmap=0xFFFFFFE0 ring=6/7/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=6 c53=45 c52svc=52 cardints=0 c53regs=9545/6 bus=9648 c53rx=39 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+irq_mode=1 host_cardint=1
 rx_frame 40: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=40 from_slot=7 rx_port_now=8
-svc_irq frames=40 rx_data=40 rd_bitmap=0x0 wr_bitmap=0xFFFFFFE0 ring=6/8/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=6 c53=46 c52svc=9315 cardints=6
+svc_irq frames=40 rx_data=40 rd_bitmap=0x0 wr_bitmap=0xFFFFFFE0 ring=6/8/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=6 c53=46 c52svc=56 cardints=1 c53regs=9551/6 bus=9659 c53rx=40 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 41: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=41 from_slot=8 rx_port_now=9
 rx_frame 42: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=42 from_slot=9 rx_port_now=10
 rx_frame 43: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=43 from_slot=10 rx_port_now=11
 tx=ok wr_bitmap=0xFFFFFFC0 tx_port_now=7
 rx_frame 44: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=44 from_slot=11 rx_port_now=12
-svc_irq frames=44 rx_data=44 rd_bitmap=0x0 wr_bitmap=0xFFFFFFC0 ring=7/12/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=7 c53=51 c52svc=9408 cardints=10
+svc_irq frames=44 rx_data=44 rd_bitmap=0x0 wr_bitmap=0xFFFFFFC0 ring=7/12/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=7 c53=51 c52svc=60 cardints=5 c53regs=9564/7 bus=9682 c53rx=44 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 45: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=45 from_slot=12 rx_port_now=13
 rx_frame 46: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=46 from_slot=13 rx_port_now=14
 rx_frame 47: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=47 from_slot=14 rx_port_now=15
-svc_irq frames=47 rx_data=47 rd_bitmap=0x0 wr_bitmap=0xFFFFFFC0 ring=7/15/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=7 c53=54 c52svc=9495 cardints=13
+svc_irq frames=47 rx_data=47 rd_bitmap=0x0 wr_bitmap=0xFFFFFFC0 ring=7/15/2 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=7 c53=54 c52svc=64 cardints=8 c53regs=9577/7 bus=9702 c53rx=47 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 48: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=48 from_slot=15 rx_port_now=16
 rx_frame 49: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=49 from_slot=0 rx_port_now=1
 tx=ok wr_bitmap=0xFFFFFF80 tx_port_now=8
 rx_frame 50: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=50 from_slot=1 rx_port_now=2
-svc_irq frames=50 rx_data=50 rd_bitmap=0x0 wr_bitmap=0xFFFFFF80 ring=8/2/3 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=8 c53=58 c52svc=9587 cardints=16
+svc_irq frames=50 rx_data=50 rd_bitmap=0x0 wr_bitmap=0xFFFFFF80 ring=8/2/3 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=8 c53=58 c52svc=68 cardints=11 c53regs=9591/8 bus=9725 c53rx=50 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 51: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=51 from_slot=2 rx_port_now=3
 rx_frame 52: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=52 from_slot=3 rx_port_now=4
 rx_frame 53: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=53 from_slot=4 rx_port_now=5
 rx_frame 54: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=54 from_slot=5 rx_port_now=6
-svc_irq frames=54 rx_data=54 rd_bitmap=0x0 wr_bitmap=0xFFFFFF80 ring=8/6/3 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=8 c53=62 c52svc=9680 cardints=20
+svc_irq frames=54 rx_data=54 rd_bitmap=0x0 wr_bitmap=0xFFFFFF80 ring=8/6/3 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=8 c53=62 c52svc=72 cardints=15 c53regs=9604/8 bus=9746 c53rx=54 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 55: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=55 from_slot=6 rx_port_now=7
 rx_frame 56: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=56 from_slot=7 rx_port_now=8
 tx=ok wr_bitmap=0xFFFFFF00 tx_port_now=9
 rx_frame 57: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=57 from_slot=8 rx_port_now=9
-svc_irq frames=57 rx_data=57 rd_bitmap=0x0 wr_bitmap=0xFFFFFF00 ring=9/9/3 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=9 c53=66 c52svc=9767 cardints=23
+svc_irq frames=57 rx_data=57 rd_bitmap=0x0 wr_bitmap=0xFFFFFF00 ring=9/9/3 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=9 c53=66 c52svc=76 cardints=18 c53regs=9617/9 bus=9768 c53rx=57 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 58: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=58 from_slot=9 rx_port_now=10
 rx_frame 59: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=59 from_slot=10 rx_port_now=11
 rx_frame 60: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=60 from_slot=11 rx_port_now=12
-svc_irq frames=60 rx_data=60 rd_bitmap=0x0 wr_bitmap=0xFFFFFF00 ring=9/12/3 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=9 c53=69 c52svc=9859 cardints=26
+svc_irq frames=60 rx_data=60 rd_bitmap=0x0 wr_bitmap=0xFFFFFF00 ring=9/12/3 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=9 c53=69 c52svc=80 cardints=21 c53regs=9631/9 bus=9789 c53rx=60 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 61: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=61 from_slot=12 rx_port_now=13
 rx_frame 62: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=62 from_slot=13 rx_port_now=14
 rx_frame 63: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=63 from_slot=14 rx_port_now=15
 tx=ok wr_bitmap=0xFFFFFE00 tx_port_now=10
 rx_frame 64: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=64 from_slot=15 rx_port_now=16
-svc_irq frames=64 rx_data=64 rd_bitmap=0x0 wr_bitmap=0xFFFFFE00 ring=10/16/3 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=10 c53=74 c52svc=9952 cardints=30
+svc_irq frames=64 rx_data=64 rd_bitmap=0x0 wr_bitmap=0xFFFFFE00 ring=10/16/3 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=10 c53=74 c52svc=84 cardints=25 c53regs=9644/10 bus=9812 c53rx=64 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 65: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=65 from_slot=0 rx_port_now=1
 rx_frame 66: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=66 from_slot=1 rx_port_now=2
 rx_frame 67: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=67 from_slot=2 rx_port_now=3
-svc_irq frames=67 rx_data=67 rd_bitmap=0x0 wr_bitmap=0xFFFFFE00 ring=10/3/4 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=10 c53=77 c52svc=10039 cardints=33
+svc_irq frames=67 rx_data=67 rd_bitmap=0x0 wr_bitmap=0xFFFFFE00 ring=10/3/4 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=10 c53=77 c52svc=88 cardints=28 c53regs=9657/10 bus=9832 c53rx=67 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
 rx_frame 68: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=68 from_slot=3 rx_port_now=4
-irq_done frames=68 rx_data=68 rd_bitmap=0x0 wr_bitmap=0xFFFFFE00 ring=10/4/4 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=10 c53=78 c52svc=10069 cardints=34
-phase=polled ms=6000 frames=34 c52svc=9141 cardints=0
-phase=irq ms=6000 frames=34 c52svc=928 cardints=34
-alive=1
-service CMD52 per frame: polled=268.8  irq=27.2
-PASS: 68 frames delivered in order; interrupt window cut service CMD52 per frame
-      from 268 to 27 (34 DAT1 assertions serviced) — W15 interrupt-driven SDIO
+rx_frame 69: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=69 from_slot=4 rx_port_now=5
+tx=ok wr_bitmap=0xFFFFFC00 tx_port_now=11
+rx_frame 70: len=64 dst=FFFFFFFFFFFF src=024957343136 ethertype=0x88B5 seq=70 from_slot=5 rx_port_now=6
+svc_irq frames=70 rx_data=70 rd_bitmap=0x0 wr_bitmap=0xFFFFFC00 ring=11/6/4 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=11 c53=81 c52svc=92 cardints=31 c53regs=9671/11 bus=9855 c53rx=70 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+irq_done frames=70 rx_data=70 rd_bitmap=0x0 wr_bitmap=0xFFFFFC00 ring=11/6/4 stranded=0/0 drainerr=0 notready=0 int_seen=0xC3 tx=11 c53=81 c52svc=96 cardints=31 c53regs=9685/11 bus=9873 c53rx=70 rxaggr=0/0 txaggr=0/0 mpregs=1 rej=0x0 mperr=0 split=0
+phase=polled ms=6000 frames=39 svcpolls=9597 cardints=0
+phase=irq ms=6000 frames=31 svcpolls=184 cardints=31
+txaggr_begin aggr=1 tx_port=11
+txaggr_stage i=1 st=ok queued=1
+txaggr_stage i=2 st=ok queued=2
+txaggr_stage i=3 st=ok queued=3
+txaggr_stage i=4 st=ok queued=4
+txaggr_stage i=5 st=ok queued=5
+txaggr_stage i=6 st=ok queued=6
+txaggr_done sent=6 flush=ok c53tx=1 batches=1 slots=6 queued=0
