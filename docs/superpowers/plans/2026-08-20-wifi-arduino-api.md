@@ -618,11 +618,23 @@ Expected: FAIL — the stub `begin()` returns `WL_IDLE_STATUS` (0), so `wifi_sta
 
 - [ ] **Step 3: Implement the full begin() path in WiFi.cpp**
 
-Replace the stub block (everything from `int WiFiClass::begin(` to the end of the file) with:
+Replace the stub block (everything from `int WiFiClass::begin(` to the end of the file) with the following.
+
+★ **Task 3's review added things to this region that must SURVIVE**: the
+SSID/PSK length-rejection guard at the top of `begin()` (reproduced below --
+do not drop it), and the `sdio()` accessor in `WiFi.h` (untouched by this
+step). Diff your replacement against the current file rather than pasting
+blind.
 
 ```cpp
 int WiFiClass::begin(const char *ssid, const char *psk,
                      uint32_t timeoutMs, bool doBoardPreamble) {
+    // ★ KEEP the length-rejection guard added by Task 3's review -- replacing
+    // this function wholesale would silently revert it.  Reject rather than
+    // truncate: a shortened SSID returns as "SSID not found" and a shortened
+    // passphrase as a wrong key, both maximally confusing on a bench.
+    if (ssid && strlen(ssid) > 32) { m_status = WL_CONNECT_FAILED; return m_status; }
+    if (psk  && strlen(psk)  > 63) { m_status = WL_CONNECT_FAILED; return m_status; }
     strncpy(m_ssid, ssid ? ssid : "", sizeof(m_ssid) - 1);
     strncpy(m_psk,  psk  ? psk  : "", sizeof(m_psk)  - 1);
     if (m_linkUp) disconnect();
