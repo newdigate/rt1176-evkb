@@ -451,3 +451,105 @@ poll cadence), not the tick failing.  Practical consequence: on a board with
 flaky DAT1, irq mode may present as association-up/data-dead rather than
 slow -- the detection signal is cardints= frozen.  A deliberate test needs:
 CCCR write suppressed, PS OFF, a LAN peer, watch whether RX limps at ~64 ms.
+
+------------------------------------------------------------------------------
+W16: multiport aggregation.  The REGISTER PORT is validated on silicon -- and
+the check that was supposed to validate it was wrong, and silicon said so in
+one run.
+------------------------------------------------------------------------------
+Date: 2026-08-20.  Rig: ESP8266 bench AP (house creds rotated and retired), no
+LAN peer, so this is a SPARSE run: association, DHCP, PS chatter and the ESP's
+broadcasts.  Driver M2Radio b44877c+, model qemu2 7e17eff5d3.
+
+WHAT W16 CHANGED.  W11 measured this link's ceiling as ~10 SDIO bus commands
+per frame, one frame per CMD53.  W16 attacks that on two fronts: the multiport
+REGISTER PORT (one byte-mode CMD53 at fn1 address 0 returns HOST_INT_STATUS,
+both ring bitmaps, all 32 per-slot RD_LENs and the command-port length, in
+place of seven CMD52s) and multiport AGGREGATION (one CMD53 spanning several
+ring slots, both directions).  Only the first of the two is exercised by a
+sparse link; see "STILL OWED" at the end.
+
+ARM A -- THE FALSE POSITIVE, and it is the instructive part.
+
+The register port rests on one thing nothing in this tree had measured: NXP
+reads the register file with the CMD53 address held FIXED (OP Code 0), which
+for an ordinary SDIO function means "read one register 196 times".  Because
+that failure would be SILENT -- an all-zero snapshot is byte-identical to a
+healthy idle card -- the driver shipped with a sanity check.  The first version
+of that check compared the snapshot's byte at 0x5C against the cardStatus()
+value begin() had read by CMD52: "a register that cannot be zero".
+
+    tput: ip=192.168.4.100 ... regs:0/1,rxtx:8/3,aggr:0/0,total:66073
+          mpregs=0/0x40/0 ... stranded=1/0 drainerr=0 notready=0 resyncs=0
+
+  mpregs=0 -- rejected on the FIRST read, 0x40 where 0x0D was expected, and
+  the driver spent the whole run on the CMD52 fallback.
+
+THE CHECK WAS WRONG, NOT THE CARD.  Register 0x5C is CARD_TO_HOST_EVENT_REG.
+It means DN_LD_CARD_RDY|CARD_IO_READY (0x0D) to the BOOT ROM and UP_LD_CP_RDY
+(0x40) once firmware is running -- NXP's own mlan_sdio_defs.h says so.  The
+"constant" was a live register captured minutes earlier, in a different phase
+of the card's life.  A stale reference dressed as an invariant.
+
+  Replaced with a test of the FAILURE MODE rather than of any register's
+  value: is every byte of the 196 the same?  A port obeying OP Code 0
+  literally can produce nothing else; a running card's register file cannot be
+  uniform (32 RD_LENs read zero on an idle link while 0x5C carries the
+  command-port ready bits).  The live CMD52 reading is still taken, once, and
+  reported as mpRegsWitness() -- as EVIDENCE, never as a verdict.
+
+ARM B -- CORRECTED BUILD.  ~105 s, stable to the last digit across the run:
+
+    tput: ip=192.168.4.100 ps=1/113/58/57/0
+          bus=c52tx:0,c52svc:31,c53:65/18432,regs:104733/4,rxtx:61/4,
+              aggr:0/0,total:104833
+          mpregs=1/0x0/0 witness=0x4048 split=0 state=idle reconnects=0
+          stranded=0/0 drainerr=0 notready=0 resyncs=0 cardints=0
+
+  mpregs=1        THE MEASUREMENT.  This card's multiport register port DOES
+                  stream the register file for a fixed-address byte-mode
+                  CMD53.  NXP's driver assumes it; nothing in this tree had
+                  ever confirmed it; it is confirmed now.
+  witness=0x4048  what the two transports said about 0x5C at the same moment:
+                  0x40 through the register port, 0x48 through CMD52,
+                  microseconds apart.  Both are live CARD_TO_HOST_EVENT
+                  values.  That difference IS the reason arm A's check was
+                  invalid, preserved as evidence rather than argued.
+  c52tx:0 c52svc:31   the CMD52 polling storm is gone.  31 CMD52s in 105 s,
+                  against the ~1,070/s this driver used to poll at.
+  stranded/drainerr/notready/resyncs/split all 0.
+
+THE BUS-COST A/B, normalised per SERVICE PASS (both arms run the same
+delay(1)-paced loop, so a pass is the same unit in both):
+
+    arm A (CMD52 transport)   527,117 CMD52 over ~48k passes  = ~11 per pass
+    arm B (register port)     104,733 CMD53 over ~105k passes = ~1 per pass
+
+  Roughly ELEVEN bus commands per service pass become ONE.  Seven of those
+  eleven are the pre-W16 service poll proper (1 status + 4 rd-bitmap + 2
+  RD_LEN); the other four were the wr-bitmap read, which the service path no
+  longer does at all.
+  ★ HONEST CAVEAT: arm A's split between c52tx and c52svc was mis-attributed
+  (the fallback's wr-bitmap reads were counted as TX polling, which made an
+  idle link appear to do 191,607 CMD52s of TX polling for three transmitted
+  frames).  That bug was fixed after this measurement.  It moved commands
+  between two counters that are BOTH terms of the total, so the totals -- and
+  therefore the ratio above -- are unaffected.  Stated rather than quietly
+  omitted, because a counter that lies is exactly what W12's two wrong
+  conclusions were built on.
+
+STILL OWED, and it is the headline item:
+  * AGGREGATION ITSELF IS UNMEASURED ON SILICON.  `aggr:0/0` in every line
+    above, and that is CORRECT rather than a failure: a sparse link never has
+    two occupied ring slots at once, so there is nothing to aggregate.
+    Aggregation only helps when frames arrive faster than the host services
+    them, which needs blast-level load, which needs a peer on the bench AP's
+    LAN.  There was none this session.  Until that run happens, RX and TX
+    aggregation are proven in QEMU (gates [rxaggr]/[txaggr], each demonstrated
+    failing against a non-aggregating driver) and NOT on hardware.
+  * No Mbps number here at all.  A sparse link cannot produce one, and the
+    W11-W12 rule stands: any verdict rests on the counter mechanism, never on
+    an Mbps delta.
+  * TX aggregation remains DEFAULT OFF in the driver; the lwip netif enables
+    it and flushes every poll.  This run's three transmitted frames are DHCP
+    and ARP, so the TX batching path is barely touched.

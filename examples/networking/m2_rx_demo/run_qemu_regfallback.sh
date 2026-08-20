@@ -29,10 +29,18 @@
 #   asserts the driver notices and survives:
 #
 #     mpregs=0    — Iw416::mpRegsUsable() went false: the first snapshot of the
-#                   firmware life failed its check against CARD_STATUS (0x5C),
-#                   a register begin() has already read by CMD52, so the two
-#                   TRANSPORTS were compared against each other rather than
-#                   against a constant this driver invented.
+#                   firmware life was UNIFORM, every one of its 196 bytes the
+#                   same, which is the one thing a port obeying OP Code 0
+#                   literally can produce and a streaming port cannot.
+#                   ★ The check tests the FAILURE MODE, not any register's
+#                   value, and it has to. The first version compared the
+#                   snapshot's byte at 0x5C against the value begin() had read
+#                   by CMD52 — and SILICON REJECTED A WORKING CARD with it
+#                   (0x40 against an expected 0x0D), because 0x5C is
+#                   CARD_TO_HOST_EVENT_REG and means different things to the
+#                   boot ROM and to running firmware. The "constant" was a live
+#                   register captured minutes earlier. See the W16 section of
+#                   m2_throughput_test/transcript_hw_evkb.txt.
 #     c53regs=1/0 — exactly one register-port read ever happened. The port is
 #                   abandoned for the rest of the firmware life, not retried
 #                   per pass.
@@ -41,7 +49,7 @@
 #   MEASURED (2026-08-20):
 #     demo_done frames=8 rx_data=8 rd_bitmap=0x0 ... c52svc=56503 c53regs=1/0
 #               c53rx=1 rxaggr=1/8 mpregs=0 rej=0x0 mperr=0 split=0
-#   Note `rej=0x0`: the CARD_STATUS byte that came back was 0x00 — register 0,
+#   Note `rej=0x0`: the repeated byte was 0x00 — register 0 (HOST_POWER_UP),
 #   read 196 times — which is the predicted signature exactly. And note
 #   `rxaggr=1/8`: RX aggregation still worked, because the fallback fills the
 #   same snapshot struct by CMD52, so only the transport degrades, not the

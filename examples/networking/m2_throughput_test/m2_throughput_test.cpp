@@ -139,6 +139,9 @@ static void freezeDump(const char *why) {
     Serial1.print(" drainerr=");     Serial1.print(iw416.rxDrainErrors());
     Serial1.print(" notready=");     Serial1.print(iw416.rxSlotNotReady());
     Serial1.print(" c53=");          Serial1.print(iw416.cmd53Count());
+    // W16: a freeze dump has to say whether the register port was in use, or a
+    // fallback-to-CMD52 link would be diagnosed as an aggregation bug.
+    Serial1.print(" mpregs=");       Serial1.print(iw416.mpRegsUsable() ? 1 : 0);
     Serial1.print(" rx_data=");      Serial1.print(iw416.rxDataCount());
     Serial1.print(" rx_drop=");      Serial1.print(iw416.rxDropped());
     Serial1.print(" ps=");           Serial1.print(iw416.psState());
@@ -620,6 +623,35 @@ void loop() {
             Serial1.print(",c52svc:");    Serial1.print(iw416.cmd52PollsSvc());
             Serial1.print(",c53:");       Serial1.print(iw416.cmd53Count());
             Serial1.print('/');           Serial1.print(iw416.cmd53Bytes());
+            // W16.  regs: the multiport register-port reads that replaced the
+            // seven CMD52s this driver used to pay per RX frame, split
+            // svc/tx.  rx/tx: data CMD53s by direction, so "commands per RX
+            // frame" is divisible on a link that also transmits.  aggr: slots
+            // carried by CMD53s that carried MORE THAN ONE -- 0/0 means no
+            // aggregation happened, whatever the throughput.  total is
+            // busCommands(), THE number to normalise per frame.
+            Serial1.print(",regs:");      Serial1.print(iw416.cmd53RegsSvc());
+            Serial1.print('/');           Serial1.print(iw416.cmd53RegsTx());
+            Serial1.print(",rxtx:");      Serial1.print(iw416.cmd53Rx());
+            Serial1.print('/');           Serial1.print(iw416.cmd53Tx());
+            Serial1.print(",aggr:");      Serial1.print(iw416.rxAggrSlots());
+            Serial1.print('/');           Serial1.print(iw416.txAggrSlots());
+            Serial1.print(",total:");     Serial1.print(iw416.busCommands());
+            // ★ THE DECISIVE W16 FIELD ON SILICON.  mpregs=1 means the card's
+            // multiport register port really does stream the register file for
+            // a fixed-address (OP Code 0) CMD53, which is what NXP's driver
+            // assumes and what nothing in this tree had ever measured.
+            // mpregs=0 means it does NOT -- the driver caught it against
+            // CARD_STATUS and fell back to CMD52, rej= carries what came back,
+            // and the link is alive but paying the pre-W16 price.
+            Serial1.print(" mpregs=");    Serial1.print(iw416.mpRegsUsable() ? 1 : 0);
+            Serial1.print("/0x");         Serial1.print(iw416.mpRegsRejected(), HEX);
+            Serial1.print("/");           Serial1.print(iw416.mpRegsErrors());
+            // The two transports' reading of register 0x5C at the same moment,
+            // as (register-port << 8) | CMD52.  Evidence for the record, not a
+            // verdict: 0x5C is CARD_TO_HOST_EVENT and it is live.
+            Serial1.print(" witness=0x");  Serial1.print(iw416.mpRegsWitness(), HEX);
+            Serial1.print(" split=");     Serial1.print(iw416.rxSplitMismatch());
             Serial1.print(" state=");      Serial1.print(st);
             Serial1.print(" reconnects=");  Serial1.print(s_reconnects);
             // W12 fault-#5 signature.  stranded= counts uploads the driver's
