@@ -436,3 +436,18 @@ The recovery loop that worked here: instrument the failure on silicon,
 correct the MODEL first until emulation reproduces the silicon failure
 against the unfixed driver, only then fix the driver, and keep the red run
 in the record.  Model-flatters-driver is not hypothetical; this was it.
+
+W15 phase 3 ADDENDUM (post-review correction to the list above): the driver's
+"with DAT1 dead, the 64 ms net tick keeps both ports limping -- degrades to
+slow polling, never to nothing" property must move to the NOT-VALIDATED list,
+because the one silicon run that exercised the DAT1-dead condition (arm B,
+first attempt) CONTRADICTS its data-path half: DHCP never bound in 150 s and
+c53 pinned at 15, with the net-tick fold verifiably present in that build.
+Two caveats keep this an open question rather than a refutation: c53 counts
+DATA-port CMD53s only, so the event/command half of the claim (deauth/PS
+events still seen) is untested, not disproved; and the data death is
+plausibly PS interplay (the fw's awake window may be shorter than the 64 ms
+poll cadence), not the tick failing.  Practical consequence: on a board with
+flaky DAT1, irq mode may present as association-up/data-dead rather than
+slow -- the detection signal is cardints= frozen.  A deliberate test needs:
+CCCR write suppressed, PS OFF, a LAN peer, watch whether RX limps at ~64 ms.

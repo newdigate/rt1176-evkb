@@ -289,8 +289,13 @@ they are NOT local-only — the model is PUSHED.**
 need the **IW416 SDIO card model** (`hw/sd/iw416-sdio.c`, enabled by
 `-machine mimxrt1170-evk,m2-wifi=on`), plus — for `[irq]` — the SDIO
 card-interrupt plumbing W15 added to the SD bus and SDHCI. Both are on
-`gitlab.com/Newdigate/qemu-rt1170` **master at or after `8d81ed3fc1`**
+`gitlab.com/Newdigate/qemu-rt1170` **master at or after `2ed9314631`**
 (pushed 2026-08-20); build qemu2 from there and all five run anywhere.
+That exact revision matters for `[irq]`: `2ed9314631` gates the model's
+DAT1 line on CCCR 0x04 (IENM|IEN1) -- the card-side enable silicon proved
+mandatory in W15 phase 3 -- so against the older `8d81ed3fc1` model a
+driver that FORGOT the CCCR write would still pass `[irq]` while being
+dead on hardware.  The newer model fails it, as silicon does.
 Stock upstream QEMU has no such device — and worse, no SDIO card interrupt
 at all (`SDHC_NIS_CARDINT` exists only in the clear path) — so against a
 stock build these go RED, not SKIP, and it is not a firmware regression.
