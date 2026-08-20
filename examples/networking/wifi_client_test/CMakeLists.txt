@@ -31,6 +31,20 @@ else()
 endif()
 
 # --- Wi-Fi credentials (NEVER committed) -- same pattern as m2_lwip_test ----
+# The SSID and PSK are a credential and are supplied ONLY at configure time:
+#
+#   cmake -B build ... -DM2RADIO_WIFI_SSID="MyNet" -DM2RADIO_WIFI_PSK="secret"
+#
+# They are written into a generated header in the BUILD directory (gitignored,
+# same as iw416_fw.cpp) so arbitrary passphrase characters are handled cleanly
+# and **the value never touches a tracked file, a compile command line, or a
+# make fragment** -- the indirection exists for that last part: a -D on the
+# command line would land in compile_commands.json and CMakeCache.txt, both of
+# which get pasted into bug reports.  This repo has already leaked a live PSK
+# to a public remote once (W6, still in pushed history); that is why this is a
+# generated header and not a define.  Absent -> the connect attempt is compiled
+# out and the example falls back to the alive= heartbeat, so the QEMU gate and
+# the no-SDK build are unaffected.  The PSK is never echoed by CMake.
 set(M2RADIO_WIFI_SSID "" CACHE STRING "Target AP SSID")
 set(M2RADIO_WIFI_PSK  "" CACHE STRING "Target AP WPA2 passphrase -- NEVER committed")
 if(M2RADIO_WIFI_SSID AND M2RADIO_WIFI_PSK)
