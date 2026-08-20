@@ -150,16 +150,29 @@ void setup() {
 }
 
 void loop() {
-    // One line a second: station count is the only thing that changes, and a
-    // bench operator needs to see the board join without reading the board.
-    static uint32_t last = 0;
+    // Report on CHANGE, so the board joining or dropping is impossible to
+    // miss in a scrolling console...
+    static uint32_t lastPoll = 0, lastBeat = 0;
     static int lastCount = -1;
-    if (millis() - last >= 1000) {
-        last = millis();
+    if (millis() - lastPoll >= 500) {
+        lastPoll = millis();
         int n = WiFi.softAPgetStationNum();
         if (n != lastCount) {
             lastCount = n;
             printApState("ap");
         }
+    }
+    // ...and a HEARTBEAT anyway, every 5 s.  ★ Without it a healthy idle AP
+    // and a dead console are the same thing: silence.  This tree's own
+    // examples carry an `alive=` line for exactly that reason -- "nothing
+    // arrived" is also what a wedged image looks like -- and the first time
+    // this sketch's console was opened it printed nothing for 12 s and looked
+    // broken when it was simply quiet.
+    if (millis() - lastBeat >= 5000) {
+        lastBeat = millis();
+        Serial.print("alive up=");
+        Serial.print(millis() / 1000);
+        Serial.print("s stations=");
+        Serial.println(WiFi.softAPgetStationNum());
     }
 }
