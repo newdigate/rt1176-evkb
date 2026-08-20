@@ -152,3 +152,14 @@ the command port, because every remaining Phase-1 item goes through that
 command. Read `wlan_uap_ioctl.c`'s path into `wlan_ops_uap_prepare_cmd` for the
 initialisation mlan performs before it, and check whether the uAP `mlan_private`
 carries a `bss_num` this driver is not sending.
+
+## ★ One loose end before a fresh clone can build this
+
+The driver change is committed to the local `M2Radio` checkout as **`494f230`**
+and is **not pushed**, so `evkb.cmake`'s pin still names `c7d0510` — which has
+no `sendHostCmdBss()`. Local-first resolution means every build on this machine
+is fine and both new gates are green, but `-DEVKB_FORCE_FETCH=ON` (and any
+fresh clone) will fail to compile `m2_uap_probe`.
+
+Push `M2Radio` and bump the pin, in that order, before treating the 110-gate
+sweep as reproducible off this machine.
