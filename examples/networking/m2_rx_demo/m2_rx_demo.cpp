@@ -302,6 +302,13 @@ void setup() {
     (void)iw416.reconfigureTxBuffers(2048);
     (void)iw416.macControl(Iw416::MAC_RX_ON | Iw416::MAC_TX_ON |
                            Iw416::MAC_ETHERNETII | Iw416::MAC_RTS_CTS);
+    // ★ W16: the DRIVER now ships RX aggregation OFF -- it costs 4.6x
+    // throughput on silicon (see setRxAggregation() in Iw416.h).  This example
+    // turns it back ON deliberately, because its whole purpose is to exercise
+    // the ring and three of its gates assert on aggregated reads.  A gate that
+    // silently followed the driver's default would go from testing the feature
+    // to testing nothing, and would keep passing while it did.
+    iw416.setRxAggregation(true);
     g_ready   = true;
     g_started = millis();
     Serial1.println("demo_ready");

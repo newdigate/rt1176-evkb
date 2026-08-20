@@ -374,6 +374,35 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
                      sdio.cardIntEnabled() ? 1 : 0);
             udpSendText(addr, port, msg);
             Serial1.println(msg);
+        } else if (strncmp(head, "TPUT SET ", 9) == 0) {
+            // W16 bisect: the three switches INDEPENDENTLY.
+            //   TPUT SET <reg> <rxaggr> <txaggr> <irq>
+            // TPUT MODE moves all of them together, which is right for an A/B
+            // and useless for finding WHICH one is responsible when the A/B
+            // says the whole thing regressed.  It did: against the same AP
+            // minutes apart, W16 measured tcp-tx 0.57 against pre-W16's 4.24
+            // and udp-tx 2.72 against 9.10 -- so something in here costs
+            // throughput even while it cuts bus commands 14-41x.  W11 has the
+            // precedent and the warning: its bitmap cache also cut bus reads
+            // and cost 2.5x, because the reads were accidentally PACING the
+            // host to the firmware's credit cadence.
+            int r = 0, rx = 0, tx = 0, iq = 0;
+            if (sscanf(head + 9, "%d %d %d %d", &r, &rx, &tx, &iq) == 4) {
+                iw416.useRegisterPort(r != 0);
+                iw416.setRxAggregation(rx != 0);
+                iw416.setTxAggregation(tx != 0);
+                iw416.setInterruptMode(iq != 0);
+                char msg[128];
+                snprintf(msg, sizeof(msg),
+                         "TPUT SETOK reg=%d rxaggr=%d txaggr=%d irq=%d/%d",
+                         iw416.mpRegsUsable() ? 1 : 0,
+                         iw416.rxAggregation() ? 1 : 0,
+                         iw416.txAggregation() ? 1 : 0,
+                         iw416.interruptMode() ? 1 : 0,
+                         sdio.cardIntEnabled() ? 1 : 0);
+                udpSendText(addr, port, msg);
+                Serial1.println(msg);
+            }
         } else if (strncmp(head, "TPUT BUS?", 9) == 0) {
             // The bus counters as ONE line the peer can difference across a
             // blast.  Everything here is cumulative and per-firmware-life, so
