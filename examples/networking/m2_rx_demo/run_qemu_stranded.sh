@@ -89,8 +89,10 @@ rm -f "$OUT" "$DBG"
     -kernel "$ELF" -display none $(gate_console "$OUT") \
     -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
+# Wait for the line AFTER the one this gate asserts on -- see run_qemu_irq.sh's
+# note: a reap landing mid-`demo_done` fails the field matches on a healthy run.
 for _ in $(seq 1 160); do
-    [ -f "$OUT" ] && grep -q "^demo_done " "$OUT" 2>/dev/null && break
+    [ -f "$OUT" ] && grep -q "^irq_mode=" "$OUT" 2>/dev/null && break
     sleep 0.25
 done
 gate_reap $P

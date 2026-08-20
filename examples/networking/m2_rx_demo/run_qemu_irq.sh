@@ -10,27 +10,42 @@
 #        (`seq=K from_slot=S`), same oracle run_qemu_ring.sh uses. Interrupt
 #        mode that delivers fewer frames, or the same frames later or jumbled,
 #        is not a win.
-#     2. THE HOST STOPPED POLLING FOR THEM. cmd52PollsSvc() per received frame
-#        must be at least 5x lower in the interrupt window than in the polled
-#        one. That counter (W11) is the driver's own service-side CMD52 count,
-#        and dividing it by the frames the SAME window delivered is what makes
-#        the comparison an argument rather than an anecdote: both windows are
-#        6 s of the same image against the same card at the same injection
-#        cadence, so a driver that merely polls FASTER moves both numbers and
-#        the ratio does not budge.
+#     2. THE HOST STOPPED POLLING FOR THEM. The driver's service-side register
+#        polling per received frame must be at least 5x lower in the interrupt
+#        window than in the polled one. Dividing by the frames the SAME window
+#        delivered is what makes the comparison an argument rather than an
+#        anecdote: both windows are 6 s of the same image against the same card
+#        at the same injection cadence, so a driver that merely polls FASTER
+#        moves both numbers and the ratio does not budge.
 #
-#   MEASURED (2026-08-20, first passing run, and stable to ±2% over four runs):
+#        ★ THE COUNTER CHANGED IN W16, THE PROPERTY DID NOT. Until W16 the
+#        quantity was cmd52PollsSvc() alone — serviceLink read HOST_INT_STATUS
+#        with a CMD52 on every pass. W16's multiport register-port read carries
+#        that same per-pass question on a byte-mode CMD53 instead (and brings
+#        the bitmaps and all 32 RD_LENs with it), so cmd52PollsSvc() fell to
+#        near zero in BOTH windows and this ratio collapsed to 1.0 while
+#        interrupt mode was working perfectly — measured, on the first W16
+#        build: "polled=1.3 irq=1.4", with cardints=27. The gate now divides
+#        `svcpolls` = cmd52PollsSvc() + cmd53RegsSvc(), i.e. every service-side
+#        poll whatever command type carried it. That is STRICTER, not looser:
+#        the narrower measure could be satisfied by moving the cost sideways
+#        onto another command, and that is exactly what happened to it.
+#
+#   MEASURED (2026-08-20, W15, when the counter was cmd52PollsSvc() alone, and
+#   stable to ±2% over four runs):
 #     phase=polled frames=34 c52svc=8961   -> 263 CMD52 per frame
 #     phase=irq    frames=34 c52svc=937    ->  27 CMD52 per frame   = 9.6x
 #   Idle rate, which is the design doc's own success criterion, falls the same
 #   way: ~1500 CMD52/s polled to ~110/s, i.e. an order of magnitude. The
 #   threshold below is set at 5x — a little over half the measured margin — so
 #   the gate reports a REGRESSION rather than scheduling jitter.
+#   RE-MEASURED on the W16 register-port driver, same threshold, same shape —
+#   see the PASS line the gate prints for the current numbers.
 #
 #   WHY THE FLOOR IS NOT ZERO, and why that is deliberate: the W12/W13 RD-bitmap
-#   safety net still runs every 64 quiet serviceLink passes (~45 ms here) at
-#   4 CMD52 a check, plus one HOST_INT_STATUS read folded into the same tick.
-#   That is the whole of the remaining ~110/s. It is NOT overhead to be
+#   safety net still runs every 64 quiet serviceLink passes (~45 ms here) — one
+#   register-port read a check since W16 (it was 4 CMD52 plus a folded-in
+#   HOST_INT_STATUS read before). That is the whole of the remaining floor. It is NOT overhead to be
 #   optimised away — W13 measured this firmware stranding uploads with no
 #   interrupt ~3 times per 80 blasts on silicon, so a build that trusted DAT1
 #   completely would reintroduce the W12 fault class. See run_qemu_stranded.sh.
@@ -95,8 +110,16 @@ rm -f "$OUT" "$DBG"
 P=$!; gate_pid $P
 # Two 6 s windows plus boot: ~19 s wall on the reference machine. 240 x 0.25 s
 # leaves generous headroom without approaching the runner's 120 s per-gate cap.
+# ★ WAIT FOR THE LAST LINE THIS GATE PARSES, not for the first interesting
+# one.  It used to break on `^irq_done ` and then reap immediately -- but the
+# two `phase=` lines the A/B is computed from are printed RIGHT AFTER it, so
+# under sweep load the reap could land between them and the gate failed with
+# "the run did not print both phase= summary lines" against a run that was
+# working perfectly.  Measured in the 105-gate sweep on 2026-08-20, with the
+# capture torn mid-line at `irq_done frames=70 ... stranded=0/0`.  The trigger
+# was latent from W15 and W16 made it likelier by lengthening that line.
 for _ in $(seq 1 240); do
-    [ -f "$OUT" ] && grep -q "^irq_done " "$OUT" 2>/dev/null && break
+    [ -f "$OUT" ] && grep -q "^phase=irq " "$OUT" 2>/dev/null && break
     sleep 0.25
 done
 gate_reap $P
@@ -127,16 +150,16 @@ grep -q "^irq_mode=1 host_cardint=1[[:space:]]*$" "$OUT" || {
     exit 1; }
 
 # --- the A/B ---------------------------------------------------------------
-# `phase=polled ms=N frames=A c52svc=PA cardints=0`
-# `phase=irq    ms=N frames=B c52svc=PB cardints=CI`
+# `phase=polled ms=N frames=A svcpolls=PA cardints=0`
+# `phase=irq    ms=N frames=B svcpolls=PB cardints=CI`
 PA_LINE=$(grep "^phase=polled " "$OUT" | head -1)
 IRQ_LINE=$(grep "^phase=irq " "$OUT" | head -1)
 [ -n "$PA_LINE" ] && [ -n "$IRQ_LINE" ] || {
     echo "FAIL: the run did not print both phase= summary lines"; exit 1; }
 A=$( echo "$PA_LINE"  | sed -n 's/.* frames=\([0-9]*\) .*/\1/p')
-PA=$(echo "$PA_LINE"  | sed -n 's/.* c52svc=\([0-9]*\) .*/\1/p')
+PA=$(echo "$PA_LINE"  | sed -n 's/.* svcpolls=\([0-9]*\) .*/\1/p')
 B=$( echo "$IRQ_LINE" | sed -n 's/.* frames=\([0-9]*\) .*/\1/p')
-PB=$(echo "$IRQ_LINE" | sed -n 's/.* c52svc=\([0-9]*\) .*/\1/p')
+PB=$(echo "$IRQ_LINE" | sed -n 's/.* svcpolls=\([0-9]*\) .*/\1/p')
 CI=$(echo "$IRQ_LINE" | sed -n 's/.* cardints=\([0-9]*\).*/\1/p')
 for v in "$A" "$PA" "$B" "$PB" "$CI"; do
     [ -n "$v" ] || { echo "FAIL: could not parse the phase= counters"; exit 1; }
@@ -175,10 +198,10 @@ echo "$PA_LINE" | grep -q " cardints=0$\| cardints=0[[:space:]]" || {
 #   PA/A >= 5 * (PB/B)   <=>   PA*B >= 5*PB*A
 PPF_A=$((PA * 100 / A))
 PPF_B=$((PB * 100 / B))
-echo "service CMD52 per frame: polled=$((PPF_A / 100)).$((PPF_A % 100 / 10))  irq=$((PPF_B / 100)).$((PPF_B % 100 / 10))"
+echo "service polls per frame: polled=$((PPF_A / 100)).$((PPF_A % 100 / 10))  irq=$((PPF_B / 100)).$((PPF_B % 100 / 10))"
 [ $((PA * B)) -ge $((5 * PB * A)) ] || {
     echo "FAIL: the interrupt window did not cut service polling by 5x"
-    echo "      polled: $PA CMD52 for $A frames; irq: $PB CMD52 for $B frames"
+    echo "      polled: $PA polls for $A frames; irq: $PB polls for $B frames"
     echo "      This is the whole point of W15 — interrupt mode engaged (cardints=$CI)"
     echo "      but serviceLink is still polling HOST_INT_STATUS on quiet passes."
     exit 1; }
@@ -223,5 +246,5 @@ while [ $i -le "$TOT" ]; do
         exit 1; }
     i=$((i + 1))
 done
-echo "PASS: $TOT frames delivered in order; interrupt window cut service CMD52 per frame"
+echo "PASS: $TOT frames delivered in order; interrupt window cut service polls per frame"
 echo "      from $((PPF_A / 100)) to $((PPF_B / 100)) ($CI DAT1 assertions serviced) — W15 interrupt-driven SDIO"

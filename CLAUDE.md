@@ -106,7 +106,11 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **102 gates** (101 before W15
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **105 gates** (102 before W16
+added THREE more to `networking/m2_rx_demo` — `run_qemu_rxaggr.sh` and
+`run_qemu_txaggr.sh` for multiport aggregation in each direction, and
+`run_qemu_regfallback.sh` for the driver's detection of the one thing W16
+assumes about the card and cannot verify; 101 before W15
 phase 2 added a FOURTH gate to `networking/m2_rx_demo` — `run_qemu_irq.sh`, the
 interrupt-driven-SDIO-service win, which divides service CMD52s by the frames
 the same window delivered and so cannot be satisfied by a driver that merely
@@ -155,11 +159,30 @@ Directories with exactly one script are untouched, so all 97 pre-existing ids ar
 byte-identical (diffed, not assumed), including the ~38 already named for what
 they test (`run_qemu_lwip.sh`, `run_qemu_usb.sh`, …).
 W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
-FOUR scripts (W15 phase 2 added the fourth), and lists as
-`rt1176:networking/m2_rx_demo`, `…/m2_rx_demo[ring]`, `…/m2_rx_demo[stranded]`
-and `…/m2_rx_demo[irq]`.
+**SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
+as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
+`…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
-✅ **Measured 2026-08-20: 102 passed, 0 failed, 0 SKIP** (`gates: 102 passed`,
+✅ **Measured 2026-08-20: 105 passed, 0 failed, 0 SKIP**, on the W16
+aggregation work, run via `/tmp/ev`, `rt1176:dualcore/cm4_audio_test` included
+and green. All seven `networking/m2_rx_demo` gates green; `[txaggr]` is now the
+longest in the example because its burst runs after BOTH service windows.
+
+★ **The sweep before that one found a REAL race in `[irq]`, and it is worth
+knowing because it presents as a firmware failure.** That gate broke its wait
+loop on `^irq_done ` and then reaped QEMU immediately — but the two `phase=`
+lines it computes its A/B from are printed right after that line, so under
+sweep load the reap landed between them and the gate failed with "the run did
+not print both phase= summary lines" against a run that had worked perfectly
+(the capture was torn mid-line at `irq_done frames=70 … stranded=0/0`). The
+race was latent from W15; W16 made it likelier by lengthening that line. **Every
+gate on this example now waits for the LAST line it parses, not the first
+interesting one** — `[irq]` on `^phase=irq `, the `demo_done`-based gates on
+the `^irq_mode=` line that follows it. A gate that reaps mid-line blames the
+firmware for its own timing.
+
+The previous count's measurement, kept per convention:
+✅ Measured 2026-08-20: 102 passed, 0 failed, 0 SKIP (`gates: 102 passed`,
 exit 0), on the W15 phase-2 interrupt-driven-service gate, run via `/tmp/ev`,
 `rt1176:dualcore/cm4_audio_test` included and green. All four
 `networking/m2_rx_demo` gates green in that sweep, `[irq]` at 19 s — it is the
@@ -283,14 +306,22 @@ needs the `sai1-rxinject` binding, qemu2 `2141a5d781`), its rt1062 half depends
 on LOCAL-ONLY qemu2 changes, so **a fresh clone sees it red for that reason
 too**; that is the GPL firewall working, not a regression.
 
-★ **FIVE gates need the IW416 card model, and unlike the rt1062 group above
+★ **EIGHT gates need the IW416 card model, and unlike the rt1062 group above
 they are NOT local-only — the model is PUSHED.**
-`networking/m2_sdio_probe[wifi]` and all four `networking/m2_rx_demo` gates
+`networking/m2_sdio_probe[wifi]` and all SEVEN `networking/m2_rx_demo` gates
 need the **IW416 SDIO card model** (`hw/sd/iw416-sdio.c`, enabled by
 `-machine mimxrt1170-evk,m2-wifi=on`), plus — for `[irq]` — the SDIO
-card-interrupt plumbing W15 added to the SD bus and SDHCI. Both are on
-`gitlab.com/Newdigate/qemu-rt1170` **master at or after `2ed9314631`**
-(pushed 2026-08-20); build qemu2 from there and all five run anywhere.
+card-interrupt plumbing W15 added to the SD bus and SDHCI.
+★ **W16 MOVED THE FLOOR, and it moved it for gates that used to be satisfied
+by an older model.** The driver's service path no longer polls registers with
+CMD52 at all: it reads the multiport REGISTER PORT (a byte-mode CMD53 at fn1
+address 0) and issues AGGREGATED CMD53s spanning several ring slots. A qemu2
+that models neither returns zeros for the first and refuses the second, so
+**every** m2_rx_demo gate except the card-absent one goes red — not just the
+new three. The requirement is now `gitlab.com/Newdigate/qemu-rt1170` **master
+at or after `7e17eff5d3`**, which adds both plus the `reg-port-literal`
+property `[regfallback]` needs. `2ed9314631` (the W15 floor) is no longer
+enough.
 That exact revision matters for `[irq]`: `2ed9314631` gates the model's
 DAT1 line on CCCR 0x04 (IENM|IEN1) -- the card-side enable silicon proved
 mandatory in W15 phase 3 -- so against the older `8d81ed3fc1` model a
@@ -303,6 +334,16 @@ Diagnose by asking the machine whether it takes the property
 (`qemu-system-arm -machine mimxrt1170-evk,help`), not by reading firmware.
 Note `m2_rx_demo`'s plain `run_qemu.sh` is exempt: it asserts the
 card-ABSENT fallback and passes on stock QEMU like every other m2_* gate.
+★ Do NOT confuse a qemu2 that is merely too old with the DRIVER's own
+register-port fallback. `[regfallback]` deliberately runs a card that answers
+the register port the other plausible way, and the driver detects it and keeps
+going on CMD52 (`mpregs=0` in the demo's counter line). An old qemu2 does not
+answer the register port at all — the reads simply return zeros with no
+guest-error — and the driver's CARD_STATUS check catches that too, so a red
+sweep on an old model tends to show `mpregs=0` everywhere rather than a hang.
+Diagnose by asking the machine whether it takes the property
+(`qemu-system-arm -device help | grep iw416`, or start it with
+`-global iw416-sdio.reg-port-literal=on` and see whether it is rejected).
 ★ **Why those gates exist at all**: until W14 the entire SDIO ring/interrupt
 layer had ZERO automated coverage — every m2_* gate asserted the card was
 absent, so both of this subsystem's serious bugs (the W8 32-port ring, the
