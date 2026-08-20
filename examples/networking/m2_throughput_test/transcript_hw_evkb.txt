@@ -869,3 +869,76 @@ HEALTH: stranded 10/7/18 (run B), 0/11/14 (run A); resyncs, notready, drainerr
   appear across the two runs, and the PRE-W16 arm strands too, so nothing here
   supports "W16 strands more".  The absolute rate is well above W13's 3 per
   1.78 GB and stays OPEN, as it did on the ESP8266 bench.
+
+------------------------------------------------------------------------------
+W16 BISECTED ON SILICON: RX AGGREGATION COSTS 4.6x THROUGHPUT.  It is W11
+happening again -- a change whose own counters are excellent and which is a
+net loss.  Default flipped to OFF (M2Radio 882221f).
+------------------------------------------------------------------------------
+Date: 2026-08-20.  House AP, board 192.168.1.102 on 2.4 GHz, Mac on 5 GHz.
+
+HOW IT WAS FOUND, and the two wrong turns on the way, because both are the
+same mistake and this file has recorded it before.
+
+  WRONG TURN 1.  Two `all` sweeps minutes apart appeared to show W16 losing on
+  every cell (tcp-tx 0.57 against pre-W16's 4.24, udp-tx 2.72 against 9.10).
+  A single unreplicated pair.  An ISOLATED udp-tx bisect, six configurations
+  with pre-W16 controls at BOTH ENDS, then measured 11.27 / 11.13 / 11.47 /
+  11.14 / 11.31 / 11.23 Mbps -- flat to within 3%, no TX regression from any
+  switch.  The paired sweep was not reproducible.
+  WRONG TURN 2 (earlier, retracted above): "the irq arm never took an
+  interrupt", which was a truncated UDP buffer.
+  Both were single readings believed too early.
+
+THE BISECT THAT WORKED -- one switch at a time, tcp-rx, controls either side:
+
+    all off (pre-W16)            10.96 Mbps
+    register port only           11.03        <- harmless, arguably free
+    + RX aggregation              2.39        <- 4.6x COLLAPSE
+    + TX aggregation              2.45
+    + interrupt mode              2.44
+    back to pre-W16              10.49        <- the air was fine throughout
+
+  Three consecutive arms at ~2.4 while the controls sit at ~10.7.  Not variance.
+
+AND THE AGGREGATION IS NOT FAILING.  Driver counters over the same blasts:
+
+    rxaggr OFF   frames=9253  c53rx=9253  reads/frame=1.00  bus/frame=3.01
+                 stranded=26   split=0 notready=0        10.74 Mbps
+    rxaggr ON    frames=2123  c53rx= 921  reads/frame=0.43  bus/frame=7.21
+                 stranded=139  split=0 notready=0         2.43 Mbps
+    rxaggr OFF   frames=10290 c53rx=10290 reads/frame=1.00 bus/frame=2.85
+                 stranded=22   split=0 notready=0        11.98 Mbps
+
+  0.43 data CMD53s per frame, 86% of frames arriving batched, split=0 -- the
+  reads are correct and cheap.  THE COST IS ELSEWHERE and the counters name it:
+  rxStrandedRecovered() 26 -> 139, a 23x rise PER FRAME.  Each is an upload the
+  W12/W13 safety net rescued at up to 64 ms.  139 of them do not fit in a
+  ten-second blast, and the frame rate duly falls 9253 -> 2123.
+
+MECHANISM -- leading hypothesis, NOT a finding, and the fix follows from it:
+  a multi-slot read holds the bus and CPU for milliseconds (eight 1.5 KB slots
+  is ~12 KB in one PIO transfer), while the drain works from a register
+  SNAPSHOT taken before it started.  Uploads the card queues DURING that window
+  are not in the snapshot, so the drain exits believing the ring is empty and
+  the pass clears HOST_INT_UP_LD on that stale view -- stranding them until the
+  net fires 64 ms later.  Bigger batch, longer window, more strands.  It
+  explains the sign, the size and the counter.
+  THE LIKELY FIX: stop clearing HOST_INT_UP_LD on stale evidence.  Take a FRESH
+  register read at the end of the drain and clear only if the ring is genuinely
+  empty; re-enter the drain if it is not.  One extra register read per drain,
+  against a 64 ms stall.  NOT ATTEMPTED YET -- measured first.
+
+ACTION TAKEN: RX aggregation default OFF, matching TX aggregation.  The
+  register port stays ON (free: 11.03 against 10.96) and interrupt mode stays
+  available.  m2_rx_demo turns RX aggregation back on explicitly, because three
+  of its gates exist to assert on aggregated reads and a gate that followed the
+  new default would test nothing while still passing.  All six re-verified.
+
+★ THE GENERAL LESSON, W11's restated: a change that provably cuts bus commands,
+  whose own counters look excellent, can still be a large net loss because of
+  how it perturbs the firmware's timing.  W11's bitmap cache cut reads and cost
+  2.5x by breaking pacing; this cuts reads and costs 4.6x by widening a race.
+  Commands per frame is necessary and NOT sufficient -- and the W16 sections
+  above celebrating a 14-41x reduction should be read with that in mind: the
+  reduction is real, and on this rig the link is faster without most of it.
