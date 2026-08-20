@@ -15,7 +15,20 @@
 ## Ground rules (apply to every task)
 
 - **Two working trees.** Library code goes in `~/Development/M2Radio` (its own git repo, on `master`); examples/gates/docs go in this repo's worktree (`$EVKB` below = the worktree root, branch `claude/arduino-wifi-m2-link-868770`). Commit each side in its own repo.
-- **M2Radio's working tree is shared.** Library resolution is local-first, so any concurrent session building m2_* examples compiles this working tree. Only ADD files under `arduino/`; do not touch `sdio/`, `iw416/`, `lwip/` — existing examples never import `arduino/`, so they cannot be affected.
+- **★ The worktree has NO build directories** (they are gitignored and live in the main checkout at `~/Development/rt1176-evkb-m2-maya-w161`, which is on branch `m2-phase0-serial2` and fully built). Two consequences: (a) every example this plan touches must be **configured fresh in the worktree** — the "never `cmake -B` an existing build dir" rule protects the MAIN checkout's dirs, which carry creds and fw-blob paths; a fresh worktree configure with no `-D`s is exactly what the QEMU gates want (none of them needs creds or a blob). (b) A full sweep in the worktree would SKIP ~98 gates; see Task 13, which resolves where the sweep runs.
+- **★ `/tmp/ev` already exists and points at the MAIN checkout.** Never `ln -sf` onto it — that creates a link *inside* the target directory. Use `ln -sfn`, and put it back when done.
+- **★ M2Radio is being edited LIVE by another session** (~893 lines of uncommitted W16 aggregation work in `iw416/`, `sdio/`, `lwip/`; a save landed mid-Task-1). We are therefore **insulated from `~/Development/M2Radio` entirely** and must never read, build against, or write to it during Tasks 2–14.
+
+  All library work happens in a clean clone pinned at `1e15f0b`:
+
+  ```
+  LIBROOT=$(cat /private/tmp/claude-501/-Users-nicholasnewdigate-Development-rt1176-evkb-m2-maya-w161--claude-worktrees-arduino-wifi-m2-link-868770/6927d462-27c2-4aba-8244-38d56c8128b7/scratchpad/LIBROOT.txt)
+  # $LIBROOT/M2Radio  <- the clean clone; ALL arduino/ work + commits go here
+  # $LIBROOT/<other>  <- symlinks to ~/Development/<other>
+  ```
+
+  **Every `cmake -B` in this plan MUST add `-DTEENSY_LIB_ROOT="$LIBROOT"`.** Verified working: `m2_lwip_test` configures, builds and passes its gate against this root. Wherever a task says "commit (M2Radio)", it means `git -C "$LIBROOT/M2Radio"`. Task 15 fast-forwards these commits into the real repo (safe: they only add `arduino/`, so they cannot touch the other session's five modified files).
+- Only ADD files under `arduino/`; never touch `sdio/`, `iw416/`, `lwip/`. Existing examples do not import `arduino/`, so they cannot be affected.
 - Run gates as `./run_qemu.sh`, never `sh run_qemu.sh`.
 - Never `cmake -B` or `rm -rf` an EXISTING example's build dir (creds + fw-blob paths in their caches). The two NEW examples' build dirs are fresh and safe.
 - Every gate script: `chmod +x` at creation.
@@ -1772,11 +1785,17 @@ In each file, find its `m2ReleaseWifiReset()` preamble comment (in m2_lwip_test 
 // (WiFi.begin() runs it by default); this copy stays for the non-facade path.
 ```
 
-- [ ] **Step 2: Rebuild all four in place (never reconfigure — caches carry creds/fw paths)**
+- [ ] **Step 2: Configure + build all four IN THE WORKTREE**
+
+The worktree has no build dirs, so these are fresh configures. That is safe
+and correct here — the "never reconfigure" rule protects the MAIN checkout's
+dirs (creds + fw-blob paths in their caches); these gates need neither.
 
 ```bash
 for d in m2_lwip_test m2_sdio_probe m2_throughput_test m2_rx_demo; do
-  cmake --build $EVKB/examples/networking/$d/build || exit 1
+  cd $EVKB/examples/networking/$d || exit 1
+  cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake || exit 1
+  cmake --build build || exit 1
 done
 ```
 
@@ -1840,7 +1859,22 @@ cd ~/Development/M2Radio && git add README.md && git commit -m "readme: document
 
 **Files:** Modify `$EVKB/CLAUDE.md`; check `$EVKB/docs/KNOWN-BROKEN-GATES.md`.
 
-- [ ] **Step 1: Confirm every gate-owning example is built** (gates do not build; a missing ELF is a SKIP that silently under-reports)
+- [ ] **Step 0: Decide WHERE the sweep runs — the worktree cannot do it alone**
+
+Discovery finds gates from the source tree, but the runner does not build:
+a missing ELF is a SKIP. The worktree has build dirs only for the six
+examples this plan touched, so a worktree sweep would report ~99 SKIPs — the
+exact silent under-report CLAUDE.md warns about. The main checkout
+(`~/Development/rt1176-evkb-m2-maya-w161`, branch `m2-phase0-serial2`) is
+fully built but does not have this branch's two new examples.
+
+**Escalate to the human with these two options** rather than guessing:
+(a) build the ~99 remaining examples in the worktree, then sweep here; or
+(b) merge/rebase this branch into the main checkout first and sweep there,
+reusing its existing build dirs. Option (b) is far cheaper but reorders the
+close-out. Do not fabricate a sweep result either way.
+
+- [ ] **Step 1: Confirm discovery sees 105** (in whichever tree Step 0 chose)
 
 ```bash
 cd $EVKB && ./tools/run-all-qemu-gates.sh -l | tail -3
@@ -1849,8 +1883,12 @@ Expected: the listing ends `(105 gate(s))`. If not 105, find the discovery discr
 
 - [ ] **Step 2: Sweep from the short path**
 
+`/tmp/ev` already exists and points at the MAIN checkout — `ln -sf` onto an
+existing symlink-to-a-directory creates the link *inside* it. Use `-n`, and
+restore it afterwards if you repointed it.
+
 ```bash
-ln -sf $EVKB /tmp/ev 2>/dev/null || true
+ln -sfn <chosen-tree> /tmp/ev && ls -ld /tmp/ev
 cd /tmp/ev && ./tools/run-all-qemu-gates.sh
 ```
 Expected: `gates: 105 passed`, exit 0 (or 104/1 with ONLY `rt1176:dualcore/cm4_audio_test` red — re-run that one idle before accepting). Read gate NAMES on any other red.
@@ -1928,12 +1966,25 @@ cd $EVKB && git add examples/networking/wifi_*/transcript_hw_evkb.txt && git com
 
 ### Task 15: Close-out — push, pin, fresh-user verify
 
-- [ ] **Step 1: Push M2Radio**
+- [ ] **Step 1: Land the clone's commits in the real repo, then push**
+
+The other session may still have uncommitted work in `~/Development/M2Radio`.
+A fast-forward only adds `arduino/`, so it cannot touch their five modified
+files — but verify that rather than assume it.
 
 ```bash
-cd ~/Development/M2Radio && git push origin master && git log --oneline -1
+git -C ~/Development/M2Radio status --short          # note their dirty files
+git -C ~/Development/M2Radio fetch "$LIBROOT/M2Radio" master
+git -C ~/Development/M2Radio merge --ff-only FETCH_HEAD
+git -C ~/Development/M2Radio status --short          # same dirty files, unchanged
 ```
-Note the new HEAD SHA (full 40 chars: `git rev-parse HEAD`).
+If the merge is not a fast-forward, STOP and escalate — that means they
+committed to master meanwhile and the histories diverged.
+
+```bash
+git -C ~/Development/M2Radio push origin master && git -C ~/Development/M2Radio rev-parse HEAD
+```
+Note the new HEAD SHA (full 40 chars).
 
 - [ ] **Step 2: Bump the pin**
 
