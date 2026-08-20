@@ -18,9 +18,18 @@
 #     transcript covers the download).
 #   * The model is not silicon; see run_qemu_wifi.sh in m2_sdio_probe for the
 #     full statement of where it could be lying.
-# Requires qemu2 >= 2ed9314631 (gitlab.com/Newdigate/qemu-rt1170).  On stock
-# QEMU this gate goes RED, not SKIP — documented in CLAUDE.md alongside the
-# other model-dependent gates.
+# Requires qemu2 >= 7e17eff5d3 (gitlab.com/Newdigate/qemu-rt1170) -- the W16
+# floor, not W15's 2ed9314631: this example links the W16 driver, which reads
+# the multiport REGISTER PORT and issues AGGREGATED CMD53s, and a model with
+# neither returns zeros for the first and refuses the second.  7e17eff5d3 is
+# what this gate was actually measured green on.  That floor is RESTATED from
+# CLAUDE.md's "W16 MOVED THE FLOOR" paragraph, NOT independently measured here:
+# the driver does self-detect and fall back to CMD52 (Iw416.cpp mpRegsUsable()),
+# so an older model MIGHT still satisfy this particular gate -- nobody has run
+# it, and rebuilding the shared qemu2 tree to find out would invalidate other
+# sessions' sweeps.  Claim the floor you measured on.
+# On stock QEMU this gate goes RED, not SKIP.  (CLAUDE.md's model-dependent-gate
+# paragraph does not name this gate yet -- adding it is Task 13's job.)
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
