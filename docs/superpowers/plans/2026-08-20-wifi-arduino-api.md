@@ -25,7 +25,18 @@
 
 ### Findings that change later tasks
 
-- **Task 6 must not undo the `DriverCmd` guard.** Adding `m_pool.service()` to `servicePass()` *outside* the `if (m_lwipUp)` block is what makes the missing bring-up guard a live, silicon-only bug. The guard is now in place — keep it.
+- **The `DriverCmd` guard is defence-in-depth, not a fix for an imminent Task-6
+  break.** Correction to what this file said earlier: the reviewer's warning
+  (and spec §3) framed the missing bring-up guard as going live "the moment
+  Task 6 adds `m_pool.service()` to `servicePass()`" — but **Task 6 as planned
+  does not touch `servicePass()` at all**; it only makes `linkLost()` call
+  `WiFiPool::abortAll()`. The `m_pool.service()` step was dropped as dead code
+  in this plan's Deviations section (write retries live in `WiFiClient::write`,
+  reaping in lwip's `tcp_poll`). The guard is still right — the invariant it
+  protects ("`m_cardUp` is never cleared") is one a future `end()` or
+  card-reset path would break, and the failure is silicon-only — but no task in
+  this plan was about to trip it. Keep the guard; do not add
+  `m_pool.service()` just because §3 mentions it.
 - **QEMU cannot observe a dead service pump.** The `[wifi]` gate passes green with the pump working and with it dead (measured). Anything that depends on the pump actually running is silicon-only evidence.
 - **Two Task-4 fixes are unverifiable in QEMU** — single-shot reconnect and DHCP-timeout limbo both need an association the zero-BSS model cannot provide. They are reasoned, not measured, and must be exercised in Task 14's silicon transcript.
 - **`m_status` must not double as control state.** Two bugs in two review
