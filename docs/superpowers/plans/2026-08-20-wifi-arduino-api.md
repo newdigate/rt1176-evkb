@@ -33,12 +33,28 @@
   reconnect; then `disconnect()` silently failing to cancel auto-reconnect).
   Task 4 now separates them with `m_wantReconnect`. Later tasks that add state
   should keep diagnosis and control apart rather than overloading a field.
-- **Silicon must exercise what QEMU cannot.** Task 14's transcript has to cover
-  four Task-4 fixes that no gate here can reach, all needing a real
-  association: single-shot reconnect, DHCP-timeout limbo, `disconnect()`
-  cancelling auto-reconnect, and the reconnect throttle actually spacing
-  attempts (it measured attempt *starts*, so a 15-45 s failing attempt left no
-  gap at all).
+- **Silicon must exercise what QEMU cannot — but the list is TWO, not four.**
+  Task 14's transcript still has to cover **single-shot reconnect** and
+  **DHCP-timeout limbo**: both need a real association and a real lease, which
+  the zero-BSS model cannot provide.
+  The other two — `disconnect()` cancelling auto-reconnect, and the throttle
+  spacing attempts — **were measured in QEMU after all**, and the technique is
+  worth reusing rather than re-deriving. `linkLost()` needs only lwip up, which
+  is true in the `[wifi]` run, so a temporary public test hook reaches the exact
+  post-loss state without an association, and each retry then runs a REAL scan
+  against the model. The model's scan is instant (`dur=0`), which is what makes
+  the naive version of this test useless; emulating a silicon-like ~5.4 s
+  attempt inside the measured window is what made it discriminating:
+
+  | | attempts / 45 s | inter-attempt gaps | attempts in 15 s after `disconnect()` |
+  |---|---|---|---|
+  | fixed | 5 | every one exactly 5000 ms | **0** |
+  | before-only stamp | 9 | alternating 5000 ms and **ZERO** (back-to-back) | 0 |
+  | pre-fix `disconnect()` ordering | 5 | 5000 ms | **2** |
+
+  Silicon should still confirm both with real 15–45 s attempt durations, but
+  they are no longer *unverified* — do not report them in Task 14 as though
+  nothing has measured them.
 - **The licence audit cannot go green in this worktree** until the examples are built (~99 `MISSING BUILD`). Part 1 (copyleft) and the GATES drift check are clean throughout. Same root cause as the Task 13 sweep question.
 
 ---
