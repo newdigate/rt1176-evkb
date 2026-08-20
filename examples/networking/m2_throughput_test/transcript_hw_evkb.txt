@@ -553,3 +553,88 @@ STILL OWED, and it is the headline item:
   * TX aggregation remains DEFAULT OFF in the driver; the lwip netif enables
     it and flushes every poll.  This run's three transmitted frames are DHCP
     and ARP, so the TX batching path is barely touched.
+
+------------------------------------------------------------------------------
+W16 SILICON A/B: 6.4x fewer bus commands per frame -- and the win is the
+REGISTER PORT, not aggregation.  Throughput did not move, and that is the
+honest headline too.
+------------------------------------------------------------------------------
+Date: 2026-08-20.  ESP8266 bench AP, Mac as LAN peer, board at 192.168.4.101.
+Method: `tput_peer.py ab`, which runs tcp-rx TWICE on ONE association and ONE
+firmware life, flipping the driver's switches over UDP between blasts
+(`TPUT MODE 0|1`).  The AP, the air, the association and the firmware life are
+therefore identical in both arms -- the only way this bench can say anything,
+because the W11 baseline table was measured against a HOUSE ROUTER with the
+board on 2.4 GHz and the Mac on the router's 5 GHz side (two radios, no shared
+airtime), while the ESP is ONE 2.4 GHz radio relaying both stations.
+
+    arm                                    frames    bus  cmd/frame  slots  Mbps
+    pre-W16 (CMD52 transport, no batching)   2308  131953    57.17       0  2.66
+    W16 (register port + aggregation)        2353   20956     8.91      28  2.68
+
+    commands per frame: 57.17 -> 8.91  (6.4x fewer)
+
+  Both arms moved 1448-byte frames at the same rate (229.9 vs 231.6 frames/s),
+  which is what makes them comparable.
+
+THE DECOMPOSITION, and it closes to 0.4%:
+  W16 issued 20,956 - 2,353 = 18,603 register reads in 10.16 s = 1,831 service
+  passes per second.  Predict the pre-W16 arm from that SAME pass count at the
+  pre-W16 price of 7 CMD52 per pass (1 status + 4 rd-bitmap + 2 CMD_RD_LEN)
+  plus one data CMD53 per frame:  18,603 x 7 + 2,308 = 132,529.
+  Measured: 131,953.  **99.6% agreement.**
+  So the entire 6.4x is the multiport register port replacing seven CMD52s
+  with one CMD53 per service pass.  Nothing is left unexplained.
+
+AGGREGATION ENGAGED, AND CONTRIBUTED ALMOST NOTHING HERE: 28 slots out of
+  2,353 frames = 1.19%.  That is not a failure, it is the workload: at 230
+  frames/s a frame arrives every 4.3 ms while the polled service loop runs at
+  1.8 kHz, so the host drains each frame long before the next lands and every
+  run is length 1.  Aggregation needs frames to QUEUE.  (An earlier bench run
+  on the same rig reached aggr:86/2 -- 86 RX slots batched, and 2 TX frames in
+  one aggregated write -- so the path works under load; it is the opportunity
+  that is scarce, not the mechanism.)
+
+THROUGHPUT DID NOT MOVE: 2.66 -> 2.68 Mbps, which is noise.
+  ★ THIS IS NOT A DISAPPOINTING RESULT, IT IS A DIAGNOSTIC ONE.  W11 measured
+  the SDIO bus as the ceiling at 9.7 Mbps against a real AP.  This bench tops
+  out at 2.7 Mbps -- the ESP8266 SoftAP relaying two stations on one 2.4 GHz
+  radio -- so the bus was never the limiter in this test and no bus change
+  could have shown up as Mbps.  Cutting bus cost 6.4x on a link bounded
+  somewhere else buys nothing you can see here.  Whether it buys throughput at
+  the rates where W11 found the ceiling is UNANSWERED and needs an AP that can
+  carry >10 Mbps to the board.
+
+WHERE THE REMAINING COST IS, which points straight at the next experiment.
+  W16's 8.91 commands per frame splits as **7.91 polling + 1.00 data**.  The
+  DATA path is at its floor: one bus command per frame, which is what
+  aggregation exists to push below and what it will only reach when frames
+  queue.  Everything else is the service loop asking a quiet card whether it
+  has work -- which is exactly what W15's interrupt mode removes, and which
+  W15 closed with "blast-level load under interrupt mode on silicon" NOT
+  validated.  `TPUT MODE 2` (W16 + DAT1) was added for that arm.
+  PREDICTION, recorded so it can be refuted: mode 2 should cut the 7.91 hard,
+  AND should raise the aggregated share -- servicing on demand lets frames
+  accumulate between passes, which is the condition aggregation needs.
+
+HEALTH, and one OPEN observation:
+    pre-W16  stranded=1 resyncs=0 notready=0 drainerr=0 split=0
+    W16      stranded=3 resyncs=0 notready=0 drainerr=0 split=0
+  1 vs 3 is not a distinguishable difference at these counts, and split=0 in
+  both says the block-padding inference (model NOTE 11) held for every packet.
+  BUT BOTH ARMS ARE FAR ABOVE W13's RATE: W13 measured 3 strands per 1.78 GB;
+  this is 1 per 3.3 MB and 3 per 3.4 MB, i.e. 175x-520x more per byte.  Since
+  the PRE-W16 arm shows it too, it is unlikely to be a W16 regression -- but
+  arm 0 is not literally the old driver (same batch code bounded to one slot,
+  same latch accounting), so that is an argument, not a measurement.  OPEN:
+  worth a long soak, and worth remembering that `stranded` is W13's evidence
+  for FIRMWARE behaviour, so a rig with a different AP and a much lower data
+  rate is exactly the sort of thing that could move it.
+
+RIG GOTCHA, which cost one confused round trip: an ESP8266 SoftAP hands out
+  192.168.4.100 FIRST and a rebooted ESP has an EMPTY LEASE TABLE, so whichever
+  station asks first takes the address the board had.  After the AP was
+  rebooted the board came back on .101 and the peer aimed at .100 was talking
+  to the Mac itself.  tput_peer.py now detects that case by name instead of
+  reporting "is it the W16 image?", which is what it said the first time and
+  which sent a correct diagnosis chasing a firmware ghost.

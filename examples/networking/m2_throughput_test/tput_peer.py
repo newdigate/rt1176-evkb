@@ -313,8 +313,9 @@ def ab(ip):
         return {"test": "ab", "failed": detail}
 
     arms = []
-    for mode, label in ((0, "pre-W16 (CMD52 transport, no batching)"),
-                        (1, "W16 (register port + aggregation)")):
+    for mode, label in ((0, "pre-W16 (CMD52, no batching, polled)"),
+                        (1, "W16 (register port + aggregation, polled)"),
+                        (2, "W16 + W15 interrupt-driven (DAT1)")):
         ok = _ctrl(ip, "TPUT MODE %d" % mode, "TPUT MODEOK")
         if ok is None:
             # _reachable() already proved the board answers BUS?, so this is a
@@ -345,21 +346,32 @@ def ab(ip):
 
     print()
     print("=== W16 A/B, one association, one firmware life ===")
-    hdr = "%-34s %9s %9s %9s %9s %9s" % ("arm", "frames", "bus_cmds", "cmd/frame",
-                                         "rx_slots", "Mbps")
-    print(hdr)
+    print("%-38s %7s %8s %9s %7s %7s %6s %6s"
+          % ("arm", "frames", "bus", "cmd/frame", "poll", "data", "slots", "Mbps"))
     for a in arms:
         f = a.get("frames", 0)
         b = a.get("total", 0)
-        cpf = (b / f) if f else float("nan")
-        print("%-34s %9d %9d %9.2f %9d %9.2f"
-              % (a["label"], f, b, cpf, a.get("rxslots", 0), a["mbps"]))
-    if len(arms) == 2 and arms[0].get("frames") and arms[1].get("frames"):
-        c0 = arms[0]["total"] / arms[0]["frames"]
-        c1 = arms[1]["total"] / arms[1]["frames"]
-        if c1 > 0:
-            print("\ncommands per frame: %.2f -> %.2f  (%.1fx fewer)"
-                  % (c0, c1, c0 / c1))
+        # The split that matters: what the SERVICE LOOP spent asking a quiet
+        # card whether it had work, versus what the frames themselves cost.
+        data = a.get("c53rx", 0) + a.get("c53tx", 0)
+        poll = b - data
+        print("%-38s %7d %8d %9.2f %7.2f %7.2f %6d %6.2f"
+              % (a["label"], f, b, (b / f) if f else float("nan"),
+                 (poll / f) if f else float("nan"),
+                 (data / f) if f else float("nan"),
+                 a.get("rxslots", 0), a["mbps"]))
+    base = arms[0] if arms and arms[0].get("frames") else None
+    if base:
+        c0 = base["total"] / base["frames"]
+        for a in arms[1:]:
+            if a.get("frames"):
+                c1 = a["total"] / a["frames"]
+                if c1 > 0:
+                    print("\n%-38s %.2f -> %.2f commands per frame  (%.1fx fewer)"
+                          % (a["label"], c0, c1, c0 / c1))
+    print("\ncardints (0 means the arm was polled, whatever it claimed):")
+    for a in arms:
+        print("  %-38s %d" % (a["label"], a.get("cardints", 0)))
     print("\nhealth deltas (both arms must stay clean):")
     for a in arms:
         print("  %-34s stranded=%d resyncs=%d notready=%d drainerr=%d split=%d"
@@ -367,7 +379,10 @@ def ab(ip):
                  a.get("notready", 0), a.get("drainerr", 0), a.get("split", 0)))
     print("\nMbps is CONTEXT, not the verdict: 2.4 GHz varies 2x-4x run to run,")
     print("and an ESP8266 SoftAP relaying both stations is its own ceiling.")
-    # Leave the board in W16 mode rather than in whichever arm ran last.
+    # Leave the board in the polled W16 mode rather than in whichever arm ran
+    # last: interrupt mode is still DEFAULT OFF in the driver pending a load
+    # soak, and a bench run must not quietly leave the board in a mode the
+    # driver does not ship.
     _ctrl(ip, "TPUT MODE 1", "TPUT MODEOK")
     return {"test": "ab", "mbps": arms[-1]["mbps"]}
 

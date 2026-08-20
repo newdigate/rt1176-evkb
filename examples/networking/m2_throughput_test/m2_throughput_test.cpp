@@ -8,7 +8,7 @@
 //                          TX_BLAST_MS, then reports once the last byte acks.
 //   :5003 UDP           -- data datagrams (BE32 seq + 0xA5 fill) are counted;
 //                          "TPUT RESET" / "TPUT STATS?" / "TPUT GO <secs>"
-//                          "TPUT MODE <0|1>" / "TPUT BUS?"   (W16 A/B)
+//                          "TPUT MODE <0|1|2>" / "TPUT BUS?"  (W16 A/B)
 //                          control datagrams drive the udp-rx / udp-tx runs.
 // All services stay armed between tests; each test re-runs without a reflash.
 //
@@ -331,21 +331,47 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
             // the comparison.
             //
             //   TPUT MODE 0   pre-W16: CMD52 register transport, no batching
-            //   TPUT MODE 1   W16: register port + RX/TX aggregation
+            //   TPUT MODE 1   W16: register port + RX/TX aggregation, POLLED
+            //   TPUT MODE 2   W16 + W15 interrupt-driven service (DAT1)
+            //
+            // ★ MODE 2 EXISTS BECAUSE THE FIRST A/B SAID SO.  Arm 1's cost
+            // decomposed as 7.91 polling commands per frame plus 1.00 for the
+            // data itself -- the DATA path is already at its floor of one bus
+            // command per frame, and everything left is the service loop
+            // asking a quiet card whether it has work.  That is precisely what
+            // W15's interrupt mode removes, and W15 closed with "blast-level
+            // load under interrupt mode on silicon" explicitly NOT validated.
+            // One arm answers both.
+            //
+            // It should also make AGGREGATION matter, which it did not at 230
+            // frames/s: a polled loop running at ~1.8 kHz drains each frame
+            // before the next arrives, so runs are length 1 (measured: 1.19%
+            // of frames arrived batched).  Service on demand instead and
+            // frames accumulate between passes, which is the condition
+            // aggregation needs.  Stated as a PREDICTION here so the next run
+            // can refute it.
             //
             // The counters are NOT reset here -- the peer reads them either
             // side of the blast and consumes the DELTA.  Resetting would
             // invite exactly the absolute-counter comparison W12 got wrong.
-            const bool on = (strtol(head + 10, nullptr, 10) != 0);
+            const long mode = strtol(head + 10, nullptr, 10);
+            const bool on  = (mode != 0);
+            const bool irq = (mode >= 2);
             iw416.useRegisterPort(on);
             iw416.setRxAggregation(on);
             iw416.setTxAggregation(on);
-            char msg[96];
+            // Order matters on the way IN as well as out: setInterruptMode
+            // writes the card-side CCCR gate and arms the controller, and it
+            // early-outs when the mode is already what was asked for.
+            iw416.setInterruptMode(irq);
+            char msg[128];
             snprintf(msg, sizeof(msg),
-                     "TPUT MODEOK w16=%d mpregs=%d rxaggr=%d txaggr=%d",
+                     "TPUT MODEOK w16=%d mpregs=%d rxaggr=%d txaggr=%d irq=%d/%d",
                      on ? 1 : 0, iw416.mpRegsUsable() ? 1 : 0,
                      iw416.rxAggregation() ? 1 : 0,
-                     iw416.txAggregation() ? 1 : 0);
+                     iw416.txAggregation() ? 1 : 0,
+                     iw416.interruptMode() ? 1 : 0,
+                     sdio.cardIntEnabled() ? 1 : 0);
             udpSendText(addr, port, msg);
             Serial1.println(msg);
         } else if (strncmp(head, "TPUT BUS?", 9) == 0) {
@@ -356,7 +382,8 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
             snprintf(msg, sizeof(msg),
                      "TPUT BUS total=%lu regs=%lu c52=%lu c53rx=%lu c53tx=%lu "
                      "rxslots=%lu txslots=%lu frames=%lu stranded=%lu "
-                     "resyncs=%lu notready=%lu drainerr=%lu split=%lu",
+                     "resyncs=%lu notready=%lu drainerr=%lu split=%lu "
+                     "cardints=%lu",
                      (unsigned long)iw416.busCommands(),
                      (unsigned long)iw416.cmd53Regs(),
                      (unsigned long)(iw416.cmd52PollsTx() + iw416.cmd52PollsSvc()),
@@ -369,7 +396,8 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
                      (unsigned long)iw416.rxRingResyncs(),
                      (unsigned long)iw416.rxSlotNotReady(),
                      (unsigned long)iw416.rxDrainErrors(),
-                     (unsigned long)iw416.rxSplitMismatch());
+                     (unsigned long)iw416.rxSplitMismatch(),
+                     (unsigned long)iw416.cardInts());
             udpSendText(addr, port, msg);
             Serial1.println(msg);
         } else if (strncmp(head, "TPUT GO ", 8) == 0) {
