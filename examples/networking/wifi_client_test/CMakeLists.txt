@@ -38,11 +38,18 @@ endif()
 # They are written into a generated header in the BUILD directory (gitignored,
 # same as iw416_fw.cpp) so arbitrary passphrase characters are handled cleanly
 # and **the value never touches a tracked file, a compile command line, or a
-# make fragment** -- the indirection exists for that last part: a -D on the
-# command line would land in compile_commands.json and CMakeCache.txt, both of
-# which get pasted into bug reports.  This repo has already leaked a live PSK
-# to a public remote once (W6, still in pushed history); that is why this is a
-# generated header and not a define.  Absent -> the connect attempt is compiled
+# make fragment** -- the indirection exists for that last part: a -D reaching
+# the compiler would land in compile_commands.json, which gets pasted into bug
+# reports.  This repo has already leaked a live PSK to a public remote once
+# (W6, still in pushed history); that is why this is a generated header and
+# not a define.
+#
+# ★ What this does NOT protect: `build/CMakeCache.txt`.  M2RADIO_WIFI_PSK is a
+# CACHE entry, so CMake writes the supplied value there verbatim no matter how
+# it is later consumed (verified: CMakeCache.txt carries the M2RADIO_WIFI_PSK
+# line).  It is in your shell history too.  Treat a build dir as
+# secret-bearing -- never attach one to a bug report, and never commit one.
+# Absent -> the connect attempt is compiled
 # out and the example falls back to the alive= heartbeat, so the QEMU gate and
 # the no-SDK build are unaffected.  The PSK is never echoed by CMake.
 set(M2RADIO_WIFI_SSID "" CACHE STRING "Target AP SSID")
