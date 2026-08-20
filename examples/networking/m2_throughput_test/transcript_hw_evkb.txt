@@ -367,3 +367,72 @@ RESYNCS, finally understood: 14703 over 80 blasts = ~184/blast, in line with
   normal operation, not damage.  My W12 reading of this counter as "thrash"
   was wrong twice over (once from comparing absolute counts across unequal
   runs, once from assuming the resyncs were finding nothing).
+
+------------------------------------------------------------------------------
+W15 phase 3: DAT1 silicon validation -- FAILED first, root-caused to a missing
+CCCR write, model corrected to reproduce the failure, driver fixed, PASSED.
+------------------------------------------------------------------------------
+Date: 2026-08-20.  Rig: ESP8266 bench AP (house creds rotated and retired).
+Both arms are m2_throughput_test builds with bench creds; traffic is the
+ESP's 1 Hz broadcast + DHCP/ARP + PS event chatter (no LAN peer available:
+the Mac is not on the ESP's network, so blast-level load stays QEMU-only).
+
+ARM A -- polled (default), 143 s:  joined, ip=192.168.4.100, cardints=0,
+  idle service cost ~1,070 CMD52/s (the documented ~1 kHz poll), c53=67,
+  stranded=0/0 drainerr=0 notready=0 resyncs=0.
+
+ARM B -- irq mode, FIRST ATTEMPT, 150 s: **VALIDATION FAILURE.**
+  irq_mode=ON, connect=ok, then: cardints=0 the whole run, DHCP never
+  bound, c53 pinned at 15.  A forensics line (raw uSDHC regs) made it
+  decisive:  usdhc=0x0/0x157F71FF/0x100 on every tick =
+    INT_STATUS bit 8 NEVER LATCHED / status-enable armed / signal-enable
+    still armed (so the ISR never fired).
+  The controller sat armed forever; THE CARD NEVER ASSERTED DAT1.
+
+ROOT CAUSE: the SDIO spec gates the DAT1 pin CARD-SIDE in CCCR 0x04
+  (IENM bit 0 + IEN1 bit 1), and the driver never wrote it -- it only ever
+  configured the vendor HOST_INT_MASK (fn1), which selects which
+  conditions the firmware raises, not whether the pin asserts.  NXP's own
+  fsl_sdio.c SDIO_EnableIOInterrupt() writes CCCR 0x04.  The QEMU model
+  had the same blind spot (derived the line from HOST_INT_STATUS &
+  HOST_INT_MASK alone), which is exactly why emulation was green: THE
+  MODEL SHARED THE DRIVER'S MISCONCEPTION -- the failure mode the W14
+  design doc named as the honest risk of self-modelled hardware.
+
+THE FIX, in the order the two-gate rule demands:
+  1. qemu2 2ed9314631: the model's DAT1 line now requires CCCR 0x04
+     IENM|IEN1.  Re-run against the UNFIXED driver, m2_rx_demo[irq] went
+     RED in emulation -- "FAIL: cardInts()=0" -- reproducing silicon's
+     failure exactly.  The model now encodes the contract.
+  2. M2Radio c64ca1f: setInterruptMode(true) writes CCCR 0x04 = 0x03
+     before arming the controller; on write failure it stays polled and
+     interruptMode() reads false.  [irq] gate back to GREEN, ring/
+     stranded/fallback gates unaffected.
+
+ARM B -- irq mode, FIXED DRIVER, 195 s: **PASS.**
+  cardints=1 on the first status tick, 502 by t=194 -- DAT1 fires on real
+  silicon and every assertion is serviced.  ip bound normally.  c53=91
+  (delivery rate matches the polled arm's 67/143 s).  Idle service cost
+  ~88 CMD52/s vs 1,070 polled = **12x reduction on silicon** (the residual
+  is the 64 ms safety-net tick, by design -- W13's missing-interrupt fw
+  behaviour still needs it).  stranded=0/0 drainerr=0 notready=0
+  resyncs=0: nothing the interrupt path made worse.  usdhc INT_STATUS
+  reads 0 at print time because every latch is serviced within the tick.
+
+WHAT THIS VALIDATES AND WHAT IT DOES NOT:
+  * Validated: DAT1 asserts per queued work on the MAYA-W161, the
+    ISR/mask/flag/rearm protocol works, PS sleep-wake cycling coexists
+    with interrupt mode (166 sleeps in arm B), and the idle win is real.
+  * NOT validated: blast-level load under interrupt mode on silicon (no
+    peer on the ESP LAN this session) -- QEMU covers it; a future session
+    with a LAN peer should repeat the tcp-rx soak in irq mode.
+  * Interrupt mode remains DEFAULT OFF in the driver.  Flipping the
+    default is a decision for after a load soak, not after one sparse run.
+
+THE LESSON, stated for the next self-modelled peripheral: a hardware model
+written from the same reading of the spec as the driver will AGREE with the
+driver, and both can be wrong together -- emulation green, silicon dead.
+The recovery loop that worked here: instrument the failure on silicon,
+correct the MODEL first until emulation reproduces the silicon failure
+against the unfixed driver, only then fix the driver, and keep the red run
+in the record.  Model-flatters-driver is not hypothetical; this was it.

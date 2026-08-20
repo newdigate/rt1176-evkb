@@ -428,11 +428,32 @@ static const char *statusName(SdioHost::Status s) {
 #define M2_PS_OFF 0
 #endif
 
+// W15: interrupt-driven SDIO service (DAT1).  OFF by default because the
+// uSDHC card interrupt has never been exercised on this board -- the QEMU
+// behaviour is spec-derived, not capture-derived, so a green [irq] gate
+// proves spec-conformance only.  Build with -DM2_IRQ_MODE=1 for the silicon
+// validation arm.  What to watch on the bench: cardints= must CLIMB with
+// traffic (the interrupt actually fires) and stranded= must not climb
+// faster than the polled build (the safety net still covers the fw's
+// missing-interrupt behaviour, W13).
+#ifndef M2_IRQ_MODE
+#define M2_IRQ_MODE 0
+#endif
+
 static bool wifiConnect() {
 #if defined(HAVE_WIFI_CREDS)
     SdioHost::Status c = iw416.connectStation(M2_WIFI_SSID, M2_WIFI_PSK, 3,
                                               /*psOn=*/M2_PS_OFF ? false : true);
     Serial1.print("ps_mode="); Serial1.println(M2_PS_OFF ? "OFF(A/B arm)" : "on");
+#if M2_IRQ_MODE
+    if (c == SdioHost::OK) {
+        // After begin() (long since done here): enableCardInt() must not run
+        // before the controller reset in begin() or the enable is wiped.
+        iw416.setInterruptMode(true);
+    }
+    Serial1.print("irq_mode="); Serial1.println(iw416.interruptMode()
+                                                ? "ON(W15 validation arm)" : "off");
+#endif
     Serial1.print("connect="); Serial1.print(statusName(c));
     Serial1.print(" last_event=0x"); Serial1.println(iw416.lastEvent(), HEX);
     return c == SdioHost::OK;
@@ -632,7 +653,24 @@ void loop() {
             Serial1.print("/");             Serial1.print(iw416.rxDesyncRecovered());
             Serial1.print(" drainerr=");    Serial1.print(iw416.rxDrainErrors());
             Serial1.print(" notready=");    Serial1.print(iw416.rxSlotNotReady());
-            Serial1.print(" resyncs=");     Serial1.println(iw416.rxRingResyncs());
+            Serial1.print(" resyncs=");     Serial1.print(iw416.rxRingResyncs());
+            // W15: DAT1 assertions serviced.  Stays 0 in polled mode; in irq
+            // mode it climbing is the whole silicon-validation signal.
+            Serial1.print(" cardints=");    Serial1.print(iw416.cardInts());
+#if M2_IRQ_MODE
+            // Silicon-validation forensics: the raw uSDHC interrupt regs.
+            // sigen bit8 present + cardints frozen  -> DAT1 never asserted
+            //   (or CINT status never latched: check sten bit8 + st bit8).
+            // sigen bit8 ABSENT + cardints frozen   -> the ISR fired and
+            //   masked signalling but serviceLink never took the flag.
+            Serial1.print(" usdhc=0x");
+            Serial1.print(*(volatile uint32_t *)(0x40418000u + 0x30), HEX);
+            Serial1.print("/0x");
+            Serial1.print(*(volatile uint32_t *)(0x40418000u + 0x34), HEX);
+            Serial1.print("/0x");
+            Serial1.print(*(volatile uint32_t *)(0x40418000u + 0x38), HEX);
+#endif
+            Serial1.println();
         }
     } else {
         // Fallback (QEMU / no card / no fw): prove the image stays alive.
