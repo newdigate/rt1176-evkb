@@ -153,13 +153,32 @@ command. Read `wlan_uap_ioctl.c`'s path into `wlan_ops_uap_prepare_cmd` for the
 initialisation mlan performs before it, and check whether the uAP `mlan_private`
 carries a `bss_num` this driver is not sending.
 
-## ★ One loose end before a fresh clone can build this
+## The pin (closed)
 
-The driver change is committed to the local `M2Radio` checkout as **`494f230`**
-and is **not pushed**, so `evkb.cmake`'s pin still names `c7d0510` — which has
-no `sendHostCmdBss()`. Local-first resolution means every build on this machine
-is fine and both new gates are green, but `-DEVKB_FORCE_FETCH=ON` (and any
-fresh clone) will fail to compile `m2_uap_probe`.
+`M2Radio` master is pushed (`c7d0510..494f230`) and `evkb.cmake` names
+`494f230`. Verified in fresh-user mode rather than assumed: configured and
+built `m2_uap_probe` with `-DEVKB_FORCE_FETCH=ON`, which fetched M2Radio at
+that SHA into `_deps/m2radio-src/`, and the fetched `Iw416.cpp` carries
+`sendHostCmdBss()`. Clean build.
 
-Push `M2Radio` and bump the pin, in that order, before treating the 110-gate
-sweep as reproducible off this machine.
+★ A pin bump makes every consuming build dir **reconfigure** on its next build.
+Dirs configured before 2026-08-14 fail that reconfigure with a message that
+never mentions a toolchain — `COMPILERPATH is UNDEFINED`. Gates are unaffected
+(a gate runs the cached `.elf` and never reconfigures), which is also the
+reason a green sweep is no evidence that a build dir can still configure.
+
+## Running the 110-gate sweep
+
+The sweep belongs in the full-build checkout, and `m2_uap_probe` arrives there
+with **no build directory** — two SKIPs unless it is built first:
+
+```
+cd examples/networking/m2_uap_probe
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake
+cmake --build build
+```
+
+No blob and no credentials: `build/` is deliberately the fresh-clone build, and
+both gates require it (the model gate refuses a build that supplies a blob,
+because the model cannot do a download). The silicon builds live in
+`build-hw/` (combo blob) and `build-hw-wlan/` (Wi-Fi-only blob).
