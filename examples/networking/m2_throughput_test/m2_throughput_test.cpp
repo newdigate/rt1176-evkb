@@ -383,7 +383,7 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
                      "TPUT BUS total=%lu regs=%lu c52=%lu c53rx=%lu c53tx=%lu "
                      "rxslots=%lu txslots=%lu frames=%lu stranded=%lu "
                      "resyncs=%lu notready=%lu drainerr=%lu split=%lu "
-                     "cardints=%lu isr=%lu",
+                     "cardints=%lu isr=%lu sigen=0x%lX sten=0x%lX ist=0x%lX",
                      (unsigned long)iw416.busCommands(),
                      (unsigned long)iw416.cmd53Regs(),
                      (unsigned long)(iw416.cmd52PollsTx() + iw416.cmd52PollsSvc()),
@@ -398,7 +398,21 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
                      (unsigned long)iw416.rxDrainErrors(),
                      (unsigned long)iw416.rxSplitMismatch(),
                      (unsigned long)iw416.cardInts(),
-                     (unsigned long)sdio.cardIntCount());
+                     (unsigned long)sdio.cardIntCount(),
+                     // ★ THE uSDHC REGISTERS, IN THE UDP REPLY AND NOT ONLY ON
+                     // THE SERIAL CONSOLE.  Three bench runs in a row asked
+                     // "why is cardints 0" and three times the answer was on a
+                     // console that was not attached.  A diagnostic only the
+                     // operator can reach is a diagnostic that will be missing
+                     // exactly when it is needed.
+                     //   sigen bit8 SET, isr=0   -> armed; DAT1 never asserted
+                     //                              or never sampled
+                     //   sigen bit8 CLEAR, isr=0 -> never armed, or the ISR
+                     //                              masked it and nothing
+                     //                              re-armed
+                     (unsigned long)*(volatile uint32_t *)(0x40418000u + 0x38),
+                     (unsigned long)*(volatile uint32_t *)(0x40418000u + 0x34),
+                     (unsigned long)*(volatile uint32_t *)(0x40418000u + 0x30));
             udpSendText(addr, port, msg);
             Serial1.println(msg);
         } else if (strncmp(head, "TPUT GO ", 8) == 0) {
@@ -533,13 +547,29 @@ static const char *statusName(SdioHost::Status s) {
 #define M2_IRQ_MODE 0
 #endif
 
+// W16: enable interrupt mode this many ms AFTER the connect instead of at the
+// connect itself.  It exists to isolate ONE variable.
+//
+// The three-arm load A/B enabled interrupt mode MID-RUN (TPUT MODE 2) and came
+// back isr=0/cardints=0 -- no interrupt ever fired -- while the same driver
+// with M2_IRQ_MODE=1 (enable AT connect) and only the AP's broadcasts for
+// traffic reported isr=67 and an idle cost of 8.6 register reads per second.
+// Two things differ between those runs: WHEN the mode is enabled, and whether
+// there is load.  Building with -DM2_IRQ_LATE_MS=30000 changes only the
+// first, so a sparse run with it either reproduces isr=0 (the mid-run enable
+// is broken) or does not (leaving load as the explanation).  Guessing between
+// two confounded variables is how W11 concluded PS was killing RX.
+#ifndef M2_IRQ_LATE_MS
+#define M2_IRQ_LATE_MS 0
+#endif
+
 static bool wifiConnect() {
 #if defined(HAVE_WIFI_CREDS)
     SdioHost::Status c = iw416.connectStation(M2_WIFI_SSID, M2_WIFI_PSK, 3,
                                               /*psOn=*/M2_PS_OFF ? false : true);
     Serial1.print("ps_mode="); Serial1.println(M2_PS_OFF ? "OFF(A/B arm)" : "on");
 #if M2_IRQ_MODE
-    if (c == SdioHost::OK) {
+    if (c == SdioHost::OK && M2_IRQ_LATE_MS == 0) {
         // After begin() (long since done here): enableCardInt() must not run
         // before the controller reset in begin() or the enable is wiped.
         iw416.setInterruptMode(true);
@@ -675,6 +705,24 @@ void loop() {
                 Serial1.println("link_reup");
             }
         }
+#if M2_IRQ_MODE && M2_IRQ_LATE_MS
+        // The isolated variable: same call, same driver, later.
+        {
+            static bool lateDone = false;
+            static uint32_t lateFrom = 0;
+            if (!lateDone && s_linkUp) {
+                if (lateFrom == 0) lateFrom = millis();
+                if (millis() - lateFrom >= (uint32_t)M2_IRQ_LATE_MS) {
+                    iw416.setInterruptMode(true);
+                    lateDone = true;
+                    Serial1.print("irq_late_enable irq=");
+                    Serial1.print(iw416.interruptMode() ? 1 : 0);
+                    Serial1.print("/");
+                    Serial1.println(sdio.cardIntEnabled() ? 1 : 0);
+                }
+            }
+        }
+#endif
         sys_check_timeouts();
 
         // Bounded service pumps -- each does a small fixed amount of work per

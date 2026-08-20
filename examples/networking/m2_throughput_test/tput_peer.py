@@ -269,7 +269,7 @@ def _bus(ip):
     for tok in line.split()[2:]:
         k, _, v = tok.partition("=")
         try:
-            out[k] = int(v)
+            out[k] = int(v, 0)     # base 0: the uSDHC regs arrive as 0x...
         except ValueError:
             pass
     return out
@@ -339,6 +339,9 @@ def ab(ip):
             print("ab: no BUS reply after the blast", file=sys.stderr)
             return {"test": "ab", "failed": "no BUS"}
         d = {k: after.get(k, 0) - before.get(k, 0) for k in after}
+        # Register VALUES are states, not events: differencing them is
+        # meaningless, so the raw post-blast snapshot is kept alongside.
+        d["raw"] = after
         d["mbps"] = res["mbps"]
         d["label"] = label
         arms.append(d)
@@ -373,8 +376,23 @@ def ab(ip):
     print("      BOTH zero in an 'interrupt' arm means no interrupt was involved,")
     print("      whatever the command count did -- the win came from somewhere else.")
     for a in arms:
-        print("  %-38s isr=%d cardints=%d"
-              % (a["label"], a.get("isr", 0), a.get("cardints", 0)))
+        raw = a.get("raw", {})
+        sigen = raw.get("sigen", 0)
+        armed = "ARMED" if (sigen & 0x100) else "not-armed"
+        print("  %-38s isr=%-5d cardints=%-5d INT_SIGNAL_EN=0x%X (CINT %s)"
+              % (a["label"], a.get("isr", 0), a.get("cardints", 0), sigen, armed))
+    irq = arms[-1] if arms else {}
+    if irq.get("isr", 0) == 0:
+        raw = irq.get("raw", {})
+        if raw.get("sigen", 0) & 0x100:
+            print("\n  -> CINT signalling IS armed and the ISR never ran: the card did not")
+            print("     assert DAT1, or the controller never sampled it.  A 4-bit SDIO card")
+            print("     interrupt is only sampled between transfers, and under sustained")
+            print("     load the driver clears the card's status almost as soon as it rises.")
+        elif raw:
+            print("\n  -> CINT signalling is NOT armed, so no interrupt could have been")
+            print("     delivered.  Either the enable never reached the register, or the")
+            print("     ISR masked it and nothing re-armed it.")
     print("\nhealth deltas (both arms must stay clean):")
     for a in arms:
         print("  %-34s stranded=%d resyncs=%d notready=%d drainerr=%d split=%d"

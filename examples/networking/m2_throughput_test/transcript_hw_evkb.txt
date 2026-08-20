@@ -720,3 +720,61 @@ HEALTH: stranded 0 / 0 / 2, everything else 0 across all three arms, split=0
   per-pass read and the safety net has more to catch -- but n=2 is not a
   measurement.  Note the previous session showed 1 and 3 on arms that here
   show 0 and 0, which is the same point about small counts.
+
+------------------------------------------------------------------------------
+W16: WHY THE LOAD ARM NEVER TOOK AN INTERRUPT.  Two confounded variables,
+separated by two runs that needed no LAN peer at all.
+------------------------------------------------------------------------------
+Date: 2026-08-20.  The three-arm load A/B enabled interrupt mode MID-RUN and
+came back isr=0 / cardints=0: no interrupt fired, though the ack said irq=1/1.
+Two things differed from W15's validated run -- WHEN the mode was enabled, and
+whether there was load -- and guessing between two confounded variables is how
+W11 concluded that power save was killing RX.  So they were separated.
+
+RUN 1 -- enable AT CONNECT, sparse traffic (M2_IRQ_MODE=1, the W15 path, but
+on the W16 driver).  ~40 s, only the AP's broadcasts and PS chatter:
+
+    cardints=67 isr=67  usdhc=0x0/0x157F71FF/0x100
+    regs:344/5  total:365   stranded=0/0 drainerr=0 notready=0 resyncs=0
+
+  The ISR fires, serviceLink consumes EVERY assertion (isr == cardints, so
+  nothing is being flagged and dropped), CINT signalling is armed (bit 8 of
+  INT_SIGNAL_EN), and the idle service cost is 344 register reads in 40 s =
+  8.6/s against the ~1,000/s a polled build spends.
+  => W16 DID NOT BREAK INTERRUPT MODE.  W15's mechanism still works, now on
+  one CMD53 per look instead of seven CMD52s.
+
+RUN 2 -- enable MID-RUN, sparse traffic (-DM2_IRQ_LATE_MS=30000: same call,
+same driver, 30 s later).  The one variable changed, nothing else:
+
+    cardints=162 isr=162  usdhc=0x0/0x157F71FF/0x100
+
+  The register reads climb at ~1,000/s for the first 30 s and then flatten to
+  tens per second at the moment of the enable.
+  => THE MID-RUN ENABLE IS NOT BROKEN EITHER.
+
+WHICH LEAVES LOAD.  Under sustained tcp-rx the interrupt does not participate:
+  the driver is servicing the card through the STICKY PENDING BIT faster than
+  the card can signal.  DAT1 is a LEVEL derived from unmasked HOST_INT_STATUS
+  bits, our read CLEARS those bits, and a 4-bit SDIO card interrupt is only
+  sampled between transfers -- so on a bus that is busy 134 times a second and
+  read 211 times a second, the level may never survive long enough to be seen.
+  ★ STATED AS THE REMAINING HYPOTHESIS, not as a finding: what separates "never
+  asserted" from "never sampled" is INT_SIGNAL_EN bit 8 during the load arm,
+  and the BUS? reply now carries sigen/sten/ist so the next load run captures
+  it without a serial console.  Three bench runs in a row asked this question
+  and three times the answer was on a console that was not attached; a
+  diagnostic only the operator can reach is one that will be missing exactly
+  when it is needed.
+
+WHAT THIS MEANS FOR THE NUMBERS ALREADY RECORDED: nothing changes.  The 27-30x
+  is real and reproducible (84.12 -> 3.07 in the second load session, 93.27 ->
+  3.08 in the first).  Only the ATTRIBUTION changes, and it matters:
+    * ~8x of it is the register port,
+    * the rest is serviceLink declining to read status on passes with nothing
+      pending -- a benefit of interrupt MODE, not of interrupts,
+    * and DAT1's own contribution under load is, so far, zero.
+  W15's open item is therefore ANSWERED IN THE NEGATIVE rather than closed:
+  blast-level load under interrupt mode runs correctly on silicon and the
+  interrupt does not fire.  Its measured value remains the IDLE win (W15: 12x;
+  re-measured here as 8.6 register reads/s against ~1,000).
