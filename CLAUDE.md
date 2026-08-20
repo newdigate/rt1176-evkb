@@ -283,16 +283,21 @@ needs the `sai1-rxinject` binding, qemu2 `2141a5d781`), its rt1062 half depends
 on LOCAL-ONLY qemu2 changes, so **a fresh clone sees it red for that reason
 too**; that is the GPL firewall working, not a regression.
 
-★ **W14 put FOUR more gates in that class, and it is the largest such group.**
-`networking/m2_sdio_probe[wifi]` and all three `networking/m2_rx_demo` gates
-need the **IW416 SDIO card model** (`hw/sd/iw416-sdio.c`, qemu2 `0056068fae`,
-enabled by `-machine mimxrt1170-evk,m2-wifi=on`). Stock QEMU has no such
-device, so on a machine without that qemu2 tree they go RED — not SKIP, and
-not a firmware regression. Diagnose by checking the machine accepts the
-property at all (`qemu-system-arm -machine mimxrt1170-evk,help`), not by
-reading the firmware. Note `m2_rx_demo`'s plain `run_qemu.sh` is exempt: it
-asserts the card-ABSENT fallback and passes on stock QEMU like every other
-m2_* gate.
+★ **FIVE gates need the IW416 card model, and unlike the rt1062 group above
+they are NOT local-only — the model is PUSHED.**
+`networking/m2_sdio_probe[wifi]` and all four `networking/m2_rx_demo` gates
+need the **IW416 SDIO card model** (`hw/sd/iw416-sdio.c`, enabled by
+`-machine mimxrt1170-evk,m2-wifi=on`), plus — for `[irq]` — the SDIO
+card-interrupt plumbing W15 added to the SD bus and SDHCI. Both are on
+`gitlab.com/Newdigate/qemu-rt1170` **master at or after `8d81ed3fc1`**
+(pushed 2026-08-20); build qemu2 from there and all five run anywhere.
+Stock upstream QEMU has no such device — and worse, no SDIO card interrupt
+at all (`SDHC_NIS_CARDINT` exists only in the clear path) — so against a
+stock build these go RED, not SKIP, and it is not a firmware regression.
+Diagnose by asking the machine whether it takes the property
+(`qemu-system-arm -machine mimxrt1170-evk,help`), not by reading firmware.
+Note `m2_rx_demo`'s plain `run_qemu.sh` is exempt: it asserts the
+card-ABSENT fallback and passes on stock QEMU like every other m2_* gate.
 ★ **Why those gates exist at all**: until W14 the entire SDIO ring/interrupt
 layer had ZERO automated coverage — every m2_* gate asserted the card was
 absent, so both of this subsystem's serious bugs (the W8 32-port ring, the
