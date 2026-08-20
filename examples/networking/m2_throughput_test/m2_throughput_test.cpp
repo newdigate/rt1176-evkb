@@ -8,6 +8,7 @@
 //                          TX_BLAST_MS, then reports once the last byte acks.
 //   :5003 UDP           -- data datagrams (BE32 seq + 0xA5 fill) are counted;
 //                          "TPUT RESET" / "TPUT STATS?" / "TPUT GO <secs>"
+//                          "TPUT MODE <0|1>" / "TPUT BUS?"   (W16 A/B)
 //                          control datagrams drive the udp-rx / udp-tx runs.
 // All services stay armed between tests; each test re-runs without a reflash.
 //
@@ -311,6 +312,66 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
             s_udpRxCount = 0; s_udpRxHi = 0; s_udpRxTiming = false;
             udpSendText(addr, port, "TPUT RESETOK");
             Serial1.println("tput: udp_rx reset");
+        } else if (strncmp(head, "TPUT MODE ", 10) == 0) {
+            // W16: flip the driver's two transport/aggregation switches at
+            // RUNTIME, so a throughput A/B runs both arms in ONE firmware life
+            // against the SAME AP.
+            //
+            // ★ THIS IS THE ONLY HONEST WAY TO JUDGE W16 ON THIS BENCH.  The
+            // W11 baseline table was measured against a house router with the
+            // board on 2.4 GHz and the Mac on the router's 5 GHz side -- two
+            // radios, no shared airtime.  The ESP8266 bench AP is one 2.4 GHz
+            // radio RELAYING both stations, so every byte crosses the air
+            // twice on the same channel.  Comparing a bench Mbps against that
+            // table measures the AP, not the driver -- the same class of error
+            // as W11's confounded PS A/B and W12's unequal-length counter
+            // comparison, both of which produced published wrong conclusions.
+            // Flipping the switch between two blasts minutes apart on one
+            // association removes the AP, the air, and the firmware life from
+            // the comparison.
+            //
+            //   TPUT MODE 0   pre-W16: CMD52 register transport, no batching
+            //   TPUT MODE 1   W16: register port + RX/TX aggregation
+            //
+            // The counters are NOT reset here -- the peer reads them either
+            // side of the blast and consumes the DELTA.  Resetting would
+            // invite exactly the absolute-counter comparison W12 got wrong.
+            const bool on = (strtol(head + 10, nullptr, 10) != 0);
+            iw416.useRegisterPort(on);
+            iw416.setRxAggregation(on);
+            iw416.setTxAggregation(on);
+            char msg[96];
+            snprintf(msg, sizeof(msg),
+                     "TPUT MODEOK w16=%d mpregs=%d rxaggr=%d txaggr=%d",
+                     on ? 1 : 0, iw416.mpRegsUsable() ? 1 : 0,
+                     iw416.rxAggregation() ? 1 : 0,
+                     iw416.txAggregation() ? 1 : 0);
+            udpSendText(addr, port, msg);
+            Serial1.println(msg);
+        } else if (strncmp(head, "TPUT BUS?", 9) == 0) {
+            // The bus counters as ONE line the peer can difference across a
+            // blast.  Everything here is cumulative and per-firmware-life, so
+            // the peer must consume deltas -- see TPUT MODE above.
+            char msg[160];
+            snprintf(msg, sizeof(msg),
+                     "TPUT BUS total=%lu regs=%lu c52=%lu c53rx=%lu c53tx=%lu "
+                     "rxslots=%lu txslots=%lu frames=%lu stranded=%lu "
+                     "resyncs=%lu notready=%lu drainerr=%lu split=%lu",
+                     (unsigned long)iw416.busCommands(),
+                     (unsigned long)iw416.cmd53Regs(),
+                     (unsigned long)(iw416.cmd52PollsTx() + iw416.cmd52PollsSvc()),
+                     (unsigned long)iw416.cmd53Rx(),
+                     (unsigned long)iw416.cmd53Tx(),
+                     (unsigned long)iw416.rxAggrSlots(),
+                     (unsigned long)iw416.txAggrSlots(),
+                     (unsigned long)iw416.rxDataCount(),
+                     (unsigned long)iw416.rxStrandedRecovered(),
+                     (unsigned long)iw416.rxRingResyncs(),
+                     (unsigned long)iw416.rxSlotNotReady(),
+                     (unsigned long)iw416.rxDrainErrors(),
+                     (unsigned long)iw416.rxSplitMismatch());
+            udpSendText(addr, port, msg);
+            Serial1.println(msg);
         } else if (strncmp(head, "TPUT GO ", 8) == 0) {
             long secs = strtol(head + 8, nullptr, 10);
             if (secs < 1)  secs = 1;

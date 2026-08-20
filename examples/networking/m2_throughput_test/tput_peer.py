@@ -12,6 +12,10 @@ cross-check (what the board thinks it saw), never the measurement.
   udp-tx <ip>   "TPUT GO 10" -> board blasts UDP -> Mac  (board TX + loss)
   all    <ip>   the four in order with 2 s gaps, then summary lines:
                 TPUT <test> mbps=<x.xx> [loss=<y.y>%]
+  ab     <ip>   W16 A/B: tcp-rx twice on ONE association, once with the
+                pre-W16 transport and once with the register port +
+                aggregation, reporting COMMANDS PER FRAME (the verdict) with
+                Mbps as context only.  Needs the W16 board image.
 
 Python 3 stdlib only.
 """
@@ -200,11 +204,118 @@ TESTS = (("tcp-rx", tcp_rx), ("tcp-tx", tcp_tx),
          ("udp-rx", udp_rx), ("udp-tx", udp_tx))
 
 
+def _ctrl(ip, req, expect, tries=4):
+    """Send a UDP control line and return the board's reply, or None."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(1.5)
+    try:
+        for _ in range(tries):
+            try:
+                s.sendto(req.encode(), (ip, UDP_PORT))
+                while True:
+                    b, _a = s.recvfrom(2048)
+                    if b.startswith(expect.encode()):
+                        return b.decode(errors="replace").strip()
+            except socket.timeout:
+                continue
+    finally:
+        s.close()
+    return None
+
+
+def _bus(ip):
+    """One snapshot of the board's cumulative bus counters, as a dict."""
+    line = _ctrl(ip, "TPUT BUS?", "TPUT BUS")
+    if line is None:
+        return None
+    out = {}
+    for tok in line.split()[2:]:
+        k, _, v = tok.partition("=")
+        try:
+            out[k] = int(v)
+        except ValueError:
+            pass
+    return out
+
+
+def ab(ip):
+    """W16 A/B: the SAME blast, twice, on one association and one firmware life.
+
+    Why this and not a comparison against the W11 baseline table: that table was
+    measured against a house router with the board on 2.4 GHz and this Mac on
+    the router's 5 GHz side -- two radios, no shared airtime.  The ESP8266 bench
+    AP is ONE 2.4 GHz radio relaying both stations, so every byte crosses the
+    air twice on the same channel.  A bench Mbps compared against that table
+    measures the AP, not the driver.  Flipping the driver's switches between two
+    blasts minutes apart removes the AP, the air and the firmware life from the
+    comparison and leaves only the thing under test.
+
+    THE VERDICT IS COMMANDS PER FRAME, NOT MBPS.  2.4 GHz variance is 2x-4x run
+    to run on identical builds, so Mbps is reported as context and nothing else.
+    Every counter is cumulative and per-firmware-life, so each arm consumes a
+    DELTA -- comparing absolute counters across runs of different length is the
+    error that produced two published wrong conclusions in W12.
+    """
+    arms = []
+    for mode, label in ((0, "pre-W16 (CMD52 transport, no batching)"),
+                        (1, "W16 (register port + aggregation)")):
+        ok = _ctrl(ip, "TPUT MODE %d" % mode, "TPUT MODEOK")
+        if ok is None:
+            print("ab: board did not accept TPUT MODE %d -- is it the W16 image?" % mode,
+                  file=sys.stderr)
+            return {"test": "ab", "failed": "no MODEOK"}
+        print("ab: %s -> %s" % (label, ok))
+        before = _bus(ip)
+        if before is None:
+            print("ab: no BUS reply", file=sys.stderr)
+            return {"test": "ab", "failed": "no BUS"}
+        time.sleep(1)
+        res = tcp_rx(ip)
+        time.sleep(2)                  # let the ring drain before sampling
+        after = _bus(ip)
+        if after is None:
+            print("ab: no BUS reply after the blast", file=sys.stderr)
+            return {"test": "ab", "failed": "no BUS"}
+        d = {k: after.get(k, 0) - before.get(k, 0) for k in after}
+        d["mbps"] = res["mbps"]
+        d["label"] = label
+        arms.append(d)
+        time.sleep(2)
+
+    print()
+    print("=== W16 A/B, one association, one firmware life ===")
+    hdr = "%-34s %9s %9s %9s %9s %9s" % ("arm", "frames", "bus_cmds", "cmd/frame",
+                                         "rx_slots", "Mbps")
+    print(hdr)
+    for a in arms:
+        f = a.get("frames", 0)
+        b = a.get("total", 0)
+        cpf = (b / f) if f else float("nan")
+        print("%-34s %9d %9d %9.2f %9d %9.2f"
+              % (a["label"], f, b, cpf, a.get("rxslots", 0), a["mbps"]))
+    if len(arms) == 2 and arms[0].get("frames") and arms[1].get("frames"):
+        c0 = arms[0]["total"] / arms[0]["frames"]
+        c1 = arms[1]["total"] / arms[1]["frames"]
+        if c1 > 0:
+            print("\ncommands per frame: %.2f -> %.2f  (%.1fx fewer)"
+                  % (c0, c1, c0 / c1))
+    print("\nhealth deltas (both arms must stay clean):")
+    for a in arms:
+        print("  %-34s stranded=%d resyncs=%d notready=%d drainerr=%d split=%d"
+              % (a["label"], a.get("stranded", 0), a.get("resyncs", 0),
+                 a.get("notready", 0), a.get("drainerr", 0), a.get("split", 0)))
+    print("\nMbps is CONTEXT, not the verdict: 2.4 GHz varies 2x-4x run to run,")
+    print("and an ESP8266 SoftAP relaying both stations is its own ceiling.")
+    # Leave the board in W16 mode rather than in whichever arm ran last.
+    _ctrl(ip, "TPUT MODE 1", "TPUT MODEOK")
+    return {"test": "ab", "mbps": arms[-1]["mbps"]}
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name, _ in TESTS + (("all", None),):
+    for name, _ in TESTS + (("all", None), ("ab", None)):
         p = sub.add_parser(name)
         p.add_argument("ip", help="board IP (from its `tput: ip=` status line)")
     args = ap.parse_args()
@@ -228,6 +339,8 @@ def main():
                 if r.get("loss") is not None:
                     line += " loss=%.1f%%" % r["loss"]
                 print(line)
+        elif args.cmd == "ab":
+            ab(args.ip)
         else:
             dict(TESTS)[args.cmd](args.ip)
     except OSError as e:
