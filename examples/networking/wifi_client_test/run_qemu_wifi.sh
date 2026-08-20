@@ -11,6 +11,15 @@
 #   blocking call returned and the image stays alive.
 #
 # WHAT THIS DOES *NOT* PROVE — read before trusting a green
+#   * NOTHING ABOUT THE SERVICE PUMP -- the gap is total, not partial.  The
+#     model returns zero BSSes, so the card never associates, m_linkUp is never
+#     true, and servicePass() never reaches iw416NetifPoll() on ANY path here:
+#     this gate is green with a working pump and green with a dead one.  Not
+#     hypothetical -- the setAutoService(false)->(true) re-arm bug (pump passes
+#     per 300 ms window: 107309 / 0 / 0) passed BOTH gates in this directory
+#     while nothing serviced the link and status() still said WL_CONNECTED.
+#     The pump is verified by instrumenting the image and on silicon
+#     (transcript_hw_evkb.txt), never by a green here.
 #   * NO association, NO 4-way handshake, NO DHCP, NO TCP, NO WiFiClient/
 #     WiFiServer data path.  Zero scan results means the connect path ends at
 #     the scan; everything past it is silicon-only (transcript_hw_evkb.txt).
