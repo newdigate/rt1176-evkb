@@ -106,7 +106,11 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **101 gates** (98 before W14
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **102 gates** (101 before W15
+phase 2 added a FOURTH gate to `networking/m2_rx_demo` — `run_qemu_irq.sh`, the
+interrupt-driven-SDIO-service win, which divides service CMD52s by the frames
+the same window delivered and so cannot be satisfied by a driver that merely
+polls faster; 98 before W14
 phase 2 added `networking/m2_rx_demo` and its THREE gates at once —
 `run_qemu.sh` (card-absent fallback), `run_qemu_ring.sh` (the W8 32-slot-ring
 regression) and `run_qemu_stranded.sh` (the W12 stranded-upload regression);
@@ -133,8 +137,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **101 passed, 0 failed, 0 SKIP**, or
-**100 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **102 passed, 0 failed, 0 SKIP**, or
+**101 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
 ★ **A gate id now carries a `[variant]` suffix when — and only when — its
 example directory holds more than one `run_qemu*.sh`.** W14 made
@@ -151,10 +155,20 @@ Directories with exactly one script are untouched, so all 97 pre-existing ids ar
 byte-identical (diffed, not assumed), including the ~38 already named for what
 they test (`run_qemu_lwip.sh`, `run_qemu_usb.sh`, …).
 W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
-THREE scripts, and lists as `rt1176:networking/m2_rx_demo`,
-`…/m2_rx_demo[ring]` and `…/m2_rx_demo[stranded]`.
+FOUR scripts (W15 phase 2 added the fourth), and lists as
+`rt1176:networking/m2_rx_demo`, `…/m2_rx_demo[ring]`, `…/m2_rx_demo[stranded]`
+and `…/m2_rx_demo[irq]`.
 
-✅ **Measured 2026-08-19: 101 passed, 0 failed, 0 SKIP** (`gates: 101 passed`,
+✅ **Measured 2026-08-20: 102 passed, 0 failed, 0 SKIP** (`gates: 102 passed`,
+exit 0), on the W15 phase-2 interrupt-driven-service gate, run via `/tmp/ev`,
+`rt1176:dualcore/cm4_audio_test` included and green. All four
+`networking/m2_rx_demo` gates green in that sweep, `[irq]` at 19 s — it is the
+longest gate in the example because it runs two 6 s service windows back to
+back in one image, which is what makes its polled/interrupt comparison a
+controlled A/B rather than two runs.
+
+The previous count's measurement, kept per convention:
+✅ Measured 2026-08-19: 101 passed, 0 failed, 0 SKIP (`gates: 101 passed`,
 exit 0), on the W14 phase-2b regression gates, run via `/tmp/ev`,
 `rt1176:dualcore/cm4_audio_test` included and green.
 

@@ -20,6 +20,22 @@
 //   run_qemu_stranded.sh are the gates; run_qemu.sh asserts the card-absent
 //   fallback a default sweep sees.
 //
+// TWO SERVICE WINDOWS (W15)
+//   A run that reaches a card services the link TWICE, back to back:
+//     1. `svc` ... `demo_done`   -- POLLED. serviceLink() reads HOST_INT_STATUS
+//        once per pass and paces on delay(1): ~1000 CMD52/s on an idle link.
+//        This window is byte-for-byte what W14 shipped, which is why the two
+//        regression gates above are unaffected by any of this.
+//     2. `irq_mode=1` ... `irq_done` -- INTERRUPT. Iw416::setInterruptMode(true)
+//        turns on the SDIO card interrupt (DAT1) and the quiet passes stop
+//        touching the bus. The two `phase=` lines at the end are the A/B.
+//   The point of doing it in one run is that the two windows differ in exactly
+//   one thing. run_qemu_irq.sh divides one by the other; see IRQ_RUN_MS below
+//   for why this is not two builds or two runs.
+//   Note the driver's default is POLLED and stays that way -- DAT1 has never
+//   been exercised on this board's silicon, so this example turning it on is a
+//   deliberate opt-in, not the library's behaviour.
+//
 // HOW IT REACHES A RUNNING CARD WITH NO BLOB
 //   The model's `fw-preboot=on` property makes it come up with firmware
 //   already running. That is an admitted FICTION (a real IW416 has no flash
@@ -83,7 +99,7 @@ static void m2ReleaseWifiReset() {
 }
 
 // How long to service the link (measured from demo_ready) before printing the
-// summary and dropping to heartbeats. 6 s is ~3x what the gates need: 16
+// summary. 6 s is ~3x what the gates need: 16
 // injected frames at the model's default 100 ms period are all queued by 1.8 s,
 // and the driver's bitmap safety net -- the only thing that moves them when the
 // upload interrupt is suppressed -- fires every RX_BITMAP_CHECK_PASSES (64)
@@ -92,10 +108,35 @@ static void m2ReleaseWifiReset() {
 // never assert that nothing ELSE arrived.
 static const uint32_t DEMO_RUN_MS = 6000;
 
+// W15: a SECOND service window of the same length, run with the driver's
+// interrupt mode ON, immediately after `demo_done`.
+//
+// WHY THE RUN IS SPLIT RATHER THAN THE BUILD
+//   The measurement that matters is polls-per-frame, and it is only meaningful
+//   as a comparison. Two builds would compare two ELFs; two QEMU runs would
+//   compare two injection schedules. One run with two windows compares neither
+//   -- same image, same card model, same injection cadence, same 6 s budget,
+//   and the ONLY difference is Iw416::setInterruptMode(). That is what makes
+//   run_qemu_irq.sh's ratio an argument rather than an anecdote.
+//   It also keeps every gate on the ONE build a fresh clone makes: a second
+//   build directory would not be probed by the sweep runner's SKIP check
+//   (it only looks in build/), so a clone that built the usual way would see
+//   the new gate FAIL rather than SKIP -- worse than either.
+//
+// The two W14 regression gates are untouched by construction: this window
+// begins only AFTER the `demo_done` line they assert on, and both of them stop
+// polling the capture and reap QEMU the moment that line appears.
+static const uint32_t IRQ_RUN_MS = 6000;
+
+// 0 = polled window, 1 = interrupt window, 2 = finished (heartbeats).
+static uint8_t  g_phase   = 0;
 static bool     g_ready   = false;
 static uint32_t g_frames  = 0;
 static uint32_t g_started = 0;
-static bool     g_summarised = false;
+// Snapshots taken at the phase boundary, so each window's numbers are a delta
+// rather than a running total -- the driver's counters are cumulative.
+static uint32_t g_polledFrames = 0;
+static uint32_t g_polledPolls  = 0;
 
 // The sink prints the whole 802.3 header plus the model's own payload marker.
 // Nothing in this image knows any of these bytes: dst/src/ethertype and the
@@ -151,7 +192,15 @@ static void printCounters(const char *tag) {
     Serial1.print(" notready=");    Serial1.print(iw416.rxSlotNotReady());
     Serial1.print(" int_seen=0x");  Serial1.print(iw416.intStatusSeen(), HEX);
     Serial1.print(" tx=");          Serial1.print(iw416.dataTxCount());
-    Serial1.print(" c53=");         Serial1.println(iw416.cmd53Count());
+    Serial1.print(" c53=");         Serial1.print(iw416.cmd53Count());
+    // W15, appended at the END of the line on purpose: run_qemu_ring.sh and
+    // run_qemu_stranded.sh match this line by prefix and by `field=value `
+    // fragments, so new fields at the tail cannot perturb them.
+    // c52svc is the service-side CMD52 count -- the thing interrupt mode is
+    // meant to collapse -- and cardints is the DAT1 assertions serviced, which
+    // is 0 for the whole polled window by construction.
+    Serial1.print(" c52svc=");      Serial1.print(iw416.cmd52PollsSvc());
+    Serial1.print(" cardints=");    Serial1.println(iw416.cardInts());
 }
 
 void setup() {
@@ -212,11 +261,11 @@ void loop() {
     static uint32_t alive = 0;
     static uint32_t lastAlive = 0;
 
-    if (g_ready && !g_summarised) {
+    if (g_ready && g_phase < 2) {
         bool dropped = false;
         (void)iw416.serviceLink(rxSink, nullptr, &dropped, 100);
 
-        if ((beats % 10) == 0) printCounters("svc");
+        if ((beats % 10) == 0) printCounters(g_phase == 0 ? "svc" : "svc_irq");
 
         // One TX every 20 passes, to exercise the download credits.
         if ((beats % 20) == 7) {
@@ -234,9 +283,46 @@ void loop() {
         }
         beats++;
 
-        if ((uint32_t)(millis() - g_started) >= DEMO_RUN_MS) {
-            printCounters("demo_done");
-            g_summarised = true;
+        uint32_t budget = (g_phase == 0) ? DEMO_RUN_MS : IRQ_RUN_MS;
+        if ((uint32_t)(millis() - g_started) >= budget) {
+            if (g_phase == 0) {
+                printCounters("demo_done");
+                g_polledFrames = g_frames;
+                g_polledPolls  = iw416.cmd52PollsSvc();
+                // W15: hand the link over to the card interrupt. Both halves
+                // are reported rather than assumed -- interruptMode() is the
+                // driver's own view and cardIntEnabled() is the uSDHC's, and a
+                // gate that only saw one of them could not tell "the mode was
+                // requested" from "the mode engaged".
+                iw416.setInterruptMode(true);
+                Serial1.print("irq_mode=");
+                Serial1.print(iw416.interruptMode() ? 1 : 0);
+                Serial1.print(" host_cardint=");
+                Serial1.println(sdio.cardIntEnabled() ? 1 : 0);
+                g_phase   = 1;
+                g_started = millis();
+            } else {
+                printCounters("irq_done");
+                // The A/B, as two deltas the gate can divide. Nothing here is
+                // derived: frames come from the sink, c52svc from the driver's
+                // W11 bus-attribution counter, cardints from the ISR.
+                Serial1.print("phase=polled ms=");
+                Serial1.print(DEMO_RUN_MS);
+                Serial1.print(" frames=");
+                Serial1.print(g_polledFrames);
+                Serial1.print(" c52svc=");
+                Serial1.print(g_polledPolls);
+                Serial1.println(" cardints=0");
+                Serial1.print("phase=irq ms=");
+                Serial1.print(IRQ_RUN_MS);
+                Serial1.print(" frames=");
+                Serial1.print(g_frames - g_polledFrames);
+                Serial1.print(" c52svc=");
+                Serial1.print(iw416.cmd52PollsSvc() - g_polledPolls);
+                Serial1.print(" cardints=");
+                Serial1.println(iw416.cardInts());
+                g_phase = 2;
+            }
         }
         return;
     }
