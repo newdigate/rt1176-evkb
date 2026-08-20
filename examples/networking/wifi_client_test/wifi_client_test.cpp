@@ -44,6 +44,42 @@ void setup() {
 }
 
 void loop() {
+    // --- the WiFiClient echo round-trip, once every 2 s -----------------------
+    // SILICON-ONLY, and not by omission: the QEMU IW416 model returns zero scan
+    // results by design, so status() is never WL_CONNECTED under either gate and
+    // this whole block is unreachable there.  Neither gate executes a single
+    // line of the WiFiClient data path -- they prove no regression, nothing
+    // more.  The oracle is the ESP bench echo server on the AP itself
+    // (192.168.4.1:4712), which returns exactly the bytes it was sent, so
+    // tcp=<sent>/<ok>/<fail> in the heartbeat below is un-fakeable by the
+    // firmware: an ok can only come from bytes that made a full round trip.
+    static uint32_t lastKick = 0;
+    if (WiFi.status() == WL_CONNECTED && millis() - lastKick >= 2000) {
+        lastKick = millis();
+        WiFiClient c;
+        char msg[48];
+        int n = snprintf(msg, sizeof(msg), "WIFI hello %lu", (unsigned long)s_tx);
+        s_tx++;
+        if (c.connect(IPAddress(192, 168, 4, 1), 4712)) {
+            c.write((const uint8_t *)msg, (size_t)n);
+            char echo[48];
+            int got = 0;
+            uint32_t t0 = millis();
+            // Incremental, NOT `if (c.available() >= n)`: the pool stages a
+            // capped number of pbufs at a time (WiFiConnPool.h obligation 5),
+            // so waiting for a total is how you wait forever.
+            while (got < n && millis() - t0 < 5000) {
+                int r = c.read((uint8_t *)echo + got, (size_t)(n - got));
+                if (r > 0) got += r;
+                else delay(1);          // yield -> the auto-service pump runs
+            }
+            if (got == n && memcmp(echo, msg, (size_t)n) == 0) s_ok++; else s_fail++;
+            c.stop();
+        } else {
+            s_fail++;
+        }
+    }
+
     static uint32_t lastBeat = 0, beats = 0;
     if (millis() - lastBeat >= 1000) {
         lastBeat = millis();
