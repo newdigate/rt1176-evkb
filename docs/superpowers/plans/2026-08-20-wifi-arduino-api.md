@@ -45,9 +45,13 @@
   Task 4 now separates them with `m_wantReconnect`. Later tasks that add state
   should keep diagnosis and control apart rather than overloading a field.
 - **Silicon must exercise what QEMU cannot — but the list is TWO, not four.**
-  Task 14's transcript still has to cover **single-shot reconnect** and
-  **DHCP-timeout limbo**: both need a real association and a real lease, which
-  the zero-BSS model cannot provide.
+  Narrowed once more by the round-4 review: **single-shot reconnect is ALSO
+  measurable in QEMU** — under the old code the first failed retry closed the
+  guard, so QEMU shows exactly 1 attempt; the fixed code shows 7 in 30 s. What
+  genuinely still needs silicon is **DHCP-timeout limbo** (needs a real
+  association plus a non-answering DHCP server) and **the SUCCESS path of
+  reconnect** — `connectAndDhcp()` clearing `m_wantReconnect` and returning
+  `WL_CONNECTED` is the one branch the zero-BSS model can never execute.
   The other two — `disconnect()` cancelling auto-reconnect, and the throttle
   spacing attempts — **were measured in QEMU after all**, and the technique is
   worth reusing rather than re-deriving. `linkLost()` needs only lwip up, which
@@ -63,9 +67,27 @@
   | before-only stamp | 9 | alternating 5000 ms and **ZERO** (back-to-back) | 0 |
   | pre-fix `disconnect()` ordering | 5 | 5000 ms | **2** |
 
-  Silicon should still confirm both with real 15–45 s attempt durations, but
+  Silicon should still confirm these with real 15–45 s attempt durations, but
   they are no longer *unverified* — do not report them in Task 14 as though
   nothing has measured them.
+
+  ★ **Two limits of the technique, invisible from the numbers.** (1) The
+  emulated attempt duration sat NEAR the 5000 ms threshold, which is what
+  produces the "alternating 5000 and zero" middle row; silicon's 15–45 s
+  produces ALL-zero gaps, so the demonstration *understates* the bug rather
+  than overstating it. (2) It exercises only the FAILING retry loop — every
+  retry ends at the scan, so the success path never runs, and `m_inDriverCmd`
+  is held ~0 ms here versus ~15 s on silicon, so "the pump is deaf for the
+  whole attempt" is untested.
+- **A re-entrancy hole was closed pre-emptively for Task 7** (`f0bf4f7`).
+  `maybeReconnect()`'s 5 s throttle is not re-entrancy insurance: once lwip
+  callbacks reach sketch code, `WiFi.status()` called from a callback inside
+  `pumpUntil()` re-enters it, and on silicon the outer attempt has always
+  outlived 5 s, so a NESTED `connectStation()` would run on the command port.
+  `m_inDriverCmd` does not cover it (direct call, not the pump). Closed with an
+  `m_inReconnect` RAII latch. **Task 7 must not reintroduce this shape**: any
+  new sketch-facing entry point that can run a driver command needs the same
+  treatment.
 - **The licence audit cannot go green in this worktree** until the examples are built (~99 `MISSING BUILD`). Part 1 (copyleft) and the GATES drift check are clean throughout. Same root cause as the Task 13 sweep question.
 
 ---
