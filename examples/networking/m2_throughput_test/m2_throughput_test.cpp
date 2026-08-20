@@ -383,7 +383,7 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
                      "TPUT BUS total=%lu regs=%lu c52=%lu c53rx=%lu c53tx=%lu "
                      "rxslots=%lu txslots=%lu frames=%lu stranded=%lu "
                      "resyncs=%lu notready=%lu drainerr=%lu split=%lu "
-                     "cardints=%lu",
+                     "cardints=%lu isr=%lu",
                      (unsigned long)iw416.busCommands(),
                      (unsigned long)iw416.cmd53Regs(),
                      (unsigned long)(iw416.cmd52PollsTx() + iw416.cmd52PollsSvc()),
@@ -397,7 +397,8 @@ static void udpRecv(void *, struct udp_pcb *, struct pbuf *p,
                      (unsigned long)iw416.rxSlotNotReady(),
                      (unsigned long)iw416.rxDrainErrors(),
                      (unsigned long)iw416.rxSplitMismatch(),
-                     (unsigned long)iw416.cardInts());
+                     (unsigned long)iw416.cardInts(),
+                     (unsigned long)sdio.cardIntCount());
             udpSendText(addr, port, msg);
             Serial1.println(msg);
         } else if (strncmp(head, "TPUT GO ", 8) == 0) {
@@ -778,19 +779,34 @@ void loop() {
             // W15: DAT1 assertions serviced.  Stays 0 in polled mode; in irq
             // mode it climbing is the whole silicon-validation signal.
             Serial1.print(" cardints=");    Serial1.print(iw416.cardInts());
-#if M2_IRQ_MODE
-            // Silicon-validation forensics: the raw uSDHC interrupt regs.
-            // sigen bit8 present + cardints frozen  -> DAT1 never asserted
-            //   (or CINT status never latched: check sten bit8 + st bit8).
-            // sigen bit8 ABSENT + cardints frozen   -> the ISR fired and
-            //   masked signalling but serviceLink never took the flag.
+            // ★ THE DISCRIMINATOR, added after the first load A/B.  That run
+            // reported irq=1/1 (driver mode on, controller signalling on) and
+            // still ended with cardInts()=0 -- which by this tree's own rule
+            // (the [irq] gate asserts cardInts>0 precisely because "a driver
+            // that stayed polled reads 0") means the arm proved NOTHING about
+            // interrupt-driven service, however good its command count looked.
+            // cardInts() is serviceLink's TAKE count; SdioHost::cardIntCount()
+            // is the ISR's OWN count.  Together they split the three cases
+            // that a single zero conflates:
+            //   isr>0, take=0  -> the ISR fired and serviceLink never consumed
+            //                     the flag.  A driver bug.
+            //   isr=0, sigen bit8 SET -> controller armed, DAT1 never asserted
+            //                     or never sampled.  Under sustained load the
+            //                     bus is rarely idle, and a 4-bit SDIO card
+            //                     interrupt is only sampled between transfers.
+            //   isr=0, sigen bit8 CLEAR -> the ISR fired once, masked
+            //                     signalling, and nothing re-armed it.
+            Serial1.print(" isr=");         Serial1.print(sdio.cardIntCount());
+            // Raw uSDHC interrupt registers: INT_STATUS / INT_STATUS_EN /
+            // INT_SIGNAL_EN.  ★ NO LONGER behind M2_IRQ_MODE: interrupt mode
+            // is selected at RUNTIME now (TPUT MODE 2), so a build-time guard
+            // meant the one run that needed these forensics did not have them.
             Serial1.print(" usdhc=0x");
             Serial1.print(*(volatile uint32_t *)(0x40418000u + 0x30), HEX);
             Serial1.print("/0x");
             Serial1.print(*(volatile uint32_t *)(0x40418000u + 0x34), HEX);
             Serial1.print("/0x");
             Serial1.print(*(volatile uint32_t *)(0x40418000u + 0x38), HEX);
-#endif
             Serial1.println();
         }
     } else {

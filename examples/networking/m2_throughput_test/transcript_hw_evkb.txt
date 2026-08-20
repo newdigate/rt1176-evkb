@@ -638,3 +638,85 @@ RIG GOTCHA, which cost one confused round trip: an ESP8266 SoftAP hands out
   to the Mac itself.  tput_peer.py now detects that case by name instead of
   reporting "is it the W16 image?", which is what it said the first time and
   which sent a correct diagnosis chasing a firmware ghost.
+
+------------------------------------------------------------------------------
+W16 SILICON A/B, THREE ARMS: 30x fewer bus commands per frame -- and the arm
+that got there NEVER TOOK AN INTERRUPT.  Read the cardints column before the
+headline.
+------------------------------------------------------------------------------
+Date: 2026-08-20, same rig, board on 192.168.4.101.  `tput_peer.py ab`, three
+arms, one association, one firmware life.
+
+  arm                          frames    bus  cmd/frame   poll   data  slots  Mbps
+  pre-W16 (CMD52, polled)        1272 118640     93.27   91.77   1.50      0  1.44
+  W16 (reg port + aggr, polled)  1408  18065     12.83   11.33   1.50      3  1.60
+  W16 + irq mode (DAT1)          1364   4195      3.08    1.58   1.49     14  1.54
+
+  93.27 -> 12.83  (7.3x)      93.27 -> 3.08  (30.3x)
+
+★ AND THE ARM THAT REACHED 3.08 REPORTED cardints=0.
+
+  By this tree's own rule -- run_qemu_irq.sh asserts cardInts>0 precisely
+  because "a driver that stayed polled, or one whose controller-side enable
+  silently did not take, reads 0 here no matter how many frames it delivers"
+  -- that arm demonstrated NOTHING about interrupt-driven service.  It ran in
+  interrupt MODE (the ack read irq=1/1: driver flag on, uSDHC signalling on)
+  and never serviced a DAT1 assertion.  W15's open item, "blast-level load
+  under interrupt mode on silicon", IS STILL OPEN.  The 30x is real; the label
+  on it was wrong.
+
+WHAT ACTUALLY PRODUCED EACH STEP, from the poll/data split:
+
+  poll term  91.77 -> 11.33 -> 1.58      data term  1.50 -> 1.50 -> 1.49
+
+  * 91.77 -> 11.33 (8.1x) is the REGISTER PORT: seven CMD52s per service pass
+    become one CMD53.  Both arms ran the same pass rate (1,636 vs 1,569
+    passes/s), which is what makes the ratio a measurement.
+  * 11.33 -> 1.58 (7.2x) is NOT interrupts.  It is serviceLink declining to
+    read HOST_INT_STATUS on passes with nothing pending: the look rate falls
+    from 1,569/s to 211/s while the pass loop keeps running.  The wake-ups
+    come from the STICKY PENDING BIT, not from DAT1 -- and under tcp-rx that
+    bit is kept alive by the TX path's own register reads, because lwip
+    answers each delivered segment with an ACK from inside the sink and
+    sendDataFrame reads the card's registers to find a credit.
+  * the DATA term never moves: ~1.0 RX CMD53 per frame plus ~0.5 TX CMD53 per
+    ACK.  It is now 49% of arm 2's total cost.
+
+  HYPOTHESIS for cardints=0, NOT a finding: a 4-bit SDIO card interrupt is
+  only sampled between transfers, and under sustained load the bus is rarely
+  idle -- while the driver, servicing on the pending bit, clears the card's
+  status almost as soon as it rises.  DAT1 may never get a window.  The
+  instrument to settle it is now in the image: `isr=` (SdioHost::cardIntCount,
+  the ISR's OWN count) beside `cardints=` (serviceLink's TAKE count), plus the
+  raw uSDHC INT_STATUS/INT_STATUS_EN/INT_SIGNAL_EN, no longer behind the
+  M2_IRQ_MODE build flag -- which is why the run that needed them did not have
+  them.  Three cases it separates:
+      isr>0, cardints=0            -> ISR fired, serviceLink never consumed it
+      isr=0, sigen bit8 SET        -> armed, DAT1 never asserted or sampled
+      isr=0, sigen bit8 CLEAR      -> ISR fired once, masked, never re-armed
+
+THE AGGREGATION PREDICTION: directionally right, magnitude REFUTED.
+  W16's previous entry predicted that servicing on demand would raise the
+  aggregated share.  It did -- 3 slots -> 14, a 4.7x rise -- and it is still
+  1.0% of frames.  The reason is arithmetic and it generalises: aggregation
+  needs the host to look LESS OFTEN THAN FRAMES ARRIVE, and arm 2 still looked
+  211 times a second at 134 frames a second.  Runs stay length 1.
+  ★ SO THIS BENCH CANNOT DEMONSTRATE AGGREGATION, and no amount of tuning will
+  change that: at 134 frames/s the service loop will always outrun the
+  traffic.  W11's rig ran at 840 frames/s.  Aggregation's benefit scales with
+  frame rate relative to service rate, and this AP cannot supply the frames.
+
+ABSOLUTE cmd/frame IS NOT PORTABLE BETWEEN RUNS -- a worked example:
+  the SAME pre-W16 arm read 57.17 cmd/frame in the previous session and 93.27
+  in this one.  Nothing changed but the air: the frame rate fell from 230/s to
+  125/s while the pass rate stayed ~1,600/s, so the fixed polling cost was
+  divided among fewer frames.  Only WITHIN-RUN ratios mean anything.  This is
+  the same trap as comparing absolute counters across runs of different length
+  (W12, twice) wearing different clothes.
+
+HEALTH: stranded 0 / 0 / 2, everything else 0 across all three arms, split=0
+  throughout (the block-padding inference held for every packet).  The 2 is in
+  the irq arm only, which is the direction W15 warned about -- suppress the
+  per-pass read and the safety net has more to catch -- but n=2 is not a
+  measurement.  Note the previous session showed 1 and 3 on arms that here
+  show 0 and 0, which is the same point about small counts.

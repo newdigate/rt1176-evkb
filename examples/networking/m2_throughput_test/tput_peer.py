@@ -315,7 +315,7 @@ def ab(ip):
     arms = []
     for mode, label in ((0, "pre-W16 (CMD52, no batching, polled)"),
                         (1, "W16 (register port + aggregation, polled)"),
-                        (2, "W16 + W15 interrupt-driven (DAT1)")):
+                        (2, "W16 + irq mode (DAT1 -- see isr= below)")):
         ok = _ctrl(ip, "TPUT MODE %d" % mode, "TPUT MODEOK")
         if ok is None:
             # _reachable() already proved the board answers BUS?, so this is a
@@ -369,9 +369,12 @@ def ab(ip):
                 if c1 > 0:
                     print("\n%-38s %.2f -> %.2f commands per frame  (%.1fx fewer)"
                           % (a["label"], c0, c1, c0 / c1))
-    print("\ncardints (0 means the arm was polled, whatever it claimed):")
+    print("\nDAT1: isr = the ISR's own count, cardints = what serviceLink consumed.")
+    print("      BOTH zero in an 'interrupt' arm means no interrupt was involved,")
+    print("      whatever the command count did -- the win came from somewhere else.")
     for a in arms:
-        print("  %-38s %d" % (a["label"], a.get("cardints", 0)))
+        print("  %-38s isr=%d cardints=%d"
+              % (a["label"], a.get("isr", 0), a.get("cardints", 0)))
     print("\nhealth deltas (both arms must stay clean):")
     for a in arms:
         print("  %-34s stranded=%d resyncs=%d notready=%d drainerr=%d split=%d"
