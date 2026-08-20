@@ -28,6 +28,17 @@
 - **Task 6 must not undo the `DriverCmd` guard.** Adding `m_pool.service()` to `servicePass()` *outside* the `if (m_lwipUp)` block is what makes the missing bring-up guard a live, silicon-only bug. The guard is now in place — keep it.
 - **QEMU cannot observe a dead service pump.** The `[wifi]` gate passes green with the pump working and with it dead (measured). Anything that depends on the pump actually running is silicon-only evidence.
 - **Two Task-4 fixes are unverifiable in QEMU** — single-shot reconnect and DHCP-timeout limbo both need an association the zero-BSS model cannot provide. They are reasoned, not measured, and must be exercised in Task 14's silicon transcript.
+- **`m_status` must not double as control state.** Two bugs in two review
+  rounds came from it carrying both diagnosis and "please retry" (single-shot
+  reconnect; then `disconnect()` silently failing to cancel auto-reconnect).
+  Task 4 now separates them with `m_wantReconnect`. Later tasks that add state
+  should keep diagnosis and control apart rather than overloading a field.
+- **Silicon must exercise what QEMU cannot.** Task 14's transcript has to cover
+  four Task-4 fixes that no gate here can reach, all needing a real
+  association: single-shot reconnect, DHCP-timeout limbo, `disconnect()`
+  cancelling auto-reconnect, and the reconnect throttle actually spacing
+  attempts (it measured attempt *starts*, so a 15-45 s failing attempt left no
+  gap at all).
 - **The licence audit cannot go green in this worktree** until the examples are built (~99 `MISSING BUILD`). Part 1 (copyleft) and the GATES drift check are clean throughout. Same root cause as the Task 13 sweep question.
 
 ---
