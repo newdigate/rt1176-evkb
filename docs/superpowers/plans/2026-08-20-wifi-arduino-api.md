@@ -4,7 +4,7 @@
 
 **Goal:** An Arduino-style `WiFi` / `WiFiClient` / `WiFiServer` over the M2Radio + lwip NO_SYS stack, so a sketch can do `WiFi.begin(ssid, psk); WiFiClient c; c.connect(ip, 80);` on the MIMXRT1170-EVKB M.2 IW416.
 
-**Architecture:** New `arduino/` subdir in the M2Radio sibling repo (`~/Development/M2Radio`), imported via `import_evkb_library(M2Radio sdio iw416 lwip arduino)`. Clean-room MIT `Client`/`Server`/`IPAddress` base classes copied from the Ethernet sibling. A `WiFiClass` singleton owns bring-up (board preamble → SDIO → firmware → lwip netif → `connectStation` → DHCP) and a yield()-driven service pump (EventResponder). TCP connections live in a fixed 4-slot pool; `WiFiClient` is a refcounted handle; `tcp_arg` only ever points at a pool slot. Two new examples with three QEMU gates; sweep baseline 102 → 105.
+**Architecture:** New `arduino/` subdir in the M2Radio sibling repo (`~/Development/M2Radio`), imported via `import_evkb_library(M2Radio sdio iw416 lwip arduino)`. Clean-room MIT `Client`/`Server`/`IPAddress` base classes copied from the Ethernet sibling. A `WiFiClass` singleton owns bring-up (board preamble → SDIO → firmware → lwip netif → `connectStation` → DHCP) and a yield()-driven service pump (EventResponder). TCP connections live in a fixed 4-slot pool; `WiFiClient` is a refcounted handle; `tcp_arg` only ever points at a pool slot. Two new examples with three QEMU gates; sweep baseline 108 → 111.
 
 **Tech Stack:** ARM GCC 10 bare-metal C++, lwip raw API (`NO_SYS=1`), imxrt1176 core (`EventResponder`, `yield()`), CMake per-example builds, QEMU gates via `tools/gate-lib.sh`, qemu2 IW416 model (`m2-wifi=on`, `fw-preboot=on`) for the `[wifi]` gate.
 
@@ -17,17 +17,10 @@
 - **Two working trees.** Library code goes in `~/Development/M2Radio` (its own git repo, on `master`); examples/gates/docs go in this repo's worktree (`$EVKB` below = the worktree root, branch `claude/arduino-wifi-m2-link-868770`). Commit each side in its own repo.
 - **★ The worktree has NO build directories** (they are gitignored and live in the main checkout at `~/Development/rt1176-evkb-m2-maya-w161`, which is on branch `m2-phase0-serial2` and fully built). Two consequences: (a) every example this plan touches must be **configured fresh in the worktree** — the "never `cmake -B` an existing build dir" rule protects the MAIN checkout's dirs, which carry creds and fw-blob paths; a fresh worktree configure with no `-D`s is exactly what the QEMU gates want (none of them needs creds or a blob). (b) A full sweep in the worktree would SKIP ~98 gates; see Task 13, which resolves where the sweep runs.
 - **★ `/tmp/ev` already exists and points at the MAIN checkout.** Never `ln -sf` onto it — that creates a link *inside* the target directory. Use `ln -sfn`, and put it back when done.
-- **★ M2Radio is being edited LIVE by another session** (~893 lines of uncommitted W16 aggregation work in `iw416/`, `sdio/`, `lwip/`; a save landed mid-Task-1). We are therefore **insulated from `~/Development/M2Radio` entirely** and must never read, build against, or write to it during Tasks 2–14.
+- **★ RESOLVED 2026-08-20 (mid-execution): the W16 session finished and pushed.** For Tasks 1–2 this plan ran against an insulated clone because `~/Development/M2Radio` had ~893 lines of uncommitted W16 aggregation work. That work is now committed and pushed (`c7d0510`), the tree is clean, and **Task 2's two commits have been replayed onto it** as `9a3ddf8` + `1454ff4`. The insulation is **retired**: work directly in `~/Development/M2Radio` from Task 3 onward, and use no `-DTEENSY_LIB_ROOT` override.
 
-  All library work happens in a clean clone pinned at `1e15f0b`:
-
-  ```
-  LIBROOT=$(cat /private/tmp/claude-501/-Users-nicholasnewdigate-Development-rt1176-evkb-m2-maya-w161--claude-worktrees-arduino-wifi-m2-link-868770/6927d462-27c2-4aba-8244-38d56c8128b7/scratchpad/LIBROOT.txt)
-  # $LIBROOT/M2Radio  <- the clean clone; ALL arduino/ work + commits go here
-  # $LIBROOT/<other>  <- symlinks to ~/Development/<other>
-  ```
-
-  **Every `cmake -B` in this plan MUST add `-DTEENSY_LIB_ROOT="$LIBROOT"`.** Verified working: `m2_lwip_test` configures, builds and passes its gate against this root. Wherever a task says "commit (M2Radio)", it means `git -C "$LIBROOT/M2Radio"`. Task 15 fast-forwards these commits into the real repo (safe: they only add `arduino/`, so they cannot touch the other session's five modified files).
+  Re-check `git -C ~/Development/M2Radio status --short` is clean at the start of each library task. If it goes dirty again, that session has restarted — stop and re-insulate (the clone recipe is in this plan's git history at `939be89`).
+- **★ Upstream moved 50 commits during execution** and this branch has merged it (`f657d97`). Three consequences the original plan got wrong: the sweep baseline is **108, not 102** (so this phase targets **111**); the M2Radio pin in `evkb.cmake` is already **`c7d0510`**, not `1e15f0b`; and `m2_rx_demo` now owns **seven** gates (W16 added `[regfallback]`, `[rxaggr]`, `[txaggr]`), so Task 11 must re-run seven, not four.
 - Only ADD files under `arduino/`; never touch `sdio/`, `iw416/`, `lwip/`. Existing examples do not import `arduino/`, so they cannot be affected.
 - Run gates as `./run_qemu.sh`, never `sh run_qemu.sh`.
 - Never `cmake -B` or `rm -rf` an EXISTING example's build dir (creds + fw-blob paths in their caches). The two NEW examples' build dirs are fresh and safe.
@@ -1799,15 +1792,15 @@ for d in m2_lwip_test m2_sdio_probe m2_throughput_test m2_rx_demo; do
 done
 ```
 
-- [ ] **Step 3: Re-run their 8 gates**
+- [ ] **Step 3: Re-run their 11 gates** (W16 added three m2_rx_demo variants)
 
 ```bash
 cd $EVKB/examples/networking/m2_lwip_test && ./run_qemu.sh
 cd $EVKB/examples/networking/m2_throughput_test && ./run_qemu.sh
 cd $EVKB/examples/networking/m2_sdio_probe && ./run_qemu.sh && ./run_qemu_wifi.sh
-cd $EVKB/examples/networking/m2_rx_demo && ./run_qemu.sh && ./run_qemu_ring.sh && ./run_qemu_stranded.sh && ./run_qemu_irq.sh
+cd $EVKB/examples/networking/m2_rx_demo && for g in run_qemu.sh run_qemu_ring.sh run_qemu_stranded.sh run_qemu_irq.sh run_qemu_regfallback.sh run_qemu_rxaggr.sh run_qemu_txaggr.sh; do ./$g || exit 1; done
 ```
-Expected: all 8 PASS.
+Expected: all 11 PASS.
 
 - [ ] **Step 4: Commit (EVKB)**
 
@@ -1874,12 +1867,12 @@ fully built but does not have this branch's two new examples.
 reusing its existing build dirs. Option (b) is far cheaper but reorders the
 close-out. Do not fabricate a sweep result either way.
 
-- [ ] **Step 1: Confirm discovery sees 105** (in whichever tree Step 0 chose)
+- [ ] **Step 1: Confirm discovery sees 111** (in whichever tree Step 0 chose)
 
 ```bash
 cd $EVKB && ./tools/run-all-qemu-gates.sh -l | tail -3
 ```
-Expected: the listing ends `(105 gate(s))`. If not 105, find the discovery discrepancy before sweeping.
+Expected: the listing ends `(111 gate(s))`. If not 111, find the discovery discrepancy before sweeping.
 
 - [ ] **Step 2: Sweep from the short path**
 
@@ -1891,14 +1884,14 @@ restore it afterwards if you repointed it.
 ln -sfn <chosen-tree> /tmp/ev && ls -ld /tmp/ev
 cd /tmp/ev && ./tools/run-all-qemu-gates.sh
 ```
-Expected: `gates: 105 passed`, exit 0 (or 104/1 with ONLY `rt1176:dualcore/cm4_audio_test` red — re-run that one idle before accepting). Read gate NAMES on any other red.
+Expected: `gates: 111 passed`, exit 0 (or 110/1 with ONLY `rt1176:dualcore/cm4_audio_test` red — re-run that one idle before accepting). Read gate NAMES on any other red.
 
 - [ ] **Step 3: Update CLAUDE.md**
 
-In the sweep paragraph: `102 gates` → `105 gates`, with the parenthetical history extended in the established style, e.g. prepend: `(104 before the Arduino WiFi facade added networking/wifi_server_test; 103 before it added networking/wifi_client_test's second gate — run_qemu_wifi.sh, enumeration + a real scan against the model's deliberate zero-BSS reply; 102 before wifi_client_test itself; …)`. Target line becomes `105 passed, 0 failed, 0 SKIP` / `104 passed, 1 failed`. Add the dated measured line above the previous one, per convention:
+In the sweep paragraph: `108 gates` → `111 gates`, with the parenthetical history extended in the established style, e.g. prepend: `(110 before the Arduino WiFi facade added networking/wifi_server_test; 109 before it added networking/wifi_client_test's second gate — run_qemu_wifi.sh, enumeration + a real scan against the model's deliberate zero-BSS reply; 108 before wifi_client_test itself; …)`. Target line becomes `111 passed, 0 failed, 0 SKIP` / `110 passed, 1 failed`. Add the dated measured line above the previous one, per convention:
 
 ```
-✅ Measured 2026-08-20: 105 passed, 0 failed, 0 SKIP (`gates: 105 passed`,
+✅ Measured 2026-08-20: 111 passed, 0 failed, 0 SKIP (`gates: 111 passed`,
 exit 0), on the Arduino WiFi facade close-out, run via `/tmp/ev`,
 `rt1176:dualcore/cm4_audio_test` included and green.
 ```
@@ -1913,14 +1906,14 @@ Read it; if it carries the model-dependent-gate list (it records exceptions by n
 - [ ] **Step 5: Commit (EVKB)**
 
 ```bash
-cd $EVKB && git add CLAUDE.md docs/KNOWN-BROKEN-GATES.md && git commit -m "docs: sweep baseline 105 -- wifi_client_test (2 gates) + wifi_server_test"
+cd $EVKB && git add CLAUDE.md docs/KNOWN-BROKEN-GATES.md && git commit -m "docs: sweep baseline 111 -- wifi_client_test (2 gates) + wifi_server_test"
 ```
 
 ### Task 14: Silicon ⚠ REQUIRES THE BOARD — ask the user to semaphore first
 
 **Files:** Create `examples/networking/wifi_client_test/transcript_hw_evkb.txt`, `examples/networking/wifi_server_test/transcript_hw_evkb.txt`.
 
-- [ ] **Step 0: Ask the user for the board.** Another session soak-tests on it. Do not flash until they confirm. Also confirm the ESP8266 bench AP (`ESP8266TEST`, `/dev/cu.usbserial-0001`) is up and get its PSK + the firmware `.bin.inc` path from the user (both are configure-time inputs, never committed).
+- [ ] **Step 0: Ask the user for the board.** Another session soak-tests on it. Do not flash until they confirm. Also confirm the bench AP is up. It may now be the **ESP32-C6** (`tools/esp32c6-benchap/`, added upstream 2026-08-20) rather than the ESP8266 — it deliberately keeps the SAME SSID, PSK and 192.168.4.x subnet, so nothing in this plan changes either way; ask the user which is powered and get its PSK + the firmware `.bin.inc` path from the user (both are configure-time inputs, never committed).
 
 - [ ] **Step 1: Configure + build both examples with fw + creds** (fresh build dirs — these are NEW examples; the never-reconfigure rule protects the OLD ones)
 
@@ -1966,7 +1959,7 @@ cd $EVKB && git add examples/networking/wifi_*/transcript_hw_evkb.txt && git com
 
 ### Task 15: Close-out — push, pin, fresh-user verify
 
-- [ ] **Step 1: Land the clone's commits in the real repo, then push**
+- [ ] **Step 1: Push M2Radio** (the insulated clone is retired; work is already on `~/Development/M2Radio` master)
 
 The other session may still have uncommitted work in `~/Development/M2Radio`.
 A fast-forward only adds `arduino/`, so it cannot touch their five modified
@@ -1988,7 +1981,7 @@ Note the new HEAD SHA (full 40 chars).
 
 - [ ] **Step 2: Bump the pin**
 
-In `$EVKB/evkb.cmake`, on the `teensy_declare_library(M2Radio …)` line, replace `1e15f0bee7a001d8afec82ed5592bd28f0fa31da` with the new SHA, and update the trailing comment to `# subdir chosen by the importer: import_evkb_library(M2Radio sdio iw416 [lwip] [arduino])`.
+In `$EVKB/evkb.cmake`, on the `teensy_declare_library(M2Radio …)` line, replace `c7d051068c55f9b8f33117939353c342b55195f8` with the new SHA, and update the trailing comment to `# subdir chosen by the importer: import_evkb_library(M2Radio sdio iw416 [lwip] [arduino])`.
 
 - [ ] **Step 3: Fresh-user verify (the SKIP-hider check)**
 
