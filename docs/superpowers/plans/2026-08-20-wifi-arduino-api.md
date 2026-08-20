@@ -88,6 +88,23 @@
   `m_inReconnect` RAII latch. **Task 7 must not reintroduce this shape**: any
   new sketch-facing entry point that can run a driver command needs the same
   treatment.
+- **★ Task 7 MUST read `WiFiConnPool.h`'s contract block before writing
+  `WiFiClient`.** Task 6's review produced five caller obligations, now written
+  into that header: `addRef()` immediately after `alloc()` (the only recovery
+  path for a reserved slot — setting `claimed` is NOT a substitute);
+  `installCallbacks()` before `tcp_connect()` (it is what stores `c->pcb`, and
+  until it runs `abortAll()` cannot see it); the pool does not install
+  `tcp_connected`, so Task 7 owns it and the success half of
+  `connectDone`/`connectOk`; `stop()` usually emits RST not FIN, because
+  deferred `tcp_recved` leaves `rcv_wnd != TCP_WND_MAX`; and `available()`
+  means "staged now", so `if (available() >= N)` can stall at the RX cap —
+  incremental `while (available())` consumption is required.
+- **A controller-directed fix caused a bug.** Directing "reserve the slot in
+  `alloc()`" closed a double-allocation window but created a reserved state
+  with no exit (`refs==0`, no pcb — invisible to `release`, `abortAll`,
+  eviction and both callbacks). Worth remembering when directing a fix into an
+  allocator: closing an acquire window without checking the release path is
+  half a fix.
 - **The licence audit cannot go green in this worktree** until the examples are built (~99 `MISSING BUILD`). Part 1 (copyleft) and the GATES drift check are clean throughout. Same root cause as the Task 13 sweep question.
 
 ---
