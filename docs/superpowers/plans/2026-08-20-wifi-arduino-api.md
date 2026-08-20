@@ -12,6 +12,26 @@
 
 ---
 
+## Execution status (updated as tasks land)
+
+| Task | State | Notes |
+|---|---|---|
+| 1 Baseline | ✅ | Caught two blockers: M2Radio being edited live, and no build dirs in the worktree. |
+| 2 Base classes | ✅ | `9a3ddf8` + `1454ff4`. Both reviews passed; replayed onto upstream `c7d0510`. |
+| 3 Skeleton + card-absent gate | ✅ | M2Radio `b766a41`, EVKB `d232551`. Review found the gate header overclaimed ("card-absent" is unprovable — the same 255 appears with the card present and no blob); narrowed to "clean-failure". Added `sdio()` accessor + SSID/PSK length rejection. |
+| 4 Full begin() + `[wifi]` gate | ✅ | M2Radio `3cac1bd`, EVKB `709fb3b`. Review found a **critical** silent pump death (`EventResponder::detach()` leaves `_triggered` set, so `setAutoService(false)`→`(true)` never re-arms), single-shot auto-reconnect, and DHCP-timeout limbo. `DriverCmd` RAII guard now covers every command-port call. |
+| 5 Guard-interaction re-run | ✅ | No new code. Both assertions verified in situ; both gates green. Subsumed by Task 4's reviews, which traced every guard path. |
+| 6–15 | pending | |
+
+### Findings that change later tasks
+
+- **Task 6 must not undo the `DriverCmd` guard.** Adding `m_pool.service()` to `servicePass()` *outside* the `if (m_lwipUp)` block is what makes the missing bring-up guard a live, silicon-only bug. The guard is now in place — keep it.
+- **QEMU cannot observe a dead service pump.** The `[wifi]` gate passes green with the pump working and with it dead (measured). Anything that depends on the pump actually running is silicon-only evidence.
+- **Two Task-4 fixes are unverifiable in QEMU** — single-shot reconnect and DHCP-timeout limbo both need an association the zero-BSS model cannot provide. They are reasoned, not measured, and must be exercised in Task 14's silicon transcript.
+- **The licence audit cannot go green in this worktree** until the examples are built (~99 `MISSING BUILD`). Part 1 (copyleft) and the GATES drift check are clean throughout. Same root cause as the Task 13 sweep question.
+
+---
+
 ## Ground rules (apply to every task)
 
 - **Two working trees.** Library code goes in `~/Development/M2Radio` (its own git repo, on `master`); examples/gates/docs go in this repo's worktree (`$EVKB` below = the worktree root, branch `claude/arduino-wifi-m2-link-868770`). Commit each side in its own repo.
