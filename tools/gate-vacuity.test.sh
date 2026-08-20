@@ -149,4 +149,43 @@ else
     rm -f "$EVKB/$wifi_rel"/build/wifi.uart
 fi
 
+# --- 4. the same rule for m2_uap_probe's model gate (W17) --------------------
+# networking/m2_uap_probe is the second example carrying two gates asserting
+# OPPOSITE outcomes, and its model gate has a sharper reason to be checked than
+# m2_sdio_probe's: it asserts a NEGATIVE (every AP command indistinguishable
+# from a reserved id). A gate whose expected answer is "no" is exactly the kind
+# that can pass on a capture where nothing happened at all -- the card-absent
+# run emits no probe cells whatsoever, and "no cell said SUPPORTED" is trivially
+# true of it. If this gate ever passes that capture, its silicon counterpart is
+# worthless and so is the Phase-0 answer resting on it.
+uap_rel="examples/networking/m2_uap_probe"
+uap_src="$EVKB/$uap_rel/transcript_qemu_wifi.txt"
+if [ ! -f "$uap_src" ]; then
+    echo "SKIP: absent_card_fails_uap_gate (no transcript)"
+else
+    sed 's/^sdio_begin=ok rc=0/sdio_begin=cmd5-no-response rc=-6/' "$uap_src" > "$WORK/uap.absent"
+    run_gate "$uap_rel" "run_qemu_wifi.sh" "$WORK/uap.absent"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1                                      # must not pass
+    echo "$OUT_TEXT" | grep -q "the card-absent fallback ran" || result=1   # and name it
+    report "absent_card_fails_uap_gate" $result
+
+    # A capture with the probe cells present but the VERDICT missing must fail
+    # too. Deleting the verdict is the cheapest way a future refactor breaks
+    # this example silently, and "no verdict" must never read as "the negative
+    # verdict" -- the tree's standing rule that a MISSING counter is not a zero.
+    grep -v '^uap_verdict=' "$uap_src" > "$WORK/uap.noverdict"
+    run_gate "$uap_rel" "run_qemu_wifi.sh" "$WORK/uap.noverdict"; rc=$?
+    [ "$rc" -ne 0 ] && result=0 || result=1
+    report "missing_verdict_fails_uap_gate" $result
+
+    # Over-correction guard, as above: the untouched transcript must still pass.
+    cp "$uap_src" "$WORK/uap.green"
+    run_gate "$uap_rel" "run_qemu_wifi.sh" "$WORK/uap.green"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_m2_uap_probe_wifi" $result
+
+    rm -f "$EVKB/$uap_rel"/build/wifi.uart
+fi
+
 exit $FAILED

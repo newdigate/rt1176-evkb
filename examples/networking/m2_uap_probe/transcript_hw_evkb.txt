@@ -1,0 +1,355 @@
+==============================================================================
+m2_uap_probe -- HARDWARE TRANSCRIPT, MIMXRT1170-EVKB RevC3 + u-blox M2-MAYA-W161
+==============================================================================
+W17 Phase 0: does the running IW416 firmware carry the uAP (AP-mode) command
+layer?  The whole of W17 after this is wasted if it does not, and nothing in
+QEMU can answer it -- the card model has no AP surface and never claimed one.
+
+ANSWER: YES.  Two AP commands answer with HostCmd_RESULT_OK and real bodies,
+against a reserved id that answers HostCmd_RESULT_NOT_SUPPORT on the same
+healthy port.  A third, SYS_CONFIGURE, is a separate and unfinished story --
+see fault 1 below.
+
+------------------------------------------------------------------------------
+RIG, and what a reader needs to reproduce it
+------------------------------------------------------------------------------
+Date: 2026-08-20.  Board on the bench, no RF involved at all: this image never
+enables the MAC, never scans, never associates and never beacons (BSS_START is
+compiled out -- `-DM2_UAP_PROBE_BSS_START=ON` to include it, and that build
+TRANSMITS).  Both ESP boards unplugged.  The question is purely which command
+handlers exist in the blob.
+
+  card       u-blox M2-MAYA-W161 (NXP IW416 / SD8978) in J54, microSD J15 EMPTY
+  console    MCU-Link VCOM /dev/cu.usbmodem5DQ2DDHVWO5EI3 @ 115200
+  driver     M2Radio, W17 sendHostCmdBss() added; everything else as W16 left it
+  qemu       not involved
+  blobs      TWO were run, and the pair is the control (see BLOB A/B below):
+               sduartIW416_wlan_bt.bin.inc   (Wi-Fi + Bluetooth, 2415001 bytes)
+               sdIW416_wlan.bin.inc          (Wi-Fi only,        1640088 bytes)
+             Neither is in this repo -- NXP LA_OPT binary licence.
+  card id    fw_release=0x9B105C15  hw_version=0x7201  mac=6C:1D:EB:91:0C:45
+             SYS_INFO body: "w8978o-V0, RF878X, FP92, 16.92.21.p1"
+
+------------------------------------------------------------------------------
+THE METHOD, because the first run got it wrong and had to be thrown away
+------------------------------------------------------------------------------
+RUN 1 put the positive control first and the negative control LAST.  It read:
+
+    SYS_INFO       bss=0/1  st=ok          result=0x0000
+    SYS_CONFIGURE  bss=0/1  st=cmd-timeout
+    STA_LIST       bss=0/1  st=cmd-timeout
+    RESERVED.ctl-  bss=0/1  st=cmd-timeout
+
+and the obvious conclusion -- "this firmware answers a command it does not have
+with SILENCE, so STA_LIST is missing" -- is WRONG.  Two stories fit that column
+of timeouts equally well:
+    (a) unknown commands get no reply, or
+    (b) one command wedged the command port and every later timeout, the
+        control's included, is an echo of that single event.
+The run could not tell them apart, because the control ran AFTER the damage.
+That is a single unbracketed reading believed too early, which is the mistake
+this project has retracted twice already (m2_throughput_test's transcript, W16
+wrong turns 1 and 2).
+
+RUN 2 restructured the matrix and settled it in one shot:
+  * the NEGATIVE control runs FIRST, on a port known healthy -- so "what does a
+    command this blob lacks look like?" is measured before anything can spoil
+    it;
+  * a POSITIVE control runs BETWEEN every AP command -- so "did the port
+    survive that?" is a measurement, not an assumption;
+  * a cell counts as evidence only if the nearest positive control on EACH SIDE
+    of it answered.  The probe calls this BRACKETING and prints
+    `uap_unbracketed` for every cell that fails it, rather than folding it into
+    a count.  An unbracketed cell is not a result.
+
+------------------------------------------------------------------------------
+WHAT A COMMAND THIS BLOB DOES NOT HAVE LOOKS LIKE -- the yardstick
+------------------------------------------------------------------------------
+Command id 0x7FFE is defined by nothing in mlan_fw.h (highest real id is
+0x0FFF).  On a healthy port, both interfaces:
+
+    uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256
+    uap_bytes RSVD.ctl-.a.bss0 0C000100FEFF08000500020002000172...
+    uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256
+    uap_bytes RSVD.ctl-.a.bss1 0C000100FEFF08000610020002000172...
+
+  result=0x0002 is HostCmd_RESULT_NOT_SUPPORT.  So this firmware ANSWERS an
+  unknown command, and says so explicitly.  Silence is NOT its "I don't have
+  that" signal -- which is exactly what run 1 assumed.
+  ★ Note this differs from QEMU's model, which answers unmodelled commands with
+  HostCmd_RESULT_ERROR (0x0001, its NOTE 13).  Neither number is hardcoded
+  anywhere: the probe measures the signature at runtime and compares against
+  it, which is why the same image reads correctly on both.
+
+------------------------------------------------------------------------------
+THE ANSWER: two AP commands, answered, with bodies that are not ours
+------------------------------------------------------------------------------
+    uap_probe cmd=0x00AE name=SYS_INFO bss=0 st=ok resp=0x80AE type=1 result=0x0000 len=256
+    uap_bytes SYS_INFO.bss0 34000100AE8030000900000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+    uap_probe cmd=0x00AE name=SYS_INFO bss=1 st=ok resp=0x80AE type=1 result=0x0000 len=256
+    uap_bytes SYS_INFO.bss1 34000100AE8030000A10000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+
+  HOST_CMD_APCMD_SYS_INFO (0x00AE) -> RESULT_OK, and the body is ASCII:
+      "w8978o-V0, RF878X, FP92, 16.92.21.p1"
+  ★ THAT STRING IS THE UN-FAKEABLE PART.  It is the card's own build identity;
+  it exists nowhere in this firmware image, and no amount of host-side wishing
+  produces it.  An AP command returned it.
+
+    uap_probe cmd=0x00B3 name=STA_LIST bss=0 st=ok resp=0x80B3 type=1 result=0x0000 len=256
+    uap_bytes STA_LIST.bss0 0E000100B3800A000D00000000000172...
+    uap_probe cmd=0x00B3 name=STA_LIST bss=1 st=ok resp=0x80B3 type=1 result=0x0000 len=256
+    uap_bytes STA_LIST.bss1 0E000100B3800A000E10000000000172...
+
+  HOST_CMD_APCMD_STA_LIST (0x00B3) -> RESULT_OK.  Decoding the header:
+  total_size=0x000E, pkttype=1, cmd=0x80B3, size=0x000A, seq, result=0x0000,
+  then the body: sta_count = 0x0000.  Ten bytes is S_DS_GEN(8) + sta_count(2)
+  exactly, so the card is not padding a stub -- it is returning a real, empty
+  station list, which is the correct answer with no BSS running.
+  ★ This is the future gates' ORACLE, and it works today: the CARD's own list
+  of who has joined, with no host-side bookkeeping to fake it with.
+
+  Both are BRACKETED -- HWSPEC.ctl+.b answered before SYS_INFO, .c between
+  SYS_INFO and STA_LIST, .d after STA_LIST, all four on both interfaces.
+
+VERDICT LINE, run 2 and run 3, identical:
+    uap_control neg_sta_st=ok neg_sta_result=0x0002 neg_uap_st=ok neg_uap_result=0x0002 bracketed=1 seq_mismatches=0
+    uap_tally bracketed=4 distinct_from_neg=4 unbracketed=2
+    uap_verdict=SUPPORTED
+
+------------------------------------------------------------------------------
+★ THE FIRMWARE ECHOES bss_type BACK -- the uAP interface is real to the card
+------------------------------------------------------------------------------
+Every reply carries the seq_num it was sent.  Reading offset 8:9 of the
+uap_bytes dumps (little-endian):
+
+    bss=0 requests come back  0x0003, 0x0007, 0x0009, 0x000B, 0x000D, 0x000F
+    bss=1 requests come back  0x1004, 0x1008, 0x100A, 0x100C, 0x100E, 0x1010
+                                ^^ bits 15:12 = 1 = MLAN_BSS_TYPE_UAP
+
+The card read the bss_type nibble W17 put there and handed it back.  It is not
+ignoring the field.
+
+TWO CONSEQUENCES, both load-bearing:
+  1. waitCmdResp()'s low-byte-only seq comparison is now MANDATORY, not a
+     nicety.  It was written speculatively in W12 ("keeps the comparison honest
+     even if that ever changes") and this is that change: a whole-word compare
+     would reject every uAP reply as stale.
+  2. QEMU CANNOT CATCH A REGRESSION THERE.  The model zeroes the high byte in
+     its replies, so both a masked and an unmasked comparison pass against it.
+     If a uAP reply ever starts reading as stale on silicon while every gate is
+     green, this is the divergence.
+
+------------------------------------------------------------------------------
+FAULT 1 (OPEN, and Phase 1's first problem): SYS_CONFIGURE 0x00B0 KILLS THE
+COMMAND PORT.  Both minimal forms.  Not a missing command -- a dead port.
+------------------------------------------------------------------------------
+    uap_probe cmd=0x00B0 name=SYSCFG.chantlv bss=0 st=cmd-timeout ...
+    uap_probe cmd=0x00B0 name=SYSCFG.bare    bss=0 st=cmd-timeout ...
+    -- and then EVERY subsequent command, including HWSPEC.ctl+.f/.g and the
+       trailing reserved-id control, times out for the rest of the run.
+
+  The port was demonstrably alive immediately before: HWSPEC.ctl+.e answered on
+  both interfaces one command earlier.  After SYS_CONFIGURE, no packet of any
+  kind ever arrives again -- not a reply, not an event; CMD_PORT_UPLD is never
+  raised (int_seen unchanged at 0xC2) and seq_mismatches stays 0, so nothing is
+  arriving and being discarded either.  It does not recover within the ~15 s
+  of further commands the matrix issues afterwards.
+
+  BISECTED, one variable, controls at both ends.  The obvious hypothesis was
+  that our GET was malformed -- action(2) and an EMPTY TLV buffer.  So a second
+  form was sent FIRST, carrying the one TLV mlan pairs with a channel GET
+  (TLV_TYPE_UAP_CHAN_BAND_CONFIG 0x012A, header(4) + band_config(1) +
+  channel(1)):
+
+      SYSCFG.chantlv   cmd-timeout, port dead afterwards
+      SYSCFG.bare      cmd-timeout, port dead afterwards
+
+  Both wedge.  THE EMPTY TLV BUFFER IS NOT THE CAUSE.
+  Worth recording against the obvious follow-up: the bare form is not our
+  invention either -- mlan's own wlan_uap_cmd_sys_configure_ext emits exactly
+  action(2) and nothing else when it has neither an ioctl buffer nor a data
+  buffer (cmd->size = sizeof(HostCmd_DS_SYS_CONFIG) - 1 + S_DS_GEN).
+
+  WHAT IS NOT ESTABLISHED, and must not be assumed in Phase 1:
+    * whether the firmware CRASHED or merely stopped answering;
+    * whether some earlier uAP initialisation is required that mlan performs
+      and we do not (the likeliest remaining explanation);
+    * whether bss_num must be non-zero for the uAP interface -- everything here
+      used bss_num=0, bss_type=1;
+    * whether a power cycle is the only recovery.  Every run here reset the
+      card at boot, so recovery was never tested in isolation.
+  This is why SYS_CONFIGURE sits LAST of the AP rows in the matrix: it is the
+  known port-killer, and putting it last confines the damage to the trailing
+  controls instead of costing every other row its reading.
+
+------------------------------------------------------------------------------
+BLOB A/B: uAP support is NOT conditional on the combo firmware
+------------------------------------------------------------------------------
+The board normally downloads sduartIW416_wlan_bt.bin (Wi-Fi + BT).  The SDK
+also ships sdIW416_wlan.bin (Wi-Fi only), and the handoff's premise -- "the
+blob the board already downloads is the full image, so uAP support is PROBABLY
+in there" -- invites the question of whether the choice matters.
+
+Both were built and run, on the SAME matrix (run 2's -- the SYS_CONFIGURE
+bisect had not been added yet, so each has one SYS_CONFIGURE row rather than
+two).  They are genuinely different images (text 427364 vs 295908 bytes) and
+both report the SAME Wi-Fi firmware, fw_release=0x9B105C15 / "16.92.21.p1" --
+the blobs differ by the appended Bluetooth image, not by the Wi-Fi build.
+Diffed line by line after stripping the console banner and the heartbeat: 53
+lines each, ZERO differing.  SYS_INFO's version string, STA_LIST's empty count,
+the reserved id's NOT_SUPPORT and SYS_CONFIGURE's wedge all match exactly.
+
+  So: uAP is present in BOTH, and nothing in Phase 1 needs to depend on which
+  blob is loaded.  Equally, the A/B does NOT discriminate anything -- if a
+  future SDK ships a genuinely station-only Wi-Fi build, this control becomes
+  informative again and the probe is the tool for it.
+
+------------------------------------------------------------------------------
+WHAT THIS SETTLES, AND WHAT IT DOES NOT
+------------------------------------------------------------------------------
+SETTLED:
+  * The AP command family is present in this firmware.  SYS_INFO and STA_LIST
+    both answer RESULT_OK with real bodies, against a reserved id that answers
+    NOT_SUPPORT on the same bracketed port.
+  * The card acts on bss_type: it echoes the uAP nibble back.
+  * STA_LIST works today and is the un-fakeable oracle the future join/leave
+    gates need.
+  * Neither blob choice changes any of it.
+
+NOT SETTLED -- do not read this transcript as more than it says:
+  * That an AP can actually be STARTED.  BSS_START was never sent; it emits RF
+    with whatever the firmware defaults to and is deliberately compiled out.
+    "The command handler exists" is a long way from "the BSS comes up".
+  * SYS_CONFIGURE, which is how an AP would be configured at all, does not work
+    from this driver in either form tried.  Fault 1 is Phase 1's gate.
+  * Nothing about the data path.  bss_type/bss_num are still hardcoded to 0 in
+    the TxPD the driver builds and ignored in the RxPD it parses; W17's change
+    touched the COMMAND path only.
+  * Nothing about IEEE power save under a live uAP BSS.  Still the open
+    question the handoff flagged, still unasked.
+
+------------------------------------------------------------------------------
+RAW CAPTURE, run 4 -- sduartIW416_wlan_bt.bin, THE MATRIX AS COMMITTED
+(this is the only run with the SYSCFG.chantlv / SYSCFG.bare bisect in it)
+------------------------------------------------------------------------------
+RT1176 M.2 uAP probe up
+m2_wifi_reset=released
+sdio_io_voltage=1v8_requested
+sdio_begin=ok rc=0
+iw416_begin=ok ioport=0x10000 fw_status=0x0
+fw_download=ok
+fw_release=0x9B105C15 hw_version=0x7201 mac=6C1DEB910C45
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.a bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.a.bss0 4E00010003804A000300000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.a bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.a.bss1 4E00010003804A000410000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2
+uap_bytes RSVD.ctl-.a.bss0 0C000100FEFF08000500020002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2
+uap_bytes RSVD.ctl-.a.bss1 0C000100FEFF08000610020002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.b bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.b.bss0 4E00010003804A000700000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.b bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.b.bss1 4E00010003804A000810000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x00AE name=SYS_INFO bss=0 st=ok resp=0x80AE type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes SYS_INFO.bss0 34000100AE8030000900000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+uap_probe cmd=0x00AE name=SYS_INFO bss=1 st=ok resp=0x80AE type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes SYS_INFO.bss1 34000100AE8030000A10000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.c bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.c.bss0 4E00010003804A000B00000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.c bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.c.bss1 4E00010003804A000C10000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B3 name=STA_LIST bss=0 st=ok resp=0x80B3 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes STA_LIST.bss0 0E000100B3800A000D00000000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B3 name=STA_LIST bss=1 st=ok resp=0x80B3 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes STA_LIST.bss1 0E000100B3800A000E10000000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.d.bss0 4E00010003804A000F00000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.d.bss1 4E00010003804A001010000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B1 name=BSS_START st=SKIPPED reason=rf_emitting
+uap_probe cmd=0x00B2 name=BSS_STOP st=SKIPPED reason=rf_emitting
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.e.bss0 4E00010003804A001100000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.e.bss1 4E00010003804A001210000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B0 name=SYSCFG.chantlv bss=0 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x00B0 name=SYSCFG.chantlv bss=1 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.f bss=0 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.f bss=1 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x00B0 name=SYSCFG.bare bss=0 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x00B0 name=SYSCFG.bare bss=1 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.g bss=0 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.g bss=1 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x7FFE name=RSVD.ctl-.b bss=0 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x7FFE name=RSVD.ctl-.b bss=1 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_control neg_sta_st=ok neg_sta_result=0x0002 neg_uap_st=ok neg_uap_result=0x0002 bracketed=1 seq_mismatches=0
+uap_unbracketed SYSCFG.chantlv.bss0 st=cmd-timeout -- the command port was not proven healthy after it; NOT evidence
+uap_unbracketed SYSCFG.chantlv.bss1 st=cmd-timeout -- the command port was not proven healthy after it; NOT evidence
+uap_unbracketed SYSCFG.bare.bss0 st=cmd-timeout -- the command port was not proven healthy after it; NOT evidence
+uap_unbracketed SYSCFG.bare.bss1 st=cmd-timeout -- the command port was not proven healthy after it; NOT evidence
+uap_tally bracketed=4 distinct_from_neg=4 unbracketed=4
+uap_verdict=SUPPORTED
+uap_probe_done
+
+(heartbeat `hb card=1` lines elided; they continued unchanged to the end of the
+run, which is what says the image was still alive rather than wedged.)
+
+------------------------------------------------------------------------------
+RAW CAPTURE, station-only blob (sdIW416_wlan.bin) -- the A/B control
+(run 2's matrix: one SYS_CONFIGURE row.  Its combo-blob twin, run 3, is not
+reproduced here -- it is this capture byte for byte, which is the finding.)
+------------------------------------------------------------------------------
+RT1176 M.2 uAP probe up
+m2_wifi_reset=released
+sdio_io_voltage=1v8_requested
+sdio_begin=ok rc=0
+iw416_begin=ok ioport=0x10000 fw_status=0x0
+fw_download=ok
+fw_release=0x9B105C15 hw_version=0x7201 mac=6C1DEB910C45
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.a bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.a.bss0 4E00010003804A000300000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.a bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.a.bss1 4E00010003804A000410000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2
+uap_bytes RSVD.ctl-.a.bss0 0C000100FEFF08000500020002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2
+uap_bytes RSVD.ctl-.a.bss1 0C000100FEFF08000610020002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.b bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.b.bss0 4E00010003804A000700000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.b bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.b.bss1 4E00010003804A000810000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x00AE name=SYS_INFO bss=0 st=ok resp=0x80AE type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes SYS_INFO.bss0 34000100AE8030000900000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+uap_probe cmd=0x00AE name=SYS_INFO bss=1 st=ok resp=0x80AE type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes SYS_INFO.bss1 34000100AE8030000A10000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.c bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.c.bss0 4E00010003804A000B00000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.c bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.c.bss1 4E00010003804A000C10000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B3 name=STA_LIST bss=0 st=ok resp=0x80B3 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes STA_LIST.bss0 0E000100B3800A000D00000000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B3 name=STA_LIST bss=1 st=ok resp=0x80B3 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes STA_LIST.bss1 0E000100B3800A000E10000000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.d.bss0 4E00010003804A000F00000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.d.bss1 4E00010003804A001010000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B1 name=BSS_START st=SKIPPED reason=rf_emitting
+uap_probe cmd=0x00B2 name=BSS_STOP st=SKIPPED reason=rf_emitting
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.e.bss0 4E00010003804A001100000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2
+uap_bytes HWSPEC.ctl+.e.bss1 4E00010003804A001210000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B0 name=SYS_CONFIGURE bss=0 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x00B0 name=SYS_CONFIGURE bss=1 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.f bss=0 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.f bss=1 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x7FFE name=RSVD.ctl-.b bss=0 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_probe cmd=0x7FFE name=RSVD.ctl-.b bss=1 st=cmd-timeout resp=0x8003 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2
+uap_control neg_sta_st=ok neg_sta_result=0x0002 neg_uap_st=ok neg_uap_result=0x0002 bracketed=1 seq_mismatches=0
+uap_unbracketed SYS_CONFIGURE.bss0 st=cmd-timeout -- the command port was not proven healthy after it; NOT evidence
+uap_unbracketed SYS_CONFIGURE.bss1 st=cmd-timeout -- the command port was not proven healthy after it; NOT evidence
+uap_tally bracketed=4 distinct_from_neg=4 unbracketed=2
+uap_verdict=SUPPORTED
+uap_probe_done

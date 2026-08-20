@@ -1,0 +1,9 @@
+==== captured UART ====
+RT1176 M.2 uAP probe up
+m2_wifi_reset=released
+sdio_io_voltage=1v8_requested
+sdio_begin=cmd5-no-response rc=-6
+iw416_init=cmd-timeout fw=cmd-timeout
+uap_probe_done
+hb card=0
+PASS: card-absent fallback; no probe cells and no verdict were invented

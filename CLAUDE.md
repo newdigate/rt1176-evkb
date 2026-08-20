@@ -106,15 +106,30 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **108 gates**, and the count
-is the MERGE of two independent lines that both branched from 94: the display
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **110 gates**: 108 from the
+merge of two independent lines that both branched from 94 — the display
 capstone line added THREE (`display/vglite_lvgl_test`, then
 `display/synthui_step_test` and `display/acid_box` from the Acid Box capstone,
 reaching 97 on its own), and the M.2 Wi-Fi line added ELEVEN, reaching 105 on
-its own. 94 + 3 + 11 = 108, and that arithmetic was CHECKED against the
-runner rather than trusted: `-l` reports 108 on the merged tree.
+its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
+`networking/m2_uap_probe`. That arithmetic is CHECKED against the runner rather
+than trusted: `-l` reports 110.
 
 The M.2 line's own chain, kept because each step says what the gate is for:
+
+W17 Phase 0 added `networking/m2_uap_probe` and its TWO gates — `run_qemu.sh`
+(card-absent, and it asserts the VACUITY guards: no probe cell and no verdict
+may be invented with no card to ask) and `run_qemu_wifi.sh`, which runs the
+whole probe against the IW416 model and requires it to reach a correct
+NEGATIVE. That second gate exists for one reason: it is the only automated
+proof that a negative Phase-0 answer is REACHABLE and readable. A probe that
+could only ever print SUPPORTED would make its silicon answer worthless.
+DEMONSTRATED RED against a deliberately re-broken `sendHostCmdBss()` (bss
+nibble OR'd into seq_num's low nibble instead of shifted to 15:12): every
+`bss=1` cell went `st=cmd-timeout` and the gate failed by name.
+★ And note what did NOT catch it — `uap_verdict=` was UNCHANGED, because half
+the matrix vanishing does not move a verdict computed from what is left. The
+per-cell assertions and the tally did. 108 before that;
 
 W16 added THREE more to `networking/m2_rx_demo` — `run_qemu_rxaggr.sh` and
 `run_qemu_txaggr.sh` for multiport aggregation in each direction, and
@@ -150,8 +165,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **108 passed, 0 failed, 0 SKIP**, or
-**107 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **110 passed, 0 failed, 0 SKIP**, or
+**109 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
 fresh-clone-red set: its injected gestures come from the `touch-script`
@@ -352,12 +367,17 @@ needs the `sai1-rxinject` binding, qemu2 `2141a5d781`), its rt1062 half depends
 on LOCAL-ONLY qemu2 changes, so **a fresh clone sees it red for that reason
 too**; that is the GPL firewall working, not a regression.
 
-★ **EIGHT gates need the IW416 card model, and unlike the rt1062 group above
+★ **NINE gates need the IW416 card model, and unlike the rt1062 group above
 they are NOT local-only — the model is PUSHED.**
-`networking/m2_sdio_probe[wifi]` and all SEVEN `networking/m2_rx_demo` gates
-need the **IW416 SDIO card model** (`hw/sd/iw416-sdio.c`, enabled by
-`-machine mimxrt1170-evk,m2-wifi=on`), plus — for `[irq]` — the SDIO
-card-interrupt plumbing W15 added to the SD bus and SDHCI.
+`networking/m2_sdio_probe[wifi]`, all SEVEN `networking/m2_rx_demo` gates and
+`networking/m2_uap_probe[wifi]` need the **IW416 SDIO card model**
+(`hw/sd/iw416-sdio.c`, enabled by `-machine mimxrt1170-evk,m2-wifi=on`), plus —
+for `[irq]` — the SDIO card-interrupt plumbing W15 added to the SD bus and
+SDHCI.
+★ The floor is NOT uniform across the nine. `m2_uap_probe[wifi]` uses only
+`m2-wifi=on` + `fw-preboot=on` and the command port, so an older model
+satisfies it; the W16 floor below is the m2_rx_demo family's. Do not read one
+of the nine going red as evidence about the others.
 ★ **W16 MOVED THE FLOOR, and it moved it for gates that used to be satisfied
 by an older model.** The driver's service path no longer polls registers with
 CMD52 at all: it reads the multiport REGISTER PORT (a byte-mode CMD53 at fn1
