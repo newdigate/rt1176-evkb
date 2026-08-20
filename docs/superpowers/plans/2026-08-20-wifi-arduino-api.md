@@ -1177,6 +1177,12 @@ cd ~/Development/M2Radio && git add arduino/ && git commit -m "arduino: WiFiConn
 
 **Files:** Replace `~/Development/M2Radio/arduino/WiFiClient.h`; create `~/Development/M2Radio/arduino/WiFiClient.cpp`; modify the sketch.
 
+★ **Read `~/Development/M2Radio/arduino/WiFiConnPool.h`'s contract block first.**
+Task 6's reviews produced five caller obligations and they are written there.
+The literal code below has already been corrected for obligation 1 (the
+`connect()` ordering); check the rest against the header rather than assuming
+this text is current, and diff any replacement against the live file.
+
 - [ ] **Step 1: Write WiFiClient.h (replacing the placeholder)**
 
 ```cpp
@@ -1266,14 +1272,24 @@ int WiFiClient::connect(IPAddress ip, uint16_t port) {
     stop();
     WiFiConn *c = WiFiPool::alloc();
     if (!c) return 0;
-    struct tcp_pcb *pcb = tcp_new();
-    if (!pcb) return 0;
-    c->state = WiFiConn::CONNECTING;
+    // ★ addRef + adopt IMMEDIATELY, before anything that can fail.  alloc()
+    // hands back a RESERVED slot (state CONNECTING, no pcb, refs 0), and a
+    // reserved slot with refs 0 is invisible to release(), abortAll(), the
+    // eviction scan and both callbacks -- it leaks permanently, and once
+    // `claimed` is set it is not even evictable.  The tcp_new() below can
+    // fail, so the old ordering (alloc -> tcp_new -> early return -> addRef)
+    // leaked a slot per failed connect: four of them killed the pool until
+    // reboot.  See WiFiConnPool.h's contract block: addRef() first, ALWAYS;
+    // `claimed` is an addition to it, never a substitute.
+    WiFiPool::addRef(c);
+    m_conn = c;                       // adopt now, so detach() can release it
     c->claimed = true;
     c->connectDone = c->connectOk = false;
-    WiFiPool::installCallbacks(c, pcb);
-    WiFiPool::addRef(c);
-    m_conn = c;
+    struct tcp_pcb *pcb = tcp_new();
+    if (!pcb) { detach(); return 0; }  // detach -> release -> slot recovered
+    WiFiPool::installCallbacks(c, pcb);   // MUST precede tcp_connect: this is
+                                          // what stores c->pcb, and until it
+                                          // runs abortAll() cannot see it
     ip_addr_t dst;
     IP_ADDR4(&dst, ip[0], ip[1], ip[2], ip[3]);
     if (tcp_connect(pcb, &dst, port, clientConnected) != ERR_OK) {
