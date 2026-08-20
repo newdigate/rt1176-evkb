@@ -223,6 +223,43 @@ def _ctrl(ip, req, expect, tries=4):
     return None
 
 
+def _local_addrs():
+    """Every IPv4 address this host answers to, so `ab` can spot self-talk."""
+    out = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            out.add(info[4][0])
+    except OSError:
+        pass
+    # The address actually used to reach the board's subnet.
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("192.168.4.1", 9))
+        out.add(s.getsockname()[0])
+        s.close()
+    except OSError:
+        pass
+    return out
+
+
+def _reachable(ip):
+    """Is the board answering at all, and does it know the W16 commands?
+
+    Split deliberately.  `TPUT STATS?` exists in EVERY image this example has
+    ever had, so it separates three failures a single probe would conflate:
+    nothing there, an old image, and a working board.  The first version of
+    this script reported "is it the W16 image?" for all three, and sent a real
+    diagnosis (a DHCP address collision) chasing a firmware ghost.
+    """
+    if ip in _local_addrs():
+        return ("self", "%s is one of THIS machine's own addresses" % ip)
+    if _ctrl(ip, "TPUT STATS?", "TPUT STATS", tries=3) is None:
+        return ("unreachable", "no reply to TPUT STATS? at %s" % ip)
+    if _ctrl(ip, "TPUT BUS?", "TPUT BUS", tries=3) is None:
+        return ("old", "board answers STATS but not BUS? -- pre-W16 image")
+    return ("ok", "")
+
+
 def _bus(ip):
     """One snapshot of the board's cumulative bus counters, as a dict."""
     line = _ctrl(ip, "TPUT BUS?", "TPUT BUS")
@@ -256,13 +293,37 @@ def ab(ip):
     DELTA -- comparing absolute counters across runs of different length is the
     error that produced two published wrong conclusions in W12.
     """
+    why, detail = _reachable(ip)
+    if why != "ok":
+        print("ab: %s" % detail, file=sys.stderr)
+        if why == "self":
+            print("ab: an ESP8266 SoftAP hands out 192.168.4.100 FIRST -- after the AP\n"
+                  "    reboots, its lease table is empty and whichever station asks\n"
+                  "    first takes that address.  Check the board's own `tput: ip=`\n"
+                  "    line on the serial console and use THAT, and confirm\n"
+                  "    `ipconfig getifaddr en0` differs from it.", file=sys.stderr)
+        elif why == "unreachable":
+            print("ab: the board may still be re-associating -- after an AP reboot it\n"
+                  "    waits up to 5 s, then scans (which can take 15 s) before DHCP.\n"
+                  "    Watch the serial console for `link_reup` and a `tput: ip=`\n"
+                  "    line, then re-run.", file=sys.stderr)
+        elif why == "old":
+            print("ab: reflash m2_throughput_test -- `TPUT MODE` and `TPUT BUS?` are\n"
+                  "    W16 additions.", file=sys.stderr)
+        return {"test": "ab", "failed": detail}
+
     arms = []
     for mode, label in ((0, "pre-W16 (CMD52 transport, no batching)"),
                         (1, "W16 (register port + aggregation)")):
         ok = _ctrl(ip, "TPUT MODE %d" % mode, "TPUT MODEOK")
         if ok is None:
-            print("ab: board did not accept TPUT MODE %d -- is it the W16 image?" % mode,
-                  file=sys.stderr)
+            # _reachable() already proved the board answers BUS?, so this is a
+            # lost reply rather than a missing feature.
+            print("ab: no MODEOK for mode %d, though the board answered BUS? a"
+                  " moment ago -- retrying once" % mode, file=sys.stderr)
+            ok = _ctrl(ip, "TPUT MODE %d" % mode, "TPUT MODEOK", tries=6)
+        if ok is None:
+            print("ab: board never acked TPUT MODE %d" % mode, file=sys.stderr)
             return {"test": "ab", "failed": "no MODEOK"}
         print("ab: %s -> %s" % (label, ok))
         before = _bus(ip)
