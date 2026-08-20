@@ -942,3 +942,68 @@ ACTION TAKEN: RX aggregation default OFF, matching TX aggregation.  The
   Commands per frame is necessary and NOT sufficient -- and the W16 sections
   above celebrating a 14-41x reduction should be read with that in mind: the
   reduction is real, and on this rig the link is faster without most of it.
+
+------------------------------------------------------------------------------
+W16 FIX: clear HOST_INT_UP_LD on FRESH evidence.  The 4.6x regression is gone
+AND stranding falls to ZERO -- including on the path that was stranding before
+aggregation existed.  M2Radio c7d0510.
+------------------------------------------------------------------------------
+Date: 2026-08-20.  House AP, board 192.168.1.102, Mac on 5 GHz.
+
+THE CHANGE.  The drain exhausts the register snapshot it started from and used
+to clear HOST_INT_UP_LD on that basis.  An exhausted snapshot is not an empty
+ring -- the snapshot predates the drain, and a drain takes milliseconds.  The
+pass now takes a FRESH register read AFTER the drain and clears only if BOTH
+the fresh HOST_INT_STATUS has no UP_LD and the fresh RD bitmap offers nothing
+at our ring slot.  One extra register-port command per drain against a 64 ms
+stall; on a read failure the bit is left set.
+
+BEFORE / AFTER, same bisect, pre-W16 controls at both ends:
+
+    before:  pre-W16 10.96 | +RX aggr  2.39 | ... | back to pre-W16 10.49
+    after:   pre-W16 13.68 | +RX aggr 13.76 | ... | back to pre-W16 14.08
+
+  Every arm now within 3% of every other, at 13.7-14.1 Mbps -- the top of this
+  card's documented 3-14 Mbps range, and above W11's 9.69 baseline.
+
+COUNTERS, and the part that was not expected:
+
+    rxaggr OFF  frames=11946 reads/frame=1.00 bus/frame=2.97 stranded=0  13.94
+    rxaggr ON   frames=11902 reads/frame=0.44 bus/frame=2.57 stranded=0  13.84
+    rxaggr OFF  frames=12126 reads/frame=1.00 bus/frame=2.95 stranded=0  14.14
+
+  ★ stranded=0 IN EVERY ARM.  It was 139 with aggregation and 22-26 WITHOUT it
+  before this change.  So the stale-snapshot clear was stranding uploads on
+  BOTH paths -- W16's snapshot introduced it (the pre-W16 code re-read the
+  bitmap per packet, always fresh) and aggregation merely widened the window
+  from microseconds to milliseconds.  The "pre-W16" arm in every measurement
+  above this section carried the same defect, which is why its stranded rate
+  was 175x-520x above W13's and why that anomaly was left OPEN twice.  It is
+  now closed, and the cause was ours.
+
+  The post-drain bitmap check is exactly what the 64 ms safety net does, done
+  inline on every drain for the price of one command.  The net has nothing left
+  to catch and STAYS -- W13's evidence that this firmware sometimes queues an
+  upload without raising the interrupt is unchanged, and a backstop that never
+  fires is the correct state for a backstop.
+
+WHAT THIS DOES AND DOES NOT SETTLE:
+  * SETTLED: RX aggregation is no longer a regression.  It works (0.44 data
+    CMD53s per frame, 88% of frames batched) and costs nothing.
+  * SETTLED: the elevated stranding seen throughout W16 was our bug, not the
+    firmware's.
+  * NOT SETTLED, and it is the honest headline: AGGREGATION STILL BUYS NO
+    THROUGHPUT.  All arms sit at ~13.9 Mbps.  It cannot, on this rig: the
+    REGISTER PORT alone already took the bus from saturated (12-15k commands/s,
+    at the ceiling W11 measured) to ~9% utilisation, so the link stopped being
+    bus-bound before aggregation was even switched on.  Aggregation trims
+    bus/frame 2.97 -> 2.57 on a bus with ten times that in hand.
+  * RX aggregation therefore stays DEFAULT OFF.  Not because it is broken --
+    it is now correct and free -- but because flipping a default on one
+    afternoon's bisect is what W15 declined to do for interrupt mode, and the
+    same reasoning applies.  A soak first.
+
+WHERE W16 ACTUALLY LANDED, stated plainly: the win is the REGISTER PORT, and it
+is a bus-cost win rather than a throughput win.  W11's "the bus transactions
+per frame, not the air link, are the ceiling" was true of the pre-W16 driver
+and is no longer true of anything.  The ~14 Mbps this rig reaches is the air.
