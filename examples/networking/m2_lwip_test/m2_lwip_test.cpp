@@ -163,6 +163,10 @@ static bool wifiConnect() {
 #endif
 }
 
+// [2026-08-21] This preamble ALSO lives in M2Radio arduino/WiFi.cpp now:
+// WiFi.begin() runs it by default, so a sketch using the Arduino facade
+// needs no copy of this.  This copy stays because this example drives the
+// driver directly, below the facade.  Keep the two in step.
 // M.2 board bring-up preamble, from m2_sdio_probe (W2/W3 evidence there):
 // release SDIO_RST (GPIO_AD_16 = GPIO9.15) then WL_RST/PDn (GPIO_AD_31 =
 // GPIO9.30, reaching PDn via the hand-bridged R404), with the 1 s ROM-boot

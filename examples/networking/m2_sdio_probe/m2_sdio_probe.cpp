@@ -130,6 +130,10 @@ static bool ssidLooseMatch(const char *a, const char *b) {
 // Pad mux registers are local defines because the core header stops at
 // GPIO_AD_14.  RM offsets: GPIO_AD_16 at 14Ch, GPIO_AD_31 at 188h, IOMUXC base
 // 0x400E8000.  ALT10 = 0xA.
+// [2026-08-21] This preamble ALSO lives in M2Radio arduino/WiFi.cpp now:
+// WiFi.begin() runs it by default, so a sketch using the Arduino facade
+// needs no copy of this.  This copy stays because this example drives the
+// driver directly, below the facade.  Keep the two in step.
 #define M2_SDIO_RST_MUX (*(volatile uint32_t *)0x400E814Cu)   // GPIO_AD_16
 #define M2_WL_RST_MUX   (*(volatile uint32_t *)0x400E8188u)   // GPIO_AD_31
 #define M2_WL_RST_PAD   (*(volatile uint32_t *)0x400E83CCu)   // GPIO_AD_31 pad ctl
