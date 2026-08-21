@@ -27,6 +27,13 @@ extern const uint32_t iw416_fw_len;
 #endif
 
 static uint32_t s_tx = 0, s_ok = 0, s_fail = 0;
+// WHICH failure, not just "a failure".  connect() folds six distinguishable
+// causes into 0 and the echo can fail two more ways, so a silicon transcript
+// that only carried s_fail could say nothing useful.  0 = none; 1..7 =
+// WiFiClient::ConnectError (NO_LINK, NO_SLOT, NO_PCB, NO_ROUTE, TIMED_OUT,
+// REFUSED, DNS_FAILED); 200 = short write; 201 = echo timeout or mismatch.
+static uint8_t s_lastFail = 0;
+static const uint8_t FAIL_SHORT_WRITE = 200, FAIL_ECHO = 201;
 
 void setup() {
     Serial1.begin(115200);
@@ -59,25 +66,37 @@ void loop() {
         WiFiClient c;
         char msg[48];
         int n = snprintf(msg, sizeof(msg), "WIFI hello %lu", (unsigned long)s_tx);
+        // snprintf returns what it WOULD have written, so a truncation would
+        // make n index past msg[] in the memcmp below.  Clamp it.
+        if (n < 0) n = 0;
+        if (n > (int)sizeof(msg) - 1) n = (int)sizeof(msg) - 1;
         s_tx++;
         if (c.connect(IPAddress(192, 168, 4, 1), 4712)) {
-            c.write((const uint8_t *)msg, (size_t)n);
-            char echo[48];
-            int got = 0;
-            uint32_t t0 = millis();
-            // Incremental, NOT `if (c.available() >= n)`: the pool stages a
-            // capped number of pbufs at a time (WiFiConnPool.h obligation 5),
-            // so waiting for a total is how you wait forever.
-            while (got < n && millis() - t0 < 5000) {
-                int r = c.read((uint8_t *)echo + got, (size_t)(n - got));
-                if (r > 0) got += r;
-                else delay(1);          // yield -> the auto-service pump runs
+            size_t w = c.write((const uint8_t *)msg, (size_t)n);
+            if (w != (size_t)n) {
+                // A short write is a DIFFERENT fault from a bad echo, and
+                // ignoring write()'s return would report it as the latter.
+                s_fail++; s_lastFail = FAIL_SHORT_WRITE;
+            } else {
+                char echo[48];
+                int got = 0;
+                uint32_t t0 = millis();
+                // Incremental, NOT `if (c.available() >= n)`: the pool stages a
+                // capped number of pbufs at a time (WiFiConnPool.h obligation
+                // 5), so waiting for a total is how you wait forever.
+                while (got < n && millis() - t0 < 5000) {
+                    int r = c.read((uint8_t *)echo + got, (size_t)(n - got));
+                    if (r > 0) got += r;
+                    else delay(1);      // yield -> the auto-service pump runs
+                }
+                if (got == n && memcmp(echo, msg, (size_t)n) == 0) { s_ok++; s_lastFail = 0; }
+                else { s_fail++; s_lastFail = FAIL_ECHO; }
             }
-            if (got == n && memcmp(echo, msg, (size_t)n) == 0) s_ok++; else s_fail++;
             c.stop();
         } else {
             s_fail++;
-        }
+            s_lastFail = c.lastError();   // which of the six, not just "it
+        }                                 // failed"
     }
 
     static uint32_t lastBeat = 0, beats = 0;
@@ -86,6 +105,7 @@ void loop() {
         Serial1.print("alive="); Serial1.print(++beats);
         Serial1.print(" tcp="); Serial1.print(s_tx);
         Serial1.print('/');     Serial1.print(s_ok);
-        Serial1.print('/');     Serial1.println(s_fail);
+        Serial1.print('/');     Serial1.print(s_fail);
+        Serial1.print(" lastfail="); Serial1.println(s_lastFail);
     }
 }
