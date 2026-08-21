@@ -133,8 +133,31 @@ enum Kind : uint8_t { KIND_AP = 0, KIND_CTL_POS = 1, KIND_CTL_NEG = 2, KIND_CTL_
 // TLV_TYPE_UAP_MAX_STA_CNT (0x0155) with len=2, exactly the shape
 // wlan_uap_cmd_sys_configure_ext emits for a SET.  Non-RF: it caps the client
 // count on a BSS that is not started.
+// BODY_UAP_CONFIG is the one axis the three earlier shapes did not vary: a
+// FULLY POPULATED configuration.  mlan never sends a minimal SYS_CONFIGURE --
+// wlan_uap_cmd_sys_configure refuses to build without a configuration at all,
+// and wifi_uap_start()'s first uAP command is a full SET -- so "the handler
+// wants a populated request" is the standing hypothesis.  Built by the driver
+// (Iw416::uapConfigure) rather than here, because it is also Phase 1's
+// deliverable, not just this experiment's instrument.
 enum Body : uint8_t { BODY_NONE = 0, BODY_ACTION = 1, BODY_ACTION_CHANTLV = 2,
-                      BODY_MACADDR_GET = 3, BODY_SET_MAXSTA = 4 };
+                      BODY_MACADDR_GET = 3, BODY_SET_MAXSTA = 4,
+                      BODY_UAP_CONFIG = 5 };
+
+// Open network, and it never reaches the air: BSS_START is what beacons and it
+// is compiled out.  No PSK anywhere in this example, deliberately -- an open
+// config tests the same axis with nothing to leak.
+#ifndef M2_UAP_CONFIG_SSID
+#define M2_UAP_CONFIG_SSID "RT1176-UAP-TEST"
+#endif
+#ifndef M2_UAP_CONFIG_CHANNEL
+#define M2_UAP_CONFIG_CHANNEL 6
+#endif
+// Which TLVs to send. Override to bisect: the boundary between an accepted and
+// a rejected set is the finding, if there is one.
+#ifndef M2_UAP_CONFIG_MASK
+#define M2_UAP_CONFIG_MASK Iw416::UAP_TLV_ALL_OPEN
+#endif
 static const uint16_t TLV_UAP_MAX_STA_CNT = 0x0155;
 
 // HostCmd_CMD_802_11_MAC_ADDRESS (mlan_fw.h).  Kept local to the example: the
@@ -204,6 +227,13 @@ static const Probe kProbes[] = {
     //       candidate is eliminated rather than left hanging.
     { CMD_MAC_ADDRESS,                "MACADDR.uap",    BODY_MACADDR_GET, false, KIND_CTL_UAP },
     { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.e3", BODY_NONE,   false, KIND_CTL_POS },
+#if defined(M2_UAP_CONFIGURE)
+    // FIRST of the SYS_CONFIGURE family, because only the first one of a run is
+    // evidence -- it takes the port with it.  Everything below it is expected
+    // to be unbracketed when the hypothesis is wrong.
+    { Iw416::CMD_APCMD_SYS_CONFIGURE, "SYSCFG.fullopen", BODY_UAP_CONFIG, false, KIND_AP },
+    { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.e5", BODY_NONE,   false, KIND_CTL_POS },
+#endif
     // ★ SYS_CONFIGURE IS DELIBERATELY LAST OF THE AP ROWS. On silicon
     // (2026-08-20) this exact request -- action=GET, no TLVs -- gets no reply
     // AND takes the command port with it: every command after it, positive
@@ -358,10 +388,36 @@ static void runCell(uint8_t pi, uint8_t bssType) {
     // 0x5C does not clear on read.
     uint8_t csPre = 0, csPost = 0;
     (void)sdio.cmd52Read(1, Iw416::CARD_STATUS_REG, &csPre);
-    SdioHost::Status s = iw416.sendHostCmdBss(pr.cmd, bodyLen ? body : nullptr,
-                                              bodyLen, bssType, 0);
-    if (s == SdioHost::OK) {
-        s = iw416.waitCmdResp(pr.cmd, rx, sizeof(rx), &rxLen, 2000);
+    SdioHost::Status s;
+    if (pr.body == BODY_UAP_CONFIG) {
+        // The driver builds and sends this one, so what is tested is the thing
+        // Phase 1 will actually ship rather than a probe-local imitation of it.
+        // bss is forced to the uAP interface inside uapConfigure(), so the
+        // bss=0 column of this row is a repeat of bss=1, not a STA request --
+        // said here because the printed `bss=` would otherwise mislead.
+        Iw416::UapConfig cfg;
+        cfg.ssid         = M2_UAP_CONFIG_SSID;
+        cfg.channel      = M2_UAP_CONFIG_CHANNEL;
+        cfg.mac          = s_mac;
+        cfg.beaconPeriod = 100;
+        cfg.dtimPeriod   = 1;
+        cfg.bcastSsidCtl = 1;
+        cfg.tlvMask      = (uint16_t)(M2_UAP_CONFIG_MASK);
+        Serial1.print("uap_cfg_req mask=0x"); printHex16(cfg.tlvMask);
+        Serial1.print(" ssid="); Serial1.print(cfg.ssid);
+        Serial1.print(" chan=");  Serial1.println((int)cfg.channel);
+        s = iw416.uapConfigure(cfg);
+        rxLen = 0;
+        Serial1.print("uap_cfg_bytes len="); Serial1.print(iw416.uapCfgReqLen());
+        Serial1.print(" ");
+        dumpBytes(iw416.uapCfgReq(), iw416.uapCfgReqLen());
+        Serial1.println();
+    } else {
+        s = iw416.sendHostCmdBss(pr.cmd, bodyLen ? body : nullptr,
+                                 bodyLen, bssType, 0);
+        if (s == SdioHost::OK) {
+            s = iw416.waitCmdResp(pr.cmd, rx, sizeof(rx), &rxLen, 2000);
+        }
     }
     (void)sdio.cmd52Read(1, Iw416::CARD_STATUS_REG, &csPost);
     c.st         = s;
@@ -396,7 +452,12 @@ static void runCell(uint8_t pi, uint8_t bssType) {
     // TLV's type/len.
     uint16_t n = rxLen ? rxLen : iw416.lastCmdRdLen();
     if (n > 48) n = 48;
-    if (n && s != SdioHost::CMD_TIMEOUT) {
+    // BODY_UAP_CONFIG reads its reply into the DRIVER's buffer, not this one,
+    // so `rx` here is still zeroed -- dumping it would print 48 zero bytes that
+    // a later reader could easily take for the card's answer.  The answer for
+    // that row is in the resp=/result= fields of the line above, which come
+    // from the driver.
+    if (n && s != SdioHost::CMD_TIMEOUT && pr.body != BODY_UAP_CONFIG) {
         Serial1.print("uap_bytes ");
         Serial1.print(pr.name); Serial1.print(".bss"); Serial1.print((int)bssType);
         Serial1.print(" ");

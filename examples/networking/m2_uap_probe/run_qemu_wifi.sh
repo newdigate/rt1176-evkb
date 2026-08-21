@@ -159,7 +159,7 @@ grep -q "^uap_bsscheck MACADDR.uap .* bracketed=1[[:space:]]*$" "$OUT" || {
 # command must come back answered-but-erroring, exactly like the reserved id.
 # Asserted per cell rather than via the tally so a single row going quietly
 # missing cannot be absorbed by a count.
-for C in 00AE:SYS_INFO 00B3:STA_LIST 00B0:SYSCFG.chantlv 00B0:SYSCFG.bare; do
+for C in 00AE:SYS_INFO 00B3:STA_LIST 00B0:SYSCFG.fullopen 00B0:SYSCFG.chantlv 00B0:SYSCFG.bare; do
     ID=${C%%:*}; NAME=${C#*:}
     for B in 0 1; do
         grep -q "^uap_probe cmd=0x$ID name=$NAME bss=$B st=ok .* result=0x0001 " "$OUT" || {
@@ -175,6 +175,29 @@ for C in 00B1:BSS_START 00B2:BSS_STOP; do
         echo "FAIL: $NAME was not skipped — this build TRANSMITS and must not be gated"; exit 1; }
 done
 
+# --- Iw416::uapConfigure(), the one SYS_CONFIGURE shape silicon ACCEPTS ------
+# Silicon (2026-08-21) answers this RESULT_OK on both interfaces while every
+# MINIMAL SYS_CONFIGURE kills the command port; this model answers its usual
+# unknown-command ERROR and wedges nothing, so what this gate proves is that the
+# driver still BUILDS AND SENDS the request, byte for byte.  That is the part
+# that can silently rot -- a wrong TLV length would still compile, still send,
+# and would only be caught on the bench.
+#
+# 82 bytes for the default open configuration, and the length is asserted
+# because it is the cheapest check that catches a mis-sized TLV:
+#   action 2 + MAC 10 + SSID 19 + beacon 6 + DTIM 5 + rates 16 + bcast 5
+#   + chan/band 6 + auth 7 + protocol 6 = 82
+grep -q "^uap_cfg_bytes len=82 01002B0106" "$OUT" || {
+    echo "FAIL: uapConfigure() built the wrong request — expected an 82-byte body"
+    echo "      opening action=SET(0100) then TLV 0x012B len 6 (the MAC)."
+    echo "      A changed length means a TLV payload length moved; those are"
+    echo "      PAYLOAD lengths, not whole-TLV lengths (DTIM and BCAST are 1,"
+    echo "      AUTH is 3), and getting one wrong mis-parses the whole soup."
+    exit 1; }
+grep -q "^uap_cfg_req mask=0x01FF ssid=" "$OUT" || {
+    echo "FAIL: the full open-AP TLV set was not requested (mask should be ALL_OPEN)"
+    exit 1; }
+
 # --- THE VERDICT -------------------------------------------------------------
 # The negative control's own signature, echoed so a reader can check the
 # comparison the firmware-independent way. bracketed=1 is the load-bearing
@@ -187,8 +210,8 @@ grep -q "^uap_control neg_sta_st=ok neg_sta_result=0x0001 neg_uap_st=ok neg_uap_
 # the command port, so every AP cell MUST be bracketed; a non-zero count here
 # means the model started dropping replies and the run has quietly measured
 # less than it claims — the same class of defect as a SKIP hiding in a sweep.
-grep -q "^uap_tally bracketed=8 distinct_from_neg=0 unbracketed=0[[:space:]]*$" "$OUT" || {
-    echo "FAIL: wrong tally — all eight AP cells must be bracketed and none may"
+grep -q "^uap_tally bracketed=10 distinct_from_neg=0 unbracketed=0[[:space:]]*$" "$OUT" || {
+    echo "FAIL: wrong tally — all TEN AP cells must be bracketed and none may"
     echo "      differ from the reserved-id control"; exit 1; }
 grep -q "^uap_verdict=INDISTINGUISHABLE_FROM_UNKNOWN_CMD[[:space:]]*$" "$OUT" || {
     echo "FAIL: wrong verdict for a model with no uAP layer"; exit 1; }

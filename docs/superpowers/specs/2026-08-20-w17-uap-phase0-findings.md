@@ -86,7 +86,7 @@ This is the tree's own method (bisect one variable, controls at both ends)
 applied to a command matrix, and it is the difference between run 1's wrong
 answer and run 2's right one — same firmware, same driver, ten minutes apart.
 
-## ★ FAULT 1 (INVESTIGATED 2026-08-21 — see below for what changed)
+## ★ FAULT 1 — **RESOLVED 2026-08-21**. The handler wants a populated request.
 
 > **The account in this section was written on 2026-08-20 and its conclusion
 > had an uncontrolled variable.** Every row that answered in those runs was
@@ -272,3 +272,68 @@ command precedes configuration on this firmware.
 the port with it and every later row is unbracketed — so a variant can only be
 tested by being put first, one variant per firmware life. Default OFF so the
 gated build keeps the matrix the QEMU gates assert.
+
+
+## FAULT 1, resolved (2026-08-21)
+
+**A fully populated `SYS_CONFIGURE` is accepted. A minimal one kills the port.**
+Both measured in **one firmware life**, on the same card, minutes apart — so
+this needs no cross-run comparison:
+
+```
+HWSPEC.ctl+.e3   bss=0/1  st=ok                              <- port healthy in
+SYSCFG.fullopen  bss=0    st=ok result=0x0000  cs 0x08->0x08
+SYSCFG.fullopen  bss=1    st=ok result=0x0000  cs 0x08->0x08
+HWSPEC.ctl+.e5   bss=0/1  st=ok                              <- port healthy out
+SYSCFG.chantlv   bss=0    st=cmd-timeout       cs 0x08->0x88 <- the wedge
+```
+
+`RESULT_OK` on both interfaces, **bracketed** on each side, so it is evidence by
+the example's own rule.
+
+### Where the hypothesis came from
+
+Not from guessing at shapes — from asking the reference what a real bring-up
+sends. `wifi_uap_start()` runs `wifi_cmd_uap_config()` → (PMF) → (11d) →
+`BSS_START`, so the config **is** the first uAP command and there is no missing
+prerequisite upstream of it. And its builder refuses to construct the command
+without a configuration at all:
+
+```c
+if (pioctl_buf == MNULL) { LEAVE(); return MLAN_STATUS_FAILURE; }
+```
+
+"How much configuration the request carries" was the one axis the three earlier
+shapes never varied, and the only one mlan's own code says is not optional.
+
+### What shipped
+
+`Iw416::uapConfigure(const UapConfig &)` — the nine TLVs mlan emits for an open
+AP on a manual 2.4 GHz channel, built by the **driver** so what was tested is
+what Phase 1 ships. 82 bytes, verified in QEMU before the bench run. The TLV set
+is a **mask** (`UapTlv`), because the boundary between accepted and rejected is
+the finding and can only be found by varying the set.
+
+★ Every TLV `len` is the **payload** length. `DTIM` and `BCAST` are **1** byte,
+`AUTH` is **3** (auth_type, PWE_derivation, transition_disable). Those are the
+easy ones to get wrong, and one wrong length mis-parses everything after it.
+
+### Consequences
+
+- **There is no harmless probe of `SYS_CONFIGURE`.** A GET is exactly the shape
+  that wedges; nothing may "just query" the uAP configuration.
+- **The minimal rows stay in the matrix.** They are no longer a mystery, they
+  are the control that proves the boundary.
+- **The probe sends the full configuration by default**, so the QEMU gate covers
+  `uapConfigure()`'s construction. The model can't reproduce the silicon
+  behaviour, but it can prove the driver still builds the request byte for byte
+  — the part that rots silently. Demonstrated RED by moving the DTIM payload
+  length from 1 to 2.
+
+### Still open
+
+- Whether **`BSS_START`** actually brings the BSS up. Untested, and it transmits.
+- **WPA2** — AKMP / cipher / passphrase TLVs on the same builder, and with them
+  the repo's standing SSID/PSK rule.
+- Why a partial request *kills the port* rather than being rejected. Inside a
+  closed blob, and no longer blocking.

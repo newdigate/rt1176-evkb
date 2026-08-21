@@ -57,6 +57,20 @@ endif()
 # reading a run can yield is the SET rather than a GET.  Non-RF (it caps the
 # client count on a BSS that is never started), but OFF by default because it
 # changes the matrix the QEMU gates assert.
+# W17: send a FULLY POPULATED uAP configuration (Iw416::uapConfigure) as the
+# first SYS_CONFIGURE of the run.  Open network, no credentials, and it does not
+# transmit -- BSS_START is what beacons and stays compiled out.
+# ★ ON by default since 2026-08-21, when silicon showed this is the ONLY
+# SYS_CONFIGURE shape the firmware accepts (the minimal ones wedge the command
+# port).  Default ON so the QEMU gates cover Iw416::uapConfigure() -- the code
+# Phase 1 is built on -- rather than leaving it with no automated coverage at
+# all, which is the gap that cost W8 and W12 days of silicon soaks.
+option(M2_UAP_CONFIGURE "Probe a full open-AP SYS_CONFIGURE first" ON)
+if(M2_UAP_CONFIGURE)
+    message(STATUS "uAP probe: full open-AP SYS_CONFIGURE runs first")
+    add_definitions(-DM2_UAP_CONFIGURE=1)
+endif()
+
 option(M2_UAP_SYSCFG_SET_FIRST "Probe SYS_CONFIGURE with action=SET first" OFF)
 if(M2_UAP_SYSCFG_SET_FIRST)
     message(STATUS "uAP probe: SYS_CONFIGURE action=SET runs first")
