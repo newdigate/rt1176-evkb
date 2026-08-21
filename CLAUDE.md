@@ -106,7 +106,11 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **108 gates**, and the count
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **111 gates** (108 before the
+Arduino WiFi facade added THREE: `networking/wifi_client_test` and its
+`[wifi]` variant -- enumeration plus a REAL 802.11 scan against the model's
+deliberate zero-BSS reply, asserting an honest WL_NO_SSID_AVAIL -- and
+`networking/wifi_server_test`), and the count
 is the MERGE of two independent lines that both branched from 94: the display
 capstone line added THREE (`display/vglite_lvgl_test`, then
 `display/synthui_step_test` and `display/acid_box` from the Acid Box capstone,
@@ -150,8 +154,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **108 passed, 0 failed, 0 SKIP**, or
-**107 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **111 passed, 0 failed, 0 SKIP**, or
+**110 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
 fresh-clone-red set: its injected gestures come from the `touch-script`
@@ -179,6 +183,11 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-08-21: 111 passed, 0 failed, 0 SKIP** (`gates: 111 passed`,
+exit 0), on the Arduino WiFi facade close-out, run via `/tmp/ev`,
+`rt1176:dualcore/cm4_audio_test` included and green (3 s).
+
+The previous count's measurement, kept per convention:
 ✅ **Measured 2026-08-20: 108 passed, 0 failed, 0 SKIP** (`gates: 108 passed`,
 exit 0) on the MERGE of the M.2 Wi-Fi line into master, run via `/tmp/ev`,
 `rt1176:dualcore/cm4_audio_test` green and `display/acid_box` green (so this
@@ -352,9 +361,12 @@ needs the `sai1-rxinject` binding, qemu2 `2141a5d781`), its rt1062 half depends
 on LOCAL-ONLY qemu2 changes, so **a fresh clone sees it red for that reason
 too**; that is the GPL firewall working, not a regression.
 
-★ **EIGHT gates need the IW416 card model, and unlike the rt1062 group above
+★ **NINE gates need the IW416 card model, and unlike the rt1062 group above
 they are NOT local-only — the model is PUSHED.**
-`networking/m2_sdio_probe[wifi]` and all SEVEN `networking/m2_rx_demo` gates
+`networking/m2_sdio_probe[wifi]`, `networking/wifi_client_test[wifi]` (added
+with the Arduino facade -- it drives a real scan through `WiFi.begin()` and
+asserts the model's zero-BSS reply is reported honestly), and all SEVEN
+`networking/m2_rx_demo` gates
 need the **IW416 SDIO card model** (`hw/sd/iw416-sdio.c`, enabled by
 `-machine mimxrt1170-evk,m2-wifi=on`), plus — for `[irq]` — the SDIO
 card-interrupt plumbing W15 added to the SD bus and SDHCI.
