@@ -53,6 +53,16 @@ endif()
 # is off unless asked for:
 #
 #   cmake -B build-bssstart ... -DM2_UAP_PROBE_BSS_START=ON
+# W17 FAULT 1 investigation: put an action=SET SYS_CONFIGURE first, so the one
+# reading a run can yield is the SET rather than a GET.  Non-RF (it caps the
+# client count on a BSS that is never started), but OFF by default because it
+# changes the matrix the QEMU gates assert.
+option(M2_UAP_SYSCFG_SET_FIRST "Probe SYS_CONFIGURE with action=SET first" OFF)
+if(M2_UAP_SYSCFG_SET_FIRST)
+    message(STATUS "uAP probe: SYS_CONFIGURE action=SET runs first")
+    add_definitions(-DM2_UAP_SYSCFG_SET_FIRST=1)
+endif()
+
 option(M2_UAP_PROBE_BSS_START "Also probe BSS_START/BSS_STOP (starts beaconing)" OFF)
 if(M2_UAP_PROBE_BSS_START)
     message(STATUS "uAP probe: BSS_START enabled -- this image TRANSMITS")

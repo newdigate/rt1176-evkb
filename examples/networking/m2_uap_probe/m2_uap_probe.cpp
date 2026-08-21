@@ -108,7 +108,12 @@ struct Probe {
 // CTL_POS: a command this firmware definitely has.  CTL_NEG: an id nothing
 // defines.  AP: the rows the whole example exists to read.  Only AP rows feed
 // the tally and the verdict.
-enum Kind : uint8_t { KIND_AP = 0, KIND_CTL_POS = 1, KIND_CTL_NEG = 2 };
+// CTL_UAP is a POSITIVE control on the uAP INTERFACE rather than on the AP
+// command family: a generic command, addressed to bss_type=1, that mlan itself
+// sends there.  It is deliberately NOT KIND_AP -- it says nothing about whether
+// the APCMD handlers exist, so folding it into the tally would inflate the
+// Phase 0 verdict with evidence about something else.
+enum Kind : uint8_t { KIND_AP = 0, KIND_CTL_POS = 1, KIND_CTL_NEG = 2, KIND_CTL_UAP = 3 };
 // BODY_NONE is what mlan emits for SYS_INFO / BSS_STOP / STA_LIST / BSS_START
 // (S_DS_GEN and nothing else).  BODY_ACTION is a bare SYS_CONFIGURE GET --
 // action(2), no TLVs -- which is ALSO a shape mlan emits (wlan_uap_cmd_sys_
@@ -119,7 +124,22 @@ enum Kind : uint8_t { KIND_AP = 0, KIND_CTL_POS = 1, KIND_CTL_NEG = 2 };
 // channel(1).  The pair exists to bisect ONE variable: if the bare GET wedges
 // the command port and the TLV-carrying GET does not, the fault is the empty
 // TLV buffer and Phase 1 has its rule.
-enum Body : uint8_t { BODY_NONE = 0, BODY_ACTION = 1, BODY_ACTION_CHANTLV = 2 };
+// BODY_MACADDR_GET is mlan's own GET of a MAC address: action(2) + mac(6),
+// cmd->size = sizeof(HostCmd_DS_802_11_MAC_ADDRESS) + S_DS_GEN = 16
+// (mlan_glue.c wifi_prepare_get_mac_addr_cmd).
+// BODY_SET_MAXSTA is a SET rather than a GET, and that is the point: both
+// forms tried so far were GETs, and mlan's own uAP bring-up never starts with
+// one -- wlan_start_network SETs the configuration.  action(2)=SET plus
+// TLV_TYPE_UAP_MAX_STA_CNT (0x0155) with len=2, exactly the shape
+// wlan_uap_cmd_sys_configure_ext emits for a SET.  Non-RF: it caps the client
+// count on a BSS that is not started.
+enum Body : uint8_t { BODY_NONE = 0, BODY_ACTION = 1, BODY_ACTION_CHANTLV = 2,
+                      BODY_MACADDR_GET = 3, BODY_SET_MAXSTA = 4 };
+static const uint16_t TLV_UAP_MAX_STA_CNT = 0x0155;
+
+// HostCmd_CMD_802_11_MAC_ADDRESS (mlan_fw.h).  Kept local to the example: the
+// driver has no use for it, and a probe's constants do not belong in a driver.
+static const uint16_t CMD_MAC_ADDRESS = 0x004D;
 
 // ★ THE ORDER IS THE EXPERIMENT, and it was rewritten after the first silicon
 // run.  That run put the positive control first and the negative control LAST,
@@ -158,6 +178,32 @@ static const Probe kProbes[] = {
     { Iw416::CMD_APCMD_BSS_START,     "BSS_START",      BODY_NONE,   true,  KIND_AP      },
     { Iw416::CMD_APCMD_BSS_STOP,      "BSS_STOP",       BODY_NONE,   true,  KIND_AP      },
     { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.e",  BODY_NONE,   false, KIND_CTL_POS },
+    // --- W17 FAULT 1 rows: what the first silicon runs could NOT separate ---
+    // Every row that ANSWERED above is empty-bodied, and both rows that wedged
+    // the port carry a body.  "SYS_CONFIGURE is the killer" and "a bodied
+    // command on this port is the killer" fit that evidence equally well, and
+    // the W16 rule says a single uncontrolled pair is not a finding.  These two
+    // rows separate them, cheapest first.
+    //
+    // RSVD.body: the reserved id again, now carrying action(2).  The firmware
+    // rejects it on the id, BEFORE any body parsing, so an answer here proves
+    // exactly one thing -- that a 10-byte bodied command reaches the parser and
+    // is replied to on this port, on both interfaces.  It deliberately does not
+    // claim the body was UNDERSTOOD; that is the next row's job.
+    { 0x7FFE,                         "RSVD.body",      BODY_ACTION, false, KIND_CTL_NEG },
+    { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.e2", BODY_NONE,   false, KIND_CTL_POS },
+    // MACADDR.uap: a REAL bodied command addressed to the uAP interface, and
+    // not one we invented -- wlan_get_mac_addr_uap() (wifi-sdio.c) sends
+    // exactly this, action=GET on priv[MLAN_BSS_TYPE_UAP], as part of mlan's
+    // OWN init.  It is the only uAP-addressed command in that whole init path,
+    // which makes this row do double duty:
+    //   (a) a positive control for "bodied command, bss_type=1, understood";
+    //   (b) the leading candidate for the prerequisite FAULT 1 might be about.
+    //       It runs BEFORE both SYS_CONFIGURE rows.  If SYS_CONFIGURE stops
+    //       wedging now, the missing step was this; if it still wedges, this
+    //       candidate is eliminated rather than left hanging.
+    { CMD_MAC_ADDRESS,                "MACADDR.uap",    BODY_MACADDR_GET, false, KIND_CTL_UAP },
+    { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.e3", BODY_NONE,   false, KIND_CTL_POS },
     // ★ SYS_CONFIGURE IS DELIBERATELY LAST OF THE AP ROWS. On silicon
     // (2026-08-20) this exact request -- action=GET, no TLVs -- gets no reply
     // AND takes the command port with it: every command after it, positive
@@ -168,6 +214,15 @@ static const Probe kProbes[] = {
     // measurement.
     // The TLV-carrying GET goes FIRST of the two, because the bare one is the
     // known port-killer and would otherwise take this row's reading with it.
+#if defined(M2_UAP_SYSCFG_SET_FIRST)
+    // Opt-in variant row.  Because the FIRST SYS_CONFIGURE of a run is the only
+    // one whose reading survives -- it takes the port with it and every later
+    // row is unbracketed -- a variant can only be tested by being put first,
+    // one variant per firmware life.  OFF by default so the gated build keeps
+    // the matrix the QEMU gates assert.
+    { Iw416::CMD_APCMD_SYS_CONFIGURE, "SYSCFG.setmaxsta", BODY_SET_MAXSTA, false, KIND_AP },
+    { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.e4", BODY_NONE,   false, KIND_CTL_POS },
+#endif
     { Iw416::CMD_APCMD_SYS_CONFIGURE, "SYSCFG.chantlv", BODY_ACTION_CHANTLV, false, KIND_AP },
     { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.f",  BODY_NONE,   false, KIND_CTL_POS },
     { Iw416::CMD_APCMD_SYS_CONFIGURE, "SYSCFG.bare",    BODY_ACTION, false, KIND_AP      },
@@ -206,6 +261,57 @@ static void dumpBytes(const uint8_t *p, uint16_t n) {
     }
 }
 
+// --- card-state autopsy ------------------------------------------------------
+// The single thing the first FAULT 1 runs could not say: after SYS_CONFIGURE
+// kills the command port, is the FIRMWARE dead or is only the command layer
+// wedged?  Nothing in a timeout distinguishes those, and they lead to opposite
+// Phase 1 designs -- one needs a card reset in the recovery path, the other
+// needs a different command.
+//
+// These are plain CMD52 reads of card state, so they are answered by the SDIO
+// interface itself and do not depend on the command port at all.
+//
+// ★ HOST_INT_STATUS (0x0C) is READ ONLY IN THE FINAL DUMP, and that is not an
+// oversight.  begin() configures HOST_INT_RSR so the register CLEARS ON READ:
+// sampling it mid-matrix would consume an interrupt the driver is waiting for
+// and perturb the very thing being measured.  intStatusSeen() -- the driver's
+// accumulated union, printed on every cell -- is the non-destructive reading,
+// and it is what the per-cell lines already carry.
+//
+// ★ The `init` dump is what makes the later ones readable.  W16's lesson was
+// that a reference value read in a DIFFERENT PHASE of the card's life is not a
+// constant (reg 0x5C answers 0x0D to the boot ROM and 0x40 to running
+// firmware), so "0xFEDC means alive" is not assumed here -- the baseline is
+// measured on this card, in this phase, in this run, and the comparison is
+// against that.
+static void dumpCardRegs(const char *tag, bool includeIntStatus) {
+    uint8_t cs = 0, him = 0, f0 = 0, f1 = 0, p0 = 0, p1 = 0, p2 = 0, his = 0;
+    bool ok = true;
+    ok &= (sdio.cmd52Read(1, Iw416::CARD_STATUS_REG,   &cs)  == SdioHost::OK);
+    ok &= (sdio.cmd52Read(1, Iw416::HOST_INT_MASK_REG, &him) == SdioHost::OK);
+    ok &= (sdio.cmd52Read(1, Iw416::CARD_FW_STATUS0,   &f0)  == SdioHost::OK);
+    ok &= (sdio.cmd52Read(1, Iw416::CARD_FW_STATUS1,   &f1)  == SdioHost::OK);
+    ok &= (sdio.cmd52Read(1, Iw416::IO_PORT_0_REG,     &p0)  == SdioHost::OK);
+    ok &= (sdio.cmd52Read(1, Iw416::IO_PORT_0_REG + 1, &p1)  == SdioHost::OK);
+    ok &= (sdio.cmd52Read(1, Iw416::IO_PORT_0_REG + 2, &p2)  == SdioHost::OK);
+    if (includeIntStatus) {
+        ok &= (sdio.cmd52Read(1, Iw416::HOST_INT_STATUS, &his) == SdioHost::OK);
+    }
+    Serial1.print("uap_cardreg tag="); Serial1.print(tag);
+    Serial1.print(" cmd52=");          Serial1.print(ok ? "ok" : "FAILED");
+    Serial1.print(" cardstatus=0x");   printHex16(cs);
+    Serial1.print(" intmask=0x");      printHex16(him);
+    Serial1.print(" fwstatus=0x");     printHex16((uint16_t)(((uint16_t)f1 << 8) | f0));
+    Serial1.print(" ioport=0x");       printHex16((uint16_t)(((uint16_t)p1 << 8) | p0));
+    Serial1.print(",0x");              printHex16(p2);
+    if (includeIntStatus) { Serial1.print(" intstatus=0x"); printHex16(his); }
+    Serial1.println();
+}
+
+// Set once, by the first cell that times out, so the autopsy is taken while
+// the damage is fresh rather than after fifteen more seconds of commands.
+static bool s_autopsyTaken = false;
+
 static void runCell(uint8_t pi, uint8_t bssType) {
     const Probe &pr = kProbes[pi];
     Cell &c = s_cells[pi][bssType];
@@ -219,6 +325,16 @@ static void runCell(uint8_t pi, uint8_t bssType) {
     if (pr.body != BODY_NONE) {
         body[bodyLen++] = 0x00; body[bodyLen++] = 0x00;      // HostCmd_ACT_GET, LE
     }
+    if (pr.body == BODY_MACADDR_GET) {
+        for (uint8_t k = 0; k < 6; k++) body[bodyLen++] = 0x00;   // mac_addr, GET
+    }
+    if (pr.body == BODY_SET_MAXSTA) {
+        body[0] = 0x01; body[1] = 0x00;                      // HostCmd_ACT_GEN_SET
+        body[bodyLen++] = (uint8_t)(TLV_UAP_MAX_STA_CNT & 0xFF);
+        body[bodyLen++] = (uint8_t)(TLV_UAP_MAX_STA_CNT >> 8);
+        body[bodyLen++] = 0x02; body[bodyLen++] = 0x00;      // len, as mlan sets it for a SET
+        body[bodyLen++] = 0x04; body[bodyLen++] = 0x00;      // max_sta_count = 4
+    }
     if (pr.body == BODY_ACTION_CHANTLV) {
         // MrvlIEtypes_channel_band_t: type(2) len(2) band_config(1) channel(1),
         // len counting only the payload -- 2, as mlan computes it
@@ -231,11 +347,23 @@ static void runCell(uint8_t pi, uint8_t bssType) {
     }
 
     memset(rx, 0, sizeof(rx));
+    // ★ CARD_TO_HOST_EVENT (0x5C) sampled either side of every cell.  Run 1
+    // took ONE healthy reading and one wedged reading and saw 0x08 -> 0x88,
+    // bit 7 = DN_LD_CP_RDY.  That is not yet a finding: a register sampled
+    // once per phase cannot say whether it OSCILLATES in normal operation, and
+    // this project has retracted three conclusions built on exactly that
+    // mistake.  Sampling every cell turns it into a distribution -- if healthy
+    // cells also read 0x88 before a send, bit 7 at the wedge means nothing.
+    // Cheap (two CMD52s per cell) and non-destructive: unlike HOST_INT_STATUS,
+    // 0x5C does not clear on read.
+    uint8_t csPre = 0, csPost = 0;
+    (void)sdio.cmd52Read(1, Iw416::CARD_STATUS_REG, &csPre);
     SdioHost::Status s = iw416.sendHostCmdBss(pr.cmd, bodyLen ? body : nullptr,
                                               bodyLen, bssType, 0);
     if (s == SdioHost::OK) {
         s = iw416.waitCmdResp(pr.cmd, rx, sizeof(rx), &rxLen, 2000);
     }
+    (void)sdio.cmd52Read(1, Iw416::CARD_STATUS_REG, &csPost);
     c.st         = s;
     c.respCmd    = iw416.lastRespCmd();
     c.respResult = iw416.lastRespResult();
@@ -250,7 +378,15 @@ static void runCell(uint8_t pi, uint8_t bssType) {
     Serial1.print(" result=0x"); printHex16(iw416.lastRespResult());
     Serial1.print(" len=");    Serial1.print(rxLen);
     Serial1.print(" rdlen=");  Serial1.print(iw416.lastCmdRdLen());
-    Serial1.print(" intseen=0x"); Serial1.println(iw416.intStatusSeen(), HEX);
+    Serial1.print(" intseen=0x"); Serial1.print(iw416.intStatusSeen(), HEX);
+    Serial1.print(" cspre=0x");   printHex16(csPre);
+    Serial1.print(" cspost=0x");  printHex16(csPost);
+    Serial1.println();
+
+    if (s == SdioHost::CMD_TIMEOUT && !s_autopsyTaken) {
+        s_autopsyTaken = true;
+        dumpCardRegs("firstfail", false);
+    }
 
     // The reply bytes themselves -- the handoff's success criterion 1 is that
     // the answer is recorded "with the reply bytes quoted", either way.  Dump
@@ -350,6 +486,22 @@ static void reportVerdict() {
             if (!sameAsUnknown) distinct++;
         }
     }
+    // The uAP-interface controls, reported on their own line.  Kept OUT of the
+    // tally above on purpose: these say whether bss_type=1 addressing and
+    // bodied commands work, not whether the AP command family exists.
+    for (uint8_t i = 0; i < kProbeCount; i++) {
+        if (kProbes[i].kind != KIND_CTL_UAP) continue;
+        int prev = -1, next = -1;
+        for (int j = i - 1; j >= 0; j--) if (kProbes[j].kind == KIND_CTL_POS) { prev = j; break; }
+        for (int j = i + 1; j < kProbeCount; j++) if (kProbes[j].kind == KIND_CTL_POS) { next = j; break; }
+        Serial1.print("uap_bsscheck ");  Serial1.print(kProbes[i].name);
+        Serial1.print(" sta_st=");       Serial1.print(statusName(s_cells[i][0].st));
+        Serial1.print(" sta_result=0x"); printHex16(s_cells[i][0].respResult);
+        Serial1.print(" uap_st=");       Serial1.print(statusName(s_cells[i][1].st));
+        Serial1.print(" uap_result=0x"); printHex16(s_cells[i][1].respResult);
+        Serial1.print(" bracketed=");    Serial1.println((posOkAt(prev) && posOkAt(next)) ? 1 : 0);
+    }
+
     Serial1.print("uap_tally bracketed="); Serial1.print((int)bracketed);
     Serial1.print(" distinct_from_neg=");   Serial1.print((int)distinct);
     Serial1.print(" unbracketed=");         Serial1.println((int)unbracketed);
@@ -357,6 +509,117 @@ static void reportVerdict() {
     if (bracketed == 0)   Serial1.println("uap_verdict=INVALID reason=no_bracketed_ap_cells");
     else if (distinct)    Serial1.println("uap_verdict=SUPPORTED");
     else                  Serial1.println("uap_verdict=INDISTINGUISHABLE_FROM_UNKNOWN_CMD");
+}
+
+// Does the command port EVER come back on its own?  The first FAULT 1 runs
+// could only say "not within the ~15 s of commands the matrix issues
+// afterwards", because nothing waited any longer.  That mattered: if the port
+// recovers, Phase 1 can test several SYS_CONFIGURE variants in ONE firmware
+// life; if it does not, every variant costs a card reset and the driver needs a
+// recovery path before it needs anything else.
+//
+// Only runs when the port is actually dead -- when the last positive control
+// answered, this prints n/a and costs nothing.  That is what keeps it out of
+// the QEMU gates' runtime, where nothing wedges.
+static const uint8_t  kRecoverTries    = 30;
+static const uint32_t kRecoverIntervMs = 1000;
+
+static void m2ReleaseWifiReset();   // defined with the board preamble, below
+
+static uint32_t s_drainFrames = 0;
+static void drainSink(void *, const uint8_t *, uint16_t) { s_drainFrames++; }
+
+// Ask the command port once, the way the controls do.
+static bool cmdPortAlive() {
+    uint8_t rx[Iw416::SDIO_BLOCK_SIZE];
+    uint16_t rxLen = 0;
+    SdioHost::Status s = iw416.sendHostCmdBss(Iw416::CMD_GET_HW_SPEC, nullptr, 0,
+                                              Iw416::BSS_TYPE_STA, 0);
+    if (s == SdioHost::OK) s = iw416.waitCmdResp(Iw416::CMD_GET_HW_SPEC, rx, sizeof(rx), &rxLen, 2000);
+    return s == SdioHost::OK;
+}
+
+static void probeRecovery() {
+    if (cmdPortAlive()) {
+        Serial1.println("uap_recover=n/a reason=command_port_alive_at_end");
+        return;
+    }
+    // ★ THE DATA PORT, BEFORE THE PATIENT RETRY.  A hypothesis that fits every
+    // symptom run 1 recorded -- card alive (fwstatus=0xFEDC), ready to accept
+    // downloads (DN_LD_CP_RDY set), but never producing another command reply
+    // -- is that SYS_CONFIGURE made the firmware post something on the DATA
+    // port (an event), and that an UNDRAINED upload holds the command port off.
+    // This example never services the data port, so it would never have found
+    // out.  Draining here makes it a CAUSAL test rather than another
+    // correlation: if the port answers immediately after a drain and not
+    // before, the undrained upload IS the mechanism; if the drain finds
+    // nothing and changes nothing, that whole family of explanations is dead
+    // and Phase 1 stops looking there.
+    bool dropped = false;
+    s_drainFrames = 0;
+    const uint32_t evBefore = iw416.lastEvent();
+    for (uint8_t i = 0; i < 30; i++) (void)iw416.serviceLink(drainSink, nullptr, &dropped, 100);
+    Serial1.print("uap_drain frames=");   Serial1.print((int)s_drainFrames);
+    Serial1.print(" rxdata=");            Serial1.print(iw416.rxDataCount());
+    Serial1.print(" dropped=");           Serial1.print(dropped ? 1 : 0);
+    Serial1.print(" event_before=0x");    printHex16((uint16_t)evBefore);
+    Serial1.print(" event_after=0x");     printHex16((uint16_t)iw416.lastEvent());
+    Serial1.print(" event_info=0x");      printHex16((uint16_t)iw416.lastEventInfo());
+    Serial1.println();
+    dumpCardRegs("postdrain", false);
+    if (cmdPortAlive()) {
+        Serial1.println("uap_recover=drain reason=command_port_answered_after_data_port_drain");
+        return;
+    }
+    for (uint8_t t = 1; t <= kRecoverTries; t++) {
+        delay(kRecoverIntervMs);
+        if (cmdPortAlive()) {
+            Serial1.print("uap_recover="); Serial1.print((int)t);
+            Serial1.println(" unit=tries");
+            return;
+        }
+    }
+    Serial1.print("uap_recover=never tries="); Serial1.print((int)kRecoverTries);
+    Serial1.print(" interval_ms=");            Serial1.println((int)kRecoverIntervMs);
+
+    // ★ THE LAST OF THE FOUR UNKNOWNS FAULT 1 WAS LEFT WITH: is a CARD reset
+    // enough to get the command port back, or does the module need a power
+    // cycle?  Every run so far started from a board reset, so recovery was
+    // never tested in isolation -- and the answer decides whether Phase 1 can
+    // iterate at all.  If a card reset works, a uAP driver can recover in the
+    // field and a bench run can try several variants per flash; if only a power
+    // cycle does, every SYS_CONFIGURE experiment costs a human at the board.
+    //
+    // This repeats exactly what setup() does, in the same order, so a failure
+    // here is a failure of the reset path and not of some shortcut.
+#if defined(HAVE_IW416_FW)
+    Serial1.println("uap_reinit=attempting");
+    m2ReleaseWifiReset();
+    SdioHost::Status rs = sdio.begin();
+    Serial1.print("uap_reinit sdio="); Serial1.print(statusName(rs));
+    if (rs == SdioHost::OK) {
+        rs = iw416.begin();
+        Serial1.print(" iw416="); Serial1.print(statusName(rs));
+    }
+    if (rs == SdioHost::OK) {
+        rs = iw416.downloadFirmware(iw416_fw, iw416_fw_len);
+        Serial1.print(" fw="); Serial1.print(statusName(rs));
+    }
+    if (rs == SdioHost::OK) {
+        (void)iw416.refreshIoPort();
+        delay(50);
+        (void)iw416.enableHostInt();
+        uint8_t mac[6]; uint32_t rel = 0; uint16_t hw = 0;
+        rs = iw416.getHwSpec(mac, &rel, &hw);
+        Serial1.print(" hwspec="); Serial1.print(statusName(rs));
+    }
+    Serial1.println();
+    Serial1.print("uap_reinit=");
+    Serial1.println(rs == SdioHost::OK ? "recovered" : "failed");
+    dumpCardRegs("postreinit", false);
+#else
+    Serial1.println("uap_reinit=skipped reason=no_blob_to_redownload");
+#endif
 }
 
 // --- board preamble ----------------------------------------------------------
@@ -434,6 +697,8 @@ void setup() {
                     dumpBytes(s_mac, 6);
                     Serial1.println();
                     s_haveCard = true;
+                    // The baseline every later dump is compared against.
+                    dumpCardRegs("init", false);
                 }
             }
         }
@@ -460,6 +725,9 @@ void setup() {
             for (uint8_t b = 0; b < 2; b++) runCell(i, b);
         }
         reportVerdict();
+        probeRecovery();
+        // Last read of the run, so this one may safely consume HOST_INT_STATUS.
+        dumpCardRegs("final", true);
     }
 
     Serial1.println("uap_probe_done");

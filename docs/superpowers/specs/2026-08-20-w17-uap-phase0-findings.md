@@ -86,7 +86,19 @@ This is the tree's own method (bisect one variable, controls at both ends)
 applied to a command matrix, and it is the difference between run 1's wrong
 answer and run 2's right one — same firmware, same driver, ten minutes apart.
 
-## ★ FAULT 1 (OPEN): `SYS_CONFIGURE` 0x00B0 kills the command port
+## ★ FAULT 1 (INVESTIGATED 2026-08-21 — see below for what changed)
+
+> **The account in this section was written on 2026-08-20 and its conclusion
+> had an uncontrolled variable.** Every row that answered in those runs was
+> empty-bodied and both rows that wedged carried a body, so "0x00B0 is the
+> killer" and "a bodied command is the killer" fit the evidence equally well.
+> The follow-up run closed that, and three more besides: see
+> **[FAULT 1, investigated](#fault-1-investigated-2026-08-21)** at the end of
+> this document and the `W17 FAULT 1, INVESTIGATED` section of
+> `examples/networking/m2_uap_probe/transcript_hw_evkb.txt`. The section below
+> is kept as written, because the confound is the lesson.
+
+## FAULT 1 as first recorded (2026-08-20): `SYS_CONFIGURE` 0x00B0 kills the command port
 
 Not "unsupported" — the port dies. After it, no packet of any kind arrives
 again: `CMD_PORT_UPLD` is never raised, `int_seen` stays `0xC2`,
@@ -182,3 +194,79 @@ No blob and no credentials: `build/` is deliberately the fresh-clone build, and
 both gates require it (the model gate refuses a build that supplies a blob,
 because the model cannot do a download). The silicon builds live in
 `build-hw/` (combo blob) and `build-hw-wlan/` (Wi-Fi-only blob).
+
+
+## FAULT 1, investigated (2026-08-21)
+
+Four more runs on the same board and card, three on the default matrix and one
+on an `action=SET` variant. **The wedge reproduced in every run.** Full
+evidence, with the reply bytes and the raw captures, is in the transcript.
+
+### Settled
+
+- **It is the command, not the body.** Two new controls: the reserved id
+  `0x7FFE` *carrying* `action(2)` answers `NOT_SUPPORT` on both interfaces, and
+  `HostCmd_CMD_802_11_MAC_ADDRESS` 0x004D (action(2)+mac(6), size 16) —
+  **mlan's own** uAP-addressed init command, `wlan_get_mac_addr_uap()` —
+  answers `RESULT_OK` on `bss_type=1` with the real MAC in the body. A bodied
+  command on the uAP interface is not merely accepted but understood.
+- **Action, TLV and size are all ruled out.** Three forms, each sent first in
+  its own firmware life: bare GET (size 10), GET + `CHAN_BAND` TLV (16),
+  SET + `MAX_STA_CNT` TLV (16, mlan's own SET shape). All three wedge
+  identically. `MACADDR.uap` is also 16 bytes and is answered.
+- **The firmware does not crash.** `fwstatus` reads `0xFEDC` (FIRMWARE_READY)
+  before, at the moment of failure, and after; CMD52 keeps working; the I/O
+  port is unchanged. The card is alive and answers nothing.
+- **The wedge has a register signature.** `CARD_TO_HOST_EVENT` (0x5C) reads a
+  constant `0x0008` across every healthy command — sampled either side of all
+  34/38 cells per run, so this is a distribution and not a single reading — and
+  shows `0x0088` (bit 7, `DN_LD_CP_RDY`) in exactly the window of the command
+  that kills the port, in both runs, on two different forms. What bit 7 *means*
+  here is not claimed; that it is a reproducible trigger is.
+- **The data port is not involved.** Thirty `serviceLink()` passes after the
+  wedge found no frames, no data and no event, and draining did not bring the
+  command port back. The "undrained upload holds off the command port" family
+  is eliminated.
+- **No self-recovery** in ~90 s (30 retries at 1 s, each also costing its 2 s
+  timeout). Previously only "not within ~15 s".
+- **`MACADDR.uap` is not the missing prerequisite** — it ran immediately
+  before, bracketed by controls that answered, and `SYS_CONFIGURE` wedged
+  anyway. And `bss_num=0` is what mlan uses for uAP
+  (`mlan_glue.c`, `bss_attr[1].bss_num = 0`), so that open question is answered
+  from the reference: what we sent is what mlan sends.
+- **Incidental, and load-bearing for Phase 1:** the uAP interface reports the
+  **same MAC** as the STA interface. No separate uAP address is provisioned.
+
+### Still open
+
+- **Whether a card reset recovers it.** The probe has the test
+  (`uap_reinit=`, M.2 reset GPIO + blob re-download without rebooting the MCU)
+  and it is built and committed, but it never ran: the MCU-Link debug port
+  stopped connecting (`Wire not connected` / `No connection to chip's debug
+  port`) before the image could be flashed, while the board kept running and
+  heartbeating. Needs a physical re-plug or reset button, then one run. **This
+  is the datum that decides whether Phase 1 can iterate on the bench** — if a
+  card reset works, a variant can be tried per reset instead of per flash, and
+  the driver can recover in the field.
+- **Why the handler dies.** Inside a closed blob, not answerable from outside.
+- **Whether a prerequisite other than `MAC_ADDRESS` exists.** Narrowed, not
+  closed: mlan's init sends nothing else to `bss_type=1`.
+
+### What Phase 1 inherits
+
+`SYS_CONFIGURE` cannot be used as the configuration path until this is
+resolved, and no amount of reshaping the request will do it — three shapes
+covering both action directions and both TLV states all fail the same way. The
+next moves, in order: settle the card-reset question (one run), then look for a
+prerequisite outside mlan's init path — how `wlan.c` reaches
+`WLAN_BSS_ROLE_UAP`, and whether a `BSS_MODE`/role command precedes
+configuration on this firmware.
+
+### One more thing the probe now carries
+
+`M2_UAP_SYSCFG_SET_FIRST` (CMake option, default OFF) puts an `action=SET`
+`SYS_CONFIGURE` first in the matrix. It exists because **the first
+`SYS_CONFIGURE` of a run is the only one whose reading survives** — it takes
+the port with it and every later row is unbracketed — so a variant can only be
+tested by being put first, one variant per firmware life. Default OFF so the
+gated build keeps the matrix the QEMU gates assert.

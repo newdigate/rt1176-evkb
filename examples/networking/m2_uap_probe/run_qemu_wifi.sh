@@ -113,7 +113,7 @@ grep -q "^hb card=1" "$OUT" || { echo "FAIL: never reached a serviced card"; exi
 # something if the controls themselves are read, and a control that quietly
 # stopped being emitted would silently turn every AP row unbracketed while the
 # verdict happily reported on whatever was left.
-for N in a b c d e f g; do
+for N in a b c d e e2 e3 f g; do
     for B in 0 1; do
         grep -q "^uap_probe cmd=0x0003 name=HWSPEC.ctl+.$N bss=$B st=ok " "$OUT" || {
             echo "FAIL: positive control $N did not answer on bss=$B"
@@ -133,6 +133,26 @@ for N in a b; do
             exit 1; }
     done
 done
+
+# --- W17 FAULT 1: the body / uAP-interface controls -------------------------
+# These separate "SYS_CONFIGURE is the port-killer" from "a bodied command on
+# this port is the port-killer" — a distinction the first silicon runs could
+# not make, because every row that answered there was empty-bodied and both
+# rows that wedged carried a body. They are asserted here so the controls
+# cannot quietly stop being emitted between now and the next silicon run; the
+# model does not reproduce the wedge, so this gate proves the rows RUN and are
+# READ, not what silicon answers.
+for B in 0 1; do
+    grep -q "^uap_probe cmd=0x7FFE name=RSVD.body bss=$B st=ok .* result=0x0001 " "$OUT" || {
+        echo "FAIL: the bodied reserved-id control did not answer on bss=$B"
+        echo "      (expected st=ok result=0x0001 — this row is what says a 10-byte"
+        echo "       bodied command reaches the parser at all)"; exit 1; }
+    grep -q "^uap_probe cmd=0x004D name=MACADDR.uap bss=$B st=ok " "$OUT" || {
+        echo "FAIL: the uAP-interface control (MAC_ADDRESS GET) did not answer on bss=$B"
+        exit 1; }
+done
+grep -q "^uap_bsscheck MACADDR.uap .* bracketed=1[[:space:]]*$" "$OUT" || {
+    echo "FAIL: the uAP-interface control was not reported, or was not bracketed"; exit 1; }
 
 # --- THE AP ROWS -------------------------------------------------------------
 # The model answers unmodelled commands with HostCmd_RESULT_ERROR, so each AP
@@ -178,5 +198,23 @@ grep -q "^uap_verdict=INDISTINGUISHABLE_FROM_UNKNOWN_CMD[[:space:]]*$" "$OUT" ||
 if grep -q "^uap_verdict=SUPPORTED" "$OUT"; then
     echo "FAIL: claimed uAP support against a model that has no AP commands"; exit 1
 fi
+# --- W17 FAULT 1: the card-state autopsy and the recovery probe -------------
+# Nothing wedges on this model, so both readings have a KNOWN value here and
+# asserting them is what stops the autopsy from rotting into dead code between
+# silicon runs — the failure mode being that it silently stops reading the card
+# and the next wedge is diagnosed with no state again.
+for T in init final; do
+    grep -q "^uap_cardreg tag=$T cmd52=ok .* fwstatus=0xFEDC " "$OUT" || {
+        echo "FAIL: the '$T' card-state dump is missing, could not read the card over"
+        echo "      CMD52, or did not see FIRMWARE_READY — on this model the firmware"
+        echo "      is always up, so anything else means the dump itself is broken"
+        exit 1; }
+done
+# The port is alive at the end here, so the recovery loop must NOT run: if this
+# ever reads a number or 'never', the model started dropping command replies and
+# every reading above is suspect.
+grep -q "^uap_recover=n/a reason=command_port_alive_at_end[[:space:]]*$" "$OUT" || {
+    echo "FAIL: the command port did not survive the matrix on a model where"
+    echo "      nothing wedges it"; exit 1; }
 grep -q "^uap_probe_done[[:space:]]*$" "$OUT" || { echo "FAIL: probe never completed"; exit 1; }
 echo "PASS: the probe reached a correct NEGATIVE — every AP command indistinguishable from the reserved id, on both bss values"

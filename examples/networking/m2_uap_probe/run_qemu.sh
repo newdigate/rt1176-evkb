@@ -43,6 +43,15 @@ echo "==== captured UART ===="; cat "$OUT"
 grep -q "RT1176 M.2 uAP probe up" "$OUT" || { echo "FAIL: banner missing"; exit 1; }
 grep -q "^sdio_begin=cmd5-no-response" "$OUT" || {
     echo "FAIL: expected the cmd5-no-response fallback"; exit 1; }
+# The new W17 FAULT 1 readings are subject to the same vacuity rule as the
+# probe cells: with no card there is nothing to read, so a card-state dump or a
+# recovery verdict appearing here would be invented rather than measured.
+if grep -q "^uap_cardreg " "$OUT"; then
+    echo "FAIL: dumped card registers with no card present"; exit 1
+fi
+if grep -q "^uap_recover=" "$OUT"; then
+    echo "FAIL: reported a command-port recovery verdict with no card present"; exit 1
+fi
 grep -q "^uap_probe_done[[:space:]]*$" "$OUT" || { echo "FAIL: probe never completed"; exit 1; }
 grep -q "^hb card=0" "$OUT" || { echo "FAIL: no heartbeat, or it claimed a card"; exit 1; }
 # THE VACUITY GUARDS. With no card there is nothing to ask, so any probe cell
