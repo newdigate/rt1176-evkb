@@ -1716,6 +1716,12 @@ target_include_directories(wifi_server_test.elf PRIVATE ${CMAKE_CURRENT_BINARY_D
 target_link_libraries(wifi_server_test.elf stdc++)
 ```
 
+★ **Check this literal code against the live headers before pasting.** It was
+written before `WiFiServer`, `WiFiClient` and the pool existed, and three
+earlier tasks' literal code had gone stale the same way. In particular
+`WiFiServer::lastError()` and `WiFiPool::stallAborts()/acceptRefusals()` were
+added during Task 9's review and are used below — confirm their exact spelling.
+
 - [ ] **Step 4: The sketch**
 
 `wifi_server_test.cpp`:
@@ -1767,16 +1773,36 @@ void loop() {
     if (server) {
         WiFiClient c = server.available();
         if (c) {
+            // ★ BOUNDED BY A SNAPSHOT, and it has to be.  The obvious
+            // `while ((n = c.read(buf, sizeof buf)) > 0)` is NOT bounded:
+            // since Task 7, read() runs a service pass and re-checks when the
+            // staged chain empties, so a peer that keeps sending keeps the
+            // loop fed and loop() never returns -- the heartbeat this gate
+            // asserts would stop.  wifi_peer.py is exactly such a peer, so
+            // that is the primary case here, not a corner one.
             uint8_t buf[256];
-            int n;
-            // Bounded per pass: echo what is there, then return to loop().
-            while ((n = c.read(buf, sizeof(buf))) > 0) c.write(buf, (size_t)n);
+            int budget = c.available();          // snapshot ONCE
+            while (budget > 0) {
+                size_t want = (budget < (int)sizeof(buf)) ? (size_t)budget
+                                                          : sizeof(buf);
+                int n = c.read(buf, want);
+                if (n <= 0) break;
+                c.write(buf, (size_t)n);
+                budget -= n;
+            }
         }
     }
     if (millis() - lastBeat >= 1000) {
         lastBeat = millis();
         Serial1.print("alive=");  Serial1.print(++beats);
-        Serial1.print(" evict="); Serial1.println(WiFiPool::evictions());
+        // All three "a connection vanished / was refused" counters, plus the
+        // listener's own failure code.  This example exists to be diagnosed
+        // from its transcript: a starved server must be a number, not silence.
+        Serial1.print(" srv=");    Serial1.print(server ? 1 : 0);
+        Serial1.print('/');        Serial1.print(server.lastError());
+        Serial1.print(" evict=");  Serial1.print(WiFiPool::evictions());
+        Serial1.print(" stall=");  Serial1.print(WiFiPool::stallAborts());
+        Serial1.print(" refuse="); Serial1.println(WiFiPool::acceptRefusals());
     }
 }
 ```
