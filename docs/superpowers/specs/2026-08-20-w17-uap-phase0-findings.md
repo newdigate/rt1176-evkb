@@ -332,7 +332,16 @@ easy ones to get wrong, and one wrong length mis-parses everything after it.
 
 ### Still open
 
-- Whether **`BSS_START`** actually brings the BSS up. Untested, and it transmits.
+- Whether **`BSS_START`** actually brings the BSS up. The sequence is **written,
+  built and gated** (`-DM2_UAP_PROBE_BSS_START=ON`) but has not run on silicon:
+  the MCU-Link debug port dropped again before it could be flashed. It
+  configures first, starts, services the link for the card's own
+  `EVENT_MICRO_AP_BSS_START`, holds ~60 s so another radio can scan for the
+  SSID, reads `STA_LIST`, and **always** sends `BSS_STOP` — including on the
+  not-started branch, so a missed branch cannot leave a radio on air. The
+  external oracle is prepared: `system_profiler SPAirPortDataType` sees four
+  networks here and `RT1176-UAP-TEST` is absent, so a later sighting means
+  something.
 - **WPA2** — AKMP / cipher / passphrase TLVs on the same builder, and with them
   the repo's standing SSID/PSK rule.
 - Why a partial request *kills the port* rather than being rejected. Inside a

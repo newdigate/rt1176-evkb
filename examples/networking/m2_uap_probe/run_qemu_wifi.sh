@@ -87,6 +87,31 @@ gate_reap $P
 gate_require_capture "$OUT"
 echo "==== captured UART ===="; cat "$OUT"
 grep -q "RT1176 M.2 uAP probe up" "$OUT" || { echo "FAIL: banner missing"; exit 1; }
+
+# ★ THE GATED BUILD MUST NOT TRANSMIT, asserted directly rather than by proxy.
+# This used to check that the BSS_START/BSS_STOP matrix rows printed SKIPPED.
+# Once those rows moved into a real start/stop SEQUENCE that only exists under
+# -DM2_UAP_PROBE_BSS_START, the SKIPPED lines stopped being emitted at all and
+# the old check would have had to be deleted -- taking the only "does not
+# transmit" assertion with it.  This is the stronger replacement: the sequence
+# announces itself, and its announcement must be absent.
+if grep -q "^uap_bss_seq=begin" "$OUT"; then
+    echo "FAIL: this build RUNS THE TRANSMITTING SEQUENCE and must not be gated"
+    echo "      (M2_UAP_PROBE_BSS_START is ON in the gated build directory)"; exit 1
+fi
+for T in "^uap_bss cmd=0x00B1" "^uap_bss=beaconing"; do
+    if grep -q "$T" "$OUT"; then
+        echo "FAIL: found evidence of BSS_START in a gated run ($T)"; exit 1
+    fi
+done
+# ★ Checked HERE, before anything else, and that position is deliberate. A
+# transmitting build also compiles OUT the trailing positive controls, so the
+# control loop below would fail FIRST and report "positive control f did not
+# answer" -- blaming a missing control for what is actually a build that
+# transmits. Measured, not imagined: that is exactly what it printed before this
+# moved. A safety check has to be the first thing to speak, or it gets
+# pre-empted by its own side effects.
+
 # THE NEGATIVE THAT MAKES THE REST MEAN SOMETHING. Without the model attached
 # the board gets a plain SD memory card, which ignores CMD5 — the outcome
 # run_qemu.sh asserts. Every assertion below would then be vacuous.
@@ -168,12 +193,7 @@ for C in 00AE:SYS_INFO 00B3:STA_LIST 00B0:SYSCFG.fullopen 00B0:SYSCFG.chantlv 00
             exit 1; }
     done
 done
-# RF-emitting cells must be compiled out in the gated build.
-for C in 00B1:BSS_START 00B2:BSS_STOP; do
-    ID=${C%%:*}; NAME=${C#*:}
-    grep -q "^uap_probe cmd=0x$ID name=$NAME st=SKIPPED reason=rf_emitting[[:space:]]*$" "$OUT" || {
-        echo "FAIL: $NAME was not skipped — this build TRANSMITS and must not be gated"; exit 1; }
-done
+
 
 # --- Iw416::uapConfigure(), the one SYS_CONFIGURE shape silicon ACCEPTS ------
 # Silicon (2026-08-21) answers this RESULT_OK on both interfaces while every

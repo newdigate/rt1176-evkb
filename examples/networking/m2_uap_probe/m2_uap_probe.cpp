@@ -104,6 +104,12 @@ struct Probe {
     uint8_t     body;         // Body, below
     bool        rfEmitting;   // compiled out unless explicitly enabled
     uint8_t     kind;         // Kind, below
+    // Run this row on the uAP interface ONLY.  BSS_START/BSS_STOP are
+    // meaningless addressed to the STA interface -- mlan sends them on the uAP
+    // priv -- and sending a start to bss_type=0 would be asking the firmware to
+    // do something undefined while an AP is coming up.  Trailing member so the
+    // rows above value-initialise it to false.
+    bool        uapOnly;
 };
 // CTL_POS: a command this firmware definitely has.  CTL_NEG: an id nothing
 // defines.  AP: the rows the whole example exists to read.  Only AP rows feed
@@ -198,8 +204,6 @@ static const Probe kProbes[] = {
     { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.c",  BODY_NONE,   false, KIND_CTL_POS },
     { Iw416::CMD_APCMD_STA_LIST,      "STA_LIST",       BODY_NONE,   false, KIND_AP      },
     { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.d",  BODY_NONE,   false, KIND_CTL_POS },
-    { Iw416::CMD_APCMD_BSS_START,     "BSS_START",      BODY_NONE,   true,  KIND_AP      },
-    { Iw416::CMD_APCMD_BSS_STOP,      "BSS_STOP",       BODY_NONE,   true,  KIND_AP      },
     { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.e",  BODY_NONE,   false, KIND_CTL_POS },
     // --- W17 FAULT 1 rows: what the first silicon runs could NOT separate ---
     // Every row that ANSWERED above is empty-bodied, and both rows that wedged
@@ -253,10 +257,18 @@ static const Probe kProbes[] = {
     { Iw416::CMD_APCMD_SYS_CONFIGURE, "SYSCFG.setmaxsta", BODY_SET_MAXSTA, false, KIND_AP },
     { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.e4", BODY_NONE,   false, KIND_CTL_POS },
 #endif
+#if !defined(M2_UAP_PROBE_BSS_START)
+    // ★ COMPILED OUT when BSS_START is enabled, and this is load-bearing rather
+    // than tidy: these two rows are the KNOWN port-killers.  Left in, they would
+    // wedge the command port before BSS_START could ever be sent, and the run
+    // would report a dead port as if starting the BSS had killed it -- charging
+    // one command's fault to another, which is exactly the misreading the
+    // bracketing rule exists to prevent.
     { Iw416::CMD_APCMD_SYS_CONFIGURE, "SYSCFG.chantlv", BODY_ACTION_CHANTLV, false, KIND_AP },
     { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.f",  BODY_NONE,   false, KIND_CTL_POS },
     { Iw416::CMD_APCMD_SYS_CONFIGURE, "SYSCFG.bare",    BODY_ACTION, false, KIND_AP      },
     { Iw416::CMD_GET_HW_SPEC,         "HWSPEC.ctl+.g",  BODY_NONE,   false, KIND_CTL_POS },
+#endif
     // The negative control again, at the other end.
     { 0x7FFE,                         "RSVD.ctl-.b",    BODY_NONE,   false, KIND_CTL_NEG },
 };
@@ -572,6 +584,110 @@ static void reportVerdict() {
     else                  Serial1.println("uap_verdict=INDISTINGUISHABLE_FROM_UNKNOWN_CMD");
 }
 
+static void m2ReleaseWifiReset();   // defined with the board preamble, below
+static bool cmdPortAlive();         // defined with the recovery probe, below
+
+#if defined(M2_UAP_PROBE_BSS_START)
+// --- BSS_START: the AP actually goes on air ----------------------------------
+// ★ THIS TRANSMITS.  Open network, no upstack behind it (no DHCP server and no
+// netif yet, so a client can associate at most and get nothing), on the channel
+// the configuration named, and it is stopped again at the end of the sequence.
+//
+// Ordering is the experiment, as everywhere else in this example: the BSS is
+// configured FIRST (SYSCFG.fullopen, the only shape this firmware accepts) and
+// only then started.  Starting an unconfigured BSS would beacon with whatever
+// the firmware defaults to, which is both less informative and less polite.
+//
+// The oracle is deliberately NOT our own print.  Three things are asked for:
+//   * the firmware's own RESULT for BSS_START,
+//   * the card's own EVENT (EVENT_MICRO_AP_BSS_START 0x2E / BSS_ACTIVE 0x44) --
+//     un-fakeable by us, since we do not synthesise events,
+//   * a positive control afterwards, so "the AP started" is never inferred from
+//     a command port that has quietly died.
+// The fourth and best oracle is external and belongs to the operator: while the
+// hold window runs, ANOTHER DEVICE should see the SSID in a scan.  A radio that
+// a second radio can hear is the only proof that really settles it.
+static uint32_t s_bssFrames = 0;
+static void bssSink(void *, const uint8_t *, uint16_t) { s_bssFrames++; }
+
+#ifndef M2_UAP_BSS_HOLD_MS
+#define M2_UAP_BSS_HOLD_MS 60000     // long enough to scan for it from elsewhere
+#endif
+
+static void serviceFor(uint32_t ms, const char *tag) {
+    bool dropped = false;
+    const uint32_t t0 = millis();
+    while (millis() - t0 < ms) (void)iw416.serviceLink(bssSink, nullptr, &dropped, 100);
+    Serial1.print("uap_bss_service tag="); Serial1.print(tag);
+    Serial1.print(" frames=");             Serial1.print((int)s_bssFrames);
+    Serial1.print(" lastevent=0x");        printHex16((uint16_t)iw416.lastEvent());
+    Serial1.print(" eventinfo=0x");        printHex16((uint16_t)iw416.lastEventInfo());
+    Serial1.print(" dropped=");            Serial1.println(dropped ? 1 : 0);
+}
+
+static bool oneUapCmd(uint16_t cmd, const char *name) {
+    static uint8_t rx[Iw416::SDIO_BLOCK_SIZE * 4];
+    uint16_t rxLen = 0;
+    uint8_t csPre = 0, csPost = 0;
+    (void)sdio.cmd52Read(1, Iw416::CARD_STATUS_REG, &csPre);
+    SdioHost::Status s = iw416.sendHostCmdBss(cmd, nullptr, 0, Iw416::BSS_TYPE_UAP, 0);
+    if (s == SdioHost::OK) s = iw416.waitCmdResp(cmd, rx, sizeof(rx), &rxLen, 5000);
+    (void)sdio.cmd52Read(1, Iw416::CARD_STATUS_REG, &csPost);
+    Serial1.print("uap_bss cmd=0x");   printHex16(cmd);
+    Serial1.print(" name=");           Serial1.print(name);
+    Serial1.print(" st=");             Serial1.print(statusName(s));
+    Serial1.print(" result=0x");       printHex16(iw416.lastRespResult());
+    Serial1.print(" len=");            Serial1.print(rxLen);
+    Serial1.print(" cspre=0x");        printHex16(csPre);
+    Serial1.print(" cspost=0x");       printHex16(csPost);
+    Serial1.println();
+    return s == SdioHost::OK && iw416.lastRespResult() == Iw416::RESULT_OK;
+}
+
+static void runBssStartSequence() {
+    Serial1.println("uap_bss_seq=begin -- THIS TRANSMITS");
+    // The configuration must already have been accepted, or starting is
+    // meaningless.  Report it rather than assume it.
+    Serial1.print("uap_bss_precheck cfg_ok=");
+    Serial1.println(iw416.lastRespResult() == Iw416::RESULT_OK ? 1 : 0);
+
+    const bool started = oneUapCmd(Iw416::CMD_APCMD_BSS_START, "BSS_START");
+    serviceFor(3000, "post_start");
+    Serial1.print("uap_bss_ctl_after_start=");
+    Serial1.println(cmdPortAlive() ? "ok" : "DEAD");
+
+    if (started) {
+        Serial1.print("uap_bss=beaconing ssid="); Serial1.print(M2_UAP_CONFIG_SSID);
+        Serial1.print(" chan=");                  Serial1.print((int)M2_UAP_CONFIG_CHANNEL);
+        Serial1.print(" hold_ms=");               Serial1.println((int)M2_UAP_BSS_HOLD_MS);
+        // STA_LIST during the hold is the card's own view of who joined -- the
+        // oracle the future join gates will use, exercised here for the first
+        // time against a BSS that is actually up.
+        serviceFor(M2_UAP_BSS_HOLD_MS, "hold");
+        static uint8_t rx[Iw416::SDIO_BLOCK_SIZE];
+        uint16_t rxLen = 0;
+        if (iw416.sendHostCmdBss(Iw416::CMD_APCMD_STA_LIST, nullptr, 0,
+                                 Iw416::BSS_TYPE_UAP, 0) == SdioHost::OK &&
+            iw416.waitCmdResp(Iw416::CMD_APCMD_STA_LIST, rx, sizeof(rx), &rxLen, 2000) == SdioHost::OK) {
+            Serial1.print("uap_bss_stalist len="); Serial1.print(rxLen);
+            Serial1.print(" bytes=");              dumpBytes(rx, rxLen > 24 ? 24 : rxLen);
+            Serial1.println();
+        } else {
+            Serial1.println("uap_bss_stalist=FAILED");
+        }
+    } else {
+        Serial1.println("uap_bss=not_started -- BSS_STOP still sent, so nothing is left on air");
+    }
+
+    // ALWAYS, started or not: leaving a radio beaconing because a branch was
+    // missed is not a failure mode this example is going to have.
+    (void)oneUapCmd(Iw416::CMD_APCMD_BSS_STOP, "BSS_STOP");
+    Serial1.print("uap_bss_ctl_after_stop=");
+    Serial1.println(cmdPortAlive() ? "ok" : "DEAD");
+    Serial1.println("uap_bss_seq=end");
+}
+#endif  // M2_UAP_PROBE_BSS_START
+
 // Does the command port EVER come back on its own?  The first FAULT 1 runs
 // could only say "not within the ~15 s of commands the matrix issues
 // afterwards", because nothing waited any longer.  That mattered: if the port
@@ -585,7 +701,6 @@ static void reportVerdict() {
 static const uint8_t  kRecoverTries    = 30;
 static const uint32_t kRecoverIntervMs = 1000;
 
-static void m2ReleaseWifiReset();   // defined with the board preamble, below
 
 static uint32_t s_drainFrames = 0;
 static void drainSink(void *, const uint8_t *, uint16_t) { s_drainFrames++; }
@@ -783,9 +898,12 @@ void setup() {
                 continue;
             }
 #endif
-            for (uint8_t b = 0; b < 2; b++) runCell(i, b);
+            for (uint8_t b = kProbes[i].uapOnly ? 1 : 0; b < 2; b++) runCell(i, b);
         }
         reportVerdict();
+#if defined(M2_UAP_PROBE_BSS_START)
+        runBssStartSequence();
+#endif
         probeRecovery();
         // Last read of the run, so this one may safely consume HOST_INT_STATUS.
         dumpCardRegs("final", true);

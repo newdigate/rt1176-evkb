@@ -35,8 +35,6 @@ uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=0 st=ok resp=0x8003 type=1 result=0x
 uap_bytes HWSPEC.ctl+.d.bss0 2200010003801E000F00000000000172000020006C1DEB910C4510000200155C109B0000000000000000000000000000
 uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x000D cspost=0x000D
 uap_bytes HWSPEC.ctl+.d.bss1 2200010003801E001000000000000172000020006C1DEB910C4510000200155C109B0000000000000000000000000000
-uap_probe cmd=0x00B1 name=BSS_START st=SKIPPED reason=rf_emitting
-uap_probe cmd=0x00B2 name=BSS_STOP st=SKIPPED reason=rf_emitting
 uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x000D cspost=0x000D
 uap_bytes HWSPEC.ctl+.e.bss0 2200010003801E001100000000000172000020006C1DEB910C4510000200155C109B0000000000000000000000000000
 uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x000D cspost=0x000D
