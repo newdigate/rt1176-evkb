@@ -14,10 +14,29 @@ round trip through lwip and the radio.
   fill <ip>        4 idle connections (they never send, so the sketch's
                    available()-based loop never claims them), then a 5th
                    connect + echo that can only succeed through the pool's
-                   EVICTION valve.  Cross-check: the board's evict= counter
-                   moves (see the caveat below before asserting it is 1).
+                   EVICTION valve -- and this side then CONFIRMS a peer was
+                   evicted, rather than inferring it (see ★ SELF-VERIFYING).
+                   Prints `fill evicted_peers=N`.  The board's evict= counter
+                   is the cross-check (read the caveat before expecting 1).
   all <ip>         the three in order; prints WIFISRV <test> PASS/FAIL lines
 Exit status is 0 only if every test selected passed.  Python 3 stdlib only.
+
+★ SELF-VERIFYING `fill`, because the obvious version is not.  "The 5th echo
+worked" does NOT imply anything was evicted: a server with more slots, or one
+that simply never fills, passes that test identically -- measured, against a
+stand-in whose only difference was a larger capacity.  The proof is available
+because eviction is tcp_abort() (WiFiConnPool.cpp), which puts an RST on the
+wire: the evicted peer can SEE it.  So after the 5th echo this script selects
+the four idlers for a couple of seconds and counts how many the board dropped.
+It asserts >= 1, not == 1, and prints the count -- on a real link a lost RST
+should degrade to a diagnosable number, not to a flaky hard FAIL.
+
+★ PAYLOADS MUST FIT ONE TCP SEGMENT, and every message here is ~40 bytes so
+they do.  The board echoes ONE available() snapshot and then closes, so a
+payload split across two segments gets a partial echo followed by a FIN --
+which on a bench reads as intermittent packet loss rather than as the
+one-shot contract working exactly as designed.  Enlarge these messages and
+that is what you will be debugging.
 
 ★ THE BOARD IS A ONE-SHOT SERVER, and this script is written to that contract.
 wifi_server_test.cpp takes a transient `WiFiClient` from server.available()
@@ -30,14 +49,18 @@ static and holds one session open; that is the other half of the API.)
 
 ★ CAVEAT on `fill`, worth reading before you disbelieve a counter: a peer that
 merely CLOSES an unclaimed connection does not free its pool slot -- lwip
-reports the FIN, the slot goes PEER_CLOSED, and the stall valve reaps it
-30-40 s later (WiFiConnPool.cpp connPoll).  So the 4 idlers this test leaves
-behind still occupy slots for up to ~40 s.  Running `fill` (or `all`) twice
-inside that window still PASSES -- the leftovers are unclaimed, so the evictor
-takes them too -- but evict= will then be larger than 1.  Compare the DELTA
-across the run, never the absolute value, and leave ~40 s between runs if you
-want the clean evict=1 reading.
+reports the FIN, the slot goes PEER_CLOSED, and only the stall valve reaps it
+(WiFiConnPool.cpp connPoll).  So the idlers this test leaves behind still
+occupy slots for a while afterwards.  Note WHERE that clock starts, because
+the intuitive answer is wrong: connRecv's FIN branch returns BEFORE it touches
+lastActivityMs, so connPoll measures 30-40 s from the ACCEPT, not from your
+close.  The slots therefore come back SOONER than "40 s after I hung up"
+suggests -- safe in that direction, but do not use your close as the anchor.
+Running `fill` (or `all`) twice inside that window still PASSES -- the
+leftovers are unclaimed, so the evictor takes them too -- but evict= will then
+be larger than 1.  Compare the DELTA across the run, never the absolute value.
 """
+import select
 import socket
 import sys
 import time
@@ -104,23 +127,64 @@ def t_concurrent(ip):
     return ok
 
 
+def _count_dropped(socks, seconds):
+    """How many of these connections did the BOARD drop? Eviction is
+    tcp_abort() (WiFiConnPool.cpp), i.e. an RST, which surfaces here as
+    ConnectionResetError; a graceful close would surface as EOF. Either means
+    the board let go of a connection this side never closed, so both count."""
+    deadline = time.monotonic() + seconds
+    pending, dropped = list(socks), 0
+    while pending:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        readable, _, _ = select.select(pending, [], [], left)
+        if not readable:
+            break                           # nothing more is coming
+        for s in readable:
+            pending.remove(s)               # each socket is judged once
+            try:
+                if s.recv(4096) == b"":
+                    dropped += 1            # FIN
+            except OSError:
+                dropped += 1                # RST -- the eviction path
+    return dropped
+
+
 def t_fill(ip):
     """4 silent connections fill the pool (WIFI_MAX_CONNS == 4); a 5th can only
     be accepted if the eviction valve drops the least-recently-active unclaimed
     one. The idlers must never send: sending would stage bytes, the board's
     available() would surface and CLAIM that conn, and a claimed conn is exempt
     from eviction -- the 5th would then be REFUSED (refuse= climbing) and this
-    test would fail for the opposite reason."""
+    test would fail for the opposite reason.
+
+    Two independent things must hold, and the second is the one that makes this
+    test worth running: the 5th echo must work, AND a peer must actually have
+    been evicted. Without the second, a server with more slots passes this
+    identically -- see ★ SELF-VERIFYING at the top."""
     idlers = [socket.create_connection((ip, PORT), timeout=TIMEOUT)
               for _ in range(4)]
     try:
         time.sleep(1)                       # let the board's accepts land
-        return _echo_once(ip, "evicted")    # 5th conn: needs the valve
+        echoed = _echo_once(ip, "evicted")  # 5th conn: needs the valve
+        dropped = _count_dropped(idlers, 2.0)
+        print(f"    fill evicted_peers={dropped}", flush=True)
+        if not dropped:
+            print("    no idler was dropped -- the 5th connection was accepted "
+                  "without the eviction valve firing", file=sys.stderr)
+        return echoed and dropped >= 1
     finally:
         for s in idlers:
             s.close()
 
 
+# ORDER MATTERS for `all`, and only this dict expresses it: `fill` must run
+# LAST. It leaves 3 unclaimed PEER_CLOSED slots behind (see the ★ CAVEAT), and
+# ahead of `echo`/`concurrent` those still pass but make the board's evict=
+# readings disagree with everything documented here -- the accepts in front of
+# a near-full pool start evicting the leftovers. Reordering this dict silently
+# changes what a bench sees on the serial line.
 TESTS = {"echo": t_echo, "concurrent": t_concurrent, "fill": t_fill}
 
 

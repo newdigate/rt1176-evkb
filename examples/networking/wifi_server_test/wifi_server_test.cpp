@@ -63,6 +63,19 @@ static WiFiServer server(5010);
 // wifi_peer.py compares its own bytes independently.
 static uint32_t s_sessions = 0, s_bytes = 0;
 
+// ListenError -> name.  Six values: LISTEN_OK and five distinct failures.
+static const char *listenErrName(uint8_t e) {
+    switch (e) {
+    case WiFiServer::LISTEN_OK:     return "LISTEN_OK";
+    case WiFiServer::BAD_PORT:      return "BAD_PORT";
+    case WiFiServer::NO_LINK:       return "NO_LINK";
+    case WiFiServer::NO_PCB:        return "NO_PCB";
+    case WiFiServer::BIND_FAILED:   return "BIND_FAILED";
+    case WiFiServer::LISTEN_FAILED: return "LISTEN_FAILED";
+    default:                        return "UNKNOWN";
+    }
+}
+
 void setup() {
     Serial1.begin(115200);
     delay(50);
@@ -78,11 +91,15 @@ void setup() {
     server.begin();     // with no link this must be a clean, falsy no-op
     Serial1.print("server_begin=");
     Serial1.println(server ? "listening" : "ok_nolink");
-    // WHICH of begin()'s five exits, on its own line so a gate and a bench can
-    // both grep it: 0 = LISTEN_OK, 1 = BAD_PORT, 2 = NO_LINK, 3 = NO_PCB,
-    // 4 = BIND_FAILED, 5 = LISTEN_FAILED.  "It did not listen" with no cause
-    // is not a diagnosable transcript.
-    Serial1.print("server_err="); Serial1.println(server.lastError());
+    // WHICH of ListenError's SIX values -- LISTEN_OK plus FIVE distinct
+    // failures -- on its own line so a gate and a bench can both grep it.
+    // "It did not listen" with no cause is not a diagnosable transcript.
+    // The NAME is printed beside the ordinal deliberately: the gate greps the
+    // name, so renumbering the enum cannot red a gate for a non-semantic
+    // reason, and a bench reading a transcript needs no header to hand.
+    Serial1.print("server_err=");  Serial1.print(server.lastError());
+    Serial1.print(" (");           Serial1.print(listenErrName(server.lastError()));
+    Serial1.println(")");
 }
 
 void loop() {
@@ -93,13 +110,17 @@ void loop() {
     if (up && !server) {
         server.begin();
         Serial1.print("server_relisten="); Serial1.print(server ? 1 : 0);
-        Serial1.print(" err="); Serial1.println(server.lastError());
+        Serial1.print(" err="); Serial1.print(server.lastError());
+        Serial1.print(" ("); Serial1.print(listenErrName(server.lastError()));
+        Serial1.println(")");
     }
     if (server) {
         WiFiClient c = server.available();
         if (c) {
             s_sessions++;
-            // ★ BOUNDED BY A SNAPSHOT, and it has to be.  The obvious
+            // ★ BOUNDED ON BOTH SIDES, and each bound is separate.
+            //
+            // RX -- BOUNDED BY A SNAPSHOT.  The obvious
             // `while ((n = c.read(buf, sizeof buf)) > 0)` is NOT bounded:
             // since Task 7, read() runs a service pass and re-checks when the
             // staged chain empties, so a peer that keeps sending keeps the
@@ -108,6 +129,25 @@ void loop() {
             // wifi_peer.py is exactly such a peer, so that is the primary
             // case here, not a corner one.  One pass echoes what was staged
             // when it started, and goes home.
+            //
+            // TX -- BOUNDED BY BAILING ON A SHORT WRITE, which is a different
+            // hazard with the same symptom.  WiFiClient::write blocks up to
+            // WIFI_TX_TIMEOUT_MS (5 s) waiting for room in lwip's send buffer
+            // and then SHORT-WRITES.  Against a peer that stops reading, two
+            // things follow and neither is visible without this check:
+            //   - the un-written bytes are LOST.  read() already consumed them
+            //     from the rx chain, nothing re-queues them, and the peer sees
+            //     a truncated echo that reads as packet loss on the link.
+            //   - each call can burn 5 s, and that is a FLOOR, not a cap:
+            //     the budget restarts on every accepted tcp_write, so a peer
+            //     trickling ACKs stretches it (WiFiClient.h).  With
+            //     TCP_WND = 11680 a single snapshot is up to ~46 calls of this
+            //     size => ~230 s with no heartbeat -- exactly the wedge
+            //     `alive=` exists to catch, and it would be this sketch's own
+            //     doing.
+            // So a short write ends the pass and SAYS SO.  A starved server
+            // must be a number, not silence.  (wifi_peer.py always reads, so
+            // it cannot reach this; the line is for a bench with a real peer.)
             uint8_t buf[256];
             int budget = c.available();          // snapshot ONCE
             while (budget > 0) {
@@ -115,8 +155,15 @@ void loop() {
                                                           : sizeof(buf);
                 int n = c.read(buf, want);
                 if (n <= 0) break;
-                s_bytes += (uint32_t)c.write(buf, (size_t)n);
+                int w = (int)c.write(buf, (size_t)n);
+                s_bytes += (uint32_t)w;
                 budget -= n;
+                if (w < n) {                     // tx stalled 5 s; n-w bytes
+                    Serial1.print("echo_short=");// are gone for good
+                    Serial1.print(n - w);
+                    Serial1.println(" (tx stalled -- peer not reading)");
+                    break;
+                }
             }
         }   // c dies here -> last handle -> the conn is CLOSED.  See the ★
     }       // block at the top: this is a one-shot server, on purpose.

@@ -4,8 +4,9 @@
 # WHAT THIS PROVES: with QEMU's default SD *memory* card (which ignores CMD5),
 # WiFi.begin() fails cleanly with WL_NO_SHIELD (255), a WiFiServer.begin() on
 # that dead stack is a clean no-op -- server_begin=ok_nolink with
-# server_err=2 (WiFiServer::NO_LINK), naming WHICH of begin()'s five exits
-# fired -- and the sketch's heartbeat keeps running, so begin() did not wedge.
+# server_err=... (NO_LINK), naming WHICH of ListenError's five FAILURE values
+# fired (the enum has six; LISTEN_OK is the sixth) -- and the sketch's
+# heartbeat keeps running, so begin() did not wedge.
 #
 # WHAT THIS DOES NOT PROVE -- and the list is longer than what it does:
 #   - NOTHING about accept, data flow, echo, broadcast, or the connection pool.
@@ -51,8 +52,11 @@ grep -q "^wifi_status=255" "$OUT" || { echo "FAIL: expected WL_NO_SHIELD (255) w
 grep -q "^server_begin=ok_nolink" "$OUT" || {
     echo "FAIL: server.begin() on a dead stack must be a clean no-op"; exit 1; }
 # WHICH exit, not just "it did not listen".  A server_begin=ok_nolink with
-# err=4 (BIND_FAILED) would mean something quite different and must not pass.
-grep -q "^server_err=2" "$OUT" || {
-    echo "FAIL: expected WiFiServer::NO_LINK (2) with no lwip"; exit 1; }
+# BIND_FAILED would mean something quite different and must not pass.
+# Keyed on the NAME, not the ordinal: renumbering ListenError is a
+# non-semantic change and must not red a gate.  The sketch prints both
+# ("server_err=2 (NO_LINK)") so a bench still gets the number.
+grep -qE "^server_err=[0-9]+ \(NO_LINK\)" "$OUT" || {
+    echo "FAIL: expected WiFiServer::NO_LINK with no lwip"; exit 1; }
 grep -q "^alive=2" "$OUT" || { echo "FAIL: no heartbeat -- server.begin() wedged?"; exit 1; }
 echo "PASS: WL_NO_SHIELD fallback; server.begin() no-op'd cleanly (NO_LINK); alive"
