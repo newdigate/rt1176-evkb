@@ -237,17 +237,18 @@ evidence, with the reply bytes and the raw captures, is in the transcript.
 - **Incidental, and load-bearing for Phase 1:** the uAP interface reports the
   **same MAC** as the STA interface. No separate uAP address is provisioned.
 
-### Still open
+- **A card reset recovers it — no power cycle, no MCU reboot.** Run 6, after
+  the board was repowered: the wedge reproduced for the fifth time, the port
+  again never recovered on its own, and then
+  `uap_reinit sdio=ok iw416=ok fw=ok hwspec=ok` → **`uap_reinit=recovered`**.
+  The M.2 reset GPIO sequence, a fresh SDIO/IW416 bring-up, a fresh blob
+  download and `GET_HW_SPEC` all succeed and the command port answers again.
+  Two consequences: a uAP driver can **recover in the field** (the wedge is
+  terminal for the firmware life, not for the card), and **the bench can
+  iterate** — a variant costs a card reset, not a reflash, which makes a
+  multi-variant probe in one firmware life the obvious next tool.
 
-- **Whether a card reset recovers it.** The probe has the test
-  (`uap_reinit=`, M.2 reset GPIO + blob re-download without rebooting the MCU)
-  and it is built and committed, but it never ran: the MCU-Link debug port
-  stopped connecting (`Wire not connected` / `No connection to chip's debug
-  port`) before the image could be flashed, while the board kept running and
-  heartbeating. Needs a physical re-plug or reset button, then one run. **This
-  is the datum that decides whether Phase 1 can iterate on the bench** — if a
-  card reset works, a variant can be tried per reset instead of per flash, and
-  the driver can recover in the field.
+### Still open
 - **Why the handler dies.** Inside a closed blob, not answerable from outside.
 - **Whether a prerequisite other than `MAC_ADDRESS` exists.** Narrowed, not
   closed: mlan's init sends nothing else to `bss_type=1`.
@@ -257,10 +258,11 @@ evidence, with the reply bytes and the raw captures, is in the transcript.
 `SYS_CONFIGURE` cannot be used as the configuration path until this is
 resolved, and no amount of reshaping the request will do it — three shapes
 covering both action directions and both TLV states all fail the same way. The
-next moves, in order: settle the card-reset question (one run), then look for a
-prerequisite outside mlan's init path — how `wlan.c` reaches
-`WLAN_BSS_ROLE_UAP`, and whether a `BSS_MODE`/role command precedes
-configuration on this firmware.
+card-reset question is now settled (it recovers), so the next move is a
+**multi-variant probe in one firmware life** — resetting the card between
+variants instead of reflashing — hunting a prerequisite outside mlan's init
+path: how `wlan.c` reaches `WLAN_BSS_ROLE_UAP`, and whether a `BSS_MODE`/role
+command precedes configuration on this firmware.
 
 ### One more thing the probe now carries
 
