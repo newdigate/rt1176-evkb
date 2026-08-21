@@ -1,0 +1,113 @@
+wifi_client_test — silicon transcript, MIMXRT1170-EVKB RevC3
+=============================================================
+
+Date        2026-08-21
+Board       MIMXRT1170-EVKB RevC3, u-blox M2-MAYA-W161 (NXP IW416) in M.2 J54
+Firmware    sduartIW416_wlan_bt.bin.inc (NXP MCUXpresso SDK; never vendored)
+Library     M2Radio arduino/ facade — WiFiClass + WiFiConnPool + WiFiClient
+Bench AP    ESP8266 softAP "ESP8266TEST", WPA2, channel 6, 192.168.4.0/24,
+            also running the TCP echo oracle on 192.168.4.1:4712
+
+★ BENCH CAVEAT — the same one recorded in wifi_server_test's transcript, and
+  it is visible in this capture rather than merely stated.  The M.2 card's RF
+  path is compromised (associates only at ~1 cm, -51 dBm there where -20..-30
+  is expected); a KNOWN OPEN HARDWARE ITEM predating this work, see
+  docs/superpowers/handoff/2026-08-18-w8-next-session.md.  Attempts 1-10 below
+  are that link, not a software fault.  The connection succeeded on attempt 11
+  and then ran clean.
+
+★ EXCERPTED.  The lines below are the transitions from a longer console log.
+
+
+CAPTURE
+-------
+
+wifi_status=1 attempt=9  err=8(SSID_NOT_FOUND) drv=-5(bad-cis) last_event=0x8 info=0xF386000F
+alive=48 tcp=0/0/0 lastfail=0 srv=0/0
+   ... to alive=53 ...
+wifi_status=4 attempt=10 err=10(DHCP_TIMEOUT)  drv=0(ok)       last_event=0xB info=0xA0000
+alive=54 tcp=0/0/0 lastfail=0 srv=0/0
+wifi_status=3 attempt=11 err=0(OK)             drv=0(ok)       last_event=0x0 info=0xA0000
+wifi_ip=192.168.4.100
+wifi_rssi=-51
+alive=55 tcp=0/0/0 lastfail=0 srv=0/0
+alive=56 tcp=1/1/0 lastfail=0 srv=0/0
+alive=57 tcp=1/1/0 lastfail=0 srv=0/0
+alive=58 tcp=2/2/0 lastfail=0 srv=0/0
+   ... tcp= continues climbing with ok == tx and fail == 0 ...
+
+AP side, same window:
+    AP: TCP echo 14 bytes
+    AP alive=483 stations=1
+
+
+WHAT THIS PROVES
+----------------
+
+1. THE CORE, UN-FAKEABLE ASSERTION: `tcp=2/2/0` -- tx == ok, fail == 0.  Every
+   message sent through WiFiClient came back BYTE-EXACT from the ESP oracle at
+   192.168.4.1:4712, and the AP independently logged `TCP echo 14 bytes` from
+   its own side.  The firmware cannot fabricate either.  Full path: board
+   preamble -> SDIO -> IW416 firmware -> association -> DHCP lease -> lwip
+   netif -> WiFiClient TCP round trip.
+
+2. A REAL DHCP LEASE: `wifi_ip=192.168.4.100`, granted by the AP.  WL_CONNECTED
+   is returned only when localIP() is real, so status 3 IS the lease.
+
+3. THE SERVICE PUMP RUNNING.  A steadily climbing `tcp=` with zero failures is
+   the only evidence of this that exists anywhere -- it is MEASURED that the
+   [wifi] QEMU gate is green with a working pump and with a dead one, because
+   with no link servicePass() never reaches iw416NetifPoll().
+
+4. IEEE POWER SAVE ACTIVE AND HARMLESS.  `last_event=0xB` on attempt 10 is
+   EVENT_PS_SLEEP.  PS stays ON by design (the W10 idle-RX-death erratum
+   workaround) and the facade exposes no switch for it.
+
+
+WHAT THE FAILED ATTEMPTS SHOW — read these, they are the useful part
+--------------------------------------------------------------------
+
+The three attempts are three DIFFERENT failure modes, distinguished only
+because WiFiClass::lastError() exists.  status() alone reports 1 / 4 / 3 and
+cannot tell attempt 9 from attempt 10 at all.
+
+  attempt 9   err=8(SSID_NOT_FOUND) drv=-5(bad-cis)
+              The scan COMPLETED and the SSID was not in its results.  Not an
+              association failure.  ★ last_event=0x8 (EVENT_DEAUTHENTICATED,
+              info low bits 0x000F = reason 15 = handshake timeout) is RESIDUE
+              from an earlier attempt -- lastEvent() is sticky and attempt 9
+              never associated.  Do not over-read it on an SSID_NOT_FOUND.
+
+  attempt 10  err=10(DHCP_TIMEOUT) drv=0(ok)
+              connectStation() returned OK -- ASSOCIATED -- and no lease
+              arrived inside the 30 s budget.  The opposite response from
+              attempt 9, and indistinguishable from it without lastError().
+
+  attempt 11  err=0(OK)
+              Clean.
+
+★ THE BUG THIS RUN FOUND, AND IT NEEDED SILICON.  The first report of this
+  symptom was a board sitting at `alive=2359 tcp=0/0/0` for 39 minutes.  Root
+  cause: begin() failed once on the marginal link, and the facade NEVER
+  RETRIED -- m_wantReconnect was raised only by linkLost(), which requires the
+  link to have been UP, so a link that never came up had no recovery path at
+  all, and setAutoReconnect(true) did nothing for it.  Attempts 9-11 above
+  only happened because a retry was added to this sketch to measure it.
+  Fixed in the library: begin() now arms reconnect intent whenever it fails
+  with the card and lwip already up (the association/DHCP class a retry can
+  fix), while deliberately NOT arming bring-up failures -- a missing card does
+  not appear because you asked again.
+  Invisible in QEMU (every attempt fails identically there, the model never
+  associating) and invisible to review, because each component reads correctly
+  in isolation; the gap was between two of them.
+
+
+WHAT THIS DOES NOT PROVE
+------------------------
+
+* Throughput.  Two echoes of 14 bytes.  m2_throughput_test is that instrument.
+* Behaviour on a healthy RF link -- see the bench caveat.
+* WiFiClient::connect()'s REFUSED arm (needs a peer that actively refuses) or
+  hostByName()'s success path (needs a DNS server; the ESP softAP is not one).
+* The reconnect SUCCESS path clearing m_wantReconnect after a genuine link
+  LOSS (as opposed to a failed first connect, which attempts 9-11 do cover).

@@ -1,0 +1,128 @@
+wifi_server_test — silicon transcript, MIMXRT1170-EVKB RevC3
+=============================================================
+
+Date        2026-08-21
+Board       MIMXRT1170-EVKB RevC3, u-blox M2-MAYA-W161 (NXP IW416) in M.2 J54
+Firmware    sduartIW416_wlan_bt.bin.inc (NXP MCUXpresso SDK; never vendored)
+Library     M2Radio arduino/ facade — WiFiClass + WiFiConnPool + WiFiClient +
+            WiFiServer
+Bench AP    ESP8266 softAP "ESP8266TEST", WPA2, channel 6, 192.168.4.0/24
+Peer        Mac joined to the same AP, running examples/networking/
+            wifi_server_test/wifi_peer.py — THE AUTHORITATIVE MEASUREMENT.
+            The board's serial counters below are the cross-check, never the
+            measurement.
+
+★ BENCH CAVEAT, stated because a transcript that hides its conditions is
+  worth less than one that states them.  The M.2 card's RF path is
+  compromised: the board associates only at ~1 cm from the AP and reads
+  -51 dBm there, where -20..-30 would be expected.  This is a KNOWN OPEN
+  HARDWARE ITEM predating this work -- see
+  docs/superpowers/handoff/2026-08-18-w8-next-session.md, which records
+  -81..-84 dBm and that `wlan-set-antcfg 1 / 2 / 0xFFFF` made no difference,
+  i.e. it is not fixable from software.  The M2-MAYA-W161 datasheet
+  (UBX-22004354 R05 p.17) specifies U.FL connectors, J1 = RF_ANT0 = Wi-Fi.
+  Everything below therefore passed on a WORSE link than intended, which
+  makes it a harder test, not a softer one.
+
+
+PEER SIDE (authoritative)
+-------------------------
+
+$ python3 wifi_peer.py all 192.168.4.101
+WIFISRV echo PASS
+WIFISRV concurrent PASS
+    fill evicted_peers=1
+WIFISRV fill PASS
+                                              (exit 0)
+
+
+BOARD SIDE (cross-check)
+------------------------
+
+RT1176 WiFi server test up
+wifi_status=3
+wifi_ip=192.168.4.101
+server_begin=listening
+server_err=0 (LISTEN_OK)
+alive=1 srv=1/0 sess=0/0 evict=0 stall=0 refuse=0
+   ... idle ...
+alive=32 srv=1/0 sess=0/0 evict=0 stall=0 refuse=0
+alive=33 srv=1/0 sess=3/87 evict=0 stall=0 refuse=0
+alive=36 srv=1/0 sess=5/145 evict=0 stall=0 refuse=0
+alive=39 srv=1/0 sess=6/176 evict=1 stall=0 refuse=0
+   ... idle ...
+alive=77 srv=1/0 sess=6/176 evict=1 stall=3 refuse=0
+   ... steady to alive=156, no further change ...
+
+(Full capture is the console log; the lines above are the transitions.)
+
+
+WHAT THIS PROVES
+----------------
+
+None of the following is reachable by ANY QEMU gate in this tree.  The
+IW416 model returns zero scan results by design, so the board never
+associates there and not one line of the accept path, the pool, or the
+client data path executes.  The three gates prove bring-up, a real scan and
+honest failure reporting; everything here is silicon-only.
+
+1. ACCEPT PATH AND HANDLE LIFETIME.  `sess=3/87` after wifi_peer's `echo`:
+   three sequential connections, 29 bytes each, every byte returned
+   byte-exact (the peer FAILs on any mismatch).  lwip's tcp_arg points at a
+   WiFiConnPool slot throughout, never at a WiFiClient.
+
+2. TWO POOL SLOTS LIVE SIMULTANEOUSLY.  `sess=5/145` after `concurrent`:
+   +2 sessions, +58 bytes.  That test stages bytes on BOTH sockets before
+   draining either, and is demonstrated to FAIL against a 1-slot server.
+
+3. THE EVICTION VALVE (design doc section 6), CONFIRMED FROM BOTH SIDES:
+     - peer: `fill evicted_peers=1` -- it select()ed the four idlers and saw
+       exactly one dropped by the board.  Eviction is tcp_abort(), which puts
+       an RST on the wire, so this is the peer observing the mechanism
+       directly rather than inferring it.
+     - board: `evict=1` at alive=39, in the same window.
+   Two independent observers, same count.  This test is demonstrated to FAIL
+   (evicted_peers=0) against a stand-in that has room and never evicts, so a
+   PASS means the valve fired, not merely that the 5th connection worked.
+
+4. THE STALL VALVE, AND ITS TIMING MATCHES THE ARITHMETIC DERIVED IN REVIEW.
+   `stall=3` first appears at alive=77, i.e. +38 s after the fill test's
+   accepts at alive=39.  Task 9's code review derived the window by READING
+   lwip: tcp_poll(..., 20) against TCP_SLOW_INTERVAL = 500 ms gives a 10 s
+   poll cadence, and connPoll's body additionally requires > 30 s idle, so
+   the abort must land in 30-40 s.  38 s is inside that window.
+   The count closes too: `fill` leaves four idle connections, one was
+   evicted (item 3), and the peer closing an UNCLAIMED conn does not free
+   its slot -- connRecv's FIN path returns before touching lastActivityMs,
+   so connPoll measures from the ACCEPT, not from the close.  4 - 1 = 3.
+   Both the timing and the count were predicted from source and then
+   measured.
+
+5. WiFiClient COPY-ASSIGN AND COPY-CONSTRUCT.  `s_session = server.accept()`
+   is a copy-assign and `serveEcho(c)` a copy-construct.  Until Task 9 these
+   were absent from the linked ELF entirely (gc-sections dropped them,
+   because -std=gnu++17 elides `WiFiClient c = server.available();`), so
+   their refcount correctness rested on review and a reverted harness.  This
+   run executes them.
+
+6. THE SERVICE PUMP GENUINELY RUNNING.  Nothing echoes if it is not.  This
+   matters because it is measured that the [wifi] QEMU gate is green with a
+   working pump AND with a dead one -- a defect that permanently killed the
+   pump shipped green through both gates during development and was only
+   caught by instrumenting the image.
+
+7. NO PATHOLOGY.  `refuse=0` throughout: the evictor always had a candidate,
+   so no accept was ever refused.  No `echo_short=` line: the TX path never
+   hit its 5 s no-progress budget, so no consumed byte was dropped.
+   `srv=1/0` throughout: the listener stayed up with LISTEN_OK.
+
+
+WHAT THIS DOES NOT PROVE
+------------------------
+
+* Throughput or sustained load.  Six sessions, 176 bytes.  This is a
+  correctness run; m2_throughput_test is the throughput instrument.
+* Behaviour on a healthy RF link -- see the bench caveat above.
+* Accept refusal (`refuse=`) was never exercised: reaching it needs all four
+  slots CLAIMED, which this sketch cannot do (it holds one session).
+* The DHCP-timeout and reconnect paths -- see wifi_client_test's transcript.
