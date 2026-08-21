@@ -75,6 +75,42 @@ static uint32_t serveEcho(WiFiClient c) {
     return (uint32_t)c.write(buf, (size_t)got);
 }
 
+// --- INSTRUMENT (2026-08-21) -------------------------------------------------
+// A silicon run reached alive=2359 with tcp=0/0/0 while the AP still listed a
+// station.  status() alone cannot say which boundary broke: WL_NO_SHIELD is
+// the shared exit of five bring-up failures and WL_CONNECT_FAILED of three,
+// and the two that matter here -- "the associate was refused" and "we
+// associated but no lease arrived" -- look identical from it.  This prints
+// WiFi.lastError() by NAME, the raw driver status behind it, and the firmware
+// event id, so the next run says which rather than leaving it inferred from
+// the AP's station count.
+static void reportBegin(int st, uint32_t attempt) {
+    Serial1.print("wifi_status="); Serial1.print(st);
+    Serial1.print(" attempt=");    Serial1.print(attempt);
+    Serial1.print(" err=");        Serial1.print(WiFi.lastError());
+    Serial1.print('(');            Serial1.print(WiFiClass::beginErrorName(WiFi.lastError()));
+    Serial1.print(") drv=");       Serial1.print(WiFi.lastDriverStatus());
+    Serial1.print('(');            Serial1.print(WiFiClass::driverStatusName(WiFi.lastDriverStatus()));
+    Serial1.print(')');
+    Serial1.print(" last_event=0x");
+    Serial1.print(WiFi.radio().lastEvent(), HEX);
+    Serial1.print(" info=0x");
+    Serial1.println(WiFi.radio().lastEventInfo(), HEX);
+    if (st == WL_CONNECTED) {
+        Serial1.print("wifi_ip=");   Serial1.println(WiFi.localIP());
+        Serial1.print("wifi_rssi="); Serial1.println(WiFi.RSSI());
+    }
+}
+
+// Does a SECOND begin() succeed?  m2_lwip_test retries wifiConnect() every 5 s
+// forever and so never shows a transient association failure; this facade
+// attempts once, and setAutoReconnect() would not help because
+// maybeReconnect() gates on m_wantReconnect, which only linkLost() raises --
+// so a link that was never UP has no recovery path.  Retrying HERE answers
+// "is it transient?" without changing the library.
+static uint32_t s_beginAttempts = 1;
+static uint32_t s_lastBeginMs   = 0;
+
 void setup() {
     Serial1.begin(115200);
     delay(50);
@@ -83,7 +119,7 @@ void setup() {
     WiFi.setFirmware(iw416_fw, iw416_fw_len);
 #endif
     int st = WiFi.begin(M2_WIFI_SSID, M2_WIFI_PSK);
-    Serial1.print("wifi_status="); Serial1.println(st);
+    reportBegin(st, 1);
     if (st == WL_CONNECTED) {
         Serial1.print("wifi_ip=");   Serial1.println(WiFi.localIP());
         Serial1.print("wifi_rssi="); Serial1.println(WiFi.RSSI());
@@ -100,6 +136,14 @@ void setup() {
 
 void loop() {
     const bool up = (WiFi.status() == WL_CONNECTED);
+
+    // INSTRUMENT: retry begin() every 15 s while down, reporting each attempt.
+    if (!up && millis() - s_lastBeginMs >= 15000) {
+        s_lastBeginMs = millis();
+        int rst = WiFi.begin(M2_WIFI_SSID, M2_WIFI_PSK);
+        reportBegin(rst, ++s_beginAttempts);
+    }
+
 
     // --- the WiFiServer echo session, serviced every pass --------------------
     // SILICON-ONLY, same reason as the client block below: the QEMU IW416 model
