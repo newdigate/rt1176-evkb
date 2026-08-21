@@ -1,5 +1,6 @@
 // Arduino WiFi facade proof: WiFi.begin() + WiFiClient echo against the ESP
-// bench oracle (192.168.4.1:4712).
+// bench oracle (192.168.4.1:4712), plus a WiFiServer echo session the bench
+// drives the other way (this board listening on :4713).
 //
 // QEMU proof (run_qemu.sh): the CARD-ABSENT path -- WL_NO_SHIELD, no IP, alive.
 // QEMU proof (run_qemu_wifi.sh): enumeration + a REAL scan against the IW416
@@ -9,6 +10,7 @@
 #include "HardwareSerial.h"
 #include "WiFi.h"
 #include "WiFiClient.h"
+#include "WiFiServer.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -35,6 +37,39 @@ static uint32_t s_tx = 0, s_ok = 0, s_fail = 0;
 static uint8_t s_lastFail = 0;
 static const uint8_t FAIL_SHORT_WRITE = 200, FAIL_ECHO = 201;
 
+// --- the WiFiServer side ----------------------------------------------------
+// This board LISTENING, which is the other half of the facade and the only
+// thing in the tree that links WiFiServer at all.  The bench oracle is the
+// same ESP: it opens :4713, sends a line, and compares what comes back, so
+// srv=<sessions>/<bytes> below is un-fakeable the same way tcp= is.
+static WiFiServer s_server(4713);
+// ONE persistent session, held across loop() passes.  This is the idiom
+// accept() exists for -- available() only ever surfaces a connection that has
+// bytes staged this instant, so a sketch built on it cannot hold an idle
+// session open (the pool's evictor and stall valve reap unclaimed conns).
+static WiFiClient s_session;
+static uint32_t s_srvSess = 0, s_srvBytes = 0;
+
+// Takes the handle BY VALUE, deliberately: a WiFiClient is a refcounted handle
+// onto a pool slot, and handing one to a request handler is what that design
+// buys.  It is also, as of this task, the first genuine COPY of a WiFiClient
+// anywhere in the tree -- `s_session = s_server.accept()` below is the first
+// genuine copy-ASSIGN.  Before them --gc-sections dropped both operations from
+// every image, so their correctness rested on review alone.
+static uint32_t serveEcho(WiFiClient c) {
+    uint32_t n = 0;
+    // Bounded per pass: echo what is staged, then return to loop().  Draining
+    // "until the peer stops" inside one pass is the poll-without-returning bug
+    // WiFiClient.h warns about.
+    while (c.available() > 0) {
+        int b = c.read();
+        if (b < 0) break;
+        if (c.write((uint8_t)b) != 1) break;
+        n++;
+    }
+    return n;
+}
+
 void setup() {
     Serial1.begin(115200);
     delay(50);
@@ -47,10 +82,33 @@ void setup() {
     if (st == WL_CONNECTED) {
         Serial1.print("wifi_ip=");   Serial1.println(WiFi.localIP());
         Serial1.print("wifi_rssi="); Serial1.println(WiFi.RSSI());
+        s_server.begin();
+        Serial1.print("srv_listen="); Serial1.println(s_server ? 1 : 0);
     }
 }
 
 void loop() {
+    const bool up = (WiFi.status() == WL_CONNECTED);
+
+    // --- the WiFiServer echo session, serviced every pass --------------------
+    // SILICON-ONLY, same reason as the client block below: the QEMU IW416 model
+    // returns zero scan results by design, so `up` is never true under either
+    // gate and not one line of the accept path runs there.  accept() rather
+    // than available() because this session is held open between requests --
+    // see s_session.
+    if (up && s_server) {
+        if (!s_session) {
+            s_session = s_server.accept();       // copy-ASSIGN from a prvalue
+            if (s_session) s_srvSess++;
+        }
+        if (s_session) {
+            s_srvBytes += serveEcho(s_session);  // copy-CONSTRUCT (by value)
+            // connected() stays true while unread bytes remain, so this drops
+            // the session only once its tail has been echoed.
+            if (!s_session.connected()) s_session.stop();
+        }
+    }
+
     // --- the WiFiClient echo round-trip, once every 2 s -----------------------
     // SILICON-ONLY, and not by omission: the QEMU IW416 model returns zero scan
     // results by design, so status() is never WL_CONNECTED under either gate and
@@ -61,7 +119,7 @@ void loop() {
     // tcp=<sent>/<ok>/<fail> in the heartbeat below is un-fakeable by the
     // firmware: an ok can only come from bytes that made a full round trip.
     static uint32_t lastKick = 0;
-    if (WiFi.status() == WL_CONNECTED && millis() - lastKick >= 2000) {
+    if (up && millis() - lastKick >= 2000) {
         lastKick = millis();
         WiFiClient c;
         char msg[48];
@@ -106,6 +164,8 @@ void loop() {
         Serial1.print(" tcp="); Serial1.print(s_tx);
         Serial1.print('/');     Serial1.print(s_ok);
         Serial1.print('/');     Serial1.print(s_fail);
-        Serial1.print(" lastfail="); Serial1.println(s_lastFail);
+        Serial1.print(" lastfail="); Serial1.print(s_lastFail);
+        Serial1.print(" srv="); Serial1.print(s_srvSess);
+        Serial1.print('/');     Serial1.println(s_srvBytes);
     }
 }
