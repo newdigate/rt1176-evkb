@@ -351,5 +351,17 @@ default-on, `WiFiClientSecure`.  None of these blocks the minimum surface.
   transcripts ARE the evidence for everything past the scan.  Stated in gate
   headers.
 * The eviction policy (unclaimed-only) means a sketch that holds 4 claimed
-  dead connections can still starve accepts; `tcp_poll` reaping bounds this
-  at the drain timeout.  Documented in WiFiServer's header.
+  dead connections can still starve accepts.
+  ★ **CORRECTED 2026-08-21 (Task 9 review).** This bullet originally claimed
+  "`tcp_poll` reaping bounds this at the drain timeout". That is **wrong** and
+  the implementation is right: there is no `CLOSING` state (dropped as a plan
+  deviation — `closeConn` closes or aborts synchronously), and `connPoll`
+  explicitly **excludes claimed slots**. Nor could it do otherwise: `claimed`
+  with `refs > 0` means a live `WiFiClient` points at the slot, and reaping it
+  is exactly the dangling-handle class the refcount exists to make
+  unrepresentable. So starvation by four claimed dead connections is bounded
+  by nothing but the sketch calling `stop()`, and that is the correct design.
+  What it needs is not a mitigation but **evidence**: `WiFiPool::acceptRefusals()`
+  counts the refusals, beside `evictions()` and `stallAborts()`, so a starved
+  server is a number in the transcript rather than an unexplained silence.
+  Documented in WiFiServer's header.
