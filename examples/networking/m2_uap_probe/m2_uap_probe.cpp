@@ -353,6 +353,8 @@ static void dumpCardRegs(const char *tag, bool includeIntStatus) {
 // Set once, by the first cell that times out, so the autopsy is taken while
 // the damage is fresh rather than after fifteen more seconds of commands.
 static bool s_autopsyTaken = false;
+static uint16_t s_cfgResult = 0xFFFF;   // the uAP config's OWN reply code
+static bool     s_cfgRan     = false;
 
 static void runCell(uint8_t pi, uint8_t bssType) {
     const Probe &pr = kProbes[pi];
@@ -419,6 +421,15 @@ static void runCell(uint8_t pi, uint8_t bssType) {
         Serial1.print(" ssid="); Serial1.print(cfg.ssid);
         Serial1.print(" chan=");  Serial1.println((int)cfg.channel);
         s = iw416.uapConfigure(cfg);
+        // ★ Captured HERE, not read back later.  The first version of the
+        // BSS_START precheck asked lastRespResult() at the start of the
+        // sequence and printed cfg_ok=0 on a run where the configuration had
+        // in fact succeeded -- because by then a dozen further commands had
+        // run and that accessor holds the LAST reply, which was the reserved
+        // id's NOT_SUPPORT.  A status that reads "the most recent thing" is
+        // not a record of a specific thing.
+        s_cfgResult = iw416.lastRespResult();
+        s_cfgRan    = true;
         rxLen = 0;
         Serial1.print("uap_cfg_bytes len="); Serial1.print(iw416.uapCfgReqLen());
         Serial1.print(" ");
@@ -648,8 +659,10 @@ static void runBssStartSequence() {
     Serial1.println("uap_bss_seq=begin -- THIS TRANSMITS");
     // The configuration must already have been accepted, or starting is
     // meaningless.  Report it rather than assume it.
-    Serial1.print("uap_bss_precheck cfg_ok=");
-    Serial1.println(iw416.lastRespResult() == Iw416::RESULT_OK ? 1 : 0);
+    Serial1.print("uap_bss_precheck cfg_ran=");   Serial1.print(s_cfgRan ? 1 : 0);
+    Serial1.print(" cfg_result=0x");               printHex16(s_cfgResult);
+    Serial1.print(" cfg_ok=");
+    Serial1.println((s_cfgRan && s_cfgResult == Iw416::RESULT_OK) ? 1 : 0);
 
     const bool started = oneUapCmd(Iw416::CMD_APCMD_BSS_START, "BSS_START");
     serviceFor(3000, "post_start");

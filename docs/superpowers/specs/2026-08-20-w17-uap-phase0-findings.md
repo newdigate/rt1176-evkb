@@ -332,17 +332,47 @@ easy ones to get wrong, and one wrong length mis-parses everything after it.
 
 ### Still open
 
-- Whether **`BSS_START`** actually brings the BSS up. The sequence is **written,
-  built and gated** (`-DM2_UAP_PROBE_BSS_START=ON`) but has not run on silicon:
-  the MCU-Link debug port dropped again before it could be flashed. It
-  configures first, starts, services the link for the card's own
-  `EVENT_MICRO_AP_BSS_START`, holds ~60 s so another radio can scan for the
-  SSID, reads `STA_LIST`, and **always** sends `BSS_STOP` — including on the
-  not-started branch, so a missed branch cannot leave a radio on air. The
-  external oracle is prepared: `system_profiler SPAirPortDataType` sees four
-  networks here and `RT1176-UAP-TEST` is absent, so a later sighting means
-  something.
+- ~~Whether **`BSS_START`** brings the BSS up.~~ **Answered 2026-08-21: it does.**
+  See below.
+
 - **WPA2** — AKMP / cipher / passphrase TLVs on the same builder, and with them
   the repo's standing SSID/PSK rule.
 - Why a partial request *kills the port* rather than being rejected. Inside a
   closed blob, and no longer blocking.
+
+
+## The AP is on air (2026-08-21, run 8)
+
+`BSS_START` → `result=0x0000`, `BSS_STOP` → `result=0x0000`, a positive control
+answering after each, and `STA_LIST` returning a real `sta_count=0` against a
+**live** BSS — the oracle the future join/leave gates need, exercised for the
+first time against an AP that is actually up.
+
+**The proof is external.** This Mac, which knows nothing about our firmware, was
+asked before, during and after:
+
+| when | `RT1176-UAP-TEST` |
+|---|---|
+| before | absent (4 networks visible) |
+| during | **present** — Channel 6 (2GHz, 20MHz), Infrastructure, Security: None, −75 dBm |
+| after `BSS_STOP` | absent, on **four** consecutive scans |
+
+Every advertised value is one we put in a TLV — SSID (0x0000), channel/band
+(0x012A, manual + 6), `PROTOCOL_NO_SECURITY` (0x0140) and open `AUTH_TYPE`
+(0x011F). So this is not "BSS_START returned OK": the configuration
+`uapConfigure()` built **reached the air and a foreign radio read it back**,
+and it appears only between START and STOP.
+
+★ **Scan trap:** two `system_profiler` invocations disagreed — one listed the
+SSID, the next counted zero — because each triggers its own scan and macOS ages
+cached entries out between them. Never compare across invocations; capture one
+scan to a file and query that file.
+
+### Open, and load-bearing for Phase 1 step 3
+
+**No events at all** in 63 s with the BSS demonstrably up — not
+`EVENT_MICRO_AP_BSS_START` (0x2E), not `BSS_ACTIVE` (0x44). Three live
+explanations, none of which may be assumed: the firmware may not raise them
+without a client, it may need something we have not enabled, or our
+`serviceLink()` demux may not surface uAP-BSS events at all. Phase 1 step 3 *is*
+those events — establish which of the three before designing around any of them.

@@ -1000,3 +1000,172 @@ uap_reinit=recovered
 uap_cardreg tag=postreinit cmd52=ok cardstatus=0x0008 intmask=0x00C3 fwstatus=0xFEDC ioport=0x0000,0x0001
 uap_cardreg tag=final cmd52=ok cardstatus=0x0008 intmask=0x00C3 fwstatus=0xFEDC ioport=0x0000,0x0001 intstatus=0x0000
 uap_probe_done
+
+==============================================================================
+W17: THE AP IS ON AIR -- 2026-08-21, run 8.  BSS_START, confirmed externally.
+==============================================================================
+The first time this card has hosted a network.  Configure, start, hold, stop --
+and the proof is not our own print.
+
+THE COMMANDS
+------------------------------------------------------------------------------
+    uap_bss cmd=0x00B1 name=BSS_START st=ok result=0x0000 len=256 cspre=0x0008 cspost=0x0008
+    uap_bss_ctl_after_start=ok
+    uap_bss=beaconing ssid=RT1176-UAP-TEST chan=6 hold_ms=60000
+    uap_bss_stalist len=256 bytes=0E000100B3800A002310000000000172575740006C1DEB91
+    uap_bss cmd=0x00B2 name=BSS_STOP st=ok result=0x0000 len=256 cspre=0x0008 cspost=0x0008
+    uap_bss_ctl_after_stop=ok
+
+  Both RESULT_OK, and a positive control answered after each -- so neither is
+  an "it worked" inferred from a command port that had quietly died.  The
+  STA_LIST reply is a real one taken against a LIVE BSS: size 0x000A, result
+  0x0000, sta_count 0 (nothing had joined, and nothing had been asked to).
+  That is the oracle the future join/leave gates need, exercised for the first
+  time against an AP that is actually up.
+
+THE PROOF, AND IT IS NOT OURS
+------------------------------------------------------------------------------
+A completely independent radio -- this Mac, which knows nothing about our
+firmware -- was asked before, during and after.  Each reading is ONE
+system_profiler invocation (see the trap below):
+
+    BEFORE  RT1176-UAP-TEST absent   (4 networks visible)
+    DURING  RT1176-UAP-TEST PRESENT
+              PHY Mode: 802.11
+              Channel: 6 (2GHz, 20MHz)
+              Network Type: Infrastructure
+              Security: None
+              Signal / Noise: -75 dBm / -89 dBm
+    AFTER   RT1176-UAP-TEST absent, on FOUR consecutive scans
+
+  Every one of those advertised values is a value WE PUT IN A TLV:
+      SSID TLV 0x0000        -> SSID "RT1176-UAP-TEST"
+      CHAN_BAND 0x012A, 0x00,6 -> Channel 6, 2GHz, 20MHz  (BAND_CONFIG_MANUAL)
+      ENCRYPT_PROTOCOL 0x0140 = PROTOCOL_NO_SECURITY
+      AUTH_TYPE 0x011F = open      -> Security: None
+  So this is not merely "BSS_START returned OK".  The configuration built by
+  Iw416::uapConfigure() reached the air, and a foreign radio read it back.
+  Positive AND negative control: it appears only between START and STOP.
+
+★ SCAN TRAP, met and diagnosed here.  Two system_profiler invocations
+disagreed -- one listed the SSID, the very next counted zero -- because each
+invocation triggers/reads its own scan and macOS ages cached entries out
+between them.  Never compare across two invocations: capture ONE scan to a file
+and query that file.  The four post-stop readings above are four separate
+single-invocation scans, which is why they are worth quoting.
+
+WHAT DID NOT HAPPEN, AND IS NOT EXPLAINED
+------------------------------------------------------------------------------
+    uap_bss_service tag=post_start frames=0 lastevent=0x0000 eventinfo=0x0000
+    uap_bss_service tag=hold       frames=0 lastevent=0x0000 eventinfo=0x0000
+
+  NO EVENTS AT ALL in 63 s with a BSS demonstrably up -- not
+  EVENT_MICRO_AP_BSS_START (0x2E), not BSS_ACTIVE (0x44).  The AP worked, so
+  this is not a failure of the AP; it is an open question with at least three
+  live answers, and none of them may be assumed:
+    * the firmware may not raise those events without a client joining;
+    * it may need something we have not enabled;
+    * our serviceLink() demux may not surface uAP-BSS events at all.
+  This matters because the handoff's Phase 1 step 3 is exactly those events,
+  and gates want numbers rather than prints.  Whoever takes that on: establish
+  which of the three it is BEFORE designing around any of them.
+
+★ AN INSTRUMENTATION FLAW THIS RUN EXPOSED, since a later reader will see it in
+the raw capture below: the precheck printed `cfg_ok=0` on a run where the
+configuration HAD succeeded.  It asked lastRespResult() at the start of the
+sequence, and by then a dozen further commands had run -- that accessor holds
+the LAST reply, which was the reserved id's NOT_SUPPORT.  A status that means
+"the most recent thing" is not a record of a specific thing.  Fixed: the config
+row now captures its own result when it runs (cfg_ran=/cfg_result=/cfg_ok=).
+The BSS_START result itself was never in doubt -- it is read from its own reply.
+
+RAW CAPTURE
+------------------------------------------------------------------------------
+RT1176 M.2 uAP probe up
+m2_wifi_reset=released
+sdio_io_voltage=1v8_requested
+sdio_begin=ok rc=0
+iw416_begin=ok ioport=0x10000 fw_status=0x0
+fw_download=ok
+fw_release=0x9B105C15 hw_version=0x7201 mac=6C1DEB910C45
+uap_cardreg tag=init cmd52=ok cardstatus=0x0008 intmask=0x00C3 fwstatus=0xFEDC ioport=0x0000,0x0001
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.a bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.a.bss0 4E00010003804A000300000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.a bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.a.bss1 4E00010003804A000410000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.a.bss0 0C000100FEFF08000500020002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.a.bss1 0C000100FEFF08000610020002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.b bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.b.bss0 4E00010003804A000700000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.b bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.b.bss1 4E00010003804A000810000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x00AE name=SYS_INFO bss=0 st=ok resp=0x80AE type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes SYS_INFO.bss0 34000100AE8030000900000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+uap_probe cmd=0x00AE name=SYS_INFO bss=1 st=ok resp=0x80AE type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes SYS_INFO.bss1 34000100AE8030000A10000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.c bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.c.bss0 4E00010003804A000B00000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.c bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.c.bss1 4E00010003804A000C10000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B3 name=STA_LIST bss=0 st=ok resp=0x80B3 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes STA_LIST.bss0 0E000100B3800A000D00000000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B3 name=STA_LIST bss=1 st=ok resp=0x80B3 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes STA_LIST.bss1 0E000100B3800A000E10000000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.d.bss0 4E00010003804A000F00000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.d.bss1 4E00010003804A001010000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e.bss0 4E00010003804A001100000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e.bss1 4E00010003804A001210000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x7FFE name=RSVD.body bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.body.bss0 0E000100FEFF0A001300020000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x7FFE name=RSVD.body bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.body.bss1 0E000100FEFF0A001410020000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e2 bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e2.bss0 4E00010003804A001500000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e2 bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e2.bss1 4E00010003804A001610000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x004D name=MACADDR.uap bss=0 st=ok resp=0x804D type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes MACADDR.uap.bss0 140001004D8010001700000000006C1DEB910C456C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x004D name=MACADDR.uap bss=1 st=ok resp=0x804D type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes MACADDR.uap.bss1 140001004D8010001810000000006C1DEB910C456C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e3 bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e3.bss0 4E00010003804A001900000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e3 bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e3.bss1 4E00010003804A001A10000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_cfg_req mask=0x01FF ssid=RT1176-UAP-TEST chan=6
+uap_cfg_bytes len=82 01002B0106006C1DEB910C4500000F005254313137362D5541502D544553542C01020064002D0101000101000C0082848B960C1218243048606C30010100012A01020000061F010300000000400102000100
+uap_probe cmd=0x00B0 name=SYSCFG.fullopen bss=0 st=ok resp=0x80B0 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_cfg_req mask=0x01FF ssid=RT1176-UAP-TEST chan=6
+uap_cfg_bytes len=82 01002B0106006C1DEB910C4500000F005254313137362D5541502D544553542C01020064002D0101000101000C0082848B960C1218243048606C30010100012A01020000061F010300000000400102000100
+uap_probe cmd=0x00B0 name=SYSCFG.fullopen bss=1 st=ok resp=0x80B0 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e5 bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e5.bss0 4E00010003804A001D00000002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e5 bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e5.bss1 4E00010003804A001E10000002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.b bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.b.bss0 0C000100FEFF08001F00020002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.b bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.b.bss1 0C000100FEFF08002010020002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_control neg_sta_st=ok neg_sta_result=0x0002 neg_uap_st=ok neg_uap_result=0x0002 bracketed=1 seq_mismatches=0
+uap_bsscheck MACADDR.uap sta_st=ok sta_result=0x0000 uap_st=ok uap_result=0x0000 bracketed=1
+uap_tally bracketed=6 distinct_from_neg=6 unbracketed=0
+uap_verdict=SUPPORTED
+uap_bss_seq=begin -- THIS TRANSMITS
+uap_bss_precheck cfg_ok=0
+uap_bss cmd=0x00B1 name=BSS_START st=ok result=0x0000 len=256 cspre=0x0008 cspost=0x0008
+uap_bss_service tag=post_start frames=0 lastevent=0x0000 eventinfo=0x0000 dropped=0
+uap_bss_ctl_after_start=ok
+uap_bss=beaconing ssid=RT1176-UAP-TEST chan=6 hold_ms=60000
+uap_bss_service tag=hold frames=0 lastevent=0x0000 eventinfo=0x0000 dropped=0
+uap_bss_stalist len=256 bytes=0E000100B3800A002310000000000172575740006C1DEB91
+uap_bss cmd=0x00B2 name=BSS_STOP st=ok result=0x0000 len=256 cspre=0x0008 cspost=0x0008
+uap_bss_ctl_after_stop=ok
+uap_bss_seq=end
+uap_recover=n/a reason=command_port_alive_at_end
+uap_cardreg tag=final cmd52=ok cardstatus=0x0008 intmask=0x00C3 fwstatus=0xFEDC ioport=0x0000,0x0001 intstatus=0x0000
+uap_probe_done
