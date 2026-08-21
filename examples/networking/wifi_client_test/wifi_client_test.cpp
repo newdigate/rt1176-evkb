@@ -14,6 +14,7 @@
 #include <string.h>
 #include <stdio.h>
 
+
 #if defined(HAVE_WIFI_CREDS)
 #include "wifi_creds.h"          // generated, gitignored -- never committed
 #else
@@ -57,17 +58,22 @@ static uint32_t s_srvSess = 0, s_srvBytes = 0;
 // genuine copy-ASSIGN.  Before them --gc-sections dropped both operations from
 // every image, so their correctness rested on review alone.
 static uint32_t serveEcho(WiFiClient c) {
-    uint32_t n = 0;
-    // Bounded per pass: echo what is staged, then return to loop().  Draining
-    // "until the peer stops" inside one pass is the poll-without-returning bug
-    // WiFiClient.h warns about.
-    while (c.available() > 0) {
-        int b = c.read();
-        if (b < 0) break;
-        if (c.write((uint8_t)b) != 1) break;
-        n++;
-    }
-    return n;
+    // SNAPSHOT THE COUNT FIRST, and note that the obvious spelling is the bug:
+    // `while (c.available() > 0)` LOOKS bounded and is not.  Since Task 7,
+    // available() runs a servicePass() and re-checks whenever the staged chain
+    // empties, so a peer that streams continuously keeps this loop fed and
+    // loop() never returns -- the heartbeat stops and the sketch reads as hung.
+    // One pass echoes what was staged when it started, capped, and goes home.
+    int n = c.available();
+    if (n <= 0) return 0;
+    uint8_t buf[64];
+    if (n > (int)sizeof(buf)) n = (int)sizeof(buf);
+    int got = c.read(buf, (size_t)n);
+    if (got <= 0) return 0;
+    // ONE tcp_write for the pass, not one per byte: byte-at-a-time echoing
+    // emits a TCP segment per byte, which works but makes a silicon capture
+    // enormous and leans on a path the bench oracle is not measuring.
+    return (uint32_t)c.write(buf, (size_t)got);
 }
 
 void setup() {
@@ -83,7 +89,12 @@ void setup() {
         Serial1.print("wifi_ip=");   Serial1.println(WiFi.localIP());
         Serial1.print("wifi_rssi="); Serial1.println(WiFi.RSSI());
         s_server.begin();
-        Serial1.print("srv_listen="); Serial1.println(s_server ? 1 : 0);
+        Serial1.print("srv_listen="); Serial1.print(s_server ? 1 : 0);
+        // WHICH of begin()'s five exits, not just "it did not listen" -- a
+        // transcript showing srv_listen=0 with no cause cannot be debugged.
+        // 0 = OK; 1..5 = WiFiServer::ListenError (BAD_PORT, NO_LINK, NO_PCB,
+        // BIND_FAILED, LISTEN_FAILED).
+        Serial1.print(" err="); Serial1.println(s_server.lastError());
     }
 }
 
@@ -96,6 +107,11 @@ void loop() {
     // gate and not one line of the accept path runs there.  accept() rather
     // than available() because this session is held open between requests --
     // see s_session.
+    // Retryable, and it has to be retried here: begin() in setup() only runs
+    // if the FIRST WiFi.begin() reached WL_CONNECTED, so a link that comes up
+    // late (auto-reconnect, or an AP that appeared afterwards) would otherwise
+    // leave the server falsy for ever with nothing to say why.
+    if (up && !s_server) s_server.begin();
     if (up && s_server) {
         if (!s_session) {
             s_session = s_server.accept();       // copy-ASSIGN from a prvalue
