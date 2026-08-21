@@ -76,6 +76,49 @@ static const char *listenErrName(uint8_t e) {
     }
 }
 
+// --- INSTRUMENT (2026-08-21), at parity with wifi_client_test ---------------
+// status() alone cannot say which of begin()'s exits fired: WL_NO_SHIELD is
+// the shared exit of five bring-up failures and WL_CONNECT_FAILED of three.
+// A silicon run here printed a bare `wifi_status=1` and the bench had no way
+// to tell "the scan missed the AP" from "we associated and got no lease".
+// NOTE last_event is STICKY across attempts -- on an SSID_NOT_FOUND the card
+// never associated, so any event shown is residue from an earlier attempt.
+static void reportBegin(int st, uint32_t attempt) {
+    Serial1.print("wifi_status="); Serial1.print(st);
+    Serial1.print(" attempt=");    Serial1.print(attempt);
+    Serial1.print(" err=");        Serial1.print(WiFi.lastError());
+    Serial1.print('(');            Serial1.print(WiFiClass::beginErrorName(WiFi.lastError()));
+    Serial1.print(") drv=");       Serial1.print(WiFi.lastDriverStatus());
+    Serial1.print('(');            Serial1.print(WiFiClass::driverStatusName(WiFi.lastDriverStatus()));
+    Serial1.print(") last_event=0x");
+    Serial1.print(WiFi.radio().lastEvent(), HEX);
+    Serial1.print(" info=0x");
+    Serial1.println(WiFi.radio().lastEventInfo(), HEX);
+    if (st == WL_CONNECTED) {
+        Serial1.print("wifi_ip="); Serial1.println(WiFi.localIP());
+        return;
+    }
+    if (WiFi.lastError() == WiFiClass::SSID_NOT_FOUND) {
+        static Iw416::ScanResult aps[24];
+        uint8_t sets = 0;
+        int n = WiFi.scanNetworks(aps, 24, &sets);
+        Serial1.print("scan_dump n="); Serial1.print(n);
+        Serial1.print(" sets_seen="); Serial1.print(sets);
+        Serial1.print(" looking_for='"); Serial1.print(M2_WIFI_SSID);
+        Serial1.println("'");
+        for (int i = 0; i < n; i++) {
+            Serial1.print("  ap["); Serial1.print(i);
+            Serial1.print("] ch=");   Serial1.print(aps[i].channel);
+            Serial1.print(" rssi=-"); Serial1.print(aps[i].rssi);
+            Serial1.print(" ssid='"); Serial1.print(aps[i].ssid);
+            Serial1.println("'");
+        }
+    }
+}
+
+static uint32_t s_beginAttempts = 1;
+static uint32_t s_lastBeginMs   = 0;
+
 void setup() {
     Serial1.begin(115200);
     delay(50);
@@ -84,10 +127,11 @@ void setup() {
     WiFi.setFirmware(iw416_fw, iw416_fw_len);
 #endif
     int st = WiFi.begin(M2_WIFI_SSID, M2_WIFI_PSK);
-    Serial1.print("wifi_status="); Serial1.println(st);
-    if (st == WL_CONNECTED) {
-        Serial1.print("wifi_ip="); Serial1.println(WiFi.localIP());
-    }
+    reportBegin(st, 1);
+    // NOTE: this can print "listening" while wifi_status is a FAILURE, and
+    // that is honest rather than a bug -- WiFi.begin() brings lwip up before
+    // it attempts the association, so the TCP listener binds fine on a netif
+    // that has no address yet.  It just cannot be reached until there is one.
     server.begin();     // with no link this must be a clean, falsy no-op
     Serial1.print("server_begin=");
     Serial1.println(server ? "listening" : "ok_nolink");
@@ -103,6 +147,21 @@ void setup() {
 }
 
 void loop() {
+    // INSTRUMENT: retry begin() every 15 s while down, reporting each attempt.
+    // A first begin() that failed used to be permanent (reconnect intent was
+    // raised only by link LOSS, and a link that was never up cannot be lost);
+    // the library now arms it, but this reports each attempt so a marginal
+    // link is visible as a sequence rather than as one silent failure.
+    if (WiFi.status() != WL_CONNECTED && millis() - s_lastBeginMs >= 15000) {
+        s_lastBeginMs = millis();
+        int rst = WiFi.begin(M2_WIFI_SSID, M2_WIFI_PSK);
+        reportBegin(rst, ++s_beginAttempts);
+        if (rst == WL_CONNECTED && !server) {
+            server.begin();           // listener may have been bound already
+            Serial1.print("server_relisten="); Serial1.print(server ? 1 : 0);
+            Serial1.print(" err="); Serial1.println(server.lastError());
+        }
+    }
     const bool up = (WiFi.status() == WL_CONNECTED);
     // Retryable, and it has to be retried here: begin() in setup() runs on a
     // stack that may not be up yet, and a link that arrives late would
