@@ -89,7 +89,8 @@ void setup() {
         Serial1.print("wifi_rssi="); Serial1.println(WiFi.RSSI());
         s_server.begin();
         Serial1.print("srv_listen="); Serial1.print(s_server ? 1 : 0);
-        // WHICH of begin()'s five exits, not just "it did not listen" -- a
+        // WHICH of begin()'s five FAILURE exits (ListenError has six values,
+        // five of them failures), not just "it did not listen" -- a
         // transcript showing srv_listen=0 with no cause cannot be debugged.
         // 0 = OK; 1..5 = WiFiServer::ListenError (BAD_PORT, NO_LINK, NO_PCB,
         // BIND_FAILED, LISTEN_FAILED).
