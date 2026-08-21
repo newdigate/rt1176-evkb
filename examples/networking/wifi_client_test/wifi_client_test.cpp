@@ -14,7 +14,6 @@
 #include <string.h>
 #include <stdio.h>
 
-
 #if defined(HAVE_WIFI_CREDS)
 #include "wifi_creds.h"          // generated, gitignored -- never committed
 #else
