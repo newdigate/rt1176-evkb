@@ -99,6 +99,30 @@ static void reportBegin(int st, uint32_t attempt) {
     if (st == WL_CONNECTED) {
         Serial1.print("wifi_ip=");   Serial1.println(WiFi.localIP());
         Serial1.print("wifi_rssi="); Serial1.println(WiFi.RSSI());
+        return;
+    }
+    // SSID_NOT_FOUND is the one failure whose cause is entirely OUTSIDE the
+    // board, so make the failure carry the evidence: dump what the card
+    // actually saw.  setsSeen > count means the firmware found more BSSes
+    // than fit -- connectStation() keeps only 12, in SCAN ORDER not by
+    // strength, so a weak AP on a busy bench can be crowded out of its own
+    // connect attempt.  That is a different bug from "the AP is not on air".
+    if (WiFi.lastError() == WiFiClass::SSID_NOT_FOUND) {
+        static Iw416::ScanResult aps[24];
+        uint8_t sets = 0;
+        int n = WiFi.scanNetworks(aps, 24, &sets);
+        Serial1.print("scan_dump n="); Serial1.print(n);
+        Serial1.print(" sets_seen="); Serial1.print(sets);
+        Serial1.print(" looking_for='"); Serial1.print(M2_WIFI_SSID);
+        Serial1.println("'");
+        for (int i = 0; i < n; i++) {
+            Serial1.print("  ap["); Serial1.print(i);
+            Serial1.print("] ch=");  Serial1.print(aps[i].channel);
+            Serial1.print(" rssi=-"); Serial1.print(aps[i].rssi);
+            Serial1.print(" sec=");  Serial1.print(aps[i].security);
+            Serial1.print(" ssid='"); Serial1.print(aps[i].ssid);
+            Serial1.println("'");
+        }
     }
 }
 
