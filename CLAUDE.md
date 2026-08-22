@@ -416,6 +416,13 @@ they are NOT local-only — the model is PUSHED.**
 (`hw/sd/iw416-sdio.c`, enabled by `-machine mimxrt1170-evk,m2-wifi=on`), plus —
 for `[irq]` — the SDIO card-interrupt plumbing W15 added to the SD bus and
 SDHCI.
+★ **FOUR gates need a qemu2 with the uAP surface** — `m2_uap_probe[uap]` and
+all three `m2_uap_lwip` variants beyond the card-absent one. The floor is
+qemu2 **`59c0013d75`** (uAP command family + modelled station + `inject-bss`).
+An older model rejects `-global iw416-sdio.uap=on` outright, so these go RED and
+not SKIP, and it is not a firmware regression — diagnose by asking the device
+whether it takes the property (`qemu-system-arm -device help | grep iw416`),
+not by reading firmware.
 ★ **The IW416 model now echoes the WHOLE seq_num** (qemu2 `721fb09146`,
 2026-08-22): bss_num/bss_type included, because that is what silicon does. It
 used to zero the high byte, which HID A BUG CLASS — a driver comparing the full
