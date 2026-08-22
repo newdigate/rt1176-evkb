@@ -1,92 +1,223 @@
 acid_box -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
 ================================================================================
-2026-08-18. ★ PARTIAL: THE UI IS PROVEN ON SILICON, THE INSTRUMENT IS NOT.
-The scene renders correctly and its checksum matches the QEMU golden
-BIT-FOR-BIT -- and then the CM7 LOCKS UP at ~1.739 s, before touch is
-initialised. Nothing has been heard through headphones. The example is
-QEMU-verified and hardware-INCOMPLETE, and the gate says so.
+2026-08-18, SECOND SESSION. ★ THE LOCKUP DOES NOT EXIST. It was an artefact of
+the debugger, and this file's first version was WRONG about it. The firmware
+runs indefinitely, the touch controller comes up, and the instrument PLAYS --
+per-step RMS measured on silicon agrees with the QEMU gate's windows to ~2%.
+What is still owed is only what needs a human: a listen and a finger.
 ================================================================================
 
 WHAT IS PROVEN ON SILICON
 
-  silicon FNV-1a over the live scanout buffer : 0xD3BC88D7
-  QEMU golden (run_qemu.sh, ACIDBOX_UI_SUM)   : 0xD3BC88D7
-  -> the boot frame is pixel-identical across two independent renderers.
+  1. THE BOOT FRAME (carried over from the first session, unchanged)
+     silicon FNV-1a over the live scanout buffer : 0xD3BC88D7
+     QEMU golden (run_qemu.sh, ACIDBOX_UI_SUM)   : 0xD3BC88D7
+     Pixel-identical across two independent renderers. Re-confirmed this
+     session from a fresh dump: title, tempo 128.0, eight labelled knobs at
+     their computed boot angles, editor strip on step 0 (A1, ACC lit, SAW),
+     and the step lane matching kPreset[] cell for cell -- fills on
+     0,1,3,4,6,7,8,10,11,12,13,15; accent dots on 0,7,12; slide bars on
+     3,10,15; white selection outline on step 0; no cursor ring.
 
-Read by eye off the dumped framebuffer (tools/rt1170-screenshot.py, LCDIFv2
-layer-0 descriptor reported addr=0x80100040 720x1280 pitch=2880):
-  - title, tempo readout showing 128.0, -/+ buttons, play and stop
-  - all eight knobs present, labelled, each at its computed boot angle
-  - editor strip on step 0: detent lattice, pointer at A1, ACC lit, SAW
-  - ★ the step lane matches kPreset[] CELL FOR CELL: fills on
-    0,1,3,4,6,7,8,10,11,12,13,15; empty on 2,5,9,14; accent dots on 0,7,12;
-    slide bars on 3,10,15; white selection outline on step 0; no cursor ring
-    (transport stopped, as designed).
-So the widget layer, the layout arithmetic and the preset load are all correct
-on real hardware.
+  2. IT RUNS. It does not stop.
+     Measured on the SHIPPED image (build/acid_box.elf, the byte-for-byte
+     golden-producing one), free-running, read over SWD:
 
-================================================================================
-★ THE DEFECT: CM7 LOCKUP AT ~1.739 s, APP-SPECIFIC
-================================================================================
+       DHCSR                = 0x01010001   S_HALT=0, S_RETIRE_ST=1 -> RUNNING
+       systick_millis_count = 184326 ms
+       transport.samplesElapsed_ = 8129152 -> 184.33 s at 44.1 kHz
+       CFSR / HFSR          = 0 / 0        no fault has EVER been recorded
+       s_sum                = 0xD3BC88D7
+       touch._begun         = true, _devId = 0x313139 ("911" in ASCII)
 
-  systick_millis_count : 1739, FROZEN (identical across 20 s of wall time)
-  $pc                  : 0xFFFFFFFE  -- the Cortex-M LOCKUP vector
-  $lr, $sp             : 0
-  touch object         : _begun=false, _devId=0, _i2cStatus=0, _err=None
-  s_sum                : 0xD3BC88D7  -- the CORRECT final value
+     and, later in the same uninterrupted run:
 
-Read those together and they bracket the failure tightly. The checksum loop
-RAN TO COMPLETION (s_sum holds its final, correct value), and GT911::begin was
-never entered (_err is None and _i2cStatus is 0 -- not a failed I2C
-transaction, an I2C transaction that never happened). So the core died between
-acid_box.cpp:591 and :603.
+       DHCSR                = 0x01010001   still RUNNING
+       systick_millis_count = 907822 ms    -- FIFTEEN MINUTES, and counting
+       VTOR                 = 0x20006000   acid_box's own .vectorsram
+       SHCSR                = 0x00070000   MEM/BUS/USGFAULTENA all enabled
+       CFSR / HFSR          = 0 / 0
 
-★ IT IS NOT THE BENCH. A/B on the same board, same session, same probe:
-  synthui_step_test : systick 22640 and ADVANCING, image healthy
-  acid_box          : systick 1739, FROZEN, PC=0xFFFFFFFE
-Same panel, same SDRAM, same flash procedure, minutes apart. Whatever this is,
-it is something acid_box does and the step test does not -- audio (AudioMemory,
-WM8962 over Wire2/LPI2C5, I2S), the 1 kHz IntervalTimer note pump at priority
-224, or the touch bring-up on that same I2C bus.
+     A separate earlier run of the same image was read at systick 401839
+     (402 s), also still running. The audio sample clock and systick agree to
+     within 10 ms at every reading, which is a stronger statement than either
+     alone: the audio ISR kept exact pace with SysTick for the whole run. The
+     reported failure was at 1.739 s; this is 522x that, on the same board,
+     the same panel and the same image.
 
-★ NO FAULT HANDLER RAN. A hardware breakpoint on fault_isr was never hit, and
-PC is the lockup vector rather than a handler address. A fault that escalates
-straight to LOCKUP without its handler executing is the signature of a fault
-that could not even be stacked, or of a fault taken while faults are masked --
-which is a much narrower class than "it crashed" and is where the next
-session should start. Note the pump ISR and the sequencer's setters both take
-__disable_irq() guards, and the pump is running throughout the whole UI build.
+  3. IT PLAYS. Per-step peak RMS, measured ON SILICON over four bars
+     (diagnostic build only -- see BUILD-DIAG below):
 
-★ A DEBUG-MODE RESET LOCKS UP EARLIER than a free-running one: a hardware
-breakpoint at acid_box.cpp:592 was never reached under `monitor reset`, while
-free-running boots reliably reach 1739 ms and complete the checksum. Whatever
-this is, it is timing- or state-sensitive, so do not trust a single
-observation -- and note that debug mode also runs the connect script that
-wakes the CM4, which the free-running path does not.
+       step  0 0.4292 *   1 0.3907     2 0.00029 .   3 0.3776
+             4 0.3752     5 0.00033 .  6 0.3880     7 0.4175 *
+             8 0.3942     9 0.00045 . 10 0.3808    11 0.3708
+            12 0.4297 *  13 0.3924    14 0.00046 . 15 0.3916
+       (* = accented in kPreset[],  . = rest)
 
-================================================================================
-SEPARATE BENCH FAULT: THE MCU-LINK VCOM CARRIES NO DATA
-================================================================================
+     - the four rests (2,5,9,14) read 0.0003-0.0005: three orders of magnitude
+       below the gated steps, so the gate is really closed;
+     - the three ACCENTED steps (0,7,12) are the three LOUDEST of the twelve
+       gated steps -- 0.4297, 0.4292, 0.4175 against 0.37-0.39 for the rest.
+       Accent is audible in the numbers, not just implemented;
+     - QEMU's bar 2 for comparison:
+       [0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,
+        0.0002,0.3688,0.3646,0.4297,0.3885,0.0002,0.3876]
+       Two independent implementations of voice + transport + sequencer +
+       note pump, agreeing to about 2%.
 
-The port enumerates (/dev/cu.usbmodem5DQ2DDHVWO5EI3) and opens, but delivers
-ZERO bytes -- with DSR and CTS both low -- for TWO INDEPENDENT IMAGES
-(acid_box and synthui_step_test). A second image printing nothing is what
-makes this a bridge fault rather than a firmware one; it had already been dead
-for a day before this session and survived a physical replug.
-
-Consequence for this transcript: no UART tokens could be captured for either
-example, so every claim above is SWD-derived (framebuffer dumps, symbol reads,
-core registers). That turned out to be enough to prove the UI and to
-characterise the lockup, which is worth knowing for the next time the VCOM
-dies: the serial console is a convenience, not the only oracle.
+     So the 303 voice, AudioTransport, AudioStepSequencer and the 1 kHz
+     IntervalTimer note pump are all working on real silicon, together, while
+     the UI runs. That is the capstone's integration claim, measured.
 
 ================================================================================
-STILL OWED
+★ THE "LOCKUP" WAS THE DEBUGGER. HOW THE FIRST SESSION WAS FOOLED.
 ================================================================================
-  - the lockup, root-caused and fixed
-  - the by-ear ritual: preset line through headphones, cutoff swept under a
-    finger, a tapped step heard entering the loop, ACC/SLD audible
-  - touch confirmed on glass (a human tap moving the cursor and the pattern)
-None of these can be claimed today. The QEMU gate covers the same ground in
-software and passes; per this tree's standing rule that is necessary and not
-sufficient, and this file is the record of the half that is missing.
+
+The first session recorded: systick frozen at 1739 across 20 s of wall time,
+PC=0xFFFFFFFE, $lr=$sp=0, s_sum holding its correct final value, touch never
+begun, and no fault handler ever reached. Every one of those is explainable
+without any firmware defect, and three of them were reproduced deliberately
+this session on a board proven to be healthy.
+
+★ ARTEFACT 1 -- REGISTER READS ON A RUNNING CORE RETURN ZEROS.
+  LinkServer's gdbserver in --attach mode reports a FAKE STOP to gdb and hands
+  back 0 for every core register while the target runs on. Demonstrated on the
+  HEALTHY control, synthui_step_test: `info registers` gave r0-r15 = 0, sp = 0,
+  lr = 0, pc = 0 -- while systick_millis_count advanced 2 ms between two reads
+  in the same session. So `$lr=0, $sp=0` was never data. (Memory reads in this
+  mode are live and non-invasive, which is why every symbol read stayed
+  trustworthy. Writes are silently dropped: `set var transport.playing_ = 1`
+  read back false.)
+
+★ ARTEFACT 2 -- A DEBUGGER-HALTED CORE LOOKS EXACTLY LIKE A FROZEN ONE, AND
+  THE FROZEN NUMBER SURVIVES RESETS.
+  Once a probe session latches C_HALT, the core stays halted after gdb
+  detaches. `wiretimedreset` does NOT clear it -- so the firmware never
+  re-runs startup, systick_millis_count keeps its old DTCM value, and every
+  later read returns the SAME number. This session read 16390 identically
+  across two resets and 35 s of wall time and very nearly concluded "dead at
+  16.39 s". It is the same shape as "1739, FROZEN across 20 s".
+  THE ONLY HONEST LIVENESS TEST IS DHCSR: bit 17 S_HALT and bit 24
+  S_RETIRE_ST say whether the core is halted or retiring instructions.
+  A frozen counter says nothing until you have read them.
+
+★ ARTEFACT 3 -- "NO FAULT HANDLER RAN" IS THE EXPECTED RESULT UNDER A DEBUG
+  CONNECT, EVEN WITH NO FAULT.
+  LinkServer's connect script sets DEMCR = 0x010007F1/0x010007F0, arming
+  VC_HARDERR, VC_BUSERR, VC_MMERR, VC_INTERR, VC_STATERR, VC_CHKERR and
+  VC_NOCPERR. Vector catch halts the core INSTEAD OF running the handler, so a
+  breakpoint on fault_isr can never be hit whether or not a fault occurred.
+  It was never evidence of an unstackable fault. And in fact CFSR and HFSR
+  read 0 at every reading this session: no fault ever happened at all.
+
+★ AND THE BRACKET WAS A BASE RATE, NOT A CLUE.
+  The first session bracketed the death between acid_box.cpp:591 and :603 and
+  read the tightness as strong evidence. The setup() timeline, measured on
+  silicon (below), shows why that bracket is simply where the firmware
+  usually IS: it is 55% of setup()'s wall-clock time. A debugger halt landing
+  during boot is MORE LIKELY to land there than anywhere else.
+
+  setup() checkpoint timeline, silicon, milliseconds (g_diag_t):
+
+      204  after CONSOLE.begin + delay(200)
+      204  after AudioMemory(24)
+      301  after wm.enable() + volume            <- codec over LPI2C5:  97 ms
+      751  after Display.begin()                 <- panel bring-up:    450 ms
+      751  after lvgl_rt1176_begin()
+      754  after lvgl_mipi_panel_create()
+      754  after preset + patch + transport cfg
+      754  after pump.begin()
+      791  after build_ui() + screen load        <- whole UI built in:  37 ms
+     1053  after the frame_done wait loop        <- first full paint:  262 ms
+     2022  after the 3.6 MB checksum   (== :591) <- lvgl_sum_feed:     969 ms
+     2022  after the two console printfs
+     2022  after Wire2.begin()/setClock()(== :602)
+     2103  after touch.begin()         (== :603) <- GT911 bring-up:     81 ms
+     2103  setup() COMPLETE
+
+  setup() spans 204 -> 2103 ms. lvgl_sum_feed() ALONE owns 1053 -> 2022 ms,
+  969 of those 1899 ms. Half of boot is spent inside the single statement the
+  first session bracketed.
+
+★ THE SIGNATURE, REPRODUCED ON DEMAND.
+  With the shipped image flashed and verified 4/4, free-running and proven
+  healthy, one ordinary probe attach produced:
+
+      DHCSR  = 0x00030003  (C_HALT=1, S_HALT=1 -- halted BY THE DEBUGGER)
+      systick_millis_count = 1933      <- frozen, and in the same 1.7-2.0 s
+                                          neighbourhood as the reported 1739
+      s_sum  = 0x811C9DC5              <- the FNV-1a OFFSET BASIS: reset, and
+                                          the checksum not yet finished
+      touch._begun = false, _devId = 0
+      CFSR / HFSR = 0 / 0
+
+  That is the first session's report, on a board that had just been measured
+  running for 184 s. The remaining difference is instructive: at 1933 ms s_sum
+  reads the BASIS, because lvgl_sum_feed accumulates into a plain static that
+  the compiler keeps in a register until the call returns. The first session
+  recorded s_sum at its CORRECT FINAL value TOGETHER WITH systick=1739 and
+  touch._begun=false -- and those three cannot come from one instant: a final
+  s_sum means t >= 2022 ms, an unbegun touch means t < 2103 ms, so t is in an
+  81 ms window that 1739 is not in. The readings were taken across different
+  attaches, each freezing the target at a different point, and then read as
+  one snapshot. That is the deepest version of the trap: not one wrong number,
+  but several right numbers from different moments assembled into a story.
+
+  (PC = 0xFFFFFFFE remains the one datum this session did not reproduce; every
+  attach here reported PC = 0 or a real address. It is not load-bearing: the
+  lockup it was taken to prove is refuted by 402 s of measured uptime, zero
+  fault bits, and a live touch controller.)
+
+================================================================================
+METHOD, AND THE BUILD-DIAG VARIANT
+================================================================================
+
+The MCU-Link VCOM still carries ZERO bytes, so nothing here used a serial
+console. Everything is SWD: framebuffer dumps (tools/rt1170-screenshot.py),
+symbol reads and SCB register reads (tools/rt1170-swdprobe.py, added this
+session).
+
+build-diag/ is a SECOND build directory of this same example, configured with
+-DACIDBOX_DIAG=1:
+
+    cmake -B build-diag -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake \
+          -DCMAKE_C_FLAGS=-DACIDBOX_DIAG=1 -DCMAKE_CXX_FLAGS=-DACIDBOX_DIAG=1
+
+It adds volatile globals (g_diag_t, g_diag_rms, g_diag_bars, g_diag_played)
+read by symbol over SWD, and starts the transport itself at 4000 ms so the
+audio path can be MEASURED while the VCOM is dead. It exists because the
+shipped contract is BOOT SILENT and that claim must not be softened to make
+measurement convenient -- so the measurement lives in a build the gate never
+compiles.
+
+★ THE SHIPPED IMAGE IS UNCHANGED, AND THAT IS CHECKED, NOT ASSERTED. The
+loadable binary of build/acid_box.elf after this session's edits is
+BYTE-IDENTICAL (275456 bytes, objcopy -O binary, cmp) to the ELF that produced
+the golden before them, the shipped build contains zero g_diag symbols and
+zero diag_mark call sites, and ./run_qemu.sh still prints
+ACIDBOX_UI_SUM=0xD3BC88D7 and PASSes. LICENSE-AUDIT: PASS.
+
+BENCH PROTOCOL NOTES EARNED THIS SESSION
+  - Never SIGKILL a LinkServer session mid-flash-program. Doing so left the
+    target unreachable at the wire level ("Wire not connected", "Hardware
+    interface transfer error" on every transfer, dapinfo included) while the
+    MCU-Link itself still enumerated perfectly over USB. Neither
+    wiretimedreset nor any software recovery restored it; a full board POWER
+    CYCLE did.
+  - `wiretimedreset` does not restart firmware on a core that a probe has
+    latched halted. Watch systick RESTART FROM ~0, or you are re-reading a
+    corpse that was never a corpse.
+  - LinkServer's `run` subcommand is silent for a minute or more while it
+    programs. Silent is not hung.
+
+================================================================================
+STILL OWED -- and it is now only what a human can do
+================================================================================
+  - the by-ear ritual: the preset line through headphones, cutoff swept under
+    a finger, a tapped step heard entering the loop, ACC/SLD audible.
+    The numbers above say the samples are right; only an ear can say the jack
+    is wired and the codec is unmuted.
+  - touch confirmed on glass: a real finger moving the cursor and the pattern.
+    GT911::begin() succeeds and the part reports its true device ID, so the
+    bus and the controller are proven; the contact path is not.
+The board is currently left free-running the shipped image, ready for both.

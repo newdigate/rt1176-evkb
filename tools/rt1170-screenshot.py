@@ -15,9 +15,16 @@ probe.
 
 Consequences worth knowing:
   - No firmware change, and it works on an ALREADY-RUNNING image.
-  - Frames are coherent by construction: gdb's connect halts the core for the
-    duration of the dump (allstop mode) and detach resumes it. --halt merely
-    makes the halt explicit.
+  - ★ Frames are NOT coherent by construction, contrary to what this file
+    claimed until 2026-08-18. `--attach` does NOT reliably halt the core: a
+    session against a healthy image read DHCSR = 0x01010001 (S_HALT=0,
+    S_RETIRE_ST=1 -- running) and watched systick advance 2 ms between two
+    reads inside that one gdb session, while other sessions came back halted
+    (0x00030003). `monitor halt` is rejected outright ("Target does not support
+    this command"), so --halt is a no-op here. In practice every dump taken has
+    still matched its golden bit-for-bit -- a static boot scene is not being
+    repainted -- but that is the SCENE holding still, not the core. Dump an
+    animating scene and expect tearing.
   - It is ~3.6 MB over SWD, so expect tens of seconds (~20 s measured).
 
 ★ The default --addr is AUTO: the tool reads the LCDIFv2 layer-0 descriptor
@@ -114,9 +121,9 @@ def _dump_once(geom, raw_path, halt, log_path):
                 # refusal off. (The CM7 was happily using SDRAM the whole
                 # time; only the debugger believed it did not exist.)
                 "-ex", "set mem inaccessible-by-default off"]
-        # gdb's connect halts the core (allstop mode), so the frame is coherent
-        # by construction and detach resumes it. --halt just makes that
-        # explicit; it is no longer the difference between torn and whole.
+        # ★ --halt is a NO-OP: this gdbserver rejects `monitor halt`, and
+        # --attach does not reliably halt the core (see the header). Kept only
+        # so existing invocations still parse.
         if halt:
             cmds += ["-ex", "monitor halt"]
         if geom is None:
@@ -293,8 +300,8 @@ if __name__ == "__main__":
 #   - --attach skips the RT1170 connect script (no M4 wake/reset) and the
 #     flash-driver VECTRESET that debug mode performs on connect, so it is
 #     the right mode for photographing a running image.
-#   - gdb's connect halts the core either way (allstop), so frames are
-#     coherent by construction; detach resumes the target.
+#   - gdb's connect does NOT reliably halt the core, so frames are coherent
+#     only because the scenes dumped so far hold still. See the header.
 #   - A stub whose first client vanished ignores SIGTERM in accept() and
 #     must be SIGKILLed, or it holds the probe and starves every later
 #     session (see _kill_daemons).

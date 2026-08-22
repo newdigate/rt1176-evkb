@@ -1,7 +1,8 @@
 # Acid Box — the audio+display integration capstone
 
-Date: 2026-08-17. Status: **IMPLEMENTED and QEMU-verified 2026-08-18;
-hardware verification still OWED.**
+Date: 2026-08-17. Status: **IMPLEMENTED, QEMU-verified and
+HARDWARE-verified 2026-08-18** — runs, renders and plays on silicon; the
+by-ear ritual and touch-on-glass are the only items still owed.
 
 Measured on merge day: full sweep **97 passed, 0 failed, 0 SKIP** (serial,
 `rt1176:dualcore/cm4_audio_test` green first try), `LICENSE-AUDIT: PASS` with
@@ -11,32 +12,56 @@ drift check is proven to name it. SynthUI's additions are pushed
 (`f630966`) and the pin in `evkb.cmake` re-resolves under
 `-DEVKB_FORCE_FETCH=ON`.
 
-**Hardware, attempted 2026-08-18 — the UI is PROVEN, the instrument is NOT.**
-Full account in `examples/display/acid_box/transcript_hw_evkb.txt`.
+**Hardware, 2026-08-18 (two sessions) — the UI, the run and the SOUND are all
+proven; only the by-ear ritual and touch-on-glass remain.** Full account in
+`examples/display/acid_box/transcript_hw_evkb.txt`.
 
 - ✅ The boot frame is **pixel-identical to the QEMU golden on silicon**
   (`0xD3BC88D7` both sides), and the step lane matches `kPreset[]` cell for
-  cell by eye. The widget layer, the layout arithmetic and the preset load are
-  correct on real hardware. `synthui_step_test` likewise reproduced its golden
-  `0xCE619CE1` bit-for-bit and runs stably.
-- ❌ **The CM7 then LOCKS UP at ~1.739 s**: `PC=0xFFFFFFFE`, systick frozen,
-  `GT911::begin` never entered (`_err=None`, `_i2cStatus=0` — the I2C
-  transaction never happened) while `s_sum` holds its correct final value,
-  bracketing the death between `acid_box.cpp:591` and `:603`. It is
-  app-specific, not the bench: `synthui_step_test` ran to 22.6 s on the same
-  board in the same session. No fault handler ran, which narrows it to a fault
-  that could not be stacked or was taken with faults masked.
-- ❌ Nothing has been **heard**. §5.2's by-ear ritual and touch-on-glass are
-  both still owed, and are blocked behind the lockup.
-- ⚠ Separately, the MCU-Link VCOM carries **zero bytes for two independent
-  images** and survived a physical replug, so no UART tokens were capturable;
-  every hardware claim above is SWD-derived. Useful precedent: framebuffer
-  dumps plus symbol reads were enough to prove the UI and characterise the
-  lockup without a serial console at all.
+  cell. `synthui_step_test` likewise reproduced its golden `0xCE619CE1`
+  bit-for-bit and runs stably.
+- ✅ **It runs.** The shipped image was measured free-running for **15 minutes**
+  (`systick_millis_count = 907822`, `DHCSR = 0x01010001` → `S_RETIRE_ST=1`),
+  with `transport.samplesElapsed_` tracking systick to within 10 ms throughout
+  and `CFSR = HFSR = 0` — no fault ever taken. `GT911::begin()` succeeds and
+  the part returns its true device ID (`_devId = 0x313139`, "911").
+- ✅ **It plays**, measured on silicon rather than heard: per-step peak RMS over
+  four bars puts the four rests at 0.0003–0.0005 and the twelve gated steps at
+  0.37–0.43, with the three **accented** steps (0, 7, 12) the three loudest of
+  all. That agrees with the QEMU gate's windows to ~2%, so voice + transport +
+  sequencer + note pump are all correct on hardware, together, under the UI.
+- ❌ **The reported CM7 lockup at ~1.739 s DOES NOT EXIST.** It was an artefact
+  of the debugger, and the first hardware session's account of it was wrong.
+  Three independent instrument behaviours produced it: LinkServer's `--attach`
+  gdbserver returns **zeros for every core register on a running core** (so
+  `$lr = $sp = 0` was never data); a probe-latched `C_HALT` **survives
+  `wiretimedreset`**, so the core never re-runs startup and
+  `systick_millis_count` reports the same frozen value forever (reproduced here
+  at 16390 before it was recognised); and every LinkServer connect script arms
+  **all seven DEMCR vector catches**, which halt the core *instead of* running
+  its handler, so "no fault handler ran" was the expected observation with or
+  without a fault. The whole signature — frozen ~1.9 s systick, incomplete
+  `s_sum`, `touch._begun = false`, no fault bits — was then **reproduced on
+  demand** on a board measured healthy minutes earlier.
+- ★ The "tight bracket" between `:591` and `:603` was a **base rate, not a
+  clue**. The measured silicon timeline puts `setup()` at 204 → 2103 ms with
+  `lvgl_sum_feed()` alone owning 1053 → 2022 ms: **half of boot is spent inside
+  the single statement the bracket named**, so a debugger halt during boot is
+  likelier to land there than anywhere else.
+- ⚠ The MCU-Link VCOM still carries **zero bytes**, so every claim above is
+  SWD-derived. `tools/rt1170-swdprobe.py` was added for it — the state-reading
+  companion to `rt1170-screenshot.py`, and it documents how to tell a halted
+  core from a frozen one (read `DHCSR` first, always).
+- ❌ Still owed, and now only what a human can do: the §5.2 **by-ear ritual**
+  and a **finger on the glass**.
 
-So §1's goal is **not met on hardware yet**. The QEMU gate covers the same
-ground in software and passes; per this tree's standing rule that is necessary
-and not sufficient.
+So §1's goal is met on hardware except for the two human confirmations. The
+measurements above were taken with the shipped `build/acid_box.elf`; the
+`setup()` timeline and the RMS table come from a `build-diag/` variant
+(`-DACIDBOX_DIAG=1`) whose definition the gate never sets — and the shipped
+loadable binary is **byte-identical** (275456 bytes, `objcopy -O binary` +
+`cmp`) to the ELF that produced the golden before this session's edits, with
+the gate still printing `ACIDBOX_UI_SUM=0xD3BC88D7` and `LICENSE-AUDIT: PASS`.
 
 Two deliberate departures from §5.1, both recorded rather than quietly
 absorbed:
