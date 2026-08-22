@@ -28,7 +28,15 @@ P=$!; gate_pid $P
 # Wait for the LAST line of a heartbeat, not the first interesting one: reaping
 # mid-line is how a healthy run gets blamed on the firmware (see CLAUDE.md's
 # note on the m2_rx_demo [irq] race).
-for _ in $(seq 1 40); do
+# 30 s, not the 10 s the older gates in this tree use.  Measured reason: this
+# gate failed ONCE while four QEMU instances were started back to back, and
+# passed on every one of nine subsequent runs including three repeats of the
+# same back-to-back sequence -- i.e. the run was fine and the WAIT was short.
+# Lengthening it costs nothing, because the loop exits the moment the token
+# appears; the budget only ever matters when the gate would otherwise fail.
+# CLAUDE.md's standing warning is that a load-sensitive gate produces false
+# regressions, and a false regression in a 111-gate sweep is expensive to chase.
+for _ in $(seq 1 120); do
     [ -f "$OUT" ] && grep -q "^hb card=0 " "$OUT" 2>/dev/null && break
     sleep 0.25
 done
