@@ -390,6 +390,33 @@ static void arpLossProbe(void) {
 }
 #endif
 
+#if defined(UAP_TX_PROBE)
+/*
+ * Send one ARP request on the uAP netif, periodically.
+ *
+ * Its only job is to make the driver TRANSMIT on bss_type=1 so something can
+ * check that it did.  With the model's tx-loopback on, the frame comes back
+ * tagged with the interface it was SENT on -- so a driver that used the plain
+ * sendDataFrame() (bss 0) sees its own frame arrive on the station interface
+ * and be refused, while a correct one sees it arrive on the uAP interface.
+ * That round trip is the only thing a host can observe that distinguishes
+ * "addressed the uAP" from "addressed the station and got lucky".
+ *
+ * ARP rather than UDP because it needs no peer, no address and no checksum:
+ * a frame that fails to come back must have failed for the reason under test.
+ */
+static uint32_t s_txProbes = 0;
+
+static void uapTxProbe(void) {
+    static uint32_t last = 0;
+    if (millis() - last < 500) return;
+    last = millis();
+    ip4_addr_t target;
+    IP4_ADDR(&target, AP_ADDR0, AP_ADDR1, AP_ADDR2, 200);   /* nobody holds it */
+    if (etharp_request(&s_uapNif, &target) == ERR_OK) s_txProbes++;
+}
+#endif
+
 // --- board preamble (identical to m2_lwip_test / m2_uap_probe) ---------------
 #define M2_SDIO_RST_MUX (*(volatile uint32_t *)0x400E814Cu)
 #define M2_WL_RST_MUX   (*(volatile uint32_t *)0x400E8188u)
@@ -568,6 +595,9 @@ void loop() {
 #if defined(ARP_LOSS_PROBE)
     if (s_haveCard && s_bssUp) arpLossProbe();
 #endif
+#if defined(UAP_TX_PROBE)
+    if (s_haveCard && s_bssUp) uapTxProbe();
+#endif
     if (s_haveCard && s_bssUp && millis() - lastSta >= 2000) {
         lastSta = millis();
         pollStaList();
@@ -613,6 +643,10 @@ void loop() {
         Serial1.print(" pswake=");          Serial1.print(iw416.psWakes());
         Serial1.print(" rx_bss0=");         Serial1.print(iw416.rxFramesByBss(0));
         Serial1.print(" unrouted=");        Serial1.print(iw416NetifUnroutedFrames());
-        Serial1.print(" uptime_s=");        Serial1.println(millis() / 1000);
+        Serial1.print(" uptime_s=");        Serial1.print(millis() / 1000);
+#if defined(UAP_TX_PROBE)
+        Serial1.print(" tx_probes=");       Serial1.print(s_txProbes);
+#endif
+        Serial1.println();
     }
 }

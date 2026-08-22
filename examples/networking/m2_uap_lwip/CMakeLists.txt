@@ -100,6 +100,25 @@ endif()
 
 # W17: measure AP->client ARP loss per request, with the destination as the one
 # variable (broadcast is DTIM-buffered and sent at a basic rate; unicast is not).
+# W18: transmit on the uAP netif periodically, so a TX-side gate has something
+# to observe.  Pairs with qemu2's tx-loopback, which echoes a frame back on the
+# interface it was SENT on.
+#
+# ★ ON by default, and the reason is the SKIP rule rather than a preference.
+# Gates run whatever is in build/, and a gate whose example was configured
+# without this would report SKIP -- not FAIL -- which CLAUDE.md is explicit is
+# worse, because a SKIP hides in a count while a FAIL shows up by name.  An
+# opt-in TX probe would mean the one gate covering sendDataFrameBss() silently
+# not running on anyone else's sweep.
+# The cost is one ARP request every 500 ms for an address nobody holds.  On
+# silicon that is real RF, but it is a broadcast ARP on an AP this example is
+# already hosting -- unremarkable next to the beacons it sends 10x as often.
+option(UAP_TX_PROBE     "Send periodic ARP requests on the uAP netif" ON)
+if(UAP_TX_PROBE)
+    add_definitions(-DUAP_TX_PROBE=1)
+    message(STATUS "uAP: TX probe ENABLED")
+endif()
+
 option(ARP_LOSS_PROBE   "Run the AP->client ARP loss probe once a client joins" OFF)
 option(ARP_PROBE_UNICAST "Send the probe unicast rather than broadcast" OFF)
 if(ARP_LOSS_PROBE)

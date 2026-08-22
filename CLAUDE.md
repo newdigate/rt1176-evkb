@@ -106,17 +106,31 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **115 gates**: 108 from the
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **116 gates**: 108 from the
 merge of two independent lines that both branched from 94 — the display
 capstone line added THREE (`display/vglite_lvgl_test`, then
 `display/synthui_step_test` and `display/acid_box` from the Acid Box capstone,
 reaching 97 on its own), and the M.2 Wi-Fi line added ELEVEN, reaching 105 on
 its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
-`networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FOUR
-more once the QEMU model grew a uAP surface and a station. That arithmetic is
-CHECKED against the runner rather than trusted: `-l` reports 115.
+`networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
+more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
+That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
+116.
 
 The M.2 line's own chain, kept because each step says what the gate is for:
+
+W18 finally added `networking/m2_uap_lwip[tx]`, which closes the last part of the
+uAP driver that was silicon-only. The model now READS the TxPD's `bss_type` and
+its `tx-loopback` echoes each frame back ON THE INTERFACE IT WAS SENT ON, so the
+tag that returns is the tag that went out. That round trip is the only thing a
+host can observe that distinguishes "addressed the uAP" from "addressed the
+station and got lucky" — a status code proves the card took a buffer and nothing
+more. Discrimination is total and was measured before the gate was written:
+correct → `rx_bss0=0 rx_bss1=71 unrouted=0`; the uAP netif calling
+`sendDataFrame()` instead → `rx_bss0=71 rx_bss1=0 unrouted=71`. 115 before it;
+★ `UAP_TX_PROBE` is ON by default and that is a SKIP-rule decision, not a
+preference: a gate whose example was configured without it would report SKIP
+rather than FAIL, and a SKIP hides in a count. 
 
 W18 later added TWO more on `networking/m2_uap_lwip` once the model could TAG an
 injected frame (`-global iw416-sdio.inject-bss=`), and they are a PAIR that must
@@ -207,8 +221,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **115 passed, 0 failed, 0 SKIP**, or
-**114 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **116 passed, 0 failed, 0 SKIP**, or
+**115 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
 fresh-clone-red set: its injected gestures come from the `touch-script`
