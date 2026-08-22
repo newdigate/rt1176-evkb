@@ -302,3 +302,86 @@ membership figure that is only ever adjusted by deltas drifts silently and
 permanently once one is lost.  The card's own list cannot drift.  joins/leaves
 are derived from observed transitions of that count, so they are counts of what
 was SEEN to change rather than of events received.
+
+==============================================================================
+THE ~17% TX LOSS, CHASED AND CLOSED -- 2026-08-22
+==============================================================================
+W17 left ~17% of AP->client ARP requests unanswered with client power save OFF,
+and named three suspects: lwip rate-limiting, air loss, and "something else".
+It was none of those in the sense meant.  It is the BROADCAST path, and it is
+not a fault.
+
+WHAT WAS WRONG WITH THE OLD MEASUREMENT
+------------------------------------------------------------------------------
+Two things, and both had to be fixed before the number could be trusted:
+  1. IT AGGREGATED.  "25 of 30" cannot distinguish losses spread evenly from
+     losses arriving in one burst, and those imply different causes.
+  2. IT HAD A BUILT-IN LAG.  A request went out at the end of a 5 s service
+     window and its reply was counted in the NEXT one, so the final request
+     could never be counted and the ratio was structurally pessimistic.
+The new probe records a per-request HIT or MISS with its own bounded wait.
+
+THE A/B -- ONE VARIABLE, THE DESTINATION
+------------------------------------------------------------------------------
+    arp_probe begin dst=broadcast target=192.168.44.100 n=40 wait_ms=400
+    XX...X.......................X..X.....X.
+    arp_probe done sent=40 hit=34 miss=6 pct=85
+
+    arp_probe begin dst=unicast   target=192.168.44.100 n=40 wait_ms=400
+    ........................................
+    arp_probe done sent=40 hit=40 miss=0 pct=100
+
+  Same client, same channel, same firmware image, minutes apart.  BROADCAST 85%,
+  UNICAST 100%.  And the broadcast misses are SCATTERED, not bursty -- which is
+  what the per-request record buys: a burst would have implied a buffer or a
+  timing window, and the spread implies plain per-frame loss.
+
+  ★ 85% also agrees with the old aggregate's 83%.  So the earlier measurement
+    was not WRONG, just uninformative -- worth saying, because a new method that
+    disagreed with the old one would have needed explaining before anything
+    built on it.
+
+WHY, AND WHY IT IS NOT A BUG
+------------------------------------------------------------------------------
+802.11 ACKNOWLEDGES AND RETRIES UNICAST FRAMES, AND DOES NEITHER FOR BROADCAST.
+A unicast frame that collides is retried until it gets through; a broadcast
+frame that collides is simply gone.  Nothing in the driver, the card or the
+client is misbehaving -- an AP that broadcasts to a station is using a lossy
+primitive, by design.
+  arp_txfail stayed 0 and txcount tracked arp_sent exactly in every arm, so the
+  frames always left the host.  The loss is on the air and only on the
+  unacknowledged path.
+
+THE CONSEQUENCE, WHICH WAS A REAL DEFECT
+------------------------------------------------------------------------------
+This example's DHCP server replied to the BROADCAST address, so every OFFER and
+ACK inherited that ~15%.  That is exactly the asymmetry recorded earlier in this
+transcript and left unexplained:
+
+    before (broadcast replies, 3 rejoins)   dhcp_disc=4 dhcp_req=3 dhcp_ack=3
+                                            -- one DISCOVER never became a
+                                               REQUEST, i.e. one OFFER was lost
+    after  (unicast replies,   4 joins)     dhcp_disc=4 dhcp_req=4 dhcp_ack=4
+                                            dhcp_bcast=0
+
+  Fixed by replying to the address being offered when RFC 2131 s4.1 allows it:
+  a client that sets the BROADCAST flag cannot receive a unicast before it is
+  configured and MUST be broadcast to; a client that leaves it clear can be
+  unicast.  No client seen here sets it (dhcp_bcast=0).
+  Replying unicast to an address the client does not hold yet needs an ARP
+  mapping it cannot answer for, so one is installed directly from the chaddr
+  being replied to -- which is what ETHARP_SUPPORT_STATIC_ENTRIES is for.  That
+  is enabled for THIS example only (add_definitions before the lwip import,
+  directory-scoped, its own build tree); the shared lwip port config is
+  untouched and m2_lwip_test is unaffected.
+
+WHAT THIS MEANS FOR ANYTHING BUILT ON TOP
+------------------------------------------------------------------------------
+  * Unicast AP->client traffic is LOSSLESS here (40/40).  TX is not merely
+    correct, it is reliable, which is more than the earlier entry could say.
+  * ANY protocol that depends on broadcast reaching a uAP client must tolerate
+    ~15% loss or avoid broadcast.  DHCP was the instance that mattered; ARP
+    requests from the AP are the other obvious one, and lwip retries those on
+    its own.
+  * A gate asserting "N sent, N received" over a broadcast path would be flaky
+    by construction, and it would look like a firmware regression.

@@ -2,5 +2,5 @@
 RT1176 M.2 uAP + lwip up
 sdio_begin=cmd5-no-response
 uap_lwip_done
-hb card=0 bss=0 udp_rx=0 udp_bytes=0 rx_bss0=0 rx_bss1=0 unrouted=0 dhcp_disc=0 dhcp_req=0 dhcp_ack=0 dhcp_full=0 sta=? joins=0 leaves=0 lastevent=0x0
+hb card=0 bss=0 udp_rx=0 udp_bytes=0 rx_bss0=0 rx_bss1=0 unrouted=0 dhcp_disc=0 dhcp_req=0 dhcp_ack=0 dhcp_full=0 dhcp_bcast=0 sta=? joins=0 leaves=0 lastevent=0x0
 PASS: card-absent fallback; no AP was configured, started, or claimed

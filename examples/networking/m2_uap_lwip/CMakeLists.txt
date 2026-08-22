@@ -7,6 +7,18 @@ endif()
 
 include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 
+# ★ Static ARP entries, and this must come BEFORE the lwip import so it reaches
+# lwip's own sources and not just ours.  A DHCP server has to reply to a client
+# that does not yet hold the address being offered, so ordinary ARP resolution
+# cannot work -- the standard answer is to install the mapping directly from the
+# chaddr being replied to.  lwip defaults this off (opt.h) and the shared port's
+# lwipopts.h does not set it, so the #ifndef default is what we are overriding.
+#
+# Scoped to THIS example: add_definitions is directory-scoped and every example
+# configures its own lwip in its own build directory, so m2_lwip_test and the
+# rest are untouched.
+add_definitions(-DETHARP_SUPPORT_STATIC_ENTRIES=1)
+
 # lwip exactly as lwip_test imports it (port/ carries lwipopts.h + arch/;
 # port/ethernetif.c also compiles but is inert here -- nothing calls it).
 import_evkb_library(lwip
@@ -84,6 +96,18 @@ if(M2_UAP_PSK)
     message(STATUS "uAP security: WPA2-PSK (passphrase ${_psklen} chars, not logged)")
 else()
     message(STATUS "uAP security: OPEN (no -DM2_UAP_PSK given)")
+endif()
+
+# W17: measure AP->client ARP loss per request, with the destination as the one
+# variable (broadcast is DTIM-buffered and sent at a basic rate; unicast is not).
+option(ARP_LOSS_PROBE   "Run the AP->client ARP loss probe once a client joins" OFF)
+option(ARP_PROBE_UNICAST "Send the probe unicast rather than broadcast" OFF)
+if(ARP_LOSS_PROBE)
+    add_definitions(-DARP_LOSS_PROBE=1)
+    message(STATUS "uAP: ARP loss probe ENABLED")
+endif()
+if(ARP_PROBE_UNICAST)
+    add_definitions(-DARP_PROBE_UNICAST=1)
 endif()
 
 teensy_add_executable(m2_uap_lwip m2_uap_lwip.cpp ${M2_FW_SRC})

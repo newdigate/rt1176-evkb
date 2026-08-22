@@ -765,10 +765,70 @@ ever adjusted by deltas drifts silently and permanently once one is lost. The
 card's own list cannot drift. `joins`/`leaves` count observed transitions of
 that count, not events received.
 
-### One loose end
+### One loose end — since **explained and fixed**
 
 Across three rejoins: `dhcp_disc=4 dhcp_req=3 dhcp_ack=3` — one DISCOVER never
-led to a REQUEST. The outcome was correct every time (the client was addressed,
-and got the same `.100` each cycle, since leases are keyed by MAC), so this is
-the client's state machine rather than a server fault — but it is unexplained
-and recorded as such.
+led to a REQUEST. This turned out to be the same root cause as the TX loss
+below: the OFFER was broadcast, and broadcast is lossy. After switching replies
+to unicast: `dhcp_disc=4 dhcp_req=4 dhcp_ack=4`.
+
+
+## The ~17% TX loss, chased and closed
+
+It is the **broadcast path**, and it is not a fault.
+
+First, two defects in the old measurement had to go: it **aggregated** (25 of 30
+cannot distinguish evenly-spread loss from one burst, and those imply different
+causes), and it had a **built-in lag** (a request went out at the end of a 5 s
+window and its reply was counted in the next, so the ratio was structurally
+pessimistic). The new probe records a per-request hit/miss with its own bounded
+wait.
+
+### One variable: the destination
+
+```
+dst=broadcast  n=40   XX...X.......................X..X.....X.   hit=34 miss=6   85%
+dst=unicast    n=40   ........................................   hit=40 miss=0  100%
+```
+
+Same client, channel and firmware image, minutes apart. The broadcast misses are
+**scattered, not bursty** — which is what the per-request record buys: a burst
+would imply a buffer or timing window, the spread implies plain per-frame loss.
+
+85% also agrees with the old aggregate's 83%, so the earlier measurement was
+uninformative rather than wrong — worth stating, since a new method that
+*disagreed* would need explaining before anything rested on it.
+
+### Why, and why it isn't a bug
+
+**802.11 acknowledges and retries unicast, and does neither for broadcast.** A
+unicast frame that collides is retried; a broadcast frame that collides is gone.
+Nothing in the driver, card or client is misbehaving — an AP broadcasting to a
+station is using a lossy primitive by design. `arp_txfail=0` and `txcount`
+tracked `arp_sent` exactly in both arms, so the frames always left the host.
+
+### The consequence, which *was* a real defect
+
+The DHCP server replied to the broadcast address, so every OFFER and ACK
+inherited the ~15%:
+
+| | |
+|---|---|
+| broadcast replies, 3 rejoins | `dhcp_disc=4 dhcp_req=3 dhcp_ack=3` — an OFFER lost |
+| unicast replies, 4 joins | `dhcp_disc=4 dhcp_req=4 dhcp_ack=4`, `dhcp_bcast=0` |
+
+Fixed per RFC 2131 §4.1: a client setting the BROADCAST flag must be broadcast
+to; one leaving it clear can be unicast. Replying to an address the client does
+not hold yet needs an ARP mapping it cannot answer for, so one is installed from
+the `chaddr` being replied to — `ETHARP_SUPPORT_STATIC_ENTRIES`, enabled for
+**this example only** (directory-scoped `add_definitions` before the lwip
+import, own build tree); the shared lwip port config is untouched.
+
+### For anything built on top
+
+- Unicast AP→client traffic is **lossless** here (40/40) — TX is not merely
+  correct but reliable, which the earlier entry could not say.
+- Any protocol depending on broadcast reaching a uAP client must tolerate ~15%
+  loss or avoid broadcast.
+- **A gate asserting "N sent, N received" over a broadcast path would be flaky
+  by construction** — and would look like a firmware regression.

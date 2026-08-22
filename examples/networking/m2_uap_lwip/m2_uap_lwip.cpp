@@ -47,6 +47,7 @@ extern "C" {
 #include "lwip/netif.h"
 #include "lwip/timeouts.h"
 #include "lwip/udp.h"
+#include "lwip/etharp.h"
 #include "netif/ethernet.h"
 }
 
@@ -71,6 +72,36 @@ static bool     s_dumped = false;
 static bool     s_haveCard = false, s_bssUp = false;
 static uint16_t s_staCount = 0xFFFF;      // 0xFFFF = never successfully read
 static uint32_t s_joins = 0, s_leaves = 0;
+
+// --- ARP loss probe (opt-in) -------------------------------------------------
+// W17 left ~17% of AP->client ARP requests unanswered with client power save
+// OFF, unexplained.  This measures it properly.  Two things were wrong with the
+// earlier measurement and both are fixed here:
+//
+//  1. IT AGGREGATED.  "25 replies to 30 requests" cannot say whether the misses
+//     were spread evenly or arrived in one burst, and those imply different
+//     causes.  This records a per-request HIT or MISS.
+//  2. IT HAD A BUILT-IN LAG.  A request was sent at the end of a 5 s window and
+//     its reply counted in the NEXT one, so the last request could never be
+//     counted and the ratio was structurally pessimistic by one.  Here each
+//     request gets its own bounded wait.
+//
+// The variable under test is the DESTINATION.  A broadcast frame from an AP is
+// buffered for DTIM delivery and sent at a basic rate; a unicast frame is not.
+// If the loss is in that path, unicast removes it -- and if it does not, the
+// broadcast path is exonerated and the next suspect is the client.
+#ifndef ARP_PROBE_COUNT
+#define ARP_PROBE_COUNT 40
+#endif
+#ifndef ARP_PROBE_WAIT_MS
+#define ARP_PROBE_WAIT_MS 400
+#endif
+static uint8_t  s_clientMac[6] = {0};
+static uint8_t  s_clientLast = 0;         // host byte of the lease we handed out
+static bool     s_haveClient = false;
+static uint32_t s_arpSent = 0, s_arpHit = 0, s_arpMiss = 0;
+static bool     s_arpSeen = false;        // set by the sink for THIS request
+static bool     s_arpDone = false;
 
 // The AP's own address.  Static on both sides: there is no DHCP server here, so
 // a client must be configured to match (192.168.44.50 in the bench sketch).
@@ -108,6 +139,7 @@ struct Lease { uint8_t mac[6]; uint8_t last; bool used; };
 static Lease s_leases[POOL_COUNT];
 static struct udp_pcb *s_dhcpPcb = nullptr;
 static uint32_t s_dhcpDiscover = 0, s_dhcpRequest = 0, s_dhcpAck = 0, s_dhcpNoPool = 0;
+static uint32_t s_dhcpBcastReplies = 0;   // how many had to go out broadcast
 
 static const char *statusName(SdioHost::Status s) {
     switch (s) {
@@ -133,6 +165,25 @@ static void dumpBytes(const uint8_t *p, uint16_t n) {
 // Every packet that reaches here has come off the air, through the RxPD demux,
 // into the uAP netif and up through lwip to a bound socket.  The first one is
 // dumped whole: a counter says "something arrived", the bytes say WHAT.
+// The netif poll delivers into lwip, so an ARP reply is consumed by etharp and
+// never reaches an application callback.  Watching for it therefore has to
+// happen at the FRAME level, which is what iw416NetifPollDual's sink does --
+// but that sink is inside the library.  Rather than reach into it, the probe
+// asks a simpler question of lwip itself: after a request, does the client's
+// address appear in the ARP CACHE?  A cache entry can only come from a reply.
+static bool clientInArpCache(void) {
+    ip4_addr_t want;
+    IP4_ADDR(&want, AP_ADDR0, AP_ADDR1, AP_ADDR2, s_clientLast);
+    for (int i = 0; i < ARP_TABLE_SIZE; i++) {
+        ip4_addr_t *ip = nullptr;
+        struct netif *nif = nullptr;
+        struct eth_addr *eth = nullptr;
+        if (etharp_get_entry(i, &ip, &nif, &eth) &&
+            ip && ip4_addr_cmp(ip, &want)) return true;
+    }
+    return false;
+}
+
 static void onUdp(void *, struct udp_pcb *, struct pbuf *p,
                   const ip_addr_t *addr, u16_t port) {
     if (p == nullptr) return;
@@ -212,10 +263,32 @@ static void dhcpReply(const uint8_t *req, uint16_t reqLen, uint8_t msgType, uint
     b[o++] = AP_ADDR0; b[o++] = AP_ADDR1; b[o++] = AP_ADDR2; b[o++] = AP_ADDR3;
     b[o++] = DHCP_OPT_END;
     pbuf_realloc(p, o);
-    // ★ ALWAYS BROADCAST the reply.  The client has no address yet, so a
-    // unicast would need an ARP entry for an address it does not hold, and the
-    // exchange would stall in a way that looks like the server never answered.
-    (void)udp_sendto_if(s_dhcpPcb, p, IP_ADDR_BROADCAST, DHCP_CLIENT_PORT, &s_uapNif);
+    // ★ UNICAST WHEN THE CLIENT ALLOWS IT, and this is a measured decision
+    // rather than a preference.  802.11 acknowledges and RETRIES unicast frames
+    // and does neither for broadcast, so a broadcast from an AP is lost
+    // outright when it collides.  Measured here, same client, same channel,
+    // one variable: 40 ARP requests broadcast -> 34 answered; 40 unicast -> 40.
+    // A DHCP reply sent to the broadcast address inherits that ~15%, and a lost
+    // OFFER makes the client start over -- which is exactly the dhcp_disc=4 /
+    // dhcp_req=3 asymmetry seen over three rejoins before this change.
+    //
+    // RFC 2131 s4.1: if the client set the BROADCAST flag it cannot receive a
+    // unicast before it is configured, and the reply MUST be broadcast.  Most
+    // clients do not set it.  When it is clear, the reply goes to the address
+    // being offered -- which needs an ARP entry the client cannot yet answer
+    // for, so one is installed directly from the chaddr we are replying to.
+    const bool mustBroadcast = (req[10] & 0x80) != 0;
+    if (mustBroadcast) {
+        s_dhcpBcastReplies++;
+        (void)udp_sendto_if(s_dhcpPcb, p, IP_ADDR_BROADCAST, DHCP_CLIENT_PORT, &s_uapNif);
+    } else {
+        ip4_addr_t cli;
+        IP4_ADDR(&cli, AP_ADDR0, AP_ADDR1, AP_ADDR2, last);
+        struct eth_addr eth;
+        memcpy(eth.addr, &req[28], 6);          // chaddr
+        (void)etharp_add_static_entry(&cli, &eth);
+        (void)udp_sendto_if(s_dhcpPcb, p, &cli, DHCP_CLIENT_PORT, &s_uapNif);
+    }
     pbuf_free(p);
 }
 
@@ -240,6 +313,9 @@ static void onDhcp(void *, struct udp_pcb *, struct pbuf *p,
                 s_dhcpRequest++;
                 dhcpReply(buf, n, DHCP_MSG_ACK, last);
                 s_dhcpAck++;
+                memcpy(s_clientMac, mac, 6);
+                s_clientLast = last;
+                s_haveClient = true;
                 Serial1.print("uap_dhcp_ack mac=");  dumpBytes(mac, 6);
                 Serial1.print(" ip=");
                 Serial1.print(AP_ADDR0); Serial1.print('.'); Serial1.print(AP_ADDR1);
@@ -250,6 +326,69 @@ static void onDhcp(void *, struct udp_pcb *, struct pbuf *p,
     }
     pbuf_free(p);
 }
+
+#if defined(ARP_LOSS_PROBE)
+static void arpLossProbe(void) {
+    if (!s_haveClient || s_arpDone) return;
+    ip4_addr_t target;
+    IP4_ADDR(&target, AP_ADDR0, AP_ADDR1, AP_ADDR2, s_clientLast);
+    Serial1.print("arp_probe begin dst=");
+#if defined(ARP_PROBE_UNICAST)
+    Serial1.print("unicast");
+#else
+    Serial1.print("broadcast");
+#endif
+    Serial1.print(" target=");   Serial1.print(ip4addr_ntoa(&target));
+    Serial1.print(" n=");        Serial1.print(ARP_PROBE_COUNT);
+    Serial1.print(" wait_ms=");  Serial1.println(ARP_PROBE_WAIT_MS);
+
+    for (int i = 0; i < ARP_PROBE_COUNT; i++) {
+        // Clear the cache entry first, so each iteration measures a FRESH
+        // exchange rather than reading last round's answer.  Without this the
+        // probe would report 100% from the second request onward and prove
+        // nothing at all.
+        etharp_cleanup_netif(&s_uapNif);
+#if defined(ARP_PROBE_UNICAST)
+        (void)etharp_query(&s_uapNif, &target, NULL);   // lwip unicasts once cached
+        struct pbuf *q = pbuf_alloc(PBUF_RAW, 42, PBUF_RAM);
+        if (q) {
+            uint8_t *f = (uint8_t *)q->payload;
+            memcpy(&f[0], s_clientMac, 6);              // dst: the CLIENT, not FF..
+            memcpy(&f[6], g_mac, 6);
+            f[12] = 0x08; f[13] = 0x06;
+            f[14] = 0x00; f[15] = 0x01; f[16] = 0x08; f[17] = 0x00;
+            f[18] = 6;    f[19] = 4;    f[20] = 0x00; f[21] = 0x01;
+            memcpy(&f[22], g_mac, 6);
+            f[28] = AP_ADDR0; f[29] = AP_ADDR1; f[30] = AP_ADDR2; f[31] = AP_ADDR3;
+            memset(&f[32], 0, 6);
+            f[38] = AP_ADDR0; f[39] = AP_ADDR1; f[40] = AP_ADDR2; f[41] = s_clientLast;
+            (void)s_uapNif.linkoutput(&s_uapNif, q);
+            pbuf_free(q);
+        }
+#else
+        (void)etharp_request(&s_uapNif, &target);       // lwip broadcasts this
+#endif
+        s_arpSent++;
+        const uint32_t t0 = millis();
+        bool hit = false;
+        while (millis() - t0 < ARP_PROBE_WAIT_MS) {
+            (void)iw416NetifPollDual(nullptr, &s_uapNif);
+            sys_check_timeouts();
+            if (clientInArpCache()) { hit = true; break; }
+        }
+        if (hit) s_arpHit++; else s_arpMiss++;
+        Serial1.print(hit ? "." : "X");
+        if ((i % 40) == 39) Serial1.println();
+    }
+    Serial1.println();
+    Serial1.print("arp_probe done sent="); Serial1.print(s_arpSent);
+    Serial1.print(" hit=");                Serial1.print(s_arpHit);
+    Serial1.print(" miss=");               Serial1.print(s_arpMiss);
+    Serial1.print(" pct=");
+    Serial1.println((int)((s_arpHit * 100) / (s_arpSent ? s_arpSent : 1)));
+    s_arpDone = true;
+}
+#endif
 
 // --- board preamble (identical to m2_lwip_test / m2_uap_probe) ---------------
 #define M2_SDIO_RST_MUX (*(volatile uint32_t *)0x400E814Cu)
@@ -426,6 +565,9 @@ void loop() {
         (void)iw416NetifPollDual(nullptr, &s_uapNif);
         sys_check_timeouts();
     }
+#if defined(ARP_LOSS_PROBE)
+    if (s_haveCard && s_bssUp) arpLossProbe();
+#endif
     if (s_haveCard && s_bssUp && millis() - lastSta >= 2000) {
         lastSta = millis();
         pollStaList();
@@ -443,6 +585,7 @@ void loop() {
         Serial1.print(" dhcp_req="); Serial1.print(s_dhcpRequest);
         Serial1.print(" dhcp_ack="); Serial1.print(s_dhcpAck);
         Serial1.print(" dhcp_full=");Serial1.print(s_dhcpNoPool);
+        Serial1.print(" dhcp_bcast=");Serial1.print(s_dhcpBcastReplies);
         Serial1.print(" sta=");
         if (s_staCount == 0xFFFF) Serial1.print("?"); else Serial1.print((int)s_staCount);
         Serial1.print(" joins=");    Serial1.print(s_joins);
