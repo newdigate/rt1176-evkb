@@ -1,5 +1,14 @@
 # W17 handoff: Wi-Fi HOST mode — the M.2 card as an access point (uAP)
 
+> ★ **DONE — see `2026-08-22-w18-uap-next.md` for what came of it and what is
+> left.** The card hosts a WPA2-secured AP, a client joins and is addressed by
+> our DHCP server, traffic moves both ways, and every part of it is gated
+> (sweep 116). Read this document for the *question* and the reasoning that
+> framed it; read W18 for the answers, the five things that will bite, and the
+> traps found on the way. Two of this document's own premises turned out to
+> need correcting — Phase 0's "unknown command" assumption and the belief that
+> a config GET was a harmless probe — and W18 says why.
+
 u-blox **M2-MAYA-W161** (IW416/SD8978) on **MIMXRT1170-EVKB RevC3**, repo
 `~/Development/rt1176-evkb-m2-maya-w161`, branch **`master`** (the W16 merge —
 everything now lives on masters). Pins, all verified on their repos' masters:

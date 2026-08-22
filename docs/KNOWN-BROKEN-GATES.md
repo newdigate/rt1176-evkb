@@ -383,6 +383,40 @@ the codec, the panel and the GT911 are all modelled. Until
 `transcript_hw_evkb.txt` exists beside the QEMU one, the honest claim is
 "QEMU-verified", not "verified".
 
+## `rt1176:networking/m2_uap_*` — RED without a qemu2 that models the uAP surface
+
+**Four gates need a QEMU the stock tree does not have**, and they go **RED, not SKIP**, which is the
+part worth knowing: a SKIP would at least announce itself in the count, while these look exactly
+like a firmware regression in whatever you just changed.
+
+| gate | needs |
+|------|-------|
+| `rt1176:networking/m2_uap_probe[uap]` | `-global iw416-sdio.uap=on` |
+| `rt1176:networking/m2_uap_lwip[uap]` | same |
+| `rt1176:networking/m2_uap_lwip[data]` | `uap=on` + `inject-bss=` |
+| `rt1176:networking/m2_uap_lwip[mistag]` | same |
+| `rt1176:networking/m2_uap_lwip[tx]` | `uap=on` + `tx-loopback` reading the TxPD's `bss_type` |
+
+The floor is **qemu2 `c3b816be51`** (gitlab.com/Newdigate/qemu-rt1170) — the uAP command family, the
+modelled station, `inject-bss` and the TxPD `bss_type` read. Anything older **rejects
+`-global iw416-sdio.uap=on` outright**, so QEMU never starts and the gate fails with no UART.
+
+**Diagnose it by asking the device, not by reading firmware:**
+```sh
+qemu-system-arm -device help | grep iw416          # is the model there at all?
+qemu-system-arm -M mimxrt1170-evk,m2-wifi=on,help  # does the machine take the property?
+```
+This is the same rule the pre-existing IW416 gates already carry, and the same trap: on a stock
+upstream QEMU there is no `iw416-sdio` device at all, so *every* `m2_*` model gate is red for a
+reason that has nothing to do with this repo.
+
+★ Note the plain `rt1176:networking/m2_uap_probe`, `[wifi]` and `rt1176:networking/m2_uap_lwip`
+gates are **exempt**: they assert the card-ABSENT fallback or the pre-uAP model behaviour and pass
+on any QEMU that has the IW416 device. The `uap` property is off by default precisely so those keep
+the behaviour they assert.
+
+---
+
 ## Rules for this list
 
 - **Do not delete, weaken, or `exit 0` a gate to get it off this list.** That defeats the entire
@@ -396,6 +430,14 @@ the codec, the panel and the GT911 are all modelled. Until
 - When you fix one, delete its section and re-run the full sweep to confirm the count went up.
 
 ## Current expected sweep result
+
+★ **2026-08-22 — the count is 116, and the log below stopped being maintained at 72.**
+Everything from W9 to W18 (the M.2 Wi-Fi line, the display capstone line, and the uAP work) was
+added without an entry here. **`CLAUDE.md` is the maintained source for the count and the target**;
+it records `116 passed, 0 failed, 0 SKIP`, or `115 passed, 1 failed, 0 SKIP` when
+`dualcore/cm4_audio_test` is having one of its days. The per-move history below is kept because
+each entry says *what* a gate was for, which is still useful — it is the arithmetic that is stale,
+not the reasoning. Do not trust a number in this section; ask the runner (`-l`).
 
 **2026-07-30 — gate count moved 68 → 70.** Two new LVGL RK055 gates joined the sweep
 (`examples/display/lvgl_rk055_panel_test` and `examples/display/lvgl_rk055_touch_test`). The
