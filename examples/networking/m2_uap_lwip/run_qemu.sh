@@ -32,13 +32,20 @@ P=$!; gate_pid $P
 # than a diagnosed fix, and the distinction is worth recording accurately.
 #
 # What happened: this gate reported failure TWICE early on, both times inside a
-# shell loop that used a RELATIVE `cd` per gate.  It then passed ~43 consecutive
-# runs -- 19 more in relative-path loops, 24 in absolute-path loops -- and has
-# never once failed when run on its own.  The most likely explanation is the
-# LOOP, not the gate: the harness running these commands resets the working
-# directory between invocations, so a relative `cd` can fail and produce a
-# non-zero status with the gate never running at all.  That is a hypothesis, not
-# a finding: it was not reproduced deliberately, so it is not proven.
+# shell loop running several gates.  It then passed ~43 consecutive runs and has
+# never once failed when run on its own.
+#
+# ★ A BETTER EXPLANATION TURNED UP LATER, and it is worth recording because it
+# is not about this gate at all.  m2_rx_demo[txaggr] later "failed" the same way
+# in a 19-gate loop, passed 3/3 standalone at 17-21 s, and passed when the same
+# 19 gates were run in three smaller batches.  The cause was the OUTER command's
+# own two-minute limit killing whichever gate was in flight -- the loop, not the
+# gate, and not the run.  That fits both of this gate's failures at least as
+# well as the relative-`cd` idea previously recorded here, and it is testable
+# where that was not.
+# Neither is proven for THIS gate specifically, so nothing here is stated as
+# fact.  What is certain: run long gate sets in batches, and never diagnose a
+# gate from a loop that was itself cut short.
 #
 # The timeout was raised anyway, because it costs nothing -- the loop exits the
 # moment the token appears, so the budget only ever matters when the gate would
