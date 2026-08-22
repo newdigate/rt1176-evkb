@@ -19,13 +19,20 @@
 #
 #   ★ WHAT THE bss=1 ROWS DO AND DO NOT SAY. W17 made seq_num carry bss_type
 #   in bits 15:12, and every command this driver had ever sent left that at 0.
-#   THE MODEL DOES NOT ROUTE ON THAT FIELD — it ignores the high byte entirely
-#   and echoes back only the low byte (visible in the uap_bytes dumps: a bss=1
-#   reply carries seq 0x0004, not 0x1004). So these rows do NOT prove a command
-#   reaches the uAP interface; only silicon can say that. What they DO prove is
-#   that a BSS-addressed send still produces a well-formed packet the card
-#   answers and the driver correlates — that the new field did not corrupt the
-#   header, or the seq the reply is matched against.
+#   THE MODEL DOES NOT ROUTE ON THAT FIELD — it has no uAP interface to route
+#   to. So these rows do NOT prove a command reaches the uAP interface; only
+#   silicon can say that. What they DO prove is that a BSS-addressed send
+#   produces a well-formed packet the card answers and the driver correlates —
+#   that the new field did not corrupt the header, or the seq the reply is
+#   matched against.
+#   ★ UPDATED 2026-08-22: the model now ECHOES THE WHOLE seq_num, bss nibbles
+#   included, because that is what silicon does (a bss=1 reply carries 0x1004,
+#   not 0x0004 — qemu2 721fb09146, anchored to this example's own silicon
+#   capture). It used to zero the high byte, and that HID A BUG CLASS: a driver
+#   comparing the full 16-bit seq instead of masking to the low byte passed
+#   here and rejected every uAP reply on the bench. It now fails this gate.
+#   So these rows say more than they used to — but still not that the uAP
+#   interface exists.
 #   DEMONSTRATED RED, not asserted on faith (2026-08-20): sendHostCmdBss() was
 #   temporarily changed to OR bssType into seq_num's LOW nibble instead of
 #   shifting it to bits 15:12 — a plausible transcription slip — and every

@@ -381,6 +381,12 @@ they are NOT local-only — the model is PUSHED.**
 (`hw/sd/iw416-sdio.c`, enabled by `-machine mimxrt1170-evk,m2-wifi=on`), plus —
 for `[irq]` — the SDIO card-interrupt plumbing W15 added to the SD bus and
 SDHCI.
+★ **The IW416 model now echoes the WHOLE seq_num** (qemu2 `721fb09146`,
+2026-08-22): bss_num/bss_type included, because that is what silicon does. It
+used to zero the high byte, which HID A BUG CLASS — a driver comparing the full
+16-bit seq instead of masking to the low byte passed in emulation and rejected
+every uAP reply on the bench. A qemu2 older than that revision does not catch
+it; nothing else changes, and all eight model-using gates pass either way.
 ★ The floor is NOT uniform across the nine. `m2_uap_probe[wifi]` uses only
 `m2-wifi=on` + `fw-preboot=on` and the command port, so an older model
 satisfies it; the W16 floor below is the m2_rx_demo family's. Do not read one
