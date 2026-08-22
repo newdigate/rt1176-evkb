@@ -62,6 +62,14 @@ void setup() {
     // test would put a second beacon on the air next to the one under test.
     WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_STA);
+    // ★ POWER SAVE OFF, and it is a measurement rather than a tidy-up.  An
+    // ESP8266 station sleeps between beacons by default, and an AP is then
+    // obliged to BUFFER for it and deliver at DTIM.  Run 13 saw only 11 replies
+    // to 26 ARP requests with sleep ON; if that ratio moves with this one line,
+    // the AP-side buffering is the explanation and the driver is not at fault.
+    // If it does NOT move, the leading candidate is eliminated and the next
+    // suspect is lwip rate-limiting or air loss.
+    WiFi.setSleepMode(WIFI_NONE_SLEEP);
     WiFi.persistent(false);
     WiFi.setAutoReconnect(true);
     WiFi.config(kIp, kGw, kMask);

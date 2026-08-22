@@ -522,8 +522,26 @@ becomes a bug report later. Three candidates, none tested:
 
 What *is* established: the loss is **downstream of this driver** —
 `arp_txfail=0` and `txcount` tracks `arp_sent` exactly, so every frame was
-accepted by the card. Disable client power save first; it is one line on the
-client and would settle the leading candidate outright.
+accepted by the card.
+
+**A/B'd in run 14** — one line changed on the client, nothing on the RT1176 side:
+
+| client power save | replies / sent | |
+|---|---|---|
+| ON (run 13) | 11 / 26 | 42% |
+| OFF (run 14) | 25 / 30 | **83%** |
+
+The ratio roughly doubles, so the leading candidate is substantially right: a
+station sleeping between beacons misses a good fraction of what the AP sends,
+and the AP-side buffer-and-deliver-at-DTIM path is where that goes.
+
+★ But this is **one A/B pair**, one run each, and the project rule that every
+single-pair comparison here has eventually been overturned applies to it too.
+And **power save is not the whole story** — 83% is not 100%, and 5 of 30 went
+unanswered with the client fully awake. lwip ARP rate-limiting and air loss are
+both still live and untested. Do not read "TX works" as "TX is lossless": it is
+proven *correct* and not yet proven *reliable*, and a uAP upstack will need to
+know which.
 
 ### Step 2 status
 

@@ -1885,3 +1885,33 @@ uap_bss_seq=end
 uap_recover=n/a reason=command_port_alive_at_end
 uap_cardreg tag=final cmd52=ok cardstatus=0x0008 intmask=0x00C3 fwstatus=0xFEDC ioport=0x0000,0x0001 intstatus=0x0000
 uap_probe_done
+
+------------------------------------------------------------------------------
+W17 run 14: the reply ratio, A/B'd against client power save
+------------------------------------------------------------------------------
+Run 13 left 11 replies to 26 ARP requests unexplained and named client power
+save as the leading candidate.  One line changed on the CLIENT
+(WiFi.setSleepMode(WIFI_NONE_SLEEP)); nothing on the RT1176 side moved -- same
+firmware image, same test, same channel.
+
+    power save ON  (run 13)   arp_replies=11 / arp_sent=26   42%
+    power save OFF (run 14)   arp_replies=25 / arp_sent=30   83%
+
+  The ratio roughly DOUBLES.  So the leading candidate is substantially right:
+  an ESP8266 sleeping between beacons is not receiving a good fraction of what
+  the AP sends it, and the AP-side buffer-and-deliver-at-DTIM path is where that
+  goes.  arp_txfail stayed 0 in both, and txcount tracked arp_sent exactly in
+  both, so this was never about frames the driver failed to send.
+
+  ★ WHAT THIS IS NOT.  It is ONE A/B PAIR, one run each, and this project's own
+  rule -- "every single-pair comparison this project has believed was later
+  overturned" -- applies to it as much as to anything else.  It is strong
+  evidence, not a controlled series.
+  ★ And power save is NOT THE WHOLE STORY: 83% is not 100%, and 5 of 30
+  requests still went unanswered with the client fully awake.  That remainder
+  is unexplained and is the thing to chase next -- lwip ARP rate-limiting and
+  plain air loss are both still live, and neither has been tested.
+
+  For anyone building on this: do not read "TX works" as "TX is lossless".  It
+  is proven correct and it is not yet proven reliable, and a uAP upstack will
+  need to know which.
