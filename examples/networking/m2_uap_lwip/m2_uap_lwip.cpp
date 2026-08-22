@@ -50,6 +50,10 @@ extern "C" {
 #include "netif/ethernet.h"
 }
 
+#if defined(HAVE_UAP_PSK)
+#include "uap_creds.h"          // generated, gitignored -- see CMakeLists.txt
+#endif
+
 #if defined(HAVE_IW416_FW)
 extern const uint8_t iw416_fw[];
 extern const uint32_t iw416_fw_len;
@@ -310,7 +314,12 @@ void setup() {
     cfg.beaconPeriod = 100;
     cfg.dtimPeriod   = 1;
     cfg.bcastSsidCtl = 1;
+#if defined(HAVE_UAP_PSK)
+    cfg.psk          = M2_UAP_PSK_STR;
+    cfg.tlvMask      = Iw416::UAP_TLV_ALL_WPA2;
+#else
     cfg.tlvMask      = Iw416::UAP_TLV_ALL_OPEN;
+#endif
     SdioHost::Status cs = iw416.uapConfigure(cfg);
     Serial1.print("uap_configure="); Serial1.print(statusName(cs));
     Serial1.print(" result=0x");     Serial1.println(iw416.lastRespResult(), HEX);
@@ -330,7 +339,15 @@ void setup() {
     }
     s_bssUp = true;
     Serial1.print("uap_hosting ssid="); Serial1.print(M2_UAP_SSID);
-    Serial1.print(" chan=");            Serial1.println(M2_UAP_CHANNEL);
+    Serial1.print(" chan=");            Serial1.print(M2_UAP_CHANNEL);
+    // The SSID is broadcast so printing it costs nothing.  The passphrase is
+    // never printed, not even its length beyond this yes/no -- a console log is
+    // the easiest place in this whole chain for a secret to end up.
+#if defined(HAVE_UAP_PSK)
+    Serial1.println(" security=wpa2-psk");
+#else
+    Serial1.println(" security=open");
+#endif
 
     // --- the second netif ---------------------------------------------------
     lwip_init();

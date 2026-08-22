@@ -38,9 +38,53 @@ endif()
 # could reach a commit.  When WPA2 lands, the passphrase follows the same
 # configure-time pattern as the firmware blob above -- never a literal in
 # source.  This repo has leaked live Wi-Fi passwords into pushed history once.
-set(M2_UAP_SSID "RT1176-UAP-TEST" CACHE STRING "SSID this example hosts (open network)")
+set(M2_UAP_SSID "RT1176-UAP-TEST" CACHE STRING "SSID this example hosts")
 set(M2_UAP_CHANNEL "6" CACHE STRING "2.4 GHz channel to host on")
 add_definitions(-DM2_UAP_SSID="${M2_UAP_SSID}" -DM2_UAP_CHANNEL=${M2_UAP_CHANNEL})
+
+# --- WPA2 passphrase: CONFIGURE TIME ONLY, never a tracked file -------------
+# Supply with -DM2_UAP_PSK="a throwaway passphrase".  Omit it and the AP comes
+# up OPEN, which is what every gate and every earlier W17 run used.
+#
+#   cmake -B build-hw ... -DM2_UAP_PSK="somethingthrowaway"
+#
+# The passphrase is written to uap_creds.h in the BUILD DIRECTORY, which is
+# gitignored -- the same scratchpad -> cache -> generated-header path the rest
+# of this repo uses (tools/esp32c6-benchap/make-creds.sh documents why).  This
+# project leaked live Wi-Fi passwords into PUSHED history once; the rule exists
+# because redacting at HEAD does not undo that.
+#
+# ★ Use a FRESH THROWAWAY passphrase.  Never a real network's, and never one
+# reused anywhere else: it is compiled into an .elf that lives in a build
+# directory and is trivially recoverable with `strings`.
+set(M2_UAP_PSK "" CACHE STRING "WPA2 passphrase (8..63 chars); empty = open network")
+if(M2_UAP_PSK)
+    string(LENGTH "${M2_UAP_PSK}" _psklen)
+    if(_psklen LESS 8 OR _psklen GREATER 63)
+        message(FATAL_ERROR
+            "M2_UAP_PSK must be 8..63 characters (got ${_psklen}). "
+            "A shorter one is not a weak passphrase -- WPA2 rejects it, and the "
+            "AP would silently come up OPEN while the log still said WPA2.")
+    endif()
+    # Refuse to generate into anything git would offer to commit.  The build
+    # directory is normally ignored; if someone configures in-tree, stop.
+    execute_process(COMMAND git -C "${CMAKE_CURRENT_LIST_DIR}" check-ignore -q
+                            "${CMAKE_CURRENT_BINARY_DIR}/uap_creds.h"
+                    RESULT_VARIABLE _ignored)
+    if(NOT _ignored EQUAL 0)
+        message(FATAL_ERROR
+            "${CMAKE_CURRENT_BINARY_DIR}/uap_creds.h is NOT gitignored -- refusing "
+            "to write a credential there.  Configure into a build/ directory.")
+    endif()
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/uap_creds.h"
+"// Generated at configure time from -DM2_UAP_PSK.  NEVER committed.\n"
+"#pragma once\n"
+"#define M2_UAP_PSK_STR \"${M2_UAP_PSK}\"\n")
+    add_definitions(-DHAVE_UAP_PSK=1)
+    message(STATUS "uAP security: WPA2-PSK (passphrase ${_psklen} chars, not logged)")
+else()
+    message(STATUS "uAP security: OPEN (no -DM2_UAP_PSK given)")
+endif()
 
 teensy_add_executable(m2_uap_lwip m2_uap_lwip.cpp ${M2_FW_SRC})
 teensy_target_link_libraries(m2_uap_lwip cores M2Radio lwip)

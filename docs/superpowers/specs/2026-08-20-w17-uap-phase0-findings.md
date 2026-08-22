@@ -636,3 +636,45 @@ permanent. Promote it once it has faced what this version ignores: leases never
 expire, a full pool is counted but nothing reclaimed, and RENEW is answered as a
 fresh REQUEST. Acceptable in an example that says so; not in a library that
 doesn't.
+
+
+## WPA2-PSK — the AP is secured, and a foreign radio agrees
+
+Four TLVs on top of the open set:
+
+| TLV | len | value |
+|---|---|---|
+| `0x0140` ENCRYPT_PROTOCOL | 2 | `PROTOCOL_WPA2` 0x0020 (was 0x0001, open) |
+| `0x0141` AKMP | 4 | `KEY_MGMT_PSK` 0x0002 + key_mgmt_operation |
+| `0x0191` PWK_CIPHER | 4 | `PROTOCOL_WPA2` + `CIPHER_AES_CCMP` + rsvd |
+| `0x0192` GWK_CIPHER | 2 | `CIPHER_AES_CCMP` + rsvd |
+| `0x013C` WPA_PASSPHRASE | strlen | the passphrase |
+
+`auth_type` stays **open** — WPA2-PSK uses open-system 802.11 auth then the
+4-way handshake, so a "WPA" auth type here produces a network nothing can join.
+
+**Three independent witnesses:** the card accepted the config (`result=0x0000`);
+a foreign radio reports `Security: WPA2 Personal` where it reported
+`Security: None` on the same SSID earlier the same day; and the client
+**associated**, which it cannot do without completing the handshake. DHCP and
+traffic on top, unchanged. Accounting closes exactly again
+(`71 × 23 = 1633`; `rx_bss1 = 74 = 71 + DISCOVER + REQUEST + ARP`).
+
+### Passphrase handling, made mechanical
+
+Configure time only (`-DM2_UAP_PSK`), written to `uap_creds.h` in the build
+directory which CMake **checks is gitignored** and refuses to write to
+otherwise; copied file-to-file to the client by
+`tools/esp8266-uapclient/make-creds.sh` into a `client_creds.h` that was
+gitignored *before it existed*; length outside 8..63 is a configure-time
+**FATAL_ERROR**, not a warning, because WPA2 rejects a short one and the AP would
+come up OPEN while the log still said WPA2. Never printed — the console says
+`security=wpa2-psk` and nothing more. The one used was generated for this run,
+used once, and verified absent from every tracked file before committing.
+
+Mechanical rather than careful, because W6's leak reached *pushed* history and
+redacting at HEAD did not undo it.
+
+★ A fresh clone with no `-DM2_UAP_PSK` builds **open**, and every gate still
+passes — the gates never needed a credential. A missing passphrase is a
+different AP, not a broken build.

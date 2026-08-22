@@ -181,3 +181,71 @@ handing out addresses on somebody else's network.  It is harmless today because
 there is no STA netif in this example, which is precisely why it would have
 shipped unnoticed.  Now udp_bind_netif(pcb, &uapNif).  Writing down what a thing
 does not do is a good way to notice that it does something worse.
+
+==============================================================================
+WPA2-PSK -- 2026-08-22.  The AP is secured, and a foreign radio agrees.
+==============================================================================
+    uap_configure=ok result=0x0
+    uap_hosting ssid=RT1176-UAP-TEST chan=6 security=wpa2-psk
+    uap_dhcp_ack mac=84F3EBB7C45B ip=192.168.44.100
+    hb ... udp_rx=71 udp_bytes=1633 rx_bss0=0 rx_bss1=74 unrouted=0
+           dhcp_disc=1 dhcp_req=1 dhcp_ack=1 dhcp_full=0
+
+    client: joining ssid=RT1176-UAP-TEST security=wpa2-psk
+            client_state=ASSOCIATED bssid=6C:1D:EB:91:0C:45 ch=6 ip=192.168.44.100
+
+FOUR TLVs ON TOP OF THE OPEN SET
+------------------------------------------------------------------------------
+    0x0140 ENCRYPT_PROTOCOL  len 2   PROTOCOL_WPA2 0x0020 (was 0x0001, open)
+    0x0141 AKMP              len 4   KEY_MGMT_PSK 0x0002 + key_mgmt_operation
+    0x0191 PWK_CIPHER        len 4   PROTOCOL_WPA2 + CIPHER_AES_CCMP 0x08 + rsvd
+    0x0192 GWK_CIPHER        len 2   CIPHER_AES_CCMP 0x08 + rsvd
+    0x013C WPA_PASSPHRASE    len = strlen
+
+  auth_type stays MLAN_AUTH_MODE_OPEN: WPA2-PSK uses open-system 802.11
+  authentication and then does the 4-way handshake, so setting a "WPA" auth
+  type here would be wrong in the way that produces a network nothing can join.
+
+THE PROOF, AND IT IS THREE INDEPENDENT WITNESSES
+------------------------------------------------------------------------------
+  1. THE CARD accepted the configuration (result=0x0000) and started the BSS.
+  2. A FOREIGN RADIO -- this Mac -- reports:
+         Security: WPA2 Personal
+     on the same SSID and channel where it reported "Security: None" in the
+     open runs earlier the same day.  It knows nothing about our firmware.
+  3. THE CLIENT ASSOCIATED, which it could not do without completing a 4-way
+     handshake against the passphrase.  A wrong or absent key fails here, and
+     fails visibly -- it would sit at assoc=0 forever.
+  Then DHCP and traffic on top, unchanged from the open runs.
+
+  The accounting still closes exactly:
+     udp_rx=71 x 23 = 1633 = udp_bytes                     EXACT
+     rx_bss1=74 = 71 UDP + DISCOVER + REQUEST + ARP        EXACT
+     rx_bss0=0, unrouted=0
+
+HOW THE PASSPHRASE IS HANDLED, AND WHY IT IS MECHANICAL
+------------------------------------------------------------------------------
+  * Supplied ONLY at configure time: -DM2_UAP_PSK="...".
+  * Written to uap_creds.h in the BUILD DIRECTORY, which CMake CHECKS is
+    gitignored (`git check-ignore`) and refuses to write to otherwise.
+  * The client gets it by tools/esp8266-uapclient/make-creds.sh copying it
+    file-to-file from that same header into client_creds.h, which was added to
+    .gitignore BEFORE it was ever created.
+  * A passphrase outside 8..63 characters is a FATAL_ERROR at configure time,
+    not a warning -- WPA2 rejects a short one and the AP would come up OPEN
+    while the log still said WPA2.  That failure mode is the reason for the
+    check.
+  * Never printed.  The console says security=wpa2-psk and nothing else; the
+    SSID is broadcast so it costs nothing, the passphrase never appears.
+  * The one used here was randomly generated for this run, used once, and is
+    not a real network's.  Verified absent from every tracked file
+    (`git grep -F` on the literal) before committing.
+
+  This is not caution for its own sake: this repo leaked live Wi-Fi passwords
+  into PUSHED history in W6, and redacting at HEAD did not undo it.  The
+  handling rule is mechanical precisely so it does not depend on anyone being
+  careful on the day.
+
+★ NOTE FOR A FRESH CLONE: with no -DM2_UAP_PSK the example builds OPEN and
+every gate still passes -- the gates never needed a credential and still do
+not.  A missing passphrase is a different AP, not a broken build.
