@@ -550,3 +550,47 @@ counted per interface, TX addressable per interface, both verified against a
 peer that shares no code with us. **Not done** — nothing routes on the tag (no
 second netif, no DHCP), mixed-BSS TX aggregation is untested, and the reply
 ratio is open.
+
+
+## The upstack: a second netif, and a packet at a socket (m2_uap_lwip)
+
+Handoff step 4's first half. New example `networking/m2_uap_lwip` (+1 gate,
+sweep now **111**) hosts an open AP and puts an lwip netif on it.
+
+```
+uap_configure=ok result=0x0
+uap_bss_start=ok result=0x0
+uap_hosting ssid=RT1176-UAP-TEST chan=6
+uap_netif_up addr=192.168.44.1
+uap_udp_bound port=5001
+
+uap_udp_first from=192.168.44.50:58394 len=23 ascii=RT1176-UAP-CLIENT-HELLO
+hb card=1 bss=1 udp_rx=74 udp_bytes=1702 rx_bss0=0 rx_bss1=75 unrouted=0
+```
+
+The payload string appears **nowhere in the RT1176 image**, and it arrived at a
+socket this firmware bound — so the frame crossed air → RxPD → bss demux →
+netif → lwip → IP → UDP → callback, and every layer had to be right.
+
+**The accounting closes exactly**, which is worth more than a counter that
+climbs: `74 × 23 = 1702` bytes; `rx_bss1 = 75 = 74 UDP + 1 gratuitous ARP`;
+`rx_bss0 = 0` (nothing mis-tagged to the STA side); `unrouted = 0`.
+
+### Driver/glue shape
+
+`iw416NetifInitUap` + `iw416NetifPollDual(sta, uap)` — one service pass, each
+frame routed by its RxPD tag, either netif may be NULL. **The STA path is
+untouched**: `iw416NetifInit`/`iw416NetifPoll` are byte-for-byte unchanged (the
+diff removes no lines), which is how handoff criterion 3 is met — by not
+touching it. A frame whose tag matches no netif is counted (`unroutedFrames()`)
+and dropped rather than delivered to the wrong stack.
+
+`iw416NetifInitUap` deliberately does **not** enable TX aggregation, unlike the
+STA init: aggregation is driver-wide, a mixed-BSS batch is untested on silicon,
+and this is the hot path W8/W12/W16 were each dug out of.
+
+### Limitations, stated rather than discovered later
+
+No DHCP server (clients must be statically configured — the zero-dependency
+route), no routing/NAT, no security, and the AP hosts **indefinitely** — there
+is no `BSS_STOP`, so the board beacons until reset or reflashed.

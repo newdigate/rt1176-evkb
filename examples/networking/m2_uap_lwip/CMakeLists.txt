@@ -1,0 +1,48 @@
+cmake_minimum_required(VERSION 3.24)
+project(m2_uap_lwip)
+
+if(NOT DEFINED TEENSY_VERSION)
+    set(TEENSY_VERSION 117 CACHE STRING "")
+endif()
+
+include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
+
+# lwip exactly as lwip_test imports it (port/ carries lwipopts.h + arch/;
+# port/ethernetif.c also compiles but is inert here -- nothing calls it).
+import_evkb_library(lwip
+    src/include src/core src/core/ipv4 src/netif port port/arch)
+# M2Radio: sdio + iw416 as the probe, PLUS the lwip netif glue subdir.
+import_evkb_library(M2Radio sdio iw416 lwip)
+
+# --- IW416 firmware blob (NOT vendored) -- same rules as m2_sdio_probe ------
+set(M2RADIO_IW416_FW "" CACHE FILEPATH "IW416 firmware .bin.inc from an NXP SDK")
+if(M2RADIO_IW416_FW AND EXISTS "${M2RADIO_IW416_FW}")
+    message(STATUS "IW416 firmware: ${M2RADIO_IW416_FW}")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/iw416_fw.cpp"
+"#include <stdint.h>\n"
+"// Generated at configure time from an NXP SDK copy. Never committed.\n"
+"extern const uint8_t iw416_fw[];\n"
+"extern const uint32_t iw416_fw_len;\n"
+"const uint8_t iw416_fw[] __attribute__((section(\".progmem\"), used)) = {\n#include \"${M2RADIO_IW416_FW}\"\n};\n"
+"const uint32_t iw416_fw_len = sizeof(iw416_fw);\n")
+    set(M2_FW_SRC "${CMAKE_CURRENT_BINARY_DIR}/iw416_fw.cpp")
+    add_definitions(-DHAVE_IW416_FW=1)
+else()
+    message(STATUS "IW416 firmware: not supplied -- download will be skipped")
+    set(M2_FW_SRC "")
+endif()
+
+# --- NO CREDENTIALS HERE, and that is deliberate ---------------------------
+# m2_lwip_test needs an SSID + PSK because it JOINS someone else's network.
+# This example HOSTS an open one, so there is nothing to supply and nothing that
+# could reach a commit.  When WPA2 lands, the passphrase follows the same
+# configure-time pattern as the firmware blob above -- never a literal in
+# source.  This repo has leaked live Wi-Fi passwords into pushed history once.
+set(M2_UAP_SSID "RT1176-UAP-TEST" CACHE STRING "SSID this example hosts (open network)")
+set(M2_UAP_CHANNEL "6" CACHE STRING "2.4 GHz channel to host on")
+add_definitions(-DM2_UAP_SSID="${M2_UAP_SSID}" -DM2_UAP_CHANNEL=${M2_UAP_CHANNEL})
+
+teensy_add_executable(m2_uap_lwip m2_uap_lwip.cpp ${M2_FW_SRC})
+teensy_target_link_libraries(m2_uap_lwip cores M2Radio lwip)
+target_include_directories(m2_uap_lwip.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(m2_uap_lwip.elf stdc++)

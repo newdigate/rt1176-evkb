@@ -1,0 +1,125 @@
+==============================================================================
+m2_uap_lwip on real hardware -- 2026-08-22
+MIMXRT1170-EVKB RevC3 + u-blox M2-MAYA-W161 (IW416), fw_release=0x9B105C15
+Client: ESP8266 running tools/esp8266-uapclient (static 192.168.44.50)
+==============================================================================
+The AP hosts, a client joins, and the client's packets arrive at a BOUND UDP
+SOCKET.  That last step is what makes this an upstack rather than a driver
+demo: the frames have travelled air -> RxPD -> bss demux -> netif -> lwip ->
+IP -> UDP -> socket, and every layer had to be right for the callback to fire.
+
+BRING-UP
+------------------------------------------------------------------------------
+    sdio_begin=ok
+    iw416_begin=ok
+    fw_download=ok
+    fw_release=0x9B105C15 mac=6C1DEB910C45
+    uap_configure=ok result=0x0
+    uap_bss_start=ok result=0x0
+    uap_hosting ssid=RT1176-UAP-TEST chan=6
+    uap_netif_up addr=192.168.44.1
+    uap_udp_bound port=5001
+    uap_lwip_done
+
+  uapConfigure() sends the FULL open-AP TLV set.  It has to: a minimal
+  SYS_CONFIGURE kills this firmware's command port outright (W17 FAULT 1,
+  reproduced 5/5 runs), so there is no harmless partial config and no config
+  GET.  The example does not offer one.
+
+THE PROOF -- A PACKET AT THE SOCKET
+------------------------------------------------------------------------------
+    uap_udp_first from=192.168.44.50:58394 len=23
+                  ascii=RT1176-UAP-CLIENT-HELLO
+                  bytes=5254313137362D5541502D434C49454E542D48454C4C4F
+
+  * from 192.168.44.50 -- the client's static address, configured on the CLIENT
+    and never told to this firmware;
+  * "RT1176-UAP-CLIENT-HELLO", 23 bytes -- the exact literal in the client
+    sketch, which appears NOWHERE in this image.  Grep it: it is not here.
+  * delivered through udp_recv() on a pcb bound to port 5001, so lwip parsed
+    the Ethernet header, the IP header and the UDP header on the way.
+
+  A raw frame counter could have been fooled by a beacon or by another
+  station's traffic.  A payload this firmware cannot generate, arriving at a
+  socket this firmware bound, cannot.
+
+THE ACCOUNTING IS EXACT, WHICH IS THE POINT
+------------------------------------------------------------------------------
+    hb card=1 bss=1 udp_rx=74 udp_bytes=1702 rx_bss0=0 rx_bss1=75 unrouted=0
+
+    udp_rx=74 x 23 bytes = 1702 = udp_bytes            EXACT
+    rx_bss1=75 = 74 UDP datagrams + 1 gratuitous ARP   EXACT
+    rx_bss0=0     nothing was mis-tagged to the STA interface
+    unrouted=0    no frame arrived for an interface that does not exist
+
+  Every frame the card delivered is accounted for, and the one frame that is
+  not a UDP datagram is the ARP the client emits on taking its address -- the
+  same frame dumped in m2_uap_probe's transcript.  An accounting that closes to
+  the byte is worth more than a counter that merely climbs.
+
+WHAT IS NOT HERE
+------------------------------------------------------------------------------
+  * NO DHCP SERVER.  Clients must be statically configured to match
+    (192.168.44.x/24, gateway .1).  That is the handoff's zero-dependency
+    Phase 1 and it is a real limitation, not an oversight.
+  * NO ROUTING OR NAT between the STA and uAP sides -- explicitly out of scope
+    until the rest soaks.
+  * NO SECURITY.  The network is open.  WPA2 needs the AKMP/cipher/passphrase
+    TLVs on the same builder, and with them this repo's standing rule that a
+    PSK is supplied at configure time and never written to a tracked file.
+  * TX aggregation is NOT enabled by the uAP netif init, unlike the STA one: a
+    batch mixing both interfaces is untested on silicon, and this is the hot
+    path W8/W12/W16 were each dug out of.
+  * The AP hosts INDEFINITELY -- there is no BSS_STOP.  The board beacons until
+    it is reset or reflashed.
+
+QEMU
+------------------------------------------------------------------------------
+run_qemu.sh asserts the card-ABSENT fallback only, and its vacuity guards are
+the substance: an example whose purpose is to TRANSMIT must be provably silent
+with no card, so every AP line -- configure, start, hosting, netif, socket --
+must be ABSENT.  Demonstrated red by appending a fake `uap_hosting` line to the
+capture: "FAIL: emitted '^uap_hosting ' with no card present".
+
+RAW CAPTURE (head)
+------------------------------------------------------------------------------
+RT1176 M.2 uAP + lwip up
+sdio_begin=ok
+iw416_begin=ok
+fw_download=ok
+fw_release=0x9B105C15 mac=6C1DEB910C45
+uap_configure=ok result=0x0
+uap_bss_start=ok result=0x0
+uap_hosting ssid=RT1176-UAP-TEST chan=6
+uap_netif_up addr=192.168.44.1
+uap_udp_bound port=5001
+uap_lwip_done
+hb card=1 bss=1 udp_rx=0 udp_bytes=0 rx_bss0=0 rx_bss1=0 unrouted=0
+hb card=1 bss=1 udp_rx=0 udp_bytes=0 rx_bss0=0 rx_bss1=1 unrouted=0
+uap_udp_first from=192.168.44.50:58394 len=23 ascii=RT1176-UAP-CLIENT-HELLO bytes=5254313137362D5541502D434C49454E542D48454C4C4F
+hb card=1 bss=1 udp_rx=2 udp_bytes=46 rx_bss0=0 rx_bss1=3 unrouted=0
+hb card=1 bss=1 udp_rx=4 udp_bytes=92 rx_bss0=0 rx_bss1=5 unrouted=0
+hb card=1 bss=1 udp_rx=6 udp_bytes=138 rx_bss0=0 rx_bss1=7 unrouted=0
+hb card=1 bss=1 udp_rx=8 udp_bytes=184 rx_bss0=0 rx_bss1=9 unrouted=0
+hb card=1 bss=1 udp_rx=10 udp_bytes=230 rx_bss0=0 rx_bss1=11 unrouted=0
+hb card=1 bss=1 udp_rx=12 udp_bytes=276 rx_bss0=0 rx_bss1=13 unrouted=0
+hb card=1 bss=1 udp_rx=14 udp_bytes=322 rx_bss0=0 rx_bss1=15 unrouted=0
+hb card=1 bss=1 udp_rx=16 udp_bytes=368 rx_bss0=0 rx_bss1=17 unrouted=0
+hb card=1 bss=1 udp_rx=18 udp_bytes=414 rx_bss0=0 rx_bss1=19 unrouted=0
+hb card=1 bss=1 udp_rx=20 udp_bytes=460 rx_bss0=0 rx_bss1=21 unrouted=0
+hb card=1 bss=1 udp_rx=22 udp_bytes=506 rx_bss0=0 rx_bss1=23 unrouted=0
+hb card=1 bss=1 udp_rx=24 udp_bytes=552 rx_bss0=0 rx_bss1=25 unrouted=0
+hb card=1 bss=1 udp_rx=26 udp_bytes=598 rx_bss0=0 rx_bss1=27 unrouted=0
+hb card=1 bss=1 udp_rx=28 udp_bytes=644 rx_bss0=0 rx_bss1=29 unrouted=0
+hb card=1 bss=1 udp_rx=30 udp_bytes=690 rx_bss0=0 rx_bss1=31 unrouted=0
+hb card=1 bss=1 udp_rx=32 udp_bytes=736 rx_bss0=0 rx_bss1=33 unrouted=0
+hb card=1 bss=1 udp_rx=34 udp_bytes=782 rx_bss0=0 rx_bss1=35 unrouted=0
+hb card=1 bss=1 udp_rx=36 udp_bytes=828 rx_bss0=0 rx_bss1=37 unrouted=0
+hb card=1 bss=1 udp_rx=38 udp_bytes=874 rx_bss0=0 rx_bss1=39 unrouted=0
+hb card=1 bss=1 udp_rx=40 udp_bytes=920 rx_bss0=0 rx_bss1=41 unrouted=0
+hb card=1 bss=1 udp_rx=42 udp_bytes=966 rx_bss0=0 rx_bss1=43 unrouted=0
+hb card=1 bss=1 udp_rx=44 udp_bytes=1012 rx_bss0=0 rx_bss1=45 unrouted=0
+hb card=1 bss=1 udp_rx=46 udp_bytes=1058 rx_bss0=0 rx_bss1=47 unrouted=0
+hb card=1 bss=1 udp_rx=48 udp_bytes=1104 rx_bss0=0 rx_bss1=49 unrouted=0
+hb card=1 bss=1 udp_rx=50 udp_bytes=1150 rx_bss0=0 rx_bss1=51 unrouted=0
+hb card=1 bss=1 udp_rx=52 udp_bytes=1196 rx_bss0=0 rx_bss1=53 unrouted=0
