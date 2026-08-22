@@ -1,0 +1,17 @@
+==== captured UART ====
+RT1176 M.2 uAP + lwip up
+sdio_begin=ok
+iw416_begin=ok
+fw_download=skipped preboot=1
+fw_release=0x9B105C15 mac=6C1DEB910C45
+uap_configure=ok result=0x0
+uap_bss_start=ok result=0x0
+uap_hosting ssid=RT1176-UAP-TEST chan=6 security=open
+uap_netif_up addr=192.168.44.1
+uap_udp_bound port=5001
+uap_dhcp_up pool=192.168.44.100-109
+uap_lwip_done
+hb card=1 bss=1 udp_rx=0 udp_bytes=0 rx_bss0=0 rx_bss1=9 unrouted=0 dhcp_disc=0 dhcp_req=0 dhcp_ack=0 dhcp_full=0 dhcp_bcast=0 sta=1 joins=0 leaves=0 lastevent=0x100002D
+health stranded=0 desync=0 split=0 dropped=0 seqmm=0 pswake=0 rx_bss0=0 unrouted=0 uptime_s=2
+hb card=1 bss=1 udp_rx=0 udp_bytes=0 rx_bss0=0 rx_bss1=20 unrouted=0 dhcp_disc=0 dhcp_req=0 dhcp_ack=0 dhcp_full=0 dhcp_bcast=0 sta=1 joins=0 leaves=0 lastevent=0x100002D
+health stranded=0 desync=0 split=0 dropped=0 seqmm=0 pswake=0 rx_bss0=0 unrouted=0 uptime_s=4

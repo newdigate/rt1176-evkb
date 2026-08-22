@@ -106,17 +106,30 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **113 gates**: 108 from the
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **115 gates**: 108 from the
 merge of two independent lines that both branched from 94 — the display
 capstone line added THREE (`display/vglite_lvgl_test`, then
 `display/synthui_step_test` and `display/acid_box` from the Acid Box capstone,
 reaching 97 on its own), and the M.2 Wi-Fi line added ELEVEN, reaching 105 on
 its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
-`networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's TWO
-more once the QEMU model grew a uAP surface. That arithmetic is CHECKED against
-the runner rather than trusted: `-l` reports 113.
+`networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FOUR
+more once the QEMU model grew a uAP surface and a station. That arithmetic is
+CHECKED against the runner rather than trusted: `-l` reports 115.
 
 The M.2 line's own chain, kept because each step says what the gate is for:
+
+W18 later added TWO more on `networking/m2_uap_lwip` once the model could TAG an
+injected frame (`-global iw416-sdio.inject-bss=`), and they are a PAIR that must
+be read together. `[data]` injects frames tagged bss_type=1 and asserts they
+reach the uAP netif. `[mistag]` injects them tagged bss_type=0 while only a uAP
+netif exists, and asserts they are REFUSED and COUNTED — that is the W17
+handoff's named hazard ("RX frames from AP clients would be silently
+mis-delivered to the STA netif"), and this driver did exactly that before W17.
+★ ONLY `[mistag]` CAN CATCH IT. Measured, not assumed: against a demux re-broken
+to ignore the tag, `[mistag]` fails by name and `[data]` still PASSES — because
+there every frame belongs where it lands. A gate that only tests the happy
+routing proves nothing about routing. `[data]` earns its place separately, by
+failing when the tag is read from the wrong RxPD offset. 113 before them;
 
 W18 added TWO gates once the QEMU IW416 model grew an AP surface
 (`-global iw416-sdio.uap=on`, qemu2 after `721fb09146`), which is what finally
@@ -194,8 +207,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **113 passed, 0 failed, 0 SKIP**, or
-**112 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **115 passed, 0 failed, 0 SKIP**, or
+**114 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
 fresh-clone-red set: its injected gestures come from the `touch-script`
