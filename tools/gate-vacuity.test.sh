@@ -186,6 +186,38 @@ else
     report "green_still_passes_m2_uap_probe_wifi" $result
 
     rm -f "$EVKB/$uap_rel"/build/wifi.uart
+
+# --- 5. and again for the Arduino WiFi facade (merged from the arduino line) --
+# Same class, second instance: networking/wifi_client_test. The Arduino WiFi
+# facade's two gates assert opposite outcomes off ONE elf in ONE directory --
+# run_qemu.sh wants WL_NO_SHIELD (255) from the card-absent fallback,
+# run_qemu_wifi.sh wants WL_NO_SSID_AVAIL (1) from a real scan against the IW416
+# model. Dropping `-machine m2-wifi=on` turns the second run into the first, so
+# the enumeration gate must reject a 255 capture by name or it proves nothing
+# about whether the model was ever attached.
+#
+# Worth covering separately from m2_sdio_probe above even though the shape is
+# identical: that gate's negative keys on a DRIVER token (sdio_begin=...), this
+# one on the FACADE's status byte, and the two can regress independently.
+fac_rel="examples/networking/wifi_client_test"
+fac_src="$EVKB/$fac_rel/transcript_qemu_wifi.txt"
+if [ ! -f "$fac_src" ]; then
+    echo "SKIP: absent_card_fails_wifi_client_gate (no transcript)"
+else
+    sed 's/^wifi_status=1$/wifi_status=255/' "$fac_src" > "$WORK/fac.absent"
+    run_gate "$fac_rel" "run_qemu_wifi.sh" "$WORK/fac.absent"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1                                          # must not pass
+    echo "$OUT_TEXT" | grep -q "m2-wifi=on did not take" || result=1     # and name it
+    report "absent_card_fails_wifi_client_gate" $result
+
+    # Over-correction guard, as above: the untouched transcript must still pass.
+    cp "$fac_src" "$WORK/fac.green"
+    run_gate "$fac_rel" "run_qemu_wifi.sh" "$WORK/fac.green"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_wifi_client_wifi" $result
+
+    rm -f "$EVKB/$fac_rel"/build/wifi.uart
 fi
 
 exit $FAILED

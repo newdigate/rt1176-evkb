@@ -926,6 +926,10 @@ static void probeRecovery() {
 #endif
 }
 
+// [2026-08-21] This preamble ALSO lives in M2Radio arduino/WiFi.cpp now:
+// WiFi.begin() runs it by default, so a sketch using the Arduino facade
+// needs no copy of this.  This copy stays because this example drives the
+// driver directly, below the facade.  Keep the two in step.
 // --- board preamble ----------------------------------------------------------
 // Identical to m2_lwip_test / m2_throughput_test: without it the card either
 // stays in power-down or holds the previous image's state and never answers

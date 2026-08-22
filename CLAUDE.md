@@ -106,8 +106,13 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **116 gates**: 108 from the
-merge of two independent lines that both branched from 94 — the display
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **119 gates** — the merge of
+THREE independent lines. The Arduino WiFi facade added THREE
+(`networking/wifi_client_test` and its `[wifi]` variant — enumeration plus a
+REAL 802.11 scan against the model's deliberate zero-BSS reply, asserting an
+honest WL_NO_SSID_AVAIL — and `networking/wifi_server_test`); the uAP line added
+EIGHT (below); and 108 came from the earlier merge of two lines that both
+branched from 94 — the display
 capstone line added THREE (`display/vglite_lvgl_test`, then
 `display/synthui_step_test` and `display/acid_box` from the Acid Box capstone,
 reaching 97 on its own), and the M.2 Wi-Fi line added ELEVEN, reaching 105 on
@@ -115,7 +120,7 @@ its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
 `networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
 more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
 That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
-116.
+119.
 
 The M.2 line's own chain, kept because each step says what the gate is for:
 
@@ -221,8 +226,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **116 passed, 0 failed, 0 SKIP**, or
-**115 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **119 passed, 0 failed, 0 SKIP**, or
+**118 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
 fresh-clone-red set: its injected gestures come from the `touch-script`
@@ -250,6 +255,11 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-08-21: 111 passed, 0 failed, 0 SKIP** (`gates: 111 passed`,
+exit 0), on the Arduino WiFi facade close-out, run via `/tmp/ev`,
+`rt1176:dualcore/cm4_audio_test` included and green (3 s).
+
+The previous count's measurement, kept per convention:
 ✅ **Measured 2026-08-20: 108 passed, 0 failed, 0 SKIP** (`gates: 108 passed`,
 exit 0) on the MERGE of the M.2 Wi-Fi line into master, run via `/tmp/ev`,
 `rt1176:dualcore/cm4_audio_test` green and `display/acid_box` green (so this
@@ -425,15 +435,20 @@ too**; that is the GPL firewall working, not a regression.
 
 ★ **NINE gates need the IW416 card model, and unlike the rt1062 group above
 they are NOT local-only — the model is PUSHED.**
-`networking/m2_sdio_probe[wifi]`, all SEVEN `networking/m2_rx_demo` gates and
-`networking/m2_uap_probe[wifi]` need the **IW416 SDIO card model**
+`networking/m2_sdio_probe[wifi]`, `networking/wifi_client_test[wifi]` (added
+with the Arduino facade — it drives a real scan through `WiFi.begin()` and
+asserts the model's zero-BSS reply is reported honestly), all SEVEN
+`networking/m2_rx_demo` gates and `networking/m2_uap_probe[wifi]` — TEN in all —
+need the **IW416 SDIO card model**
 (`hw/sd/iw416-sdio.c`, enabled by `-machine mimxrt1170-evk,m2-wifi=on`), plus —
 for `[irq]` — the SDIO card-interrupt plumbing W15 added to the SD bus and
 SDHCI.
-★ **FOUR gates need a qemu2 with the uAP surface** — `m2_uap_probe[uap]` and
-all three `m2_uap_lwip` variants beyond the card-absent one. The floor is
-qemu2 **`59c0013d75`** (uAP command family + modelled station + `inject-bss`).
-An older model rejects `-global iw416-sdio.uap=on` outright, so these go RED and
+★ **FIVE MORE need a qemu2 with the uAP SURFACE on top of that** —
+`m2_uap_probe[uap]` and all four `m2_uap_lwip` variants beyond the card-absent
+one (`[uap]`, `[data]`, `[mistag]`, `[tx]`). The floor is qemu2
+**`c3b816be51`** (uAP command family + modelled station + `inject-bss` + the
+TxPD `bss_type` read). An older model rejects `-global iw416-sdio.uap=on`
+outright, so these go RED and
 not SKIP, and it is not a firmware regression — diagnose by asking the device
 whether it takes the property (`qemu-system-arm -device help | grep iw416`),
 not by reading firmware.

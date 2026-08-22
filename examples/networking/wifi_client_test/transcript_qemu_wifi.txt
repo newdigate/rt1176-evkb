@@ -1,0 +1,7 @@
+==== captured UART ====
+RT1176 WiFi client test up
+wifi_status=1
+alive=1 tcp=0/0/0
+alive=2 tcp=0/0/0
+alive=3 tcp=0/0/0
+PASS: enumeration + real scan -> honest WL_NO_SSID_AVAIL; image alive

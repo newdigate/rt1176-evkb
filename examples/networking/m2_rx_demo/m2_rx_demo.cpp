@@ -73,6 +73,10 @@ static const char *statusName(SdioHost::Status s) {
     }
 }
 
+// [2026-08-21] This preamble ALSO lives in M2Radio arduino/WiFi.cpp now:
+// WiFi.begin() runs it by default, so a sketch using the Arduino facade
+// needs no copy of this.  This copy stays because this example drives the
+// driver directly, below the facade.  Keep the two in step.
 // --- M.2 board bring-up preamble ------------------------------------------
 // QEMU does NOT need this: the model is attached to USDHC1 by the machine and
 // nothing in it watches a reset line. It is here anyway, and deliberately.

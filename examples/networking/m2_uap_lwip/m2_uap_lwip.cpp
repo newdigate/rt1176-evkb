@@ -417,6 +417,10 @@ static void uapTxProbe(void) {
 }
 #endif
 
+// [2026-08-21] This preamble ALSO lives in M2Radio arduino/WiFi.cpp now:
+// WiFi.begin() runs it by default, so a sketch using the Arduino facade
+// needs no copy of this.  This copy stays because this example drives the
+// driver directly, below the facade.  Keep the two in step.
 // --- board preamble (identical to m2_lwip_test / m2_uap_probe) ---------------
 #define M2_SDIO_RST_MUX (*(volatile uint32_t *)0x400E814Cu)
 #define M2_WL_RST_MUX   (*(volatile uint32_t *)0x400E8188u)

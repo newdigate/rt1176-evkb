@@ -373,6 +373,8 @@ examples/networking/m2_throughput_test:m2_throughput_test \
 examples/networking/m2_uap_probe:m2_uap_probe \
 examples/networking/m2_uap_lwip:m2_uap_lwip \
 examples/networking/native_ethernet_test:native_ethernet_test \
+examples/networking/wifi_client_test:wifi_client_test \
+examples/networking/wifi_server_test:wifi_server_test \
 examples/serial/serial_test:serial_test examples/serial/serial_test_rx:serial_test_rx \
 examples/serial/serial_test/build-rt1062:serial_test \
 examples/storage-memory/eeprom_test:eeprom_test examples/storage-memory/extmem_test:extmem_test \
