@@ -28,14 +28,25 @@ P=$!; gate_pid $P
 # Wait for the LAST line of a heartbeat, not the first interesting one: reaping
 # mid-line is how a healthy run gets blamed on the firmware (see CLAUDE.md's
 # note on the m2_rx_demo [irq] race).
-# 30 s, not the 10 s the older gates in this tree use.  Measured reason: this
-# gate failed ONCE while four QEMU instances were started back to back, and
-# passed on every one of nine subsequent runs including three repeats of the
-# same back-to-back sequence -- i.e. the run was fine and the WAIT was short.
-# Lengthening it costs nothing, because the loop exits the moment the token
-# appears; the budget only ever matters when the gate would otherwise fail.
-# CLAUDE.md's standing warning is that a load-sensitive gate produces false
-# regressions, and a false regression in a 111-gate sweep is expensive to chase.
+# 30 s, not the 10 s the older gates in this tree use.  Cheap insurance rather
+# than a diagnosed fix, and the distinction is worth recording accurately.
+#
+# What happened: this gate reported failure TWICE early on, both times inside a
+# shell loop that used a RELATIVE `cd` per gate.  It then passed ~43 consecutive
+# runs -- 19 more in relative-path loops, 24 in absolute-path loops -- and has
+# never once failed when run on its own.  The most likely explanation is the
+# LOOP, not the gate: the harness running these commands resets the working
+# directory between invocations, so a relative `cd` can fail and produce a
+# non-zero status with the gate never running at all.  That is a hypothesis, not
+# a finding: it was not reproduced deliberately, so it is not proven.
+#
+# The timeout was raised anyway, because it costs nothing -- the loop exits the
+# moment the token appears, so the budget only ever matters when the gate would
+# otherwise fail -- and because CLAUDE.md's standing warning is that a
+# load-sensitive gate produces FALSE regressions, which in a 111-gate sweep are
+# expensive precisely because they look like real breakage in new code.
+# If this ever fails again, capture its OUTPUT: it prints a named FAIL for every
+# assertion, and both original failures were lost to `>/dev/null`.
 for _ in $(seq 1 120); do
     [ -f "$OUT" ] && grep -q "^hb card=0 " "$OUT" 2>/dev/null && break
     sleep 0.25
