@@ -25,6 +25,7 @@
 //   arduino-cli upload  -b esp8266:esp8266:nodemcuv2 -p /dev/cu.usbserial-0001 \
 //                       tools/esp8266-uapclient
 #include <ESP8266WiFi.h>
+#include <WiFiUdp.h>
 
 static const char *AP_SSID = "RT1176-UAP-TEST";
 
@@ -35,7 +36,18 @@ static IPAddress kGw(192, 168, 44, 1);
 static IPAddress kMask(255, 255, 255, 0);
 
 static uint32_t s_lastPrint = 0;
+static uint32_t s_lastSend  = 0;
 static bool     s_wasConnected = false;
+static WiFiUDP  s_udp;
+static uint32_t s_sent = 0;
+
+// ★ The client must TRANSMIT, not merely associate.  An associated station with
+// a static address and nothing to say emits almost nothing, and "no frames
+// received" would then be ambiguous between a broken RX path and a silent
+// client.  A periodic broadcast removes that ambiguity: every second there is
+// something on the air that the AP side must either count or be shown to miss.
+// Broadcast rather than unicast so it needs no ARP resolution and no peer.
+static const uint16_t kPort = 5001;
 
 void setup() {
     Serial.begin(115200);
@@ -71,11 +83,20 @@ void loop() {
         }
         Serial.println();
     }
+    if (up && millis() - s_lastSend >= 1000) {
+        s_lastSend = millis();
+        IPAddress bcast(192, 168, 44, 255);
+        if (s_udp.beginPacket(bcast, kPort)) {
+            s_udp.write("RT1176-UAP-CLIENT-HELLO", 23);
+            if (s_udp.endPacket()) s_sent++;
+        }
+    }
     if (millis() - s_lastPrint >= 5000) {
         s_lastPrint = millis();
         // status() and localIP() are separate claims -- see the header note.
         Serial.print("hb status="); Serial.print((int)WiFi.status());
         Serial.print(" assoc=");    Serial.print(up ? 1 : 0);
-        Serial.print(" ip=");       Serial.println(WiFi.localIP().toString());
+        Serial.print(" ip=");       Serial.print(WiFi.localIP().toString());
+        Serial.print(" sent=");     Serial.println(s_sent);
     }
 }

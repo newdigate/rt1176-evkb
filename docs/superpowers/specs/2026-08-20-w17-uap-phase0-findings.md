@@ -422,3 +422,59 @@ off the air.
 > Run 9 settled it — the first explanation was right. Kept because the *order*
 > of elimination is the reusable part: the explanation under our own control was
 > checked first, for free, before any bench time was spent.
+
+
+## Data over the uAP BSS, and the ring contract verified (runs 11/12)
+
+The handoff is explicit here: *"mlan runs BOTH interfaces over the SAME rings,
+tagged per-packet. Verify that, don't assume it."* Verified.
+
+```
+uap_bss_service tag=hold frames=99 rx_bss0=0 rx_bss1=99 rx_bssX=0
+                         last_bss=1/0 rxdata_total=99 dropped=0
+```
+
+**99 frames, every one tagged `bss_type=1, bss_num=0`** — the uAP interface
+exactly as mlan addresses it. Zero arrived tagged `bss_type=0` while a uAP
+client was the only station transmitting, and `rx_bssX` (there to catch a byte
+offset off by one) stayed 0, so the bytes being read are the bytes assumed.
+
+One set of rings, tagged per packet, and the tag is a usable demux key. That is
+Phase 1 step 2's foundation, now measured rather than inherited from NXP source.
+
+### The frames are the client's, and the bytes say so
+
+A counter climbing in step with the client's is suggestive, not conclusive. The
+first frame, dumped whole, is a **gratuitous ARP**:
+
+```
+FFFFFFFFFFFF 84F3EBB7C45B 0806          broadcast | ESP8266 MAC | ARP
+0001 0800 06 04 0001                    Ethernet/IPv4 request
+84F3EBB7C45B C0A82C32                   sender = client, 192.168.44.50
+000000000000 C0A82C32                   target IP == sender IP -> gratuitous
+```
+
+`len=42 = 14 + 28`, well-formed, and every identifying field — the MAC, the IP —
+exists nowhere in this firmware. It came off the air.
+
+### Deliberately not done
+
+- **Nothing is routed on the tag yet.** Recording and routing are separate
+  changes on purpose: this is the hot path W8, W12 and W16 were each dug out of,
+  and a counter reading the wrong byte is a cheap mistake while a mis-routed
+  netif is not. The tag is now proven, so the routing change can be made against
+  evidence.
+- **No TX over the uAP BSS.** The TxPD still hardcodes `bss_type/bss_num = 0`;
+  nothing has been sent *to* the client. RX is proven, TX is the other half of
+  step 2.
+- **No upstack.** Frames go to a counting sink — no second netif, no DHCP.
+
+### Bench trap
+
+Run 11 showed `frames=1` and an apparently idle client. Not the firmware: an
+`arduino-cli upload` had silently not taken and the ESP8266 was still running
+the previous, non-transmitting sketch. It was caught only because the client
+prints its own `sent=` counter and that field was **absent** rather than zero —
+a missing field looks nothing like a field reading 0. That is the whole reason
+to print counters at both ends of a link test rather than infer one from the
+other.

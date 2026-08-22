@@ -619,7 +619,24 @@ static bool cmdPortAlive();         // defined with the recovery probe, below
 // hold window runs, ANOTHER DEVICE should see the SSID in a scan.  A radio that
 // a second radio can hear is the only proof that really settles it.
 static uint32_t s_bssFrames = 0;
-static void bssSink(void *, const uint8_t *, uint16_t) { s_bssFrames++; }
+// ★ Dump the FIRST frame only, and dump it whole enough to identify.  The
+// frame COUNT tracking the client's send counter is suggestive, but "these are
+// our client's packets" would still be an inference -- beacons, noise or some
+// other station's traffic would also make a counter climb.  One 802.3 header
+// plus payload settles it: the source MAC, the source IP, the UDP port and the
+// payload string are all things only that client emits, and none of them exist
+// anywhere in this firmware.
+static bool s_bssFirstDumped = false;
+static void bssSink(void *, const uint8_t *f, uint16_t n) {
+    s_bssFrames++;
+    if (!s_bssFirstDumped && n >= 14) {
+        s_bssFirstDumped = true;
+        Serial1.print("uap_rx_frame1 len="); Serial1.print((int)n);
+        Serial1.print(" bytes=");
+        dumpBytes(f, n > 64 ? 64 : n);
+        Serial1.println();
+    }
+}
 
 #ifndef M2_UAP_BSS_HOLD_MS
 #define M2_UAP_BSS_HOLD_MS 60000     // long enough to scan for it from elsewhere
@@ -631,6 +648,18 @@ static void serviceFor(uint32_t ms, const char *tag) {
     while (millis() - t0 < ms) (void)iw416.serviceLink(bssSink, nullptr, &dropped, 100);
     Serial1.print("uap_bss_service tag="); Serial1.print(tag);
     Serial1.print(" frames=");             Serial1.print((int)s_bssFrames);
+    // ★ The per-BSS split is the whole point.  A frame count alone cannot say
+    // WHICH interface the traffic arrived on, and with a uAP client as the only
+    // transmitter, rx_bss1 counting up is the direct evidence that mlan tags
+    // the shared rings per packet -- the thing the handoff says to verify
+    // rather than assume.  rx_bssX catches a tag that is neither 0 nor 1, which
+    // would mean the byte being read is not the one assumed.
+    Serial1.print(" rx_bss0=");             Serial1.print((int)iw416.rxFramesByBss(0));
+    Serial1.print(" rx_bss1=");             Serial1.print((int)iw416.rxFramesByBss(1));
+    Serial1.print(" rx_bssX=");             Serial1.print((int)iw416.rxFramesBssOther());
+    Serial1.print(" last_bss=");            Serial1.print((int)iw416.lastRxBssType());
+    Serial1.print("/");                     Serial1.print((int)iw416.lastRxBssNum());
+    Serial1.print(" rxdata_total=");        Serial1.print(iw416.rxDataCount());
     Serial1.print(" lastevent=0x");        printHex16((uint16_t)iw416.lastEvent());
     Serial1.print(" eventinfo=0x");        printHex16((uint16_t)iw416.lastEventInfo());
     Serial1.print(" dropped=");            Serial1.println(dropped ? 1 : 0);
