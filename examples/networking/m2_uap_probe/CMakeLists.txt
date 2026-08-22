@@ -77,6 +77,15 @@ if(M2_UAP_SYSCFG_SET_FIRST)
     add_definitions(-DM2_UAP_SYSCFG_SET_FIRST=1)
 endif()
 
+# How long the AP is held up once started, in ms.  Long enough for a client to
+# find it and associate: an ESP8266 rescans on its own schedule, so a window
+# sized for OUR convenience rather than the client's would misreport "no join"
+# as "no events".
+set(M2_UAP_BSS_HOLD_MS "" CACHE STRING "How long to hold the uAP up, ms")
+if(M2_UAP_BSS_HOLD_MS)
+    add_definitions(-DM2_UAP_BSS_HOLD_MS=${M2_UAP_BSS_HOLD_MS})
+endif()
+
 option(M2_UAP_PROBE_BSS_START "Also probe BSS_START/BSS_STOP (starts beaconing)" OFF)
 if(M2_UAP_PROBE_BSS_START)
     message(STATUS "uAP probe: BSS_START enabled -- this image TRANSMITS")

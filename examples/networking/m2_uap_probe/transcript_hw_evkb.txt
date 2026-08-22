@@ -1169,3 +1169,236 @@ uap_bss_seq=end
 uap_recover=n/a reason=command_port_alive_at_end
 uap_cardreg tag=final cmd52=ok cardstatus=0x0008 intmask=0x00C3 fwstatus=0xFEDC ioport=0x0000,0x0001 intstatus=0x0000
 uap_probe_done
+
+==============================================================================
+W17: A CLIENT JOINED -- 2026-08-21/22, run 9.  And the events question, answered.
+==============================================================================
+An ESP8266 (tools/esp8266-uapclient) associated to the AP the IW416 is hosting.
+Both sides name each other, and neither could have invented the other's MAC.
+
+THE EVENTS QUESTION FROM RUN 8, SETTLED
+------------------------------------------------------------------------------
+Run 8 saw NO events in 63 s with the BSS up, and left three explanations open:
+(1) the firmware raises none without a client, (2) something is not enabled, or
+(3) our serviceLink() demux does not surface uAP events.
+
+(3) was eliminated FIRST, by inspection, because it was free and it was the one
+under our control: serviceLink() does handle events -- it acts on CMD_PORT_UPLD,
+reads the command port, checks pkttype == MLAN_TYPE_EVENT and records the id
+(Iw416.cpp, the CMD_PORT_UPLD branch).  And that machinery was already known to
+work, since every command reply in every run arrives through the same bit
+(intseen=0xC2 throughout).  A demux that is demonstrably servicing the port it
+would read events from is not the reason no events appeared.
+
+(1) and (2) are separated by the same experiment: put a client on it.
+
+    uap_hold t=5  sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002310000001003701080084F3EBB7C45B...
+    uap_hold t=10 sta_count=1 lastevent=0x002D ...
+    ... steady through t=40
+
+  lastevent=0x002D is EVENT_MICRO_AP_STA_ASSOC.  THE FIRMWARE DOES RAISE uAP
+  EVENTS, and our demux does surface them.  Run 8 saw none because there was
+  nothing to raise one about -- explanation (1).  Nothing needs enabling and
+  nothing in the driver needed fixing; Phase 1 step 3 can be built on this.
+
+THE CARD'S OWN STATION LIST NAMES THE CLIENT
+------------------------------------------------------------------------------
+    1A00 0100 B380 1600 2410 0000 | 0100 | 3701 0800 | 84F3EBB7C45B
+    total=26 pkttype=1 resp=0x80B3 size=22 seq=0x1024(bss1) result=0x0000
+    sta_count=1   TLV 0x0137 len 8   MAC 84:F3:EB:B7:C4:5B
+
+  HostCmd_DS_STA_LIST is { t_u16 sta_count; sta_info[] }, so the count is the
+  first body u16 at offset 12 (4 INTF + 8 S_DS_GEN).  It stepped 0 -> 1 and the
+  station entry carries a MAC ADDRESS THIS FIRMWARE HAS NEVER SEEN -- it is not
+  in our image, not in any TLV we sent, and could only have come off the air.
+
+BOTH SIDES NAME EACH OTHER
+------------------------------------------------------------------------------
+    card  -> STA_LIST station        84:F3:EB:B7:C4:5B
+    ESP8266 -> client_mac            84:F3:EB:B7:C4:5B      MATCH
+
+    ESP8266 -> client_state=ASSOCIATED bssid=6C:1D:EB:91:0C:45 ch=6 rssi=31
+    card  -> GET_HW_SPEC mac         6C:1D:EB:91:0C:45      MATCH
+                                     (and that is the MAC we put in TLV 0x012B)
+
+  Channel 6 on both sides, matching the CHAN_BAND TLV.  Neither device knows
+  anything about the other's firmware; each independently reports the other's
+  hardware address.  This is the closed loop the handoff's success criterion 2
+  asks for, minus the addressing step.
+
+WHAT IS DELIBERATELY NOT CLAIMED
+------------------------------------------------------------------------------
+  * NO DHCP, and no IP was obtained.  The uAP has no upstack yet -- no server,
+    no netif -- so the client is configured with a static address purely so it
+    does not sit in a retry loop and misreport association as failure.  The
+    sketch prints assoc= and ip= as SEPARATE fields for exactly this reason:
+    "associated" and "addressed" are different claims and only the first is
+    made here.  status=3 (WL_CONNECTED) with no server behind it is association
+    only.
+  * NO TRAFFIC was moved.  Frames=0 throughout; nothing was sent and the data
+    path over a uAP BSS is untested.
+  * The leave event was NOT observed.  BSS_STOP returned RESULT_OK and the port
+    stayed healthy, but no EVENT_MICRO_AP_STA_DEAUTH (0x2C) was recorded --
+    unsurprising given the poll cadence (the run ends promptly after STOP), but
+    it is untested rather than absent, and the deauth path is what a leave gate
+    would assert.
+
+BENCH NOTE
+------------------------------------------------------------------------------
+The client is the ESP8266 on /dev/cu.usbserial-0001, which the handoff lists as
+the second candidate station and warns to keep unplugged unless it IS the client
+under test -- which it now is.  The sketch disables its SoftAP on boot, so
+ESP8266TEST stops being broadcast for the duration; leaving it up would have put
+a second beacon on the air next to the one under test.
+★ No credentials anywhere: the AP under test is OPEN, so WiFi.begin(ssid) takes
+no passphrase and there is nothing to store or leak.  WPA2 will need the repo's
+standing SSID/PSK rule; this deliberately does not.
+
+RAW CAPTURE (RT1176 side)
+------------------------------------------------------------------------------
+RT1176 M.2 uAP probe up
+m2_wifi_reset=released
+sdio_io_voltage=1v8_requested
+sdio_begin=ok rc=0
+iw416_begin=ok ioport=0x10000 fw_status=0x0
+fw_download=ok
+fw_release=0x9B105C15 hw_version=0x7201 mac=6C1DEB910C45
+uap_cardreg tag=init cmd52=ok cardstatus=0x0008 intmask=0x00C3 fwstatus=0xFEDC ioport=0x0000,0x0001
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.a bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.a.bss0 4E00010003804A000300000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.a bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.a.bss1 4E00010003804A000410000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.a.bss0 0C000100FEFF08000500020002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.a.bss1 0C000100FEFF08000610020002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.b bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.b.bss0 4E00010003804A000700000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.b bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.b.bss1 4E00010003804A000810000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x00AE name=SYS_INFO bss=0 st=ok resp=0x80AE type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes SYS_INFO.bss0 34000100AE8030000900000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+uap_probe cmd=0x00AE name=SYS_INFO bss=1 st=ok resp=0x80AE type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes SYS_INFO.bss1 34000100AE8030000A10000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.c bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.c.bss0 4E00010003804A000B00000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.c bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.c.bss1 4E00010003804A000C10000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B3 name=STA_LIST bss=0 st=ok resp=0x80B3 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes STA_LIST.bss0 0E000100B3800A000D00000000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B3 name=STA_LIST bss=1 st=ok resp=0x80B3 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes STA_LIST.bss1 0E000100B3800A000E10000000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.d.bss0 4E00010003804A000F00000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.d.bss1 4E00010003804A001010000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e.bss0 4E00010003804A001100000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e.bss1 4E00010003804A001210000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x7FFE name=RSVD.body bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.body.bss0 0E000100FEFF0A001300020000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x7FFE name=RSVD.body bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.body.bss1 0E000100FEFF0A001410020000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e2 bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e2.bss0 4E00010003804A001500000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e2 bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e2.bss1 4E00010003804A001610000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x004D name=MACADDR.uap bss=0 st=ok resp=0x804D type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes MACADDR.uap.bss0 140001004D8010001700000000006C1DEB910C456C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x004D name=MACADDR.uap bss=1 st=ok resp=0x804D type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes MACADDR.uap.bss1 140001004D8010001810000000006C1DEB910C456C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e3 bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e3.bss0 4E00010003804A001900000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e3 bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e3.bss1 4E00010003804A001A10000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_cfg_req mask=0x01FF ssid=RT1176-UAP-TEST chan=6
+uap_cfg_bytes len=82 01002B0106006C1DEB910C4500000F005254313137362D5541502D544553542C01020064002D0101000101000C0082848B960C1218243048606C30010100012A01020000061F010300000000400102000100
+uap_probe cmd=0x00B0 name=SYSCFG.fullopen bss=0 st=ok resp=0x80B0 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_cfg_req mask=0x01FF ssid=RT1176-UAP-TEST chan=6
+uap_cfg_bytes len=82 01002B0106006C1DEB910C4500000F005254313137362D5541502D544553542C01020064002D0101000101000C0082848B960C1218243048606C30010100012A01020000061F010300000000400102000100
+uap_probe cmd=0x00B0 name=SYSCFG.fullopen bss=1 st=ok resp=0x80B0 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e5 bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e5.bss0 4E00010003804A001D00000002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e5 bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e5.bss1 4E00010003804A001E10000002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.b bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.b.bss0 0C000100FEFF08001F00020002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.b bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.b.bss1 0C000100FEFF08002010020002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_control neg_sta_st=ok neg_sta_result=0x0002 neg_uap_st=ok neg_uap_result=0x0002 bracketed=1 seq_mismatches=0
+uap_bsscheck MACADDR.uap sta_st=ok sta_result=0x0000 uap_st=ok uap_result=0x0000 bracketed=1
+uap_tally bracketed=6 distinct_from_neg=6 unbracketed=0
+uap_verdict=SUPPORTED
+uap_bss_seq=begin -- THIS TRANSMITS
+uap_bss_precheck cfg_ran=1 cfg_result=0x0000 cfg_ok=1
+uap_bss cmd=0x00B1 name=BSS_START st=ok result=0x0000 len=256 cspre=0x0008 cspost=0x0008
+uap_bss_service tag=post_start frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_bss_ctl_after_start=ok
+uap_bss=beaconing ssid=RT1176-UAP-TEST chan=6 hold_ms=150000
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=5 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002310000001003701080084F3EBB7C45B009E00000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=10 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002410000001003701080084F3EBB7C45B019E00000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=15 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002510000001003701080084F3EBB7C45B019E00000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=20 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002610000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=25 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002710000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=30 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002810000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=35 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002910000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=40 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002A10000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=45 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002B10000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=50 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002C10000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=55 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002D10000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=60 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002E10000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=65 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002F10000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=70 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003010000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=75 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003110000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=80 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003210000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=86 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003310000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=91 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003410000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=96 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003510000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=101 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003610000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=106 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003710000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=111 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003810000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=116 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003910000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=121 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003A10000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=126 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003B10000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=131 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003C10000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=136 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003D10000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=141 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003E10000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=146 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003F10000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=1 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_hold t=151 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016004010000001003701080084F3EBB7C45B01C200000111155C
+uap_bss cmd=0x00B2 name=BSS_STOP st=ok result=0x0000 len=256 cspre=0x0008 cspost=0x0008
+uap_bss_ctl_after_stop=ok
+uap_bss_seq=end
+uap_recover=n/a reason=command_port_alive_at_end
+uap_cardreg tag=final cmd52=ok cardstatus=0x0008 intmask=0x00C3 fwstatus=0xFEDC ioport=0x0000,0x0001 intstatus=0x0000
+uap_probe_done

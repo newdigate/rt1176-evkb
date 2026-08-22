@@ -368,11 +368,57 @@ SSID, the next counted zero — because each triggers its own scan and macOS age
 cached entries out between them. Never compare across invocations; capture one
 scan to a file and query that file.
 
-### Open, and load-bearing for Phase 1 step 3
+### The events question, answered (run 9)
 
-**No events at all** in 63 s with the BSS demonstrably up — not
-`EVENT_MICRO_AP_BSS_START` (0x2E), not `BSS_ACTIVE` (0x44). Three live
-explanations, none of which may be assumed: the firmware may not raise them
-without a client, it may need something we have not enabled, or our
-`serviceLink()` demux may not surface uAP-BSS events at all. Phase 1 step 3 *is*
-those events — establish which of the three before designing around any of them.
+Run 8 saw **no events** in 63 s with the BSS up, leaving three explanations. The
+third — *our demux doesn't surface uAP events* — was eliminated first, by
+inspection, because it was free and the only one under our control:
+`serviceLink()` acts on `CMD_PORT_UPLD`, reads the command port, checks
+`pkttype == MLAN_TYPE_EVENT` and records the id. That machinery was already
+known to work, since every command reply in every run arrives through the same
+bit (`intseen=0xC2`).
+
+The other two are separated by putting a client on it:
+
+```
+uap_hold t=5  sta_count=1 lastevent=0x002D ...
+uap_hold t=10 sta_count=1 lastevent=0x002D ...  (steady through t=40)
+```
+
+`0x002D` is `EVENT_MICRO_AP_STA_ASSOC`. **The firmware does raise uAP events and
+our demux does surface them.** Run 8 saw none because there was nothing to raise
+one about. Nothing needs enabling, nothing in the driver needed fixing, and
+Phase 1 step 3 can be built on this.
+
+## A client joined (run 9)
+
+An ESP8266 (`tools/esp8266-uapclient`) associated. **Both sides name each
+other**, and neither could invent the other's MAC:
+
+| | reports | matches |
+|---|---|---|
+| card `STA_LIST` | station `84:F3:EB:B7:C4:5B` | the ESP8266's own `client_mac` |
+| ESP8266 | `bssid=6C:1D:EB:91:0C:45` ch 6 | the card's `GET_HW_SPEC` MAC, and our TLV 0x012B |
+
+`sta_count` stepped 0 → 1 and the station entry carries a MAC **this firmware has
+never seen** — not in our image, not in any TLV we sent. It could only have come
+off the air.
+
+### Deliberately not claimed
+
+- **No DHCP, no IP.** There is no upstack yet; the client uses a static address
+  purely so it doesn't sit in a retry loop and misreport association as failure.
+  The sketch prints `assoc=` and `ip=` separately because *associated* and
+  *addressed* are different claims and only the first is made here.
+- **No traffic.** `frames=0` throughout; the data path over a uAP BSS is
+  untested.
+- **The leave event was not observed.** `BSS_STOP` returned OK and the port
+  stayed healthy, but no `EVENT_MICRO_AP_STA_DEAUTH` (0x2C) was recorded —
+  untested rather than absent, and it is what a leave gate would assert.
+
+### Superseded
+
+> The run-8 note here said no events appeared and listed three explanations.
+> Run 9 settled it — the first explanation was right. Kept because the *order*
+> of elimination is the reusable part: the explanation under our own control was
+> checked first, for free, before any bench time was spent.

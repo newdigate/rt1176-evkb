@@ -673,20 +673,49 @@ static void runBssStartSequence() {
         Serial1.print("uap_bss=beaconing ssid="); Serial1.print(M2_UAP_CONFIG_SSID);
         Serial1.print(" chan=");                  Serial1.print((int)M2_UAP_CONFIG_CHANNEL);
         Serial1.print(" hold_ms=");               Serial1.println((int)M2_UAP_BSS_HOLD_MS);
-        // STA_LIST during the hold is the card's own view of who joined -- the
-        // oracle the future join gates will use, exercised here for the first
-        // time against a BSS that is actually up.
-        serviceFor(M2_UAP_BSS_HOLD_MS, "hold");
-        static uint8_t rx[Iw416::SDIO_BLOCK_SIZE];
-        uint16_t rxLen = 0;
-        if (iw416.sendHostCmdBss(Iw416::CMD_APCMD_STA_LIST, nullptr, 0,
-                                 Iw416::BSS_TYPE_UAP, 0) == SdioHost::OK &&
-            iw416.waitCmdResp(Iw416::CMD_APCMD_STA_LIST, rx, sizeof(rx), &rxLen, 2000) == SdioHost::OK) {
-            Serial1.print("uap_bss_stalist len="); Serial1.print(rxLen);
-            Serial1.print(" bytes=");              dumpBytes(rx, rxLen > 24 ? 24 : rxLen);
+        // ★ The hold is a WATCH, not a wait.  Run 8 sampled STA_LIST once, at
+        // the end, and saw sta_count=0 with no events -- which cannot
+        // distinguish "the firmware raises no uAP events" from "no client ever
+        // joined, so there was nothing to raise one about".  Polling turns the
+        // hold into a timeline: sta_count stepping 0 -> 1 dates the association
+        // to a 5 s window, and whether an event id appears in that same window
+        // is then a direct reading rather than an inference.
+        //
+        // STA_LIST is the card's OWN list of who has joined -- un-fakeable by
+        // us, and the oracle every future join/leave gate will be built on.
+        // HostCmd_DS_STA_LIST is { t_u16 sta_count; sta_info[] }, so the count
+        // is the first body u16, at offset 12 (4 INTF + 8 S_DS_GEN).
+        const uint32_t holdT0 = millis();
+        uint16_t lastCount = 0xFFFF;
+        while (millis() - holdT0 < M2_UAP_BSS_HOLD_MS) {
+            serviceFor(5000, "hold");
+            static uint8_t rx[Iw416::SDIO_BLOCK_SIZE];
+            uint16_t rxLen = 0;
+            uint16_t count = 0xFFFF;
+            if (iw416.sendHostCmdBss(Iw416::CMD_APCMD_STA_LIST, nullptr, 0,
+                                     Iw416::BSS_TYPE_UAP, 0) == SdioHost::OK &&
+                iw416.waitCmdResp(Iw416::CMD_APCMD_STA_LIST, rx, sizeof(rx), &rxLen, 2000) == SdioHost::OK &&
+                rxLen >= 14) {
+                count = (uint16_t)(rx[12] | ((uint16_t)rx[13] << 8));
+            }
+            Serial1.print("uap_hold t=");        Serial1.print((int)((millis() - holdT0) / 1000));
+            Serial1.print(" sta_count=");
+            if (count == 0xFFFF) Serial1.print("READ_FAILED"); else Serial1.print((int)count);
+            Serial1.print(" lastevent=0x");      printHex16((uint16_t)iw416.lastEvent());
+            Serial1.print(" rxlen=");            Serial1.print(rxLen);
+            Serial1.print(" bytes=");            dumpBytes(rx, rxLen > 32 ? 32 : rxLen);
             Serial1.println();
-        } else {
-            Serial1.println("uap_bss_stalist=FAILED");
+            // A change is the interesting instant, so say so on its own line --
+            // a later reader scanning for the join should not have to diff a
+            // column of otherwise identical lines to find it.
+            if (count != lastCount && lastCount != 0xFFFF) {
+                Serial1.print("uap_join_change from="); Serial1.print((int)lastCount);
+                Serial1.print(" to=");                  Serial1.print((int)count);
+                Serial1.print(" at_t=");                Serial1.print((int)((millis() - holdT0) / 1000));
+                Serial1.print(" lastevent=0x");         printHex16((uint16_t)iw416.lastEvent());
+                Serial1.println();
+            }
+            lastCount = count;
         }
     } else {
         Serial1.println("uap_bss=not_started -- BSS_STOP still sent, so nothing is left on air");
