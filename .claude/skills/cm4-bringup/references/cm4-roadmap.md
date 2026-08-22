@@ -22,6 +22,20 @@ because iso data does not move against QEMU's emulated usb-audio and the graph's
 clock IS packet flow. Do not "strengthen" any of them in QEMU.
 See the Phase 7 section below. History follows, newest first.
 
+★ **QUEUED — Phase 8: the Wi-Fi stack (uAP + STA) on the CM4.**  Brief and
+measured constraints in
+`docs/superpowers/handoff/2026-08-22-w19-wifi-on-cm4.md`.  It is a BRAINSTORM
+first, not a plan: the obvious design ("move the whole stack to the CM4") is
+ruled out by two measurements — the IW416 blob is ~400 KB (15x the largest CM4
+image ever built here) and the uAP+lwip build's **bss alone is 148 KB against a
+fixed 128 KB DTCM**.  The enabler is that the SDIO data path is **PIO**
+(`DATPORT`, no ADMA), so the "DMA cannot reach CM4 private TCM" constraint does
+not apply to it.  Four risk-triggers fire (peripheral-to-core assignment,
+core-release sequencing, TCM/address-map, a qemu2 model change), so an EVKB
+probe is mandatory before any of it is trusted.
+★ Note Phase 7.4 is still HW-UNVERIFIED; decide deliberately whether Phase 8
+starts before that is closed, since Phase 7 is the precedent Phase 8 leans on.
+
 Superseded pointer, kept for history — **Phase 6 — CM4 audio pipeline, Plan 2 of 2, ★★ALL HW-VERIFIED
 (2026-07-22)** — the CM4 now OWNS the whole audio pipeline: interrupt-driven SAI
 I/O (`sai1176` shared core + `AudioOutputI2SInt`/`AudioInputI2SInt`, no eDMA),
