@@ -717,3 +717,58 @@ they would not pass a data path that behaved differently.
   `sendDataFrame` and `sendHostCmd` delegate with `(0, 0)`, and the buffers were
   already `memset` to zero at those offsets, so the bytes written are provably
   identical. The RX change writes no bytes at all.
+
+
+## Join and leave — membership tracked both ways
+
+The client leaves and rejoins on a cycle (30 s joined, 8 s away) rather than
+being unplugged once: a single disconnect proves an event fired once, a cycle
+shows the AP tracking membership **both ways repeatedly** — and catches the
+failure a one-shot cannot, a count that goes 1 → 0 correctly the first time and
+never comes back.
+
+```
+uap_membership from=0 to=1 lastevent=0x1000051 joins=1 leaves=0
+uap_membership from=1 to=0 lastevent=0x100002C joins=1 leaves=1
+... three full cycles, joins=3 leaves=3, matching client_leaving/rejoining 1..3
+```
+
+### The event word carries the BSS
+
+`EVENT_GET_BSS_TYPE(cause) = (cause >> 24) & 0xFF`, so:
+
+| value | bss_type | event |
+|---|---|---|
+| `0x0100002C` | 1 (uAP) | `EVENT_MICRO_AP_STA_DEAUTH` |
+| `0x01000051` | 1 (uAP) | `EVENT_MICRO_AP_RSN_CONNECT` |
+
+Both tagged uAP — independent confirmation these aren't leaking from the station
+side.
+
+### ★ The join event id depends on the security mode
+
+On the **open** AP the join event was `EVENT_MICRO_AP_STA_ASSOC` (0x2D). On the
+**WPA2** AP it is `EVENT_MICRO_AP_RSN_CONNECT` (0x51), because RSN_CONNECT
+follows the 4-way handshake — the point at which a station on a secured network
+is actually usable.
+
+**A join gate asserting 0x2D would pass on an open AP and fail on a WPA2 one,
+for a link working perfectly.** Any such gate must accept both, or assert on
+`STA_LIST`'s count instead — which is why the count is what this example treats
+as authoritative.
+
+### Why membership is polled, not accumulated
+
+`sta_count` comes from `STA_LIST` every 2 s; events only say *when* it changed.
+An event can be missed — a late service pass, a full ring — and a figure only
+ever adjusted by deltas drifts silently and permanently once one is lost. The
+card's own list cannot drift. `joins`/`leaves` count observed transitions of
+that count, not events received.
+
+### One loose end
+
+Across three rejoins: `dhcp_disc=4 dhcp_req=3 dhcp_ack=3` — one DISCOVER never
+led to a REQUEST. The outcome was correct every time (the client was addressed,
+and got the same `.100` each cycle, since leases are keyed by MAC), so this is
+the client's state machine rather than a server fault — but it is unexplained
+and recorded as such.

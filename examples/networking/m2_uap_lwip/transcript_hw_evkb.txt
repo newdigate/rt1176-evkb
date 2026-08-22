@@ -249,3 +249,56 @@ HOW THE PASSPHRASE IS HANDLED, AND WHY IT IS MECHANICAL
 ★ NOTE FOR A FRESH CLONE: with no -DM2_UAP_PSK the example builds OPEN and
 every gate still passes -- the gates never needed a credential and still do
 not.  A missing passphrase is a different AP, not a broken build.
+
+==============================================================================
+JOIN AND LEAVE -- 2026-08-22.  Membership tracked both ways, three cycles.
+==============================================================================
+The client leaves and rejoins on a cycle (30 s joined, 8 s away) rather than
+being unplugged once.  A single disconnect proves an event fired once; a cycle
+shows the AP tracking membership BOTH ways repeatedly, which is what a leave
+gate would have to assert -- and it catches the failure a one-shot cannot: a
+count that goes 1 -> 0 correctly the first time and never comes back.
+
+    uap_membership from=0 to=1 lastevent=0x1000051 joins=1 leaves=0
+    uap_membership from=1 to=0 lastevent=0x100002C joins=1 leaves=1
+    uap_membership from=0 to=1 lastevent=0x1000051 joins=2 leaves=1
+    uap_membership from=1 to=0 lastevent=0x100002C joins=2 leaves=2
+    uap_membership from=0 to=1 lastevent=0x1000051 joins=3 leaves=2
+    uap_membership from=1 to=0 lastevent=0x100002C joins=3 leaves=3
+
+  Client side, matching one for one: client_leaving cycle=1,2,3 /
+  client_rejoining cycle=1,2,3.
+
+THE EVENT WORD CARRIES MORE THAN AN ID
+------------------------------------------------------------------------------
+mlan packs the BSS into the event cause:
+    EVENT_GET_BSS_TYPE(cause) = (cause >> 24) & 0xFF
+    EVENT_GET_BSS_NUM(cause)  = (cause >> 16) & BSS_NUM_MASK
+So the observed values decode as:
+
+    0x0100002C -> bss_type 1 (uAP), EVENT_MICRO_AP_STA_DEAUTH  (0x2C)
+    0x01000051 -> bss_type 1 (uAP), EVENT_MICRO_AP_RSN_CONNECT (0x51)
+
+  Both are tagged bss_type=1, which is independent confirmation that these are
+  uAP events and not something leaking from the station side.
+
+★ THE JOIN EVENT ID DEPENDS ON THE SECURITY MODE, and this is the finding worth
+carrying forward.  On the OPEN AP the join event was
+EVENT_MICRO_AP_STA_ASSOC (0x2D) -- recorded earlier in this transcript.  On the
+WPA2 AP it is EVENT_MICRO_AP_RSN_CONNECT (0x51), because RSN_CONNECT is raised
+after the 4-way handshake completes, which is the point at which a station on a
+secured network is actually usable.
+
+  A join gate that asserts 0x2D would therefore PASS on an open AP and FAIL on
+  a WPA2 one, for a link that is working perfectly.  Any such gate must accept
+  BOTH, or assert on STA_LIST's count instead -- which is why the count is what
+  this example treats as authoritative.
+
+WHY MEMBERSHIP IS POLLED AND NOT ACCUMULATED FROM EVENTS
+------------------------------------------------------------------------------
+sta_count comes from STA_LIST every 2 s; the events only say WHEN it changed.
+An event can be missed -- a service pass that ran late, a full ring -- and a
+membership figure that is only ever adjusted by deltas drifts silently and
+permanently once one is lost.  The card's own list cannot drift.  joins/leaves
+are derived from observed transitions of that count, so they are counts of what
+was SEEN to change rather than of events received.

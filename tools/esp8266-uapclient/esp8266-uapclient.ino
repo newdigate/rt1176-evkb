@@ -43,6 +43,21 @@ static IPAddress kIp(192, 168, 44, 50);
 static IPAddress kGw(192, 168, 44, 1);
 static IPAddress kMask(255, 255, 255, 0);
 
+// ★ LEAVE AND REJOIN ON A CYCLE, rather than testing a leave once by pulling
+// power.  A single disconnect proves an event fired once; a cycle shows the AP
+// tracking membership BOTH ways, repeatedly, which is what a leave gate would
+// have to assert.  It also catches the failure that a one-shot cannot: a count
+// that goes 1 -> 0 correctly the first time and then never comes back.
+#ifndef CLIENT_CYCLE_MS
+#define CLIENT_CYCLE_MS 30000     // stay joined this long...
+#endif
+#ifndef CLIENT_AWAY_MS
+#define CLIENT_AWAY_MS  8000      // ...then stay away this long
+#endif
+static uint32_t s_phaseAt = 0;
+static bool     s_away    = false;
+static uint32_t s_cycles  = 0;
+
 static uint32_t s_lastPrint = 0;
 static uint32_t s_lastSend  = 0;
 static bool     s_wasConnected = false;
@@ -97,6 +112,27 @@ void setup() {
 }
 
 void loop() {
+#if !defined(CLIENT_NO_CYCLE)
+    const uint32_t now = millis();
+    if (!s_away && now - s_phaseAt >= CLIENT_CYCLE_MS) {
+        s_away = true; s_phaseAt = now; s_cycles++;
+        Serial.print("client_leaving cycle="); Serial.println(s_cycles);
+        // Disconnect WITHOUT wiping stored config, then stop auto-reconnect so
+        // the away phase is actually away -- otherwise the SDK rejoins within
+        // a second and the AP sees a blip rather than a leave.
+        WiFi.setAutoReconnect(false);
+        WiFi.disconnect(false);
+    } else if (s_away && now - s_phaseAt >= CLIENT_AWAY_MS) {
+        s_away = false; s_phaseAt = now;
+        Serial.print("client_rejoining cycle="); Serial.println(s_cycles);
+        WiFi.setAutoReconnect(true);
+#if defined(CLIENT_PSK)
+        WiFi.begin(AP_SSID, CLIENT_PSK);
+#else
+        WiFi.begin(AP_SSID);
+#endif
+    }
+#endif
     const bool up = (WiFi.status() == WL_CONNECTED);
     if (up != s_wasConnected) {
         s_wasConnected = up;

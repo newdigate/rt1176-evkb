@@ -69,6 +69,8 @@ static struct udp_pcb *s_pcb = nullptr;
 static uint32_t s_udpRx = 0, s_udpBytes = 0;
 static bool     s_dumped = false;
 static bool     s_haveCard = false, s_bssUp = false;
+static uint16_t s_staCount = 0xFFFF;      // 0xFFFF = never successfully read
+static uint32_t s_joins = 0, s_leaves = 0;
 
 // The AP's own address.  Static on both sides: there is no DHCP server here, so
 // a client must be configured to match (192.168.44.50 in the bench sketch).
@@ -393,11 +395,40 @@ void setup() {
     Serial1.println("uap_lwip_done");
 }
 
+// The card's OWN list of who is associated.  Polled rather than inferred from
+// events: an event can be missed (a service pass that ran late, a full ring),
+// and a membership count that is only ever adjusted by deltas drifts silently
+// once one is lost.  The count is authoritative; the events say WHEN.
+static void pollStaList() {
+    static uint8_t rx[Iw416::SDIO_BLOCK_SIZE];
+    uint16_t rxLen = 0;
+    if (iw416.sendHostCmdBss(Iw416::CMD_APCMD_STA_LIST, nullptr, 0,
+                             Iw416::BSS_TYPE_UAP, 0) != SdioHost::OK) return;
+    if (iw416.waitCmdResp(Iw416::CMD_APCMD_STA_LIST, rx, sizeof(rx), &rxLen, 2000) != SdioHost::OK)
+        return;
+    if (rxLen < 14) return;
+    const uint16_t n = (uint16_t)(rx[12] | ((uint16_t)rx[13] << 8));
+    if (s_staCount != 0xFFFF && n != s_staCount) {
+        if (n > s_staCount) s_joins++; else s_leaves++;
+        Serial1.print("uap_membership from="); Serial1.print((int)s_staCount);
+        Serial1.print(" to=");                 Serial1.print((int)n);
+        Serial1.print(" lastevent=0x");        Serial1.print(iw416.lastEvent(), HEX);
+        Serial1.print(" joins=");              Serial1.print(s_joins);
+        Serial1.print(" leaves=");             Serial1.println(s_leaves);
+    }
+    s_staCount = n;
+}
+
 void loop() {
     static uint32_t last = 0;
+    static uint32_t lastSta = 0;
     if (s_haveCard && s_bssUp) {
         (void)iw416NetifPollDual(nullptr, &s_uapNif);
         sys_check_timeouts();
+    }
+    if (s_haveCard && s_bssUp && millis() - lastSta >= 2000) {
+        lastSta = millis();
+        pollStaList();
     }
     if (millis() - last >= 2000) {
         last = millis();
@@ -411,6 +442,11 @@ void loop() {
         Serial1.print(" dhcp_disc=");Serial1.print(s_dhcpDiscover);
         Serial1.print(" dhcp_req="); Serial1.print(s_dhcpRequest);
         Serial1.print(" dhcp_ack="); Serial1.print(s_dhcpAck);
-        Serial1.print(" dhcp_full=");Serial1.println(s_dhcpNoPool);
+        Serial1.print(" dhcp_full=");Serial1.print(s_dhcpNoPool);
+        Serial1.print(" sta=");
+        if (s_staCount == 0xFFFF) Serial1.print("?"); else Serial1.print((int)s_staCount);
+        Serial1.print(" joins=");    Serial1.print(s_joins);
+        Serial1.print(" leaves=");   Serial1.print(s_leaves);
+        Serial1.print(" lastevent=0x"); Serial1.println(iw416.lastEvent(), HEX);
     }
 }
