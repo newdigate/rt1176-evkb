@@ -186,8 +186,16 @@ else
     report "green_still_passes_m2_uap_probe_wifi" $result
 
     rm -f "$EVKB/$uap_rel"/build/wifi.uart
+fi
 
 # --- 5. and again for the Arduino WiFi facade (merged from the arduino line) --
+# ★ When the uAP and facade sections were merged, section 4's closing `fi` was
+# lost at the conflict boundary.  The script then died with "unexpected end of
+# file" -- AFTER printing eleven PASS lines, having silently never run sections
+# 4 and 5.  Only the exit code (2) said so.
+# So: judge this suite by its EXIT CODE and its CASE COUNT, never by the PASS
+# lines scrolling past.  A suite that stops early looks exactly like a suite
+# that passed, which is the same defect it exists to catch in gates.
 # Same class, second instance: networking/wifi_client_test. The Arduino WiFi
 # facade's two gates assert opposite outcomes off ONE elf in ONE directory --
 # run_qemu.sh wants WL_NO_SHIELD (255) from the card-absent fallback,
