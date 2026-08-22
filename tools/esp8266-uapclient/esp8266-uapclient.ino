@@ -14,11 +14,16 @@
 // When WPA2 comes, credentials go through tools/esp32c6-benchap/make-creds.sh's
 // refuse-to-write-untracked pattern -- never inline here.
 //
-// ★ NO DHCP IS EXPECTED.  The uAP has no upstack yet (no server, no netif), so
-// this will associate and never get an address.  That is the CORRECT outcome
-// for this phase: a static IP is configured below so the sketch does not sit
-// in a DHCP retry loop and misreport association as failure.  "Associated" and
-// "addressed" are different claims and this prints them separately.
+// ★ DHCP, as of the m2_uap_lwip work.  Earlier revisions of this sketch used a
+// STATIC address because the AP had no server behind it; now it has one, and
+// asking for an address is the whole test -- an address this client did not
+// choose, handed out by the AP, is something neither side could have faked.
+// Set M2_UAP_CLIENT_STATIC to go back to the static configuration (useful
+// against a build of the AP without the DHCP server).
+// "Associated" and "addressed" remain SEPARATE claims and are printed as
+// separate fields: assoc= says the link is up, ip= says an address was
+// obtained, and conflating them is how a half-working AP reads as a working
+// one.
 //
 // Build/flash:
 //   arduino-cli compile -b esp8266:esp8266:nodemcuv2 tools/esp8266-uapclient
@@ -72,7 +77,12 @@ void setup() {
     WiFi.setSleepMode(WIFI_NONE_SLEEP);
     WiFi.persistent(false);
     WiFi.setAutoReconnect(true);
+#if defined(M2_UAP_CLIENT_STATIC)
     WiFi.config(kIp, kGw, kMask);
+    Serial.println("addr_mode=static");
+#else
+    Serial.println("addr_mode=dhcp");
+#endif
     Serial.print("joining ssid="); Serial.println(AP_SSID);
     WiFi.begin(AP_SSID);          // open network: no passphrase argument
 }

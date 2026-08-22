@@ -123,3 +123,61 @@ hb card=1 bss=1 udp_rx=46 udp_bytes=1058 rx_bss0=0 rx_bss1=47 unrouted=0
 hb card=1 bss=1 udp_rx=48 udp_bytes=1104 rx_bss0=0 rx_bss1=49 unrouted=0
 hb card=1 bss=1 udp_rx=50 udp_bytes=1150 rx_bss0=0 rx_bss1=51 unrouted=0
 hb card=1 bss=1 udp_rx=52 udp_bytes=1196 rx_bss0=0 rx_bss1=53 unrouted=0
+
+==============================================================================
+DHCP -- 2026-08-22.  The client is handed an address it did not choose.
+==============================================================================
+lwip ships a DHCP CLIENT and never a server, so this one is written in the
+example.  Smallest thing that works: one /24, a ten-address pool,
+DISCOVER/REQUEST only, no persistence, no conflict detection.
+
+    uap_dhcp_up pool=192.168.44.100-109
+    uap_dhcp_ack mac=84F3EBB7C45B ip=192.168.44.100
+
+    client: addr_mode=dhcp
+            client_state=ASSOCIATED bssid=6C:1D:EB:91:0C:45 ch=6 ip=192.168.44.100
+
+  ★ 192.168.44.100 IS THE ORACLE.  The client did not pick it and cannot have
+    guessed it: that address appears nowhere in the client sketch, whose only
+    hard-coded address is the .50 static fallback it is no longer using.  It
+    came out of this server's pool, through a DISCOVER/OFFER/REQUEST/ACK
+    exchange, and was accepted by the ESP8266's own DHCP state machine.  Both
+    ends then independently report the same address and the same MAC.
+
+    dhcp_disc=1 dhcp_req=1 dhcp_ack=1 dhcp_full=0
+
+  One DISCOVER, one REQUEST, one ACK.  No retries -- which matters, because a
+  client that had to retry would still end up with an address and the run would
+  still look successful while hiding a server that answers unreliably.
+
+AND THE TRAFFIC MOVED TO IT
+------------------------------------------------------------------------------
+    uap_udp_first from=192.168.44.100:56388 len=23 ascii=RT1176-UAP-CLIENT-HELLO
+    hb ... udp_rx=77 udp_bytes=1771 rx_bss0=0 rx_bss1=80 unrouted=0
+
+  The datagrams now arrive FROM the assigned address, so the lease is not just
+  acknowledged, it is in use.
+
+  The accounting closes exactly again:
+    udp_rx=77 x 23 = 1771 = udp_bytes                       EXACT
+    rx_bss1=80 = 77 UDP + DISCOVER + REQUEST + gratuitous ARP   EXACT
+    rx_bss0=0, unrouted=0
+
+WHY IT LIVES IN THE EXAMPLE
+------------------------------------------------------------------------------
+It is not in M2Radio, deliberately.  It has not soaked, and promoting an
+unsoaked API is how a bad interface becomes permanent.  Promote it once it has
+run for more than a bench session and has been made to face the things this
+version ignores: leases never expire, a full pool is counted (dhcp_full) but
+nothing is reclaimed, and RENEW is answered as though it were a fresh REQUEST.
+Those are acceptable in an example that says so and unacceptable in a library
+that does not.
+
+★ A LATENT BUG FOUND WHILE WRITING THIS UP, AND FIXED RATHER THAN FILED.  The
+DHCP pcb was bound to IP_ANY_TYPE, so it would have answered a DISCOVER arriving
+on ANY netif -- meaning the moment this is paired with the station path (the
+module supports STA+uAP simultaneously, a later phase), it would have started
+handing out addresses on somebody else's network.  It is harmless today because
+there is no STA netif in this example, which is precisely why it would have
+shipped unnoticed.  Now udp_bind_netif(pcb, &uapNif).  Writing down what a thing
+does not do is a good way to notice that it does something worse.

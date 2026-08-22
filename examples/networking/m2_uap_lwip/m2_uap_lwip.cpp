@@ -23,9 +23,17 @@
 //     have travelled air -> RxPD -> demux -> netif -> lwip -> socket, and the
 //     payload is one this firmware never generates.
 //
-// NOT here, deliberately: no DHCP server (clients use static addresses -- the
-// handoff's zero-dependency Phase 1), and no routing or NAT between the STA and
-// uAP sides, which is explicitly out of scope until the rest soaks.
+//   * A MINIMAL DHCP SERVER, so a client needs no prior knowledge of this
+//     network.  lwip ships a DHCP client only, never a server, so this is
+//     written here rather than imported.  It is deliberately the smallest thing
+//     that works: one /24, a small pool, DISCOVER/REQUEST only, no persistence,
+//     no conflict detection, no RENEW handling beyond answering it like a fresh
+//     REQUEST.  It lives in the EXAMPLE and not in the library on purpose --
+//     it has not soaked, and promoting an unsoaked API is how a bad interface
+//     becomes permanent.  Promote it once it has.
+//
+// NOT here, deliberately: no routing or NAT between the STA and uAP sides,
+// which is explicitly out of scope until the rest soaks.
 //
 // Bench client: tools/esp8266-uapclient (static 192.168.44.50, broadcasts to
 // 192.168.44.255:5001 once a second, power save off).
@@ -65,6 +73,35 @@ static bool     s_haveCard = false, s_bssUp = false;
 #define AP_ADDR2 44
 #define AP_ADDR3 1
 #define UDP_PORT 5001
+
+// --- minimal DHCP server ----------------------------------------------------
+// RFC 2131 wire layout: a 236-byte fixed header, the magic cookie, then
+// options.  Only what a client needs to take an address is implemented.
+#define DHCP_SERVER_PORT 67
+#define DHCP_CLIENT_PORT 68
+#define DHCP_OP_REQUEST  1
+#define DHCP_OP_REPLY    2
+#define DHCP_MSG_DISCOVER 1
+#define DHCP_MSG_OFFER    2
+#define DHCP_MSG_REQUEST  3
+#define DHCP_MSG_ACK      5
+#define DHCP_OPT_MSGTYPE  53
+#define DHCP_OPT_SERVERID 54
+#define DHCP_OPT_LEASE    51
+#define DHCP_OPT_MASK      1
+#define DHCP_OPT_ROUTER    3
+#define DHCP_OPT_DNS       6
+#define DHCP_OPT_END     255
+#define DHCP_HDR_LEN     236
+// Pool: .100 .. .109.  Small on purpose -- the card's own limit is eight
+// stations, so a large pool would only paper over a lease leak.
+#define POOL_FIRST 100
+#define POOL_COUNT 10
+
+struct Lease { uint8_t mac[6]; uint8_t last; bool used; };
+static Lease s_leases[POOL_COUNT];
+static struct udp_pcb *s_dhcpPcb = nullptr;
+static uint32_t s_dhcpDiscover = 0, s_dhcpRequest = 0, s_dhcpAck = 0, s_dhcpNoPool = 0;
 
 static const char *statusName(SdioHost::Status s) {
     switch (s) {
@@ -109,6 +146,101 @@ static void onUdp(void *, struct udp_pcb *, struct pbuf *p,
             Serial1.print((buf[i] >= 32 && buf[i] < 127) ? (char)buf[i] : '.');
         Serial1.print(" bytes="); dumpBytes(buf, n);
         Serial1.println();
+    }
+    pbuf_free(p);
+}
+
+// One address per MAC, and the SAME address on a repeat request -- a client
+// that DISCOVERs, then REQUESTs, must be offered and acked the same thing or it
+// will refuse the lease.  Returns the host byte, or 0 when the pool is full.
+static uint8_t leaseFor(const uint8_t *mac) {
+    for (int i = 0; i < POOL_COUNT; i++)
+        if (s_leases[i].used && memcmp(s_leases[i].mac, mac, 6) == 0)
+            return s_leases[i].last;
+    for (int i = 0; i < POOL_COUNT; i++)
+        if (!s_leases[i].used) {
+            memcpy(s_leases[i].mac, mac, 6);
+            s_leases[i].last = (uint8_t)(POOL_FIRST + i);
+            s_leases[i].used = true;
+            return s_leases[i].last;
+        }
+    return 0;
+}
+
+static uint8_t dhcpMsgType(const uint8_t *o, uint16_t n) {
+    for (uint16_t i = 0; i + 1 < n;) {
+        uint8_t t = o[i];
+        if (t == DHCP_OPT_END) break;
+        if (t == 0) { i++; continue; }              // pad
+        uint8_t l = o[i + 1];
+        if (t == DHCP_OPT_MSGTYPE && l == 1 && i + 2 < n) return o[i + 2];
+        i += 2 + l;
+    }
+    return 0;
+}
+
+static void dhcpReply(const uint8_t *req, uint16_t reqLen, uint8_t msgType, uint8_t last) {
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, 300, PBUF_RAM);
+    if (p == nullptr) return;
+    uint8_t *b = (uint8_t *)p->payload;
+    memset(b, 0, 300);
+    b[0] = DHCP_OP_REPLY;
+    b[1] = 1; b[2] = 6;                             // Ethernet, 6-byte MAC
+    memcpy(&b[4], &req[4], 4);                      // xid -- echoed, or ignored
+    memcpy(&b[10], &req[10], 2);                    // flags (broadcast bit)
+    b[16] = AP_ADDR0; b[17] = AP_ADDR1; b[18] = AP_ADDR2; b[19] = last;   // yiaddr
+    b[20] = AP_ADDR0; b[21] = AP_ADDR1; b[22] = AP_ADDR2; b[23] = AP_ADDR3; // siaddr
+    memcpy(&b[28], &req[28], 16);                   // chaddr
+    uint16_t o = DHCP_HDR_LEN;
+    b[o++] = 0x63; b[o++] = 0x82; b[o++] = 0x53; b[o++] = 0x63;   // magic cookie
+    b[o++] = DHCP_OPT_MSGTYPE; b[o++] = 1; b[o++] = msgType;
+    b[o++] = DHCP_OPT_SERVERID; b[o++] = 4;
+    b[o++] = AP_ADDR0; b[o++] = AP_ADDR1; b[o++] = AP_ADDR2; b[o++] = AP_ADDR3;
+    b[o++] = DHCP_OPT_LEASE; b[o++] = 4;
+    b[o++] = 0x00; b[o++] = 0x00; b[o++] = 0x0E; b[o++] = 0x10;   // 3600 s
+    b[o++] = DHCP_OPT_MASK; b[o++] = 4;
+    b[o++] = 255; b[o++] = 255; b[o++] = 255; b[o++] = 0;
+    b[o++] = DHCP_OPT_ROUTER; b[o++] = 4;
+    b[o++] = AP_ADDR0; b[o++] = AP_ADDR1; b[o++] = AP_ADDR2; b[o++] = AP_ADDR3;
+    b[o++] = DHCP_OPT_DNS; b[o++] = 4;
+    b[o++] = AP_ADDR0; b[o++] = AP_ADDR1; b[o++] = AP_ADDR2; b[o++] = AP_ADDR3;
+    b[o++] = DHCP_OPT_END;
+    pbuf_realloc(p, o);
+    // ★ ALWAYS BROADCAST the reply.  The client has no address yet, so a
+    // unicast would need an ARP entry for an address it does not hold, and the
+    // exchange would stall in a way that looks like the server never answered.
+    (void)udp_sendto_if(s_dhcpPcb, p, IP_ADDR_BROADCAST, DHCP_CLIENT_PORT, &s_uapNif);
+    pbuf_free(p);
+}
+
+static void onDhcp(void *, struct udp_pcb *, struct pbuf *p,
+                   const ip_addr_t *, u16_t) {
+    if (p == nullptr) return;
+    if (p->tot_len >= DHCP_HDR_LEN + 4) {
+        static uint8_t buf[576];
+        uint16_t n = p->tot_len > sizeof(buf) ? (uint16_t)sizeof(buf) : p->tot_len;
+        pbuf_copy_partial(p, buf, n, 0);
+        if (buf[0] == DHCP_OP_REQUEST) {
+            const uint8_t t = dhcpMsgType(&buf[DHCP_HDR_LEN + 4],
+                                          (uint16_t)(n - DHCP_HDR_LEN - 4));
+            const uint8_t *mac = &buf[28];
+            const uint8_t last = leaseFor(mac);
+            if (last == 0) {
+                s_dhcpNoPool++;
+            } else if (t == DHCP_MSG_DISCOVER) {
+                s_dhcpDiscover++;
+                dhcpReply(buf, n, DHCP_MSG_OFFER, last);
+            } else if (t == DHCP_MSG_REQUEST) {
+                s_dhcpRequest++;
+                dhcpReply(buf, n, DHCP_MSG_ACK, last);
+                s_dhcpAck++;
+                Serial1.print("uap_dhcp_ack mac=");  dumpBytes(mac, 6);
+                Serial1.print(" ip=");
+                Serial1.print(AP_ADDR0); Serial1.print('.'); Serial1.print(AP_ADDR1);
+                Serial1.print('.'); Serial1.print(AP_ADDR2); Serial1.print('.');
+                Serial1.println(last);
+            }
+        }
     }
     pbuf_free(p);
 }
@@ -221,6 +353,26 @@ void setup() {
     } else {
         Serial1.println("uap_udp_bound=FAILED");
     }
+
+    s_dhcpPcb = udp_new();
+    if (s_dhcpPcb && udp_bind(s_dhcpPcb, IP_ANY_TYPE, DHCP_SERVER_PORT) == ERR_OK) {
+        // ★ BOUND TO THE uAP NETIF, not to every interface.  A DHCP server
+        // listening on IP_ANY_TYPE answers DISCOVERs arriving on ANY netif --
+        // so the moment this is paired with the station path (the datasheet
+        // supports STA+uAP simultaneously, and that is a later phase), it would
+        // start handing out addresses on somebody else's network.  Harmless
+        // today because there is no STA netif here, which is exactly why it
+        // would have shipped unnoticed.
+        udp_bind_netif(s_dhcpPcb, &s_uapNif);
+        udp_recv(s_dhcpPcb, onDhcp, nullptr);
+        Serial1.print("uap_dhcp_up pool=");
+        Serial1.print(AP_ADDR0); Serial1.print('.'); Serial1.print(AP_ADDR1);
+        Serial1.print('.'); Serial1.print(AP_ADDR2); Serial1.print('.');
+        Serial1.print(POOL_FIRST); Serial1.print("-");
+        Serial1.println(POOL_FIRST + POOL_COUNT - 1);
+    } else {
+        Serial1.println("uap_dhcp_up=FAILED");
+    }
     Serial1.println("uap_lwip_done");
 }
 
@@ -238,6 +390,10 @@ void loop() {
         Serial1.print(" udp_bytes=");Serial1.print(s_udpBytes);
         Serial1.print(" rx_bss0=");  Serial1.print(iw416.rxFramesByBss(0));
         Serial1.print(" rx_bss1=");  Serial1.print(iw416.rxFramesByBss(1));
-        Serial1.print(" unrouted="); Serial1.println(iw416NetifUnroutedFrames());
+        Serial1.print(" unrouted="); Serial1.print(iw416NetifUnroutedFrames());
+        Serial1.print(" dhcp_disc=");Serial1.print(s_dhcpDiscover);
+        Serial1.print(" dhcp_req="); Serial1.print(s_dhcpRequest);
+        Serial1.print(" dhcp_ack="); Serial1.print(s_dhcpAck);
+        Serial1.print(" dhcp_full=");Serial1.println(s_dhcpNoPool);
     }
 }

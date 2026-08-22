@@ -591,6 +591,48 @@ and this is the hot path W8/W12/W16 were each dug out of.
 
 ### Limitations, stated rather than discovered later
 
-No DHCP server (clients must be statically configured — the zero-dependency
-route), no routing/NAT, no security, and the AP hosts **indefinitely** — there
-is no `BSS_STOP`, so the board beacons until reset or reflashed.
+No routing/NAT, no security, and the AP hosts **indefinitely** — there is no
+`BSS_STOP`, so the board beacons until reset or reflashed. (DHCP was added
+straight after; see below.)
+
+## DHCP — the client is handed an address it did not choose
+
+lwip ships a DHCP *client* and never a server, so this one is written in the
+example. Smallest thing that works: one /24, a ten-address pool,
+DISCOVER/REQUEST only, no persistence, no conflict detection.
+
+```
+uap_dhcp_up pool=192.168.44.100-109
+uap_dhcp_ack mac=84F3EBB7C45B ip=192.168.44.100
+client: addr_mode=dhcp ... ip=192.168.44.100
+dhcp_disc=1 dhcp_req=1 dhcp_ack=1 dhcp_full=0
+```
+
+**`192.168.44.100` is the oracle.** The client did not pick it and cannot have
+guessed it — that address appears nowhere in the client sketch, whose only
+hard-coded address is the `.50` static fallback it no longer uses. One DISCOVER,
+one REQUEST, one ACK, **no retries** — which matters, because a client that had
+to retry would still end up addressed and the run would still look successful
+while hiding a server that answers unreliably.
+
+Traffic then moves to it: `uap_udp_first from=192.168.44.100`, so the lease is
+in use and not merely acknowledged. Accounting closes exactly again
+(`77 × 23 = 1771`; `rx_bss1 = 80 = 77 UDP + DISCOVER + REQUEST + ARP`).
+
+### A latent bug found while writing up, and fixed rather than filed
+
+The DHCP pcb was bound to `IP_ANY_TYPE`, so it would have answered a DISCOVER
+arriving on **any** netif — meaning the moment this is paired with the station
+path (STA+uAP simultaneously is a later phase), it would have started handing out
+addresses on somebody else's network. Harmless today because there is no STA
+netif here, which is precisely why it would have shipped unnoticed. Now
+`udp_bind_netif(pcb, &uapNif)`, re-verified on silicon. *Writing down what a
+thing does not do is a good way to notice that it does something worse.*
+
+### Why it lives in the example, not the library
+
+It has not soaked, and promoting an unsoaked API is how a bad interface becomes
+permanent. Promote it once it has faced what this version ignores: leases never
+expire, a full pool is counted but nothing reclaimed, and RENEW is answered as a
+fresh REQUEST. Acceptable in an example that says so; not in a library that
+doesn't.
