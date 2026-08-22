@@ -12,9 +12,12 @@
 #     here means the command sequence was accepted, not that a station could
 #     see it -- that is what the foreign-radio scans in transcript_hw_evkb.txt
 #     are for.
-#   * no client joins.  The model has no station, so sta_count is 0 and the
-#     DHCP server is exercised only to the point of binding.  Join/leave/data
-#     gates need a modelled station and there is not one yet.
+#   * the modelled station joins INSTANTLY when the BSS starts.  A real client
+#     scans, authenticates, associates and on WPA2 completes a 4-way handshake
+#     -- seconds, and variable.  So this gate can assert that a join is SEEN
+#     and reported, never anything about how long it takes.
+#   * no DHCP exchange happens: the modelled station never sends anything.  The
+#     server is exercised to the point of binding and no further.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
@@ -72,7 +75,25 @@ grep -q "^health stranded=0 desync=0 split=0 dropped=0 seqmm=0 pswake=0 rx_bss0=
     echo "FAIL: a health counter is non-zero on a model that has no radio and"
     echo "      therefore nothing to lose -- suspect the driver, not the air"
     exit 1; }
-# No station exists here, so any join is the MODEL inventing one.
-grep -q "^hb card=1 bss=1 .* sta=0 joins=0 leaves=0 " "$OUT" || {
-    echo "FAIL: reported a client on a model that has no station"; exit 1; }
+# --- the modelled station, and the event that announces it ------------------
+# The model joins a station as soon as the BSS is up, so STA_LIST must report
+# it.  Asserting on the COUNT rather than on a join TRANSITION is deliberate:
+# the station is already associated by the first poll, so no 0->1 edge is ever
+# seen, and a gate written against `joins=1` would fail on a working model.
+# The same reasoning applies on silicon for a different reason -- an event can
+# be missed, and a count cannot drift.
+grep -q "^hb card=1 bss=1 .* sta=1 " "$OUT" || {
+    echo "FAIL: STA_LIST did not report the modelled station"; exit 1; }
+# ★ The join event id DEPENDS ON THE SECURITY MODE: open raises
+# EVENT_MICRO_AP_STA_ASSOC (0x2D), WPA2 raises EVENT_MICRO_AP_RSN_CONNECT
+# (0x51) after the handshake.  This build is OPEN (gates carry no credential),
+# so 0x2D is the correct one here -- and the 0x01 in the top byte is
+# EVENT_GET_BSS_TYPE saying uAP, which is what makes it OUR event and not
+# something from the station side.
+grep -q "^hb card=1 bss=1 .* lastevent=0x100002D" "$OUT" || {
+    echo "FAIL: wrong or missing join event.  Expected 0x100002D --"
+    echo "      bss_type=1 (bits 31:24) + EVENT_MICRO_AP_STA_ASSOC (0x2D)."
+    echo "      0x1000051 would mean the model thinks this AP is WPA2; a bare"
+    echo "      0x2D would mean it dropped the bss_type the host demuxes on."
+    exit 1; }
 echo "PASS: configure -> BSS_START -> netif -> socket -> DHCP, in order, health clean"
