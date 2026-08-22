@@ -58,6 +58,10 @@ grep -q "RT1176 M.2 uAP + lwip up" "$OUT" || { echo "FAIL: banner missing"; exit
 grep -q "^sdio_begin=cmd5-no-response" "$OUT" || {
     echo "FAIL: expected the cmd5-no-response fallback"; exit 1; }
 grep -q "^uap_lwip_done" "$OUT" || { echo "FAIL: setup never completed"; exit 1; }
+# The health line must be emitted even with no card: a soak counter that only
+# appears once things are working is one nobody checks when they are not.
+grep -q "^health stranded=0 desync=0 split=0 dropped=0 seqmm=0 pswake=0 rx_bss0=0 unrouted=0 " "$OUT" || {
+    echo "FAIL: health line missing, or a counter was non-zero with no card"; exit 1; }
 grep -q "^hb card=0 bss=0 .* dhcp_ack=0 dhcp_full=0 dhcp_bcast=0 sta=? joins=0 leaves=0 " "$OUT" || {
     echo "FAIL: no heartbeat, or it claimed a card/BSS with neither present"; exit 1; }
 

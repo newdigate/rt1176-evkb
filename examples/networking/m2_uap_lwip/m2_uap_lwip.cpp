@@ -591,5 +591,28 @@ void loop() {
         Serial1.print(" joins=");    Serial1.print(s_joins);
         Serial1.print(" leaves=");   Serial1.print(s_leaves);
         Serial1.print(" lastevent=0x"); Serial1.println(iw416.lastEvent(), HEX);
+        // ★ THE HEALTH LINE, and every counter on it was earned.  These are the
+        // ones that caught real faults in this driver's history, so a soak that
+        // does not print them is a soak that proves the AP kept talking and
+        // nothing more:
+        //   stranded  -- W12 fault #5: uploads the host never collected because
+        //                a clear-on-read interrupt bit was discarded.  Cost days.
+        //   desync    -- a set ring bitmap bit with a zero length behind it.
+        //   split     -- a packet whose declared size disagreed with its slot.
+        //   dropped   -- RX frames the driver could not hand up.
+        //   seqmm     -- command replies whose sequence did not match; W17 made
+        //                this load-bearing, since the card echoes bss nibbles.
+        //   pswake    -- power-save wakes, the W10 erratum's tell.
+        // rx_bss0 belongs here too: on a uAP-only build ANY frame tagged for the
+        // station interface is a mis-tag, and it must stay 0 for the whole soak.
+        Serial1.print("health stranded=");  Serial1.print(iw416.rxStrandedRecovered());
+        Serial1.print(" desync=");          Serial1.print(iw416.rxDesyncRecovered());
+        Serial1.print(" split=");           Serial1.print(iw416.rxSplitMismatch());
+        Serial1.print(" dropped=");         Serial1.print(iw416.rxDropped());
+        Serial1.print(" seqmm=");           Serial1.print(iw416.seqMismatches());
+        Serial1.print(" pswake=");          Serial1.print(iw416.psWakes());
+        Serial1.print(" rx_bss0=");         Serial1.print(iw416.rxFramesByBss(0));
+        Serial1.print(" unrouted=");        Serial1.print(iw416NetifUnroutedFrames());
+        Serial1.print(" uptime_s=");        Serial1.println(millis() / 1000);
     }
 }
