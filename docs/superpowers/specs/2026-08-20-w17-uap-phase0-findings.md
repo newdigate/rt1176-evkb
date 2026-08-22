@@ -832,3 +832,39 @@ import, own build tree); the shared lwip port config is untouched.
   loss or avoid broadcast.
 - **A gate asserting "N sent, N received" over a broadcast path would be flaky
   by construction** — and would look like a firmware regression.
+
+
+## Soak — criterion 5
+
+~18.5 min, **30 join/leave cycles**, client cycling throughout so association,
+DHCP, the data path and teardown are all exercised repeatedly.
+
+```
+udp_rx=775 udp_bytes=17825 rx_bss0=0 rx_bss1=866 unrouted=0
+dhcp_disc=31 dhcp_req=30 dhcp_ack=30 dhcp_bcast=0 joins=30 leaves=29
+health stranded=0 desync=0 split=0 dropped=0 seqmm=0 pswake=0 rx_bss0=0 unrouted=0
+```
+
+**One distinct health signature for the whole run.** The line prints every 2 s
+and all samples were collapsed with `sort -u`; one line means no counter was
+*ever* non-zero, which a final-sample check could not have shown.
+
+**The accounting closes exactly over 30 cycles:** `775 × 23 = 17825`;
+`rx_bss1 866 = 775 UDP + 31 DISCOVER + 30 REQUEST + 30 rejoin ARPs`;
+`rx_bss0 = 0`; `unrouted = 0`. Every frame in eighteen minutes is attributable.
+
+**Not perfect:** `dhcp_disc=31` against `req=30` — one DISCOVER in thirty still
+goes missing (~3%, down from ~25% before the unicast fix). Candidates untested:
+a first-exchange race with the netif, an occasional unicast loss, a client retry
+the server never saw. Recorded rather than rounded to "fixed".
+
+### ★ Scan trap, refined
+
+A single scan during the soak reported the SSID **absent** while the board was
+heartbeating with a client associated and UDP arriving; four scans immediately
+after all saw it. So the earlier rule was too weak:
+
+> **Presence in a scan is reliable — absence is not.** A single scan can
+> false-negative, so absence means nothing until it repeats.
+
+This doesn't disturb the `BSS_STOP` result, which used four consecutive scans.

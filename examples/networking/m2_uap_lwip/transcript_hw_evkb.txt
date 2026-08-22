@@ -385,3 +385,66 @@ WHAT THIS MEANS FOR ANYTHING BUILT ON TOP
     its own.
   * A gate asserting "N sent, N received" over a broadcast path would be flaky
     by construction, and it would look like a firmware regression.
+
+==============================================================================
+SOAK -- 2026-08-22.  ~18.5 min, 30 join/leave cycles, every frame accounted for.
+==============================================================================
+Success criterion 5 is "health counters clean across a soak".  The AP had never
+run more than about two minutes before this.  The client cycles join/leave
+throughout (30 s joined, 8 s away), so this exercises association, DHCP, the
+data path and teardown repeatedly rather than idling.
+
+    hb card=1 bss=1 udp_rx=775 udp_bytes=17825 rx_bss0=0 rx_bss1=866
+       unrouted=0 dhcp_disc=31 dhcp_req=30 dhcp_ack=30 dhcp_full=0
+       dhcp_bcast=0 sta=1 joins=30 leaves=29 lastevent=0x1000051
+
+    health stranded=0 desync=0 split=0 dropped=0 seqmm=0 pswake=0
+           rx_bss0=0 unrouted=0 uptime_s=1107
+
+HEALTH: ONE DISTINCT SIGNATURE FOR THE WHOLE RUN
+------------------------------------------------------------------------------
+The health line is printed every 2 s and every sample was collapsed with
+`sort -u`.  ONE line came out.  That is the point of doing it that way: a
+final-sample check would only prove the counters were zero at the END, while a
+single distinct signature proves none of them was EVER non-zero at any sample.
+Each counter was earned by a real fault -- stranded is W12 fault #5, seqmm
+became load-bearing in W17 when the card turned out to echo bss nibbles, pswake
+is the W10 erratum's tell.
+
+THE ACCOUNTING CLOSES EXACTLY, OVER 30 CYCLES
+------------------------------------------------------------------------------
+    udp_rx 775 x 23 bytes = 17825 = udp_bytes                        EXACT
+    rx_bss1 866 = 775 UDP + 31 DISCOVER + 30 REQUEST + 30 rejoin ARPs EXACT
+    rx_bss0 = 0        nothing was ever mis-tagged to the STA interface
+    unrouted = 0       no frame arrived for an interface that does not exist
+
+  Every frame the card delivered in eighteen minutes is attributable to
+  something that was asked for.  A counter that merely climbs would not have
+  shown that; an accounting that closes to the byte does.
+
+STILL NOT PERFECT, AND SAYING SO
+------------------------------------------------------------------------------
+    dhcp_disc=31  dhcp_req=30  dhcp_ack=30   over 30 joins
+
+  One DISCOVER never became a REQUEST.  That is ~3% against the ~25% seen
+  before DHCP replies were switched to unicast, so the broadcast fix did the
+  work it was supposed to -- but it is not zero, and one exchange in thirty
+  still goes missing.  Candidates, none tested: the very first exchange after
+  boot racing the netif coming up; an occasional unicast loss; a client-side
+  retry that the server never saw.  Recorded rather than rounded to "fixed".
+
+★ A REFINEMENT TO THE SCAN TRAP, FOUND HERE
+------------------------------------------------------------------------------
+A single `system_profiler` scan taken during this soak reported the SSID
+ABSENT -- while the board was heartbeating with bss=1, a client associated and
+UDP still arriving.  Four scans immediately afterwards all saw it.  So the rule
+recorded earlier ("never compare two invocations") was too weak:
+
+    PRESENCE in a scan is reliable -- an SSID that is not there cannot appear.
+    ABSENCE IS NOT.  A single scan can false-negative, and absence therefore
+    means nothing until it repeats.
+
+  This does not disturb the BSS_STOP result earlier in this transcript: that
+  one used FOUR consecutive single-invocation scans after the stop, all absent,
+  which is exactly what this rule requires.  It does mean a single "absent"
+  reading must never again be quoted as a negative control on its own.
