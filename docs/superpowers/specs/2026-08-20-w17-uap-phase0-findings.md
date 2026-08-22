@@ -478,3 +478,57 @@ prints its own `sent=` counter and that field was **absent** rather than zero �
 a missing field looks nothing like a field reading 0. That is the whole reason
 to print counters at both ends of a link test rather than infer one from the
 other.
+
+
+## TX over the uAP BSS — the round trip closes (run 13)
+
+The other half of step 2. `sendDataFrameBss()` returning OK proves only that the
+*card accepted a buffer* — not that the frame left, which interface it left on,
+or that anything understood it. So the proof is the **peer answering**, and the
+peer's stack answers with no cooperation from its sketch: there is no code on
+the client that knows this test exists.
+
+An ARP request, hand-built, claiming to be `192.168.44.1` at the card's MAC,
+sent with `bss_type=1`. What came back:
+
+```
+6C1DEB910C45  dst = THE CARD   -- addressed back to us, not broadcast
+84F3EBB7C45B  src = the ESP8266
+0806 / 0002   ARP reply
+84F3EBB7C45B  C0A82C32         sender = client, 192.168.44.50
+6C1DEB910C45  C0A82C01         target = the card's MAC, 192.168.44.1
+```
+
+The last two fields are the ones that matter: `192.168.44.1` and the card's MAC
+exist **nowhere except in the request we constructed**. The client could only
+have learned them by receiving and parsing that frame.
+
+```
+uap_tx arp_sent=26 arp_txfail=0 arp_replies=11 txcount=26
+uap_bss_service frames=147 rx_bss0=0 rx_bss1=147 rx_bssX=0 dropped=0
+```
+
+### The number that is not 1:1
+
+**Eleven replies to twenty-six requests, and that is not explained.** Recorded
+rather than rounded up to "it works", because ~42% is the sort of number that
+becomes a bug report later. Three candidates, none tested:
+
+- the ESP8266 is a station with **power save on by default** — it sleeps between
+  beacons and the AP must buffer for it and deliver at DTIM (ours is 1). If that
+  buffering is imperfect this is exactly how it would look;
+- lwip may rate-limit ARP replies to a repeating request;
+- plain air loss, though the RX direction shows none.
+
+What *is* established: the loss is **downstream of this driver** —
+`arp_txfail=0` and `txcount` tracks `arp_sent` exactly, so every frame was
+accepted by the card. Disable client power save first; it is one line on the
+client and would settle the leading candidate outright.
+
+### Step 2 status
+
+**Done** — the data path in both directions on a real uAP BSS: RX tagged and
+counted per interface, TX addressable per interface, both verified against a
+peer that shares no code with us. **Not done** — nothing routes on the tag (no
+second netif, no DHCP), mixed-BSS TX aggregation is untested, and the reply
+ratio is open.

@@ -1627,3 +1627,261 @@ uap_bss_service tag=hold frames=135 rx_bss0=0 rx_bss1=135 rx_bssX=0 last_bss=1/0
 uap_hold t=132 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003C10000001003701080084F3EBB7C45B01C100000111155C
 uap_bss_service tag=hold frames=140 rx_bss0=0 rx_bss1=140 rx_bssX=0 last_bss=1/0 rxdata_total=140 lastevent=0x002D eventinfo=0x0000 dropped=0
 uap_hold t=137 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003D10000001003701080084F3EBB7C45B01C100000111155C
+
+==============================================================================
+W17: TX OVER THE uAP BSS -- 2026-08-22, run 13.  The round trip closes.
+==============================================================================
+The other half of Phase 1 step 2.  RX was proven in run 12; this is TX, and it
+is proven by the PEER answering rather than by our own status code.
+
+WHY ARP, AND WHY A REPLY IS THE ONLY ACCEPTABLE PROOF
+------------------------------------------------------------------------------
+sendDataFrameBss() returning OK proves that the CARD ACCEPTED A BUFFER.  It says
+nothing about whether the frame left, which interface it left on, or whether
+anything understood it.  An ARP request answered by the peer proves all three at
+once, and the peer's stack answers WITHOUT ANY COOPERATION FROM ITS SKETCH --
+there is no code on the client that knows this test exists.
+ARP over UDP because it carries no checksum: a hand-built frame then cannot fail
+for a reason unrelated to what is being tested.
+
+WHAT WAS SENT
+------------------------------------------------------------------------------
+An ARP request, built by hand, claiming to be 192.168.44.1 (the gateway the
+client is already configured with) at the card's own MAC, asking who holds
+192.168.44.50.  Sent with bss_type=1 -- and that is the entire point: the same
+call with the default STA addressing puts the frame on an interface that has no
+client on it.
+
+WHAT CAME BACK
+------------------------------------------------------------------------------
+    uap_arp_reply len=42 bytes=6C1DEB910C45 84F3EBB7C45B 0806
+                               0001 0800 06 04 0002
+                               84F3EBB7C45B C0A82C32
+                               6C1DEB910C45 C0A82C01
+
+    6C1DEB910C45   dst  = THE CARD -- addressed back to us, not broadcast
+    84F3EBB7C45B   src  = the ESP8266
+    0806 / 0002    ARP, oper 2 = REPLY
+    84F3EBB7C45B   sender hw  = the client
+    C0A82C32       sender IP  = 192.168.44.50
+    6C1DEB910C45   target hw  = the card's MAC
+    C0A82C01       target IP  = 192.168.44.1
+
+  ★ The last two fields are the ones that matter.  192.168.44.1 and the card's
+    MAC exist NOWHERE except in the request we constructed thirty lines above.
+    The client could only have learned them by receiving and parsing that
+    frame.  This is a closed round trip: our bytes out, its bytes back, each
+    naming the other.
+
+COUNTS, INCLUDING THE ONE THAT IS NOT 1:1
+------------------------------------------------------------------------------
+    uap_tx arp_sent=26 arp_txfail=0 arp_replies=11 txcount=26
+    uap_bss_service tag=hold frames=147 rx_bss0=0 rx_bss1=147 rx_bssX=0 dropped=0
+
+  TX: 26 sent, ZERO failures, and the driver's own dataTxCount agrees at 26.
+  RX: 147 frames, still every one tagged bss_type=1, still nothing dropped.
+
+  ★ ELEVEN replies to twenty-six requests, and that is NOT explained.  It is
+    recorded rather than rounded up to "it works", because ~42% is the sort of
+    number that turns into a bug report later.  Three candidates, none tested:
+      * the ESP8266 is a station with power save ON by default -- it sleeps
+        between beacons, and an AP is supposed to buffer for a sleeping station
+        and deliver at DTIM (ours is 1).  If that buffering is imperfect, this
+        is exactly what it would look like;
+      * lwip may rate-limit ARP replies to a repeating request;
+      * plain air loss, though the RX direction shows none.
+    What IS established is that the loss is downstream of this driver:
+    arp_txfail=0 and txcount tracks arp_sent exactly, so every frame was
+    accepted by the card.  Whoever picks this up: disable client power save
+    first, since it is one line on the client and would settle the leading
+    candidate outright.
+
+WHAT THIS COMPLETES, AND WHAT IT DOES NOT
+------------------------------------------------------------------------------
+  DONE: Phase 1 step 2's data path, BOTH directions, on a real uAP BSS --
+  RX tagged and counted per interface, TX addressable per interface, both
+  verified against a peer that shares no code with us.
+  NOT DONE: nothing is ROUTED on the tag yet (no second netif, no DHCP), TX
+  aggregation with mixed BSSes in one batch is untested, and the reply ratio
+  above is open.
+
+RAW CAPTURE
+------------------------------------------------------------------------------
+RT1176 M.2 uAP probe up
+m2_wifi_reset=released
+sdio_io_voltage=1v8_requested
+sdio_begin=ok rc=0
+iw416_begin=ok ioport=0x10000 fw_status=0x0
+fw_download=ok
+fw_release=0x9B105C15 hw_version=0x7201 mac=6C1DEB910C45
+uap_cardreg tag=init cmd52=ok cardstatus=0x0008 intmask=0x00C3 fwstatus=0xFEDC ioport=0x0000,0x0001
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.a bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.a.bss0 4E00010003804A000300000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.a bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.a.bss1 4E00010003804A000410000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.a.bss0 0C000100FEFF08000500020002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.a bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.a.bss1 0C000100FEFF08000610020002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.b bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.b.bss0 4E00010003804A000700000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.b bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.b.bss1 4E00010003804A000810000002000172575740006C1DEB910C4500000111155C109B00000000000000000000000003CF
+uap_probe cmd=0x00AE name=SYS_INFO bss=0 st=ok resp=0x80AE type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes SYS_INFO.bss0 34000100AE8030000900000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+uap_probe cmd=0x00AE name=SYS_INFO bss=1 st=ok resp=0x80AE type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes SYS_INFO.bss1 34000100AE8030000A10000077383937386F2D56302C205246383738582C20465039322C2031362E39322E32312E7031
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.c bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.c.bss0 4E00010003804A000B00000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.c bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.c.bss1 4E00010003804A000C10000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B3 name=STA_LIST bss=0 st=ok resp=0x80B3 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes STA_LIST.bss0 0E000100B3800A000D00000000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x00B3 name=STA_LIST bss=1 st=ok resp=0x80B3 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes STA_LIST.bss1 0E000100B3800A000E10000000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.d.bss0 4E00010003804A000F00000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.d bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.d.bss1 4E00010003804A001010000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e.bss0 4E00010003804A001100000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e.bss1 4E00010003804A001210000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x7FFE name=RSVD.body bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.body.bss0 0E000100FEFF0A001300020000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x7FFE name=RSVD.body bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.body.bss1 0E000100FEFF0A001410020000000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e2 bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e2.bss0 4E00010003804A001500000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e2 bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e2.bss1 4E00010003804A001610000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x004D name=MACADDR.uap bss=0 st=ok resp=0x804D type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes MACADDR.uap.bss0 140001004D8010001700000000006C1DEB910C456C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x004D name=MACADDR.uap bss=1 st=ok resp=0x804D type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes MACADDR.uap.bss1 140001004D8010001810000000006C1DEB910C456C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e3 bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e3.bss0 4E00010003804A001900000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e3 bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e3.bss1 4E00010003804A001A10000002000172575740006C1DEB910C4500000111155C109B322C2031362E39322E32312E03CF
+uap_cfg_req mask=0x01FF ssid=RT1176-UAP-TEST chan=6
+uap_cfg_bytes len=82 01002B0106006C1DEB910C4500000F005254313137362D5541502D544553542C01020064002D0101000101000C0082848B960C1218243048606C30010100012A01020000061F010300000000400102000100
+uap_probe cmd=0x00B0 name=SYSCFG.fullopen bss=0 st=ok resp=0x80B0 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_cfg_req mask=0x01FF ssid=RT1176-UAP-TEST chan=6
+uap_cfg_bytes len=82 01002B0106006C1DEB910C4500000F005254313137362D5541502D544553542C01020064002D0101000101000C0082848B960C1218243048606C30010100012A01020000061F010300000000400102000100
+uap_probe cmd=0x00B0 name=SYSCFG.fullopen bss=1 st=ok resp=0x80B0 type=1 result=0x0000 len=0 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e5 bss=0 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e5.bss0 4E00010003804A001D00000002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_probe cmd=0x0003 name=HWSPEC.ctl+.e5 bss=1 st=ok resp=0x8003 type=1 result=0x0000 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes HWSPEC.ctl+.e5.bss1 4E00010003804A001E10000002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.b bss=0 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.b.bss0 0C000100FEFF08001F00020002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_probe cmd=0x7FFE name=RSVD.ctl-.b bss=1 st=ok resp=0xFFFE type=1 result=0x0002 len=256 rdlen=256 intseen=0xC2 cspre=0x0008 cspost=0x0008
+uap_bytes RSVD.ctl-.b.bss1 0C000100FEFF08002010020002000172575740006C1DEB910C4500000111155C109B2D5541502D544553542C010203CF
+uap_control neg_sta_st=ok neg_sta_result=0x0002 neg_uap_st=ok neg_uap_result=0x0002 bracketed=1 seq_mismatches=0
+uap_bsscheck MACADDR.uap sta_st=ok sta_result=0x0000 uap_st=ok uap_result=0x0000 bracketed=1
+uap_tally bracketed=6 distinct_from_neg=6 unbracketed=0
+uap_verdict=SUPPORTED
+uap_bss_seq=begin -- THIS TRANSMITS
+uap_bss_precheck cfg_ran=1 cfg_result=0x0000 cfg_ok=1
+uap_bss cmd=0x00B1 name=BSS_START st=ok result=0x0000 len=256 cspre=0x0008 cspost=0x0008
+uap_rx_frame1 len=42 bytes=FFFFFFFFFFFF84F3EBB7C45B0806000108000604000184F3EBB7C45BC0A82C32000000000000C0A82C32
+uap_bss_service tag=post_start frames=3 rx_bss0=0 rx_bss1=3 rx_bssX=0 last_bss=1/0 rxdata_total=3 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_bss_ctl_after_start=ok
+uap_bss=beaconing ssid=RT1176-UAP-TEST chan=6 hold_ms=150000
+uap_bss_service tag=hold frames=8 rx_bss0=0 rx_bss1=8 rx_bssX=0 last_bss=1/0 rxdata_total=8 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=1 arp_txfail=0 arp_replies=0 txcount=1
+uap_hold t=5 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002310000001003701080084F3EBB7C45B00C200000111155C
+uap_arp_reply len=42 bytes=6C1DEB910C4584F3EBB7C45B0806000108000604000284F3EBB7C45BC0A82C326C1DEB910C45C0A82C01
+uap_bss_service tag=hold frames=14 rx_bss0=0 rx_bss1=14 rx_bssX=0 last_bss=1/0 rxdata_total=14 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=2 arp_txfail=0 arp_replies=1 txcount=2
+uap_hold t=10 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002410000001003701080084F3EBB7C45B01C200000111155C
+uap_bss_service tag=hold frames=21 rx_bss0=0 rx_bss1=21 rx_bssX=0 last_bss=1/0 rxdata_total=21 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=3 arp_txfail=0 arp_replies=2 txcount=3
+uap_hold t=15 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002510000001003701080084F3EBB7C45B00C100000111155C
+uap_bss_service tag=hold frames=27 rx_bss0=0 rx_bss1=27 rx_bssX=0 last_bss=1/0 rxdata_total=27 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=4 arp_txfail=0 arp_replies=3 txcount=4
+uap_hold t=20 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002610000001003701080084F3EBB7C45B00C000000111155C
+uap_bss_service tag=hold frames=33 rx_bss0=0 rx_bss1=33 rx_bssX=0 last_bss=1/0 rxdata_total=33 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=5 arp_txfail=0 arp_replies=4 txcount=5
+uap_hold t=25 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002710000001003701080084F3EBB7C45B01C000000111155C
+uap_bss_service tag=hold frames=38 rx_bss0=0 rx_bss1=38 rx_bssX=0 last_bss=1/0 rxdata_total=38 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=6 arp_txfail=0 arp_replies=4 txcount=6
+uap_hold t=30 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002810000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=43 rx_bss0=0 rx_bss1=43 rx_bssX=0 last_bss=1/0 rxdata_total=43 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=7 arp_txfail=0 arp_replies=4 txcount=7
+uap_hold t=35 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002910000001003701080084F3EBB7C45B01C000000111155C
+uap_bss_service tag=hold frames=48 rx_bss0=0 rx_bss1=48 rx_bssX=0 last_bss=1/0 rxdata_total=48 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=8 arp_txfail=0 arp_replies=4 txcount=8
+uap_hold t=40 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002A10000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=54 rx_bss0=0 rx_bss1=54 rx_bssX=0 last_bss=1/0 rxdata_total=54 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=9 arp_txfail=0 arp_replies=5 txcount=9
+uap_hold t=45 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002B10000001003701080084F3EBB7C45B01C000000111155C
+uap_bss_service tag=hold frames=59 rx_bss0=0 rx_bss1=59 rx_bssX=0 last_bss=1/0 rxdata_total=59 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=10 arp_txfail=0 arp_replies=5 txcount=10
+uap_hold t=51 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002C10000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=64 rx_bss0=0 rx_bss1=64 rx_bssX=0 last_bss=1/0 rxdata_total=64 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=11 arp_txfail=0 arp_replies=5 txcount=11
+uap_hold t=56 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002D10000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=69 rx_bss0=0 rx_bss1=69 rx_bssX=0 last_bss=1/0 rxdata_total=69 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=12 arp_txfail=0 arp_replies=5 txcount=12
+uap_hold t=61 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002E10000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=75 rx_bss0=0 rx_bss1=75 rx_bssX=0 last_bss=1/0 rxdata_total=75 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=13 arp_txfail=0 arp_replies=5 txcount=13
+uap_hold t=66 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016002F10000001003701080084F3EBB7C45B00C100000111155C
+uap_bss_service tag=hold frames=81 rx_bss0=0 rx_bss1=81 rx_bssX=0 last_bss=1/0 rxdata_total=81 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=14 arp_txfail=0 arp_replies=6 txcount=14
+uap_hold t=71 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003010000001003701080084F3EBB7C45B00C000000111155C
+uap_bss_service tag=hold frames=87 rx_bss0=0 rx_bss1=87 rx_bssX=0 last_bss=1/0 rxdata_total=87 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=15 arp_txfail=0 arp_replies=7 txcount=15
+uap_hold t=76 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003110000001003701080084F3EBB7C45B01C000000111155C
+uap_bss_service tag=hold frames=92 rx_bss0=0 rx_bss1=92 rx_bssX=0 last_bss=1/0 rxdata_total=92 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=16 arp_txfail=0 arp_replies=7 txcount=16
+uap_hold t=81 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003210000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=97 rx_bss0=0 rx_bss1=97 rx_bssX=0 last_bss=1/0 rxdata_total=97 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=17 arp_txfail=0 arp_replies=7 txcount=17
+uap_hold t=86 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003310000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=103 rx_bss0=0 rx_bss1=103 rx_bssX=0 last_bss=1/0 rxdata_total=103 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=18 arp_txfail=0 arp_replies=8 txcount=18
+uap_hold t=91 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003410000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=108 rx_bss0=0 rx_bss1=108 rx_bssX=0 last_bss=1/0 rxdata_total=108 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=19 arp_txfail=0 arp_replies=8 txcount=19
+uap_hold t=96 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003510000001003701080084F3EBB7C45B01C000000111155C
+uap_bss_service tag=hold frames=113 rx_bss0=0 rx_bss1=113 rx_bssX=0 last_bss=1/0 rxdata_total=113 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=20 arp_txfail=0 arp_replies=8 txcount=20
+uap_hold t=102 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003610000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=118 rx_bss0=0 rx_bss1=118 rx_bssX=0 last_bss=1/0 rxdata_total=118 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=21 arp_txfail=0 arp_replies=8 txcount=21
+uap_hold t=107 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003710000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=123 rx_bss0=0 rx_bss1=123 rx_bssX=0 last_bss=1/0 rxdata_total=123 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=22 arp_txfail=0 arp_replies=8 txcount=22
+uap_hold t=112 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003810000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=130 rx_bss0=0 rx_bss1=130 rx_bssX=0 last_bss=1/0 rxdata_total=130 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=23 arp_txfail=0 arp_replies=9 txcount=23
+uap_hold t=117 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003910000001003701080084F3EBB7C45B00C000000111155C
+uap_bss_service tag=hold frames=136 rx_bss0=0 rx_bss1=136 rx_bssX=0 last_bss=1/0 rxdata_total=136 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=24 arp_txfail=0 arp_replies=10 txcount=24
+uap_hold t=122 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003A10000001003701080084F3EBB7C45B00C000000111155C
+uap_bss_service tag=hold frames=142 rx_bss0=0 rx_bss1=142 rx_bssX=0 last_bss=1/0 rxdata_total=142 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=25 arp_txfail=0 arp_replies=11 txcount=25
+uap_hold t=127 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003B10000001003701080084F3EBB7C45B01C000000111155C
+uap_bss_service tag=hold frames=147 rx_bss0=0 rx_bss1=147 rx_bssX=0 last_bss=1/0 rxdata_total=147 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=26 arp_txfail=0 arp_replies=11 txcount=26
+uap_hold t=132 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003C10000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=152 rx_bss0=0 rx_bss1=152 rx_bssX=0 last_bss=1/0 rxdata_total=152 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=27 arp_txfail=0 arp_replies=11 txcount=27
+uap_hold t=137 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003D10000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=157 rx_bss0=0 rx_bss1=157 rx_bssX=0 last_bss=1/0 rxdata_total=157 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=28 arp_txfail=0 arp_replies=11 txcount=28
+uap_hold t=142 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003E10000001003701080084F3EBB7C45B01C000000111155C
+uap_bss_service tag=hold frames=162 rx_bss0=0 rx_bss1=162 rx_bssX=0 last_bss=1/0 rxdata_total=162 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=29 arp_txfail=0 arp_replies=11 txcount=29
+uap_hold t=147 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016003F10000001003701080084F3EBB7C45B01C100000111155C
+uap_bss_service tag=hold frames=167 rx_bss0=0 rx_bss1=167 rx_bssX=0 last_bss=1/0 rxdata_total=167 lastevent=0x002D eventinfo=0x0000 dropped=0
+uap_tx arp_sent=30 arp_txfail=0 arp_replies=11 txcount=30
+uap_hold t=153 sta_count=1 lastevent=0x002D rxlen=256 bytes=1A000100B38016004010000001003701080084F3EBB7C45B01C100000111155C
+uap_bss cmd=0x00B2 name=BSS_STOP st=ok result=0x0000 len=256 cspre=0x0008 cspost=0x0008
+uap_bss_ctl_after_stop=ok
+uap_bss_seq=end
+uap_recover=n/a reason=command_port_alive_at_end
+uap_cardreg tag=final cmd52=ok cardstatus=0x0008 intmask=0x00C3 fwstatus=0xFEDC ioport=0x0000,0x0001 intstatus=0x0000
+uap_probe_done
