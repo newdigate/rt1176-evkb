@@ -106,16 +106,38 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **111 gates**: 108 from the
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **113 gates**: 108 from the
 merge of two independent lines that both branched from 94 — the display
 capstone line added THREE (`display/vglite_lvgl_test`, then
 `display/synthui_step_test` and `display/acid_box` from the Acid Box capstone,
 reaching 97 on its own), and the M.2 Wi-Fi line added ELEVEN, reaching 105 on
 its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
-`networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`. That arithmetic is
-CHECKED against the runner rather than trusted: `-l` reports 111.
+`networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's TWO
+more once the QEMU model grew a uAP surface. That arithmetic is CHECKED against
+the runner rather than trusted: `-l` reports 113.
 
 The M.2 line's own chain, kept because each step says what the gate is for:
+
+W18 added TWO gates once the QEMU IW416 model grew an AP surface
+(`-global iw416-sdio.uap=on`, qemu2 after `721fb09146`), which is what finally
+made the uAP work gateable rather than silicon-only:
+`networking/m2_uap_probe[uap]` is the **FAULT 1 REGRESSION** — a POPULATED
+SYS_CONFIGURE is accepted and a MINIMAL one WEDGES the command port, exactly as
+silicon does, so a driver that reintroduces a config GET fails here instead of
+on a bench (there is no harmless probe of that command). Its tally matches the
+silicon run byte for byte: `bracketed=6 distinct_from_neg=6 unbracketed=4`.
+`networking/m2_uap_lwip[uap]` asserts the bring-up SEQUENCE — configure →
+BSS_START → netif → socket → DHCP — and asserts the ORDER, since configuring
+after starting would be a different and broken driver these greps would
+otherwise accept. Both DEMONSTRATED RED against a `uapConfigure()` re-broken to
+drop its SSID TLV. 111 before them;
+★ The `uap` property is OFF by default, so `m2_uap_probe[wifi]` keeps asserting
+its correct NEGATIVE and its "SUPPORTED must never appear" tripwire stays valid.
+★ `m2_uap_probe[uap]` waits for `^uap_verdict=`, NOT for the heartbeat: after the
+wedge the probe spends ~90 s retrying before it reaches `loop()`, and qrun caps
+QEMU at 60 s (`QRUN_TIMEOUT`), so waiting for `hb` means waiting out the poll
+loop for a run QEMU was already killed under. Measured — the first version of
+that gate did exactly that.
 
 W17 Phase 1 added `networking/m2_uap_lwip` and ONE gate — the card-ABSENT
 fallback, whose VACUITY GUARDS are its substance rather than a formality. That
@@ -172,8 +194,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **111 passed, 0 failed, 0 SKIP**, or
-**110 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **113 passed, 0 failed, 0 SKIP**, or
+**112 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
 fresh-clone-red set: its injected gestures come from the `touch-script`
