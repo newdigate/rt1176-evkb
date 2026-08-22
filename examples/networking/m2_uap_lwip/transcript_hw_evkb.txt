@@ -387,19 +387,19 @@ WHAT THIS MEANS FOR ANYTHING BUILT ON TOP
     by construction, and it would look like a firmware regression.
 
 ==============================================================================
-SOAK -- 2026-08-22.  ~18.5 min, 30 join/leave cycles, every frame accounted for.
+SOAK -- 2026-08-22.  28.8 min, 46 join/leave cycles, every frame accounted for.
 ==============================================================================
 Success criterion 5 is "health counters clean across a soak".  The AP had never
 run more than about two minutes before this.  The client cycles join/leave
 throughout (30 s joined, 8 s away), so this exercises association, DHCP, the
 data path and teardown repeatedly rather than idling.
 
-    hb card=1 bss=1 udp_rx=775 udp_bytes=17825 rx_bss0=0 rx_bss1=866
-       unrouted=0 dhcp_disc=31 dhcp_req=30 dhcp_ack=30 dhcp_full=0
-       dhcp_bcast=0 sta=1 joins=30 leaves=29 lastevent=0x1000051
+    hb card=1 bss=1 udp_rx=1214 udp_bytes=27922 rx_bss0=0 rx_bss1=1353
+       unrouted=0 dhcp_disc=47 dhcp_req=46 dhcp_ack=46 dhcp_full=0
+       dhcp_bcast=0 sta=1 joins=46 leaves=45 lastevent=0x1000051
 
     health stranded=0 desync=0 split=0 dropped=0 seqmm=0 pswake=0
-           rx_bss0=0 unrouted=0 uptime_s=1107
+           rx_bss0=0 unrouted=0 uptime_s=1729
 
 HEALTH: ONE DISTINCT SIGNATURE FOR THE WHOLE RUN
 ------------------------------------------------------------------------------
@@ -411,27 +411,41 @@ Each counter was earned by a real fault -- stranded is W12 fault #5, seqmm
 became load-bearing in W17 when the card turned out to echo bss nibbles, pswake
 is the W10 erratum's tell.
 
-THE ACCOUNTING CLOSES EXACTLY, OVER 30 CYCLES
+THE ACCOUNTING CLOSES EXACTLY, OVER 46 CYCLES
 ------------------------------------------------------------------------------
-    udp_rx 775 x 23 bytes = 17825 = udp_bytes                        EXACT
-    rx_bss1 866 = 775 UDP + 31 DISCOVER + 30 REQUEST + 30 rejoin ARPs EXACT
+    udp_rx 1214 x 23 bytes = 27922 = udp_bytes                        EXACT
+    rx_bss1 1353 = 1214 UDP + 47 DISCOVER + 46 REQUEST + 46 rejoin ARPs EXACT
     rx_bss0 = 0        nothing was ever mis-tagged to the STA interface
     unrouted = 0       no frame arrived for an interface that does not exist
 
-  Every frame the card delivered in eighteen minutes is attributable to
+  Every frame the card delivered in twenty-nine minutes is attributable to
   something that was asked for.  A counter that merely climbs would not have
   shown that; an accounting that closes to the byte does.
 
-STILL NOT PERFECT, AND SAYING SO
+★ THE DHCP ASYMMETRY IS A STARTUP EVENT, NOT A LOSS RATE -- AND THIS CORRECTS
+  AN EARLIER READING IN THIS TRANSCRIPT
 ------------------------------------------------------------------------------
-    dhcp_disc=31  dhcp_req=30  dhcp_ack=30   over 30 joins
+    dhcp_disc=47  dhcp_req=46  dhcp_ack=46   over 46 joins
 
-  One DISCOVER never became a REQUEST.  That is ~3% against the ~25% seen
-  before DHCP replies were switched to unicast, so the broadcast fix did the
-  work it was supposed to -- but it is not zero, and one exchange in thirty
-  still goes missing.  Candidates, none tested: the very first exchange after
-  boot racing the netif coming up; an occasional unicast loss; a client-side
-  retry that the server never saw.  Recorded rather than rounded to "fixed".
+  An interim reading at 30 joins showed 31/30 and was written up here as "one
+  DISCOVER in thirty still goes missing (~3%)", with an occasional unicast loss
+  among the candidates.  THAT WAS WRONG, and the longer run says so plainly:
+
+      joins=1   disc=2  req=1   delta=1     <- the delta appears here
+      ...                                      and NEVER CHANGES AGAIN
+      joins=46  disc=47 req=46  delta=1
+
+  The delta is a CONSTANT 1, not a proportion.  It arrives at the very first
+  exchange and every one of the 46 joins after it is exactly 1:1.  So the
+  candidate that survives is the first-exchange race with the netif coming up,
+  and ONGOING LOSS IS RULED OUT -- which matters, because ~3% recurring DHCP
+  loss would be a reliability defect worth chasing and one extra DISCOVER at
+  boot is not.
+
+  Worth noting how the mistake happened: the interim number was a RATIO taken at
+  one moment (31/30) and a ratio cannot distinguish a constant from a rate.  It
+  took a second point to tell them apart, and the second point was free -- the
+  soak was already running.
 
 ★ A REFINEMENT TO THE SCAN TRAP, FOUND HERE
 ------------------------------------------------------------------------------

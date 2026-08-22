@@ -836,12 +836,12 @@ import, own build tree); the shared lwip port config is untouched.
 
 ## Soak — criterion 5
 
-~18.5 min, **30 join/leave cycles**, client cycling throughout so association,
+**28.8 min, 46 join/leave cycles**, client cycling throughout so association,
 DHCP, the data path and teardown are all exercised repeatedly.
 
 ```
-udp_rx=775 udp_bytes=17825 rx_bss0=0 rx_bss1=866 unrouted=0
-dhcp_disc=31 dhcp_req=30 dhcp_ack=30 dhcp_bcast=0 joins=30 leaves=29
+udp_rx=1214 udp_bytes=27922 rx_bss0=0 rx_bss1=1353 unrouted=0
+dhcp_disc=47 dhcp_req=46 dhcp_ack=46 dhcp_bcast=0 joins=46 leaves=45
 health stranded=0 desync=0 split=0 dropped=0 seqmm=0 pswake=0 rx_bss0=0 unrouted=0
 ```
 
@@ -849,14 +849,32 @@ health stranded=0 desync=0 split=0 dropped=0 seqmm=0 pswake=0 rx_bss0=0 unrouted
 and all samples were collapsed with `sort -u`; one line means no counter was
 *ever* non-zero, which a final-sample check could not have shown.
 
-**The accounting closes exactly over 30 cycles:** `775 × 23 = 17825`;
-`rx_bss1 866 = 775 UDP + 31 DISCOVER + 30 REQUEST + 30 rejoin ARPs`;
-`rx_bss0 = 0`; `unrouted = 0`. Every frame in eighteen minutes is attributable.
+**The accounting closes exactly over 46 cycles:** `1214 × 23 = 27922`;
+`rx_bss1 1353 = 1214 UDP + 47 DISCOVER + 46 REQUEST + 46 rejoin ARPs`;
+`rx_bss0 = 0`; `unrouted = 0`. Every frame in twenty-nine minutes is
+attributable.
 
-**Not perfect:** `dhcp_disc=31` against `req=30` — one DISCOVER in thirty still
-goes missing (~3%, down from ~25% before the unicast fix). Candidates untested:
-a first-exchange race with the netif, an occasional unicast loss, a client retry
-the server never saw. Recorded rather than rounded to "fixed".
+### ★ The DHCP asymmetry is a startup event, not a loss rate
+
+An interim reading at 30 joins (31/30) was written up as *"one DISCOVER in
+thirty still goes missing (~3%)"*, with occasional unicast loss among the
+candidates. **That was wrong.** The delta appears at the very first exchange and
+never changes again:
+
+```
+joins=1   disc=2   req=1   delta=1     <- appears here
+joins=46  disc=47  req=46  delta=1     <- and never moves
+```
+
+A **constant 1**, not a proportion. Every one of the 46 joins after the first is
+exactly 1:1, so the surviving candidate is the first-exchange race with the netif
+coming up, and **ongoing loss is ruled out** — which matters, since ~3% recurring
+DHCP loss would be a reliability defect and one extra DISCOVER at boot is not.
+
+Worth noting how the mistake happened: the interim figure was a **ratio taken at
+one moment**, and a ratio cannot distinguish a constant from a rate. It took a
+second data point to separate them — and that point was free, since the soak was
+already running.
 
 ### ★ Scan trap, refined
 
