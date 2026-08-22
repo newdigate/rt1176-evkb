@@ -678,3 +678,42 @@ redacting at HEAD did not undo it.
 ★ A fresh clone with no `-DM2_UAP_PSK` builds **open**, and every gate still
 passes — the gates never needed a credential. A missing passphrase is a
 different AP, not a broken build.
+
+
+## STA-side regression (success criterion 3)
+
+The handoff requires that **"the STA path must not notice uAP code exists."**
+W17 changed three things that could break that: two byte reads and a counter in
+the RX hot path, a new BSS parameter on TX, and the netif glue. Argued as
+purely additive — but argument is not measurement, so:
+
+```
+m2_sdio_probe            PASS      m2_rx_demo[rxaggr]       PASS
+m2_sdio_probe[wifi]      PASS      m2_rx_demo[txaggr]       PASS
+m2_rx_demo               PASS      m2_rx_demo[regfallback]  PASS
+m2_rx_demo[ring]         PASS      m2_lwip_test             PASS
+m2_rx_demo[stranded]     PASS      m2_throughput_test       PASS
+m2_rx_demo[irq]          PASS      m2_uap_probe / [wifi]    PASS
+                                   m2_uap_lwip              PASS
+        14 passed, 0 failed
+```
+
+All seven `m2_rx_demo` gates matter here specifically: `[ring]` and `[stranded]`
+are the W8 and W12 regression gates, `[irq]` the W15 interrupt-service A/B, and
+the aggregation pair the W16 work — i.e. the gates that exist because this exact
+hot path has broken three times before. They assert exact counter values, so
+they would not pass a data path that behaved differently.
+
+### What this does not cover, stated plainly
+
+- **The full 111-gate sweep** is not run here: this worktree has only these
+  examples built, and a sweep with everything else SKIPped measures less than it
+  appears to. The sweep belongs in the full-build checkout.
+- **A real-AP `m2_lwip_test` session** — the handoff's other half of criterion 3
+  — has *not* been run. It needs live credentials for someone's actual network,
+  which is not something to acquire casually given this repo's history. The
+  QEMU gate asserts the card-absent fallback only.
+- The STA **wire image** is unchanged by construction rather than by capture:
+  `sendDataFrame` and `sendHostCmd` delegate with `(0, 0)`, and the buffers were
+  already `memset` to zero at those offsets, so the bytes written are provably
+  identical. The RX change writes no bytes at all.
