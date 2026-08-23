@@ -15,7 +15,9 @@
 #
 # WHAT THIS DOES NOT PROVE
 #   Anything about the IW416.  Every claim about the card lives in
-#   transcript_hw_evkb.txt.  The bidirectional transport is gated by
+#   transcript_hw_evkb.txt -- WHICH DOES NOT EXIST YET: no HCI command has
+#   ever been answered by a real IW416.  BT-1 Task 14 writes it.
+#   The bidirectional transport is gated by
 #   run_qemu_hci.sh against a fake controller.
 #
 # WHAT THIS GATE CANNOT SEE (2026-08-23, measured)

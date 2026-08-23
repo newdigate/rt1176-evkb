@@ -137,12 +137,22 @@ fails as FRAMING, attempt 2 succeeds after the 50 ms resync) and `starve`
 ★ **It needs NO qemu2 change.** qemu2 binds the second `-serial` to LPUART2
 (`hw/arm/fsl-imxrt1170.c`) and `imxrt_lpuart.c` implements chardev RX, so the
 whole Bluetooth transport is gateable against stock qemu2 — unlike every other
-m2_* gate, which needs the IW416 model. `server` WITHOUT `nowait` holds the
+m2_* gate that proves the device WORKS, all of which need the IW416 model. (The
+card-ABSENT m2_* gates pass on stock QEMU too; it is the working-device half
+that the model exists for.) `server` WITHOUT `nowait` holds the
 guest until the peer connects, which is what makes the counter assertions
 strict rather than racy.
 ★ **The socket lives in `/tmp`, deliberately** — same `sun_path` 104-byte cap
 that forces the four `mon.sock` gates through a short-path symlink; putting it
 under the example directory would reintroduce that hazard for no gain.
+★ **BOTH GATES SKIP ON A FRESH CLONE UNTIL THE PINS MOVE, and that is a pin
+state, not a firmware fault.** `m2_hci_probe` is the first example to link
+`M2Radio/hci/`, and it calls `addMemoryForRead()` on the core — neither exists
+at the SHAs `evkb.cmake` currently pins (`M2Radio` 300d32b has no `hci/`;
+`cores` fcd22b0 has no `addMemoryForRead`). So a fresh clone, or anyone using
+`-DEVKB_FORCE_FETCH=ON`, cannot build the example and the sweep reports **2
+SKIP** — and a SKIP hides in a count, which is exactly why this line exists.
+Bumping both pins after the two libraries are pushed is what clears it.
 DEMONSTRATED RED twice: changing the fake's manufacturer failed `[full]` by
 name, and breaking the driver's opcode match failed `[hci]` while
 **`run_qemu.sh` stayed GREEN** — it has no replies to match, so it cannot see
@@ -294,6 +304,16 @@ as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 exit 0), on the BT-1 HCI transport close-out, `rt1176:dualcore/cm4_audio_test`
 included and green in 3 s, `display/acid_box` green, both new
 `networking/m2_hci_probe` gates green (11 s and 33 s).
+`LICENSE-AUDIT: PASS` the same day, with the new manifest walked:
+`examples/networking/m2_hci_probe` at 120 dep paths.
+★ **Its `GATES` entry had to be added by hand and the plan never mentioned the
+audit at all** — the drift check caught it, which is what that check is for.
+★ **Pass `LICENSE_AUDIT_EVKB=$(pwd)`** when running the audit from anywhere but
+`~/Development/rt1170/evkb`: the variable is `LICENSE_AUDIT_EVKB`, not `EVKB`,
+and without it the script audits that ONE checkout and reports this tree's new
+gate as `MISSING BUILD` while never looking at it. Same class of trap as the
+symlink below — a tool that silently measures a different tree than the one you
+are in.
 ★ Run from a SHORT-PATH SYMLINK, and this time it was `/tmp/bt` rather than
 `/tmp/ev` — the existing `/tmp/ev` points at a DIFFERENT checkout
 (`rt1176-evkb-m2-maya-w161`), so it would have swept the wrong tree entirely and

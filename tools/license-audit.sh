@@ -372,6 +372,7 @@ examples/networking/m2_sdio_probe:m2_sdio_probe \
 examples/networking/m2_throughput_test:m2_throughput_test \
 examples/networking/m2_uap_probe:m2_uap_probe \
 examples/networking/m2_uap_lwip:m2_uap_lwip \
+examples/networking/m2_hci_probe:m2_hci_probe \
 examples/networking/native_ethernet_test:native_ethernet_test \
 examples/networking/wifi_client_test:wifi_client_test \
 examples/networking/wifi_server_test:wifi_server_test \

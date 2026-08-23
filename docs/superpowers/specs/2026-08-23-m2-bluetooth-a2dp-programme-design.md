@@ -44,7 +44,7 @@ NXP IW416 (88W8978 lineage): Wi-Fi 4 dual-band **1×1** + dual-mode Bluetooth
 |---|---|
 | SDIO enumeration, 1.8 V pads (`manfid=0x2DF cardid=0x9158`) | proven |
 | Combo blob download over SDIO (`sduartIW416_wlan_bt.bin`, 411,064 B) | proven, every boot |
-| Scan / WPA2-PSK STA / lwIP / DHCP / TCP / aggregation / uAP / Arduino `WiFi` facade | proven + gated, sweep 119 |
+| Scan / WPA2-PSK STA / lwIP / DHCP / TCP / aggregation / uAP / Arduino `WiFi` facade | proven + gated, sweep 119 (121 after BT-1) |
 | **Bluetooth HCI — any command** | **never answered**; the only reading predates `R404` |
 | BT PCM (SCO/eSCO) | unavailable — pads run to the SDRAM data bus |
 | LPUART2 flow control | unusable — RTS is the gigabit PHY's reset (`R1866`), CTS its interrupt (`R1816`) |
@@ -267,8 +267,14 @@ Written after B2's silicon result, per the per-phase-group rule. Fixed now:
 * **Demonstrated RED**: change the fake's manufacturer and the `[hci]` gate
   must fail by name; break the opcode match and the card-absent gate must
   still pass while `[hci]` fails. Both quoted in the gate headers.
-* `H4Parser` gets host-clang unit tests on byte fixtures captured on silicon
-  and then mutated (the UAC2 P2 lesson: never invent byte arrays).
+* `H4Parser` gets host-clang unit tests on byte fixtures.
+  ★ **Amended after BT-1 shipped:** the intent was fixtures *captured on
+  silicon* and then mutated (the UAC2 P2 lesson: never invent byte arrays), and
+  that is NOT what happened — B0/B1 silicon is deferred, so every fixture in
+  the host tests and in `hci_peer.py` is written from the specification. They
+  are therefore a test of "does this match the spec as read", not "does this
+  match the card". Task 3's first captured Command Complete is the point at
+  which they should be re-based on real bytes.
 * Sweep target **119 → 121**, re-measured by running the sweep.
 
 ### Core changes

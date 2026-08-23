@@ -24,7 +24,10 @@
 #
 # WHAT THIS DOES NOT PROVE
 #   Anything about the IW416, or about baud (a chardev has none).  Silicon's
-#   answers live in transcript_hw_evkb.txt.
+#   answers live in transcript_hw_evkb.txt -- WHICH DOES NOT EXIST YET: no
+#   HCI command has ever been answered by a real IW416.  BT-1 Task 14 writes
+#   it.  Until then NOTHING here says the card works, only that the driver
+#   does what the specification says against a peer that follows it.
 #
 # DEMONSTRATED RED (2026-08-23), twice, and the two are deliberately different
 # kinds of lie:
