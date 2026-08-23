@@ -296,10 +296,22 @@ Written after B2's silicon result, per the per-phase-group rule. Fixed now:
 
 ### Risks
 
-* The module variant may expect the BT-only UART download path — B0 shows the
-  ROM's request bytes if so, and B1 grows a UART `firmware_download`.
-* The manufacturer may read Marvell `0x0048` rather than NXP `0x0025`; either
-  is off the wire and the probe prints what it got.
+* ~~The module variant may expect the BT-only UART download path~~ —
+  ★ **ANSWERED ON SILICON 2026-08-23, and the answer is YES.** The card never
+  answers HCI over LPUART2, before or after the combo SDIO download. It
+  transmits a five-byte pattern three times at power-up (`AB 01 72 00 47`,
+  containing `0x7201` = the `hw_version` read independently over SDIO — the
+  cross-check that proves the UART is correctly framed), then goes silent, and
+  BT_WAKE_HOST never asserts. The combo download also stops 8,776 bytes short
+  of the blob (`sent=402288/411064 last_req=0`), consistent with the image
+  being WLAN + an appended BT part that SDIO never delivers. So **B1 grows a
+  UART `firmware_download`** — NXP's `CONFIG_BT_IND_DNLD` path — and that is
+  now the first task of the next phase, not a risk. Evidence:
+  `examples/networking/m2_sdio_probe/transcript_hw_evkb.txt` (B0 section) and
+  `examples/networking/m2_hci_probe/transcript_hw_evkb.txt`.
+* ~~The manufacturer may read Marvell `0x0048` rather than NXP `0x0025`~~ —
+  **still unanswered, and now blocked**: no HCI command has been answered, so
+  no identity has been read. It stays open behind the UART download.
 * The IW416 firmware may not implement local loopback mode (B3 fallback above).
 * Interrupt-driven RX at 3 M without flow control may still lose bytes under
   SDIO load even with eDMA; B3 measures, and 921600 or 1.5 M is the honest

@@ -24,10 +24,12 @@
 #
 # WHAT THIS DOES NOT PROVE
 #   Anything about the IW416, or about baud (a chardev has none).  Silicon's
-#   answers live in transcript_hw_evkb.txt -- WHICH DOES NOT EXIST YET: no
-#   HCI command has ever been answered by a real IW416.  BT-1 Task 14 writes
-#   it.  Until then NOTHING here says the card works, only that the driver
-#   does what the specification says against a peer that follows it.
+#   answers live in transcript_hw_evkb.txt.  ★ As of 2026-08-23 that file
+#   records a NEGATIVE: a real IW416 has never answered an HCI command, so
+#   NOTHING here says the card works -- only that the driver does what the
+#   specification says against a peer that follows it.  That is precisely why
+#   this gate is worth having: it is the only place the driver is exercised
+#   against a controller that ANSWERS.
 #
 # DEMONSTRATED RED (2026-08-23), twice, and the two are deliberately different
 # kinds of lie:

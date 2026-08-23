@@ -15,8 +15,11 @@
 #
 # WHAT THIS DOES NOT PROVE
 #   Anything about the IW416.  Every claim about the card lives in
-#   transcript_hw_evkb.txt -- WHICH DOES NOT EXIST YET: no HCI command has
-#   ever been answered by a real IW416.  BT-1 Task 14 writes it.
+#   transcript_hw_evkb.txt, which now exists and records an HONEST NEGATIVE:
+#   run on silicon 2026-08-23, the card came up on SDIO (card=1) and never
+#   answered HCI -- timeouts=10 framing=0, i.e. all ten attempts transmitted
+#   and the line was electrically clean.  m2_sdio_probe's B0 section explains
+#   why: the BT core appears to be in its UART bootloader.
 #   The bidirectional transport is gated by
 #   run_qemu_hci.sh against a fake controller.
 #
