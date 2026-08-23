@@ -18,7 +18,17 @@
 #   transcript_hw_evkb.txt.  The bidirectional transport is gated by
 #   run_qemu_hci.sh against a fake controller.
 #
-# DEMONSTRATED RED (2026-08-XX): <quote the Task 11 Step 6 result here>
+# WHAT THIS GATE CANNOT SEE (2026-08-23, measured)
+#   Breaking the driver's reply matching -- M2Radio hci/Hci.cpp, onPacket's
+#   Command Complete branch, `opcode == m_inflightOpcode` ->
+#   `opcode == (m_inflightOpcode ^ 1)`, so no reply is ever matched -- left this
+#   gate GREEN on the same ELF:
+#     PASS: HCI probe reached the no_response fallback cleanly and kept running
+#   It has nothing to match here, so a total failure of reply matching is
+#   INDISTINGUISHABLE from the card-absent case it asserts.  run_qemu_hci.sh
+#   caught it in the same breath (`late=10`, Reset timing out with replies on
+#   the wire), and that asymmetry is why the [hci] variant exists.  Do not read
+#   a green here as evidence about the transport.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
