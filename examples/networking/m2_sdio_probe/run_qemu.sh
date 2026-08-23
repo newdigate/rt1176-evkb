@@ -12,7 +12,7 @@ rm -f "$OUT"
     -display none $(gate_console "$OUT") \
     -d guest_errors -D "$(gate_capture_path "$DIR" serial.dbg)" &
 P=$!; gate_pid $P
-for _ in $(seq 1 40); do
+for _ in $(seq 1 60); do
     [ -f "$OUT" ] && grep -q "alive=2" "$OUT" 2>/dev/null && break
     sleep 0.25
 done
@@ -39,6 +39,17 @@ grep -q "^int_status=0x" "$OUT" || { echo "FAIL: no raw evidence line"; exit 1; 
 # the image is still running afterwards.
 grep -q "^probe_done" "$OUT" || { echo "FAIL: probe never completed"; exit 1; }
 grep -q "^alive=2" "$OUT" || { echo "FAIL: no heartbeat after the probe"; exit 1; }
+# B0 (2026-08-23): the two bracketed HCI_Reset probes must be PRESENT in their
+# card-absent form.  LPUART2 has no chardev here, so nothing can be received:
+# quiet=0 and n=0 are what "nothing answered" looks like, and match=0 says the
+# firmware did not mistake silence for the Command Complete.  A missing line
+# would mean the probe never reached that bracket.
+grep -q "^hci_pre_download: quiet=0 reply=none n=0 match=0[[:space:]]*$" "$OUT" || {
+    echo "FAIL: B0 pre-download bracket missing or not in its card-absent form"; exit 1; }
+grep -q "^hci_post_download: quiet=0 reply=none n=0 match=0[[:space:]]*$" "$OUT" || {
+    echo "FAIL: B0 post-download bracket missing or not in its card-absent form"; exit 1; }
+grep -q "^after_pdn_cycle: rom_bytes=0 hex=none[[:space:]]*$" "$OUT" || {
+    echo "FAIL: after_pdn_cycle line missing or not in its card-absent form"; exit 1; }
 # The fallback must not claim identity it cannot have read.
 if grep -q "^manfid=" "$OUT"; then
     echo "FAIL: reported a manufacturer ID with no IO function present"; exit 1
