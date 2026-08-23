@@ -3,7 +3,7 @@ m2_wifi_reset=released
 sdio_begin=cmd5-no-response
 card=0
 serial2=up_115200
-hci_reset=fail reason=ncmd_starved attempts=10 timeouts=1 framing=0 starved=9 qfull=0 late=0
+hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0
 hci_probe_done
-hb card=0 hci=ncmd_starved n=0 pump=2107955 timeouts=1 framing=0 starved=9 qfull=0 late=0
-hb card=0 hci=ncmd_starved n=1 pump=2404128 timeouts=1 framing=0 starved=9 qfull=0 late=0
+hb card=0 hci=no_response n=0 pump=2139834 timeouts=10 framing=0 starved=0 qfull=0 late=0
+hb card=0 hci=no_response n=1 pump=2440245 timeouts=10 framing=0 starved=0 qfull=0 late=0
