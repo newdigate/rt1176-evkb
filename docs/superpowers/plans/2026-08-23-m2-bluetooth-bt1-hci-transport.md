@@ -938,6 +938,9 @@ int main() {
         };
         Hci::Reply r;
         CHECK(hci.run(0x0C03, nullptr, 0, &r, 500, idle10) == Hci::FRAMING);
+        CHECK(hci.ncmd() == 1);   // the killed command's credit came back; without
+                                  // this the link deadlocks -- the reply that would
+                                  // have restored it was in the discarded burst
         CHECK(hci.framing() == 1);
         uint32_t t1 = io.now;
         CHECK(hci.run(0x0C03, nullptr, 0, &r, 500, idle10) == Hci::OK);
@@ -1297,7 +1300,24 @@ void Hci::onPacket(uint8_t type, const uint8_t *pkt, size_t len) {
 void Hci::onFault() {
     m_framing++;
     m_resync = true; m_lastByteAt = m_io.nowMs();
-    if (m_inflight) finish(FRAMING, nullptr);
+    if (m_inflight) {
+        // Give back the credit dispatch() spent on the command we are about to
+        // kill.  m_ncmd is assigned ABSOLUTELY from each reply, so if the reply
+        // that carried the credit is one of the bytes the resync discards, the
+        // count is stuck low with nothing able to raise it: no credit means no
+        // command, and no command means no reply.  One garbage burst would wedge
+        // the link for good -- and on this board it is a garbage burst that is
+        // expected, LPUART2 having no usable flow control.
+        // This restores only what we spent (it cannot fire unless we sent), so it
+        // cannot invent a credit that was never ours.  It CAN leave us one too
+        // many if the lost reply was going to grant zero; the next reply
+        // reassigns the true count, and over by one self-corrects where a
+        // deadlock does not.  The nothing-in-flight case needs no help: a
+        // controller freeing a buffer sends a NOP (opcode 0x0000) Command
+        // Complete carrying the credit, which onPacket() already accepts.
+        m_ncmd++;
+        finish(FRAMING, nullptr);
+    }
 }
 
 namespace {
