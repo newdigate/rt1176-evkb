@@ -2376,8 +2376,8 @@ grep -q "^inquiry=started[[:space:]]*$" "$OUT" || fail "[full] inquiry did not s
 grep -q "^inq: bd=AA:BB:CC:DD:EE:01 cod=0x240404 psrm=1 clk=0x1234[[:space:]]*$" "$OUT" || fail "[full] inquiry result 1 wrong (field-major parse?)"
 grep -q "^inq: bd=AA:BB:CC:DD:EE:02 cod=0x240404 psrm=1 clk=0x1234[[:space:]]*$" "$OUT" || fail "[full] inquiry result 2 wrong (field-major parse?)"
 grep -q "^inquiry_complete: status=0x00 n=2[[:space:]]*$" "$OUT" || fail "[full] inquiry_complete wrong"
-grep -q '^inq_name: bd=AA:BB:CC:DD:EE:01 status=0x00 name="FAKE-HEADSET-01"$' "$OUT" || fail "[full] remote name 1 wrong"
-grep -q '^inq_name: bd=AA:BB:CC:DD:EE:02 status=0x00 name="FAKE-HEADSET-02"$' "$OUT" || fail "[full] remote name 2 wrong"
+grep -q '^inq_name: bd=AA:BB:CC:DD:EE:01 status=0x00 name="FAKE-HEADSET-01"[[:space:]]*$' "$OUT" || fail "[full] remote name 1 wrong"
+grep -q '^inq_name: bd=AA:BB:CC:DD:EE:02 status=0x00 name="FAKE-HEADSET-02"[[:space:]]*$' "$OUT" || fail "[full] remote name 2 wrong"
 grep -q "^hci_probe_done[[:space:]]*$" "$OUT" || fail "[full] probe never completed"
 grep -q "^hb card=0 hci=ok n=1 pump=[0-9]* timeouts=0 framing=0 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[full] heartbeat counters not all zero"
@@ -2397,7 +2397,7 @@ run_phase garbage '^hb card=0 hci=ok n=1 '
 grep -q "^hci_reset=ok attempts=2 timeouts=0 framing=1 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[garbage] attempt 1 must fail as FRAMING (not timeout) and attempt 2 must succeed"
 grep -q "^hci_version: .*manufacturer=0x1234 " "$OUT" || fail "[garbage] the run did not recover to a full identity"
-grep -q '^inq_name: bd=AA:BB:CC:DD:EE:02 status=0x00 name="FAKE-HEADSET-02"$' "$OUT" || fail "[garbage] inquiry did not complete after recovery"
+grep -q '^inq_name: bd=AA:BB:CC:DD:EE:02 status=0x00 name="FAKE-HEADSET-02"[[:space:]]*$' "$OUT" || fail "[garbage] inquiry did not complete after recovery"
 grep -q "^hb card=0 hci=ok n=1 pump=[0-9]* timeouts=0 framing=1 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[garbage] heartbeat counters wrong"
 [ "$PEER_RC" -eq 0 ] || fail "[garbage] peer exited $PEER_RC"
@@ -2456,6 +2456,25 @@ cmake --build build 2>&1 | tail -1 && ./run_qemu.sh 2>&1 | tail -1; ./run_qemu_h
 ```
 
 Expected: the card-absent gate still PASSes (nothing to match), and the `[hci]` gate fails `[full] no hci_reset=ok` (every reply is now "late", Reset times out). That asymmetry is the point: only `[hci]` can see this bug. Restore the line, rebuild, re-run both gates to green.
+
+- [ ] **Step 6b: Split `run_phase`'s card-absent guard on `late`**
+
+The step-6 mutation exposed a diagnostic defect in the gate itself: the guard
+fired and blamed the socket ("the peer never reached LPUART2") for a run where
+`late=10` proved the bytes had made the round trip and the DRIVER had rejected
+them. Split it, so the message names the right half of the system:
+
+```sh
+    if grep -q "^hci_reset=timeout" "$OUT" && [ "$PHASE" != drop-reset ]; then
+        # late=0 means nothing came back at all (the peer never reached
+        # LPUART2 -- look at the socket); late>0 means the bytes made the
+        # round trip and the DRIVER did not recognise them (look at Hci.cpp).
+        if grep -q "late=0[[:space:]]*$" "$OUT"; then
+            fail "[$PHASE] the card-absent fallback ran and NOTHING came back (late=0) -- the peer never reached LPUART2"
+        fi
+        fail "[$PHASE] Reset timed out although replies ARRIVED (late>0) -- they matched no in-flight command, so this is the driver, not the socket"
+    fi
+```
 
 - [ ] **Step 7: Quote both demonstrations in the gate headers**
 
