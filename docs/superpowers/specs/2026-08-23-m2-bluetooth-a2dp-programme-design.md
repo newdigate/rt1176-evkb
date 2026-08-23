@@ -248,16 +248,21 @@ Written after B2's silicon result, per the per-phase-group rule. Fixed now:
   `hci_reset=timeout reason=no_response` **and** a later `hb` — positive
   tokens — and is added to `tools/gate-vacuity.test.sh`.
 * **`[hci]`** (`m2_hci_probe/run_qemu_hci.sh`): appends
-  `-serial unix:$DIR/hci.sock,server,nowait` after `gate_console`'s slot-0
-  `-serial file:` so it lands on LPUART2, backgrounds QEMU through `qrun`, runs
-  `hci_peer.py` (in the example directory, the `lwip_peer.py` shape: connect
-  with retry, run a named phase, write a `.result`), then reaps. `hci_peer.py`
-  answers the four B1 commands with values the firmware cannot invent (e.g.
-  manufacturer `0x1234`), injects Inquiry Result and Remote Name Request
-  Complete events for B2, and is scriptable per phase to **drop a reply**,
-  **inject garbage** and **hold `ncmd=0`** — so `timeout`, `framing` and
-  `ncmd_starved` are gated, not only the happy path. Same `sun_path` 104-byte
-  hazard as `mon.sock`: run the sweep from `/tmp/ev`.
+  `-serial unix:/tmp/m2hci_<pid>_<phase>.sock,server` after `gate_console`'s
+  slot-0 `-serial file:` so it lands on LPUART2, backgrounds QEMU through
+  `qrun`, runs `hci_peer.py` (in the example directory, the `lwip_peer.py`
+  shape: connect with retry, run a named phase, write a `.result`), then
+  reaps. Two details decided at plan time: the socket lives in `/tmp` because
+  macOS caps `sun_path` at 104 bytes and a checkout path alone can exceed it
+  (the `mon.sock` hazard, sidestepped rather than inherited); and `server`
+  without `nowait`, so QEMU holds the guest until the peer is connected and
+  the firmware's first byte cannot be lost — which is what lets every count
+  the gate asserts be strict. `hci_peer.py` answers the four B1 commands with
+  values the firmware cannot invent (e.g. manufacturer `0x1234`), injects
+  Inquiry Result and Remote Name Request Complete events for B2, and is
+  scriptable per phase to **drop a reply**, **inject garbage** and **hold
+  `ncmd=0`** — so `timeout`, `framing` and `ncmd_starved` are gated, not only
+  the happy path. One gate id, four QEMU runs.
 * **Silicon** `transcript_hw_evkb.txt`.
 * **Demonstrated RED**: change the fake's manufacturer and the `[hci]` gate
   must fail by name; break the opcode match and the card-absent gate must
