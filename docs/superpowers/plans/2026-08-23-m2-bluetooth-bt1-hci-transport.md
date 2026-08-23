@@ -25,6 +25,12 @@
 * **qemu2 binds the Nth `-serial` to LPUART(N+1)** (`hw/arm/fsl-imxrt1170.c:1110`), and its LPUART model receives from its chardev (`hw/char/imxrt_lpuart.c:162-185`). Slot 0 is the console (LPUART1 = `Serial1`), slot 1 is the HCI UART (LPUART2 = `Serial2`). With no second `-serial`, LPUART2 has no chardev and receives nothing — that *is* the card-absent case.
 * **macOS caps a UNIX socket path at 104 bytes.** The `[hci]` gate's socket therefore lives at `/tmp/m2hci_<pid>_<phase>.sock`, never under the example directory (this worktree's path alone is longer than the cap).
 * **The NXP reference is facts-only.** `controller_wifi_nxp.c` and EtherMind are LA_OPT-licensed: read for protocol facts, never transcribe. Bluetooth Core 5.2 Vol 4 Part A (H4) and Part E (HCI) are the normative source for every byte below.
+* **End-anchor every gate grep with `[[:space:]]*$`, never a bare `$`.** The
+  core's `println()` emits CRLF, so a captured line ends `…match=0\r\n` and a
+  bare `$` can never match (verified with `od -c` during Task 1). Every
+  end-anchored assertion in the sibling gates already does this —
+  `m2_sdio_probe/run_qemu_wifi.sh` has seven, `m2_uap_lwip/run_qemu_uap.sh`
+  more. It tolerates the line ending without loosening the content match.
 * **Hardware tasks (3 and 13) need the board.** Everything else runs on QEMU and the host. Do the hardware tasks when the board is free; do not block the QEMU work on them.
 
 ## File structure
@@ -308,11 +314,11 @@ and add, after the `^alive=2` assertion:
 # quiet=0 and n=0 are what "nothing answered" looks like, and match=0 says the
 # firmware did not mistake silence for the Command Complete.  A missing line
 # would mean the probe never reached that bracket.
-grep -q "^hci_pre_download: quiet=0 reply=none n=0 match=0$" "$OUT" || {
+grep -q "^hci_pre_download: quiet=0 reply=none n=0 match=0[[:space:]]*$" "$OUT" || {
     echo "FAIL: B0 pre-download bracket missing or not in its card-absent form"; exit 1; }
-grep -q "^hci_post_download: quiet=0 reply=none n=0 match=0$" "$OUT" || {
+grep -q "^hci_post_download: quiet=0 reply=none n=0 match=0[[:space:]]*$" "$OUT" || {
     echo "FAIL: B0 post-download bracket missing or not in its card-absent form"; exit 1; }
-grep -q "^after_pdn_cycle: rom_bytes=0 hex=none$" "$OUT" || {
+grep -q "^after_pdn_cycle: rom_bytes=0 hex=none[[:space:]]*$" "$OUT" || {
     echo "FAIL: after_pdn_cycle line missing or not in its card-absent form"; exit 1; }
 ```
 
@@ -2096,15 +2102,15 @@ echo "==== captured UART ===="; cat "$OUT"
 grep -q "RT1176 M.2 HCI probe up" "$OUT" || { echo "FAIL: banner missing"; exit 1; }
 grep -q "^sdio_begin=cmd5-no-response" "$OUT" || {
     echo "FAIL: expected the cmd5-no-response SDIO fallback (a plain SD card ignores CMD5)"; exit 1; }
-grep -q "^card=0$" "$OUT" || { echo "FAIL: card= line missing or not 0"; exit 1; }
-grep -q "^serial2=up_115200$" "$OUT" || { echo "FAIL: Serial2 never came up"; exit 1; }
-grep -q "^hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0$" "$OUT" || {
+grep -q "^card=0[[:space:]]*$" "$OUT" || { echo "FAIL: card= line missing or not 0"; exit 1; }
+grep -q "^serial2=up_115200[[:space:]]*$" "$OUT" || { echo "FAIL: Serial2 never came up"; exit 1; }
+grep -q "^hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" || {
     echo "FAIL: expected the Reset timeout BY NAME with all ten attempts counted"; exit 1; }
 # The fallback must not claim what it cannot have read.
 for T in "^hci_version" "^bd_addr=" "^hci_buffer" "^inquiry=started" "^inq:" "^inq_name:"; do
     if grep -q "$T" "$OUT"; then echo "FAIL: reported '$T' with nothing on LPUART2"; exit 1; fi
 done
-grep -q "^hci_probe_done$" "$OUT" || { echo "FAIL: probe never completed"; exit 1; }
+grep -q "^hci_probe_done[[:space:]]*$" "$OUT" || { echo "FAIL: probe never completed"; exit 1; }
 grep -q "^hb card=0 hci=no_response n=1 " "$OUT" || { echo "FAIL: no heartbeat after the probe"; exit 1; }
 echo "PASS: HCI probe reached the no_response fallback cleanly and kept running"
 ```
@@ -2339,37 +2345,37 @@ run_phase() {
 # --- full ---------------------------------------------------------------------
 run_phase full '^hb card=0 hci=ok n=1 '
 grep -q "^hci_reset=ok attempts=" "$OUT" || fail "[full] no hci_reset=ok"
-grep -q "^hci_version: hci_ver=11 hci_rev=0xBEEF lmp_ver=11 manufacturer=0x1234 lmp_subver=0xCAFE$" "$OUT" \
+grep -q "^hci_version: hci_ver=11 hci_rev=0xBEEF lmp_ver=11 manufacturer=0x1234 lmp_subver=0xCAFE[[:space:]]*$" "$OUT" \
     || fail "[full] hci_version does not carry the peer's values"
-grep -q "^bd_addr=11:22:33:44:55:66$" "$OUT" || fail "[full] bd_addr does not carry the peer's value"
-grep -q "^hci_buffer: acl_len=1021 acl_num=8 sco_len=64 sco_num=0$" "$OUT" || fail "[full] hci_buffer wrong"
-grep -q "^inquiry=started$" "$OUT" || fail "[full] inquiry did not start"
-grep -q "^inq: bd=AA:BB:CC:DD:EE:01 cod=0x240404 psrm=1 clk=0x1234$" "$OUT" || fail "[full] inquiry result 1 wrong (field-major parse?)"
-grep -q "^inq: bd=AA:BB:CC:DD:EE:02 cod=0x240404 psrm=1 clk=0x1234$" "$OUT" || fail "[full] inquiry result 2 wrong (field-major parse?)"
-grep -q "^inquiry_complete: status=0x00 n=2$" "$OUT" || fail "[full] inquiry_complete wrong"
+grep -q "^bd_addr=11:22:33:44:55:66[[:space:]]*$" "$OUT" || fail "[full] bd_addr does not carry the peer's value"
+grep -q "^hci_buffer: acl_len=1021 acl_num=8 sco_len=64 sco_num=0[[:space:]]*$" "$OUT" || fail "[full] hci_buffer wrong"
+grep -q "^inquiry=started[[:space:]]*$" "$OUT" || fail "[full] inquiry did not start"
+grep -q "^inq: bd=AA:BB:CC:DD:EE:01 cod=0x240404 psrm=1 clk=0x1234[[:space:]]*$" "$OUT" || fail "[full] inquiry result 1 wrong (field-major parse?)"
+grep -q "^inq: bd=AA:BB:CC:DD:EE:02 cod=0x240404 psrm=1 clk=0x1234[[:space:]]*$" "$OUT" || fail "[full] inquiry result 2 wrong (field-major parse?)"
+grep -q "^inquiry_complete: status=0x00 n=2[[:space:]]*$" "$OUT" || fail "[full] inquiry_complete wrong"
 grep -q '^inq_name: bd=AA:BB:CC:DD:EE:01 status=0x00 name="FAKE-HEADSET-01"$' "$OUT" || fail "[full] remote name 1 wrong"
 grep -q '^inq_name: bd=AA:BB:CC:DD:EE:02 status=0x00 name="FAKE-HEADSET-02"$' "$OUT" || fail "[full] remote name 2 wrong"
-grep -q "^hci_probe_done$" "$OUT" || fail "[full] probe never completed"
-grep -q "^hb card=0 hci=ok n=1 pump=[0-9]* timeouts=0 framing=0 starved=0 qfull=0 late=0$" "$OUT" \
+grep -q "^hci_probe_done[[:space:]]*$" "$OUT" || fail "[full] probe never completed"
+grep -q "^hb card=0 hci=ok n=1 pump=[0-9]* timeouts=0 framing=0 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[full] heartbeat counters not all zero"
 [ "$PEER_RC" -eq 0 ] || fail "[full] peer exited $PEER_RC"
 grep -q "^PEER-DONE phase=full cmds=7 " "$RES" || fail "[full] peer did not see exactly the seven commands (Reset, 3 identity, Inquiry, 2 names)"
 
 # --- drop-reset ---------------------------------------------------------------
 run_phase drop-reset '^hb card=0 hci=no_response n=1 '
-grep -q "^hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0$" "$OUT" \
+grep -q "^hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[drop-reset] Reset must time out BY NAME after ten counted attempts"
 if grep -q "^hci_version" "$OUT"; then fail "[drop-reset] identity printed with no Reset"; fi
-grep -q "^hci_probe_done$" "$OUT" || fail "[drop-reset] probe never completed"
+grep -q "^hci_probe_done[[:space:]]*$" "$OUT" || fail "[drop-reset] probe never completed"
 grep -q "^PEER-DONE phase=drop-reset cmds=10 resets=10 " "$RES" || fail "[drop-reset] peer did not see ten Resets"
 
 # --- garbage ------------------------------------------------------------------
 run_phase garbage '^hb card=0 hci=ok n=1 '
-grep -q "^hci_reset=ok attempts=2 timeouts=0 framing=1 starved=0 qfull=0 late=0$" "$OUT" \
+grep -q "^hci_reset=ok attempts=2 timeouts=0 framing=1 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[garbage] attempt 1 must fail as FRAMING (not timeout) and attempt 2 must succeed"
 grep -q "^hci_version: .*manufacturer=0x1234 " "$OUT" || fail "[garbage] the run did not recover to a full identity"
 grep -q '^inq_name: bd=AA:BB:CC:DD:EE:02 status=0x00 name="FAKE-HEADSET-02"$' "$OUT" || fail "[garbage] inquiry did not complete after recovery"
-grep -q "^hb card=0 hci=ok n=1 pump=[0-9]* timeouts=0 framing=1 starved=0 qfull=0 late=0$" "$OUT" \
+grep -q "^hb card=0 hci=ok n=1 pump=[0-9]* timeouts=0 framing=1 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[garbage] heartbeat counters wrong"
 [ "$PEER_RC" -eq 0 ] || fail "[garbage] peer exited $PEER_RC"
 
@@ -2379,8 +2385,8 @@ grep -q "^hci_reset=ok attempts=1 " "$OUT" || fail "[starve] Reset itself must s
 for W in hci_version bd_addr hci_buffer inquiry; do
     grep -q "^$W=fail reason=ncmd_starved " "$OUT" || fail "[starve] $W must fail as ncmd_starved, by name"
 done
-grep -q "^hci_probe_done$" "$OUT" || fail "[starve] probe never completed"
-grep -q "^hb card=0 hci=ok n=1 pump=[0-9]* timeouts=0 framing=0 starved=4 qfull=0 late=0$" "$OUT" \
+grep -q "^hci_probe_done[[:space:]]*$" "$OUT" || fail "[starve] probe never completed"
+grep -q "^hb card=0 hci=ok n=1 pump=[0-9]* timeouts=0 framing=0 starved=4 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[starve] expected starved=4 and nothing else"
 grep -q "^PEER-DONE phase=starve cmds=1 " "$RES" || fail "[starve] the firmware must not have SENT anything after Reset"
 
