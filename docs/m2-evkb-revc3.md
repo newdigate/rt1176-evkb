@@ -58,6 +58,77 @@ Verified result: `manfid=0x2DF cardid=0x9158 io_functions=1 rca=0x1 cccr_rev=0x3
 Note both bridges commit an Arduino header pin: `GPIO_AD_31` is D12/MISO, and
 the BT UART RX pad `GPIO_DISP_B2_11` is D0.
 
+## ★ FULL DNP AUDIT OF THE M.2 / BLUETOOTH PATHS (2026-08-24)
+
+Done because "is there another 0 Ω we still need to bridge?" deserved a
+mechanical answer rather than a recollection. Method: every net touching J54 or
+the two level shifters `U354`/`U355` extracted from `pst2kicad/board.net`, every
+component on those nets looked up in `BOM/SCH-55139_C3.xlsx` (`ASSY_OPT` column
+= `DNP`). The map was validated first against parts whose state this file
+already records — `R404`, `R1901`, `R1902`, `R1903` all read DNP; `R183`,
+`R1816`, `R1866`, `R2`, `R3`, `R8`, `R366` all read fitted — so the extraction
+agrees with everything previously established by hand.
+
+### The verdict: **the Bluetooth data path is COMPLETE. Nothing is missing.**
+
+| signal | path | series part | state |
+|---|---|---|---|
+| **BT_UART_TXD** (MCU → card) | `U19.D9` → `U354.4` | **none** | complete by construction |
+| **BT_UART_RXD** (card → MCU) | `U355.20` → `R1901` → `U19.A6` | `R1901` | **bridged by hand 2026-08-18** |
+| **BT_UART_RTS** (MCU → card's CTS input) | `U19.A5` → `U354.5` | **none** | complete by construction |
+| **BT_UART_CTS** (card's RTS → MCU) | `U355.19` → `R1902` → `U19.B6` | `R1902` | **DNP, still open** |
+| **PDn** (`GPIO_AD_31` → J54.56) | `R404` → `WL_RST#` → `R830` | `R404` | **bridged by hand 2026-08-18** |
+
+★ Two of those rows are worth stating loudly because they are *absences of a
+resistor*, which is easy to misread as an absence of a connection:
+**BT_UART_TXD and BT_UART_RTS reach the level shifter with NO series resistor
+at all.** So the transmit path and the card's CTS input were always complete.
+That is what makes the 2026-08-24 CTS experiment meaningful — driving
+`GPIO_DISP_B2_13` really does reach the card's CTS pin — and its negative
+result therefore stands.
+
+**Both level shifters' direction straps are fitted**: `R1797` (U354 `DIR` →
+`WL_3V3`) and `R1798` (U355 `DIR` → `VDD_1V8`). Both directions are also proven
+in use — we transmit 131,840 bytes and receive the bootloader's frames.
+
+**The BT reset and wake chains are fully populated**: `BT_RST#` via `R209`+`R834`,
+`BT_WAKE_B_3V3` via `R238`+`R811`.
+
+**No DNP part sits on any SIGNAL pin of J54.** The only DNP items on J54 nets
+are on `GND` (bypass caps, mounting holes) and on the `NC` pins (the `U124` ESD
+array) — neither carries anything.
+
+### The DNP parts that DO exist on these nets, and why none is needed
+
+| ref | net | why it does not matter |
+|---|---|---|
+| `R1902` | BT_UART_CTS | the card's RTS **output**. Not fitting it only means the HOST cannot see the card's flow control; it cannot stop the card transmitting. NXP pair fitting it with REMOVING `R1816` — see below. |
+| `R1903`, `R229`, `R232`, `R234` | BT PCM | PCM is unavailable on this board regardless: the MCU-side pads run through fitted `R1985`–`R1988` to the SDRAM data bus. |
+| `R1841`, `R2022` | BT_UART_RXD | alternative routes; the primary path via `R1901` is complete. |
+| `R1842`, `R2021` | BT_UART_TXD | alternative routes; the primary path is direct. |
+| `R1839` | BT_UART_CTS | alternative route. |
+| `R1029`, `R1039` | BT_UART_RTS | an alternative route and a 10K pull; the primary path is direct. |
+
+### NXP's own rework list, reconciled
+
+From the SDK's EdgeFast BT PAL hardware rework guide
+(`middleware/edgefast_bluetooth/docs/HWRGEFBTPALUG`, `MIMXRT1170EVKB_hwrework.md`):
+
+> Remove `R183` and `R1816`. Solder 0 Ω to `R404`, `R1901`, and `R1902`.
+
+| their step | our state | consequence of not doing it |
+|---|---|---|
+| fit `R404` | **done** | none — the radio power-cycles |
+| fit `R1901` | **done** | none — the card's UART TX is readable |
+| fit `R1902` | not done | the host cannot read the card's RTS. Only matters with hardware flow control, which this board cannot use anyway while `R1816` is fitted. |
+| remove `R1816` | not done | `BT_UART_CTS` is shared with `RGMII1_PHY_INTB`. Removing it is what would make `R1902` useful. |
+| remove `R183` | not done | ★ `R183` ties `GPIO_AD_31` — the PDn net, and Arduino D12/MISO — to `U27.2`, the **data output of a Macronix `MX25L4006` SPI NOR flash**. A third driver can appear on the line we power-cycle the radio with. Harmless while that flash is never selected; a real hazard once `R404` is fitted, which is why NXP pair the two steps. |
+
+★ **None of the three outstanding items can prevent the controller from
+transmitting**, which is the symptom under investigation. They are recorded so
+the question does not have to be re-asked, and so that anyone attempting
+hardware flow control knows the `R1816`/`R1902` pair must be done together.
+
 ## The three facts that will bite you
 
 ### 1. uSDHC1 carries TWO card sockets
