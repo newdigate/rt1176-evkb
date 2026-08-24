@@ -129,6 +129,126 @@ transmitting**, which is the symptom under investigation. They are recorded so
 the question does not have to be re-asked, and so that anyone attempting
 hardware flow control knows the `R1816`/`R1902` pair must be done together.
 
+## ★ COMPLETE J54 PIN MAP: card ⇄ board ⇄ RT1176 (generated 2026-08-24)
+
+All 75 pins, three columns wide: what the **M2-MAYA-W161** does with the pin,
+what the **EVKB** wires it to, and which **RT1176 ball and pad** it lands on.
+
+**Generated, not transcribed.** Board side walked programmatically from
+`pst2kicad/board.net` through series resistors and the two 74AVC8T245 level
+shifters (whose A-side pin *n* pairs with B-side pin *24−n*), populate status
+from `BOM/SCH-55139_C3.xlsx`, and ball→pad names from
+`Schematic/allegro/pstchip.dat` (where `PIN_NUMBER` is a 12-field tuple with the
+ball in whichever field is non-zero). Card side transcribed from u-blox
+**UBX-22004354 R05** tables 4 and 5. Spot-checked against every value this file
+already recorded by hand — `GPIO_DISP_B2_11` = A6, `GPIO_AD_31` = J17, the six
+SDIO pads — all agree.
+
+Directions are **from the card's point of view**, as u-blox state them.
+
+| J54 | MAYA-W161 pin | dir | card function | board net | path (DNP marked) | RT1176 ball | RT1176 pad |
+|---:|---|:-:|---|---|---|:-:|---|
+| 1 | GND1 | - | Ground | GND | | | |
+| 2 | 3.3V | P | Supply | WL_3V3 | via ferrite L49 from SENSOR_3V3 | | |
+| 3 | USB_D+ | NC | Not connected | `N101733829` | L26 (USB common-mode choke) | | |
+| 4 | 3.3V | P | Supply | WL_3V3 | via ferrite L49 from SENSOR_3V3 | | |
+| 5 | USB_D- | NC | Not connected | `N101733827` | L26 (USB common-mode choke) | | |
+| 6 | LED_1# | NC | Not connected | `WIFI_LED1_B` | D18 LED anode (card side NC) | | |
+| 7 | GND2 | - | Ground | GND | | | |
+| 8 | PCM_CLK/I2S_SCK | I/O | PCM data clock | `N101734644` | J81/J80 jumper | | |
+| 9 | SDIO_CLK | I | SDIO clock | `N101734331` | R781 → R370 | D15 | `GPIO_SD_B1_01` |
+| 10 | PCM_SYNC/I2S_WS | I/O | PCM frame sync | `N101734640` | J82/J79 jumper | | |
+| 11 | SDIO_CMD | I/O | SDIO command | `N101734351` | R782 → R369 | B16 | `GPIO_SD_B1_00` |
+| 12 | PCM_OUT/I2S_SD_OUT | O | PCM data output | `N101734642` | R817 → U355 → R1903**(DNP)** → R228**(DNP)** | K5 | `GPIO_EMC_B2_13` |
+| 13 | SDIO_D0 | I/O | SDIO data 1 | `N101734355` | R783 → R371 | C15 | `GPIO_SD_B1_02` |
+| 14 | PCM_IN/I2S_SD_IN | I | PCM data input | `N101734654` | R820 → U354 → R234**(DNP)** | M4 | `GPIO_EMC_B2_14` |
+| 15 | SDIO_D1 | I/O | SDIO data 2 | `N101734367` | R784 → R372 | B17 | `GPIO_SD_B1_03` |
+| 16 | LED2# | NC | Not connected | `BT_LED2_B` | D19 LED anode (card side NC) | | |
+| 17 | SDIO_D2 | I/O | SDIO data 3 | `N101734379` | R785 → R366 | B15 | `GPIO_SD_B1_04` |
+| 18 | GND3 | - | Ground | GND | | | |
+| 19 | SDIO_D3 | I/O | SDIO data 4 | `N101734391` | R786 → R367 | A16 | `GPIO_SD_B1_05` |
+| 20 | UART_WAKE# | O | BT_WAKE_HOST (3.3 V, open drain) | `N101734503` | R811 → R238 | N16 | `GPIO_AD_27` |
+| 21 | SDIO_WAKE# | O | WLAN_WAKE_HOST (open drain) | `N101734410` | J104 jumper (OPEN by default) | | |
+| 22 | UART_TXD | O | card TX -> host RX | `N101734471` | R814 → U355 → R1901**(DNP)** | A6 | `GPIO_DISP_B2_11` |
+| 23 | SDIO_RESET# | NC | WLAN_INDEPENDENT_RESET - NOT CONNECTED ON THIS CARD | `N101734224` | R809 → U354 → R835 | N17 | `GPIO_AD_16` |
+| 24 | (reserved) |  | - | *(absent from netlist)* | | | |
+| 25 | (reserved) |  | - | *(absent from netlist)* | | | |
+| 26 | (reserved) |  | - | *(absent from netlist)* | | | |
+| 27 | (reserved) |  | - | *(absent from netlist)* | | | |
+| 28 | (reserved) |  | - | *(absent from netlist)* | | | |
+| 29 | (reserved) |  | - | *(absent from netlist)* | | | |
+| 30 | (reserved) |  | - | *(absent from netlist)* | | | |
+| 31 | (reserved) |  | - | *(absent from netlist)* | | | |
+| 32 | UART_RXD | I | host TX -> card RX | `N101734459` | R815 → U354 | D9 | `GPIO_DISP_B2_10` |
+| 33 | GND4 | - | Ground | GND | | | |
+| 34 | UART_RTS | O | card RTS -> host CTS | `N101734453` | R816 → U355 → R1902**(DNP)** | B6 | `GPIO_DISP_B2_12` |
+| 35 | PERP0 | NC | PCIe, not connected | NC (board) | | | |
+| 36 | UART_CTS | I | host RTS -> card CTS | `N101734451` | R813 → U354 | A5 | `GPIO_DISP_B2_13` |
+| 37 | PERN0 | NC | PCIe, not connected | NC (board) | | | |
+| 38 | VENDOR_DEF1 | I/O | JTAG_TDO (debug) | `VEN_DEF1` | TP47 test point only | | |
+| 39 | GND5 | - | Ground | GND | | | |
+| 40 | VENDOR_DEF2 | I | DEV_WLAN_WAKE | `VEN_DEF2` | TP48 test point only | | |
+| 41 | PETP0 | NC | PCIe, not connected | NC (board) | | | |
+| 42 | VENDOR_DEF3 | I | DEV_BT_WAKE | `BT_DEV_WAKE_1V8` | U354 → R406 | L17 | `GPIO_AD_28` |
+| 43 | PETN0 | NC | PCIe, not connected | NC (board) | | | |
+| 44 | COEX3 | I/O | JTAG_TDI (debug) | `COEX3` | TP51 test point only | | |
+| 45 | GND6 | - | Ground | GND | | | |
+| 46 | COEX2 | I/O | JTAG_TCK (debug) | `COEX2` | TP50 test point only | | |
+| 47 | REFCLKP0 | NC | PCIe, not connected | NC (board) | | | |
+| 48 | COEX1 | I/O | JTAG_TMS (debug) | `COEX1` | TP49 test point only | | |
+| 49 | REFCLKN0 | NC | PCIe, not connected | NC (board) | | | |
+| 50 | SUSCLK(32KHZ) | NC | NOT CONNECTED ON THIS CARD | `N101733765` | Y2 32.768 kHz oscillator | | |
+| 51 | GND7 | - | Ground | GND | | | |
+| 52 | PERST0# | NC | Not connected | NC (board) | | | |
+| 53 | CLKREQ0# | NC | PCIe, not connected | NC (board) | | | |
+| 54 | W_DISABLE2# | I | BT_INDEPENDENT_RESET (3.3 V) | `N101734218` | R833 → R834 → R209 | M14 | `GPIO_AD_15` |
+| 55 | PEWAKE0# | NC | PCIe, not connected | NC (board) | | | |
+| 56 | W_DISABLE1# | I | PDn - high=normal, low=FULL POWER-DOWN (3.3 V) | `N101734037` | R831 → R830 → R404**(DNP)** | J17 | `GPIO_AD_31` |
+| 57 | GND8 | - | Ground | GND | | | |
+| 58 | I2C_DATA | NC | Not connected | `N101733917` | GPIO_LPSR_04 (LPI2C5 SDA = Wire2) | | |
+| 59 | PERP1 | NC | PCIe, not connected | NC (board) | | | |
+| 60 | I2C_CLK | NC | Not connected | `N101733919` | GPIO_LPSR_05 (LPI2C5 SCL = Wire2) | | |
+| 61 | PERN1 | NC | PCIe, not connected | NC (board) | | | |
+| 62 | ALERT# | NC | Not connected | NC (board) | | | |
+| 63 | GND9 | - | Ground | GND | | | |
+| 64 | RESERVED | NC | Not connected | NC (board) | | | |
+| 65 | PETP1 | NC | PCIe, not connected | NC (board) | | | |
+| 66 | UIM_SWP/PERST1# | NC | Not connected | `WL_DEV_WAKE_1V8` | U354 → R1850 | T17 | `GPIO_AD_07` |
+| 67 | PETN1 | NC | PCIe, not connected | NC (board) | | | |
+| 68 | UIM_PWR_SNK/CLKREQ1# | NC | Not connected | NC (board) | | | |
+| 69 | GND10 | - | Ground | GND | | | |
+| 70 | UIM_PWR_SRC/GPIO1/PEWAKE1# | NC | Not connected | NC (board) | | | |
+| 71 | REFCLKP1 | NC | PCIe, not connected | NC (board) | | | |
+| 72 | 3V3_3 | P | Supply | WL_3V3 | via ferrite L49 from SENSOR_3V3 | | |
+| 73 | REFCLKN1 | NC | PCIe, not connected | NC (board) | | | |
+| 74 | 3V3_4 | P | Supply | WL_3V3 | via ferrite L49 from SENSOR_3V3 | | |
+| 75 | GND11 | - | Ground | GND | | | |
+
+
+### Reading it
+
+* **The Bluetooth UART occupies four pins**, 22/32/34/36. Note the naming
+  inverts between the two sides: J54 pin 34 is the CARD's `UART_RTS` *output*,
+  which the board calls `BT_UART_CTS` because it is the HOST's CTS input. Pin
+  36 is the reverse. Getting this backwards is easy and expensive.
+* **Two pins reach the MCU only through a DNP resistor**: 22 (`R1901`, bridged
+  here) and 34 (`R1902`, still open). Everything else on the BT UART is direct.
+* **Three pins the board drives are NOT CONNECTED on this card** — 23
+  (`SDIO_RESET#`/WLAN_INDEPENDENT_RESET), 50 (the 32.768 kHz sleep clock from
+  `Y2`), and 58/60 (I²C). Any effort spent driving them is wasted, which this
+  file has recorded since 2026-08-17.
+* **The LEDs are not connected on the card either** (6, 16), so `D18`/`D19`
+  staying dark means nothing.
+* ★ **Pins 38, 44, 46 and 48 are the chip's JTAG** — `TDO`, `TDI`, `TCK`, `TMS`
+  in NXP's usage — and on the EVKB every one of them lands on a **test point
+  only** (`TP47`, `TP51`, `TP50`, `TP49`). That is a debug port into the IW416
+  itself, unused by anything here. Worth knowing exists, though driving it needs
+  NXP's own tooling.
+* **`DEV_WLAN_WAKE` is on the wrong pin for this card**: the EVKB drives pin 66,
+  where the MAYA-W161 has nothing, while the card expects it on pin 40, which
+  the EVKB leaves on a test point. A sideband only, but a real board/card
+  mismatch.
+
 ## The three facts that will bite you
 
 ### 1. uSDHC1 carries TWO card sockets
