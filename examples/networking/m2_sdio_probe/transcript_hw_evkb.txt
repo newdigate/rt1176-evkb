@@ -1467,3 +1467,132 @@ c4f3940 (PS_MODE_ENH + sleep-confirm + wake handshake + 8-bit seq wrap).
 VERDICT: PASS.  IEEE PS is the standing workaround; every association in
 probe and lwip stacks now goes through connectStation() and gets it.  The
 erratum record above supersedes the copy in the W10 handoff doc.
+
+
+=====================================================
+B0 — BRACKETED HCI_RESET: the BT core DOES NOT ANSWER, and says why
+=====================================================
+
+Date: 2026-08-23.  Built with the COMBO blob
+(sduartIW416_wlan_bt.bin.inc, 411,064 bytes) and flashed VCOM-free; console
+attached before the reset.  The probe now keeps the RX pad on LPUART2 through
+the post-PDn window and prints BYTES, where the 2026-08-18 run counted GPIO
+edges and could only say "26".
+
+     RT1176 M.2 SDIO probe up
+    serial2=up_115200
+    m2_wifi_reset=released
+    hci_pre_download: quiet=5 reply=none n=0 match=0
+    sdio_io_voltage=1v8_requested
+    hci_post_download: quiet=10 reply=none n=0 match=0
+    sdio_begin=ok rc=0
+    int_status=0x2 r4=0x90FF8000
+    vsel: vend_spec=0x3000780B (bit1=1) mux=0x4
+    r404_bridge: pullup_reads=1 pulldown_reads=1 -> DRIVEN HIGH by R829 -- bridge conducts
+    after_pdn_cycle: rom_bytes=16 hex=00AB01720047AB01720047AB01720047
+    r1901_bridge: pullup_reads=1 pulldown_reads=1 -> DRIVEN HIGH -- bridge conducts, line idle
+    bt_wake(pin20): pullup_reads=1 pulldown_reads=1 pad=0x4 ever_low=0 -> HELD HIGH externally
+    rst_pads: sdio_rst dr=1 psr=1 | wl_rst dr=1 psr=1 | gdir=0x40008000
+    pres_state=0xFF888088 cmd_high=1 dat_levels=0xF card_inserted=0
+    iw416_begin=ok ioport=0x10000 fw_status=0xFEDC card_status=0xD requested_len=0
+    iw416_cfg: fw_pre=0x0 d9=0x0->0x1 c4=0x0->0x4 c5=0x0->0x1 r04=0x0->0xFF d8=0x0->0x10
+    fw_download=ok sent=402288/411064 chunks=417 last_req=0 fw_status=0xFEDC
+    hw_spec=ok int_seen=0xC2 cmd_rd_len=1536 resp_type=1 resp_cmd=0x8006 resp_result=0 mac=6C:1D:EB:91:0C:45 fw_release=0x9B105C15 hw_version=0x7201
+    tx_buf_cfg=ok 11n_cfg=ok amsdu=ok
+    mac_ctrl=ok
+
+WHAT IT SETTLES
+---------------
+
+**1. The RX path is good, and the 26 edges were a real protocol burst.**
+
+    after_pdn_cycle: rom_bytes=16 hex=00AB01720047AB01720047AB01720047
+
+Sixteen bytes: a leading 0x00 (the pad-settle artefact this file has recorded
+before), then the five-byte pattern `AB 01 72 00 47` repeated THREE times.
+That is the "26 edges" of 2026-08-18, resolved.
+
+★ **Those bytes contain a value we read independently over a DIFFERENT
+INTERFACE.**  The same boot prints, from the SDIO side:
+
+    hw_spec=ok ... hw_version=0x7201
+
+and `0x7201` little-endian is `01 72` — bytes 2 and 3 of the pattern.  Two
+interfaces that share no code agreeing on that number is the strongest evidence
+available here that the UART is correctly framed at 115200 and that these are
+MEANINGFUL PROTOCOL BYTES rather than noise or a baud mismatch.  Stated as a
+strong correlation, not a decode: the meaning of `AB`, of the `00`, and of the
+trailing `47` (plausibly a checksum) is NOT established by this run.
+
+**2. No HCI command is ever answered — before or after the SDIO download.**
+
+    hci_pre_download:  quiet=5  reply=none n=0 match=0
+    hci_post_download: quiet=10 reply=none n=0 match=0
+    hci_probe:         quiet=0  reply=none n=0 match=0     (every 5 s, forever)
+
+The brackets are what make this readable.  `quiet=` counts bytes arriving in an
+equal-length window BEFORE the command, so a chattering ROM cannot be misread as
+a reply: 5 and 10 bytes were still trickling in during setup, and ZERO
+thereafter.  The card transmits its burst at power-up, gets no answer, and goes
+silent for good.  `reply=none n=0` is then an honest negative and not an absence
+of listening.
+
+**3. BT_WAKE_HOST never moves.**
+
+    bt_wake(pin20): pullup_reads=1 pulldown_reads=1 ever_low=0 -> HELD HIGH externally
+    bt_wake_sample: high=1 edges=0
+
+An NXP BT controller asserts this line when it has something for the host.  It
+never does.  Consistent with a core that is not running BT firmware at all.
+(Contrast 2026-08-17, when it was stuck LOW because the module was in
+power-down — a different failure with the opposite signature.)
+
+**4. Everything else on the card is healthy**, which is what makes the negative
+meaningful rather than a symptom of a dead module:
+
+    sdio_begin=ok  manfid=0x2DF cardid=0x9158
+    iw416_begin=ok fw_status=0xFEDC
+    fw_download=ok sent=402288/411064 chunks=417 last_req=0
+    hw_spec=ok mac=6C:1D:EB:91:0C:45 fw_release=0x9B105C15 hw_version=0x7201
+
+THE HYPOTHESIS THIS PRODUCES — and the evidence for it
+------------------------------------------------------
+
+**The BT core is sitting in its own UART bootloader, asking for a firmware
+download that the SDIO path never gives it.**
+
+Two independent things point that way:
+
+* The card announces itself on the BT UART at power-up, three times, then stops
+  — the shape of a request that timed out, not of a controller that is running.
+* ★ **The combo download does not consume the whole blob**:
+  `sent=402288/411064 ... last_req=0`.  The card stopped asking after 402,288
+  bytes, leaving **8,776 bytes** of the image undelivered.  The blob's own name
+  is `sd`io-wlan + `uart`-bt, and W17's A/B against the Wi-Fi-only
+  `sdIW416_wlan.bin` found the two differ by an APPENDED BT image.  A download
+  that takes the WLAN part and stops is exactly what that layout predicts.
+
+★ **This CONTRADICTS NXP's own reference**, and the contradiction is the useful
+part.  `controller_wifi_nxp.c`'s `controller_init()` does the combo SDIO
+download and then goes straight to `controller_hci_uart_init()` — i.e. it
+assumes BT is up after the SDIO download.  It also carries an alternative path,
+`CONFIG_BT_IND_DNLD`, which downloads a BT-ONLY image over the UART first.  This
+board's behaviour says the second path is the one this module needs.  Whether
+that is a property of the u-blox MAYA-W161 variant or of some sequencing
+detail is NOT settled by this run.
+
+WHAT WOULD SETTLE IT — the next cheap question
+----------------------------------------------
+
+Feed the BT UART a firmware image and see whether the burst stops and HCI
+starts answering.  Do it as a probe, bracketed, before designing anything:
+the burst repeating exactly three times is itself a measurable signal, so
+"did the card stop asking?" is answerable without a full download working.
+
+WHAT THIS RUN DOES **NOT** SAY
+------------------------------
+
+* NOT that Bluetooth is broken on this card.  Nothing here has fed the BT core
+  the firmware it is asking for.
+* NOT that 115200 is wrong.  The 0x7201 correlation is evidence it is right.
+* NOT that `AB 01 72 00 47` is decoded.  It is recorded, not understood.

@@ -10,6 +10,7 @@
 // path, and nothing more.  Positive evidence lives in transcript_hw_evkb.txt.
 #include <Arduino.h>
 #include <ctype.h>
+#include <string.h>
 #include <SdioHost.h>
 #include <SdioFunc.h>
 #include <Iw416.h>
@@ -168,15 +169,15 @@ static uint32_t m2ResetPadLevels() {
 }
 
 // ---------------------------------------------------------------------------
-// BT_WAKE_HOST watch.  J54 pin 20 (UART_WAKE#) is the ONLY card->host signal on
-// this connector that actually reaches the MCU:
+// BT_WAKE_HOST watch.  J54 pin 20 (UART_WAKE#) reaches the MCU directly:
 //
 //   J54.20 -> R811 (0R, fitted) -> BT_WAKE_B_3V3 -> R238 (0R, fitted)
 //          -> U19.N16 = GPIO_AD_27      (no level shifter -- pin 20 is 3.3 V)
 //
 // Pin 21 (SDIO_WAKE#) is populated but blocked at jumper J104, open by default.
-// Pin 22 (the BT UART TX) dies at R1901, which is DNP. So this pin is the only
-// way this card could ever tell us it is alive.
+// Pin 22 (the BT UART TX) reaches the MCU through R1901 -- DNP from the
+// factory, BRIDGED by hand on 2026-08-18.  Until that bridge this pin was the
+// only way the card could tell us it was alive; now Serial2 receives too.
 //
 // The datasheet calls it open-drain, active low, "Pullup required on platform"
 // -- and the EVKB provides none (the net holds only R238, R811 and the MCU
@@ -241,10 +242,11 @@ static void m2BtWakeSample(uint32_t iters, bool *anyHigh, uint32_t *edges) {
 }
 
 // HCI Reset, H4 framing: packet type 0x01 (command), opcode 0x0C03, plen 0.
-// If the card is running BT firmware it must answer with a Command Complete --
-// which we can never read (R1901 is DNP) -- but processing it is exactly the
-// kind of thing that makes an NXP controller assert BT_WAKE_HOST.
-static const uint8_t HCI_RESET[] = { 0x01, 0x03, 0x0C, 0x00 };
+// A controller running BT firmware answers with a Command Complete, H4-framed
+// as 04 0E 04 01 03 0C 00 (Core 5.2 Vol 4 Part E 7.7.14) -- readable since
+// R1901 was bridged on 2026-08-18.
+static const uint8_t HCI_RESET[]       = { 0x01, 0x03, 0x0C, 0x00 };
+static const uint8_t HCI_RESET_REPLY[] = { 0x04, 0x0E, 0x04, 0x01, 0x03, 0x0C, 0x00 };
 
 // Continuity test for the LPUART2 RX path, run BEFORE Serial2.begin() takes the
 // pad.  R1901 (module->MCU RXD) is DNP from the factory and was bridged by hand
@@ -265,18 +267,6 @@ static const uint8_t HCI_RESET[] = { 0x01, 0x03, 0x0C, 0x00 };
 #define M2_RX_PAD (*(volatile uint32_t *)0x400E8484u)
 #define M2_RX_BIT 12
 
-// BT_INDEPENDENT_RESET (J54 pin 54, W_DISABLE2#) is driven from GPIO_AD_15
-// (ball M14, the "SPDIF_IN" pad) through R209/R834, with a 10K pull-up R832 --
-// so it idles HIGH = not reset, and we have never touched it.
-//
-// Now that R1901 is bridged we can SEE the card's UART TX line, so a reset
-// pulse becomes a real experiment: if the module is alive at all, resetting its
-// Bluetooth block should make that line do SOMETHING -- at minimum leave its
-// stuck-low state, at best emit the NXP boot-ROM download request.
-// GPIO_AD_15 mux 0x400E8148, pad 0x400E838C; ALT10 = GPIO9_IO14 (AD_n -> bit n-1).
-#define M2_BT_RST_MUX (*(volatile uint32_t *)0x400E8148u)
-#define M2_BT_RST_BIT 14
-
 // Continuity test for R404 (GPIO_AD_31 -> the PDn chain), bridged by hand on
 // 2026-08-18.  The far side of R404 carries the 10K pull-up R829 to WL_3V3, so:
 //   up=1 down=1 -> DRIVEN HIGH by R829: the bridge conducts
@@ -292,29 +282,6 @@ static void m2R404Continuity(bool *up, bool *down) {
     M2_WL_RST_PAD = 0x0Cu; delayMicroseconds(500);   // no pull, leave to R829
 }
 
-static void m2PulseBtReset() {
-    M2_BT_RST_MUX = 0xAu;                      // ALT10 = GPIO9_IO14
-    GPIO9_GDIR |= (1u << M2_BT_RST_BIT);
-    GPIO9_DR_CLEAR = (1u << M2_BT_RST_BIT);    // assert reset (active low)
-    delay(20);
-    GPIO9_DR_SET = (1u << M2_BT_RST_BIT);      // release
-}
-
-// Watch the card's UART TX pad as a GPIO for `ms` milliseconds.
-static void m2WatchRxLine(uint32_t ms, bool *anyHigh, uint32_t *edges) {
-    M2_RX_MUX = 0x10u | 0x5u;                  // SION | ALT5 = GPIO5_IO12
-    GPIO5_GDIR &= ~(1u << M2_RX_BIT);
-    M2_RX_PAD = 0x04u;
-    bool prev = (GPIO5_PSR >> M2_RX_BIT) & 1u; bool hi = prev; uint32_t e = 0;
-    for (uint32_t i = 0; i < ms * 100; i++) {  // ~10us per sample
-        bool now = (GPIO5_PSR >> M2_RX_BIT) & 1u;
-        if (now != prev) { e++; prev = now; }
-        if (now) hi = true;
-        delayMicroseconds(10);
-    }
-    *anyHigh = hi; *edges = e;
-}
-
 static void m2RxContinuity(bool *up, bool *down) {
     M2_RX_MUX = 0x10u | 0x5u;                 // SION | ALT5 = GPIO5_IO12
     GPIO5_GDIR &= ~(1u << M2_RX_BIT);         // input
@@ -323,6 +290,51 @@ static void m2RxContinuity(bool *up, bool *down) {
     M2_RX_PAD = 0x08u;  delayMicroseconds(500);   // pull-down
     *down = (GPIO5_PSR >> M2_RX_BIT) & 1u;
     M2_RX_PAD = 0x04u;  delayMicroseconds(500);
+}
+
+// Collect whatever Serial2 receives for `ms` milliseconds.  Returns the byte
+// count; up to `cap` bytes are kept in `buf`.  The pad STAYS on LPUART2 --
+// the earlier edge-counting watch re-muxed it to GPIO, which is why the
+// post-PDn reading on record (2026-08-18) is "26 edges" rather than bytes.
+static uint32_t m2CaptureSerial2(uint32_t ms, uint8_t *buf, uint32_t cap) {
+    uint32_t n = 0; uint32_t t0 = millis();
+    while (millis() - t0 < ms) {
+        while (Serial2.available()) {
+            int c = Serial2.read();
+            if (n < cap) buf[n] = (uint8_t)c;
+            n++;
+        }
+        delay(1);
+    }
+    return n;
+}
+
+static void m2PrintHex(const uint8_t *p, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++) {
+        if (p[i] < 0x10) Serial1.print('0');
+        Serial1.print(p[i], HEX);
+    }
+}
+
+// Bracketed HCI_Reset: an equal-length QUIET window before the command, so a
+// ROM that transmits continuously is not read as a reply, then the command
+// and a window for its answer.  Prints both ends:
+//   <tag>: quiet=<n> reply=<hex|none> n=<n> match=<0|1>
+// match=1 means the reply begins with the spec's Command Complete for Reset.
+static void m2HciResetProbe(const char *tag) {
+    uint8_t scratch[64]; uint8_t reply[64];
+    uint32_t quiet = m2CaptureSerial2(300, scratch, sizeof scratch);
+    Serial2.write(HCI_RESET, sizeof HCI_RESET);
+    Serial2.flush();
+    uint32_t n = m2CaptureSerial2(300, reply, sizeof reply);
+    uint32_t shown = n < sizeof reply ? n : (uint32_t)sizeof reply;
+    bool match = n >= sizeof HCI_RESET_REPLY &&
+                 memcmp(reply, HCI_RESET_REPLY, sizeof HCI_RESET_REPLY) == 0;
+    Serial1.print(tag); Serial1.print(": quiet="); Serial1.print(quiet);
+    Serial1.print(" reply=");
+    if (n == 0) Serial1.print("none"); else m2PrintHex(reply, shown);
+    Serial1.print(" n="); Serial1.print(n);
+    Serial1.print(" match="); Serial1.println(match ? 1 : 0);
 }
 
 static const char *statusName(SdioHost::Status s) {
@@ -342,7 +354,7 @@ static const char *statusName(SdioHost::Status s) {
 static SdioHost::Status g_status = SdioHost::CMD5_NO_RESPONSE;
 static bool g_rxUp = false, g_rxDown = false;
 static bool g_r404Up = false, g_r404Down = false;
-static bool g_rxAfterPdn = false; static uint32_t g_rxEdgesAfterPdn = 0;
+static uint8_t g_romBytes[32]; static uint32_t g_romByteCount = 0;
 
 #if HAVE_WIFI_CREDS
 // Link state.  Proven on a controlled ESP8266 SoftAP (an independent oracle):
@@ -704,10 +716,13 @@ static void reportProbe() {
     Serial1.println(g_r404Up==g_r404Down ? "DRIVEN HIGH by R829 -- bridge conducts"
                                          : "FLOATING -- bridge NOT conducting");
 
-    Serial1.print("after_pdn_cycle: rx_any_high=");
-    Serial1.print(g_rxAfterPdn);
-    Serial1.print(" rx_edges=");
-    Serial1.println(g_rxEdgesAfterPdn);
+    Serial1.print("after_pdn_cycle: rom_bytes=");
+    Serial1.print(g_romByteCount);
+    Serial1.print(" hex=");
+    if (g_romByteCount == 0) Serial1.print("none");
+    else m2PrintHex(g_romBytes, g_romByteCount < sizeof g_romBytes
+                                    ? g_romByteCount : (uint32_t)sizeof g_romBytes);
+    Serial1.println();
 
     Serial1.print("r1901_bridge: pullup_reads=");
     Serial1.print(g_rxUp);
@@ -798,6 +813,8 @@ static void reportProbe() {
         Serial1.print(iw416_fw_len);
         Serial1.print(" chunks=");
         Serial1.print(iw416.chunksSent());
+        Serial1.print(" max_pause_ms=");
+        Serial1.print(iw416.maxPauseMs());
         Serial1.print(" last_req=");
         Serial1.print(iw416.lastRequest());
         Serial1.print(" fw_status=0x");
@@ -1083,19 +1100,27 @@ void setup() {
 
     m2WatchBtWakeInit();
 
-    // LPUART2 -> J54 pin 32 (card UART_RXD).  TX only in practice: the card's
-    // reply path dies at R1901, which is DNP on this board.  No flow control --
-    // CTS/RTS are the gigabit PHY's interrupt and reset lines here.
+    // LPUART2 <-> J54 pins 32/22 (card UART_RXD/TXD).  Bidirectional since
+    // R1901 was bridged on 2026-08-18.  No flow control -- CTS/RTS are the
+    // gigabit PHY's interrupt and reset lines on this board.
     m2R404Continuity(&g_r404Up, &g_r404Down);
     m2RxContinuity(&g_rxUp, &g_rxDown);
     Serial2.begin(115200);
     Serial1.println("serial2=up_115200");
 
     m2ReleaseWifiReset();
-    // Immediately after the PDn power-up, watch the card's UART TX for any
-    // sign of a booting module: its line should leave the stuck-low state.
-    m2WatchRxLine(400, &g_rxAfterPdn, &g_rxEdgesAfterPdn);
+    // What the card's UART TX says coming out of PDn -- as BYTES, the pad left
+    // on LPUART2.  Serial2's ring already holds what arrived during the 1 s
+    // ROM-boot wait inside m2ReleaseWifiReset(); this drains it and listens
+    // 400 ms more.  26 edges were counted here on 2026-08-18 with the pad
+    // re-muxed to GPIO; this is what they were.
+    g_romByteCount = m2CaptureSerial2(400, g_romBytes, sizeof g_romBytes);
     Serial1.println("m2_wifi_reset=released");
+
+    // B0 bracket 1: does the BT core answer HCI_Reset BEFORE the SDIO blob
+    // download?  NXP's sequence says no -- the combo image carries the BT
+    // firmware and goes down over SDIO -- but nobody has asked this card.
+    m2HciResetProbe("hci_pre_download");
 
     // NXP define SDMMCHOST_OPERATION_VOLTAGE_1V8 for EVERY IW416 module config
     // in their SDK -- the Murata 1XK M.2 and the u-blox MAYA-W1 USD alike -- so
@@ -1189,6 +1214,11 @@ void setup() {
         }
     }
 #endif
+    // B0 bracket 2: the same question AFTER the download (or after the
+    // attempt, card-absent).  NXP's controller_hci_uart_init waits 100 ms plus
+    // up to 260 ms before its first command; 400 ms covers both.
+    delay(400);
+    m2HciResetProbe("hci_post_download");
     reportProbe();
     Serial1.println("probe_done");
 }
@@ -1271,41 +1301,16 @@ void loop() {
     // fallback" from "died".
     m2PollBtWake();
 
-    // Every ~5 s: characterise the wake line quietly, transmit HCI Reset, then
-    // characterise it again.  A difference between the two is the card
-    // reacting to us -- the only positive signal available on this board.
+    // Every ~5 s: sample the wake line, then the bracketed HCI_Reset probe.
+    // The pad stays on LPUART2 throughout -- the old version re-muxed it to
+    // GPIO and re-called Serial2.begin(), which is what latched the spurious
+    // 0x00 in the 2026-08-17 reading.
     if (n % 25 == 24) {
-        bool hiBefore=false, hiAfter=false; uint32_t eBefore=0, eAfter=0;
-        m2BtWakeSample(2000, &hiBefore, &eBefore);          // ~20 ms baseline
-        Serial2.write(HCI_RESET, sizeof(HCI_RESET));
-        Serial2.flush();
-        m2BtWakeSample(2000, &hiAfter, &eAfter);            // ~20 ms after TX
-        Serial1.print("hci_probe: before[high=");
-        Serial1.print(hiBefore); Serial1.print(" edges="); Serial1.print(eBefore);
-        Serial1.print("] after[high="); Serial1.print(hiAfter);
-        Serial1.print(" edges="); Serial1.print(eAfter);
-        // Drain and characterise anything on Serial2 RX.  R1901 is DNP so the
-        // card CANNOT reach us -- if real bytes accumulate here that finding is
-        // wrong and Track B is not blocked after all.  The likelier source is
-        // noise: this same pad reaches Arduino header pin J9.2 through fitted
-        // R2, so it is a floating header pin picking up interference.
-        static uint32_t rxTotal = 0; static int lastByte = -1;
-        while (Serial2.available()) { lastByte = Serial2.read(); rxTotal++; }
-        // Pulse BT_INDEPENDENT_RESET and watch the card's UART TX line for any
-        // sign of life. This is the first test with visibility of that line.
-        bool rHi=false; uint32_t rEdges=0;
-        m2PulseBtReset();
-        m2WatchRxLine(150, &rHi, &rEdges);
-        Serial1.print("bt_reset_pulse: rx_any_high=");
-        Serial1.print(rHi);
-        Serial1.print(" rx_edges=");
-        Serial1.println(rEdges);
-        Serial2.begin(115200);                  // hand the pad back to LPUART2
-
-        Serial1.print("] serial2_rx: total=");
-        Serial1.print(rxTotal);
-        Serial1.print(" last=0x");
-        Serial1.println(lastByte < 0 ? 0 : lastByte, HEX);
+        bool hi = false; uint32_t edges = 0;
+        m2BtWakeSample(2000, &hi, &edges);                  // ~20 ms
+        Serial1.print("bt_wake_sample: high="); Serial1.print(hi);
+        Serial1.print(" edges="); Serial1.println(edges);
+        m2HciResetProbe("hci_probe");
     }
 
     Serial1.print("alive=");

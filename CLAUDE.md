@@ -106,8 +106,8 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **119 gates** — the merge of
-THREE independent lines. The Arduino WiFi facade added THREE
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **121 gates** — the merge of
+THREE independent lines, plus the first two Bluetooth gates. The Arduino WiFi facade added THREE
 (`networking/wifi_client_test` and its `[wifi]` variant — enumeration plus a
 REAL 802.11 scan against the model's deliberate zero-BSS reply, asserting an
 honest WL_NO_SSID_AVAIL — and `networking/wifi_server_test`); the uAP line added
@@ -120,7 +120,52 @@ its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
 `networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
 more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
 That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
-119.
+121.
+
+BT-1 added the tree's FIRST TWO BLUETOOTH GATES, both on the new
+`networking/m2_hci_probe`. `run_qemu.sh` is the card-ABSENT fallback — with no
+second `-serial`, LPUART2 has no chardev, so `HCI_Reset` times out BY NAME after
+ten counted attempts and the image heartbeats afterwards (the positive tokens:
+"no identity printed" is also what a dead image produces). `[hci]` attaches a
+Python fake controller to LPUART2 through `-serial unix:…,server` and runs FOUR
+phases in four QEMU boots: `full` (every field the firmware prints carries the
+PEER's value — manufacturer 0x1234, bd 11:22:33:44:55:66, two field-major
+inquiry results and their names — values this firmware cannot invent),
+`drop-reset` (times out by name, peer sees all ten Resets), `garbage` (attempt 1
+fails as FRAMING, attempt 2 succeeds after the 50 ms resync) and `starve`
+(`ncmd=0` starves every later command, by name).
+★ **It needs NO qemu2 change.** qemu2 binds the second `-serial` to LPUART2
+(`hw/arm/fsl-imxrt1170.c`) and `imxrt_lpuart.c` implements chardev RX, so the
+whole Bluetooth transport is gateable against stock qemu2 — unlike every other
+m2_* gate that proves the device WORKS, all of which need the IW416 model. (The
+card-ABSENT m2_* gates pass on stock QEMU too; it is the working-device half
+that the model exists for.) `server` WITHOUT `nowait` holds the
+guest until the peer connects, which is what makes the counter assertions
+strict rather than racy.
+★ **The socket lives in `/tmp`, deliberately** — same `sun_path` 104-byte cap
+that forces the four `mon.sock` gates through a short-path symlink; putting it
+under the example directory would reintroduce that hazard for no gain.
+★ **BOTH GATES SKIP ON A FRESH CLONE UNTIL THE PINS MOVE, and that is a pin
+state, not a firmware fault.** `m2_hci_probe` is the first example to link
+`M2Radio/hci/`, and it calls `addMemoryForRead()` on the core — neither exists
+at the SHAs `evkb.cmake` currently pins (`M2Radio` 300d32b has no `hci/`;
+`cores` fcd22b0 has no `addMemoryForRead`). So a fresh clone, or anyone using
+`-DEVKB_FORCE_FETCH=ON`, cannot build the example and the sweep reports **2
+SKIP** — and a SKIP hides in a count, which is exactly why this line exists.
+Bumping both pins after the two libraries are pushed is what clears it.
+DEMONSTRATED RED twice: changing the fake's manufacturer failed `[full]` by
+name, and breaking the driver's opcode match failed `[hci]` while
+**`run_qemu.sh` stayed GREEN** — it has no replies to match, so it cannot see
+that bug. That asymmetry is the whole argument for the variant existing.
+★ **Two real driver bugs were found by these gates, not by review** — both the
+same disease, and worth knowing because the symptom is silence rather than a
+crash. `Num_HCI_Command_Packets` is assigned ABSOLUTELY from each reply, so any
+reply that is lost or discarded leaves the credit stuck at zero with nothing
+able to raise it: no credit means no command, and no command means no reply.
+A framing fault hit it first (found in review); a TIMEOUT hit it too, and that
+one turned the example's ten-attempt retry loop into a single attempt —
+measured `timeouts=1 starved=9`, one command ever reaching the wire. On the
+bench that would have reported a perfectly good card as dead. 119 before them;
 
 The M.2 line's own chain, kept because each step says what the gate is for:
 
@@ -226,8 +271,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **119 passed, 0 failed, 0 SKIP**, or
-**118 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **121 passed, 0 failed, 0 SKIP**, or
+**120 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
 fresh-clone-red set: its injected gestures come from the `touch-script`
@@ -255,6 +300,47 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-08-24: 121 passed, 0 failed, 0 SKIP** (`gates: 121 passed`,
+exit 0), re-measured on the W21 close-out AFTER the BT firmware-download work,
+the silicon runs and the loader changes — `rt1176:dualcore/cm4_audio_test` green
+in 3 s, `display/acid_box` green, `networking/m2_hci_probe` 15 s and its `[hci]`
+variant 60 s (five phases, four QEMU boots each). `LICENSE-AUDIT: PASS` the same
+day. Host tests 182 checks, 0 failures.
+
+The previous count's measurement, kept per convention:
+✅ **Measured 2026-08-23: 121 passed, 0 failed, 0 SKIP** (`gates: 121 passed`,
+exit 0), on the BT-1 HCI transport close-out, `rt1176:dualcore/cm4_audio_test`
+included and green in 3 s, `display/acid_box` green, both new
+`networking/m2_hci_probe` gates green (11 s and 33 s).
+`LICENSE-AUDIT: PASS` the same day, with the new manifest walked:
+`examples/networking/m2_hci_probe` at 120 dep paths.
+★ **Its `GATES` entry had to be added by hand and the plan never mentioned the
+audit at all** — the drift check caught it, which is what that check is for.
+★ **Pass `LICENSE_AUDIT_EVKB=$(pwd)`** when running the audit from anywhere but
+`~/Development/rt1170/evkb`: the variable is `LICENSE_AUDIT_EVKB`, not `EVKB`,
+and without it the script audits that ONE checkout and reports this tree's new
+gate as `MISSING BUILD` while never looking at it. Same class of trap as the
+symlink below — a tool that silently measures a different tree than the one you
+are in.
+★ Run from a SHORT-PATH SYMLINK, and this time it was `/tmp/bt` rather than
+`/tmp/ev` — the existing `/tmp/ev` points at a DIFFERENT checkout
+(`rt1176-evkb-m2-maya-w161`), so it would have swept the wrong tree entirely and
+reported a perfectly plausible number for work that was not there. Check where
+the symlink points before trusting a sweep taken through one.
+★ Two things about that measurement are worth keeping, because both cost a
+whole sweep to learn and neither is a firmware fault:
+  * **A fresh worktree has almost nothing built**, and a gate does not build.
+    116 rt1176 + 7 rt1062 builds had to be made first. The one build that
+    "failed" is `usb/usb_audio_capstone_test`, which is rt1062-ONLY by its
+    `boards` sidecar — expected, not a regression.
+  * **`display/pxp_draw_bench` needs a SECOND build directory** that no generic
+    build-everything loop will make: `cmake -B build-32 -DDRAW_BENCH_32=ON`.
+    Without it the gate fails as "no UART capture ... (DEPTH=32 build)", which
+    reads exactly like firmware that never started. It is the only example in
+    the tree with a second same-board build dir, so it is the only one a
+    build-all loop silently misses.
+
+The previous count's measurement, kept per convention:
 ✅ **Measured 2026-08-21: 111 passed, 0 failed, 0 SKIP** (`gates: 111 passed`,
 exit 0), on the Arduino WiFi facade close-out, run via `/tmp/ev`,
 `rt1176:dualcore/cm4_audio_test` included and green (3 s).

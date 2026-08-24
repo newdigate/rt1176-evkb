@@ -1,0 +1,19 @@
+RT1176 M.2 HCI probe up
+m2_wifi_reset=released
+sdio_begin=cmd5-no-response
+card=0
+serial2=up_115200
+hci_reset=ok attempts=1 timeouts=0 framing=0 starved=0 qfull=0 late=0
+hci_version: hci_ver=11 hci_rev=0xBEEF lmp_ver=11 manufacturer=0x1234 lmp_subver=0xCAFE
+bd_addr=11:22:33:44:55:66
+hci_buffer: acl_len=1021 acl_num=8 sco_len=64 sco_num=0
+inquiry=started
+inq: bd=AA:BB:CC:DD:EE:01 cod=0x240404 psrm=1 clk=0x1234
+inq: bd=AA:BB:CC:DD:EE:02 cod=0x240404 psrm=1 clk=0x1234
+inquiry_complete: status=0x00 n=2
+inq_name: bd=AA:BB:CC:DD:EE:01 status=0x00 name="FAKE-HEADSET-01"
+inq_name: bd=AA:BB:CC:DD:EE:02 status=0x00 name="FAKE-HEADSET-02"
+hci_probe_done
+hb card=0 hci=ok n=0 pump=199251 timeouts=0 framing=0 starved=0 qfull=0 late=0
+hb card=0 hci=ok n=1 pump=495788 timeouts=0 framing=0 starved=0 qfull=0 late=0
+hb card=0 hci=ok n=2 pump=777433 timeouts=0 framing=0 starved=0 qfull=0 late=0

@@ -228,4 +228,40 @@ else
     rm -f "$EVKB/$fac_rel"/build/wifi.uart
 fi
 
+# --- 6. the m2_hci_probe pair (BT-1) ----------------------------------------
+# run_qemu.sh asserts the card-ABSENT fallback (LPUART2 on a null chardev:
+# Reset times out BY NAME and the image heartbeats afterwards); run_qemu_hci.sh
+# asserts a BIDIRECTIONAL transport against hci_peer.py.  The [hci] gate is
+# worthless if it passes the fallback capture -- the two share an ELF, and
+# dropping the second -serial is all it takes to get the fallback -- so the
+# fallback transcript must FAIL it, by name.  (Under the fake qemu the peer
+# cannot connect and exits 2; the gate checks the capture BEFORE the peer's
+# exit code, so the named failure is the capture's, as it must be.)
+hci_rel="examples/networking/m2_hci_probe"
+hci_absent="$EVKB/$hci_rel/transcript_qemu.txt"
+if [ ! -f "$hci_absent" ]; then
+    echo "SKIP: absent_capture_fails_hci_gate (no transcript)"
+else
+    run_gate "$hci_rel" "run_qemu_hci.sh" "$hci_absent"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1                                          # must not pass
+    echo "$OUT_TEXT" | grep -q "the card-absent fallback ran" || result=1   # and name it
+    report "absent_capture_fails_hci_gate" $result
+
+    # A dead QEMU must fail the fallback gate BY NAME, like every other runner.
+    run_gate "$hci_rel" "run_qemu.sh"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "FAIL: no UART capture" || result=1
+    report "dead_qemu_named_m2_hci_probe" $result
+
+    # Over-correction guard: the committed fallback transcript still passes its own gate.
+    run_gate "$hci_rel" "run_qemu.sh" "$hci_absent"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_m2_hci_probe" $result
+
+    rm -f "$EVKB/$hci_rel"/build/hci_*.uart "$EVKB/$hci_rel"/build/hci_*.peer \
+          "$EVKB/$hci_rel"/build/hci_*.dbg "$EVKB/$hci_rel"/build/serial.uart "$EVKB/$hci_rel"/build/serial.dbg
+fi
+
 exit $FAILED

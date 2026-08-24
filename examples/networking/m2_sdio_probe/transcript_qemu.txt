@@ -4,25 +4,16 @@ m2_wifi_reset=released
 hci_pre_download: quiet=0 reply=none n=0 match=0
 sdio_io_voltage=1v8_requested
 hci_post_download: quiet=0 reply=none n=0 match=0
-sdio_begin=ok rc=0
-int_status=0x1 r4=0x90FF8000
+sdio_begin=cmd5-no-response rc=-6
+int_status=0x18001 r4=0x0
 vsel: vend_spec=0x2 (bit1=1) mux=0x4
 r404_bridge: pullup_reads=0 pulldown_reads=0 -> DRIVEN HIGH by R829 -- bridge conducts
 after_pdn_cycle: rom_bytes=0 hex=none
 r1901_bridge: pullup_reads=0 pulldown_reads=0 -> DRIVEN LOW -- bridge conducts, line held low
 bt_wake(pin20): pullup_reads=0 pulldown_reads=0 pad=0x4 ever_low=0 -> HELD LOW externally -- something is driving it
 rst_pads: sdio_rst dr=1 psr=0 | wl_rst dr=1 psr=0 | gdir=0x40008000
-pres_state=0x1FF0088 cmd_high=1 dat_levels=0x1 card_inserted=1
-iw416_begin=ok ioport=0x10000 fw_status=0x0 card_status=0xD requested_len=2048
-iw416_cfg: fw_pre=0x0 d9=0x0->0x1 c4=0x0->0x4 c5=0x0->0x1 r04=0x0->0xFF d8=0x0->0x10
-fw_download=skipped (no blob supplied)
-io_functions=1
-rca=0x1
-cccr_rev=0x3
-manfid=0x2DF
-cardid=0x9158
+pres_state=0x1F20088 cmd_high=1 dat_levels=0x1 card_inserted=0
 probe_done
 alive=0
 alive=1
 alive=2
-alive=3
