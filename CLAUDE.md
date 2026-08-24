@@ -300,6 +300,14 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-08-24: 121 passed, 0 failed, 0 SKIP** (`gates: 121 passed`,
+exit 0), re-measured on the W21 close-out AFTER the BT firmware-download work,
+the silicon runs and the loader changes — `rt1176:dualcore/cm4_audio_test` green
+in 3 s, `display/acid_box` green, `networking/m2_hci_probe` 15 s and its `[hci]`
+variant 60 s (five phases, four QEMU boots each). `LICENSE-AUDIT: PASS` the same
+day. Host tests 182 checks, 0 failures.
+
+The previous count's measurement, kept per convention:
 ✅ **Measured 2026-08-23: 121 passed, 0 failed, 0 SKIP** (`gates: 121 passed`,
 exit 0), on the BT-1 HCI transport close-out, `rt1176:dualcore/cm4_audio_test`
 included and green in 3 s, `display/acid_box` green, both new
