@@ -105,6 +105,13 @@ if(M2_BT_INJECT_UART_CFG)
     add_definitions(-DM2_BT_INJECT_UART_CFG=1)
 endif()
 
+# Drive J54 pin 36 (the card's CTS input) low, so the controller is always
+# clear to send.  Off by default: it holds the gigabit Ethernet PHY in reset.
+option(M2_BT_ASSERT_CTS "Assert the card's CTS input (holds the ENET PHY in reset)" OFF)
+if(M2_BT_ASSERT_CTS)
+    add_definitions(-DM2_BT_ASSERT_CTS=1)
+endif()
+
 teensy_add_executable(m2_hci_probe m2_hci_probe.cpp ${M2_FW_SRC} ${M2_BT_FW_SRC})
 teensy_target_link_libraries(m2_hci_probe cores M2Radio)
 target_include_directories(m2_hci_probe.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

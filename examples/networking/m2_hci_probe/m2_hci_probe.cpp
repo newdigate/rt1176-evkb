@@ -222,6 +222,42 @@ static void probeInquiry() {
 }
 
 
+// ---------------------------------------------------------------------------
+// Assert the card's CTS input, so it is permanently CLEAR TO SEND.
+//
+// ★ WHY THIS MIGHT BE THE WHOLE PROBLEM.  NXP configure this link WITH
+// hardware flow control (`enableRxRTS = 1; enableTxCTS = 1` in their
+// controller_hci_uart_get_configuration), and their rework guide for this very
+// board -- "Hardware Rework Guide for MIMXRT1170-EVKB and Murata M.2 Module" --
+// says to remove R183 and R1816 and fit R404, R1901 AND R1902.  We fitted R404
+// and R1901 (worked out from the schematic) but not R1902, and removed neither.
+//
+// J54 pin 36 is the CARD'S CTS INPUT (the net is named BT_UART_RTS, from the
+// host's point of view) and it IS populated -- it reaches GPIO_DISP_B2_13.  We
+// have never driven it.  CTS is active LOW, so an undriven or high pad tells
+// the card "not clear to send".  That would explain the exact symptom: the
+// boot ROM talks (it does not use flow control) and the booted firmware, which
+// does, never transmits a byte.
+//
+// Driving it low costs nothing and needs no rework.  ★ SIDE EFFECT, and it is
+// real: R1866 ties this net to ETHPHY_RST_B, so holding it low HOLDS THE
+// GIGABIT ETHERNET PHY IN RESET.  Fine for a Bluetooth probe, fatal for the
+// enet examples -- which is exactly why this board's LPUART2 has no usable
+// flow control and why this is a GPIO hack rather than MODIR.
+//
+// GPIO_DISP_B2_13: mux 0x400E8248, pad 0x400E848C, ALT5 = GPIO5_IO14
+// (ALT3 would be LPUART2_RTS_B; confirmed in the reference manual).
+#define M2_BT_CTS_MUX (*(volatile uint32_t *)0x400E8248u)
+#define M2_BT_CTS_PAD (*(volatile uint32_t *)0x400E848Cu)
+#define M2_BT_CTS_BIT 14
+
+static void m2AssertBtCts() {
+    M2_BT_CTS_MUX = 0x10u | 0x5u;               // SION | ALT5 = GPIO5_IO14
+    M2_BT_CTS_PAD = 0x0Cu;                      // no pull; we drive it
+    GPIO5_GDIR |= (1u << M2_BT_CTS_BIT);        // output
+    GPIO5_DR_CLEAR = (1u << M2_BT_CTS_BIT);     // LOW = asserted = clear to send
+}
+
 // The BT-only UART firmware download.  Called immediately after the card is
 // powered up and BEFORE any SDIO work -- see the ordering note in setup().
 static void btFirmwareDownload() {
@@ -361,6 +397,13 @@ void setup() {
     // cycle, then the UART download, then everything else.
     // The 1 KB RX ring is what makes this safe: the greeting lands there during
     // the ROM-boot wait inside m2ReleaseWifiReset() and waits for the loader.
+#if defined(M2_BT_ASSERT_CTS)
+    m2AssertBtCts();
+    Serial1.println("bt_cts=asserted (PHY held in reset -- see the note above)");
+#else
+    Serial1.println("bt_cts=undriven");
+#endif
+
     hciIo.begin(115200);
     Serial1.println("serial2=up_115200");
 
