@@ -145,14 +145,22 @@ strict rather than racy.
 ★ **The socket lives in `/tmp`, deliberately** — same `sun_path` 104-byte cap
 that forces the four `mon.sock` gates through a short-path symlink; putting it
 under the example directory would reintroduce that hazard for no gain.
-★ **BOTH GATES SKIP ON A FRESH CLONE UNTIL THE PINS MOVE, and that is a pin
-state, not a firmware fault.** `m2_hci_probe` is the first example to link
-`M2Radio/hci/`, and it calls `addMemoryForRead()` on the core — neither exists
-at the SHAs `evkb.cmake` currently pins (`M2Radio` 300d32b has no `hci/`;
-`cores` fcd22b0 has no `addMemoryForRead`). So a fresh clone, or anyone using
-`-DEVKB_FORCE_FETCH=ON`, cannot build the example and the sweep reports **2
-SKIP** — and a SKIP hides in a count, which is exactly why this line exists.
-Bumping both pins after the two libraries are pushed is what clears it.
+★ **BOTH GATES ONCE SKIPPED ON A FRESH CLONE — RESOLVED 2026-08-24, and the
+resolution is worth keeping because the class recurs.** `m2_hci_probe` is the
+first example to link `M2Radio/hci/`, and it calls `addMemoryForRead()` on the
+core; neither existed at the SHAs `evkb.cmake` used to pin (`M2Radio` 300d32b
+had no `hci/`; `cores` fcd22b0 had no `addMemoryForRead`), so a fresh clone
+could not build the example and the sweep reported **2 SKIP** — and a SKIP
+hides in a count, which is why the line was written. Both libraries are now
+PUSHED (`M2Radio` **6ff9ade**, 13 commits; `cores` **36e480d**, 2) and both
+pins bumped.
+★ **VERIFIED THE ONLY WAY THAT COUNTS — by running the fresh-user path, not by
+reading the SHAs.** `-DEVKB_FORCE_FETCH=ON` in a scratch build directory cloned
+both repos from GitHub at the new pins, compiled clean, and BOTH GATES WERE THEN
+RUN AGAINST THAT FETCHED-SOURCE ELF (`build` symlinked to it, then restored):
+`run_qemu.sh` PASS and `run_qemu_hci.sh` PASS. A configure that succeeds proves
+the subdirectory resolves; only running the gate proves the fetched code
+behaves. `0 SKIP` is achievable on a clean machine again.
 DEMONSTRATED RED twice: changing the fake's manufacturer failed `[full]` by
 name, and breaking the driver's opcode match failed `[hci]` while
 **`run_qemu.sh` stayed GREEN** — it has no replies to match, so it cannot see
@@ -301,11 +309,30 @@ as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
 ✅ **Measured 2026-08-24: 121 passed, 0 failed, 0 SKIP** (`gates: 121 passed`,
-exit 0), re-measured on the W21 close-out AFTER the BT firmware-download work,
-the silicon runs and the loader changes — `rt1176:dualcore/cm4_audio_test` green
-in 3 s, `display/acid_box` green, `networking/m2_hci_probe` 15 s and its `[hci]`
-variant 60 s (five phases, four QEMU boots each). `LICENSE-AUDIT: PASS` the same
-day. Host tests 182 checks, 0 failures.
+exit 0), re-measured in the MAIN CHECKOUT on master after the two sibling repos
+were pushed and both `evkb.cmake` pins bumped — `rt1176:dualcore/cm4_audio_test`
+green in 3 s, `display/acid_box` green, `networking/m2_hci_probe` 15 s and its
+`[hci]` variant 61 s. `LICENSE-AUDIT: PASS` the same day.
+★ **`0 SKIP` is now true of a FRESH CLONE too, and that was verified rather
+than reasoned.** A `-DEVKB_FORCE_FETCH=ON` build of `networking/m2_hci_probe`
+cloned `M2Radio` **6ff9ade** and `cores` **36e480d** from GitHub, compiled
+clean, and **both gates were then run against that fetched-source ELF** and
+passed. A configure proves the subdir resolves; only a gate run proves the
+fetched code behaves.
+★ **The FIRST attempt at this sweep read `120 passed, 1 failed`, and the
+failure was STALENESS, not a regression — worth knowing because it is the
+"gates do not build" trap wearing a new face.** `networking/m2_sdio_probe`
+failed with "B0 pre-download bracket missing or not in its card-absent form".
+Its ELF in this checkout dated 2026-08-22; the BT-1 merge changed that
+example's source on 2026-08-24. The gate was reading firmware older than the
+assertion. `cmake --build build` then a re-run turned it green, and the number
+above is a genuine single-run re-measurement, not two runs spliced together.
+★ Two things follow. **The gate did its job** — it went RED rather than passing
+vacuously against stale firmware, which is the outcome a gate exists for. And
+**mtimes cannot be used to find the other stale dirs**: git rewrites them on
+checkout, so ~24 build dirs *looked* stale here. Checked by content history
+instead — every one of those ELFs was built the same day as the last commit
+touching its example, and the merge touched only two example directories.
 
 The previous count's measurement, kept per convention:
 ✅ **Measured 2026-08-23: 121 passed, 0 failed, 0 SKIP** (`gates: 121 passed`,

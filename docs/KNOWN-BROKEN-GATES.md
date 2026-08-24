@@ -231,7 +231,9 @@ transcript".
 
 ---
 
-## SKIP-class gates — ✅ RESOLVED 2026-08-17, and the class is now empty
+## SKIP-class gates — ✅ the class is EMPTY, twice over
+
+Resolved once on 2026-08-17, then **RECURRED on 2026-08-23 and was resolved again on 2026-08-24** — see the second entry below. The class recurring within a week is the argument for keeping this section at all.
 
 For one day this file carried two entries of a kind it had never had before:
 `display/synthui_knob_test` and `display/vglite_probe` could not configure at
@@ -256,6 +258,31 @@ only in a count — and `0 SKIP` is exactly the number CLAUDE.md calls
 load-bearing, because it is what says the sweep covered everything instead of
 quietly measuring less. If you add a library that cannot be fetched, write its
 entry here the same way, and say how many SKIPs a fresh clone should expect.
+
+### The class recurred — `networking/m2_hci_probe`, 2026-08-23 → ✅ 2026-08-24
+
+**And it recurred exactly as predicted, one week later**, which is why the rule
+above is written the way it is. BT-1 added `networking/m2_hci_probe`, the first
+example to link `M2Radio/hci/` and the first to call `addMemoryForRead()` on the
+core. Neither existed at the pinned SHAs (`M2Radio` 300d32b, `cores` fcd22b0),
+both libraries were deliberately held unpushed for a day, and a fresh clone —
+or anyone using `-DEVKB_FORCE_FETCH=ON` — therefore reported **2 SKIP** while
+this machine's sweep read a perfectly clean `121 passed`.
+
+★ **The honest part: for that day the entry was written in `CLAUDE.md` and NOT
+here**, in a section whose heading said the class was empty. The rule above says
+to write it here; it was not followed, and the file said something untrue about
+itself. Recording that is cheaper than pretending the process held.
+
+**Closed 2026-08-24.** Both repos pushed (`M2Radio` **6ff9ade**, 13 commits;
+`cores` **36e480d**, 2 — both public, both MIT) and both `evkb.cmake` pins
+bumped. Verified by running the fresh-user path rather than by reading SHAs:
+`-DEVKB_FORCE_FETCH=ON` cloned both from GitHub into a scratch build directory
+and compiled clean, **and then both gates were run against that fetched-source
+ELF** and passed. Note the stronger check than 2026-08-17's, and why it is
+stronger: a successful *configure* proves only that the subdirectory resolves,
+while a gate run proves the fetched code behaves. Expected SKIPs on a fresh
+clone: **zero**.
 
 ★ **SynthUI's history was rewritten before it went public** (dropping
 `reference/rebirth/`, whose rights are unclear), so every SynthUI SHA before

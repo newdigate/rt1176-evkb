@@ -178,18 +178,24 @@ presents as "no UART capture", which reads like dead firmware.
 
 ---
 
-## 7. ★ STATE OF THE PINS — read before wondering why gates SKIP
+## 7. STATE OF THE PINS — ✅ RESOLVED 2026-08-24, nothing to do here
 
-**The two sibling repos are committed but NOT PUSHED, by the user's explicit
-choice.** `evkb.cmake` therefore still pins SHAs that predate this work:
+Both sibling repos are **pushed** and both pins are **bumped**. This section is
+kept because it was open when the handoff was written, and because the check
+that closed it is the reusable part.
 
-* `M2Radio` **300d32b** — has no `hci/` at all (13 unpushed commits ahead)
-* `cores` **fcd22b0** — has no `addMemoryForRead` (2 unpushed commits ahead)
+| repo | pin now | was | carries |
+|---|---|---|---|
+| `M2Radio` | **6ff9ade** | 300d32b | `hci/` — the whole BT-1 stack (13 commits) |
+| `cores` | **36e480d** | fcd22b0 | `addMemoryForRead/Write` (2 commits) |
 
-Consequence: on a fresh clone, or with `-DEVKB_FORCE_FETCH=ON`,
-`m2_hci_probe` **cannot build** and the sweep reports **2 SKIP**. That is a pin
-state, not a regression, and it is flagged in `CLAUDE.md`. Pushing both repos and
-bumping the two pins is all that clears it.
+★ **How it was verified, which is the point.** Not by comparing SHAs — by
+running the fresh-user path. `-DEVKB_FORCE_FETCH=ON` in a scratch build
+directory cloned both repos from GitHub at the new pins and compiled clean; then
+**both gates were run against that fetched-source ELF** (`build` symlinked to
+it, restored afterwards) and both PASSED. A successful configure only proves the
+subdirectory resolves; only a gate run proves the fetched code behaves. The
+sweep no longer has a SKIP to hide anything in.
 
 ---
 
