@@ -54,7 +54,7 @@ P=$!; gate_pid $P
 # 10 x 0.5 s Reset attempts before the first heartbeat.  Wait for the SECOND
 # heartbeat: it is the last line this gate parses.
 for _ in $(seq 1 120); do
-    [ -f "$OUT" ] && grep -q "^hb card=0 hci=no_response n=1 " "$OUT" 2>/dev/null && break
+    [ -f "$OUT" ] && grep -q "^hb card=0 btfw=no_start_indication hci=no_response n=1 " "$OUT" 2>/dev/null && break
     sleep 0.25
 done
 gate_reap $P
@@ -72,5 +72,5 @@ for T in "^hci_version" "^bd_addr=" "^hci_buffer" "^inquiry=started" "^inq:" "^i
     if grep -q "$T" "$OUT"; then echo "FAIL: reported '$T' with nothing on LPUART2"; exit 1; fi
 done
 grep -q "^hci_probe_done[[:space:]]*$" "$OUT" || { echo "FAIL: probe never completed"; exit 1; }
-grep -q "^hb card=0 hci=no_response n=1 " "$OUT" || { echo "FAIL: no heartbeat after the probe"; exit 1; }
+grep -q "^hb card=0 btfw=no_start_indication hci=no_response n=1 " "$OUT" || { echo "FAIL: no heartbeat after the probe"; exit 1; }
 echo "PASS: HCI probe reached the no_response fallback cleanly and kept running"

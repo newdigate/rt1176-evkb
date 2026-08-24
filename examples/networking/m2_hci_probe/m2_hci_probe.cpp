@@ -23,6 +23,7 @@
 #include <HciEvents.h>
 #include <HciTransport.h>
 #include <HciPump.h>
+#include <BtFwLoader.h>
 
 static SdioHost sdio;
 static SdioFunc func(sdio);
@@ -30,11 +31,17 @@ static Iw416 iw416(sdio, func);
 static HciTransport hciIo(Serial2);
 static Hci hci(hciIo);
 static HciPump pump;
+static BtFwLoader btLoader(hciIo);
 
 #if defined(HAVE_IW416_FW)
 extern const uint8_t  iw416_fw[];
 extern const uint32_t iw416_fw_len;
 #endif
+#if defined(HAVE_IW416_BT_FW)
+extern const uint8_t  iw416_bt_fw[];
+extern const uint32_t iw416_bt_fw_len;
+#endif
+static BtFwLoader::Error s_btFwSt = BtFwLoader::NO_IMAGE;
 
 static SdioHost::Status s_sdioSt = SdioHost::CMD5_NO_RESPONSE;
 static SdioHost::Status s_iwSt   = SdioHost::CMD_TIMEOUT;
@@ -248,9 +255,49 @@ void setup() {
     // regardless of SDIO.  NXP waits 100 ms + up to 260 ms here.
     delay(400);
     hciIo.begin(115200);
+    Serial1.println("serial2=up_115200");
+
+    // ★ THE BT CORE DOES NOT COME UP FROM THE SDIO COMBO DOWNLOAD.  Measured
+    // on silicon 2026-08-23: that download stops 8,776 bytes short and no HCI
+    // command is ever answered; the core sits in its own UART bootloader
+    // sending a V3 start indication (AB 01 72 00 47 -- chipId 0x7201, the same
+    // hw_version GET_HW_SPEC reports over SDIO) and waiting for an image.
+    // Feed it one before saying a word of HCI.
+    //
+    // The loader is driven BEFORE the HCI pump is attached, deliberately: both
+    // read the same Serial2, and a pump servicing Hci mid-download would eat
+    // the bootloader's frames.
+#if defined(HAVE_IW416_BT_FW)
+    btLoader.setImage(iw416_bt_fw, iw416_bt_fw_len);
+    s_btFwSt = btLoader.run(3000, 500, 30000, idleMs);
+#if defined(BT_FW_IS_SYNTHETIC)
+    // Loud on purpose: this build is for QEMU and the image is NOT NXP firmware.
+    Serial1.println("bt_fw_source=synthetic");
+#else
+    Serial1.println("bt_fw_source=nxp");
+#endif
+    Serial1.print("bt_fw_download=");
+    Serial1.print(BtFwLoader::errorName(s_btFwSt));
+    Serial1.print(" chip_id=0x");   printHex16(btLoader.chipId());
+    Serial1.print(" loader_ver=");  Serial1.print(btLoader.loaderVer());
+    Serial1.print(" start_inds=");  Serial1.print(btLoader.startInds());
+    Serial1.print(" chunks=");      Serial1.print(btLoader.chunks());
+    Serial1.print(" sent=");        Serial1.print(btLoader.bytesSent());
+    Serial1.print("/");             Serial1.print(iw416_bt_fw_len);
+    Serial1.print(" max_off=");     Serial1.print(btLoader.maxOffset());
+    Serial1.print(" retx=");        Serial1.print(btLoader.retransmits());
+    Serial1.print(" crc_err=");     Serial1.print(btLoader.crcErrors());
+    Serial1.print(" card_err=0x");  printHex16(btLoader.lastCardErr());
+    Serial1.println();
+    // The core needs a moment to authenticate the image and start its firmware.
+    if (s_btFwSt == BtFwLoader::OK) delay(1000);
+#else
+    Serial1.println("bt_fw_source=none");
+    Serial1.println("bt_fw_download=skipped (no image compiled in)");
+#endif
+
     hci.begin();
     pump.attach(hci);
-    Serial1.println("serial2=up_115200");
 
     // Reset: up to 10 attempts, because silicon needs an unknown settle after
     // the download (B0 measures it).  In QEMU the [hci] gate's `-serial
@@ -283,6 +330,7 @@ void loop() {
     // Heartbeat: proves the image is still running after the probe rather than
     // having wedged in it, and carries the transport's accounting.
     Serial1.print("hb card="); Serial1.print(s_card ? 1 : 0);
+    Serial1.print(" btfw="); Serial1.print(BtFwLoader::errorName(s_btFwSt));
     Serial1.print(" hci="); Serial1.print(s_hciSt == Hci::OK ? "ok" : Hci::errorName(s_hciSt));
     Serial1.print(" n="); Serial1.print(n++);
     Serial1.print(" pump="); Serial1.print(pump.passes());

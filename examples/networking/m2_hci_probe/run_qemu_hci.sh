@@ -105,7 +105,12 @@ run_phase() {
 }
 
 # --- full ---------------------------------------------------------------------
-run_phase full '^hb card=0 hci=ok n=1 '
+run_phase full '^hb card=0 btfw=no_start_indication hci=ok n=1 '
+# No bootloader on this peer, so the download must find nothing -- and say so.
+# Asserting it here is what stops [fwdnld]'s success being attributed to the
+# firmware rather than to the peer that answered.
+grep -q "^bt_fw_download=no_start_indication chip_id=0x0000 loader_ver=0 start_inds=0 chunks=0 sent=0/1024 " "$OUT" \
+    || fail "[full] the download should have found no bootloader"
 grep -q "^hci_reset=ok attempts=" "$OUT" || fail "[full] no hci_reset=ok"
 grep -q "^hci_version: hci_ver=11 hci_rev=0xBEEF lmp_ver=11 manufacturer=0x1234 lmp_subver=0xCAFE[[:space:]]*$" "$OUT" \
     || fail "[full] hci_version does not carry the peer's values"
@@ -118,13 +123,13 @@ grep -q "^inquiry_complete: status=0x00 n=2[[:space:]]*$" "$OUT" || fail "[full]
 grep -q '^inq_name: bd=AA:BB:CC:DD:EE:01 status=0x00 name="FAKE-HEADSET-01"[[:space:]]*$' "$OUT" || fail "[full] remote name 1 wrong"
 grep -q '^inq_name: bd=AA:BB:CC:DD:EE:02 status=0x00 name="FAKE-HEADSET-02"[[:space:]]*$' "$OUT" || fail "[full] remote name 2 wrong"
 grep -q "^hci_probe_done[[:space:]]*$" "$OUT" || fail "[full] probe never completed"
-grep -q "^hb card=0 hci=ok n=1 pump=[0-9]* timeouts=0 framing=0 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
+grep -q "^hb card=0 btfw=no_start_indication hci=ok n=1 pump=[0-9]* timeouts=0 framing=0 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[full] heartbeat counters not all zero"
 [ "$PEER_RC" -eq 0 ] || fail "[full] peer exited $PEER_RC"
 grep -q "^PEER-DONE phase=full cmds=7 " "$RES" || fail "[full] peer did not see exactly the seven commands (Reset, 3 identity, Inquiry, 2 names)"
 
 # --- drop-reset ---------------------------------------------------------------
-run_phase drop-reset '^hb card=0 hci=no_response n=1 '
+run_phase drop-reset '^hb card=0 btfw=no_start_indication hci=no_response n=1 '
 grep -q "^hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[drop-reset] Reset must time out BY NAME after ten counted attempts"
 if grep -q "^hci_version" "$OUT"; then fail "[drop-reset] identity printed with no Reset"; fi
@@ -132,24 +137,65 @@ grep -q "^hci_probe_done[[:space:]]*$" "$OUT" || fail "[drop-reset] probe never 
 grep -q "^PEER-DONE phase=drop-reset cmds=10 resets=10 " "$RES" || fail "[drop-reset] peer did not see ten Resets"
 
 # --- garbage ------------------------------------------------------------------
-run_phase garbage '^hb card=0 hci=ok n=1 '
+run_phase garbage '^hb card=0 btfw=no_start_indication hci=ok n=1 '
 grep -q "^hci_reset=ok attempts=2 timeouts=0 framing=1 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[garbage] attempt 1 must fail as FRAMING (not timeout) and attempt 2 must succeed"
 grep -q "^hci_version: .*manufacturer=0x1234 " "$OUT" || fail "[garbage] the run did not recover to a full identity"
 grep -q '^inq_name: bd=AA:BB:CC:DD:EE:02 status=0x00 name="FAKE-HEADSET-02"[[:space:]]*$' "$OUT" || fail "[garbage] inquiry did not complete after recovery"
-grep -q "^hb card=0 hci=ok n=1 pump=[0-9]* timeouts=0 framing=1 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
+grep -q "^hb card=0 btfw=no_start_indication hci=ok n=1 pump=[0-9]* timeouts=0 framing=1 starved=0 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[garbage] heartbeat counters wrong"
 [ "$PEER_RC" -eq 0 ] || fail "[garbage] peer exited $PEER_RC"
 
 # --- starve -------------------------------------------------------------------
-run_phase starve '^hb card=0 hci=ok n=1 '
+run_phase starve '^hb card=0 btfw=no_start_indication hci=ok n=1 '
 grep -q "^hci_reset=ok attempts=1 " "$OUT" || fail "[starve] Reset itself must succeed"
 for W in hci_version bd_addr hci_buffer inquiry; do
     grep -q "^$W=fail reason=ncmd_starved " "$OUT" || fail "[starve] $W must fail as ncmd_starved, by name"
 done
 grep -q "^hci_probe_done[[:space:]]*$" "$OUT" || fail "[starve] probe never completed"
-grep -q "^hb card=0 hci=ok n=1 pump=[0-9]* timeouts=0 framing=0 starved=4 qfull=0 late=0[[:space:]]*$" "$OUT" \
+grep -q "^hb card=0 btfw=no_start_indication hci=ok n=1 pump=[0-9]* timeouts=0 framing=0 starved=4 qfull=0 late=0[[:space:]]*$" "$OUT" \
     || fail "[starve] expected starved=4 and nothing else"
 grep -q "^PEER-DONE phase=starve cmds=1 " "$RES" || fail "[starve] the firmware must not have SENT anything after Reset"
 
-echo "PASS: HCI transport is bidirectional against the fake controller, and timeout/framing/starvation fail by name"
+# --- fwdnld -------------------------------------------------------------------
+# The V3 UART firmware download, end to end, against a peer PLAYING THE CARD'S
+# BOOTLOADER -- it replays the exact five-byte start indication a real
+# M2-MAYA-W161 sent on the bench (AB 01 72 00 47), serves four chunk requests,
+# and CHECKS THE BYTES COMING BACK against the image it knows the gate build
+# compiled in.  A downloader that acknowledged correctly but served the wrong
+# offsets would pass every other assertion here and fail this one.
+#
+# ★ No NXP blob is involved.  The gate build compiles a 1 KB SYNTHETIC image
+# (the example's CMakeLists) precisely so this protocol is gateable without a
+# licensed file; the firmware prints bt_fw_source=synthetic and this gate
+# ASSERTS that, so a build carrying the real blob can never be mistaken for it.
+# DEMONSTRATED RED (2026-08-24), twice, and the FIRST one is the argument for
+# checking bytes rather than counters:
+#   * BtFwLoader served every chunk from offset 0 instead of the requested
+#     offset.  EVERY OTHER ASSERTION STAYED GREEN -- acks correct, chunks=4,
+#     sent=1024/1024, retx=0, crc_err=0, HCI came up afterwards.  Only the
+#     peer's byte check caught it:
+#       PEER-BOOT ok=1 acks=11 chunks=4 err=wrong image bytes at offset 768 (+255)
+#       FAIL: [fwdnld] peer exited 1 -- it verifies the served bytes, so this is the driver
+#     A downloader that hands a card the wrong 129 KB fails far from here, at
+#     firmware authentication, with nothing to point at.
+#   * crc8()'s init changed from 0xFF to 0x00: every frame rejected,
+#     `crc_err=21 ... no_start_indication`, gate failed by name.
+run_phase fwdnld '^hb card=0 btfw=ok hci=ok n=1 '
+grep -q "^bt_fw_source=synthetic[[:space:]]*$" "$OUT" \
+    || fail "[fwdnld] this build must carry the SYNTHETIC image, not a real blob"
+# start_inds= is deliberately NOT pinned to a number: QEMU holds the guest until
+# the peer connects, so the peer greets while the firmware is still in its board
+# preamble and repeats until heard -- exactly as the real card repeats.  How
+# many land before the loader drains its ring is a property of that race, not of
+# the driver.  Everything the DRIVER controls is pinned exactly.
+grep -qE "^bt_fw_download=ok chip_id=0x7201 loader_ver=0 start_inds=[1-9][0-9]* chunks=4 sent=1024/1024 max_off=1024 retx=0 crc_err=0 card_err=0x0000[[:space:]]*$" "$OUT" \
+    || fail "[fwdnld] the download did not complete cleanly with the expected accounting"
+grep -q "^hci_reset=ok attempts=1 " "$OUT" || fail "[fwdnld] HCI did not start after the download"
+grep -q "^bd_addr=11:22:33:44:55:66[[:space:]]*$" "$OUT" || fail "[fwdnld] HCI did not work after the download"
+[ "$PEER_RC" -eq 0 ] || fail "[fwdnld] peer exited $PEER_RC -- it verifies the served bytes, so this is the driver"
+grep -qE "^PEER-BOOT ok=1 acks=[0-9]+ chunks=4 err=none[[:space:]]*$" "$RES" \
+    || fail "[fwdnld] the peer did not see a clean download (it checks every byte it was served)"
+grep -q "^PEER-BOOT-COMPLETE chunks=4 bytes=1024[[:space:]]*$" "$RES" || fail "[fwdnld] peer never saw the image complete"
+
+echo "PASS: HCI transport is bidirectional against the fake controller, the V3 firmware download serves the right bytes, and timeout/framing/starvation fail by name"

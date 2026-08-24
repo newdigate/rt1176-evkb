@@ -12,6 +12,9 @@ Phases (argv[1]):
   garbage     3 bytes of 0xFF before the first Reset reply, same burst
                                               -> attempt 1 fails as framing, attempt 2 succeeds
   starve      answer with Num_HCI_Command_Packets=0 -> every later command starves
+  fwdnld      play the NXP V3 UART BOOTLOADER first: send the start indication
+              the real card sends, serve chunk requests, verify the bytes the
+              host returns, and only then answer HCI
 Exit 0 when the phase's last expected opcode was seen.  Prints PEER-* lines.
 """
 import socket, struct, sys, time
@@ -24,7 +27,39 @@ DEVICES = [(bytes.fromhex("01EEDDCCBBAA"), 0x240404, b"FAKE-HEADSET-01"),   # pr
 
 OP_RESET, OP_READ_LOCAL_VER, OP_READ_BUFFER_SIZE, OP_READ_BD_ADDR = 0x0C03, 0x1001, 0x1005, 0x1009
 OP_INQUIRY, OP_REMOTE_NAME_REQ = 0x0401, 0x0419
-LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP_REMOTE_NAME_REQ, "starve": OP_RESET}
+
+# --- NXP V3 UART firmware download -----------------------------------------
+# The real M2-MAYA-W161 sends exactly these five bytes on power-up, three
+# times, and then goes silent (bench capture 2026-08-23):
+#     AB 01 72 00 47
+# = header 0xAB, chipId 0x7201 (the same hw_version GET_HW_SPEC reports over
+# SDIO), loader version 0, CRC-8 0x47.  This peer replays that frame verbatim.
+V3_START_IND, V3_DATA_REQ, V3_ACK = 0xAB, 0xA7, 0x7A
+BOOT_CHIP_ID, BOOT_LOADER_VER = 0x7201, 0x00
+# The gate build compiles in a 1 KB SYNTHETIC image (four 256-byte ramps),
+# NOT NXP firmware -- see the example's CMakeLists.  We know its bytes, so we
+# can check that the host serves the RIGHT ones at the RIGHT offsets.
+SYNTH_LEN = 1024
+def synth_image():
+    return bytes(((n + i) & 0xFF) for n in range(4) for i in range(256))
+
+def crc8(data, poly=0x07, init=0xFF):
+    crc = init
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = ((crc << 1) ^ poly) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
+def v3_start_ind():
+    f = bytes([V3_START_IND, BOOT_CHIP_ID & 0xFF, BOOT_CHIP_ID >> 8, BOOT_LOADER_VER])
+    return f + bytes([crc8(f)])
+
+def v3_data_req(length, offset, err=0):
+    f = bytes([V3_DATA_REQ]) + struct.pack("<HIH", length, offset, err)
+    return f + bytes([crc8(f)])
+LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP_REMOTE_NAME_REQ,
+               "starve": OP_RESET, "fwdnld": OP_READ_BD_ADDR}
 
 def connect(path):
     deadline = time.time() + 20
@@ -43,6 +78,24 @@ class Peer:
     def __init__(self, sock, phase):
         self.s, self.phase, self.buf, self.cmds, self.log = sock, phase, b"", [], []
         self.resets, self.pending = 0, []          # pending: (due, bytes)
+        # --- V3 bootloader state (fwdnld phase only) ---
+        # While `boot` is True every received byte belongs to the download, not
+        # to HCI: the host is answering the bootloader, and H4 framing has not
+        # started yet.  The plan is a list of (length, offset) chunks; the last
+        # one must reach the end of the image or the host is not done.
+        self.boot = (phase == "fwdnld")
+        self.img = synth_image()
+        self.boot_plan = [(256, 0), (256, 256), (256, 512), (256, 768)]
+        self.boot_step = 0
+        self.boot_acks = 0
+        self.boot_bytes = b""
+        self.boot_expect = 0          # bytes of image payload still expected
+        self.boot_ok = False
+        self.boot_err = None
+        self.boot_last_ind = 0.0
+        self.boot_inds_sent = 0
+        self.boot_started = False      # True once the transfer proper has begun
+        self.boot_ack_at = 0.0
     def send(self, b, delay=0.0): self.pending.append((time.time() + delay, b))
     def flush(self):
         now = time.time(); keep = []
@@ -85,7 +138,59 @@ class Peer:
         else:
             self.log.append("PEER-UNKNOWN-OPCODE 0x%04x" % opcode)
             self.send(cmd_complete(opcode, b"\x01"))                    # 0x01 = Unknown HCI Command
+    def feed_boot(self, data):
+        """Consume host bytes during the V3 download.
+
+        The host's traffic is a strict alternation: an ACK frame [7A][crc] for
+        each frame we sent, then -- for a data request -- exactly the bytes we
+        asked for.  Anything else is a protocol error and is RECORDED rather
+        than ignored, because a downloader that sends the wrong bytes at the
+        right time is exactly the bug this phase exists to catch."""
+        self.boot_bytes += data
+        while self.boot_bytes:
+            if self.boot_expect:
+                take = min(self.boot_expect, len(self.boot_bytes))
+                chunk, self.boot_bytes = self.boot_bytes[:take], self.boot_bytes[take:]
+                length, offset = self.boot_plan[self.boot_step - 1]
+                want = self.img[offset + (length - self.boot_expect):][:take]
+                if chunk != want:
+                    self.boot_err = ("wrong image bytes at offset %d (+%d)"
+                                     % (offset, length - self.boot_expect))
+                self.boot_expect -= take
+                if self.boot_expect == 0:
+                    if self.boot_step >= len(self.boot_plan):
+                        self.boot_ok = True
+                        self.boot = False          # HCI starts now
+                        self.log.append("PEER-BOOT-COMPLETE chunks=%d bytes=%d"
+                                        % (len(self.boot_plan), SYNTH_LEN))
+                    else:
+                        self.send(v3_data_req(*self.boot_plan[self.boot_step]))
+                        self.boot_step += 1
+                continue
+            if len(self.boot_bytes) < 2:
+                return
+            if self.boot_bytes[0] != V3_ACK:
+                self.boot_err = "expected ACK 0x7A, got 0x%02X" % self.boot_bytes[0]
+                self.boot_bytes = self.boot_bytes[1:]
+                continue
+            if self.boot_bytes[1] != crc8(bytes([V3_ACK])):
+                self.boot_err = "ACK crc wrong: 0x%02X" % self.boot_bytes[1]
+            self.boot_bytes = self.boot_bytes[2:]
+            self.boot_acks += 1
+            if not self.boot_started:
+                # Still in the greeting phase.  We may have sent several start
+                # indications before the firmware was listening (see the retry
+                # note in main), so SEVERAL acks can be in flight.  Do not start
+                # the transfer on the first one -- wait for the line to go quiet
+                # in main(), then start.  Counting them is enough here.
+                self.boot_ack_at = time.time()
+                continue
+            self.boot_expect = self.boot_plan[self.boot_step - 1][0]
+
     def feed(self, data):
+        if self.boot:
+            self.feed_boot(data)
+            return
         self.buf += data
         while self.buf:
             if self.buf[0] != 0x01:                                     # only commands come from a host
@@ -102,6 +207,17 @@ if __name__ == "__main__":
     sock = connect(path); sock.settimeout(0.05)
     print("PEER-CONNECTED phase=%s" % phase)
     peer = Peer(sock, phase)
+    if peer.boot:
+        # ★ REPEAT the start indication until it is answered, which is what the
+        # real card does (it sent exactly three on the bench before giving up).
+        # It is also required here for a reason worth recording: QEMU holds the
+        # guest until we connect, so anything sent now lands while the firmware
+        # is still in its board preamble -- and Serial2.begin() /
+        # addMemoryForRead() reset the ring, discarding whatever arrived first.
+        # Sending once produced a MID-FRAME byte and a bad_header, which is a
+        # faithful reproduction of a race a real host can also lose.
+        peer.send(v3_start_ind())
+        peer.boot_last_ind = time.time()
     deadline, last_rx = time.time() + 45, time.time()
     while time.time() < deadline:
         try:
@@ -111,9 +227,31 @@ if __name__ == "__main__":
         except socket.timeout:
             pass
         peer.flush()
+        if peer.boot and not peer.boot_started:
+            if peer.boot_acks == 0 and time.time() - peer.boot_last_ind > 0.3:
+                if peer.boot_inds_sent < 40:      # ~12 s of retries, then give up
+                    peer.send(v3_start_ind()); peer.boot_last_ind = time.time()
+                    peer.boot_inds_sent += 1
+                    peer.boot_bytes = b""         # drop anything half-read before we were heard
+            elif peer.boot_acks and time.time() - peer.boot_ack_at > 0.4:
+                # We have been heard, and the line has been quiet for 400 ms --
+                # every stale ack from the retries is now drained.  Start the
+                # transfer from a known-clean state, so what follows is exactly
+                # ack-then-image and any deviation is the driver's.
+                peer.boot_bytes = b""
+                peer.boot_started = True
+                peer.boot_step = 1
+                peer.send(v3_data_req(*peer.boot_plan[0]))
         if LAST_OPCODE[phase] in peer.cmds and not peer.pending and time.time() - last_rx > 3.0:
             break
     for l in peer.log: print(l)
+    if phase == "fwdnld":
+        print("PEER-BOOT ok=%d acks=%d chunks=%d err=%s"
+              % (1 if peer.boot_ok else 0, peer.boot_acks, peer.boot_step,
+                 peer.boot_err if peer.boot_err else "none"))
     print("PEER-DONE phase=%s cmds=%d resets=%d opcodes=%s"
           % (phase, len(peer.cmds), peer.resets, ",".join("%04x" % c for c in peer.cmds)))
-    sys.exit(0 if LAST_OPCODE[phase] in peer.cmds else 1)
+    ok = LAST_OPCODE[phase] in peer.cmds
+    if phase == "fwdnld":
+        ok = ok and peer.boot_ok and peer.boot_err is None
+    sys.exit(0 if ok else 1)
