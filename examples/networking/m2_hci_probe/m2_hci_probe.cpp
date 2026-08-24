@@ -221,42 +221,10 @@ static void probeInquiry() {
     }
 }
 
-void setup() {
-    Serial1.begin(115200);
-    delay(50);
-    Serial1.println("RT1176 M.2 HCI probe up");
 
-    m2ReleaseWifiReset();
-    Serial1.println("m2_wifi_reset=released");
-    sdio.useIoVoltage1V8(true);
-    s_sdioSt = sdio.begin();
-    Serial1.print("sdio_begin="); Serial1.println(statusName(s_sdioSt));
-    if (s_sdioSt == SdioHost::OK) {
-        s_iwSt = iw416.begin();
-        Serial1.print("iw416_begin="); Serial1.print(statusName(s_iwSt));
-        Serial1.print(" fw_status=0x"); Serial1.println(iw416.fwStatus(), HEX);
-        if (s_iwSt == SdioHost::OK) {
-#if defined(HAVE_IW416_FW)
-            s_fwSt = iw416.downloadFirmware(iw416_fw, iw416_fw_len);
-            Serial1.print("fw_download="); Serial1.println(statusName(s_fwSt));
-#else
-            s_fwSt = (iw416.fwStatus() == Iw416::FIRMWARE_READY) ? SdioHost::OK : SdioHost::CMD_TIMEOUT;
-            Serial1.print("fw_download=skipped (no blob supplied) preboot=");
-            Serial1.println(s_fwSt == SdioHost::OK ? 1 : 0);
-#endif
-        }
-    }
-    s_card = (s_fwSt == SdioHost::OK);
-    Serial1.print("card="); Serial1.println(s_card ? 1 : 0);
-
-    // The HCI sequence runs WHATEVER the SDIO outcome: on silicon the BT block
-    // only answers after the combo download (B0), and the card-absent gate
-    // wants the timeout path by name; the [hci] gate's fake controller answers
-    // regardless of SDIO.  NXP waits 100 ms + up to 260 ms here.
-    delay(400);
-    hciIo.begin(115200);
-    Serial1.println("serial2=up_115200");
-
+// The BT-only UART firmware download.  Called immediately after the card is
+// powered up and BEFORE any SDIO work -- see the ordering note in setup().
+static void btFirmwareDownload() {
     // ★ THE BT CORE DOES NOT COME UP FROM THE SDIO COMBO DOWNLOAD.  Measured
     // on silicon 2026-08-23: that download stops 8,776 bytes short and no HCI
     // command is ever answered; the core sits in its own UART bootloader
@@ -289,13 +257,127 @@ void setup() {
     Serial1.print(" crc_err=");     Serial1.print(btLoader.crcErrors());
     Serial1.print(" card_err=0x");  printHex16(btLoader.lastCardErr());
     Serial1.println();
+    // Request trace: the shape of the download, which is where a subtly wrong
+    // one shows itself (a length that never changes, an offset that stops
+    // advancing, a final block that does not reach the end of the image).
+    Serial1.print("bt_req_first:");
+    for (uint8_t i = 0; i < btLoader.traceFirstN(); i++) {
+        Serial1.print(" "); Serial1.print(btLoader.traceFirstLen(i));
+        Serial1.print("@"); Serial1.print(btLoader.traceFirstOff(i));
+    }
+    Serial1.println();
+    Serial1.print("bt_req_last:");
+    {
+        uint8_t n = btLoader.traceLastN();
+        for (uint8_t i = 0; i < n; i++) {
+            uint8_t idx = (uint8_t)((BtFwLoader::TRACE_N + i) % BtFwLoader::TRACE_N);
+            Serial1.print(" "); Serial1.print(btLoader.traceLastLen(idx));
+            Serial1.print("@"); Serial1.print(btLoader.traceLastOff(idx));
+        }
+    }
+    Serial1.println();
+
     // The core needs a moment to authenticate the image and start its firmware.
-    if (s_btFwSt == BtFwLoader::OK) delay(1000);
+    // DIAGNOSTIC: listen on the raw UART afterwards and hex-dump whatever the
+    // card says unprompted.  A booting NXP controller is not required to say
+    // anything here, so silence is not itself a fault -- but if it emits a
+    // vendor event, another start indication (meaning it rejected the image and
+    // went back to its bootloader), or bytes at an unreadable framing, that is
+    // the difference between "the image was bad" and "we are asking wrongly".
+    if (s_btFwSt == BtFwLoader::OK) {
+        for (int w = 0; w < 4; w++) {
+            uint8_t buf[64]; uint32_t n = 0;
+            uint32_t t0 = millis();
+            while (millis() - t0 < 500) {
+                while (Serial2.available()) { int c = Serial2.read(); if (n < sizeof buf) buf[n] = (uint8_t)c; n++; }
+                delay(1);
+            }
+            Serial1.print("bt_post_dnld["); Serial1.print(w); Serial1.print("]: n=");
+            Serial1.print(n); Serial1.print(" hex=");
+            if (!n) Serial1.print("none");
+            else { uint32_t s = n < sizeof buf ? n : (uint32_t)sizeof buf;
+                   for (uint32_t i = 0; i < s; i++) { if (buf[i] < 0x10) Serial1.print('0'); Serial1.print(buf[i], HEX); } }
+            Serial1.println();
+        }
+        // And ask, RAW, right here -- before any SDIO work touches the card.
+        // If HCI answers here but not later, the SDIO sequence is disturbing a
+        // controller that had come up fine, which is a completely different
+        // bug from "the image did not take".
+        static const uint8_t RESET[] = { 0x01, 0x03, 0x0C, 0x00 };
+        for (int a = 0; a < 3; a++) {
+            while (Serial2.available()) (void)Serial2.read();
+            Serial2.write(RESET, sizeof RESET); Serial2.flush();
+            uint8_t buf[32]; uint32_t n = 0; uint32_t t0 = millis();
+            while (millis() - t0 < 700) {
+                while (Serial2.available()) { int c = Serial2.read(); if (n < sizeof buf) buf[n] = (uint8_t)c; n++; }
+                delay(1);
+            }
+            Serial1.print("bt_raw_reset["); Serial1.print(a); Serial1.print("]: n=");
+            Serial1.print(n); Serial1.print(" hex=");
+            if (!n) Serial1.print("none");
+            else { uint32_t s = n < sizeof buf ? n : (uint32_t)sizeof buf;
+                   for (uint32_t i = 0; i < s; i++) { if (buf[i] < 0x10) Serial1.print('0'); Serial1.print(buf[i], HEX); } }
+            Serial1.println();
+            if (n) break;
+        }
+    }
 #else
     Serial1.println("bt_fw_source=none");
     Serial1.println("bt_fw_download=skipped (no image compiled in)");
 #endif
 
+}
+
+void setup() {
+    Serial1.begin(115200);
+    delay(50);
+    Serial1.println("RT1176 M.2 HCI probe up");
+
+    // ★ ORDER IS LOAD-BEARING, and getting it wrong is silent.
+    // The BT core greets ONCE per power-up -- it sent its V3 start indication
+    // three times in ~200 ms on the bench and then went quiet for good.  So
+    // Serial2 must be LISTENING BEFORE the card is powered up, and the download
+    // must run BEFORE the SDIO work, which takes seconds.
+    // Measured 2026-08-24: with begin() after the WLAN download (the obvious
+    // order) the loader reported `no_start_indication` on a card that had
+    // greeted perfectly well -- the bytes were transmitted before the UART
+    // existed.  NXP's own CONFIG_BT_IND_DNLD path has the same shape: power
+    // cycle, then the UART download, then everything else.
+    // The 1 KB RX ring is what makes this safe: the greeting lands there during
+    // the ROM-boot wait inside m2ReleaseWifiReset() and waits for the loader.
+    hciIo.begin(115200);
+    Serial1.println("serial2=up_115200");
+
+    m2ReleaseWifiReset();
+    Serial1.println("m2_wifi_reset=released");
+
+    btFirmwareDownload();
+
+    sdio.useIoVoltage1V8(true);
+    s_sdioSt = sdio.begin();
+    Serial1.print("sdio_begin="); Serial1.println(statusName(s_sdioSt));
+    if (s_sdioSt == SdioHost::OK) {
+        s_iwSt = iw416.begin();
+        Serial1.print("iw416_begin="); Serial1.print(statusName(s_iwSt));
+        Serial1.print(" fw_status=0x"); Serial1.println(iw416.fwStatus(), HEX);
+        if (s_iwSt == SdioHost::OK) {
+#if defined(HAVE_IW416_FW)
+            s_fwSt = iw416.downloadFirmware(iw416_fw, iw416_fw_len);
+            Serial1.print("fw_download="); Serial1.println(statusName(s_fwSt));
+#else
+            s_fwSt = (iw416.fwStatus() == Iw416::FIRMWARE_READY) ? SdioHost::OK : SdioHost::CMD_TIMEOUT;
+            Serial1.print("fw_download=skipped (no blob supplied) preboot=");
+            Serial1.println(s_fwSt == SdioHost::OK ? 1 : 0);
+#endif
+        }
+    }
+    s_card = (s_fwSt == SdioHost::OK);
+    Serial1.print("card="); Serial1.println(s_card ? 1 : 0);
+
+    // The HCI sequence runs WHATEVER the SDIO outcome: on silicon the BT block
+    // only answers after the combo download (B0), and the card-absent gate
+    // wants the timeout path by name; the [hci] gate's fake controller answers
+    // regardless of SDIO.  NXP waits 100 ms + up to 260 ms here.
     hci.begin();
     pump.attach(hci);
 

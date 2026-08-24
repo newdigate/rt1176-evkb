@@ -191,6 +191,13 @@ grep -q "^bt_fw_source=synthetic[[:space:]]*$" "$OUT" \
 # the driver.  Everything the DRIVER controls is pinned exactly.
 grep -qE "^bt_fw_download=ok chip_id=0x7201 loader_ver=0 start_inds=[1-9][0-9]* chunks=4 sent=1024/1024 max_off=1024 retx=0 crc_err=0 card_err=0x0000[[:space:]]*$" "$OUT" \
     || fail "[fwdnld] the download did not complete cleanly with the expected accounting"
+# ★ The RAW reset fired immediately after the download, before any other code
+# runs, must be ANSWERED here.  This is the exact assertion silicon fails: on
+# the bench the same build, after an equally complete download, gets n=0.
+# Pinning it here is what makes that silence attributable to the CARD rather
+# than to this firmware -- same code, same path, different answer.
+grep -q "^bt_raw_reset\[0\]: n=7 hex=040E0401030C00[[:space:]]*$" "$OUT" \
+    || fail "[fwdnld] the raw post-download reset was not answered"
 grep -q "^hci_reset=ok attempts=1 " "$OUT" || fail "[fwdnld] HCI did not start after the download"
 grep -q "^bd_addr=11:22:33:44:55:66[[:space:]]*$" "$OUT" || fail "[fwdnld] HCI did not work after the download"
 [ "$PEER_RC" -eq 0 ] || fail "[fwdnld] peer exited $PEER_RC -- it verifies the served bytes, so this is the driver"
