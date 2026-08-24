@@ -813,6 +813,8 @@ static void reportProbe() {
         Serial1.print(iw416_fw_len);
         Serial1.print(" chunks=");
         Serial1.print(iw416.chunksSent());
+        Serial1.print(" max_pause_ms=");
+        Serial1.print(iw416.maxPauseMs());
         Serial1.print(" last_req=");
         Serial1.print(iw416.lastRequest());
         Serial1.print(" fw_status=0x");
