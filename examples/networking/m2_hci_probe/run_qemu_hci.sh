@@ -189,7 +189,9 @@ grep -q "^bt_fw_source=synthetic[[:space:]]*$" "$OUT" \
 # preamble and repeats until heard -- exactly as the real card repeats.  How
 # many land before the loader drains its ring is a property of that race, not of
 # the driver.  Everything the DRIVER controls is pinned exactly.
-grep -qE "^bt_fw_download=ok chip_id=0x7201 loader_ver=0 start_inds=[1-9][0-9]* chunks=4 sent=1024/1024 max_off=1024 retx=0 crc_err=0 card_err=0x0000[[:space:]]*$" "$OUT" \
+# presync= is not pinned either, for the same reason as start_inds=: it counts
+# debris from greetings the firmware was not yet listening for.
+grep -qE "^bt_fw_download=ok chip_id=0x7201 loader_ver=0 start_inds=[1-9][0-9]* chunks=4 sent=1024/1024 max_off=1024 retx=0 crc_err=0 card_err=0x0000 cfg_resends=0 cfg_unexp_len=0 presync=[0-9]+[[:space:]]*$" "$OUT" \
     || fail "[fwdnld] the download did not complete cleanly with the expected accounting"
 # ★ The RAW reset fired immediately after the download, before any other code
 # runs, must be ANSWERED here.  This is the exact assertion silicon fails: on

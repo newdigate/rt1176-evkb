@@ -237,6 +237,19 @@ static void btFirmwareDownload() {
     // the bootloader's frames.
 #if defined(HAVE_IW416_BT_FW)
     btLoader.setImage(iw416_bt_fw, iw416_bt_fw_len);
+#if defined(M2_BT_INJECT_UART_CFG)
+    // HYPOTHESIS UNDER TEST (2026-08-24): the download completes perfectly and
+    // the controller then says nothing.  NXP's loader always writes a block of
+    // UART registers -- clock divisors, MCR/ICR/FCR and a re-init trigger -- as
+    // a type-5 header injected ahead of the image, whenever it changes baud.
+    // We change no baud, so this passes the CURRENT rate's divisors: it tests
+    // ONLY whether the card needs that register block written before its
+    // firmware will run.
+    btLoader.enableUartConfig(BtFwLoader::CLKDIV_115200, BtFwLoader::UARTDIV_115200);
+    Serial1.println("bt_uart_cfg=injected");
+#else
+    Serial1.println("bt_uart_cfg=off");
+#endif
     s_btFwSt = btLoader.run(3000, 500, 30000, idleMs);
 #if defined(BT_FW_IS_SYNTHETIC)
     // Loud on purpose: this build is for QEMU and the image is NOT NXP firmware.
@@ -256,6 +269,9 @@ static void btFirmwareDownload() {
     Serial1.print(" retx=");        Serial1.print(btLoader.retransmits());
     Serial1.print(" crc_err=");     Serial1.print(btLoader.crcErrors());
     Serial1.print(" card_err=0x");  printHex16(btLoader.lastCardErr());
+    Serial1.print(" cfg_resends="); Serial1.print(btLoader.cfgHdrResends());
+    Serial1.print(" cfg_unexp_len="); Serial1.print(btLoader.cfgUnexpectedLen());
+    Serial1.print(" presync="); Serial1.print(btLoader.preSyncSkipped());
     Serial1.println();
     // Request trace: the shape of the download, which is where a subtly wrong
     // one shows itself (a length that never changes, an offset that stops

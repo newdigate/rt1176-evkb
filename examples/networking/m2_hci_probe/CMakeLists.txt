@@ -97,6 +97,14 @@ else()
     add_definitions(-DHAVE_IW416_BT_FW=1 -DBT_FW_IS_SYNTHETIC=1)
 endif()
 
+# Bring-up switch for the 2026-08-24 hypothesis: inject the bootloader's
+# UART-configuration block ahead of the image.  Off by default -- it changes
+# what goes on the wire, so it must be asked for.
+option(M2_BT_INJECT_UART_CFG "Inject the V3 UART-config block before the BT image" OFF)
+if(M2_BT_INJECT_UART_CFG)
+    add_definitions(-DM2_BT_INJECT_UART_CFG=1)
+endif()
+
 teensy_add_executable(m2_hci_probe m2_hci_probe.cpp ${M2_FW_SRC} ${M2_BT_FW_SRC})
 teensy_target_link_libraries(m2_hci_probe cores M2Radio)
 target_include_directories(m2_hci_probe.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
