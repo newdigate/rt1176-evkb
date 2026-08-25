@@ -87,6 +87,16 @@ next session does not re-run any of them.
 > **It cannot serve as the independent platform it was brought in to be**, and
 > further work there needs a scope on J8.22/J8.56, not more firmware.
 >
+> ### ✅ The vendor case is FILED — u-blox **CA-276115** (2026-08-25)
+>
+> Submitted through the u-blox portal. The write-up is
+> `docs/m2-maya-w161-support-case.md`; nothing was attached, so if they ask for
+> logs the file to send is
+> `examples/networking/m2_hci_probe/transcript_hw_evkb.txt`.
+> **Check for a reply before repeating any experiment** — question 3 (does the
+> combo image bring BT up on this module?) and question 6 (a known-good
+> reference capture) are the two whose answers would change what to do next.
+>
 > ### So §9 stands: the USB dongle
 >
 > Every host-side and configuration-level explanation is eliminated. Only

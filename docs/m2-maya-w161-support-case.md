@@ -4,6 +4,15 @@
 measurement from this board, not an estimate. Full logs:
 `examples/networking/m2_hci_probe/transcript_hw_evkb.txt`.
 
+> ## ✅ FILED WITH u-blox — case **CA-276115**, 2026-08-25
+>
+> Submitted through the u-blox portal's Contact Customer Support form. The
+> portal's fields map onto this document as: Subject → §1, Related Products and
+> Pre-setup Conditions → §2 and the rework note in §6, Detailed Steps to
+> Reproduce → §8, Expected/Actual Test Results → §1 and §5, with §6's eliminated
+> hypotheses and §7's six questions carried into Actual Test Results.
+> **Nothing was attached** — the silicon transcript stayed local.
+
 ---
 
 ## 1. Summary
