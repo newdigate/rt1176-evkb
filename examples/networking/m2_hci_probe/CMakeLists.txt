@@ -97,6 +97,21 @@ else()
     add_definitions(-DHAVE_IW416_BT_FW=1 -DBT_FW_IS_SYNTHETIC=1)
 endif()
 
+# ★ WHICH FIRMWARE PATH.  The two are ALTERNATIVES, not additions -- measured
+# 2026-08-24: after a BT-only UART download the WLAN SDIO download fails
+# (fw_status=0x0), matching NXP's own #ifdef CONFIG_BT_IND_DNLD / #else.
+#   ON  (default) -- the BT-only V3 UART download this tree built in BT-1.
+#   OFF           -- u-blox's documented path (MAYA-W1 SIM UBX-21010495 R09
+#                    s4.4.3): the COMBO image goes over SDIO and carries BOTH
+#                    radios, with no BT UART download at all.  Then attach HCI
+#                    -- at 3 Mbaud, per s4.4.6.
+# Default ON so every gate and every existing build is byte-identical.
+option(M2_BT_UART_DNLD "Run the BT-only V3 UART firmware download (OFF = u-blox's combo-over-SDIO path)" ON)
+if(NOT M2_BT_UART_DNLD)
+    message(STATUS "BT firmware path: COMBO over SDIO (BT UART download skipped)")
+    add_definitions(-DM2_BT_NO_UART_DNLD=1)
+endif()
+
 # Bring-up switch for the 2026-08-24 hypothesis: inject the bootloader's
 # UART-configuration block ahead of the image.  Off by default -- it changes
 # what goes on the wire, so it must be asked for.

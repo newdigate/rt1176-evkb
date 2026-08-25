@@ -190,6 +190,19 @@ fourteen real timeouts — a counter reading zero where the failures were real i
 worse than no counter, since it reads as a healthy idle link.
 DEMONSTRATED RED three ways (sweep claiming every rate; bases removed; sweep
 made unconditional), each failing by name — quoted in the gate headers.
+★ **RUN ON SILICON 2026-08-25 AND REFUTED**, in three bench runs (u-blox's
+combo-over-SDIO path; the BT-only UART download; that download with CTS
+asserted in the corrected order): `bt_baud=none tried=4` every time.
+★ **The negative is worth more than the hypothesis was.** A controller talking
+at an unmatched rate gives FRAMING faults — garbage sampled at the wrong
+phase. Four rates gave `framing=0` and zero bytes, so the card transmits
+NOTHING after a fully successful download, rather than "nothing we could
+decode". Keep the sweep anyway: it is cheap, gated, and it is what made that
+distinction visible.
+★ `M2_BT_UART_DNLD` (default ON) selects the firmware path — OFF takes
+u-blox's combo-over-SDIO route instead of the BT-only UART download. The two
+are ALTERNATIVES: measured, a BT UART download leaves the later WLAN SDIO
+download at `fw_download=cmd-timeout`.
 
 ★ **Two real driver bugs were found by these gates, not by review** — both the
 same disease, and worth knowing because the symptom is silence rather than a

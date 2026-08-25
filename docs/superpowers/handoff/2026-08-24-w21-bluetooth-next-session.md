@@ -4,11 +4,11 @@
 it works; the card does not. Five days of hypotheses are recorded here so the
 next session does not re-run any of them.
 
-> ★ **The single most useful sentence in this file** (revised 2026-08-25):
-> everything on the host side is finished and proven, and the next thing to try
-> is **3 Mbaud** — the rate u-blox's own procedure attaches this controller at,
-> and the one rate no probe here ever used. The USB-dongle recommendation below
-> stands only if that fails.
+> ★ **The single most useful sentence in this file** (final, 2026-08-25):
+> everything on the host side is finished and proven; the 3 Mbaud idea was
+> built, gated and **run on silicon, and it is refuted** — the card transmits
+> *nothing* after a fully successful firmware download, at any of four rates,
+> with or without flow control. The **USB dongle** is the recommendation again.
 
 ---
 
@@ -34,9 +34,20 @@ next session does not re-run any of them.
 >   story is that NXP's rework guide lists five changes and we did two, and
 >   the documented operating rate was never tried.
 >
-> `m2_hci_probe` now escalates through 3000000/921600/460800/115200 when
-> 115200 fails, and both gates assert the sweep. **Not yet run on silicon** —
-> that is the next session's first job, and it is a bench run, not a build.
+> `m2_hci_probe` escalates through 3000000/921600/460800/115200 when 115200
+> fails, and both gates assert the sweep.
+>
+> **RUN ON SILICON THE SAME DAY — REFUTED.** Three bench runs: u-blox's combo
+> path, the BT-only UART download, and that download with CTS asserted in the
+> corrected order. All three: `bt_baud=none tried=4`, `framing=0`.
+> ★ **And that is a better negative than the one we had.** A controller talking
+> at an unmatched rate would give FRAMING faults; four rates gave zero bytes
+> and zero framing faults, so the card transmits *nothing at all* after the
+> download — not "nothing we could decode". The flow-control hypothesis is now
+> refuted properly too (CON[7] sampled correctly). Hypotheses 1, 5 and 6 are
+> dead; only "wrong image" (weakened) and "secure boot" survive.
+> **So §9 stands: the dongle.** Full account in the example's
+> `transcript_hw_evkb.txt`, final section.
 
 
 ## 1. What exists now (all merged, all green)

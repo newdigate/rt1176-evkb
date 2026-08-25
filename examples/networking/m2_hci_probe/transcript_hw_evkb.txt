@@ -824,3 +824,78 @@ ALSO SETTLED BY THESE DOCUMENTS, so nobody re-derives them
     note it collides with LPSPI1 SCK on the Arduino header.
   * Card VIO defaults to 1.8 V, which is why U354/U355 exist on the EVKB.
     Already understood and already handled -- not a fault.
+
+=====================================================
+THE BAUD SWEEP RUN ON SILICON -- 2026-08-25 -- REFUTED
+=====================================================
+
+Three runs on the bench, same board, same card, same session.  Flashed
+VCOM-free each time (load + verify), console attached afterwards, reset by
+hand.  ★ The B and C captures lost their first few lines to the reset -- the
+banner through bt_cts -- so the CTS build was confirmed from the ELF instead
+(`strings build-silC/... | grep asserted_after_reset` = 1, build-silB = 0,
+CMakeCache M2_BT_ASSERT_CTS ON vs OFF).
+
+A. u-blox's OWN PATH: combo image over SDIO, no BT UART download
+   (-DM2_BT_UART_DNLD=OFF, combo blob supplied)
+
+    bt_fw_source=combo_over_sdio
+    bt_fw_download=skipped (combo-over-SDIO path)
+    sdio_begin=ok / iw416_begin=ok / fw_download=ok / card=1
+    hci_reset=timeout reason=no_response attempts=10 timeouts=9 framing=1
+    bt_baud_try=3000000  st=no_response
+    bt_baud_try=921600   st=no_response
+    bt_baud_try=460800   st=no_response
+    bt_baud_try=115200   st=no_response
+    bt_baud=none tried=4
+
+   ★ framing=1, where every earlier run recorded framing=0.  Serial2 is opened
+   BEFORE the card is powered, so the BT ROM's power-up greeting lands in the
+   ring and nothing consumes it here (the loader never runs); the first HCI
+   attempt drains it and 0xAB is not a valid H4 packet type.  Run B confirms
+   that reading -- there the loader DOES consume the greeting (start_inds=2)
+   and framing is 0.  ★ It says only that the ROM greeted at power-up, which
+   happens BEFORE any SDIO work; it is NOT evidence about what the combo
+   download did afterwards.
+
+B. THE BT-ONLY UART DOWNLOAD, then the sweep
+
+    bt_fw_download=ok chip_id=0x7201 loader_ver=0 start_inds=2 chunks=142
+                   sent=131856/131840 max_off=131840 retx=1 crc_err=0 presync=1
+    bt_post_dnld[0..3]: n=0    bt_raw_reset[0..2]: n=0
+    hci_reset=timeout ... timeouts=10 framing=0
+    bt_baud_try=3000000/921600/460800/115200 -- all st=no_response, framing=0
+    bt_baud=none tried=4
+
+C. AS B, PLUS CTS ASSERTED -- and this time in the RIGHT ORDER
+   (-DM2_BT_ASSERT_CTS=ON, the call now after m2ReleaseWifiReset() so CON[7]
+   is sampled as 1 and the module boots its documented configuration)
+
+    byte-for-byte the same as B: bt_baud=none tried=4, framing=0 throughout.
+
+WHAT THIS SETTLES
+
+  * **The baud hypothesis is REFUTED.**  A whole firmware image lands (142
+    chunks, a real CRC retransmit recovered) and the controller then answers
+    nothing at 3 Mbaud, 921600, 460800 or 115200, on EITHER firmware path.
+  * **The flow-control hypothesis is REFUTED PROPERLY this time**, with CON[7]
+    sampled correctly.  The 2026-08-24 test reached the same answer for a
+    reason that did not hold; this one holds.
+  * ★ **It is not a rate mismatch at all, and the counters say so.**  A
+    controller talking at a rate we were not listening at would give FRAMING
+    faults -- garbage sampled at the wrong phase.  We got framing=0 and n=0 at
+    four different rates.  The card transmits NOTHING after the download.  That
+    is a stronger and more useful statement than "no reply at 115200", which is
+    all the record held before.
+
+WHERE THAT LEAVES THE PROGRAMME
+
+  Hypotheses 1 (UART-config block), 5 (flow control) and 6 (wrong baud) are all
+  refuted on silicon.  2 (wrong image) is weakened by the SIM but not closed.
+  4 (secure boot / signature) remains, and remains untestable from the host.
+  With NXP's own EdgeFast a2dp_source failing identically on this board, the
+  USB-dongle route is restored as the recommendation: USBHost_t36 already has
+  HCI-over-USB, L2CAP and SDP, all MIT.
+  ★ The sweep stays in the tree regardless.  It is cheap, it is gated, and it
+  converts "we never tried" into a measured negative -- which is what made the
+  no-transmission finding above visible at all.

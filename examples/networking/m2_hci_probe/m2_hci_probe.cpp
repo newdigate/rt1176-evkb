@@ -285,6 +285,15 @@ static void m2AssertBtCts() {
 // The BT-only UART firmware download.  Called immediately after the card is
 // powered up and BEFORE any SDIO work -- see the ordering note in setup().
 static void btFirmwareDownload() {
+#if defined(M2_BT_NO_UART_DNLD)
+    // u-blox's path: the combo image over SDIO carries the BT core too, so
+    // there is nothing to download here.  Printed rather than silent -- a
+    // missing download must never be mistaken for a failed one.
+    Serial1.println("bt_fw_source=combo_over_sdio");
+    Serial1.println("bt_fw_download=skipped (combo-over-SDIO path)");
+    s_btFwSt = BtFwLoader::NO_IMAGE;
+    return;
+#else
     // ★ THE BT CORE DOES NOT COME UP FROM THE SDIO COMBO DOWNLOAD.  Measured
     // on silicon 2026-08-23: that download stops 8,776 bytes short and no HCI
     // command is ever answered; the core sits in its own UART bootloader
@@ -401,6 +410,7 @@ static void btFirmwareDownload() {
     Serial1.println("bt_fw_source=none");
     Serial1.println("bt_fw_download=skipped (no image compiled in)");
 #endif
+#endif  // M2_BT_NO_UART_DNLD
 
 }
 
