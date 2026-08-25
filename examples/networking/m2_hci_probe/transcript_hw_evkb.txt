@@ -1541,3 +1541,40 @@ dispatch subcommands at all in this configuration.
 tree ships `a2dp_source` and `a2dp_sink` for `evkcmimxrt1060`, and those
 initialise the stack AT STARTUP with no shell interaction -- so they exercise
 exactly the path `bt init` would, without needing the broken dispatch.
+
+=====================================================
+NXP'S a2dp_source ON THE 1060 -- SAME SHAPE, DIFFERENT STAGE -- 2026-08-25
+=====================================================
+
+Built `examples/edgefast_bluetooth_examples/a2dp_source` for `evkcmimxrt1060`
+(IW416 + board_murata_1xk_m2, `--config flexspi_nor_debug`, armgcc), flashed to
+the MIMXRT1060-EVKB with R345/R96 bridged.  Chosen because it initialises the
+stack AT STARTUP and so sidesteps the older shell's broken subcommand dispatch.
+
+    Bluetooth A2dp Source demo start...
+                                        <-- nothing, 40 s
+
+CPU over SWD with the console detached: `DHCSR 0x01010001` (running; S_HALT and
+S_LOCKUP clear), `CFSR 0`, `HFSR 0`.  Alive and blocked, not crashed -- the same
+reading both EdgeFast examples gave on the 1170.
+
+★★ THE SYMPTOM IS IDENTICAL AND THE STAGE IS NOT, and conflating them would be
+the easy mistake here:
+
+    1170   card greets, whole 131,840-byte image lands, ROM leaves the loader,
+           THEN the controller never answers        -> fails AFTER the download
+    1060   card never greets at all (start_inds=0, measured by our own probe in
+           the same session)                        -> fails BEFORE the download
+
+So this run does NOT reproduce the 1170 fault on a second board.  It shows that
+NXP's stack cannot bring Bluetooth up on the 1060 either -- which was already
+implied, since no stack can download firmware to a card that never announces
+itself.  It adds one thing worth having: **an independent confirmation, using
+only NXP's software, that the 1060 setup is not yet functional.**  Our own probe
+and their binary agree.
+
+WHAT IT IS GOOD FOR: it removes "our port is wrong" as an explanation for the
+1060 silence.  Two independent codebases -- ours on LPUART3 via Serial2, theirs
+via their own board files -- both get nothing from the card on this board, while
+the same card works on the 1170.  The remaining candidates are all physical, and
+a scope on J8.22 / J8.56 remains the instrument that would settle them.
