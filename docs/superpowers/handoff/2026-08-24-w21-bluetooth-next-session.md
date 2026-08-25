@@ -12,42 +12,65 @@ next session does not re-run any of them.
 
 ---
 
-> ## ★★ SUPERSEDED IN PART — read this first (2026-08-25)
+> ## ★★ CURRENT STATE — 2026-08-25, read this before anything below
 >
-> The u-blox documents for this exact card were read after this handoff was
-> written, and they change the conclusion:
+> This block replaces an earlier one that had accreted in layers and ended up
+> contradicting itself. Everything below in the body still reads as it did when
+> written; where it disagrees with this block, this block wins.
 >
-> * **u-blox attach this module's controller at 3 Mbaud**, not at 115200
->   (MAYA-W1 SIM UBX-21010495 R09 §4.4.6: `hciattach … any 3000000 flow`,
->   after §4.4.3's **combo** image `sdiouartiw416_combo_v0.bin` has gone over
->   SDIO). **Every probe described below used 115200 only.** A controller at
->   3 Mbaud decodes nothing sent at 115200, so it never answers — which is
->   precisely the `n=0 framing=0` silence this handoff calls unexplained.
-> * The **flow-control refutation is withdrawn**: that test drove CTS low
->   *before* the PDn release, and §2.4.5 Table 6 makes `UART_CTSn` the
->   configuration pin CON[7], sampled at reset and required to be 1. It
->   latched a Reserved configuration, so its null result proves nothing.
-> * **"Pulse BT_RST to start the downloaded firmware" is dead**: §2.4.2 says a
->   firmware download is required after *each* reset, so a reset discards the
->   image rather than starting it.
-> * Therefore **the USB-dongle recommendation in §9 is demoted**. The likelier
->   story is that NXP's rework guide lists five changes and we did two, and
->   the documented operating rate was never tried.
+> **Since this handoff was written, five more hypotheses were tested on silicon
+> and every one of them failed.** The conclusion is unchanged but far better
+> supported, and the fault is now narrowly located.
 >
-> `m2_hci_probe` escalates through 3000000/921600/460800/115200 when 115200
-> fails, and both gates assert the sweep.
+> ### What was tested and refuted
 >
-> **RUN ON SILICON THE SAME DAY — REFUTED.** Three bench runs: u-blox's combo
-> path, the BT-only UART download, and that download with CTS asserted in the
-> corrected order. All three: `bt_baud=none tried=4`, `framing=0`.
-> ★ **And that is a better negative than the one we had.** A controller talking
-> at an unmatched rate would give FRAMING faults; four rates gave zero bytes
-> and zero framing faults, so the card transmits *nothing at all* after the
-> download — not "nothing we could decode". The flow-control hypothesis is now
-> refuted properly too (CON[7] sampled correctly). Hypotheses 1, 5 and 6 are
-> dead; only "wrong image" (weakened) and "secure boot" survive.
-> **So §9 stands: the dongle.** Full account in the example's
-> `transcript_hw_evkb.txt`, final section.
+> | # | hypothesis | verdict |
+> |---|---|---|
+> | 6 | **Wrong baud** — u-blox attach at 3 Mbaud (SIM §4.4.6), we only ever used 115200 | **refuted** — 3M/921600/460800/115200, `framing=0` and zero bytes at all four |
+> | 5 | **Hardware flow control** | **refuted properly** — the first test drove CTS low across the PDn release, latching `CON[7]=0` (a Reserved config, SIM §2.4.5 Table 6); re-run with correct ordering, no change |
+> | 7 | **Missing boot-sleep wake** — NXP call `wakeUpControllerFromBootSleep()` *before* the download: 10 ms LOW on `GPIO_DISP_B2_13`, mux returned to `LPUART2_RTS_B` | **refuted** — implemented; the card *reacts* (`start_inds` 2→3, the only behavioural change we ever produced) and the outcome is identical |
+> | 3 | **Combo needs both images** | **superseded** — the combo *contains* both (verified via embedded build IDs), and separately: it does **not** bring Bluetooth up (below) |
+> | — | **Downloads are "alternatives"** | **refuted** — that was the *wrong Wi-Fi image*; see below |
+>
+> ### Two findings that changed the picture
+>
+> **The combo image over SDIO does not bring up Bluetooth on this card.** Dumped
+> in bytes, not inferred: with the combo loaded and Wi-Fi running (`card=1`), the
+> BT UART emits a *fourth* `AB 01 72 00 47` — a fresh ROM start indication. The
+> BT core is still in its bootloader. That contradicts NXP's
+> `controller_wifi_nxp.c` and u-blox's own §4.4.3/§4.4.6 procedure, and it
+> vindicates BT-1's pivot to the UART download.
+>
+> **NXP's real pairing is one image per bus, and we had it wrong.** With
+> `CONFIG_BT_IND_DNLD` set, `wlan_bt_fw.h` swaps the combo for **both**
+> `sdIW416_wlan.h` *and* `uartIW416_bt.h`. Measured: after a BT UART download,
+> the **combo** over SDIO fails (`cmd-timeout, card=0`) but the **WLAN-only**
+> image succeeds (`ok, card=1`). They are two halves of one mode.
+> ★ **Pair `M2_BT_UART_DNLD=ON` with `sdIW416_wlan.bin`, never the combo.**
+>
+> ### Where the fault is
+>
+> With both radios correctly provisioned — Wi-Fi running, BT firmware accepted,
+> ROM loader **exited** (no re-greet, unlike the combo path) — Bluetooth still
+> answers nothing at any rate.
+>
+> **The failure is after the jump**: between accepting a CRC-validated image and
+> running a working HCI controller. Not transport (proven bidirectional), not
+> delivery (142 chunks, a real retransmit recovered), not arrival (the ROM stops
+> asking, which it only does once it has what it wants — and the combo path shows
+> us what *rejection* looks like: it keeps announcing).
+>
+> ★ `CONFIG_BT_IND_DNLD` was **already set** in our EdgeFast build — auto-selected
+> by Kconfig, verified by reading the generated config. So NXP's own stack used
+> the same path and the same image and failed the same way. That strengthens the
+> exoneration rather than weakening it.
+>
+> ### So §9 stands: the USB dongle
+>
+> Every host-side and configuration-level explanation is eliminated. Only
+> **secure boot / signature rejection** survives, and it is untestable from the
+> host. This is now a vendor support case, not a debugging problem — and it is a
+> well-scoped one. Full account: `examples/networking/m2_hci_probe/transcript_hw_evkb.txt`.
 
 
 ## 1. What exists now (all merged, all green)

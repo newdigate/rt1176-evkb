@@ -585,6 +585,26 @@ firmware image. A core held in reset does neither. Its only remaining use is
 resetting Bluetooth *without* a PDn cycle, which would otherwise take Wi-Fi
 down too.
 
+★★ **J54 PIN 36 HAS THREE ROLES, and confusing them has cost this project
+time.** The same pad — `GPIO_DISP_B2_13`, MCU ball A5, net `BT_UART_RTS`,
+also `ETHPHY_RST_B` via the fitted `R1866` — is:
+  1. the card's **UART CTS input** in normal operation (ALT3 = `LPUART2_RTS_B`);
+  2. the configuration pin **`CON[7]`**, sampled at module reset, "Reserved set
+     to 1" — so driving it low across a PDn release latches a Reserved
+     configuration;
+  3. NXP's **boot-sleep wake trigger**: their `fw_loader_uart.c` calls
+     `wakeUpControllerFromBootSleep()` from `uart_fw_download()`, *before* the
+     image, re-muxing this pad to GPIO (ALT10 = `GPIO11_IO14`; ALT5 =
+     `GPIO5_IO14` reaches the same pin through the normal instance), driving it
+     **LOW for 10 ms**, then returning it to `LPUART2_RTS_B`.
+★ Implemented as `M2_BT_WAKE_PULSE` (default ON) in `networking/m2_hci_probe`.
+The card demonstrably reacts — it greets an extra time (`start_inds` 2→3) —
+which is the only behavioural change this programme has ever produced on it.
+It does not fix the silence.
+★ And note the unavoidable side effect: `R1866` ties this net to
+`ETHPHY_RST_B`, so any use of roles 2 or 3 also resets the gigabit PHY.
+Harmless in a Bluetooth probe, not in an Ethernet example.
+
 ★ **`UART_CTSn` (pin 36) and `UART_RTSn` (pin 34) are CONFIGURATION PINS**
 sampled at module reset — `CON[7]` and `CON[8]`, both "Reserved set to 1"
 (§2.4.5 Table 6) — and only become UART signals ~1 ms later. **Driving CTS low
@@ -605,5 +625,11 @@ one image, both radios — and §4.4.6 attaches Bluetooth with
 was tested on this board on 2026-08-25 and **refuted**: after a fully
 successful firmware download the card answers nothing at 3 M, 921600, 460800 or
 115200, with `framing=0` throughout — so it transmits nothing at all, rather
-than something we could not decode. See
+than something we could not decode.
+★ **And the combo image does NOT bring Bluetooth up on this card** — dumped in
+bytes, not inferred: with the combo loaded and Wi-Fi running (`card=1`), the BT
+UART emits a fresh ROM start indication (`AB 01 72 00 47`). The BT core is
+still in its bootloader. NXP's real pairing for this mode is one image per bus
+— `sdIW416_wlan.bin` over SDIO **plus** `uartIW416_bt.bin` over UART — and with
+that pairing both downloads succeed. See
 `examples/networking/m2_hci_probe/transcript_hw_evkb.txt`.

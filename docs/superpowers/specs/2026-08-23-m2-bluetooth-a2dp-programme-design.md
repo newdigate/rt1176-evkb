@@ -13,10 +13,28 @@
 > measured on silicon (`framing=0` and zero bytes at every rate, so it is not a
 > decode failure).
 >
-> **NXP's own EdgeFast `a2dp_source`, built for this board, fails identically.**
-> Refuted on silicon: the UART-config block, hardware flow control, and the
-> baud rate. Weakened: "wrong image". Surviving and untestable from the host:
-> secure boot / signature.
+> **NXP's own EdgeFast `a2dp_source`, built for this board, fails identically** —
+> and its `CONFIG_BT_IND_DNLD` was already set (auto-selected by Kconfig,
+> verified by reading the generated config), so it used the same independent
+> UART path with the same image.
+>
+> Refuted on silicon: the UART-config block, hardware flow control (re-tested
+> with `CON[7]` sampled correctly), the baud rate (four rates, `framing=0`), and
+> NXP's boot-sleep wake pulse (implemented; the card *reacts* — `start_inds`
+> 2→3 — and the outcome is unchanged). Weakened: "wrong image". Surviving and
+> untestable from the host: secure boot / signature.
+>
+> ★ **Two corrections worth carrying into any future plan.** The combo image
+> over SDIO does **not** bring Bluetooth up on this card — measured in bytes:
+> the BT core emits a fresh ROM start indication after the combo download
+> succeeds. And the two downloads are **not** alternatives; that was the wrong
+> Wi-Fi image. `CONFIG_BT_IND_DNLD` pairs `sdIW416_wlan.bin` over SDIO with
+> `uartIW416_bt.bin` over UART, and with that pairing **both succeed**.
+>
+> ★ **The fault is after the jump**: between accepting a CRC-validated image and
+> running a working controller. The ROM stops asking once it has the image
+> (the combo path shows what rejection looks like — it keeps announcing), so
+> delivery, transport and arrival are all proven.
 >
 > **The recommended route is a USB Bluetooth dongle** — `USBHost_t36` already
 > carries HCI-over-USB, L2CAP and SDP under MIT. The layering below (§'s on
