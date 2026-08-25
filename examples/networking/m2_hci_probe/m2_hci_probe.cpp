@@ -634,7 +634,11 @@ static void btBaudSweep() {
 void setup() {
     CONSOLE.begin(115200);
     delay(50);
+    #if defined(ARDUINO_MIMXRT1060_EVKB)
+    CONSOLE.println("RT1062 M.2 HCI probe up (MIMXRT1060-EVKB, LPUART3)");
+#else
     CONSOLE.println("RT1176 M.2 HCI probe up");
+#endif
 
     // ★ ORDER IS LOAD-BEARING, and getting it wrong is silent.
     // The BT core greets ONCE per power-up -- it sent its V3 start indication
@@ -657,7 +661,11 @@ void setup() {
     // NXP's position for this: inside uart_fw_download(), before the image.
 #if defined(M2_BT_WAKE_PULSE)
     m2WakeFromBootSleep();
+    #if defined(ARDUINO_MIMXRT1060_EVKB)
+    CONSOLE.println("bt_wake=pulsed_10ms_low (GPIO_AD_B0_02, released as input)");
+#else
     CONSOLE.println("bt_wake=pulsed_10ms_low (GPIO_DISP_B2_13, mux returned to LPUART2_RTS_B)");
+#endif
 #else
     CONSOLE.println("bt_wake=off");
 #endif

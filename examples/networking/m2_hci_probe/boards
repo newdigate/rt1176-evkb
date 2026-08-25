@@ -7,8 +7,15 @@
 # go red for a reason that has nothing to do with Bluetooth.  The rt1062 build
 # is a BENCH configuration, driven by hand, until it has a gate written for it.
 #
-# ★ AND THE rt1062 BENCH RUN NEEDS A HARDWARE REWORK FIRST -- see
-# docs/m2-evkb-revc3.md: R345 is DNP on the MIMXRT1060-EVKB RevB1, so
-# GPIO_AD_B1_03 never reaches WL_RST# and the module is never released from
-# reset.  Measured 2026-08-25: start_inds=0, chip_id=0x0000.
+# ★ AND THE rt1062 BENCH RUN NEEDS TWO HARDWARE REWORKS FIRST, both DNP on the
+# MIMXRT1060-EVKB RevB1:
+#   R345 -- GPIO_AD_B1_03 -> WL_RST# -> J8.56 (PDn).  Without it the module
+#           cannot be power-cycled, so its once-per-power-up ROM greeting can
+#           never be caught.  BRIDGED 2026-08-25.
+#   R96  -- the CARD->MCU direction: J8.22 -> R18 -> U10 (level shifter) ->
+#           R96 -> BT_UART_RXD -> R200 -> GPIO_AD_B1_07.  R200 is fitted and
+#           only joins the MCU to an internal net; R96 is what joins that net
+#           to the card, and it is NOT fitted.  STILL OPEN.
+# Measured with R345 alone: start_inds=0, chip_id=0x0000 -- the MCU can
+# transmit to the card and cannot hear it, exactly the pre-R1901 1170 state.
 rt1176

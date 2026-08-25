@@ -1214,6 +1214,13 @@ netlist, not assumed:
 Both populated from the factory.  The 1170 needed R1901 bridged by hand for the
 card->MCU direction; the 1060 ships it.
 
+★★ **THAT PARAGRAPH IS WRONG AND IS CORRECTED BELOW (2026-08-25).**  I traced
+BT_UART_RXD -> R200 -> the MCU, saw R200 fitted, and STOPPED -- without
+following the OTHER side of that net.  The card->MCU path does not end at R200;
+R200 only joins the MCU to an internal net, and what joins that net to the CARD
+is R96, which is DNP.  The 1060 needs the same class of rework as the 1170
+after all.  Full chain under "R96" below.
+
 RESULT ON SILICON -- the card never greets:
 
     bt_fw_source=nxp
@@ -1251,3 +1258,49 @@ would want removing, which is presumably what NXP's own wifi examples assume.
 STATUS: the port is committed and builds for both boards; the rt1062 half is a
 BENCH configuration, not gated (see the `boards` sidecar for why).  The
 module-versus-board question remains OPEN until R345 is bridged.
+
+=====================================================
+R345 BRIDGED -- STILL SILENT, AND THE REAL BLOCKER IS R96 -- 2026-08-25
+=====================================================
+
+R345 was bridged by hand.  Re-run on the MIMXRT1060-EVKB, clean capture (the
+port held open across a button reset -- an earlier attempt opened the port
+mid-boot and got corrupt bytes, which is a capture artefact, not a wire fault):
+
+    RT1062 M.2 HCI probe up (MIMXRT1060-EVKB, LPUART3)
+    bt_fw_download=no_start_indication chip_id=0x0000 start_inds=0
+    bt_baud=none tried=4
+
+Still no greeting.  The schematic says why, and it is a MISTAKE OF MINE that
+this was not found first time.
+
+★★ **I REPORTED "no rework needed" ON THIS BOARD, AND THAT WAS WRONG.**  The
+error was stopping a trace one hop early.  The full card->MCU chain is:
+
+    J8.22 (card UART_TXD)
+      -> R18   FITTED   -> BT_UART_RXD_1V8 -> U10.4      (level shifter, 1V8)
+      -> U10.20                            -> N102163737
+      -> R96   **DNP**                     -> BT_UART_RXD
+      -> R200  FITTED                      -> GPIO_AD_B1_07 = LPUART3_RX
+
+R200 is fitted, which is what I checked; it joins the MCU to an internal net.
+**R96 is what joins that net to the card, and it is not fitted.**  So the card's
+transmissions reach the level shifter and stop there.  The MCU can transmit to
+the card (R189/R33/U9 all fitted) but can never hear it -- exactly the state the
+1170 was in before R1901 was bridged.
+
+WHAT R345 DID ACHIEVE, so it was not wasted: the reset chain is now complete --
+
+    GPIO_AD_B1_03 -R345(bridged)- WL_RST# -R89- N102163822 -R82- J8.56 (PDn)
+                                                  |-R81- WL_3V3   (pull-up)
+                                                  |-C18- GND      (filter)
+
+R89, R81, R82 and C18 are all FITTED.  Note R81 pulls PDn UP to WL_3V3, so the
+module is out of power-down by default -- meaning it greets ONCE at board power
+and long before our firmware is listening.  **The ability to cycle PDn is what
+makes the greeting catchable at all**, so R345 was necessary; it was just not
+sufficient.
+
+NEXT: bridge **R96** (0402) to complete the card->MCU direction.  With R345 and
+R96 both fitted this board should behave exactly like the 1170 -- and then the
+module-versus-board question finally gets its answer.
