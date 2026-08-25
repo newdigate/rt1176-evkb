@@ -1,5 +1,32 @@
 # M.2 Bluetooth on the MIMXRT1170-EVKB — A2DP source and sink, as Audio-library nodes
 
+> ## ★ STATUS 2026-08-25 — READ BEFORE PLANNING FROM THIS DOCUMENT
+>
+> **BT-1 (the HCI transport) is BUILT, GATED AND DONE.** BT-2/3/4 are **blocked
+> on hardware, not on this design.**
+>
+> The M2-MAYA-W161 **never answers HCI**. Everything host-side works: the V3
+> UART firmware download delivers all 131,840 bytes with a real CRC retransmit
+> recovered, and the transport is proven bidirectional against a fake
+> controller. The card then transmits **nothing** — at 3 Mbaud, 921600, 460800
+> or 115200, on either firmware path, with or without flow control, all
+> measured on silicon (`framing=0` and zero bytes at every rate, so it is not a
+> decode failure).
+>
+> **NXP's own EdgeFast `a2dp_source`, built for this board, fails identically.**
+> Refuted on silicon: the UART-config block, hardware flow control, and the
+> baud rate. Weakened: "wrong image". Surviving and untestable from the host:
+> secure boot / signature.
+>
+> **The recommended route is a USB Bluetooth dongle** — `USBHost_t36` already
+> carries HCI-over-USB, L2CAP and SDP under MIT. The layering below (§'s on
+> A2DP/AVDTP/SBC as Audio nodes) is unaffected by that change of transport and
+> is still the design to build against; only the HCI transport underneath it
+> would differ.
+>
+> Full account: `examples/networking/m2_hci_probe/transcript_hw_evkb.txt` and
+> `docs/superpowers/handoff/2026-08-24-w21-bluetooth-next-session.md`.
+
 **Date:** 2026-08-23
 **Hardware:** u-blox `M2-MAYA-W161-00C` (NXP **IW416**) in EVKB socket J54, with
 the two hand bridges (`R1901`, `R404`) fitted on 2026-08-18.
@@ -60,7 +87,13 @@ NXP IW416 (88W8978 lineage): Wi-Fi 4 dual-band **1×1** + dual-mode Bluetooth
 2. **The bring-up sequence is short.** After the combo SDIO download — which
    the Wi-Fi driver already performs — Bluetooth is simply *up* on the UART at
    115200. There is no separate BT download on this path (`CONFIG_BT_IND_DNLD`
-   is the alternative, BT-only-over-UART path, which we do not need). NXP waits
+   is the alternative, BT-only-over-UART path, which we do not need).
+   ★ **THIS ASSUMPTION DID NOT HOLD (2026-08-23, silicon).** Bluetooth was NOT
+   up after the combo download, so BT-1 built the `CONFIG_BT_IND_DNLD` path
+   after all — and it delivers the whole image, and the card is still silent.
+   Both paths have now been tried and neither yields an HCI reply; they are
+   also mutually exclusive (a BT UART download leaves the later WLAN SDIO
+   download at `fw_download=cmd-timeout`). NXP waits
    100 ms plus 60–260 ms, sends vendor opcode **`0xFC09`** (OGF 0x3F, OCF 0x09)
    with the new rate as a 4-byte little-endian parameter, reads a 7-byte
    Command Complete, waits 500 ms and re-opens the UART at the new rate.
@@ -303,10 +336,17 @@ Written after B2's silicon result, per the per-phase-group rule. Fixed now:
   containing `0x7201` = the `hw_version` read independently over SDIO — the
   cross-check that proves the UART is correctly framed), then goes silent, and
   BT_WAKE_HOST never asserts. The combo download also stops 8,776 bytes short
-  of the blob (`sent=402288/411064 last_req=0`), consistent with the image
-  being WLAN + an appended BT part that SDIO never delivers. So **B1 grows a
+  of the blob (`sent=402288/411064 last_req=0`). So **B1 grows a
   UART `firmware_download`** — NXP's `CONFIG_BT_IND_DNLD` path — and that is
-  now the first task of the next phase, not a risk. Evidence:
+  now the first task of the next phase, not a risk.
+  ★ **CORRECTION 2026-08-25:** the words "consistent with the image being WLAN
+  + an appended BT part that SDIO never delivers" stood here and were WRONG.
+  Byte-checked: the combo image neither starts with the WLAN image, nor ends
+  with the BT image, nor contains it. The 279,164 + 131,840 ≈ 411,064
+  arithmetic was a coincidence. The short download is also deliberate on the
+  card's side — widening the idle poll to 15 s left `sent` unchanged. And
+  u-blox's own procedure (SIM §4.4.3) treats the combo image as covering BOTH
+  radios, with no BT-only UART download at all. Evidence:
   `examples/networking/m2_sdio_probe/transcript_hw_evkb.txt` (B0 section) and
   `examples/networking/m2_hci_probe/transcript_hw_evkb.txt`.
 * ~~The manufacturer may read Marvell `0x0048` rather than NXP `0x0025`~~ —

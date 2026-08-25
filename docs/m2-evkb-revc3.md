@@ -270,14 +270,21 @@ Consequences:
   `SENSOR_3V3` through ferrite `L49` (fitted) with no switch anywhere. Physical
   removal of the card is the only isolation.
 
-### 2. The Bluetooth UART is transmit-only as built
+### 2. The Bluetooth UART is transmit-only AS SHIPPED — but this board is reworked
 
-The module→MCU half of the link is **not populated**:
+★ **Read the Status column, not the heading.** `R1901` was bridged by hand on
+2026-08-18 and the link has been bidirectional ever since: 131,840 bytes of V3
+firmware download went across it in both directions on 2026-08-25, with the
+card's own CRC-error retransmit exercised. A doc that still called this half
+"not populated" is what the W20 brief was complaining about, so it is fixed
+here rather than left for the next reader.
+
+The module→MCU half is **DNP from the factory**:
 
 | | Ref | Status | Path |
 |---|---|---|---|
-| RXD | `R1901` | **DNP** | `U355.20` ──╳── `BT_UART_RXD` (`U19.A6`) |
-| CTS | `R1902` | **DNP** | `U355.19` ──╳── `BT_UART_CTS` (`U19.B6`) |
+| RXD | `R1901` | **DNP from factory — BRIDGED BY HAND 2026-08-18, works** | `U355.20` → `BT_UART_RXD` (`U19.A6`) |
+| CTS | `R1902` | **DNP, still open** | `U355.19` ──╳── `BT_UART_CTS` (`U19.B6`) |
 
 TX is fine — `BT_UART_TXD` reaches `U354.4` with no series resistor at all. So
 LPUART2 can transmit to the IW416 and **will never receive a byte back**. An HCI
@@ -548,3 +555,55 @@ Harmless, but worth knowing before debugging any of them:
 
 That last row matters: D18/D19 were listed earlier in this file as a free visual
 smoke test. **They are not** — this card does not connect them.
+
+---
+
+## What the u-blox documents settle (added 2026-08-25)
+
+Read from `M2-MAYA-W1` data sheet **UBX-22004354 R05** (which names this exact
+part, `M2-MAYA-W161-00C-00`, NXP IW416) and the `MAYA-W1` system integration
+manual **UBX-21010495 R09**, both C1-Public, in
+`~/Development/rt1170/m2-maya-w161/`. These resolve several things this file
+had guessed at or named ambiguously.
+
+| M.2 pin | Standard name | NXP function | Direction | Notes |
+|---|---|---|---|---|
+| **54** | `W_DISABLE2#` | **BT_INDEPENDENT_RESET** — resets the Bluetooth radio only | input, active low, 3.3 V | "can be left open if not needed" (§2.4.2) |
+| **56** | `W_DISABLE1#` | **PDn** — full power-down for **both** radios | input, 3.3 V | high = normal; **assert ≥ 100 ms for a correct reset** (§2.4.1) |
+| **42** | `VENDOR_DEF3` | **BT_DEV_WAKE** — host wakes the BT radio | input, active low | ★ **never driven by this tree**; collides with LPSPI1 SCK |
+
+★ **This file used to call pin 54 `BT_DISABLE#`.** Both names are defensible —
+`W_DISABLE2#` is the M.2 standard name, `BT_INDEPENDENT_RESET` is what NXP do
+with it — but they are *different pins* from `W_DISABLE1#`/PDn and were easy to
+conflate. Pin 54 resets Bluetooth; pin 56 powers the whole module down.
+
+★ **We do not drive BT_RST_N at all, and that is correct.** It idles high (not
+in reset) through the fitted 10K `R832`, the datasheet permits leaving it open,
+and there is positive proof the BT core resets properly anyway: it greets from
+its ROM bootloader on every power-up (`start_inds=2`) and then accepts a full
+firmware image. A core held in reset does neither. Its only remaining use is
+resetting Bluetooth *without* a PDn cycle, which would otherwise take Wi-Fi
+down too.
+
+★ **`UART_CTSn` (pin 36) and `UART_RTSn` (pin 34) are CONFIGURATION PINS**
+sampled at module reset — `CON[7]` and `CON[8]`, both "Reserved set to 1"
+(§2.4.5 Table 6) — and only become UART signals ~1 ms later. **Driving CTS low
+across the PDn release latches a Reserved configuration**, which invalidated one
+2026-08-24 experiment. On this board nothing drives that pad and `R81` pulls
+`ETHPHY_RST_B` up to `SENSOR_3V3` through the fitted `R1866`, so the card sees
+1 — the default is correct, and only a deliberate CTS assert can break it.
+Assert it *after* the reset if you need it.
+
+★ **Card `VIO` defaults to 1.8 V** (§6 of the data sheet), which is why `U354`
+and `U355` exist on the EVKB. Already understood and already handled here — not
+a fault, and not something to "fix".
+
+★ **The firmware picture.** §4.4.3 names the combo image
+`sdiouartiw416_combo_v0.bin` as "the Wi-Fi/Bluetooth combo firmware image" —
+one image, both radios — and §4.4.6 attaches Bluetooth with
+`hciattach … any 3000000 flow`, i.e. **3 Mbaud with flow control**. That rate
+was tested on this board on 2026-08-25 and **refuted**: after a fully
+successful firmware download the card answers nothing at 3 M, 921600, 460800 or
+115200, with `framing=0` throughout — so it transmits nothing at all, rather
+than something we could not decode. See
+`examples/networking/m2_hci_probe/transcript_hw_evkb.txt`.

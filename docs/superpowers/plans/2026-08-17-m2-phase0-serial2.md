@@ -17,6 +17,15 @@
 > * Task 8's premise that `BT_DISABLE#` must be asserted to stop the module
 >   fighting the loopback jumper is **unnecessary** — with `R1901` unpopulated
 >   the module cannot drive that pad at all.
+> * ★ **DATED CORRECTION 2026-08-25 — the two bullets above were true when
+>   written and are FALSE now.** `R1901` was bridged by hand on 2026-08-18, so
+>   the Bluetooth link is bidirectional (131,840 bytes crossed it in both
+>   directions on 2026-08-25) and Track B is no longer parked — `m2_hci_probe`
+>   is the consumer. In particular **the module CAN now drive that pad**, so
+>   the J9 pin 2↔4 loopback jumper is a real contention risk rather than a
+>   theoretical one: check before relying on it. (`BT_DISABLE#` here means J54
+>   pin 54, which the vendor docs call `W_DISABLE2#`/BT_INDEPENDENT_RESET —
+>   see `docs/m2-evkb-revc3.md`.)
 >
 > If Track B is revived by fitting `R1901`, re-derive tasks 2-8 from the updated
 > spec rather than executing this file. Board facts: `docs/m2-evkb-revc3.md`.
