@@ -166,6 +166,12 @@ bootloader.  It simply goes quiet.
 download FAILS -- `iw416_begin=ok fw_status=0x0`, `fw_download=cmd-timeout`,
 `card=0`, where before it was `fw_status=0xFEDC` and `card=1`.  The two
 downloads are ALTERNATIVES, not additions, which matches NXP's own code: their
+★★ CORRECTED 2026-08-25 -- THAT IS WRONG, and it was an artefact of using the
+WRONG Wi-Fi image.  With the WLAN-ONLY image (sdIW416_wlan.bin) instead of the
+combo, the SDIO download SUCCEEDS after the BT UART download: fw_download=ok,
+card=1, where the combo gave fw_download=cmd-timeout, card=0.  They are not
+alternatives; they are the two halves of NXP's independent-download mode.  See
+"NXP'S ACTUAL INDEPENDENT-DOWNLOAD COMBINATION" at the end of this file.  The
 `controller_init()` selects between "BT-only over UART" and "combo over SDIO"
 with `#ifdef CONFIG_BT_IND_DNLD` / `#else`.  So on this module, as things
 stand, one may have Wi-Fi or one may attempt Bluetooth -- not both.
@@ -1056,3 +1062,69 @@ running a working HCI controller.**  It is not the transport (proven), not the
 delivery (142 chunks, a real retransmit recovered), and not "the firmware never
 arrived" (the ROM stops asking, which only happens once it has what it wants).
 Whatever goes wrong, goes wrong after the jump.
+
+=====================================================
+NXP'S ACTUAL INDEPENDENT-DOWNLOAD COMBINATION -- 2026-08-25
+=====================================================
+
+FOUND BY READING THE SDK'S OWN HEADER SELECTION.  With CONFIG_BT_IND_DNLD set,
+`middleware/wifi_nxp/wifi_bt_firmware/wlan_bt_fw.h` switches from
+
+    #include "sduartIW416_wlan_bt.h"          (the combo, one image)
+to
+    #include "sdIW416_wlan.h"                 (Wi-Fi only, over SDIO)
+    #include "uartIW416_bt.h"                 (Bluetooth only, over UART)
+
+-- BOTH, one image per bus.  Every run this tree had made used the COMBO image
+over SDIO, with or without the BT UART download.  The pairing NXP actually use
+had never been tried.
+
+★ AND CONFIG_BT_IND_DNLD IS ON BY DEFAULT in the a2dp_source build.  Verified
+empirically rather than inferred: re-running our exact west command and reading
+the generated config gives
+
+    edgefast_open_config.h:266  #define CONFIG_BT_IND_DNLD 1
+    edgefast_open_config.h:267  #define CONFIG_BT_ONLY_DNLD 1
+    .config:380                 CONFIG_BT_IND_DNLD=y
+
+It is auto-selected by Kconfig (`select BT_IND_DNLD if !BT_BYPASS_DOWNLOAD`),
+not something an integrator defines.  So NXP's stack took the SAME independent
+UART path with the SAME image and failed the same way -- which strengthens the
+exoneration rather than weakening it.
+
+RUN E -- WLAN-ONLY over SDIO + BT-only over UART:
+
+    bt_fw_download=ok chip_id=0x7201 start_inds=3 chunks=142
+                   sent=131856/131840 retx=1 crc_err=0
+    bt_post_dnld[0..3]: n=0        (loader exited, no re-greet)
+    sdio_begin=ok / iw416_begin=ok / fw_download=ok / card=1
+    bt_uart_postsdio: n=0          (still no re-greet after the SDIO work)
+    hci_reset=timeout ... timeouts=10 framing=0
+    bt_baud=none tried=4
+
+★★ **"THE TWO DOWNLOADS ARE ALTERNATIVES" IS REFUTED.**  That claim, recorded
+2026-08-24 and repeated in CLAUDE.md and the example's CMakeLists, was an
+ARTEFACT OF THE WRONG WI-FI IMAGE:
+
+    after a BT UART download, COMBO image over SDIO  -> fw_download=cmd-timeout, card=0
+    after a BT UART download, WLAN-ONLY over SDIO    -> fw_download=ok,          card=1
+
+They are not alternatives.  They are the two halves of one mode, and both
+succeed when each bus is given its own image.
+
+★ WHAT THAT LEAVES.  Both radios are now correctly provisioned in the vendor's
+documented configuration: Wi-Fi firmware running (card=1), Bluetooth firmware
+accepted and the ROM loader exited (no re-greet, unlike the combo path where it
+announces itself again).  **And Bluetooth still answers nothing** -- 115200,
+460800, 921600, 3 Mbaud, framing=0 at every one.
+
+So the last configuration-level explanation is gone.  Every knob NXP's own
+stack turns, we now turn identically:
+  * CONFIG_BT_IND_DNLD equivalent path .... yes (BT image over UART)
+  * correct per-bus images ................ yes (wlan-only + bt-only)
+  * module power cycle before download .... yes (SDIO_RST + PDn, as they do)
+  * boot-sleep wake pulse ................. yes (10 ms low on GPIO_DISP_B2_13)
+  * HCI at 3 Mbaud ........................ tried
+  * HCI with CTS asserted, CON[7] correct . tried (run C)
+and the controller is silent in all of them, with NXP's own binary failing the
+same way on the same board.

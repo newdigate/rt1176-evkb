@@ -249,8 +249,17 @@ refuted too. n=1 per arm; repeat before leaning on the delta.
 
 ★ `M2_BT_UART_DNLD` (default ON) selects the firmware path — OFF takes
 u-blox's combo-over-SDIO route instead of the BT-only UART download. The two
-are ALTERNATIVES: measured, a BT UART download leaves the later WLAN SDIO
-download at `fw_download=cmd-timeout`.
+are **NOT** alternatives — corrected 2026-08-25. A BT UART download leaves the
+later WLAN SDIO download at `fw_download=cmd-timeout` **only when the COMBO
+image is used**; with the WLAN-ONLY `sdIW416_wlan.bin` it succeeds
+(`fw_download=ok card=1`). That is precisely NXP's `CONFIG_BT_IND_DNLD` mode,
+whose `wlan_bt_fw.h` includes BOTH `sdIW416_wlan.h` AND `uartIW416_bt.h` — one
+image per bus. **Pair `M2_BT_UART_DNLD=ON` with the WLAN-ONLY image**, never
+the combo.
+★ With that pairing both radios are correctly provisioned — Wi-Fi running
+(`card=1`), BT firmware accepted and the loader exited (`bt_uart_postsdio n=0`,
+no re-greet) — and Bluetooth **still answers nothing** at any of four rates.
+That is the vendor's own configuration, reproduced exactly, still failing.
 
 ★ **Two real driver bugs were found by these gates, not by review** — both the
 same disease, and worth knowing because the symptom is silence rather than a

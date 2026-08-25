@@ -97,9 +97,14 @@ else()
     add_definitions(-DHAVE_IW416_BT_FW=1 -DBT_FW_IS_SYNTHETIC=1)
 endif()
 
-# ★ WHICH FIRMWARE PATH.  The two are ALTERNATIVES, not additions -- measured
-# 2026-08-24: after a BT-only UART download the WLAN SDIO download fails
-# (fw_status=0x0), matching NXP's own #ifdef CONFIG_BT_IND_DNLD / #else.
+# ★ WHICH FIRMWARE PATH.  ★★ These are NOT alternatives -- corrected 2026-08-25.
+# It looked that way because the wrong Wi-Fi image was in use: after a BT UART
+# download the COMBO image over SDIO fails (fw_download=cmd-timeout, card=0),
+# but the WLAN-ONLY image succeeds (fw_download=ok, card=1).  That is exactly
+# NXP's CONFIG_BT_IND_DNLD mode, whose wlan_bt_fw.h includes BOTH
+# sdIW416_wlan.h AND uartIW416_bt.h -- one image per bus, both downloaded.
+# So: supply sdIW416_wlan.bin.inc here, not sduartIW416_wlan_bt.bin.inc, when
+# M2_BT_UART_DNLD is ON.
 #   ON  (default) -- the BT-only V3 UART download this tree built in BT-1.
 #   OFF           -- u-blox's documented path (MAYA-W1 SIM UBX-21010495 R09
 #                    s4.4.3): the COMBO image goes over SDIO and carries BOTH
