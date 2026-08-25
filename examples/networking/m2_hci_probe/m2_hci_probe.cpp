@@ -141,6 +141,131 @@ static void m2ReleaseWifiReset() {
     delay(1000);                                    // PDn exit needs ROM boot time
 }
 
+// ---------------------------------------------------------------------------
+// CONTINUITY PROBE -- is the card's UART TX line actually driven, and does PDn
+// actually swing?
+//
+// ★ WHY.  With R345 and R96 both hand-bridged, the MIMXRT1060-EVKB traces
+// COMPLETE on paper -- rail always on, both level shifters fitted and enabled,
+// reset chain populated, both UART directions populated -- and the card still
+// never greets (start_inds=0).  Every remaining hypothesis is about PHYSICAL
+// state, which a netlist cannot settle.  This is the instrument that settled
+// exactly the same question on the 1170: it drove the MCU's RX pad through its
+// own internal pull-up and then pull-down and asked whether anything external
+// held it.  That is what proved the R1901 bridge conducted
+// ("pullup_reads=0 pulldown_reads=0 -> DRIVEN LOW").
+//
+// READING IT:
+//   pullup=1 pulldown=0  the pad FOLLOWS our pull -> nothing external is
+//                        driving it: the bridge is open, or the shifter output
+//                        is high-Z, or the card is not powered
+//   pullup=0 pulldown=0  DRIVEN LOW  by something external
+//   pullup=1 pulldown=1  DRIVEN HIGH by something external -- which is what a
+//                        healthy idle UART line looks like
+//
+// ★ It re-muxes the RX pad to GPIO, so it MUST run before the transport takes
+// the pad, and it hands it back afterwards.  That re-mux is why these helpers
+// were deleted from m2_sdio_probe during BT-1: they stole the pad from the
+// UART and turned bytes into "edges".
+#if defined(M2_CONTINUITY_PROBE)
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+  #define M2_RX_MUX  IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_07   // LPUART3_RX pad
+  #define M2_RX_PAD  IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_B1_07
+  #define M2_RX_BIT  23                                    // GPIO1_IO23
+  #define M2_RX_PSR  GPIO1_PSR
+  #define M2_RX_GDIR GPIO1_GDIR
+  #define M2_RX_ALT  0x5u                                  // ALT5 = GPIO1
+  // RT1060 pad control: PKE bit12, PUE bit13, PUS bits14-15
+  // (00 = 100K pull-DOWN, 10 = 100K pull-UP).  These encodings are NOT the
+  // same as the RT1176's, which is why they are spelled out here.
+  #define M2_RX_PULLUP   0xB000u
+  #define M2_RX_PULLDOWN 0x3000u
+#else
+  #define M2_RX_MUX  (*(volatile uint32_t *)0x400E8180u)   // GPIO_AD_27
+  #define M2_RX_PAD  (*(volatile uint32_t *)0x400E83C4u)
+  #define M2_RX_BIT  26
+  #define M2_RX_PSR  GPIO9_PSR
+  #define M2_RX_GDIR GPIO9_GDIR
+  #define M2_RX_ALT  0xAu
+  #define M2_RX_PULLUP   0x04u
+  #define M2_RX_PULLDOWN 0x08u
+#endif
+
+static void m2RxContinuity(bool *up, bool *down) {
+    M2_RX_MUX = 0x10u | M2_RX_ALT;              // SION so the pad is readable
+    M2_RX_GDIR &= ~(1u << M2_RX_BIT);           // input
+    M2_RX_PAD = M2_RX_PULLUP;   delayMicroseconds(500);
+    *up   = (M2_RX_PSR >> M2_RX_BIT) & 1u;
+    M2_RX_PAD = M2_RX_PULLDOWN; delayMicroseconds(500);
+    *down = (M2_RX_PSR >> M2_RX_BIT) & 1u;
+    M2_RX_PAD = M2_RX_PULLUP;   delayMicroseconds(500);
+}
+
+// Watch the card's TX pad as a GPIO.  Counts EDGES, not bytes -- the point is
+// only "did anything move", which is what distinguishes a dead line from a
+// talking one.
+static void m2WatchRxLine(uint32_t ms, bool *anyHigh, uint32_t *edges) {
+    M2_RX_MUX = 0x10u | M2_RX_ALT;
+    M2_RX_GDIR &= ~(1u << M2_RX_BIT);
+    M2_RX_PAD = M2_RX_PULLUP;
+    bool prev = (M2_RX_PSR >> M2_RX_BIT) & 1u, hi = prev; uint32_t e = 0;
+    for (uint32_t i = 0; i < ms * 100u; i++) {  // ~10 us per sample
+        bool now = (M2_RX_PSR >> M2_RX_BIT) & 1u;
+        if (now != prev) { e++; prev = now; }
+        if (now) hi = true;
+        delayMicroseconds(10);
+    }
+    *anyHigh = hi; *edges = e;
+}
+
+// Drive PDn low and high and READ THE PAD BACK each time.
+// ★ On the MIMXRT1060-EVKB that pin now drives THREE fitted loads -- R343 to
+// SD_PWREN, R344 to SPDIF_IN, and the hand-bridged R345 to WL_RST# -- so
+// "can it still swing" is a real question, not a formality.
+static void m2PdnSwing(bool *lowOk, bool *highOk) {
+    M2_WL_RST_MUX = 0x10u | M2_RST_ALT;         // SION: readable while driven
+    M2_RST_GDIR |= (1u << M2_WL_RST_BIT);
+    M2_RST_CLEAR = (1u << M2_WL_RST_BIT);  delay(5);
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+    *lowOk  = !((GPIO1_PSR >> M2_WL_RST_BIT) & 1u);
+    M2_RST_SET = (1u << M2_WL_RST_BIT);    delay(5);
+    *highOk =  ((GPIO1_PSR >> M2_WL_RST_BIT) & 1u);
+#else
+    *lowOk  = !((GPIO9_PSR >> M2_WL_RST_BIT) & 1u);
+    M2_RST_SET = (1u << M2_WL_RST_BIT);    delay(5);
+    *highOk =  ((GPIO9_PSR >> M2_WL_RST_BIT) & 1u);
+#endif
+}
+
+static void m2ContinuityProbe() {
+    bool up=false, down=false;
+    m2RxContinuity(&up, &down);
+    CONSOLE.print("rx_continuity: pullup_reads="); CONSOLE.print(up ? 1 : 0);
+    CONSOLE.print(" pulldown_reads="); CONSOLE.print(down ? 1 : 0);
+    CONSOLE.print(" -> ");
+    if (up && !down)      CONSOLE.println("FLOATING (nothing external drives it)");
+    else if (!up && !down) CONSOLE.println("DRIVEN LOW externally");
+    else if (up && down)   CONSOLE.println("DRIVEN HIGH externally (a healthy idle UART)");
+    else                   CONSOLE.println("INVERTED -- read is not trustworthy");
+
+    bool lowOk=false, highOk=false;
+    m2PdnSwing(&lowOk, &highOk);
+    CONSOLE.print("pdn_swing: drives_low="); CONSOLE.print(lowOk ? 1 : 0);
+    CONSOLE.print(" drives_high="); CONSOLE.print(highOk ? 1 : 0);
+    CONSOLE.println(lowOk && highOk ? " -> PIN SWINGS" : " -> PIN STUCK (loaded or shorted)");
+
+    // Now cycle the module with the pad still on GPIO and watch for ANY edge.
+    // The ROM greets once per power-up; if it greets, this must see movement.
+    M2_RST_CLEAR = (1u << M2_WL_RST_BIT); delay(150);
+    M2_RST_SET   = (1u << M2_WL_RST_BIT);
+    bool anyHigh=false; uint32_t edges=0;
+    m2WatchRxLine(400, &anyHigh, &edges);
+    CONSOLE.print("rx_after_pdn: any_high="); CONSOLE.print(anyHigh ? 1 : 0);
+    CONSOLE.print(" edges="); CONSOLE.println(edges);
+    CONSOLE.println("continuity_probe_done (pad handed back to the UART)");
+}
+#endif  // M2_CONTINUITY_PROBE
+
 // --- HCI opcodes and event codes (Core 5.2 Vol 4 Part E 7.x) ------------------
 static const uint16_t OP_RESET            = 0x0C03;
 static const uint16_t OP_READ_LOCAL_VER   = 0x1001;
@@ -652,6 +777,11 @@ void setup() {
     // cycle, then the UART download, then everything else.
     // The 1 KB RX ring is what makes this safe: the greeting lands there during
     // the ROM-boot wait inside m2ReleaseWifiReset() and waits for the loader.
+#if defined(M2_CONTINUITY_PROBE)
+    // ★ BEFORE the transport claims the pad -- this probe re-muxes it to GPIO.
+    m2ContinuityProbe();
+#endif
+
     hciIo.begin(115200);
     CONSOLE.println("serial2=up_115200");
 

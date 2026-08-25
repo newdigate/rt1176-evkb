@@ -1353,3 +1353,54 @@ next step and is cheap; reading more of the netlist is not.
 
 STATUS: the rt1062 port is sound and the board is now wired as far as paper can
 show.  The module-versus-board question remains OPEN.
+
+=====================================================
+THE CONTINUITY PROBE FINDS IT -- PDn IS CLAMPED LOW -- 2026-08-25
+=====================================================
+
+Built for rt1062 (`M2_CONTINUITY_PROBE`, default ON there, OFF on rt1176 so the
+two gates are undisturbed), run on the MIMXRT1060-EVKB with R345 and R96 both
+hand-bridged:
+
+    rx_continuity: pullup_reads=1 pulldown_reads=1 -> DRIVEN HIGH externally
+    pdn_swing:     drives_low=1 drives_high=0      -> PIN STUCK
+    rx_after_pdn:  any_high=1 edges=0
+
+★★ THREE ANSWERS IN ONE RUN, and the netlist could not have given any of them.
+
+  1. **The RX path is GOOD.**  `pullup_reads=1 pulldown_reads=1` means something
+     EXTERNAL holds that pad high through both of our internal pulls -- which is
+     exactly what a healthy idle UART line looks like.  So both hand bridges
+     conduct, U10 is driving, and the card side is powered.  Everything I was
+     worried about downstream is fine.
+
+  2. **PDn CANNOT BE RELEASED.**  `drives_low=1 drives_high=0`: the pin pulls
+     low happily and cannot go high.  PDn low is FULL POWER-DOWN, so the module
+     is being held off.
+
+  3. `edges=0` after the cycle follows from (2) and is the whole silence: a
+     module in power-down never boots, so it never greets, so start_inds=0.
+
+WHY THE PIN IS STUCK -- and it is the collision I flagged when recommending the
+R345 bridge, now measured rather than predicted.  GPIO_AD_B1_03 fans out to
+THREE fitted loads:
+
+    GPIO_AD_B1_03 -R343 (FITTED)- SD_PWREN -R235- Q5 gate (with R232)
+                  -R344 (FITTED)- SPDIF_IN -J20.1 | J20.2 - U15.4
+                  -R345 (bridged)- WL_RST# -R89-R82- J8.56 (PDn)
+
+Both competitors clamp it: Q5's gate network is a resistive pull toward ground,
+and U15.4 on the SPDIF net is an active driver.  Through two 47R series parts
+our GPIO wins the pull-DOWN and loses the pull-UP, which is precisely the
+asymmetry measured.
+
+THE FIX: **remove R343 and R344**, leaving GPIO_AD_B1_03 driving only WL_RST#.
+Cost: SD-card power control and the SPDIF input stop working.  Neither matters
+for a Bluetooth bench test, and both are exactly what NXP's own Wi-Fi examples
+must assume when they drive this pin as WL_RST.
+
+★ AND NOTE WHAT THIS VINDICATES.  Reading the netlist five different ways could
+not distinguish "wired correctly" from "wired correctly and clamped".  One
+electrical measurement did it immediately.  The same instrument settled the
+same class of question on the 1170 (the R1901 bridge), which is why it was
+worth reinstating rather than reading more schematic.

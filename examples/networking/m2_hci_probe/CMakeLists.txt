@@ -139,6 +139,21 @@ endif()
 # before the firmware download, with the pad then returned to LPUART2_RTS_B.
 # ON by default -- it is part of the vendor's own download sequence, and a gate
 # whose example was configured without it would report SKIP rather than FAIL.
+# The RX-line continuity / PDn-swing probe.  Re-muxes the BT UART's RX pad to
+# GPIO before the transport takes it, so it is a BENCH instrument, not part of
+# normal operation.
+# ★ Default ON for rt1062 and OFF for rt1176: the 1062 is where the electrical
+# question is open, and the 1176's two gates assert an exact line sequence that
+# extra probe output would disturb for no benefit.
+if(EVKB_BOARD STREQUAL "rt1062")
+    option(M2_CONTINUITY_PROBE "Probe the BT RX line and PDn electrically" ON)
+else()
+    option(M2_CONTINUITY_PROBE "Probe the BT RX line and PDn electrically" OFF)
+endif()
+if(M2_CONTINUITY_PROBE)
+    add_definitions(-DM2_CONTINUITY_PROBE=1)
+endif()
+
 option(M2_BT_WAKE_PULSE "Pulse the boot-sleep wake line before the BT firmware download" ON)
 if(M2_BT_WAKE_PULSE)
     add_definitions(-DM2_BT_WAKE_PULSE=1)
