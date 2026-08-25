@@ -73,8 +73,11 @@ true when written and is false now; the next reader will trust it.
   talk to that BT image.
   ★ **CORRECTION 2026-08-25: "they differ by the appended BT image" is WRONG.**
   Byte-checked: the combo image neither starts with the WLAN image, nor ends
-  with the BT image, nor contains it at all — the size arithmetic that
-  suggested it was a coincidence. u-blox describe the combo image as covering
+  with the BT image — the size arithmetic that suggested a concatenation was a
+  coincidence. (An earlier version of this correction said "nor contains it at
+  all"; that overreached. The combo carries both build IDs, `16.92.21.p155.2`
+  WLAN and BT alike, LZMA-compressed rather than appended — so the original
+  bullet's substance was closer to right than its mechanism.) u-blox describe the combo image as covering
   BOTH radios (SIM UBX-21010495 R09 §4.4.3), which is a different claim.
   Anything inferred from the concatenation idea is void.
 

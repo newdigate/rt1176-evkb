@@ -341,9 +341,16 @@ Written after B2's silicon result, per the per-phase-group rule. Fixed now:
   now the first task of the next phase, not a risk.
   ★ **CORRECTION 2026-08-25:** the words "consistent with the image being WLAN
   + an appended BT part that SDIO never delivers" stood here and were WRONG.
-  Byte-checked: the combo image neither starts with the WLAN image, nor ends
-  with the BT image, nor contains it. The 279,164 + 131,840 ≈ 411,064
-  arithmetic was a coincidence. The short download is also deliberate on the
+  Byte-checked: the combo image neither starts with the WLAN image nor ends
+  with the BT image, and the 279,164 + 131,840 ≈ 411,064 arithmetic was a
+  coincidence — it is not a concatenation.
+  ★ **BUT THE ORIGINAL WORDING OF THIS CORRECTION OVERREACHED**, and is fixed
+  here: it said the combo "nor contains it at all", which is a CONTENT claim
+  the byte check never supported. The combo carries BOTH build IDs —
+  `w8978o-V0` (WLAN, 2026/03/12 16:57:22) and `w8978d-V0 … BT_UART`
+  (17:02:37), both `16.92.21.p155.2` — timestamps identical to the standalone
+  images. It contains both radios' firmware; it is merely LZMA-compressed
+  rather than concatenated. The short download is also deliberate on the
   card's side — widening the idle poll to 15 s left `sent` unchanged. And
   u-blox's own procedure (SIM §4.4.3) treats the combo image as covering BOTH
   radios, with no BT-only UART download at all. Evidence:

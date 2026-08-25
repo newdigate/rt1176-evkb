@@ -899,3 +899,47 @@ WHERE THAT LEAVES THE PROGRAMME
   ★ The sweep stays in the tree regardless.  It is cheap, it is gated, and it
   converts "we never tried" into a measured negative -- which is what made the
   no-transmission finding above visible at all.
+
+=====================================================
+FIRMWARE PROVENANCE AND VERSION -- 2026-08-25
+=====================================================
+
+Never written down until asked, and it belongs in the record beside every
+result above.
+
+SOURCE.  MCUXpresso SDK, west workspace ~/Development/mcuxsdk-ws, manifest tag
+**v26.06.00-LTS** (manifests b01ab903; mcuxsdk checkout a910e764, 2026-06-12),
+from components/conn_fwloader/fw_bin/inc/IW416/.  NXP stock -- never committed
+to this repo, supplied at configure time only (LA_OPT binary licence).
+
+VERSION, read out of the images themselves rather than from a filename:
+
+    Id: w8978o-V0, RF878X, FP92, 16.92.21.p155.2            2026/03/12 16:57:22
+    Id: w8978d-V0, RF878X, FP92, 16.92.21.p155.2, BT_UART   2026/03/12 17:02:37
+
+  * 16.92.21.p155.2, FP92 branch, w8978 = 88W8978 = IW416, built 2026-03-12.
+  * `sdIW416_wlan.bin` (279,164 B) carries the FIRST id only.
+  * `uartIW416_bt.bin` (131,840 B) carries the SECOND only.
+  * `sduartIW416_wlan_bt.bin` (411,064 B) carries BOTH, with the timestamps
+    byte-identical to the standalone files.
+
+★ **THAT CORRECTS A CORRECTION OF MINE.**  I had written that the combo
+"neither starts with the WLAN image, nor ends with the BT image, nor contains
+it at all".  The first two clauses are byte checks and stand; the third is a
+CONTENT claim those checks never supported, and it is wrong.  The combo does
+contain both radios' firmware -- the sections are LZMA-compressed, which is
+exactly why prefix/suffix scanning found nothing.  The right statement is
+"not a concatenation", and u-blox's own description ("the Wi-Fi/Bluetooth combo
+firmware image", SIM s4.4.3) was accurate all along.
+
+★ **THERE IS NO SECOND VERSION TO TRY ON THIS MACHINE.**  The RT1060 SDK
+26.03 (~/Development/rt1060/SDK_26_03_00_MIMXRT1060-EVKB) ships the IDENTICAL
+IW416 firmware -- same three files, same byte counts, same version strings.  So
+"try another firmware build" is not a local experiment; it needs a different
+SDK release fetched deliberately.  Worth knowing before anyone plans it as a
+cheap next step.
+
+★ For scale: the version u-blox print as an example in their SIM (s4.4.7) is
+16.92.21.p84.3.  Ours is p155.2 -- much newer, same FP92 branch.  So the
+"stale firmware" theory has it backwards; if anything we are ahead of what
+their documentation was written against.

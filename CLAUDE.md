@@ -199,6 +199,21 @@ phase. Four rates gave `framing=0` and zero bytes, so the card transmits
 NOTHING after a fully successful download, rather than "nothing we could
 decode". Keep the sweep anyway: it is cheap, gated, and it is what made that
 distinction visible.
+★ **WHICH FIRMWARE, AND WHERE FROM** (recorded 2026-08-25 — it had never been
+written down): MCUXpresso SDK **v26.06.00-LTS**
+(`~/Development/mcuxsdk-ws`, `components/conn_fwloader/fw_bin/inc/IW416/`),
+version **`16.92.21.p155.2`** FP92, built 2026-03-12, read out of the images'
+own ID strings rather than inferred from filenames. The combo
+(`sduartIW416_wlan_bt.bin`, 411,064 B) carries BOTH build IDs — `w8978o-V0`
+WLAN and `w8978d-V0 … BT_UART` — with timestamps identical to the standalone
+`sdIW416_wlan.bin` (279,164 B) and `uartIW416_bt.bin` (131,840 B). It is
+therefore both radios' firmware, **LZMA-compressed, not concatenated** — which
+is why byte prefix/suffix checks found nothing and why an earlier note here
+saying the combo does not "contain" the BT image was wrong.
+★ **The RT1060 SDK 26.03 on this machine ships the IDENTICAL firmware**, so
+"try another build" is not a local experiment. Never commit these blobs; they
+are supplied at configure time only.
+
 ★ `M2_BT_UART_DNLD` (default ON) selects the firmware path — OFF takes
 u-blox's combo-over-SDIO route instead of the BT-only UART download. The two
 are ALTERNATIVES: measured, a BT UART download leaves the later WLAN SDIO

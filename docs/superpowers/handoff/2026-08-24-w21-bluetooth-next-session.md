@@ -131,7 +131,11 @@ their evidence:
 
 * **"The combo image is WLAN + BT concatenated"** — WRONG, it was a coincidence
   (279,164 + 131,840 ≈ 411,064). Byte-checked: the combo neither starts with the
-  WLAN image, nor ends with the BT image, nor contains it at all.
+  WLAN image nor ends with the BT image — it is not a concatenation.
+  ★ **"nor contains it at all", as this line first read, was itself wrong**:
+  the combo carries BOTH build IDs (`w8978o-V0` WLAN and `w8978d-V0 … BT_UART`,
+  both `16.92.21.p155.2`, timestamps identical to the standalone images). It
+  contains both radios' firmware, LZMA-compressed rather than appended.
 * **"EdgeFast is not armgcc-buildable"** — WRONG, I used the wrong example tree.
   See §6.
 
