@@ -1304,3 +1304,52 @@ sufficient.
 NEXT: bridge **R96** (0402) to complete the card->MCU direction.  With R345 and
 R96 both fitted this board should behave exactly like the 1170 -- and then the
 module-versus-board question finally gets its answer.
+
+=====================================================
+R345 AND R96 BOTH BRIDGED -- STILL NO GREETING -- 2026-08-25
+=====================================================
+
+Clean capture, banner-anchored so there is no doubt which binary ran:
+
+    RT1062 M.2 HCI probe up (MIMXRT1060-EVKB, LPUART3)
+    bt_wake=pulsed_10ms_low (GPIO_AD_B0_02, released as input)
+    bt_fw_download=no_start_indication chip_id=0x0000 start_inds=0
+    bt_baud=none tried=4
+
+THE PATH NOW TRACES COMPLETE ON PAPER.  Everything checked in the RevB1
+netlist and part list, not assumed:
+
+  power     WL_3V3 <- L17 (plain FERRITE) <- DCDC_3V3.  No switch, no enable --
+            the module rail is always on, as on the 1170.  LDO_1V8 from U26.
+  shifters  U9 and U10 both FITTED; U10's enable pulled to LDO_1V8 through R98
+            (FITTED), U9's through R99.  Both powered from WL_3V3 / LDO_1V8.
+  reset     GPIO_AD_B1_03 -R345(bridged)- WL_RST# -R89- N102163822 -R82-
+            J8.56 (PDn), with R89/R81/R82/C18 all FITTED.
+  card->MCU J8.22 -R18- U10.4 | U10.20 -R96(bridged)- BT_UART_RXD -R200-
+            GPIO_AD_B1_07 = LPUART3_RX.
+  MCU->card GPIO_AD_B1_06 -R189- U9.4 | U9.20 -R33- J8.32.
+
+So: powered, out of reset, both directions populated -- and `start_inds=0`.
+
+WHAT THAT MEANS, stated carefully.  Every remaining hypothesis is now about
+PHYSICAL STATE rather than about the netlist, and the netlist cannot settle any
+of them.  The open questions are:
+
+  * does PDn at J8.56 actually move when the firmware drives GPIO_AD_B1_03?
+    ★ Note that pin drives THREE fitted loads -- R343 to SD_PWREN, R344 to
+    SPDIF_IN, and now R345 to WL_RST# -- so it is worth confirming it can still
+    swing, rather than assuming.
+  * is the card transmitting anything at all on J8.22?
+  * are the hand bridges electrically sound (R345 and R96 both, and R96 sits
+    between a level-shifter output and a 47R series part)?
+
+★ THE 1170 SETTLED EXACTLY THIS QUESTION WITH A CONTINUITY PROBE, not with a
+schematic: `m2RxContinuity()` drove the MCU's RX pad through an internal
+pull-up and pull-down and reported whether an external driver held it, which is
+what proved the R1901 bridge conducted ("pullup_reads=0 pulldown_reads=0 ->
+DRIVEN LOW").  Those helpers were deleted in BT-1 because their GPIO re-mux
+stole the pad from LPUART2.  Reinstating that probe for rt1062 is the correct
+next step and is cheap; reading more of the netlist is not.
+
+STATUS: the rt1062 port is sound and the board is now wired as far as paper can
+show.  The module-versus-board question remains OPEN.
