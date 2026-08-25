@@ -1187,3 +1187,67 @@ working HCI transport and `bt init` is what fails to produce one.
 
 NOTE: the board currently carries NXP's shell image, not m2_hci_probe.  Reflash
 `build-*/m2_hci_probe.elf` before further probe work.
+
+=====================================================
+PORTED TO THE MIMXRT1060-EVKB -- 2026-08-25 -- BLOCKED BY A DNP RESISTOR
+=====================================================
+
+WHY: to separate "this module" from "this board".  The same card, the same
+probe, a different host, so the results are directly comparable to the five
+1170 runs above.
+
+★ THE PORT IS ALMOST FREE, and for a reason worth recording: **the M.2
+Bluetooth UART is `Serial2` on BOTH boards.**
+    rt1176   Serial2 = LPUART2 = GPIO_AD_26/27      -> J54 pins 22/32
+    rt1062   Serial2 = LPUART3 = GPIO_AD_B1_06/07   -> the M.2 BT UART
+             (teensy4 core pins 17/16; CORE_PIN17_CONFIG = GPIO_AD_B1_06)
+So every line of transport, loader, sweep and HCI code is board-independent.
+What differs: the console (Serial1 vs Serial6 = LPUART1 on each core), the
+module power pins, and whether SDIO exists (M2Radio's SdioHost is RT1176-only,
+so the Wi-Fi half is compiled out on rt1062 and SAYS SO at runtime --
+`sdio_begin=not_built`).
+
+★ AND THE WIRING IS BETTER ON THE 1060, which was the hope.  From the RevB1
+netlist, not assumed:
+    BT_UART_TXD -> R189 (47R, FITTED) -> GPIO_AD_B1_06 = LPUART3_TX
+    BT_UART_RXD -> R200 (47R, FITTED) -> GPIO_AD_B1_07 = LPUART3_RX
+Both populated from the factory.  The 1170 needed R1901 bridged by hand for the
+card->MCU direction; the 1060 ships it.
+
+RESULT ON SILICON -- the card never greets:
+
+    bt_fw_source=nxp
+    bt_fw_download=no_start_indication chip_id=0x0000 loader_ver=0
+                   start_inds=0 chunks=0 sent=0/131840
+    sdio_begin=not_built (rt1062: SdioHost is RT1176-only)
+    hci_reset=timeout ... timeouts=10 framing=0
+    bt_baud=none tried=4
+
+`start_inds=0` and `chip_id=0x0000` -- on the 1170 this is always 2 or 3.  The
+BT ROM is not announcing itself at all.
+
+★★ CAUSE FOUND IN THE SCHEMATIC, NOT GUESSED: **R345 IS DNP.**
+
+    GPIO_AD_B1_03  --R343 (FITTED)--> SD_PWREN
+                   --R344 (FITTED)--> SPDIF_IN
+                   --R345 (DNP)   --> WL_RST#  --R89--> (passive network)
+
+NXP's own BOARD_WIFI_BT_Enable() for this board drives GPIO_AD_B1_03 as
+WL_RST.  On the MIMXRT1060-EVKB RevB1 that link is NOT FITTED, so the pin
+currently drives SD_PWREN and SPDIF_IN instead and the module's reset line
+never moves.  `WL_RST#` touches only R345 and R89, and R89's far side is a
+passive network with no MCU pin on it -- **so there is no software route to
+that signal on this board.**  (GPIO_AD_B1_08, which NXP use for SDIO_RST, does
+not appear on the M.2 path here at all.)
+
+WHAT IT WOULD TAKE: bridge **R345** (0402) to connect GPIO_AD_B1_03 -> WL_RST#.
+Exactly the same class of rework as R404 on the 1170.
+★ NOTE THE COLLISION BEFORE DOING IT: R343 and R344 are FITTED, so that pin is
+shared three ways -- bridging R345 makes GPIO_AD_B1_03 drive WL_RST#, SD_PWREN
+and SPDIF_IN together.  Driving it low would also cut SD card power.  For a
+Bluetooth-only bench test that is acceptable; for anything else, R343/R344
+would want removing, which is presumably what NXP's own wifi examples assume.
+
+STATUS: the port is committed and builds for both boards; the rt1062 half is a
+BENCH configuration, not gated (see the `boards` sidecar for why).  The
+module-versus-board question remains OPEN until R345 is bridged.

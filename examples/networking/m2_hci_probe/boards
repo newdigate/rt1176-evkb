@@ -1,0 +1,14 @@
+# Boards this example is BUILT AND GATED for.
+#
+# ★ rt1062 is deliberately NOT listed, even though the example now builds for
+# it (`-DEVKB_BOARD=rt1062`, see the board axis in m2_hci_probe.cpp).  Listing
+# it would create a gate id `rt1062:networking/m2_hci_probe` whose script
+# asserts rt1176-specific lines (`sdio_begin=cmd5-no-response`), and it would
+# go red for a reason that has nothing to do with Bluetooth.  The rt1062 build
+# is a BENCH configuration, driven by hand, until it has a gate written for it.
+#
+# ★ AND THE rt1062 BENCH RUN NEEDS A HARDWARE REWORK FIRST -- see
+# docs/m2-evkb-revc3.md: R345 is DNP on the MIMXRT1060-EVKB RevB1, so
+# GPIO_AD_B1_03 never reaches WL_RST# and the module is never released from
+# reset.  Measured 2026-08-25: start_inds=0, chip_id=0x0000.
+rt1176

@@ -10,7 +10,15 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 # sdio + iw416 for the board preamble and the combo blob download that brings
 # the Bluetooth block up; hci for the transport.  lwip/arduino are NOT imported:
 # this example never touches the Wi-Fi data path.
-import_evkb_library(M2Radio sdio iw416 hci)
+# ★ rt1062 links the BLUETOOTH SUBDIR ONLY.  M2Radio's sdio/ and iw416/ target
+# the RT1176's USDHC and are not ported; hci/ is board-independent and drives
+# the M.2 BT UART through Serial2 on both boards (LPUART2 on the 1176,
+# LPUART3 on the 1062 -- the same physical M.2 pins in each case).
+if(EVKB_BOARD STREQUAL "rt1062")
+    import_evkb_library(M2Radio hci)
+else()
+    import_evkb_library(M2Radio sdio iw416 hci)
+endif()
 
 # --- IW416 firmware blob (NOT vendored) -------------------------------------
 # Same rule as every other m2_* example: NXP ship the blob under

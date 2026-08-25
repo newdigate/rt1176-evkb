@@ -18,38 +18,69 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
 #include <string.h>
+
+// --- BOARD AXIS ------------------------------------------------------------
+// ★ The M.2 Bluetooth UART is `Serial2` on BOTH boards, and that is a genuine
+// alignment rather than a coincidence worth hiding:
+//   rt1176  Serial2 = LPUART2 = GPIO_AD_26/27  -> J54 pins 22/32 (R1901 HAND
+//           BRIDGED 2026-08-18; DNP from the factory)
+//   rt1062  Serial2 = LPUART3 = GPIO_AD_B1_06/07 (core pins 17/16) -> the M.2
+//           BT UART through the FITTED 47R R189/R200.  **No rework needed** --
+//           the MIMXRT1060-EVKB ships this path populated, which the 1170 does
+//           not.  Verified from the RevB1 netlist, not assumed.
+// So every line of transport, loader and HCI code below is board-independent.
+// What differs is the console, the module power pins, and whether SDIO exists.
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+  #define CONSOLE Serial6            // LPUART1 -> the DAPLink VCOM
+  #define M2_HAS_SDIO 0
+#else
+  #define CONSOLE Serial1            // LPUART1 -> the MCU-Link VCOM
+  #define M2_HAS_SDIO 1
+#endif
+
+#if M2_HAS_SDIO
 #include <SdioHost.h>
 #include <SdioFunc.h>
 #include <Iw416.h>
+#endif
 #include <Hci.h>
 #include <HciEvents.h>
 #include <HciTransport.h>
 #include <HciPump.h>
 #include <BtFwLoader.h>
 
-static SdioHost sdio;
-static SdioFunc func(sdio);
-static Iw416 iw416(sdio, func);
+// --- the Bluetooth side: identical on both boards ---------------------------
 static HciTransport hciIo(Serial2);
 static Hci hci(hciIo);
 static HciPump pump;
 static BtFwLoader btLoader(hciIo);
+static BtFwLoader::Error s_btFwSt = BtFwLoader::NO_IMAGE;
+static Hci::Error s_hciSt = Hci::TIMEOUT;     // outcome of the Reset step
+static bool       s_card  = false;            // Wi-Fi firmware confirmed running
+
+#if defined(HAVE_IW416_BT_FW)
+extern const uint8_t  iw416_bt_fw[];
+extern const uint32_t iw416_bt_fw_len;
+#endif
+
+// --- the Wi-Fi side: rt1176 only --------------------------------------------
+// ★ M2Radio's SdioHost targets the RT1176's USDHC and is NOT ported to the
+// RT1062, so the Wi-Fi half is compiled out on that board.  The probe SAYS SO
+// at runtime rather than simply omitting the lines: a capability that was never
+// built must never read as one that failed.
+#if M2_HAS_SDIO
+static SdioHost sdio;
+static SdioFunc func(sdio);
+static Iw416 iw416(sdio, func);
 
 #if defined(HAVE_IW416_FW)
 extern const uint8_t  iw416_fw[];
 extern const uint32_t iw416_fw_len;
 #endif
-#if defined(HAVE_IW416_BT_FW)
-extern const uint8_t  iw416_bt_fw[];
-extern const uint32_t iw416_bt_fw_len;
-#endif
-static BtFwLoader::Error s_btFwSt = BtFwLoader::NO_IMAGE;
 
 static SdioHost::Status s_sdioSt = SdioHost::CMD5_NO_RESPONSE;
 static SdioHost::Status s_iwSt   = SdioHost::CMD_TIMEOUT;
 static SdioHost::Status s_fwSt   = SdioHost::CMD_TIMEOUT;
-static bool       s_card  = false;            // firmware confirmed running on the card
-static Hci::Error s_hciSt = Hci::TIMEOUT;     // outcome of the Reset step
 
 // Same spelling as every other m2_* example.
 static const char *statusName(SdioHost::Status s) {
@@ -65,25 +96,48 @@ static const char *statusName(SdioHost::Status s) {
     }
     return "unknown";
 }
+#endif
+
 
 // --- board preamble -- copied from m2_uap_probe (and WiFi.cpp); keep in step --
 // Release SDIO_RST (GPIO_AD_16 = GPIO9.15) then WL_RST/PDn (GPIO_AD_31 =
 // GPIO9.30, reaching PDn via the hand-bridged R404), with the 1 s ROM-boot
 // wait PDn requires.  Without it the card stays in power-down.
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+// MIMXRT1060-EVKB.  Same two-signal sequence, different pads -- taken from
+// NXP's own BOARD_WIFI_BT_Enable() for this board (SDIO_RST high, 100 ms,
+// WL_RST high, 100 ms) and cross-checked against the RevB1 netlist:
+//   SDIO_RST = GPIO_AD_B1_08 = GPIO1_IO24
+//   WL_RST   = GPIO_AD_B1_03 = GPIO1_IO19   (this is PDn to the module)
+// ALT5 is the GPIO1 alternate on the AD_B1 pads.
+#define M2_SDIO_RST_MUX IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_08
+#define M2_WL_RST_MUX   IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_03
+#define M2_SDIO_RST_BIT 24
+#define M2_WL_RST_BIT   19
+#define M2_RST_GDIR     GPIO1_GDIR
+#define M2_RST_SET      GPIO1_DR_SET
+#define M2_RST_CLEAR    GPIO1_DR_CLEAR
+#define M2_RST_ALT      0x5u
+#else
 #define M2_SDIO_RST_MUX (*(volatile uint32_t *)0x400E814Cu)   // GPIO_AD_16
 #define M2_WL_RST_MUX   (*(volatile uint32_t *)0x400E8188u)   // GPIO_AD_31
 #define M2_SDIO_RST_BIT 15
 #define M2_WL_RST_BIT   30
+#define M2_RST_GDIR     GPIO9_GDIR
+#define M2_RST_SET      GPIO9_DR_SET
+#define M2_RST_CLEAR    GPIO9_DR_CLEAR
+#define M2_RST_ALT      0xAu
+#endif
 
 static void m2ReleaseWifiReset() {
-    M2_SDIO_RST_MUX = 0x10u | 0xAu;                 // SION | ALT10 = GPIO9_IO15
-    M2_WL_RST_MUX   = 0x10u | 0xAu;                 // SION | ALT10 = GPIO9_IO30
-    GPIO9_GDIR |= (1u << M2_SDIO_RST_BIT) | (1u << M2_WL_RST_BIT);
-    GPIO9_DR_CLEAR = (1u << M2_SDIO_RST_BIT) | (1u << M2_WL_RST_BIT);
+    M2_SDIO_RST_MUX = 0x10u | M2_RST_ALT;           // SION | GPIO alternate
+    M2_WL_RST_MUX   = 0x10u | M2_RST_ALT;
+    M2_RST_GDIR |= (1u << M2_SDIO_RST_BIT) | (1u << M2_WL_RST_BIT);
+    M2_RST_CLEAR = (1u << M2_SDIO_RST_BIT) | (1u << M2_WL_RST_BIT);
     delay(10);
-    GPIO9_DR_SET = (1u << M2_SDIO_RST_BIT);         // SDIO_RST high
+    M2_RST_SET = (1u << M2_SDIO_RST_BIT);           // SDIO_RST high
     delay(100);
-    GPIO9_DR_SET = (1u << M2_WL_RST_BIT);           // then WL_RST / PDn high
+    M2_RST_SET = (1u << M2_WL_RST_BIT);             // then WL_RST / PDn high
     delay(1000);                                    // PDn exit needs ROM boot time
 }
 
@@ -98,10 +152,10 @@ static const uint8_t  EV_INQUIRY_COMPLETE = 0x01;
 static const uint8_t  EV_INQUIRY_RESULT   = 0x02;
 static const uint8_t  EV_REMOTE_NAME_DONE = 0x07;
 
-static void printHex8(uint8_t v)   { if (v < 0x10) Serial1.print('0'); Serial1.print(v, HEX); }
+static void printHex8(uint8_t v)   { if (v < 0x10) CONSOLE.print('0'); CONSOLE.print(v, HEX); }
 static void printHex16(uint16_t v) { printHex8((uint8_t)(v >> 8)); printHex8((uint8_t)v); }
 static void printHex24(uint32_t v) { printHex8((uint8_t)(v >> 16)); printHex16((uint16_t)v); }
-static void printBd(const uint8_t *bd) { char s[18]; hciFormatBd(bd, s); Serial1.print(s); }
+static void printBd(const uint8_t *bd) { char s[18]; hciFormatBd(bd, s); CONSOLE.print(s); }
 
 // ★ COUNTERS ARE CUMULATIVE ACROSS begin(), and they have to be.  The baud
 // sweep calls Hci::begin() once per rate, which zeroes every counter -- so
@@ -123,17 +177,17 @@ static void hciCountersFold() {          // call BEFORE an Hci::begin() that wou
 }
 
 static void printCounters() {
-    Serial1.print(" timeouts="); Serial1.print(s_toBase   + hci.timeouts());
-    Serial1.print(" framing=");  Serial1.print(s_frBase   + hci.framing());
-    Serial1.print(" starved=");  Serial1.print(s_stBase   + hci.starved());
-    Serial1.print(" qfull=");    Serial1.print(s_qfBase   + hci.queueFull());
-    Serial1.print(" late=");     Serial1.print(s_lateBase + hci.late());
+    CONSOLE.print(" timeouts="); CONSOLE.print(s_toBase   + hci.timeouts());
+    CONSOLE.print(" framing=");  CONSOLE.print(s_frBase   + hci.framing());
+    CONSOLE.print(" starved=");  CONSOLE.print(s_stBase   + hci.starved());
+    CONSOLE.print(" qfull=");    CONSOLE.print(s_qfBase   + hci.queueFull());
+    CONSOLE.print(" late=");     CONSOLE.print(s_lateBase + hci.late());
 }
 static void printFail(const char *what, Hci::Error e, const Hci::Reply &r, const char *alt) {
-    Serial1.print(what); Serial1.print("=fail reason=");
-    Serial1.print(e == Hci::OK ? alt : Hci::errorName(e));
-    Serial1.print(" status=0x"); printHex8(r.status);
-    printCounters(); Serial1.println();
+    CONSOLE.print(what); CONSOLE.print("=fail reason=");
+    CONSOLE.print(e == Hci::OK ? alt : Hci::errorName(e));
+    CONSOLE.print(" status=0x"); printHex8(r.status);
+    printCounters(); CONSOLE.println();
 }
 static void idleMs() { delay(1); }
 
@@ -153,13 +207,13 @@ static void onEvent(void *, uint8_t code, const uint8_t *p, uint8_t len) {
             Found &f = s_found[s_foundN];
             if (!hciParseInquiryResult(p, len, i, &f.r)) break;
             f.named = false; s_foundN++;
-            Serial1.print("inq: bd="); printBd(f.r.bd);
-            Serial1.print(" cod=0x"); printHex24(f.r.cod);
-            Serial1.print(" psrm="); Serial1.print(f.r.psrm);
-            Serial1.print(" clk=0x"); printHex16(f.r.clockOffset);
-            Serial1.println();
+            CONSOLE.print("inq: bd="); printBd(f.r.bd);
+            CONSOLE.print(" cod=0x"); printHex24(f.r.cod);
+            CONSOLE.print(" psrm="); CONSOLE.print(f.r.psrm);
+            CONSOLE.print(" clk=0x"); printHex16(f.r.clockOffset);
+            CONSOLE.println();
         }
-        if (n == 0) { Serial1.print("inq: malformed len="); Serial1.println(len); }
+        if (n == 0) { CONSOLE.print("inq: malformed len="); CONSOLE.println(len); }
     } else if (code == EV_INQUIRY_COMPLETE && len >= 1) {
         s_inqStatus = p[0]; s_inqDone = true;
     } else if (code == EV_REMOTE_NAME_DONE) {
@@ -170,7 +224,7 @@ static void onEvent(void *, uint8_t code, const uint8_t *p, uint8_t len) {
         }
         s_nameDone = true;
     } else {
-        Serial1.print("hci_event: code=0x"); printHex8(code); Serial1.print(" len="); Serial1.println(len);
+        CONSOLE.print("hci_event: code=0x"); printHex8(code); CONSOLE.print(" len="); CONSOLE.println(len);
     }
 }
 
@@ -181,16 +235,16 @@ static void probeIdentity() {
     if (e == Hci::OK && r.len >= 8) {
         // Return params after status: HCI_Version(1) HCI_Revision(2)
         // LMP_Version(1) Manufacturer_Name(2) LMP_Subversion(2)
-        Serial1.print("hci_version: hci_ver="); Serial1.print(r.params[0]);
-        Serial1.print(" hci_rev=0x");     printHex16((uint16_t)(r.params[1] | (r.params[2] << 8)));
-        Serial1.print(" lmp_ver=");       Serial1.print(r.params[3]);
-        Serial1.print(" manufacturer=0x"); printHex16((uint16_t)(r.params[4] | (r.params[5] << 8)));
-        Serial1.print(" lmp_subver=0x");  printHex16((uint16_t)(r.params[6] | (r.params[7] << 8)));
-        Serial1.println();
+        CONSOLE.print("hci_version: hci_ver="); CONSOLE.print(r.params[0]);
+        CONSOLE.print(" hci_rev=0x");     printHex16((uint16_t)(r.params[1] | (r.params[2] << 8)));
+        CONSOLE.print(" lmp_ver=");       CONSOLE.print(r.params[3]);
+        CONSOLE.print(" manufacturer=0x"); printHex16((uint16_t)(r.params[4] | (r.params[5] << 8)));
+        CONSOLE.print(" lmp_subver=0x");  printHex16((uint16_t)(r.params[6] | (r.params[7] << 8)));
+        CONSOLE.println();
     } else printFail("hci_version", e, r, "short_reply");
 
     e = hci.run(OP_READ_BD_ADDR, nullptr, 0, &r, 1000, idleMs);
-    if (e == Hci::OK && r.len >= 6) { Serial1.print("bd_addr="); printBd(r.params); Serial1.println(); }
+    if (e == Hci::OK && r.len >= 6) { CONSOLE.print("bd_addr="); printBd(r.params); CONSOLE.println(); }
     else printFail("bd_addr", e, r, "short_reply");
 
     e = hci.run(OP_READ_BUFFER_SIZE, nullptr, 0, &r, 1000, idleMs);
@@ -198,10 +252,10 @@ static void probeIdentity() {
         // ACL_Data_Packet_Length(2) Synchronous_Data_Packet_Length(1)
         // Total_Num_ACL_Data_Packets(2) Total_Num_Synchronous_Data_Packets(2)
         uint16_t aclLen = (uint16_t)(r.params[0] | (r.params[1] << 8));
-        Serial1.print("hci_buffer: acl_len="); Serial1.print(aclLen);
-        Serial1.print(" acl_num="); Serial1.print(r.params[3] | (r.params[4] << 8));
-        Serial1.print(" sco_len="); Serial1.print(r.params[2]);
-        Serial1.print(" sco_num="); Serial1.println(r.params[5] | (r.params[6] << 8));
+        CONSOLE.print("hci_buffer: acl_len="); CONSOLE.print(aclLen);
+        CONSOLE.print(" acl_num="); CONSOLE.print(r.params[3] | (r.params[4] << 8));
+        CONSOLE.print(" sco_len="); CONSOLE.print(r.params[2]);
+        CONSOLE.print(" sco_num="); CONSOLE.println(r.params[5] | (r.params[6] << 8));
         hci.setAclMax(aclLen);           // the parser's plausibility bound becomes the card's word
     } else printFail("hci_buffer", e, r, "short_reply");
 }
@@ -215,13 +269,13 @@ static void probeInquiry() {
     Hci::Reply r;
     Hci::Error e = hci.run(OP_INQUIRY, params, sizeof params, &r, 1000, idleMs);
     if (e != Hci::OK || !r.statusEvent) { printFail("inquiry", e, r, "not_command_status"); return; }
-    Serial1.println("inquiry=started");
+    CONSOLE.println("inquiry=started");
     uint32_t t0 = millis();
     while (!s_inqDone && millis() - t0 < 12000) delay(10);     // events arrive via the pump
-    Serial1.print("inquiry_complete: status=0x"); printHex8(s_inqDone ? s_inqStatus : 0xFF);
-    Serial1.print(" n="); Serial1.print(s_foundN);
-    if (!s_inqDone) Serial1.print(" timeout=1");
-    Serial1.println();
+    CONSOLE.print("inquiry_complete: status=0x"); printHex8(s_inqDone ? s_inqStatus : 0xFF);
+    CONSOLE.print(" n="); CONSOLE.print(s_foundN);
+    if (!s_inqDone) CONSOLE.print(" timeout=1");
+    CONSOLE.println();
 
     for (uint8_t i = 0; i < s_foundN; i++) {
         // Remote_Name_Request: BD_ADDR(6) Page_Scan_Repetition_Mode(1) Reserved(1) Clock_Offset(2, bit 15 = valid)
@@ -234,11 +288,11 @@ static void probeInquiry() {
         e = hci.run(OP_REMOTE_NAME_REQ, p, sizeof p, &r, 1000, idleMs);
         t0 = millis();
         while (e == Hci::OK && !s_nameDone && millis() - t0 < 5000) delay(10);
-        Serial1.print("inq_name: bd="); printBd(s_found[i].r.bd);
-        if (e != Hci::OK)         { Serial1.print(" fail reason="); Serial1.println(Hci::errorName(e)); continue; }
-        if (!s_found[i].named)    { Serial1.println(" fail reason=no_name_event"); continue; }
-        Serial1.print(" status=0x"); printHex8(s_found[i].name.status);
-        Serial1.print(" name=\""); Serial1.print(s_found[i].name.name); Serial1.println("\"");
+        CONSOLE.print("inq_name: bd="); printBd(s_found[i].r.bd);
+        if (e != Hci::OK)         { CONSOLE.print(" fail reason="); CONSOLE.println(Hci::errorName(e)); continue; }
+        if (!s_found[i].named)    { CONSOLE.println(" fail reason=no_name_event"); continue; }
+        CONSOLE.print(" status=0x"); printHex8(s_found[i].name.status);
+        CONSOLE.print(" name=\""); CONSOLE.print(s_found[i].name.name); CONSOLE.println("\"");
     }
 }
 
@@ -271,9 +325,28 @@ static void probeInquiry() {
 //
 // GPIO_DISP_B2_13: mux 0x400E8248, pad 0x400E848C, ALT5 = GPIO5_IO14
 // (ALT3 would be LPUART2_RTS_B; confirmed in the reference manual).
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+// MIMXRT1060-EVKB: the host's RTS -> the card's CTS input is BT_UART_RTS, which
+// the RevB1 netlist puts on GPIO_AD_B0_02 (= GPIO1_IO02) through the fitted
+// R354.  ★ NOTE IT IS NOT AN LPUART3 PIN.  NXP's own RT1060 wake macro names
+// GPIO_AD_B1_05 (LPUART3_RTS_B) -- that is a DIFFERENT board's routing, and on
+// this one AD_B1_05 does not reach the card at all.  So here the line is a
+// plain GPIO with no UART alternate, which also means hardware flow control is
+// impossible on this board, exactly as on the 1170.
+#define M2_BT_CTS_MUX IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B0_02
+#define M2_BT_CTS_PAD IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_B0_02
+#define M2_BT_CTS_BIT 2
+#define M2_BT_CTS_GDIR   GPIO1_GDIR
+#define M2_BT_CTS_CLEAR  GPIO1_DR_CLEAR
+#define M2_BT_CTS_GPIO_ALT 0x5u
+#else
 #define M2_BT_CTS_MUX (*(volatile uint32_t *)0x400E8248u)
 #define M2_BT_CTS_PAD (*(volatile uint32_t *)0x400E848Cu)
 #define M2_BT_CTS_BIT 14
+#define M2_BT_CTS_GDIR   GPIO5_GDIR
+#define M2_BT_CTS_CLEAR  GPIO5_DR_CLEAR
+#define M2_BT_CTS_GPIO_ALT 0x5u
+#endif
 
 // ---------------------------------------------------------------------------
 // Wake the controller from BOOT SLEEP -- the step NXP's loader performs and
@@ -306,20 +379,27 @@ static void probeInquiry() {
 // so the pulse also resets the gigabit PHY for 10 ms.  Harmless here; it would
 // not be in an Ethernet example.
 static void m2WakeFromBootSleep() {
-    M2_BT_CTS_MUX = 0x5u;                       // ALT5 = GPIO5_IO14 (no SION)
+    M2_BT_CTS_MUX = M2_BT_CTS_GPIO_ALT;         // the GPIO alternate (no SION)
     M2_BT_CTS_PAD = 0x02u;                      // NXP's pad config for this pin
-    GPIO5_GDIR |= (1u << M2_BT_CTS_BIT);        // output
-    GPIO5_DR_CLEAR = (1u << M2_BT_CTS_BIT);     // drive LOW
+    M2_BT_CTS_GDIR |= (1u << M2_BT_CTS_BIT);    // output
+    M2_BT_CTS_CLEAR = (1u << M2_BT_CTS_BIT);    // drive LOW
     delay(10);                                  // NXP hold 10 ms
+#if defined(ARDUINO_MIMXRT1060_EVKB)
+    // No UART alternate exists on this pad here (see the note above), so the
+    // pulse is released by handing the pin back as an INPUT rather than by
+    // re-muxing to RTS.  Deasserted is what the card should see afterwards.
+    M2_BT_CTS_GDIR &= ~(1u << M2_BT_CTS_BIT);
+#else
     M2_BT_CTS_MUX = 0x3u;                       // revert: ALT3 = LPUART2_RTS_B
     M2_BT_CTS_PAD = 0x02u;
+#endif
 }
 
 static void m2AssertBtCts() {
-    M2_BT_CTS_MUX = 0x10u | 0x5u;               // SION | ALT5 = GPIO5_IO14
+    M2_BT_CTS_MUX = 0x10u | M2_BT_CTS_GPIO_ALT; // SION | the GPIO alternate
     M2_BT_CTS_PAD = 0x0Cu;                      // no pull; we drive it
-    GPIO5_GDIR |= (1u << M2_BT_CTS_BIT);        // output
-    GPIO5_DR_CLEAR = (1u << M2_BT_CTS_BIT);     // LOW = asserted = clear to send
+    M2_BT_CTS_GDIR |= (1u << M2_BT_CTS_BIT);    // output
+    M2_BT_CTS_CLEAR = (1u << M2_BT_CTS_BIT);    // LOW = asserted = clear to send
 }
 
 // The BT-only UART firmware download.  Called immediately after the card is
@@ -339,10 +419,10 @@ static void m2DumpSerial2(const char *label, uint32_t ms) {
         delay(1);
     }
     const uint32_t kept = n < sizeof buf ? n : (uint32_t)sizeof buf;
-    Serial1.print(label); Serial1.print(" n="); Serial1.print(n); Serial1.print(" hex=");
-    if (!kept) Serial1.print("none");
+    CONSOLE.print(label); CONSOLE.print(" n="); CONSOLE.print(n); CONSOLE.print(" hex=");
+    if (!kept) CONSOLE.print("none");
     else for (uint32_t i = 0; i < kept; i++) printHex8(buf[i]);
-    Serial1.println();
+    CONSOLE.println();
 }
 
 static void btFirmwareDownload() {
@@ -350,8 +430,8 @@ static void btFirmwareDownload() {
     // u-blox's path: the combo image over SDIO carries the BT core too, so
     // there is nothing to download here.  Printed rather than silent -- a
     // missing download must never be mistaken for a failed one.
-    Serial1.println("bt_fw_source=combo_over_sdio");
-    Serial1.println("bt_fw_download=skipped (combo-over-SDIO path)");
+    CONSOLE.println("bt_fw_source=combo_over_sdio");
+    CONSOLE.println("bt_fw_download=skipped (combo-over-SDIO path)");
     // Nothing has consumed the ROM's power-up greeting on this path, so this
     // is where it should still be sitting.  Printing it is what turns the
     // later `framing=1` from an inference into a reading.
@@ -380,52 +460,52 @@ static void btFirmwareDownload() {
     // ONLY whether the card needs that register block written before its
     // firmware will run.
     btLoader.enableUartConfig(BtFwLoader::CLKDIV_115200, BtFwLoader::UARTDIV_115200);
-    Serial1.println("bt_uart_cfg=injected");
+    CONSOLE.println("bt_uart_cfg=injected");
 #else
-    Serial1.println("bt_uart_cfg=off");
+    CONSOLE.println("bt_uart_cfg=off");
 #endif
     s_btFwSt = btLoader.run(3000, 500, 30000, idleMs);
 #if defined(BT_FW_IS_SYNTHETIC)
     // Loud on purpose: this build is for QEMU and the image is NOT NXP firmware.
-    Serial1.println("bt_fw_source=synthetic");
+    CONSOLE.println("bt_fw_source=synthetic");
 #else
-    Serial1.println("bt_fw_source=nxp");
+    CONSOLE.println("bt_fw_source=nxp");
 #endif
-    Serial1.print("bt_fw_download=");
-    Serial1.print(BtFwLoader::errorName(s_btFwSt));
-    Serial1.print(" chip_id=0x");   printHex16(btLoader.chipId());
-    Serial1.print(" loader_ver=");  Serial1.print(btLoader.loaderVer());
-    Serial1.print(" start_inds=");  Serial1.print(btLoader.startInds());
-    Serial1.print(" chunks=");      Serial1.print(btLoader.chunks());
-    Serial1.print(" sent=");        Serial1.print(btLoader.bytesSent());
-    Serial1.print("/");             Serial1.print(iw416_bt_fw_len);
-    Serial1.print(" max_off=");     Serial1.print(btLoader.maxOffset());
-    Serial1.print(" retx=");        Serial1.print(btLoader.retransmits());
-    Serial1.print(" crc_err=");     Serial1.print(btLoader.crcErrors());
-    Serial1.print(" card_err=0x");  printHex16(btLoader.lastCardErr());
-    Serial1.print(" cfg_resends="); Serial1.print(btLoader.cfgHdrResends());
-    Serial1.print(" cfg_unexp_len="); Serial1.print(btLoader.cfgUnexpectedLen());
-    Serial1.print(" presync="); Serial1.print(btLoader.preSyncSkipped());
-    Serial1.println();
+    CONSOLE.print("bt_fw_download=");
+    CONSOLE.print(BtFwLoader::errorName(s_btFwSt));
+    CONSOLE.print(" chip_id=0x");   printHex16(btLoader.chipId());
+    CONSOLE.print(" loader_ver=");  CONSOLE.print(btLoader.loaderVer());
+    CONSOLE.print(" start_inds=");  CONSOLE.print(btLoader.startInds());
+    CONSOLE.print(" chunks=");      CONSOLE.print(btLoader.chunks());
+    CONSOLE.print(" sent=");        CONSOLE.print(btLoader.bytesSent());
+    CONSOLE.print("/");             CONSOLE.print(iw416_bt_fw_len);
+    CONSOLE.print(" max_off=");     CONSOLE.print(btLoader.maxOffset());
+    CONSOLE.print(" retx=");        CONSOLE.print(btLoader.retransmits());
+    CONSOLE.print(" crc_err=");     CONSOLE.print(btLoader.crcErrors());
+    CONSOLE.print(" card_err=0x");  printHex16(btLoader.lastCardErr());
+    CONSOLE.print(" cfg_resends="); CONSOLE.print(btLoader.cfgHdrResends());
+    CONSOLE.print(" cfg_unexp_len="); CONSOLE.print(btLoader.cfgUnexpectedLen());
+    CONSOLE.print(" presync="); CONSOLE.print(btLoader.preSyncSkipped());
+    CONSOLE.println();
     // Request trace: the shape of the download, which is where a subtly wrong
     // one shows itself (a length that never changes, an offset that stops
     // advancing, a final block that does not reach the end of the image).
-    Serial1.print("bt_req_first:");
+    CONSOLE.print("bt_req_first:");
     for (uint8_t i = 0; i < btLoader.traceFirstN(); i++) {
-        Serial1.print(" "); Serial1.print(btLoader.traceFirstLen(i));
-        Serial1.print("@"); Serial1.print(btLoader.traceFirstOff(i));
+        CONSOLE.print(" "); CONSOLE.print(btLoader.traceFirstLen(i));
+        CONSOLE.print("@"); CONSOLE.print(btLoader.traceFirstOff(i));
     }
-    Serial1.println();
-    Serial1.print("bt_req_last:");
+    CONSOLE.println();
+    CONSOLE.print("bt_req_last:");
     {
         uint8_t n = btLoader.traceLastN();
         for (uint8_t i = 0; i < n; i++) {
             uint8_t idx = (uint8_t)((BtFwLoader::TRACE_N + i) % BtFwLoader::TRACE_N);
-            Serial1.print(" "); Serial1.print(btLoader.traceLastLen(idx));
-            Serial1.print("@"); Serial1.print(btLoader.traceLastOff(idx));
+            CONSOLE.print(" "); CONSOLE.print(btLoader.traceLastLen(idx));
+            CONSOLE.print("@"); CONSOLE.print(btLoader.traceLastOff(idx));
         }
     }
-    Serial1.println();
+    CONSOLE.println();
 
     // The core needs a moment to authenticate the image and start its firmware.
     // DIAGNOSTIC: listen on the raw UART afterwards and hex-dump whatever the
@@ -442,12 +522,12 @@ static void btFirmwareDownload() {
                 while (Serial2.available()) { int c = Serial2.read(); if (n < sizeof buf) buf[n] = (uint8_t)c; n++; }
                 delay(1);
             }
-            Serial1.print("bt_post_dnld["); Serial1.print(w); Serial1.print("]: n=");
-            Serial1.print(n); Serial1.print(" hex=");
-            if (!n) Serial1.print("none");
+            CONSOLE.print("bt_post_dnld["); CONSOLE.print(w); CONSOLE.print("]: n=");
+            CONSOLE.print(n); CONSOLE.print(" hex=");
+            if (!n) CONSOLE.print("none");
             else { uint32_t s = n < sizeof buf ? n : (uint32_t)sizeof buf;
-                   for (uint32_t i = 0; i < s; i++) { if (buf[i] < 0x10) Serial1.print('0'); Serial1.print(buf[i], HEX); } }
-            Serial1.println();
+                   for (uint32_t i = 0; i < s; i++) { if (buf[i] < 0x10) CONSOLE.print('0'); CONSOLE.print(buf[i], HEX); } }
+            CONSOLE.println();
         }
         // And ask, RAW, right here -- before any SDIO work touches the card.
         // If HCI answers here but not later, the SDIO sequence is disturbing a
@@ -462,18 +542,18 @@ static void btFirmwareDownload() {
                 while (Serial2.available()) { int c = Serial2.read(); if (n < sizeof buf) buf[n] = (uint8_t)c; n++; }
                 delay(1);
             }
-            Serial1.print("bt_raw_reset["); Serial1.print(a); Serial1.print("]: n=");
-            Serial1.print(n); Serial1.print(" hex=");
-            if (!n) Serial1.print("none");
+            CONSOLE.print("bt_raw_reset["); CONSOLE.print(a); CONSOLE.print("]: n=");
+            CONSOLE.print(n); CONSOLE.print(" hex=");
+            if (!n) CONSOLE.print("none");
             else { uint32_t s = n < sizeof buf ? n : (uint32_t)sizeof buf;
-                   for (uint32_t i = 0; i < s; i++) { if (buf[i] < 0x10) Serial1.print('0'); Serial1.print(buf[i], HEX); } }
-            Serial1.println();
+                   for (uint32_t i = 0; i < s; i++) { if (buf[i] < 0x10) CONSOLE.print('0'); CONSOLE.print(buf[i], HEX); } }
+            CONSOLE.println();
             if (n) break;
         }
     }
 #else
-    Serial1.println("bt_fw_source=none");
-    Serial1.println("bt_fw_download=skipped (no image compiled in)");
+    CONSOLE.println("bt_fw_source=none");
+    CONSOLE.println("bt_fw_download=skipped (no image compiled in)");
 #endif
 #endif  // M2_BT_NO_UART_DNLD
 
@@ -537,14 +617,14 @@ static void btBaudSweep() {
         delay(20);                                  // let the receiver settle
         Hci::Reply r;
         const Hci::Error e = hci.run(OP_RESET, nullptr, 0, &r, 400, idleMs);
-        Serial1.print("bt_baud_try="); Serial1.print(baud);
-        Serial1.print(" st="); Serial1.print(e == Hci::OK ? "reset_complete" : Hci::errorName(e));
-        printCounters(); Serial1.println();
+        CONSOLE.print("bt_baud_try="); CONSOLE.print(baud);
+        CONSOLE.print(" st="); CONSOLE.print(e == Hci::OK ? "reset_complete" : Hci::errorName(e));
+        printCounters(); CONSOLE.println();
         if (e == Hci::OK) { s_baudFound = baud; break; }
     }
-    if (s_baudFound) { Serial1.print("bt_baud="); Serial1.println(s_baudFound); }
+    if (s_baudFound) { CONSOLE.print("bt_baud="); CONSOLE.println(s_baudFound); }
     else {
-        Serial1.print("bt_baud=none tried="); Serial1.println(BT_SWEEP_N);
+        CONSOLE.print("bt_baud=none tried="); CONSOLE.println(BT_SWEEP_N);
         hciIo.end(); hciIo.begin(115200);           // leave the port as we found it
         hciCountersFold();
         hci.begin();
@@ -552,9 +632,9 @@ static void btBaudSweep() {
 }
 
 void setup() {
-    Serial1.begin(115200);
+    CONSOLE.begin(115200);
     delay(50);
-    Serial1.println("RT1176 M.2 HCI probe up");
+    CONSOLE.println("RT1176 M.2 HCI probe up");
 
     // ★ ORDER IS LOAD-BEARING, and getting it wrong is silent.
     // The BT core greets ONCE per power-up -- it sent its V3 start indication
@@ -569,17 +649,17 @@ void setup() {
     // The 1 KB RX ring is what makes this safe: the greeting lands there during
     // the ROM-boot wait inside m2ReleaseWifiReset() and waits for the loader.
     hciIo.begin(115200);
-    Serial1.println("serial2=up_115200");
+    CONSOLE.println("serial2=up_115200");
 
     m2ReleaseWifiReset();
-    Serial1.println("m2_wifi_reset=released");
+    CONSOLE.println("m2_wifi_reset=released");
 
     // NXP's position for this: inside uart_fw_download(), before the image.
 #if defined(M2_BT_WAKE_PULSE)
     m2WakeFromBootSleep();
-    Serial1.println("bt_wake=pulsed_10ms_low (GPIO_DISP_B2_13, mux returned to LPUART2_RTS_B)");
+    CONSOLE.println("bt_wake=pulsed_10ms_low (GPIO_DISP_B2_13, mux returned to LPUART2_RTS_B)");
 #else
-    Serial1.println("bt_wake=off");
+    CONSOLE.println("bt_wake=off");
 #endif
 
     // ★ CTS IS ASSERTED HERE AND NOT EARLIER, and the ordering is the whole
@@ -597,33 +677,39 @@ void setup() {
     // retest mean anything.
 #if defined(M2_BT_ASSERT_CTS)
     m2AssertBtCts();
-    Serial1.println("bt_cts=asserted_after_reset (PHY held in reset -- see the note above)");
+    CONSOLE.println("bt_cts=asserted_after_reset (PHY held in reset -- see the note above)");
 #else
-    Serial1.println("bt_cts=undriven");
+    CONSOLE.println("bt_cts=undriven");
 #endif
 
     btFirmwareDownload();
 
+#if M2_HAS_SDIO
     sdio.useIoVoltage1V8(true);
     s_sdioSt = sdio.begin();
-    Serial1.print("sdio_begin="); Serial1.println(statusName(s_sdioSt));
+    CONSOLE.print("sdio_begin="); CONSOLE.println(statusName(s_sdioSt));
     if (s_sdioSt == SdioHost::OK) {
         s_iwSt = iw416.begin();
-        Serial1.print("iw416_begin="); Serial1.print(statusName(s_iwSt));
-        Serial1.print(" fw_status=0x"); Serial1.println(iw416.fwStatus(), HEX);
+        CONSOLE.print("iw416_begin="); CONSOLE.print(statusName(s_iwSt));
+        CONSOLE.print(" fw_status=0x"); CONSOLE.println(iw416.fwStatus(), HEX);
         if (s_iwSt == SdioHost::OK) {
 #if defined(HAVE_IW416_FW)
             s_fwSt = iw416.downloadFirmware(iw416_fw, iw416_fw_len);
-            Serial1.print("fw_download="); Serial1.println(statusName(s_fwSt));
+            CONSOLE.print("fw_download="); CONSOLE.println(statusName(s_fwSt));
 #else
             s_fwSt = (iw416.fwStatus() == Iw416::FIRMWARE_READY) ? SdioHost::OK : SdioHost::CMD_TIMEOUT;
-            Serial1.print("fw_download=skipped (no blob supplied) preboot=");
-            Serial1.println(s_fwSt == SdioHost::OK ? 1 : 0);
+            CONSOLE.print("fw_download=skipped (no blob supplied) preboot=");
+            CONSOLE.println(s_fwSt == SdioHost::OK ? 1 : 0);
 #endif
         }
     }
     s_card = (s_fwSt == SdioHost::OK);
-    Serial1.print("card="); Serial1.println(s_card ? 1 : 0);
+    CONSOLE.print("card="); CONSOLE.println(s_card ? 1 : 0);
+#else
+    // rt1062: no SDIO port, so there is no Wi-Fi half to run.  Say it plainly.
+    CONSOLE.println("sdio_begin=not_built (rt1062: SdioHost is RT1176-only)");
+    CONSOLE.println("card=0");
+#endif
 
     // ★ THE QUESTION THIS ANSWERS: when the SDIO firmware comes up -- the
     // COMBO image, which u-blox say carries the Bluetooth core too -- does
@@ -651,16 +737,16 @@ void setup() {
         if (s_hciSt == Hci::OK) break;
     }
     if (s_hciSt == Hci::OK) {
-        Serial1.print("hci_reset=ok attempts="); Serial1.print(attempts);
-        printCounters(); Serial1.println();
+        CONSOLE.print("hci_reset=ok attempts="); CONSOLE.print(attempts);
+        printCounters(); CONSOLE.println();
         probeIdentity();
         probeInquiry();
     } else if (s_hciSt == Hci::TIMEOUT) {
-        Serial1.print("hci_reset=timeout reason=no_response attempts=10");
-        printCounters(); Serial1.println();
+        CONSOLE.print("hci_reset=timeout reason=no_response attempts=10");
+        printCounters(); CONSOLE.println();
     } else {
-        Serial1.print("hci_reset=fail reason="); Serial1.print(Hci::errorName(s_hciSt));
-        Serial1.print(" attempts=10"); printCounters(); Serial1.println();
+        CONSOLE.print("hci_reset=fail reason="); CONSOLE.print(Hci::errorName(s_hciSt));
+        CONSOLE.print(" attempts=10"); printCounters(); CONSOLE.println();
     }
     // ★ ESCALATION -- 115200 is the BOOT ROM's rate, not necessarily the
     // running firmware's.  u-blox attach this module's controller at 3 Mbaud
@@ -673,25 +759,25 @@ void setup() {
     if (s_hciSt != Hci::OK) {
         btBaudSweep();
         if (s_baudFound) {
-            Serial1.print("hci_reset=ok_after_baud_change baud="); Serial1.print(s_baudFound);
-            printCounters(); Serial1.println();
+            CONSOLE.print("hci_reset=ok_after_baud_change baud="); CONSOLE.print(s_baudFound);
+            printCounters(); CONSOLE.println();
             s_hciSt = Hci::OK;
             probeIdentity();
             probeInquiry();
         }
     }
-    Serial1.println("hci_probe_done");
+    CONSOLE.println("hci_probe_done");
 }
 
 void loop() {
     static uint32_t n = 0;
     // Heartbeat: proves the image is still running after the probe rather than
     // having wedged in it, and carries the transport's accounting.
-    Serial1.print("hb card="); Serial1.print(s_card ? 1 : 0);
-    Serial1.print(" btfw="); Serial1.print(BtFwLoader::errorName(s_btFwSt));
-    Serial1.print(" hci="); Serial1.print(s_hciSt == Hci::OK ? "ok" : Hci::errorName(s_hciSt));
-    Serial1.print(" n="); Serial1.print(n++);
-    Serial1.print(" pump="); Serial1.print(pump.passes());
-    printCounters(); Serial1.println();
+    CONSOLE.print("hb card="); CONSOLE.print(s_card ? 1 : 0);
+    CONSOLE.print(" btfw="); CONSOLE.print(BtFwLoader::errorName(s_btFwSt));
+    CONSOLE.print(" hci="); CONSOLE.print(s_hciSt == Hci::OK ? "ok" : Hci::errorName(s_hciSt));
+    CONSOLE.print(" n="); CONSOLE.print(n++);
+    CONSOLE.print(" pump="); CONSOLE.print(pump.passes());
+    printCounters(); CONSOLE.println();
     delay(1000);
 }
