@@ -214,6 +214,26 @@ saying the combo does not "contain" the BT image was wrong.
 "try another build" is not a local experiment. Never commit these blobs; they
 are supplied at configure time only.
 
+★★ **THE COMBO IMAGE OVER SDIO DOES NOT BRING UP BLUETOOTH ON THIS CARD —
+measured 2026-08-25 in BYTES, not inferred.** With the combo image downloaded
+and the WLAN side running (`fw_download=ok card=1`), the BT UART emits a FOURTH
+`AB 01 72 00 47` — a fresh ROM start indication. The BT core is still in its
+bootloader, still asking for a UART download. That contradicts NXP's
+`controller_wifi_nxp.c` (whose premise is that BT is up after the combo
+download) and u-blox's own SIM §4.4.3/§4.4.6 procedure, and it VINDICATES
+BT-1's pivot to the `CONFIG_BT_IND_DNLD` UART path.
+★ **The contrast between the paths is the diagnostic**, and it tells us what
+rejection looks like on this card: combo → the ROM keeps announcing; our UART
+download → the ROM goes SILENT and never re-greets (`bt_post_dnld[0..3]` all
+`n=0`, four 500 ms windows). A ROM that rejected an image restarts and
+announces — so ours is ACCEPTED and the bootloader is exited. **The failure is
+therefore after the jump**, not in transport, delivery, or arrival.
+★ Every claim about the combo path before this was based on the Hci driver's
+`framing` counter read long afterwards — which can say "something unparseable
+arrived" but not what. `m2DumpSerial2()` dumps the raw UART at power-up and
+after the SDIO download, on both paths, which is what turned an inference into
+a reading.
+
 ★ **`M2_BT_WAKE_PULSE` (default ON) is NXP's boot-sleep wake**, found 2026-08-25
 by reading their loader's CALL ORDER: `uart_fw_download()` calls
 `wakeUpControllerFromBootSleep()` BEFORE the image, and for the RT1170 that is

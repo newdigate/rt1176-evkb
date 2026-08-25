@@ -324,6 +324,27 @@ static void m2AssertBtCts() {
 
 // The BT-only UART firmware download.  Called immediately after the card is
 // powered up and BEFORE any SDIO work -- see the ordering note in setup().
+// Dump whatever Serial2 receives in the next `ms`, as HEX.
+//
+// ★ WHY THIS EXISTS.  The combo-over-SDIO path had never captured a single
+// byte of the BT UART -- its only evidence was the Hci driver's `framing`
+// counter, read much later, which can say "something unparseable arrived" but
+// not WHAT.  A counter cannot tell the ROM's power-up greeting from noise, and
+// cannot answer the actual question: does anything come out of that UART when
+// the COMBO image boots the card over SDIO?  Bytes can.
+static void m2DumpSerial2(const char *label, uint32_t ms) {
+    uint8_t buf[64]; uint32_t n = 0; const uint32_t t0 = millis();
+    while (millis() - t0 < ms) {
+        while (Serial2.available()) { int c = Serial2.read(); if (n < sizeof buf) buf[n] = (uint8_t)c; n++; }
+        delay(1);
+    }
+    const uint32_t kept = n < sizeof buf ? n : (uint32_t)sizeof buf;
+    Serial1.print(label); Serial1.print(" n="); Serial1.print(n); Serial1.print(" hex=");
+    if (!kept) Serial1.print("none");
+    else for (uint32_t i = 0; i < kept; i++) printHex8(buf[i]);
+    Serial1.println();
+}
+
 static void btFirmwareDownload() {
 #if defined(M2_BT_NO_UART_DNLD)
     // u-blox's path: the combo image over SDIO carries the BT core too, so
@@ -331,6 +352,10 @@ static void btFirmwareDownload() {
     // missing download must never be mistaken for a failed one.
     Serial1.println("bt_fw_source=combo_over_sdio");
     Serial1.println("bt_fw_download=skipped (combo-over-SDIO path)");
+    // Nothing has consumed the ROM's power-up greeting on this path, so this
+    // is where it should still be sitting.  Printing it is what turns the
+    // later `framing=1` from an inference into a reading.
+    m2DumpSerial2("bt_uart_preboot:", 300);
     s_btFwSt = BtFwLoader::NO_IMAGE;
     return;
 #else
@@ -599,6 +624,13 @@ void setup() {
     }
     s_card = (s_fwSt == SdioHost::OK);
     Serial1.print("card="); Serial1.println(s_card ? 1 : 0);
+
+    // ★ THE QUESTION THIS ANSWERS: when the SDIO firmware comes up -- the
+    // COMBO image, which u-blox say carries the Bluetooth core too -- does
+    // anything appear on the BT UART?  A booting controller that announced
+    // itself, or re-greeted from ROM, or emitted anything at all, would show
+    // here.  Run on BOTH firmware paths so the two are comparable.
+    m2DumpSerial2("bt_uart_postsdio:", 500);
 
     // The HCI sequence runs WHATEVER the SDIO outcome: on silicon the BT block
     // only answers after the combo download (B0), and the card-absent gate

@@ -1010,3 +1010,49 @@ EdgeFast a2dp_source fails identically on this board.  What remains is the
 card refusing to execute an image it has accepted and checksummed, which is
 what a signature rejection looks like from the host and cannot be told apart
 from it without vendor help.
+
+=====================================================
+WHAT THE BT UART DOES WHEN THE COMBO FIRMWARE BOOTS -- 2026-08-25
+=====================================================
+
+THE GAP THIS CLOSES.  Every earlier statement about the combo path rested on
+the Hci driver's `framing` counter, read long afterwards.  A counter can say
+"something unparseable arrived"; it cannot say WHAT, and it cannot distinguish
+the ROM's greeting from noise.  The combo path had never captured a byte.
+`m2DumpSerial2()` now dumps the raw UART at two points, on both paths.
+
+MEASURED (combo image over SDIO, no BT UART download, wake pulse on):
+
+    bt_uart_preboot:  n=16 hex=00 AB01720047 AB01720047 AB01720047
+    sdio_begin=ok / iw416_begin=ok / fw_download=ok / card=1
+    bt_uart_postsdio: n=5  hex=AB01720047
+
+★★ **THE BT CORE RE-GREETS AFTER THE COMBO DOWNLOAD SUCCEEDS.**  That fourth
+`AB 01 72 00 47` is a NEW start indication: the preboot drain had already taken
+all three power-up greetings (16 bytes = a leading 0x00 mux artefact plus 3 x 5),
+so these five bytes arrived during the SDIO work, after them.  The Bluetooth
+core is still in its ROM bootloader, still asking for a firmware download over
+UART, with the WLAN firmware running perfectly on the same chip.
+
+**So the combo image over SDIO does NOT bring up Bluetooth on this card.**  That
+contradicts NXP's controller_wifi_nxp.c, whose whole premise is that BT is up
+after the combo download, and it contradicts u-blox's own documented procedure
+(SIM s4.4.3 combo image + s4.4.6 `hciattach`).  It also VINDICATES BT-1's pivot:
+building the CONFIG_BT_IND_DNLD UART download was the right call, not a detour.
+
+★ AND THE CONTRAST BETWEEN THE TWO PATHS IS THE USEFUL PART:
+
+    combo over SDIO      -> BT UART keeps announcing (AB 01 72 00 47), ROM alive
+    BT-only UART upload  -> BT UART goes SILENT (bt_post_dnld[0..3] all n=0,
+                            four 500 ms windows) and never re-greets
+
+A ROM that had REJECTED the image would restart and announce itself again --
+that is exactly what it does on the combo path, so we know what rejection looks
+like on this card.  After our UART download it does the opposite: it stops
+asking.  The loader accepts the image and leaves the bootloader.
+
+**That narrows the failure to the window between accepting the image and
+running a working HCI controller.**  It is not the transport (proven), not the
+delivery (142 chunks, a real retransmit recovered), and not "the firmware never
+arrived" (the ROM stops asking, which only happens once it has what it wants).
+Whatever goes wrong, goes wrong after the jump.

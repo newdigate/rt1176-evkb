@@ -10,6 +10,7 @@ bt_req_first:
 bt_req_last:
 sdio_begin=cmd5-no-response
 card=0
+bt_uart_postsdio: n=0 hex=none
 hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0
 bt_baud_try=3000000 st=no_response timeouts=11 framing=0 starved=0 qfull=0 late=0
 bt_baud_try=921600 st=no_response timeouts=12 framing=0 starved=0 qfull=0 late=0
@@ -17,5 +18,5 @@ bt_baud_try=460800 st=no_response timeouts=13 framing=0 starved=0 qfull=0 late=0
 bt_baud_try=115200 st=no_response timeouts=14 framing=0 starved=0 qfull=0 late=0
 bt_baud=none tried=4
 hci_probe_done
-hb card=0 btfw=no_start_indication hci=no_response n=0 pump=2934529 timeouts=14 framing=0 starved=0 qfull=0 late=0
-hb card=0 btfw=no_start_indication hci=no_response n=1 pump=3231261 timeouts=14 framing=0 starved=0 qfull=0 late=0
+hb card=0 btfw=no_start_indication hci=no_response n=0 pump=2695522 timeouts=14 framing=0 starved=0 qfull=0 late=0
+hb card=0 btfw=no_start_indication hci=no_response n=1 pump=3016558 timeouts=14 framing=0 starved=0 qfull=0 late=0
