@@ -65,6 +65,28 @@ next session does not re-run any of them.
 > the same path and the same image and failed the same way. That strengthens the
 > exoneration rather than weakening it.
 >
+> ### The second-host experiment — attempted, and it did not work
+>
+> The card was moved to a **MIMXRT1060-EVKB** to separate "this module" from
+> "this board". `m2_hci_probe` now builds for `rt1062` (BT UART is `Serial2` on
+> both boards — LPUART3 there), so the instrument is identical.
+>
+> **It never greeted, after three hand reworks.** `R345` (PDn) and `R96` (the
+> card→MCU RX leg) are both DNP from the factory and were bridged; `R343`/`R344`
+> were also removed, **unnecessarily, on a wrong diagnosis of mine** — a pin-swing
+> test that drove `GPIO1` while the teensy4 core hands every pad to `GPIO6`, which
+> manufactured a confident "PIN STUCK" verdict out of a disconnected register.
+>
+> With that fixed, the continuity probe reports the RX line **driven high
+> externally** (an idle UART — so the bridges conduct) and PDn **swinging** when
+> read back at the pad. And the card is **silent for 3 s** after every reset.
+>
+> ★ **That is not evidence about the module** — the same physical card greets
+> reliably on the 1170. The 1060 is simply not equivalent yet, in a way the
+> netlist, the continuity probe and the swing test have all failed to surface.
+> **It cannot serve as the independent platform it was brought in to be**, and
+> further work there needs a scope on J8.22/J8.56, not more firmware.
+>
 > ### So §9 stands: the USB dongle
 >
 > Every host-side and configuration-level explanation is eliminated. Only

@@ -213,6 +213,26 @@ driven asserted with no change (row 5 above).
 
 ---
 
+## 7a. We attempted a second host, and could not bring it up
+
+To separate "this module" from "this board" we moved the card to a
+**MIMXRT1060-EVKB** and ran the same probe (the Bluetooth UART is LPUART3
+there). It has never produced the ROM start indication.
+
+Three hand reworks were needed and were done — `R345` (PDn) and `R96` (the
+card→MCU receive leg) are both DNP from the factory. With those fitted, an
+electrical probe reports the receive line **held high externally** (an idle
+UART, so the link conducts) and PDn **swinging** when read back at the pad — and
+the card stays **silent for 3 s** after every reset.
+
+We are *not* offering this as evidence about the module: the same physical card
+greets reliably on the MIMXRT1170-EVKB. We mention it because it is why
+**question 6 matters most to us** — we have not been able to build an
+independent platform ourselves, so a known-good reference capture from your side
+would be the fastest way to settle whether this module behaves as expected.
+
+---
+
 ## 8. Reproduction
 
 Fastest path, using only NXP-supplied software:

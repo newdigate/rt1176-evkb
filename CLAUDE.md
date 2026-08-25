@@ -252,6 +252,30 @@ arrived" but not what. `m2DumpSerial2()` dumps the raw UART at power-up and
 after the SDIO download, on both paths, which is what turned an inference into
 a reading.
 
+★ **`networking/m2_hci_probe` ALSO BUILDS FOR rt1062 — as a BENCH build, not a
+gate.** `-DEVKB_BOARD=rt1062` links `M2Radio/hci` only (SdioHost is RT1176-only,
+so the Wi-Fi half compiles out and says `sdio_begin=not_built` rather than being
+silently absent). The BT UART is `Serial2` on both boards — LPUART2 on the 1176,
+**LPUART3 on the 1062** (`GPIO_AD_B1_06/07`, core pins 17/16) — so all transport,
+loader and HCI code is board-independent.
+★ `rt1062` is deliberately NOT in the example's `boards` sidecar: it would create
+a gate whose script asserts rt1176-specific lines and go red for reasons
+unrelated to Bluetooth.
+★ **The MIMXRT1060-EVKB needs THREE hand reworks and STILL does not greet.**
+`R345` (GPIO_AD_B1_03 → WL_RST# → J8.56 PDn) and `R96` (the card→MCU RX leg,
+between the level shifter and `R200`) are both DNP from the factory and were
+bridged. `R343`/`R344` were also removed — **unnecessarily, on a wrong diagnosis
+of mine** (see the GPIO6 trap above). With all of that, the continuity probe
+says the RX line is held high externally (an idle UART) and PDn swings when read
+back at the pad — and the card is **silent for 3 s** after every reset.
+★ **That is not evidence about the module**: the same physical card greets
+reliably on the 1170 (`start_inds=2` or 3, five sessions). The 1060 is simply not
+equivalent yet, in a way no software instrument here has surfaced. Further work
+there needs a scope on J8.22/J8.56, not more firmware.
+★ `M2_CONTINUITY_PROBE` (default ON for rt1062, OFF for rt1176 so the two gates
+are undisturbed) is the instrument that settles "is this line actually driven" —
+the same technique that proved the 1170's R1901 bridge conducted.
+
 ★ **`M2_BT_WAKE_PULSE` (default ON) is NXP's boot-sleep wake**, found 2026-08-25
 by reading their loader's CALL ORDER: `uart_fw_download()` calls
 `wakeUpControllerFromBootSleep()` BEFORE the image, and for the RT1170 that is
@@ -986,6 +1010,23 @@ not hung.
   `imxrt1060_evkb.ld`, `imxrt1062.ld` and `imxrt1062_t41.ld` alike, and only
   `.bss.dma` (`DMAMEM`) reaches OCRAM. So a buffer that is DMA-reachable by
   default on one board is not on the other.
+  ★★ **THE TWO CORES DIFFER ON WHICH GPIO INSTANCE OWNS A PAD, and getting it
+  wrong manufactures PLAUSIBLE FALSE READINGS rather than failing.** `teensy4`
+  sets `IOMUXC_GPR_GPR26..29 = 0xFFFFFFFF` in `startup.c`, which hands every pad
+  to the **FAST GPIO aliases — GPIO6..GPIO9**. The IOMUX ALT still selects the
+  "GPIO1" function and NXP's own pin naming still says `GPIO1_IO19`, so code
+  written from a schematic looks right and does nothing: **writes to `GPIO1_*`
+  never reach the pin, and `GPIO1_PSR` returns a value unrelated to it.**
+  `imxrt1176` has no such remap — GPIO9 there is the real instance.
+  ★ Met 2026-08-25 in `networking/m2_hci_probe`'s rt1062 port. A pin-swing test
+  that drove `GPIO1` and read `GPIO1_PSR` reported `drives_low=1 drives_high=0`
+  — a confident "PIN STUCK (loaded or shorted)" verdict — because read-low twice
+  inverts to exactly that. **A disconnected register and a clamped pin are
+  indistinguishable through such a test**, and the false verdict cost two
+  resistors off a board before the cause was found. If you write direct GPIO
+  register code for rt1062, use GPIO6..GPIO9, and prove a pin moves by reading
+  it back through the SAME instance you drove.
+
   ★ **The two cores also differ on the D-cache, and DMA correctness depends on
   it.** `teensy4` enables it (`startup.c`, `SCB_CCR_IC | SCB_CCR_DC`);
   `imxrt1176` never writes `SCB_CCR` at all, so OCRAM is coherent there
