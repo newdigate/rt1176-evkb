@@ -4,12 +4,40 @@
 it works; the card does not. Five days of hypotheses are recorded here so the
 next session does not re-run any of them.
 
-> ★ **The single most useful sentence in this file:** everything on the host
-> side is finished and proven, the vendor's own software fails on this board in
-> exactly the same way ours does, and the cheapest route to working Bluetooth
-> is a **USB dongle**, not more debugging of the M.2 card.
+> ★ **The single most useful sentence in this file** (revised 2026-08-25):
+> everything on the host side is finished and proven, and the next thing to try
+> is **3 Mbaud** — the rate u-blox's own procedure attaches this controller at,
+> and the one rate no probe here ever used. The USB-dongle recommendation below
+> stands only if that fails.
 
 ---
+
+> ## ★★ SUPERSEDED IN PART — read this first (2026-08-25)
+>
+> The u-blox documents for this exact card were read after this handoff was
+> written, and they change the conclusion:
+>
+> * **u-blox attach this module's controller at 3 Mbaud**, not at 115200
+>   (MAYA-W1 SIM UBX-21010495 R09 §4.4.6: `hciattach … any 3000000 flow`,
+>   after §4.4.3's **combo** image `sdiouartiw416_combo_v0.bin` has gone over
+>   SDIO). **Every probe described below used 115200 only.** A controller at
+>   3 Mbaud decodes nothing sent at 115200, so it never answers — which is
+>   precisely the `n=0 framing=0` silence this handoff calls unexplained.
+> * The **flow-control refutation is withdrawn**: that test drove CTS low
+>   *before* the PDn release, and §2.4.5 Table 6 makes `UART_CTSn` the
+>   configuration pin CON[7], sampled at reset and required to be 1. It
+>   latched a Reserved configuration, so its null result proves nothing.
+> * **"Pulse BT_RST to start the downloaded firmware" is dead**: §2.4.2 says a
+>   firmware download is required after *each* reset, so a reset discards the
+>   image rather than starting it.
+> * Therefore **the USB-dongle recommendation in §9 is demoted**. The likelier
+>   story is that NXP's rework guide lists five changes and we did two, and
+>   the documented operating rate was never tried.
+>
+> `m2_hci_probe` now escalates through 3000000/921600/460800/115200 when
+> 115200 fails, and both gates assert the sweep. **Not yet run on silicon** —
+> that is the next session's first job, and it is a bench run, not a build.
+
 
 ## 1. What exists now (all merged, all green)
 

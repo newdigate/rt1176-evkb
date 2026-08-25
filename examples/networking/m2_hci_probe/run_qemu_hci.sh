@@ -51,6 +51,20 @@
 #   The second demonstration also earned the late=0/late>0 split in run_phase
 #   below: before it, this gate reported the broken driver as "the peer never
 #   reached LPUART2" and sent the reader to the socket.
+#
+# THE BAUD SWEEP IS AN ESCALATION (added 2026-08-25)
+#   [full] asserts the sweep does NOT run when 115200 answers -- that is what
+#   keeps [garbage] meaningful, since that phase scripts its corruption against
+#   the FIRST command it sees and a sweep in front would absorb it.
+#   [drop-reset] asserts the opposite: 10 counted attempts + one per swept rate
+#   = cmds=14 resets=14, the peer counting what it actually RECEIVED.  That is
+#   the only proof in the tree that the sweep puts bytes on the wire per rate
+#   rather than just printing a cell.
+#
+#   DEMONSTRATED RED (2026-08-25): making the sweep unconditional
+#   (`if (true)` instead of `if (s_hciSt != Hci::OK)`) gives
+#     FAIL: [full] peer did not see exactly the seven commands
+#   i.e. the guard that protects [garbage] is itself gated.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
@@ -127,6 +141,11 @@ grep -q "^hb card=0 btfw=no_start_indication hci=ok n=1 pump=[0-9]* timeouts=0 f
     || fail "[full] heartbeat counters not all zero"
 [ "$PEER_RC" -eq 0 ] || fail "[full] peer exited $PEER_RC"
 grep -q "^PEER-DONE phase=full cmds=7 " "$RES" || fail "[full] peer did not see exactly the seven commands (Reset, 3 identity, Inquiry, 2 names)"
+# The baud sweep is an ESCALATION: when 115200 answers it must not run at all.
+# This is what keeps [garbage] meaningful -- a sweep in front of the main
+# sequence would absorb the corruption that phase scripts against the FIRST
+# command, and the resync it exists to test would stop being tested.
+if grep -q "^bt_baud" "$OUT"; then fail "[full] the baud sweep ran even though 115200 answered"; fi
 
 # --- drop-reset ---------------------------------------------------------------
 run_phase drop-reset '^hb card=0 btfw=no_start_indication hci=no_response n=1 '
@@ -134,7 +153,20 @@ grep -q "^hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0
     || fail "[drop-reset] Reset must time out BY NAME after ten counted attempts"
 if grep -q "^hci_version" "$OUT"; then fail "[drop-reset] identity printed with no Reset"; fi
 grep -q "^hci_probe_done[[:space:]]*$" "$OUT" || fail "[drop-reset] probe never completed"
-grep -q "^PEER-DONE phase=drop-reset cmds=10 resets=10 " "$RES" || fail "[drop-reset] peer did not see ten Resets"
+# 14 = the ten counted attempts PLUS one per swept rate.  This is the only
+# proof in the tree that the sweep actually PUTS BYTES ON THE WIRE at each rate
+# rather than merely printing a cell for it: the peer counts what it received.
+# (QEMU's chardev has no notion of baud, so no gate can show the RATE is right
+# -- only silicon can. What is gateable is that all four are attempted.)
+grep -q "^PEER-DONE phase=drop-reset cmds=14 resets=14 " "$RES" \
+    || fail "[drop-reset] expected 10 counted Reset attempts + 4 swept rates = 14"
+for B in 3000000 921600 460800 115200; do
+    grep -q "^bt_baud_try=$B st=no_response " "$OUT" || fail "[drop-reset] rate $B was not tried, or did not report no_response"
+done
+grep -q "^bt_baud=none tried=4[[:space:]]*$" "$OUT" || fail "[drop-reset] sweep must report none-of-four by name"
+grep -q "^bt_baud_try=115200 st=no_response timeouts=14 " "$OUT" \
+    || fail "[drop-reset] counters must survive the sweep's Hci::begin() calls (10+4)"
+if grep -q "^hci_reset=ok_after_baud_change" "$OUT"; then fail "[drop-reset] claimed a baud change worked against a peer that answers nothing"; fi
 
 # --- garbage ------------------------------------------------------------------
 run_phase garbage '^hb card=0 btfw=no_start_indication hci=ok n=1 '

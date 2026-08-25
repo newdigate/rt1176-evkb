@@ -209,6 +209,14 @@ stays silent looked like it might be exactly this missing step.
 no rate, so it isolates "does the card need this block written" from "can this
 board do 3 Mbaud" -- which it cannot, having no usable flow control.
 
+    ★★ THAT PARENTHESIS IS WRONG, and it cost the programme a week.  See
+    "THE BAUD WAS NEVER THE ONE u-blox DOCUMENT" below (2026-08-25).  Flow
+    control is needed for sustained A2DP throughput, NOT for a four-byte
+    command and a seven-byte reply, and 3 Mbaud is exactly representable on
+    this core (24 MHz / OSR 8 / SBR 1, 0.00% error).  Ruling the rate out on
+    the strength of the flow-control wiring ruled out the one experiment the
+    vendor's own procedure calls for.
+
 WHAT WAS BUILT, and why it should have been right:
 
   * the type-5 header is byte-identical to NXP's `cmd5_hdrData`
@@ -329,6 +337,21 @@ net to ETHPHY_RST_B.
 **No change whatsoever.**  The download still completes; the controller is
 still silent.  So the card is not withholding transmission for want of CTS.
 
+★★ THIS REFUTATION IS WITHDRAWN (2026-08-25).  The test drove CTS LOW BEFORE
+the PDn release -- m2AssertBtCts() was called at line 401 and
+m2ReleaseWifiReset() at line 410 -- and the MAYA-W1 system integration manual
+(UBX-21010495 R09) s2.4.5 Table 6 says UART_CTSn and UART_RTSn are
+CONFIGURATION PINS sampled at module reset: CON[7] and CON[8], both "Reserved
+set to 1", their UART function only arriving ~1 ms after reset.  Holding CTS
+low across the reset therefore latched CON[7]=0, a Reserved configuration.
+So "no change whatsoever" cannot tell "flow control is not the problem" apart
+from "the module booted into an undefined configuration", and this hypothesis
+returns to UNTESTED.  The call has been moved after m2ReleaseWifiReset() so a
+retest means something.
+★ Note what makes CON[7] correct in the DEFAULT builds: nothing drives that
+pad, and R81 pulls ETHPHY_RST_B up to SENSOR_3V3 through the fitted R1866, so
+the card sees 1.  Every run except the CTS one had a valid configuration.
+
 WHERE THE HYPOTHESES NOW STAND
 
   1. UART-config / "baud change" buffer -- **REFUTED** (previous section).
@@ -341,7 +364,8 @@ WHERE THE HYPOTHESES NOW STAND
   3. Combo needs both images -- untested.
   4. Secure-boot / signature mismatch -- untested, and indistinguishable from 2
      from the host's side.
-  5. Card needs flow control -- **REFUTED** (this section).
+  5. Card needs flow control -- ~~REFUTED~~ **WITHDRAWN 2026-08-25**, the
+     test having violated CON[7]; back to UNTESTED (this section).
 
 THE DECISIVE EXPERIMENT, not yet run
 ------------------------------------
@@ -520,7 +544,7 @@ HYPOTHESES AFTER TODAY
   3. **Combo needs both parts, and our SDIO download TRUNCATES it 8,776 bytes
      early -- NEW, strongest, and in our own code.**
   4. Secure-boot / signature mismatch -- untested, unchanged.
-  5. Card needs flow control -- REFUTED on silicon.
+  5. Card needs flow control -- WITHDRAWN 2026-08-25 (CON[7] violated).
   6. Helper-file two-stage download -- REFUTED by AN14310.
 
 ★ LICENCE NOTE.  The Linux `btnxpuart` driver implements this same V3 protocol
@@ -594,7 +618,7 @@ Remaining hypotheses, all previously listed, now with one more gone:
   2. Wrong / u-blox-specific image -- REFUTED by u-blox's documentation.
   3. Combo truncated by our impatience -- **REFUTED here, measured.**
   4. Secure-boot / signature mismatch -- UNTESTED.  Now the only one standing.
-  5. Card needs flow control -- REFUTED on silicon.
+  5. Card needs flow control -- WITHDRAWN 2026-08-25 (CON[7] violated).
   6. Helper-file two-stage download -- REFUTED by AN14310.
 
 ★ Hypothesis 4 is also the hardest to test from the host: a silently-rejected
@@ -715,3 +739,88 @@ They are replaced with `<NUL>` so this file is TEXT: with raw NULs in it git
 treats the whole transcript as binary, which means no diffs, no blame, and no
 grep -- unlike every other transcript in the tree.  Nothing else was altered;
 the bytes are recorded here rather than silently dropped.
+
+=====================================================
+THE BAUD WAS NEVER THE ONE u-blox DOCUMENT -- 2026-08-25
+=====================================================
+
+Source: the u-blox documents for THIS card, read for the first time on
+2026-08-25 -- M2-MAYA-W1 data sheet UBX-22004354 R05 (which names our exact
+part, M2-MAYA-W161-00C-00, NXP IW416) and MAYA-W1 system integration manual
+UBX-21010495 R09.  Both are C1-Public.
+
+WHAT THE VENDOR'S OWN BRING-UP IS (SIM s4.4.3 and s4.4.6)
+
+  * the Wi-Fi driver loads `sdiouartiw416_combo_v0.bin` over SDIO, described
+    as "the Wi-Fi/Bluetooth combo firmware image for the MAYA-W1 series" --
+    one image, BOTH radios, no separate Bluetooth download;
+  * Bluetooth is then attached with
+
+        hciattach /dev/ttyUSB0 any 3000000 flow
+
+    i.e. **3 Mbaud with hardware flow control**.
+
+★★ EVERY PROBE THIS TREE EVER RAN USED 115200.  Checked, not remembered: the
+only Serial2 rate anywhere in m2_hci_probe.cpp, m2_sdio_probe.cpp or
+M2Radio/hci was 115200.  A controller listening at 3 Mbaud cannot decode bytes
+sent at 115200, so it never replies and never transmits -- which is exactly
+what is on record above: n=0 with framing=0, over minutes, on a line that had
+just carried 131,840 bytes correctly.  A wrong-rate link that was TALKING
+would have shown framing errors; none ever appeared, and that absence now
+reads as evidence rather than as a puzzle.
+
+WHY 115200 IS STILL THE RIGHT RATE FOR THE DOWNLOAD, and why that misled us:
+the boot ROM greets at 115200 (AB 01 72 00 47, decoded and verified three
+ways above) and the V3 download runs there perfectly.  The rate that changes
+is the one the BOOTED FIRMWARE uses.  So the transport being provably correct
+at 115200 -- which it is -- says nothing about the rate afterwards.
+
+WHAT WAS BUILT
+
+  m2_hci_probe now ESCALATES: if Reset fails at 115200 it sweeps
+  3000000 / 921600 / 460800 / 115200, printing a cell per rate, and on the
+  first that answers it re-runs identity and inquiry there.
+  ★ Escalation rather than an unconditional sweep, because sweeping in front
+  of the main sequence changes what the [hci] gate tests -- its [garbage]
+  phase scripts corruption against the FIRST command it sees.  Measured: with
+  the sweep unconditional, [full] went from cmds=7 to cmds=8 at once.
+  ★ 3 Mbaud is exactly representable here: the core clocks LPUART from 24 MHz,
+  so OSR=8 SBR=1 gives 3,000,000 with 0.00% error (921600 and 460800 land at
+  +0.16%).  No divisor obstacle exists.
+
+NOT YET RUN ON SILICON.  This section records a corrected hypothesis and the
+instrument built to test it, nothing more.  The gates can prove the sweep
+attempts every rate and claims none without a reply; they CANNOT prove a rate
+is right, because QEMU's chardev has no notion of baud.  Only the bench can.
+
+STATE OF THE HYPOTHESES after this reading
+
+  1. UART-config / "baud change" buffer -- REFUTED (unchanged).
+  2. Wrong image for this module -- still open, but WEAKER: the SIM's own
+     procedure downloads a COMBO image over SDIO and never mentions a
+     BT-only UART download for this part.
+  3. Combo needs both images -- superseded: s4.4.3 says the combo image IS
+     both.
+  4. Secure boot / signature -- still open, still untestable from the host.
+  5. Card needs flow control -- WITHDRAWN (CON[7] violated; see above).
+  6. ★ NEW, and now the leading one: **we were talking at the wrong rate.**
+
+ALSO SETTLED BY THESE DOCUMENTS, so nobody re-derives them
+
+  * J54 pin 54 = W_DISABLE2# = NXP BT_INDEPENDENT_RESET, input, active low,
+    3.3 V; pin 56 = W_DISABLE1# = PDn, full power-down for BOTH radios
+    (high = normal).  Two different pins, two different jobs.
+  * s2.4.2: "A firmware download to the module is required after each reset."
+    ★ So pulsing BT_RST after a successful download DISCARDS the firmware --
+    it cannot start it.  BT_RST is a start-over lever, not a kick-into-life
+    lever, and the 2026-08-24 idea of using it that way is dead.
+  * s2.4.2 also: BT_RESET/WLAN_RESET "can be left open if they are not
+    needed" -- so leaving it idle-high, as we always have, is sanctioned.
+  * s2.4.1: PDn must be asserted a MINIMUM OF 100 ms for correct reset.
+    We hold it 110 ms (10 ms + 100 ms in m2ReleaseWifiReset) -- compliant,
+    but with only 10% margin, so do not shorten it.
+  * s2.4.4: BT_DEV_WAKE (J54 pin 42 -> GPIO_AD_28) is a host-to-module
+    wake input, active low.  ★ We have NEVER driven it.  Untested lever;
+    note it collides with LPSPI1 SCK on the Arduino header.
+  * Card VIO defaults to 1.8 V, which is why U354/U355 exist on the EVKB.
+    Already understood and already handled -- not a fault.

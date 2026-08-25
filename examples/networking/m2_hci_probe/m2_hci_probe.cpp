@@ -2,7 +2,9 @@
 // HCI, and what does it say it is?
 //
 // Sequence: board preamble -> SDIO enumerate -> combo blob download (if
-// supplied) -> HCI over Serial2 at 115200:
+// supplied) -> BAUD SWEEP (3M/921600/460800/115200 -- u-blox attach the
+// controller at 3 Mbaud, not at the ROM's 115200) -> HCI over Serial2 at
+// whichever rate answered:
 //   B1  Reset, Read_Local_Version_Information, Read_BD_ADDR, Read_Buffer_Size
 //   B2  Inquiry (GIAC, 10.24 s) then Remote_Name_Request per result
 // then a 1 Hz heartbeat carrying the transport's counters.
@@ -101,12 +103,31 @@ static void printHex16(uint16_t v) { printHex8((uint8_t)(v >> 8)); printHex8((ui
 static void printHex24(uint32_t v) { printHex8((uint8_t)(v >> 16)); printHex16((uint16_t)v); }
 static void printBd(const uint8_t *bd) { char s[18]; hciFormatBd(bd, s); Serial1.print(s); }
 
+// ★ COUNTERS ARE CUMULATIVE ACROSS begin(), and they have to be.  The baud
+// sweep calls Hci::begin() once per rate, which zeroes every counter -- so
+// without these bases the heartbeat after a four-rate sweep printed
+// `timeouts=0` on a run that had just suffered FOURTEEN of them.  A counter
+// that reads zero when the failures were real is worse than no counter: it
+// reads as a healthy link that merely has nothing to say.  Measured on the
+// card-absent gate before this was added.
+// Zero unless a sweep has happened, so every pre-existing transcript and every
+// gate assertion on these fields is byte-identical.
+static uint32_t s_toBase = 0, s_frBase = 0, s_stBase = 0, s_qfBase = 0, s_lateBase = 0;
+
+static void hciCountersFold() {          // call BEFORE an Hci::begin() that would reset them
+    s_toBase   += hci.timeouts();
+    s_frBase   += hci.framing();
+    s_stBase   += hci.starved();
+    s_qfBase   += hci.queueFull();
+    s_lateBase += hci.late();
+}
+
 static void printCounters() {
-    Serial1.print(" timeouts="); Serial1.print(hci.timeouts());
-    Serial1.print(" framing=");  Serial1.print(hci.framing());
-    Serial1.print(" starved=");  Serial1.print(hci.starved());
-    Serial1.print(" qfull=");    Serial1.print(hci.queueFull());
-    Serial1.print(" late=");     Serial1.print(hci.late());
+    Serial1.print(" timeouts="); Serial1.print(s_toBase   + hci.timeouts());
+    Serial1.print(" framing=");  Serial1.print(s_frBase   + hci.framing());
+    Serial1.print(" starved=");  Serial1.print(s_stBase   + hci.starved());
+    Serial1.print(" qfull=");    Serial1.print(s_qfBase   + hci.queueFull());
+    Serial1.print(" late=");     Serial1.print(s_lateBase + hci.late());
 }
 static void printFail(const char *what, Hci::Error e, const Hci::Reply &r, const char *alt) {
     Serial1.print(what); Serial1.print("=fail reason=");
@@ -239,7 +260,10 @@ static void probeInquiry() {
 // boot ROM talks (it does not use flow control) and the booted firmware, which
 // does, never transmits a byte.
 //
-// Driving it low costs nothing and needs no rework.  ★ SIDE EFFECT, and it is
+// Driving it low costs nothing and needs no rework.  ★ CALL IT ONLY AFTER THE
+// MODULE IS OUT OF RESET -- this pin is also CON[7], sampled at reset and
+// required to be 1; see the ordering note at the call site.
+// ★ SIDE EFFECT, and it is
 // real: R1866 ties this net to ETHPHY_RST_B, so holding it low HOLDS THE
 // GIGABIT ETHERNET PHY IN RESET.  Fine for a Bluetooth probe, fatal for the
 // enet examples -- which is exactly why this board's LPUART2 has no usable
@@ -380,6 +404,78 @@ static void btFirmwareDownload() {
 
 }
 
+// ---------------------------------------------------------------------------
+// BAUD SWEEP -- which rate, if any, answers HCI_Reset?
+//
+// ★ WHY THIS EXISTS, and it is the strongest untested lead of the whole
+// programme.  u-blox's own bring-up for this module (MAYA-W1 system
+// integration manual UBX-21010495 R09 §4.4.3 and §4.4.6) is:
+//
+//     Wi-Fi driver loads the COMBO image sdiouartiw416_combo_v0.bin over SDIO
+//         -- "the Wi-Fi/Bluetooth combo firmware image for the MAYA-W1 series"
+//     hciattach /dev/ttyUSB0 any 3000000 flow
+//
+// That is 3 Mbaud with flow control -- NOT the 115200 the boot ROM greets at.
+// Every probe this tree has ever run used 115200, and the transcript
+// explicitly ruled 3 Mbaud out ("which it cannot, having no usable flow
+// control").  That dismissal is wrong for a PROBE: flow control matters for
+// sustained A2DP throughput, not for a 4-byte command and a 7-byte reply.
+//
+// A controller listening at 3 Mbaud cannot decode bytes sent at 115200, so it
+// never replies and never transmits -- which is exactly the silence on record
+// (n=0 with framing=0; a wrong-rate link that was TALKING would show framing
+// errors, and none were ever seen).
+//
+// Highest first, so the documented operating point is tested before the
+// fallbacks, and stop at the first rate that answers.  The port is left AT the
+// rate that answered, so the B1/B2 probe that follows runs there; if none
+// answers the last entry is 115200, so the old behaviour is what remains.
+static const uint32_t BT_SWEEP_BAUDS[] = { 3000000u, 921600u, 460800u, 115200u };
+static const uint32_t BT_SWEEP_N = sizeof BT_SWEEP_BAUDS / sizeof BT_SWEEP_BAUDS[0];
+static uint32_t s_baudFound = 0;
+
+// Ask HCI_Reset at each candidate rate, stopping at the first that answers.
+//
+// ★ IT RUNS ONLY IF THE PROBE AT 115200 FAILED, and that ordering is
+// deliberate rather than tidy.  Sweeping unconditionally would spend a Reset
+// before the main sequence and CHANGE WHAT THE FAKE-CONTROLLER GATE TESTS --
+// [garbage] scripts its corruption against the FIRST command it sees, so a
+// sweep in front of it would absorb the garbage and the gate would silently
+// stop testing the resync it exists to test.  Measured, not feared: with the
+// sweep unconditional, [full] went from cmds=7 to cmds=8 immediately.
+// As an escalation the behaviour is unchanged whenever the link already works.
+//
+// Uses the Hci driver rather than raw Serial2 reads because the pump is
+// attached by now and would otherwise drain the bytes out from under us.
+// begin() per rate is what makes each attempt independent: fresh parser, fresh
+// command credit (the credit is assigned absolutely from each reply, so a
+// wrong-rate attempt that never replies would otherwise leave it at zero and
+// starve every later rate -- the same bug class as the two this driver
+// already carries regression coverage for).
+static void btBaudSweep() {
+    for (uint32_t i = 0; i < BT_SWEEP_N; i++) {
+        const uint32_t baud = BT_SWEEP_BAUDS[i];
+        hciIo.end();
+        hciIo.begin(baud);
+        hciCountersFold();
+        hci.begin();
+        delay(20);                                  // let the receiver settle
+        Hci::Reply r;
+        const Hci::Error e = hci.run(OP_RESET, nullptr, 0, &r, 400, idleMs);
+        Serial1.print("bt_baud_try="); Serial1.print(baud);
+        Serial1.print(" st="); Serial1.print(e == Hci::OK ? "reset_complete" : Hci::errorName(e));
+        printCounters(); Serial1.println();
+        if (e == Hci::OK) { s_baudFound = baud; break; }
+    }
+    if (s_baudFound) { Serial1.print("bt_baud="); Serial1.println(s_baudFound); }
+    else {
+        Serial1.print("bt_baud=none tried="); Serial1.println(BT_SWEEP_N);
+        hciIo.end(); hciIo.begin(115200);           // leave the port as we found it
+        hciCountersFold();
+        hci.begin();
+    }
+}
+
 void setup() {
     Serial1.begin(115200);
     delay(50);
@@ -397,18 +493,31 @@ void setup() {
     // cycle, then the UART download, then everything else.
     // The 1 KB RX ring is what makes this safe: the greeting lands there during
     // the ROM-boot wait inside m2ReleaseWifiReset() and waits for the loader.
-#if defined(M2_BT_ASSERT_CTS)
-    m2AssertBtCts();
-    Serial1.println("bt_cts=asserted (PHY held in reset -- see the note above)");
-#else
-    Serial1.println("bt_cts=undriven");
-#endif
-
     hciIo.begin(115200);
     Serial1.println("serial2=up_115200");
 
     m2ReleaseWifiReset();
     Serial1.println("m2_wifi_reset=released");
+
+    // ★ CTS IS ASSERTED HERE AND NOT EARLIER, and the ordering is the whole
+    // point.  UART_CTSn and UART_RTSn are CONFIGURATION PINS sampled at module
+    // reset (MAYA-W1 SIM UBX-21010495 R09 §2.4.5 Table 6: CON[7] = UART_CTSn,
+    // CON[8] = UART_RTSn, both "Reserved set to 1"), and their function only
+    // becomes the UART's ~1 ms after reset.  Driving CTS LOW across the PDn
+    // release therefore latches CON[7] = 0 -- a Reserved configuration.
+    // m2ReleaseWifiReset() ends with a 1 s wait, so by here the pins are long
+    // since sampled and the module is in its documented "10" configuration.
+    // ★ The 2026-08-24 run that "REFUTED" the flow-control hypothesis asserted
+    // CTS BEFORE this point, so its "no change whatsoever" cannot tell
+    // "flow control is not the problem" apart from "the module booted
+    // Reserved".  That refutation is withdrawn; this ordering is what makes a
+    // retest mean anything.
+#if defined(M2_BT_ASSERT_CTS)
+    m2AssertBtCts();
+    Serial1.println("bt_cts=asserted_after_reset (PHY held in reset -- see the note above)");
+#else
+    Serial1.println("bt_cts=undriven");
+#endif
 
     btFirmwareDownload();
 
@@ -462,6 +571,24 @@ void setup() {
     } else {
         Serial1.print("hci_reset=fail reason="); Serial1.print(Hci::errorName(s_hciSt));
         Serial1.print(" attempts=10"); printCounters(); Serial1.println();
+    }
+    // ★ ESCALATION -- 115200 is the BOOT ROM's rate, not necessarily the
+    // running firmware's.  u-blox attach this module's controller at 3 Mbaud
+    // (SIM UBX-21010495 R09 §4.4.6: `hciattach ... any 3000000 flow`, after
+    // §4.4.3's combo image has gone over SDIO).  Every probe this tree ran
+    // before 2026-08-25 used 115200 and saw silence -- which is what a
+    // controller listening at another rate looks like, since it decodes
+    // nothing and so answers nothing.  If 115200 failed, ask the other rates
+    // before concluding the controller is dead.
+    if (s_hciSt != Hci::OK) {
+        btBaudSweep();
+        if (s_baudFound) {
+            Serial1.print("hci_reset=ok_after_baud_change baud="); Serial1.print(s_baudFound);
+            printCounters(); Serial1.println();
+            s_hciSt = Hci::OK;
+            probeIdentity();
+            probeInquiry();
+        }
     }
     Serial1.println("hci_probe_done");
 }

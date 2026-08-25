@@ -165,6 +165,32 @@ DEMONSTRATED RED twice: changing the fake's manufacturer failed `[full]` by
 name, and breaking the driver's opcode match failed `[hci]` while
 **`run_qemu.sh` stayed GREEN** — it has no replies to match, so it cannot see
 that bug. That asymmetry is the whole argument for the variant existing.
+★ **THE BAUD SWEEP (2026-08-25).** When Reset fails at 115200 the probe now
+escalates through 3000000/921600/460800/115200 and, on the first rate that
+answers, re-runs identity and inquiry there. This exists because u-blox's own
+bring-up for this module attaches the controller at **3 Mbaud**
+(MAYA-W1 SIM UBX-21010495 R09 §4.4.6, after §4.4.3's combo image goes over
+SDIO) and **every probe in this tree before that date used 115200 only** — a
+controller at 3 Mbaud decodes nothing sent at 115200, which is exactly the
+`n=0 framing=0` silence on record.
+★ **It is an ESCALATION, not an unconditional sweep, and that is load-bearing
+for the gates rather than tidiness.** `[garbage]` scripts its corruption
+against the FIRST command the peer sees, so a sweep in front of the main
+sequence would absorb it and that phase would silently stop testing the resync
+it exists for. Measured: unconditional, `[full]` went from `cmds=7` to
+`cmds=8` immediately. `[full]` now asserts the sweep does NOT run.
+★ **QEMU'S CHARDEV HAS NO BAUD**, so no gate here can show a RATE is correct —
+only silicon can. What is gated is that all four are attempted (`[drop-reset]`
+asserts `cmds=14 resets=14`: ten counted attempts plus one per rate, counted by
+the PEER, so it cannot be satisfied by a sweep that merely prints cells), that
+none is claimed without a reply, and that the counters survive.
+★ Counters are **cumulative across `Hci::begin()`** because the sweep calls it
+per rate. Without that the heartbeat printed `timeouts=0` on a run with
+fourteen real timeouts — a counter reading zero where the failures were real is
+worse than no counter, since it reads as a healthy idle link.
+DEMONSTRATED RED three ways (sweep claiming every rate; bases removed; sweep
+made unconditional), each failing by name — quoted in the gate headers.
+
 ★ **Two real driver bugs were found by these gates, not by review** — both the
 same disease, and worth knowing because the symptom is silence rather than a
 crash. `Num_HCI_Command_Packets` is assigned ABSOLUTELY from each reply, so any
@@ -765,6 +791,20 @@ Repo-wide gates in `tools/`:
 - `license-audit.test.sh` — negative tests proving the audit's part-1 checks
   actually fire (unlicensed binary, MPL header) rather than passing vacuously.
 - `gate-lib.test.sh` — tests for the gate runner lifecycle library.
+★ **A COMMITTED FIXTURE GOES STALE SILENTLY, and the vacuity suite is where
+that shows up — found 2026-08-25.** `green_still_passes_m2_hci_probe` was RED
+at `master` before any of that day's work: the committed
+`m2_hci_probe/transcript_qemu.txt` had been captured before the example grew
+its `btfw=` and `bt_cts=` lines, so the gate's own assertions no longer matched
+its own fixture. Nothing else caught it — **the QEMU sweep cannot**, because
+the sweep runs the firmware live and the fixture is only replayed by
+`gate-vacuity.test.sh`. Two consequences worth keeping: a green 121-gate sweep
+says nothing about fixture freshness, and BT-1's recorded "vacuity 19/19" had
+gone false without anyone touching the tests. **Re-capture the fixture whenever
+an example's output changes** (`cp build/serial.uart transcript_qemu.txt` after
+the gate runs), and run the vacuity suite as well as the sweep before believing
+a close-out.
+
 - `gate-vacuity.test.sh` — negative tests proving the *gates themselves* fail
   when they should: a run that produced no UART must fail by name rather than
   die silently or blame the firmware, a missing counter token must not read
