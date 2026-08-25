@@ -1456,3 +1456,47 @@ WINDOW: `rx_after_pdn` samples for 400 ms, while the 1170's own sequence waits
 arrive within roughly the first 200 ms of THAT wait on that board.  A 1060 that
 boots more slowly would fall outside a 400 ms window entirely.  Widening it is
 the next cheap test.
+
+=====================================================
+WATCH WINDOW WIDENED TO 3 s -- STILL SILENT -- 2026-08-25
+=====================================================
+
+The 400 ms window was the last cheap hypothesis: a slower-booting part could
+greet outside it and read as silent.  Rebuilt to watch in FIVE 600 ms SEGMENTS,
+each printed, so that a late greeting and no greeting are different readings
+rather than the same `edges=0`.
+
+    rx_after_pdn[4]: t=3000ms any_high=1 edges=0
+    rx_after_pdn_total: edges=0  -> silent for 3 s
+
+★ NOT A TIMING PROBLEM.  Zero edges across three full seconds following a PDn
+cycle that is verified to swing.  The card transmits nothing at all.
+
+(Capture caveat, stated rather than hidden: this capture triggered on the
+post-flash boot and so begins at segment 4 -- the banner, continuity and
+pdn_swing lines are not in this file.  Those code paths are byte-identical to
+the run that reported `pdn_swing: drives_low=1 drives_high=1 -> PIN SWINGS`.)
+
+WHERE THE 1060 EXPERIMENT STANDS
+
+  verified working   the RX line is held high externally (idle UART), so both
+                     hand bridges conduct and the level shifter drives
+  verified working   PDn swings, read back at the pad while driven
+  verified present   WL_3V3 from DCDC_3V3 through a plain ferrite, no switch
+  measured           the card is silent for 3 s after every reset
+
+★★ AND NOTE WHAT THIS IS NOT.  The SAME PHYSICAL CARD greets reliably on the
+1170 (`start_inds=2` or 3, every run, five sessions).  So this is not evidence
+about the module -- it is evidence that the 1060 setup is still not equivalent,
+in some way the netlist, the continuity probe and the swing test have all
+failed to surface.
+
+**The 1060 therefore cannot yet serve as the independent platform it was
+brought in to be, and the 1170 remains the reference.**  Three hand reworks
+(R345, R96, and the R343/R344 removals -- the last of which was unnecessary,
+see the GPIO6 retraction above) have not produced a greeting.
+
+RECOMMENDATION: stop here on the 1060 and take the u-blox case forward on the
+1170 evidence, which is complete and well bracketed.  Further 1060 work needs a
+scope on J8.22 and J8.56 -- an instrument this project does not have in
+software -- rather than more firmware.

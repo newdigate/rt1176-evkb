@@ -259,12 +259,31 @@ static void m2ContinuityProbe() {
 
     // Now cycle the module with the pad still on GPIO and watch for ANY edge.
     // The ROM greets once per power-up; if it greets, this must see movement.
+    //
+    // ★ WINDOW LENGTH IS LOAD-BEARING and the first version got it wrong.  It
+    // watched 400 ms.  The 1170's own sequence waits 1000 ms after PDn release
+    // before its loader looks, and on that board the greeting lands within
+    // roughly the first 200 ms of THAT wait -- so a slower-booting part can
+    // greet outside a 400 ms window entirely and read as silent.  Watch in
+    // SEGMENTS instead, printing each, so the ANSWER CARRIES ITS OWN TIMING:
+    // a greeting at 1.4 s and no greeting at all are then different readings
+    // rather than the same "edges=0".
+    // PDn is held low for 150 ms -- above the 100 ms minimum the MAYA-W1 SIM
+    // (UBX-21010495 R09 s2.4.1) requires for a correct reset.
     M2_RST_CLEAR = (1u << M2_WL_RST_BIT); delay(150);
     M2_RST_SET   = (1u << M2_WL_RST_BIT);
-    bool anyHigh=false; uint32_t edges=0;
-    m2WatchRxLine(400, &anyHigh, &edges);
-    CONSOLE.print("rx_after_pdn: any_high="); CONSOLE.print(anyHigh ? 1 : 0);
-    CONSOLE.print(" edges="); CONSOLE.println(edges);
+    uint32_t total = 0;
+    for (int seg = 0; seg < 5; seg++) {        // 5 x 600 ms = 3 s of watching
+        bool anyHigh=false; uint32_t edges=0;
+        m2WatchRxLine(600, &anyHigh, &edges);
+        total += edges;
+        CONSOLE.print("rx_after_pdn[");    CONSOLE.print(seg);
+        CONSOLE.print("]: t=");            CONSOLE.print((seg + 1) * 600);
+        CONSOLE.print("ms any_high=");     CONSOLE.print(anyHigh ? 1 : 0);
+        CONSOLE.print(" edges=");          CONSOLE.println(edges);
+    }
+    CONSOLE.print("rx_after_pdn_total: edges="); CONSOLE.print(total);
+    CONSOLE.println(total ? "  -> THE CARD TRANSMITTED" : "  -> silent for 3 s");
     CONSOLE.println("continuity_probe_done (pad handed back to the UART)");
 }
 #endif  // M2_CONTINUITY_PROBE
