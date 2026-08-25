@@ -1404,3 +1404,55 @@ not distinguish "wired correctly" from "wired correctly and clamped".  One
 electrical measurement did it immediately.  The same instrument settled the
 same class of question on the 1170 (the R1901 bridge), which is why it was
 worth reinstating rather than reading more schematic.
+
+=====================================================
+THE "PIN STUCK" VERDICT WAS MY BUG -- GPIO1 vs GPIO6 -- 2026-08-25
+=====================================================
+
+★★ RETRACTION, and it cost two resistors off the board.
+
+The previous section concluded "PDn is clamped low" from
+`pdn_swing: drives_low=1 drives_high=0`, blamed R343/R344, and recommended
+removing them.  They were removed.  The reading did not change.
+
+**The reading was an artefact of my own port.**  The teensy4 core sets
+`IOMUXC_GPR_GPR26..29 = 0xFFFFFFFF` in startup.c, which hands every pad to the
+FAST GPIO aliases -- GPIO6..GPIO9.  The IOMUX ALT still selects the "GPIO1"
+function and NXP's pin naming still calls it GPIO1_IO19, but GPIO6 is what owns
+the pad.  My rt1062 port wrote GPIO1 registers, so:
+
+  * every write went nowhere -- PDn was NEVER actually driven, which is by
+    itself enough to explain a card that never greets;
+  * `GPIO1_PSR` returned a value unrelated to the pin, which is what produced
+    the false `drives_low=1 drives_high=0`.  Read low, read low: the first
+    inverts to "true", the second stays "false".  A stuck pin and a
+    disconnected register look identical through that code.
+
+★ AND IT MEANS THE RX VERDICT IN THAT SECTION WAS ALSO UNSAFE, for the same
+reason -- it was read from GPIO1_PSR too.  Neither line should have been
+trusted.
+
+CORRECTED (GPIO6 throughout on rt1062):
+
+    rx_continuity: pullup_reads=1 pulldown_reads=1 -> DRIVEN HIGH externally
+    pdn_swing:     drives_low=1 drives_high=1      -> PIN SWINGS
+    rx_after_pdn:  any_high=1 edges=0
+
+So with the port fixed: **PDn genuinely cycles** (verified by reading the pad
+back while driving it), and **the RX line is electrically healthy** -- held high
+by something external through both of our internal pulls, which is what an idle
+UART from a powered card looks like.  Both hand bridges conduct.
+
+AND THE CARD STILL DOES NOT GREET: `edges=0`, `start_inds=0`, `chip_id=0x0000`.
+
+★ R343/R344 DID NOT NEED REMOVING.  With GPIO6 the pin swings regardless.  The
+removal is harmless for a Bluetooth bench test (it costs SD-card power control
+and the SPDIF input) but it was asked for on a wrong diagnosis, and that is
+worth recording so nobody repeats it on the next board.
+
+WHAT IS STILL OPEN.  The most likely remaining candidate is simply the WATCH
+WINDOW: `rx_after_pdn` samples for 400 ms, while the 1170's own sequence waits
+1000 ms after PDn release before the loader looks, and the greeting is known to
+arrive within roughly the first 200 ms of THAT wait on that board.  A 1060 that
+boots more slowly would fall outside a 400 ms window entirely.  Widening it is
+the next cheap test.

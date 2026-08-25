@@ -114,9 +114,17 @@ static const char *statusName(SdioHost::Status s) {
 #define M2_WL_RST_MUX   IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_03
 #define M2_SDIO_RST_BIT 24
 #define M2_WL_RST_BIT   19
-#define M2_RST_GDIR     GPIO1_GDIR
-#define M2_RST_SET      GPIO1_DR_SET
-#define M2_RST_CLEAR    GPIO1_DR_CLEAR
+// ★ GPIO6, NOT GPIO1.  The teensy4 core sets IOMUXC_GPR_GPR26..29 = 0xFFFFFFFF
+// in startup.c, which hands every pad to the FAST GPIO aliases (GPIO6-GPIO9).
+// The IOMUX ALT still selects the "GPIO1" function; GPR26 then decides that
+// GPIO6 owns the pad.  Writing GPIO1 registers does nothing at all -- and
+// reading GPIO1_PSR returns a value unrelated to the pin, which is exactly how
+// this was got wrong first time (a bogus "PIN STUCK" verdict that cost two
+// resistors off the board).
+#define M2_RST_GDIR     GPIO6_GDIR
+#define M2_RST_SET      GPIO6_DR_SET
+#define M2_RST_CLEAR    GPIO6_DR_CLEAR
+#define M2_RST_PSR      GPIO6_PSR
 #define M2_RST_ALT      0x5u
 #else
 #define M2_SDIO_RST_MUX (*(volatile uint32_t *)0x400E814Cu)   // GPIO_AD_16
@@ -126,6 +134,7 @@ static const char *statusName(SdioHost::Status s) {
 #define M2_RST_GDIR     GPIO9_GDIR
 #define M2_RST_SET      GPIO9_DR_SET
 #define M2_RST_CLEAR    GPIO9_DR_CLEAR
+#define M2_RST_PSR      GPIO9_PSR
 #define M2_RST_ALT      0xAu
 #endif
 
@@ -172,8 +181,8 @@ static void m2ReleaseWifiReset() {
   #define M2_RX_MUX  IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_07   // LPUART3_RX pad
   #define M2_RX_PAD  IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_B1_07
   #define M2_RX_BIT  23                                    // GPIO1_IO23
-  #define M2_RX_PSR  GPIO1_PSR
-  #define M2_RX_GDIR GPIO1_GDIR
+  #define M2_RX_PSR  GPIO6_PSR     // fast-GPIO alias -- see the GPR26 note above
+  #define M2_RX_GDIR GPIO6_GDIR
   #define M2_RX_ALT  0x5u                                  // ALT5 = GPIO1
   // RT1060 pad control: PKE bit12, PUE bit13, PUS bits14-15
   // (00 = 100K pull-DOWN, 10 = 100K pull-UP).  These encodings are NOT the
@@ -226,15 +235,9 @@ static void m2PdnSwing(bool *lowOk, bool *highOk) {
     M2_WL_RST_MUX = 0x10u | M2_RST_ALT;         // SION: readable while driven
     M2_RST_GDIR |= (1u << M2_WL_RST_BIT);
     M2_RST_CLEAR = (1u << M2_WL_RST_BIT);  delay(5);
-#if defined(ARDUINO_MIMXRT1060_EVKB)
-    *lowOk  = !((GPIO1_PSR >> M2_WL_RST_BIT) & 1u);
+    *lowOk  = !((M2_RST_PSR >> M2_WL_RST_BIT) & 1u);
     M2_RST_SET = (1u << M2_WL_RST_BIT);    delay(5);
-    *highOk =  ((GPIO1_PSR >> M2_WL_RST_BIT) & 1u);
-#else
-    *lowOk  = !((GPIO9_PSR >> M2_WL_RST_BIT) & 1u);
-    M2_RST_SET = (1u << M2_WL_RST_BIT);    delay(5);
-    *highOk =  ((GPIO9_PSR >> M2_WL_RST_BIT) & 1u);
-#endif
+    *highOk =  ((M2_RST_PSR >> M2_WL_RST_BIT) & 1u);
 }
 
 static void m2ContinuityProbe() {
@@ -461,8 +464,8 @@ static void probeInquiry() {
 #define M2_BT_CTS_MUX IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B0_02
 #define M2_BT_CTS_PAD IOMUXC_SW_PAD_CTL_PAD_GPIO_AD_B0_02
 #define M2_BT_CTS_BIT 2
-#define M2_BT_CTS_GDIR   GPIO1_GDIR
-#define M2_BT_CTS_CLEAR  GPIO1_DR_CLEAR
+#define M2_BT_CTS_GDIR   GPIO6_GDIR
+#define M2_BT_CTS_CLEAR  GPIO6_DR_CLEAR
 #define M2_BT_CTS_GPIO_ALT 0x5u
 #else
 #define M2_BT_CTS_MUX (*(volatile uint32_t *)0x400E8248u)
