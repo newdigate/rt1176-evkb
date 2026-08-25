@@ -214,6 +214,24 @@ saying the combo does not "contain" the BT image was wrong.
 "try another build" is not a local experiment. Never commit these blobs; they
 are supplied at configure time only.
 
+★★ **NXP'S OWN SHELL EXAMPLE HANGS AT `bt init` ON THIS BOARD** (2026-08-25),
+and it is the cleanest artefact this investigation has produced. Built from
+`middleware/edgefast_open/examples/shell` with `--config flexspi_nor_debug`,
+IW416 + `board_murata_1xk_m2`. It boots and reaches `uart:~$`, then `bt init`
+hangs forever and the shell dies — **with no debug output at all**, despite
+`CONFIG_LOG=y` and `CONFIG_BT_HCI_DRIVER_LOG_LEVEL=4` (DBG). SWD says
+`DHCSR 0x01010001` (healthy-running, `S_HALT`/`S_LOCKUP` clear) and
+`CFSR`/`HFSR` zero — alive and blocked, not crashed.
+★ It also closes the "HCI passthrough" idea: the shell offers exactly that
+diagnostic (`bt hci-cmd <ogf> <ocf>`, arbitrary vendor commands incl. OGF
+0x3F) and it is UNREACHABLE, because it needs the transport that `bt init`
+fails to produce. Our probe already runs the other half — a raw `01 03 0C 00`
+at the bootstrap rate right after the download, three times per run,
+`bt_raw_reset[0..2]: n=0` every time.
+★ Use the shell, not `a2dp_source`, for any further vendor-stack work: it is
+the smallest example, it reaches a prompt, and its BT stack starts on command
+so the failure can be provoked deliberately.
+
 ★★ **THE COMBO IMAGE OVER SDIO DOES NOT BRING UP BLUETOOTH ON THIS CARD —
 measured 2026-08-25 in BYTES, not inferred.** With the combo image downloaded
 and the WLAN side running (`fw_download=ok card=1`), the BT UART emits a FOURTH

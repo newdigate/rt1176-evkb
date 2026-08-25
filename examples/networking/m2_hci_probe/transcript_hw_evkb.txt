@@ -1128,3 +1128,62 @@ stack turns, we now turn identically:
   * HCI with CTS asserted, CON[7] correct . tried (run C)
 and the controller is silent in all of them, with NXP's own binary failing the
 same way on the same board.
+
+=====================================================
+NXP'S OWN SHELL EXAMPLE, ON THIS BOARD -- 2026-08-25
+=====================================================
+
+Built from `middleware/edgefast_open/examples/shell` with the recipe that works
+(`--toolchain armgcc --config flexspi_nor_debug`, IW416 + board_murata_1xk_m2),
+flashed to the EVKB.  Chosen over a2dp_source because it is the smallest
+EdgeFast example, it reaches an interactive prompt, and its BT stack starts ON
+COMMAND -- so the failure can be provoked deliberately and watched.
+
+★ AND ITS DEBUG LOGGING IS ALREADY ON.  Read from the generated config, not
+assumed:
+
+    CONFIG_LOG=y
+    CONFIG_BT_LOG_LEVEL=4
+    CONFIG_BT_HCI_DRIVER_LOG_LEVEL=4        (DBG)
+    CONFIG_BT_IND_DNLD=y  CONFIG_BT_ONLY_DNLD=y
+
+RESULT:
+
+     Edgefast Bluetooth PAL shell demo start...
+    SHELL build: Aug 25 2026
+    uart:~$ bt init
+                              <-- nothing.  45 s of silence.
+
+  * the example BOOTS and reaches its prompt, so the board, the flash image and
+    the console are all fine;
+  * `bt init` HANGS INDEFINITELY and never returns a prompt;
+  * the shell is dead afterwards -- a bare newline gets no echo;
+  * ★ and it prints NO DEBUG OUTPUT AT ALL, despite DBG level on the HCI driver.
+    Not one line of their own downloader's logging.
+
+CPU STATE, read over SWD with the console detached:
+
+    DHCSR 0x01010001   (S_RETIRE_ST set; S_HALT and S_LOCKUP CLEAR)
+    CFSR  0x00000000   HFSR 0x00000000
+
+Healthy-running, and no fault was ever taken.  So NXP's stack is ALIVE and
+BLOCKED inside `bt init`, not crashed -- the same reading a2dp_source gave.
+
+★ WHY THIS IS THE BEST ARTEFACT FOR A SUPPORT CASE.  It is the vendor's own
+example, from their own SDK, built with their own documented configuration
+(CONFIG_BT_IND_DNLD auto-selected, correct module selection), hanging on their
+own reference board.  Nothing of ours is in the loop.
+
+★ AND IT CLOSES THE "HCI PASSTHROUGH" IDEA.  The shell offers exactly the
+diagnostic that would test it -- `bt hci-cmd <ogf> <ocf> [data]`, arbitrary
+vendor commands including OGF 0x3F -- and it is UNREACHABLE, because it needs a
+working HCI transport and `bt init` is what fails to produce one.
+  Our own probe already runs the other half of that diagnostic: a RAW
+  `01 03 0C 00` at the bootstrap rate immediately after the download, three
+  times, in every silicon run -- `bt_raw_reset[0..2]: n=0` every time.  So the
+  branch "if the card answers a raw Reset but ignores configuration" does not
+  arise: it answers nothing, and vendor commands would go into the same
+  silence.
+
+NOTE: the board currently carries NXP's shell image, not m2_hci_probe.  Reflash
+`build-*/m2_hci_probe.elf` before further probe work.
