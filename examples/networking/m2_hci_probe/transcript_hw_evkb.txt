@@ -1500,3 +1500,44 @@ RECOMMENDATION: stop here on the 1060 and take the u-blox case forward on the
 1170 evidence, which is complete and well bracketed.  Further 1060 work needs a
 scope on J8.22 and J8.56 -- an instrument this project does not have in
 software -- rather than more firmware.
+
+=====================================================
+NXP'S SHELL ON THE 1060: TWO TREES, AND `bt init` IS UNREACHABLE -- 2026-08-25
+=====================================================
+
+★ `middleware/edgefast_open/examples/shell` CANNOT TARGET THE 1060.  Verified by
+attempting it rather than by asserting: its `examples/_boards/` contains only
+`evkbmimxrt1170`, so a `-b evkbmimxrt1060` build finds no board sources and dies
+with "CMake can not determine linker language for target" -- which reads like a
+toolchain fault and is really "this example has no support for that board".
+
+The shell that DOES build and run on the 1060 is the OTHER tree,
+`examples/edgefast_bluetooth_examples/shell`, built for `evkcmimxrt1060`
+(there is no `evkbmimxrt1060` variant of it either).  Flashed with the reworks
+in place, it boots and reaches its prompt:
+
+    @bt>
+
+★★ AND `bt init` IS UNREACHABLE THERE -- an SDK defect, not a Bluetooth result.
+Traced through three macros:
+
+    SHELL_CMD_REGISTER(bt, &bt_cmds, "...", cmd_default_handler)
+      -> SHELL_CMD_ARG_REGISTER(bt, ..., minarg=0, additonarg=0)
+      -> SHELL_COMMAND_EXDEFINE(..., miniArg=0, addtionArg=0)
+      -> .parameter.range.min = 0 , .parameter.range.max = 0
+
+and fsl_shell.c accepts a command only when
+`((range.min + 1) <= argc) && ((range.max + 1) >= argc)` -- i.e. argc == 1
+exactly.  So `bt` alone prints its subcommand tree and **every subcommand is
+rejected by construction**, with the misleading message "Incorrect command
+parameter(s)".
+
+Note the contrast that makes this an SDK-version issue rather than a board one:
+the NEWER `edgefast_open` shell on the 1170 ACCEPTS `bt init` (it hangs, which
+is the finding recorded earlier).  The older `edgefast_bluetooth` shell cannot
+dispatch subcommands at all in this configuration.
+
+★ ROUTE THAT AVOIDS THE SHELL ENTIRELY, if the 1060 is ever revisited: the same
+tree ships `a2dp_source` and `a2dp_sink` for `evkcmimxrt1060`, and those
+initialise the stack AT STARTUP with no shell interaction -- so they exercise
+exactly the path `bt init` would, without needing the broken dispatch.
