@@ -1,6 +1,7 @@
 RT1176 M.2 HCI probe up
 serial2=up_115200
 m2_wifi_reset=released
+bt_wake=pulsed_10ms_low (GPIO_DISP_B2_13, mux returned to LPUART2_RTS_B)
 bt_cts=undriven
 bt_uart_cfg=off
 bt_fw_source=synthetic
@@ -16,5 +17,5 @@ bt_baud_try=460800 st=no_response timeouts=13 framing=0 starved=0 qfull=0 late=0
 bt_baud_try=115200 st=no_response timeouts=14 framing=0 starved=0 qfull=0 late=0
 bt_baud=none tried=4
 hci_probe_done
-hb card=0 btfw=no_start_indication hci=no_response n=0 pump=3072005 timeouts=14 framing=0 starved=0 qfull=0 late=0
-hb card=0 btfw=no_start_indication hci=no_response n=1 pump=3386894 timeouts=14 framing=0 starved=0 qfull=0 late=0
+hb card=0 btfw=no_start_indication hci=no_response n=0 pump=2934529 timeouts=14 framing=0 starved=0 qfull=0 late=0
+hb card=0 btfw=no_start_indication hci=no_response n=1 pump=3231261 timeouts=14 framing=0 starved=0 qfull=0 late=0

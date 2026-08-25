@@ -275,6 +275,46 @@ static void probeInquiry() {
 #define M2_BT_CTS_PAD (*(volatile uint32_t *)0x400E848Cu)
 #define M2_BT_CTS_BIT 14
 
+// ---------------------------------------------------------------------------
+// Wake the controller from BOOT SLEEP -- the step NXP's loader performs and
+// this tree never did.
+//
+// ★ WHY.  NXP's fw_loader_uart.c calls wakeUpControllerFromBootSleep() from
+// uart_fw_download() -- BEFORE the image goes across, not after it.  For the
+// RT1170 it names GPIO_DISP_B2_13 (the pad this board wires to J54 pin 36),
+// re-muxes it away from LPUART2_RTS_B to a plain GPIO, drives it LOW, holds
+// 10 ms, then hands the pad BACK to LPUART2_RTS_B.  Facts taken from that
+// file's pin macros, literal level and call order only -- nothing transcribed;
+// it is NXP LA_OPT licensed and this is an independent implementation of the
+// same documented behaviour, exactly as the V3 loader was.
+//
+// ★ THIS IS NOT THE CTS EXPERIMENT ALREADY RUN AND REFUTED.  That one held the
+// pad LOW indefinitely, from BEFORE the module reset -- which latched CON[7]=0,
+// a Reserved configuration -- with the mux left on GPIO and never returned.
+// This is a 10 ms PULSE, after the module is up (so CON[7] was sampled as 1),
+// with the pad given back to the UART afterwards.  Different level semantics,
+// different duration, different mux state, different point in the sequence.
+//
+// A controller left in boot sleep would do precisely what we measure: take
+// every block, checksum it, report no error -- and then never run the image.
+//
+// GPIO_DISP_B2_13: mux 0x400E8248, pad 0x400E848C (RM 12.4.6.144).  ALT5 =
+// GPIO5_IO14, ALT10 = GPIO11_IO14 (the SAME pad through the fast instance --
+// NXP use ALT10), ALT3 = LPUART2_RTS_B.  ALT5 here because the core already
+// exposes GPIO5; the pin driven is identical.
+// ★ Side effect, unavoidable and brief: R1866 ties this net to ETHPHY_RST_B,
+// so the pulse also resets the gigabit PHY for 10 ms.  Harmless here; it would
+// not be in an Ethernet example.
+static void m2WakeFromBootSleep() {
+    M2_BT_CTS_MUX = 0x5u;                       // ALT5 = GPIO5_IO14 (no SION)
+    M2_BT_CTS_PAD = 0x02u;                      // NXP's pad config for this pin
+    GPIO5_GDIR |= (1u << M2_BT_CTS_BIT);        // output
+    GPIO5_DR_CLEAR = (1u << M2_BT_CTS_BIT);     // drive LOW
+    delay(10);                                  // NXP hold 10 ms
+    M2_BT_CTS_MUX = 0x3u;                       // revert: ALT3 = LPUART2_RTS_B
+    M2_BT_CTS_PAD = 0x02u;
+}
+
 static void m2AssertBtCts() {
     M2_BT_CTS_MUX = 0x10u | 0x5u;               // SION | ALT5 = GPIO5_IO14
     M2_BT_CTS_PAD = 0x0Cu;                      // no pull; we drive it
@@ -508,6 +548,14 @@ void setup() {
 
     m2ReleaseWifiReset();
     Serial1.println("m2_wifi_reset=released");
+
+    // NXP's position for this: inside uart_fw_download(), before the image.
+#if defined(M2_BT_WAKE_PULSE)
+    m2WakeFromBootSleep();
+    Serial1.println("bt_wake=pulsed_10ms_low (GPIO_DISP_B2_13, mux returned to LPUART2_RTS_B)");
+#else
+    Serial1.println("bt_wake=off");
+#endif
 
     // ★ CTS IS ASSERTED HERE AND NOT EARLIER, and the ordering is the whole
     // point.  UART_CTSn and UART_RTSn are CONFIGURATION PINS sampled at module

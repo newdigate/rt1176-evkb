@@ -943,3 +943,70 @@ cheap next step.
 16.92.21.p84.3.  Ours is p155.2 -- much newer, same FP92 branch.  So the
 "stale firmware" theory has it backwards; if anything we are ahead of what
 their documentation was written against.
+
+=====================================================
+THE BOOT-SLEEP WAKE PULSE -- 2026-08-25 -- THE CARD REACTS, AND STILL WILL NOT RUN
+=====================================================
+
+FOUND BY READING NXP'S LOADER FOR ITS CALL ORDER, not its code.
+`fw_loader_uart.c` calls `wakeUpControllerFromBootSleep()` from
+`uart_fw_download()` -- BEFORE the image, not after it -- and for the RT1170 it
+names **GPIO_DISP_B2_13**: re-mux away from LPUART2_RTS_B to a plain GPIO,
+drive LOW, hold 10 ms, hand the pad back to LPUART2_RTS_B.  Pin identity, level
+and call order only; nothing transcribed (LA_OPT), same standard as the V3
+decode.  Implemented as `m2WakeFromBootSleep()`, ON by default.
+
+★ THAT PAD IS THE ONE THIS TREE HAD BEEN CALLING "the card's CTS input" (J54
+pin 36).  NXP do not treat it as flow control at this point in the sequence at
+all -- they treat it as a wake trigger.  And it is NOT the CTS experiment
+already run and refuted: that one held the pad LOW indefinitely, from BEFORE
+the module reset (latching CON[7]=0, a Reserved configuration), mux left on
+GPIO and never returned.
+
+RESULT -- and there IS a measured change, the first this programme has produced:
+
+    run B  BT download, no CTS, NO wake     start_inds=2
+    run C  BT download, CTS held, NO wake   start_inds=2
+    run D  BT download, no CTS, WAKE PULSE  start_inds=3   <-- one variable
+
+Same board, same session, same image, one variable changed.  **The card
+greets an extra time when the pulse is applied**, so the pin is connected, the
+card is listening on it, and the pulse provokes the ROM to re-announce itself.
+That is the first time anything we have done has changed the card's behaviour.
+
+★ AND IT CHANGES NOTHING THAT MATTERS.  Run D still ends:
+
+    bt_fw_download=ok chunks=142 sent=131856/131840 retx=1 crc_err=0
+    bt_post_dnld[0..3]: n=0    bt_raw_reset[0..2]: n=0
+    bt_baud_try=3000000/921600/460800/115200 -- all st=no_response
+    bt_baud=none tried=4
+
+So "we were missing NXP's wake step" is REFUTED as the explanation.  We now
+perform the vendor's sequence including the step we had never done, the card
+demonstrably reacts to it, and it still accepts a whole firmware image and
+declines to execute it.
+
+CAVEAT, stated rather than buried: n=1 per arm.  The controls (B and C) were
+run earlier the same session on the same board, so it is a controlled
+comparison rather than a repeated one.  If the 2 -> 3 delta is ever load-
+bearing for a conclusion, repeat it before leaning on it.
+
+WHERE THIS LEAVES THE HYPOTHESES
+
+  1. UART-config / CMD5 block ........ REFUTED (card rejects it outright)
+  2. Wrong image ..................... WEAK -- the image self-identifies as
+                                       BT_UART and its header format matches
+                                       what the card requests, byte for byte
+  3. Combo needs both images ......... SUPERSEDED (the combo IS both)
+  4. Secure boot / signature ......... STANDING, and still untestable from here
+  5. Flow control .................... REFUTED (properly, with CON[7] correct)
+  6. Wrong baud ...................... REFUTED (four rates, framing=0)
+  7. Missing boot-sleep wake ......... REFUTED (this section) -- and it is the
+                                       only one whose test produced any
+                                       observable change at the card
+
+Every host-side explanation we can construct is now eliminated, and NXP's own
+EdgeFast a2dp_source fails identically on this board.  What remains is the
+card refusing to execute an image it has accepted and checksummed, which is
+what a signature rejection looks like from the host and cannot be told apart
+from it without vendor help.

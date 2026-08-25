@@ -122,6 +122,15 @@ endif()
 
 # Drive J54 pin 36 (the card's CTS input) low, so the controller is always
 # clear to send.  Off by default: it holds the gigabit Ethernet PHY in reset.
+# NXP's wakeUpControllerFromBootSleep(): a 10 ms LOW pulse on GPIO_DISP_B2_13
+# before the firmware download, with the pad then returned to LPUART2_RTS_B.
+# ON by default -- it is part of the vendor's own download sequence, and a gate
+# whose example was configured without it would report SKIP rather than FAIL.
+option(M2_BT_WAKE_PULSE "Pulse the boot-sleep wake line before the BT firmware download" ON)
+if(M2_BT_WAKE_PULSE)
+    add_definitions(-DM2_BT_WAKE_PULSE=1)
+endif()
+
 option(M2_BT_ASSERT_CTS "Assert the card's CTS input (holds the ENET PHY in reset)" OFF)
 if(M2_BT_ASSERT_CTS)
     add_definitions(-DM2_BT_ASSERT_CTS=1)

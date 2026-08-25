@@ -214,6 +214,19 @@ saying the combo does not "contain" the BT image was wrong.
 "try another build" is not a local experiment. Never commit these blobs; they
 are supplied at configure time only.
 
+★ **`M2_BT_WAKE_PULSE` (default ON) is NXP's boot-sleep wake**, found 2026-08-25
+by reading their loader's CALL ORDER: `uart_fw_download()` calls
+`wakeUpControllerFromBootSleep()` BEFORE the image, and for the RT1170 that is
+a 10 ms LOW pulse on **GPIO_DISP_B2_13** with the pad then returned to
+`LPUART2_RTS_B`. That pad is the one this tree had been calling "the card's CTS
+input" — NXP do not treat it as flow control here at all.
+★ **It is the only thing that has ever changed the card's behaviour**: with the
+pulse the card greets an extra time (`start_inds=3` vs `2` in two controls run
+the same session, one variable). So the pin is connected and the card listens
+on it. **And it changes nothing that matters** — the image still lands and the
+controller still never answers, so "we were missing NXP's wake step" is
+refuted too. n=1 per arm; repeat before leaning on the delta.
+
 ★ `M2_BT_UART_DNLD` (default ON) selects the firmware path — OFF takes
 u-blox's combo-over-SDIO route instead of the BT-only UART download. The two
 are ALTERNATIVES: measured, a BT UART download leaves the later WLAN SDIO
