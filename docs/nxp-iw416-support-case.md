@@ -6,6 +6,13 @@ what NXP uniquely owns: the **IW416 ROM's firmware-authentication behaviour**
 and an **EdgeFast download bug on NXP's own reference board**. Every figure is a
 measurement; full logs in `examples/networking/m2_hci_probe/transcript_hw_evkb.txt`.
 
+> ## ✅ POSTED to the NXP community forum — 2026-08-26
+>
+> A formal NXP support request needs a registered company; NXP directed this to
+> their public i.MX RT community forum instead. Thread:
+> <https://community.nxp.com/t5/i-MX-RT-Crossover-MCUs/BT-firmware-accepted-over-UART-but-controller-never-runs-and/m-p/2408524#M37090>
+> Watch it for replies before re-running any experiment.
+
 ---
 
 ## 1. Summary — two DISTINCT failures, please keep them separate

@@ -89,6 +89,10 @@ next session does not re-run any of them.
 >
 > ### ✅ The vendor case is FILED — u-blox **CA-276115** (2026-08-25)
 >
+> **And an NXP community thread is open (2026-08-26)** for the silicon/firmware
+> half — the IW416 ROM authentication question and the EdgeFast 3 Mbaud
+> download bug: https://community.nxp.com/t5/i-MX-RT-Crossover-MCUs/BT-firmware-accepted-over-UART-but-controller-never-runs-and/m-p/2408524#M37090 . Check BOTH before re-running anything.
+>
 > Submitted through the u-blox portal. The write-up is
 > `docs/m2-maya-w161-support-case.md`; nothing was attached, so if they ask for
 > logs the file to send is

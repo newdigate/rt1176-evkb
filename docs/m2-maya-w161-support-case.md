@@ -12,6 +12,9 @@ measurement from this board, not an estimate. Full logs:
 > Reproduce → §8, Expected/Actual Test Results → §1 and §5, with §6's eliminated
 > hypotheses and §7's six questions carried into Actual Test Results.
 > **Nothing was attached** — the silicon transcript stayed local.
+>
+> **Companion NXP thread** (the silicon/firmware half of the same problem):
+> <https://community.nxp.com/t5/i-MX-RT-Crossover-MCUs/BT-firmware-accepted-over-UART-but-controller-never-runs-and/m-p/2408524#M37090>
 
 ---
 
