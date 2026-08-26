@@ -42,6 +42,12 @@
 #include "WiFiClient.h"
 #include "WiFiServer.h"
 #include "WiFiConnPool.h"
+// For the soak health line: tcp_active_pcbs / tcp_tw_pcbs.  lwip's internal
+// header, deliberately -- MEMP_NUM_TCP_PCB is 5 against WIFI_MAX_CONNS = 4,
+// and this one-shot server is the ACTIVE closer, so the board holds every
+// TIME_WAIT (~120 s each).  Walking the two lists is the only way to see that
+// pressure; without it the pcb-starvation hypothesis stays a hypothesis.
+#include "lwip/priv/tcp_priv.h"
 
 #if defined(HAVE_WIFI_CREDS)
 #include "wifi_creds.h"          // generated, gitignored -- never committed
@@ -246,5 +252,41 @@ void loop() {
         Serial1.print(" evict=");  Serial1.print(WiFiPool::evictions());
         Serial1.print(" stall=");  Serial1.print(WiFiPool::stallAborts());
         Serial1.print(" refuse="); Serial1.println(WiFiPool::acceptRefusals());
+    }
+    // --- SOAK HEALTH (NEW-8), every 2 s, at parity with m2_uap_lwip ---------
+    // Two lines, deliberately separate, because they are read differently:
+    //
+    //   iw416 ...  carries ONLY counters that must be INVARIANT (zero) for
+    //              the whole run.  The soak verdict is
+    //              `grep '^iw416 ' log | sort -u` producing ONE line -- which
+    //              proves no counter was EVER non-zero at ANY sample, where
+    //              checking the last sample would only prove clean-at-the-end.
+    //              Mixing a varying quantity into this line would destroy
+    //              that technique, which is why the pcb pressure is NOT here.
+    //
+    //   pcb ...    is EXPECTED to vary: live pcbs and TIME_WAIT count, walked
+    //              from lwip's own lists.  Exchange rate versus this line is
+    //              the number the soak exists to produce (tcp_kill_timewait
+    //              self-heals starvation SILENTLY -- no counter, no error --
+    //              so watching tw= saturate is the only way to see it work).
+    //
+    // Safe to walk here: NO_SYS=1, so lwip runs in this loop()'s context and
+    // nothing mutates the lists concurrently.  Card-absent both lists are
+    // never registered into, so the gate asserts `pcb act=0 tw=0`.
+    static uint32_t lastHealth = 0;
+    if (millis() - lastHealth >= 2000) {
+        lastHealth = millis();
+        Iw416 &r = WiFi.radio();
+        Serial1.print("iw416 stranded="); Serial1.print(r.rxStrandedRecovered());
+        Serial1.print(" desync=");        Serial1.print(r.rxDesyncRecovered());
+        Serial1.print(" split=");         Serial1.print(r.rxSplitMismatch());
+        Serial1.print(" drop=");          Serial1.print(r.rxDropped());
+        Serial1.print(" seqmis=");        Serial1.print(r.seqMismatches());
+        Serial1.print(" pswake=");        Serial1.println(r.psWakes());
+        uint32_t act = 0, tw = 0;
+        for (struct tcp_pcb *p = tcp_active_pcbs; p; p = p->next) act++;
+        for (struct tcp_pcb *p = tcp_tw_pcbs;     p; p = p->next) tw++;
+        Serial1.print("pcb act="); Serial1.print(act);
+        Serial1.print(" tw=");     Serial1.println(tw);
     }
 }
