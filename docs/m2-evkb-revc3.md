@@ -129,6 +129,34 @@ transmitting**, which is the symptom under investigation. They are recorded so
 the question does not have to be re-asked, and so that anyone attempting
 hardware flow control knows the `R1816`/`R1902` pair must be done together.
 
+★★ **"WILL R1816/R1902 REWORK HELP?" -- traced 2026-08-26, answer: NO to either
+observed failure.** The directions, from the netlist:
+- `R1902`-fit + `R1816`-remove is the MCU's **CTS input** (card RTS output
+  `J54.34` -> R816 -> U355 -> R1902 -> `U19.B6`). It gates **host->card
+  transmission** -- the bytes WE send.
+- The direction that gates the **card transmitting to us** is the MCU's RTS
+  output -> card CTS input (`U19.A5` -> U354 -> `J54.36`), which is **`R1866`**
+  -- tied to `ETHPHY_RST_B`, and NOT in NXP's rework list.
+
+So against the **post-download silence** (the card sends nothing): irrelevant --
+whether the host is clear to send cannot make the card talk. And the card's own
+CTS input WAS asserted in run C (driving the `GPIO_DISP_B2_13`=LPUART2_RTS pad
+low, CON[7] correct) with no change -- hypothesis 5, refuted. R1902/R1816 is not
+even that direction.
+
+Against the **3 Mbaud download corruption** (host fails to RECEIVE): wrong
+direction (RX back-pressure would need `R1866`, the PHY reset) AND wrong
+mechanism -- the corruption is bit-level framing loss (`Invalid Header 0x00`,
+concatenated offsets, CRC mismatch), which is signal integrity / DMA, not buffer
+overflow, and flow control only prevents overflow.
+
+★ Decisive: **we do not need 3 Mbaud.** `m2_hci_probe` downloads the whole image
+at 115200 and it completes; NXP's 3 Mbaud switch is a boot-speed optimisation.
+Even a rework that fixed the 3 Mbaud link would only reach the state 115200
+already reaches (image accepted, controller silent). The full five-item rework
+becomes relevant only for **runtime A2DP at 3 Mbaud**, which needs a working
+controller first -- and removing `R1816` costs the Ethernet PHY interrupt.
+
 ## ★ COMPLETE J54 PIN MAP: card ⇄ board ⇄ RT1176 (generated 2026-08-24)
 
 All 75 pins, three columns wide: what the **M2-MAYA-W161** does with the pin,
