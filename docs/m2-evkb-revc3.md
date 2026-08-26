@@ -577,6 +577,49 @@ Harmless, but worth knowing before debugging any of them:
 |---|---|---|
 | 23 | `WIFI_RST_B` via U354 (`GPIO_AD_16`) | **NC** — all the reset sequencing was a no-op |
 | 50 | 32.768 kHz from `Y2` via `R823` | **NC** — retires the "sleep clock missing" theory outright |
+
+## SNVS / sleep-clock and Bluetooth timing — settled 2026-08-26
+
+**Does the BT side need anything from the RT1170's SNVS domain? No — and the
+wiring makes it impossible on this card.** The only path from SNVS (RTC + the
+always-on 32.768 kHz oscillator) to a radio would be a **sleep clock**, and:
+
+* M.2 pin 50 (`SUSCLK` / `SLP_CLK_IN`) is **NC on the MAYA-W161** — internally
+  unwired. The EVKB routes `Y2` (32.768 kHz) to `J54.50` via `R823`, but it
+  dead-ends at the card edge, so even the board's own 32 kHz never reaches the
+  radio, let alone the SNVS RTC.
+* SIM UBX-21010495 R09 §2.4.6 makes `SLP_CLK_IN` **optional**: unused, "leave
+  this pin unconnected", and the module runs BLE sleep from its own internal
+  oscillator — which is what u-blox chose.
+
+So the BT transport (LPUART2 + GPIO, on the peripheral clock tree) has **zero
+SNVS involvement**. On a *custom* board wanting the module's lowest-power sleep
+you *could* drive pin 50 from a shared 32.768 kHz source, but this card does not
+accept one and the datasheet does not require it.
+
+**Timing that DOES matter, ordered by how badly getting it wrong bites:**
+
+1. ★★ **UART open BEFORE the card is powered.** The BT ROM emits its start
+   indication (`AB 01 72 00 47`) exactly ONCE per power-up, within ~200 ms of
+   PDn release. LPUART2 must already be draining, or a healthy card reports a
+   false `no_start_indication`. This cost a session to learn.
+2. **PDn low ≥ 100 ms** for a correct reset (§2.4.1); the low→high edge triggers
+   it. We hold 110 ms — 10% margin, do not shorten.
+3. **Firmware is RAM-resident: every reset needs a fresh download** (§2.4.2). A
+   PDn or power cycle wipes it, so a reset can never "resume" — retry logic must
+   re-download.
+4. **Post-download settle before HCI**: NXP wait ~100 ms + 60–260 ms; our probe
+   wraps this in a 10-attempt Reset retry because the window is unknown on
+   silicon.
+5. **High-baud integrity**: the 3 Mbaud switch NXP performs mid-download
+   corrupts on this board (no usable flow control — bit-level framing loss, not
+   overflow). Staying at 115200 sidesteps it; see the chatty-loader section in
+   the example transcript.
+
+★ NOT a host-timing concern here: the **1.15 ms 1.8 V-delay** rule seen on
+module-down designs (see the power-sequencing section above). It applies when
+the host supplies both rails to a bare module; this M.2 card takes 3.3 V only
+and sequences its own 1.8 V.
 | 58, 60 | LPI2C5 (`Wire2`) | **NC** |
 | 66 | `WL_DEV_WAKE_1V8` | **NC** (see above) |
 | 6, 16 | `WIFI_LED1_B`, `BT_LED2_B` | **NC** — so the board LEDs never light from this card, and their being dark means nothing |
