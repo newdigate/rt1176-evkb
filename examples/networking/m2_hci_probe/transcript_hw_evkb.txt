@@ -1640,3 +1640,64 @@ J54, reconnect the 1170, flash that ELF, run `bt init`.
 
 The SDK working tree is RESTORED (fw .inc files back to FP92, shell patch
 reverted) -- the built ELFs carry the old firmware; the tree does not.
+
+=====================================================
+FP91 ON THE 1170 -- THE FIRMWARE-VERSION HYPOTHESIS IS REFUTED -- 2026-08-26
+=====================================================
+
+The card is back in the 1170.  Two runs with the January-2025 firmware
+(FP91 16.92.21.p142.5, from github.com/NXP/wifi_nb_fw commit a91d9d6 -- the
+provenance that makes this re-fetchable):
+
+RUN 1 -- NXP's edgefast_open shell carrying FP91 (byte-verified):
+`bt init` hangs exactly as it does with FP92.  No output, no prompt return.
+
+RUN 2 -- our probe carrying FP91 (byte-verified, 169,284-byte image):
+
+    bt_fw_download=ok chip_id=0x7201 loader_ver=0 start_inds=3 chunks=178
+                   sent=169300/169284 max_off=169284 retx=1 crc_err=0
+    bt_req_last: ... 28@163380 660@163424 ... 1040@168228 ...
+    bt_post_dnld[0..3]: n=0     bt_raw_reset[0..2]: n=0
+    hci_reset=timeout ... framing=0
+    bt_baud_try=3000000/921600/460800/115200 -- all no_response
+    bt_baud=none tried=4
+
+★ READ THE CHUNK PATTERN: the FP91 image has a DIFFERENT internal structure
+(178 chunks vs 142, variable tail sizes, load address 0x00080000 vs FP92's
+0x000A2010) and the card's ROM walked it correctly, CRC-checked it, reported
+one error and accepted the retransmission -- then stopped asking and never
+re-greeted.  Accepted, loader exited, controller silent.  Byte-for-byte the
+same OUTCOME as FP92 through a visibly different download.
+
+★★ WHAT THIS SETTLES.  Two official NXP builds, EIGHTEEN MONTHS and a feature
+pack apart (FP91 p142.5, 2025-01 vs FP92 p155.2, 2026-03), on the board where
+downloads demonstrably complete:
+
+  * both are ACCEPTED (the ROM stops asking -- and the combo path shows what
+    rejection looks like: it keeps announcing);
+  * NEITHER ever runs a controller.
+
+"Wrong or incompatible firmware VERSION" is refuted as an explanation.  And
+the standing hypothesis sharpens: if the module required u-blox-SIGNED images,
+no NXP-built image of ANY era would run -- which is exactly what is observed.
+This is worth adding to case CA-276115 if u-blox's first response is "try a
+different firmware version": two versions are already tried, with full
+accounting.
+
+Hypothesis table after this session:
+  1. UART-config / CMD5 block ......... REFUTED (silicon)
+  2. Wrong image / wrong VERSION ...... REFUTED for version (two feature packs
+                                        identical); "needs u-blox-specific
+                                        SIGNED image" is now the same statement
+                                        as hypothesis 8
+  3. Combo needed ..................... superseded
+  4. Host truncation .................. REFUTED
+  5. Flow control ..................... REFUTED (CON[7] correct)
+  6. Baud rate ........................ REFUTED (four rates)
+  7. Boot-sleep wake .................. REFUTED (card reacts, outcome same)
+  8. Signature / secure boot .......... THE ONLY ONE LEFT, now with two
+                                        independent supporting data points
+
+BOARD STATE: the 1170 currently carries the FP91 probe build; reflash before
+further probe work.  The FP91 ELFs live in /tmp (efo_1170_old, build-fp91) and
+the blobs re-fetch from wifi_nb_fw@a91d9d6.
