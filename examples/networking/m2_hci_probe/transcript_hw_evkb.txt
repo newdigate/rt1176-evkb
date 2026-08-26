@@ -1701,3 +1701,68 @@ Hypothesis table after this session:
 BOARD STATE: the 1170 currently carries the FP91 probe build; reflash before
 further probe work.  The FP91 ELFs live in /tmp (efo_1170_old, build-fp91) and
 the blobs re-fetch from wifi_nb_fw@a91d9d6.
+
+=====================================================
+NXP'S CHATTY LOADER ON THE 1170 -- THE 3 MBAUD SWITCH CORRUPTS THE LINK -- 2026-08-26
+=====================================================
+
+Ran the OLDER edgefast_bluetooth shell (the one that prints, and which supports
+evkbmimxrt1170) on the 1170, with DEBUG_PRINT enabled in fw_loader_uart.c so
+NXP's own loader narrates every step.  This is on the board where downloads
+otherwise complete.  Command is `bt.init` (dotted -- that shell's syntax).
+
+★★ THE FINDING, and it is a NEW one: **the download's secondary-baud switch to
+3,000,000 succeeds, and every byte after it is CORRUPT.**
+
+Sequence from NXP's own trace:
+  1. loader opens at 115200, the card requests header bytes correctly
+     (REQ=0xA7 Len=10 Off=0 Err=0), CRCs valid;
+  2. a `command5`/type-5 UART-config block is sent (register writes at
+     0x7F00008F..94) and ACKed -- so on THIS board/firmware the type-5 command
+     IS accepted (contrast our own probe, where injecting it standalone was
+     rejected: order and context matter);
+  3. `change baud-rate req to 3000000`, `reInitUartInst(BR 3000000) FlowCtrl 0`,
+     `changeBaudrate() ret 0` -- the switch is reported successful;
+  4. immediately after: `Invalid Header 0x00`, `Invalid Header 0x71`,
+     `REQ = 0xA7, Len = 10a7, Off = 5400, Err = 400, CRC = 0`,
+     `CRC Mismatched`, and `file download: 0: 131840` -- stuck at offset 0
+     forever.  The offsets are byte-concatenations (`5400` = two bytes run
+     together): classic wrong-baud framing loss.
+
+★ WHAT THAT MEANS.  The card DID switch to 3 Mbaud and IS transmitting; the
+host cannot cleanly receive it.  The RT1176 LPUART2 at 3,000,000 baud on this
+board -- DMA-fed, no flow control (R1816/R1902 rework not done) -- does not
+recover the card's frames.  Two independent tries:
+  * flow control left ON (stock): the FIRST post-switch header times out, the
+    loader falls back to 115200, retries, and LOOPS FOREVER printing dots
+    (observed >20 min).  A patch reverting only the 0,0 shell-range issue does
+    not reach this; the download loop itself never terminates.
+  * flow control forced OFF at all three secondary-baud reInit sites, PLUS the
+    card's CTS asserted by holding the RTS pad (GPIO_DISP_B2_13) low as GPIO:
+    the switch now completes and the corruption above appears -- so the earlier
+    infinite loop was the loader retrying a link it could not read, not a
+    different failure.
+
+★★ HOW THIS RELATES TO OUR OWN PROBE.  Our m2_hci_probe NEVER does the type-5
+config + 3 Mbaud switch during download -- it downloads the whole image at
+115200 and succeeds (chunks=142, all bytes).  NXP's stock flow tries to go to
+3 Mbaud DURING the download and corrupts.  So on THIS board there are two
+different failure modes depending on the download path, and NEITHER ends with a
+running controller:
+  * our path: clean 115200 download, image accepted, controller silent
+    (the AFTER-download mystery -- unchanged, still the CA-276115 question);
+  * NXP's path: 3 Mbaud switch mid-download, link corrupts, download never
+    completes (a BOARD/baud-integrity problem, distinct and lower-level).
+
+★ THE ACTIONABLE PIECE FOR THE BENCH: the 3 Mbaud instability is consistent
+with the missing flow control (R1816 removed + R1902 fitted) that NXP's rework
+guide requires and this board does not have -- at 3 Mbaud with DMA and no RTS
+back-pressure, the host cannot keep up cleanly.  This is the FIRST evidence
+that the un-done half of the rework has an observable cost, and it is on the
+DOWNLOAD, not the post-download silence.  It does NOT explain the silence after
+our own clean 115200 download, which remains the module-level question for
+u-blox.
+
+SDK working tree RESTORED: fw_loader_uart.c reverted (DEBUG_PRINT, flow-control
+and GPIO patches all gone).  All experiment ELFs are in /tmp.  Board carries the
+last chatty build; reflash m2_hci_probe before probe work.
