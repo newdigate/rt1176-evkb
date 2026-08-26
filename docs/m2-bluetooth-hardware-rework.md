@@ -68,8 +68,8 @@ BT HCI UART = **LPUART2**. NXP's own guide
 | **`R404`** | **fit** | `GPIO_AD_31` → PDn chain → J54.56 (`W_DISABLE1#`) | DNP | Lets the MCU power-cycle the radio. **Without it the module is held in power-down and never boots — FATAL.** | `GPIO_AD_31` is also **Arduino D12 / LPSPI1 MISO** — driving PDn disturbs header SPI |
 | **`R1901`** | **fit** | `U355` → `BT_UART_RXD` → J54.22 (card TX) | DNP | Makes the card's UART TX **readable**. Without it BT is transmit-only — no HCI reply can ever be seen. | `BT_UART_RXD` also reaches **Arduino header J9.2** via `R2` |
 | **`R1902`** | fit | card RTS output → `U19.B6` (MCU **CTS input**) | DNP | Lets the host read the card's flow-control output. Only matters with HW flow control. | shares the MCU CTS net with the PHY — see `R1816` |
-| **`R1816`** | remove | `BT_UART_CTS` (`U19.B6`) ── `RGMII1_PHY_INTB` | **fitted** | Frees the MCU CTS input from the Ethernet PHY interrupt so `R1902` is usable. | **RGMII1 gigabit PHY interrupt** (`U10`, RTL8211FDI-CG) — removing it disables the PHY IRQ line |
-| **`R183`** | remove | `GPIO_AD_31` ── `U27.2` (SO of `MX25L4006` SPI NOR) | **fitted** | Removes a third driver from the PDn line — a flash **data output** on the pin you power-cycle the radio with. | the on-board **Macronix SPI NOR flash** `U27` loses its SO tap to this pin |
+| **`R1816`** | remove | `BT_UART_CTS` (`U19.B6`) ── `RGMII1_PHY_INTB` | **fitted** | Frees the MCU CTS input from the Ethernet PHY interrupt so `R1902` is usable. | the **1 Gb PHY** interrupt (`U10`, RTL8211FDI-CG) — removing it disables that PHY's IRQ line, **not** Ethernet data. ★ This repo's Ethernet examples are unaffected: they run on the **10/100** RJ45 (a different MAC/PHY) and **poll** link state (`enet_phy_link_up()`), not the IRQ |
+| **`R183`** | remove | `GPIO_AD_31` ── `U27.2` (SO of `MX25L4006` SPI NOR) | **fitted** | Removes a third driver from the PDn line — a flash **data output** on the pin you power-cycle the radio with. | an **auxiliary LPSPI1 SPI-NOR** (`U27`, 4 Mbit MX25L4006 on `GPIO_AD_28/29/30/31`) loses its MISO — **not the boot flash**, and rarely used, so cost ≈ zero |
 
 ### The flow-control trap — `R1816` / `R1866` / `R1902`
 
@@ -113,10 +113,23 @@ header I²C.
 
 `R404` and `R1901` bridged by hand (2026-08-18). Verified: PDn power-cycles the
 module (five sessions of clean ROM greetings), and the card's TX is readable
-(131,840-byte firmware download received in both directions). `R1902`/`R1816`/`R183`
-left as-is — **none can prevent the controller from transmitting**, so they are
-irrelevant to the silence under investigation, and removing `R1816` would cost
-the Ethernet PHY interrupt.
+(131,840-byte firmware download received in both directions).
+
+★ **NXP support (2026-08-26) asked for the full rework — remove `R183`/`R1816`,
+fit `R1902` — before proceeding.** The consequences are small and were checked:
+`R183` removal costs read access to the spare LPSPI1 flash `U27` (not the boot
+device, rarely used); `R1816` removal disables the **1 Gb PHY interrupt only**
+(this repo's Ethernet examples run on the 10/100 PHY and poll, so they are
+unaffected). Both are reversible 0402 removals.
+
+★ **Caveat NXP's list does not mention:** `R1866` is **not** removed, so the
+host RTS *output* stays on the 1 Gb PHY reset. After the rework, enabling
+RTS/CTS flow control holds that PHY in reset — so **1 Gb Ethernet and
+BT-with-flow-control are mutually exclusive** on this board. Fine for BT
+bring-up. Neither the flow-control pair nor `R183` can make the controller
+*transmit* (that is the CA-276115 / NXP-forum question), but completing the
+documented rework unblocks the vendor and gives the download real flow control
+for the first time.
 
 ---
 
