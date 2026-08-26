@@ -1578,3 +1578,65 @@ WHAT IT IS GOOD FOR: it removes "our port is wrong" as an explanation for the
 via their own board files -- both get nothing from the card on this board, while
 the same card works on the 1170.  The remaining candidates are all physical, and
 a scope on J8.22 / J8.56 remains the instrument that would settle them.
+
+=====================================================
+OLDER FIRMWARE (FP91 16.92.21.p142.5) ON THE 1060 -- AND TWO CORRECTIONS -- 2026-08-26
+=====================================================
+
+THE QUESTION: does a pre-26.x firmware behave differently?  The firmware blobs
+turn out to be versioned in a dedicated public repo -- github.com/NXP/wifi_nb_fw
+(the west project the SDK pins as fw_bin) -- with a commit ladder back to
+2025-01-14.  A blobless clone of its history yielded the January 2025 set:
+
+    old  FP91  16.92.21.p142.5   uartIW416_bt.bin 169,284 B  (load 0x00080000)
+    ours FP92  16.92.21.p155.2   uartIW416_bt.bin 131,840 B  (load 0x000A2010)
+
+A different feature pack entirely, and a valid V3 image.  Swapped into the
+SDK's fw_bin .inc files (backed up, restored after), rebuilt NXP's 1060 shell,
+verified BY BYTES that the ELF carries FP91 and not FP92, flashed.
+
+★★ CORRECTION OF A CORRECTION: **`bt init` WAS NEVER UNREACHABLE -- the older
+shell uses DOTTED syntax.**  The 2026-08-25 note calling the subcommand
+dispatch "an SDK defect" was WRONG.  fsl_shell's SHELL_FindCommand descends
+into a command's subcommand list only when the token contains
+`SHELL_COMMAND_CONNECTOR` = '.', i.e. the correct invocation is `bt.init` as
+ONE token.  `bt init` (space) resolves to the bare `bt`, whose 0-parameter
+range then rejects argc=2 -- which is what produced yesterday's misleading
+"Incorrect command parameter(s)".  The range analysis was right; the conclusion
+drawn from it was not.  (A bench patch widening bt's range was built to test
+this and then REVERTED -- with it, `bt init` reaches cmd_default_handler, which
+is help-or-error only, proving the space syntax can never dispatch by design.)
+
+RESULT with `bt.init`, old firmware, on the MIMXRT1060-EVKB:
+
+    @bt> bt.init
+    [FW Download] Start to download firmware from 0x6011f3e4: 130357
+    Failure to read new frame
+    Failure to read new frame
+    ASSERT ERROR " result == FWDNLD_INTF_SUCCESS ": ... controller_wifi_nxp.c
+    Line "116" function name "controller_init"
+
+★ THREE THINGS THIS SETTLES:
+  1. NXP's stack now SPEAKS on the 1060 (via the shell path) and its diagnosis
+     matches our probe's exactly: the loader transmits and gets NOTHING
+     readable back.  "Failure to read new frame" is their spelling of our
+     start_inds=0.
+  2. 0x6011f3e4 is fw_cpu2's link address and bt_fw_bin_len reads 0x29544 =
+     169,284 from the ELF symbol itself -- the OLD image is what was offered.
+     (The printed 130357 is their loader walking the image's internal
+     structure, not the array length.)
+  3. **Firmware version is IRRELEVANT on the 1060**: the failure precedes the
+     first firmware byte -- the card never asks for any.  Old or new changes
+     nothing there.
+
+★ THE VERSION EXPERIMENT THAT CAN DISCRIMINATE IS BUILT AND WAITING:
+/tmp/efo_1170_old/edgefast_open_shell_cm7.elf is the 1170 shell carrying FP91
+p142.5 (verified by bytes: old in, current out).  On the 1170 the card greets
+and downloads complete, so there `bt init` (SPACE syntax -- the newer
+edgefast_open shell dispatches normally) with FP91 answers the question the
+1060 cannot.  BLOCKED ON HARDWARE: the M.2 card is currently seated in the
+1060, and the 1170's VCOM is not enumerated.  Move the card back to the 1170's
+J54, reconnect the 1170, flash that ELF, run `bt init`.
+
+The SDK working tree is RESTORED (fw .inc files back to FP92, shell patch
+reverted) -- the built ELFs carry the old firmware; the tree does not.
