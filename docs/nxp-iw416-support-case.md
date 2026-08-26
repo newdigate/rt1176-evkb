@@ -13,6 +13,28 @@ measurement; full logs in `examples/networking/m2_hci_probe/transcript_hw_evkb.t
 > <https://community.nxp.com/t5/i-MX-RT-Crossover-MCUs/BT-firmware-accepted-over-UART-but-controller-never-runs-and/m-p/2408524#M37090>
 > Watch it for replies before re-running any experiment.
 
+> ### ⏳ PENDING — NXP (Daniel) replied 2026-08-26, three preconditions before they dig deeper
+>
+> 1. **Complete the five-item rework.** Confirmed status: `R404` + `R1901`
+>    **done**; `R183` **still fitted**, `R1816` **still fitted**, `R1902`
+>    **still DNP** — the three he named are outstanding. Action: remove
+>    `R183`/`R1816`, fit `R1902` (0 Ω). Consequences in
+>    `docs/m2-bluetooth-hardware-rework.md` (cost ≈ zero on this setup).
+> 2. **External 5 V power, not USB.** Set jumper **`J38` to 1–2** (selects
+>    `5V_DC_IN` as `5V_SYS`), feed 5 V to the **`J43`** barrel jack, slide
+>    **`SW5`** on. (MIMXRT1170EVKBHUG, Table 7.)
+> 3. **Complete serial log from the UNMODIFIED NXP shell** built for
+>    `board_murata_1xk_m2`. Note: the stock `edgefast_bluetooth` shell **hangs
+>    in the download** (3 Mbaud corruption), so the "complete log" is banner →
+>    `bt.init` → endless progress dots. The `DEBUG_PRINT`-narrated trace that
+>    explains it is a middleware change, offered separately as a supplement.
+>
+> **Plan when the board frees up:** do (1)+(2) by hand, then this session
+> rebuilds the unmodified shell and captures the (3) log on the reworked,
+> externally-powered board — one reply that satisfies all three. **On hold
+> 2026-08-26: the board is running another session's Wi-Fi soak; do not flash
+> or drive it until that finishes.**
+
 ---
 
 ## 1. Summary — two DISTINCT failures, please keep them separate

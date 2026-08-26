@@ -90,6 +90,8 @@ next session does not re-run any of them.
 > ### ✅ The vendor case is FILED — u-blox **CA-276115** (2026-08-25)
 >
 > **And an NXP community thread is open (2026-08-26)** for the silicon/firmware
+> ⏳ **PENDING: NXP asked for the full rework (remove R183/R1816, fit R1902) + external 5 V (J38 1-2, J43, SW5) + an unmodified-shell bt.init log** before proceeding. Waiting on a Wi-Fi soak to free the board. Details in docs/nxp-iw416-support-case.md.
+>
 > half — the IW416 ROM authentication question and the EdgeFast 3 Mbaud
 > download bug: https://community.nxp.com/t5/i-MX-RT-Crossover-MCUs/BT-firmware-accepted-over-UART-but-controller-never-runs-and/m-p/2408524#M37090 . Check BOTH before re-running anything.
 >
