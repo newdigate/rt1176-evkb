@@ -115,7 +115,13 @@ static void knob_draw_cb(lv_event_t *e)
     case RKB_BITMAP: {
         lv_draw_image_dsc_t d; lv_draw_image_dsc_init(&d);
         d.src = &g_rotor_dsc;
-        d.rotation = (int32_t)lroundf(k->angle * 10.0f);  /* 0.1 deg units */
+        /* ★ 0.1 deg units -- LVGL's sw rotation QUANTIZES here (the 5.625 deg
+         * animation step becomes 5.6) while the gpu path's vg_lite_rotate takes
+         * full float. So in Phase B the two engines legitimately draw slightly
+         * different pictures, and no checksum may ever be compared ACROSS
+         * engines at a Phase B angle. Phase A is unaffected: RKB_CANON_DEG is
+         * 45.0, which quantizes exactly. */
+        d.rotation = (int32_t)lroundf(k->angle * 10.0f);
         d.pivot.x = RKB_KNOB_PX / 2; d.pivot.y = RKB_KNOB_PX / 2;
         d.antialias = 1;
         lv_draw_image(layer, &d, &coords);
@@ -314,13 +320,26 @@ static uint32_t g_ok = 0, g_absent = 0, g_failed = 0;
 static volatile uint32_t g_refr_count = 0;
 static uint32_t g_refr_at_start = 0;
 
-/* ---- Phase B timing ------------------------------------------------------ */
+/* ---- Phase B timing ------------------------------------------------------
+ * ★ NONE OF THE volatile HERE IS REQUIRED TODAY, and the disarm-before-delete
+ * ordering in BS_B_RUN is not either: with LV_USE_OS == LV_OS_NONE every writer
+ * (refr_cb, anim_cb) and every reader (bench_step) runs from the same thread
+ * context under lv_timer_handler(), and this binding's flush_cb is synchronous,
+ * so there is no concurrent writer to guard against. Both are defensive, kept
+ * because they cost nothing and become LOAD-BEARING the moment a vsync-ISR
+ * flush path is adopted -- the same forward hazard, and the same reasoning,
+ * that lvgl_mipi_panel.cpp:54-60 records for its own non-volatile flags. */
 #define RKB_TIMED_N 64
+/* >5x the slowest plausible cell (64 frames at the recorded 2.83 fps ~= 23 s),
+ * so a healthy cell can never trip it. */
+#define RKB_CELL_TIMEOUT_MS 120000u
 static uint32_t g_us[RKB_TIMED_N];
 static volatile uint32_t g_nsamp = 0;
 static volatile bool g_timing = false;
+static volatile bool g_skip_first = false;
 static volatile uint32_t g_t0 = 0;      /* micros() at LV_EVENT_REFR_START */
 static uint32_t g_frame = 0;            /* animation step, drives every angle */
+static uint32_t g_cell_t0 = 0;          /* millis() when the cell armed */
 static lv_timer_t *g_anim = NULL;
 static uint32_t g_timed = 0, g_absent_b = 0, g_failed_b = 0;
 
@@ -360,8 +379,19 @@ static void refr_cb(lv_event_t *e)
     case LV_EVENT_REFR_READY:
         if (g_frame_rendered) {
             g_refr_count++;
-            if (g_timing && g_nsamp < RKB_TIMED_N)
-                g_us[g_nsamp++] = micros() - g_t0;
+            if (g_timing) {
+                /* ★ DROP THE FIRST GATED FRAME OF EVERY CELL. It is the
+                 * lv_screen_load() render -- the whole 720x1280 panel,
+                 * 921,600 px -- while samples 1..63 are the 16 knob areas LVGL
+                 * joins from anim_cb, 16 x 150x150 = 360,000 px. That is a 2.5x
+                 * different workload wearing the same units, and it lands in
+                 * the mean of the cell it opens. frames= stays 64 because 64
+                 * STEADY-STATE samples are still taken; the skipped frame is
+                 * not one of them. */
+                if (g_skip_first) g_skip_first = false;
+                else if (g_nsamp < RKB_TIMED_N)
+                    g_us[g_nsamp++] = micros() - g_t0;
+            }
         }
         g_frame_rendered = false;
         break;
@@ -402,14 +432,23 @@ static void cell_print_a(const rkb_cell_t *c, uint32_t crc)
 /* Same gpu_err rule as cell_print_a, and for the same reason: a cell that
  * blitted nothing posts a superb time, so the gpu lines must carry the number
  * that says whether they drew. Integer-only -- no %f anywhere in this build's
- * printf, so millifps is the unit rather than a formatting choice. */
-static void cell_print_b(const rkb_cell_t *c, uint32_t us_med, uint32_t us_mean)
+ * printf, so millifps is the unit rather than a formatting choice.
+ * ★ us_min/us_max EXIST BECAUSE us_mean IS OUTLIER-DOMINATED, measured rather
+ * than feared: two cells whose medians agreed to within 0.3% reported means
+ * 45% apart, because ONE ~3 s frame landed in one of them. The median is what
+ * ranks the cells; us_max is what says whether the mean beside it is describing
+ * the workload or describing a single stall. Reporting the mean without the
+ * spread invites reading §13's table off the wrong column. */
+static void cell_print_b(const rkb_cell_t *c, uint32_t us_med, uint32_t us_min,
+                         uint32_t us_max, uint32_t us_mean)
 {
-    Serial1.printf("time=%s/%s/%s frames=%d mfps_med=%lu us_med=%lu us_mean=%lu",
+    Serial1.printf("time=%s/%s/%s frames=%d mfps_med=%lu us_med=%lu"
+                   " us_min=%lu us_max=%lu us_mean=%lu",
                    STRAT_NAME[c->strat], ENGINE_NAME(c), VAR_NAME[c->var],
                    RKB_TIMED_N,
                    (unsigned long)(1000000000ull / (us_med ? us_med : 1)),
-                   (unsigned long)us_med, (unsigned long)us_mean);
+                   (unsigned long)us_med, (unsigned long)us_min,
+                   (unsigned long)us_max, (unsigned long)us_mean);
     if (c->gpu) Serial1.printf(" gpu_err=%lu", (unsigned long)g_gpu_err);
     Serial1.println();
 }
@@ -508,6 +547,8 @@ static void bench_step(void)
         cell_build_scene(c, 0.0f);
         g_frame = 0;
         g_nsamp = 0;
+        g_skip_first = true;              /* the screen-load render, see refr_cb */
+        g_cell_t0 = millis();
         g_timing = true;
         /* ★ 15 ms against LVGL's 33 ms refresh period, and created LAST on
          * purpose: lv_timer_create inserts at the list HEAD (lv_timer.c:169),
@@ -520,7 +561,8 @@ static void bench_step(void)
         break;
     }
 
-    case BS_B_RUN:
+    case BS_B_RUN: {
+        const rkb_cell_t *c = &CELLS[g_ci];
         if (g_nsamp >= RKB_TIMED_N) {
             g_timing = false;             /* before the delete: no late sample */
             if (g_anim) { lv_timer_delete(g_anim); g_anim = NULL; }
@@ -539,13 +581,36 @@ static void bench_step(void)
              * wrapped mean beside a sane median reads as a real measurement. */
             uint64_t sum = 0;
             for (int i = 0; i < RKB_TIMED_N; i++) sum += s[i];
-            cell_print_b(&CELLS[g_ci], s[RKB_TIMED_N / 2],
+            cell_print_b(c, s[RKB_TIMED_N / 2], s[0], s[RKB_TIMED_N - 1],
                          (uint32_t)(sum / RKB_TIMED_N));
             g_timed++; g_ci++;
             g_cell = NULL;
             g_state = BS_B_START;
+            break;
+        }
+        /* ★ BOUNDED WAIT, and the RENDER_READY gate is exactly why it is
+         * needed. That gate turns "nothing was damaged" into "no samples
+         * arrive" -- correct, and SILENT: a wedged cell would sit here forever
+         * printing nothing, and take the remaining cells with it, so a run that
+         * lost eleven cells would look identical to one still working on cell
+         * one. This names the stall and salvages the rest of the sweep.
+         * gpu_err rides along here (unlike st=vg-overflow, which reports a
+         * BUILD failure before any frame): a cell that starved mid-render is
+         * precisely where "was the GPU erroring?" is the first question. */
+        if (millis() - g_cell_t0 > RKB_CELL_TIMEOUT_MS) {
+            g_timing = false;
+            if (g_anim) { lv_timer_delete(g_anim); g_anim = NULL; }
+            Serial1.printf("time=%s/%s/%s st=timeout nsamp=%lu",
+                           STRAT_NAME[c->strat], ENGINE_NAME(c),
+                           VAR_NAME[c->var], (unsigned long)g_nsamp);
+            if (c->gpu) Serial1.printf(" gpu_err=%lu", (unsigned long)g_gpu_err);
+            Serial1.println();
+            g_failed_b++; g_ci++;
+            g_cell = NULL;
+            g_state = BS_B_START;
         }
         break;
+    }
 
     case BS_DONE:
         break;

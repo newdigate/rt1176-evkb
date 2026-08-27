@@ -12,7 +12,9 @@ A new example, `display/rotary_knob_bench`, renders the **RotaryKnob** design
 `RotaryKnob.dc.html`) through **six render paths** and measures which is
 fastest on silicon, under the exact FPSBENCH workload from
 `display/vglite_lvgl_test`: a 4×4 grid of 16 knobs, every knob's angle
-advanced every refresh (full-scene damage), success criterion **≥30 fps**.
+advanced every refresh (full-scene damage), success criterion **≥30 fps**
+(evaluated against `mfps_med` ≥ 30000 — a render rate, not a displayed one;
+§5 says why the distinction matters).
 
 This spec covers the bench only (Phase 1). Phase 2 — implementing the winning
 strategy as `synthui_rotary_knob` in SynthUI and replacing the existing
@@ -132,11 +134,33 @@ greps. `failed=<n>` counts cells that could not be built at all (e.g.
 
 Phase B, per cell:
 
-    time=<strategy>/<engine>/<variant> frames=64 mfps_med=<n> us_med=<n> us_mean=<n>
+    time=<strategy>/<engine>/<variant> frames=64 mfps_med=<n> us_med=<n> us_min=<n> us_max=<n> us_mean=<n>
     time=<strategy>/gpu/<variant> st=gpu-absent
+    time=<strategy>/<engine>/<variant> st=vg-overflow        (cell could not be built)
+    time=<strategy>/<engine>/<variant> st=timeout nsamp=<n>   (cell wedged; 120 s cap)
 
 (`mfps` = millifps, e.g. 2830 = 2.83 fps), then
-`bench_done cells=12 timed=<n> gpu_absent=<n>` and the heartbeat.
+`bench_done cells=12 timed=<n> gpu_absent=<n> failed=<n>` and the heartbeat.
+`timed + gpu_absent + failed == cells` is the vacuity check, as in `crc_done`;
+both `st=vg-overflow` and `st=timeout` count toward `failed`. The `st=timeout`
+line carries the trailing ` gpu_err=<n>` on GPU cells (a cell that starved
+mid-render is exactly where "was the GPU erroring?" is the first question);
+the two build-failure lines do not, matching Phase A.
+
+**Ranking is by `mfps_med`.** `us_mean` is reported beside it but **can be
+outlier-dominated** — measured, not feared: two cells whose medians agreed to
+within 0.3% reported means 45% apart because a single ~3 s frame landed in one
+of them. `us_max` is what identifies such a culprit, and `us_min`/`us_max`
+together are what say whether the mean describes the workload or one stall.
+Read §13's table off `mfps_med`.
+
+**`mfps_med` is a WORK RATE, not a display rate.** It is the reciprocal of the
+median `LV_EVENT_REFR_START`→`LV_EVENT_REFR_READY` interval — the render
+capacity of the path, GPU work and `vg_lite_finish` included. It is not frames
+reaching the glass: `LV_DEF_REFR_PERIOD` is 33 ms, so LVGL caps *displayed* fps
+near 30 no matter how fast a cell renders. §1's **≥30 fps** criterion is
+therefore evaluated against `mfps_med` (≥30000), which is the quantity that can
+exceed the cap and the quantity that discriminates between the six paths.
 
 Strategy tokens in `cell=`/`time=` lines are exactly `vector`, `bitmap` and
 `strip` — not the prose names `rotate-bitmap`/`filmstrip` used elsewhere in
@@ -240,6 +264,19 @@ appended to this document (§13) and posted to the Linear issue. Bench console
 via the MCU-Link VCOM; flash with LinkServer per the standing bench order
 (flash load → verify → attach reader → reset).
 
+**Expect visible tearing on the glass during Phase B** — the GPU composites
+rotors directly into the live scanout buffer, so the LCDIFv2 can scan out a
+half-composited frame. That is anticipated and is not a defect to chase; the
+bench measures render time, and double-buffering it would change the thing
+being measured.
+
+**Task 10's second boot doubles as an order/drift control.** Cell order is
+fixed, so every cell always runs at the same point in the sweep — which means
+thermal drift, SDRAM refresh contention or arena-reuse effects would bias the
+same cells the same way in every boot and be invisible in one run. Compare the
+two boots' `mfps_med` column: agreement bounds the systematic error on the
+ranking, and disagreement is a finding in its own right.
+
 ## 10. Risks
 
 - **GPU/CPU coherency** on the shared framebuffer: `vg_lite_finish` +
@@ -278,6 +315,17 @@ each a deliberate step in its own spec, informed by §13's numbers.
 
 ## 13. Results (to be filled from silicon)
 
-| cell | mfps_med | us_med | init_us | rotor_bytes | crc |
-|---|---|---|---|---|---|
-| *(12 rows after the hardware run)* | | | | | |
+| cell | mfps_med | us_med | us_min | us_max | us_mean | init_us | rotor_bytes | crc |
+|---|---|---|---|---|---|---|---|---|
+| *(12 rows after the hardware run)* | | | | | | | | |
+
+Rank on `mfps_med` (§5): `us_mean` can be dominated by a single stalled frame,
+and `us_max` is what exposes one. Every GPU row must read `gpu_err=0` or its
+timing is void.
+
+**The GPU rows are a pipelining LOWER BOUND.** Each timed frame ends in
+`vg_lite_finish()`, which serialises the CPU and the GC355 — the CPU waits out
+the whole rotor pass having nothing else to do. A shipped widget can overlap
+that work with the next frame's software drawing, so a GPU cell that merely
+ties its software counterpart here is not thereby a tie in production. Treat
+these numbers as "at least this fast", and say so when naming the winner.
