@@ -1,0 +1,16 @@
+rotary_knob_bench up
+PANEL_OK
+gpu=absent chip_id=0x00000000
+cell=vector/sw/notch st=ok crc=0x41193045 init_us=41 rotor_bytes=0
+cell=vector/sw/facet st=ok crc=0xB7744585 init_us=3 rotor_bytes=0
+cell=vector/gpu/notch st=gpu-absent
+cell=vector/gpu/facet st=gpu-absent
+cell=bitmap/sw/notch st=ok crc=0xCD1F02C5 init_us=6457 rotor_bytes=96000
+cell=bitmap/sw/facet st=ok crc=0x3837A345 init_us=4109 rotor_bytes=96000
+cell=bitmap/gpu/notch st=gpu-absent
+cell=bitmap/gpu/facet st=gpu-absent
+cell=strip/sw/notch st=ok crc=0x6B428FC5 init_us=175653 rotor_bytes=6144000
+cell=strip/sw/facet st=ok crc=0x572E8105 init_us=240132 rotor_bytes=6144000
+cell=strip/gpu/notch st=gpu-absent
+cell=strip/gpu/facet st=gpu-absent
+crc_done cells=12 ok=6 gpu_absent=6 failed=0
