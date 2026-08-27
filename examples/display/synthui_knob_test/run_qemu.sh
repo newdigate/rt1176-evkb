@@ -28,33 +28,44 @@ echo "==== captured UART ===="; cat "$OUT"
 # Panel chain first: in DIRECT mode a framebuffer no display owns would still
 # checksum perfectly.
 grep -q "PANEL_OK"          "$OUT" || { echo "FAIL: panel bring-up"; exit 1; }
+# Engine honesty: QEMU has no GC355, so the run must SAY software. A GPU
+# claim with no GPU present -- or the gpu error counter appearing at all --
+# must fail by name (rotary_knob_bench's tripwire discipline). Demonstrated
+# RED 2026-08-27: a fake "rk_engine=gpu" line appended to a passing capture
+# failed here as "TRIPWIRE gpu engine claimed in QEMU".
+grep -qE "rk_engine=sw\r?$" "$OUT" || { echo "FAIL: engine line missing or not sw"; exit 1; }
+grep -q  "rk_engine=gpu" "$OUT" && { echo "FAIL: TRIPWIRE gpu engine claimed in QEMU"; exit 1; }
+grep -q  "rk_gpu_err="   "$OUT" && { echo "FAIL: TRIPWIRE gpu error counter in QEMU"; exit 1; }
 grep -q "LVGL_FLUSHED=PASS" "$OUT" || { echo "FAIL: no full refresh"; exit 1; }
 # Flushed AREA of the first refresh -- 720*1280*4 at XRGB8888.  The partial-
 # repaint guard: a corner repaint and a scene edit both just change the sums.
 # Value greps are ANCHORED (CR-tolerant \r?$): 3686400 must not pass via a
 # hypothetical 36864000, and a golden must match the WHOLE value.
 grep -qE "LVGL_BYTES=3686400\r?$" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; }
-# GOLDEN CHECKSUMS -- FNV-1a over the whole 720x1280 framebuffer, ONE PER MODE
-# plus the 4x4 grid.  Per-mode goldens are the acid-bass lesson: a single
-# aggregate can silently stop testing half the feature.  RECORDED, not derived
-# -- stable across two consecutive QEMU runs AND confirmed by a human eye on
-# the RK055 glass in the SAME commit that records them (this panel's goldens
-# are glass-confirmed, like lvgl_rk055_panel_test's and unlike the RPi gate's).
-# On a mismatch work out WHICH of {SynthUI pin, LVGL pin, lv_conf.h, fonts,
-# scene} changed; do NOT paste in whatever the board printed.
+# GOLDEN CHECKSUMS -- FNV-1a over the whole 720x1280 framebuffer, ONE PER
+# FEATURE AXIS (mode x theme rows, plus the accent screen) plus the 4x4 grid.
+# Per-axis goldens are the acid-bass lesson: a single aggregate can silently
+# stop testing half the feature.  RECORDED, not derived -- stable across two
+# consecutive QEMU runs.  On a mismatch work out WHICH of {SynthUI pin, LVGL
+# pin, lv_conf.h, fonts, scene} changed; do NOT paste in whatever the board
+# printed.
 #
-# Provenance: recorded 2026-08-16 against SynthUI a1b6da7, vendored LVGL
-# 9.4.0, XRGB8888 (LV_COLOR_DEPTH=32), montserrat 14/28; stable across two
-# consecutive QEMU runs. Independently cross-verified on a host build of the
-# same widget+scene (clang/macOS vs ARM GCC/QEMU): all five sums bit-identical
-# -- see the Task 6 review record. HARDWARE CONFIRMED 2026-08-16: all five
-# sums reproduced exactly on the EVKB and the scene was seen on the RK055 by a
-# human, so these pin correctness and not merely reproducibility
-# (transcript_hw_evkb.txt).
-grep -qE "KNOB_SUM_ALL=0x8E1F9956\r?$"     "$OUT" || { echo "FAIL: grid checksum"; exit 1; }
-grep -qE "KNOB_SUM_ENDLESS=0xBF7FAB41\r?$" "$OUT" || { echo "FAIL: endless checksum"; exit 1; }
-grep -qE "KNOB_SUM_BOUNDED=0x7D77023E\r?$" "$OUT" || { echo "FAIL: bounded checksum"; exit 1; }
-grep -qE "KNOB_SUM_DETENTS=0xBEF7F8CE\r?$" "$OUT" || { echo "FAIL: detents checksum"; exit 1; }
-grep -qE "KNOB_SUM_ARC=0xAAE57894\r?$"     "$OUT" || { echo "FAIL: arc checksum"; exit 1; }
+# Provenance: recorded 2026-08-27 (NEW-20 Phase 2, synthui_rotary_knob
+# replacing the old knob) against SynthUI local 2610cb8+ (pin bumped at
+# close-out), vendored LVGL 9.4.0, XRGB8888 (LV_COLOR_DEPTH=32), montserrat
+# 14/28; bit-identical across two consecutive QEMU runs.  These are the
+# SOFTWARE renderer's sums: on silicon the same ELF composites rotors on the
+# GC355 (rk_engine=gpu) and produces a DIFFERENT, silicon-only golden set in
+# transcript_hw_evkb.txt -- two golden sets, never reconciled
+# (vglite_lvgl_test's precedent).  Hardware confirmation of THIS scene: see
+# transcript_hw_evkb.txt (Task 11 of the Phase-2 plan).
+# Demonstrated RED 2026-08-27: KNOB_SUM_ENDLESS_DARK's last digit flipped ->
+# "FAIL: endless/dark checksum".
+grep -qE "KNOB_SUM_ALL=0xB4256FB2\r?$"           "$OUT" || { echo "FAIL: grid checksum"; exit 1; }
+grep -qE "KNOB_SUM_ENDLESS_LIGHT=0x89E8CD9B\r?$" "$OUT" || { echo "FAIL: endless/light checksum"; exit 1; }
+grep -qE "KNOB_SUM_BOUNDED_LIGHT=0xD9617577\r?$" "$OUT" || { echo "FAIL: bounded/light checksum"; exit 1; }
+grep -qE "KNOB_SUM_ENDLESS_DARK=0x04C2E8F0\r?$"  "$OUT" || { echo "FAIL: endless/dark checksum"; exit 1; }
+grep -qE "KNOB_SUM_BOUNDED_DARK=0xD8FA331E\r?$"  "$OUT" || { echo "FAIL: bounded/dark checksum"; exit 1; }
+grep -qE "KNOB_SUM_ACCENT=0x2B17212F\r?$"        "$OUT" || { echo "FAIL: accent checksum"; exit 1; }
 grep -q "SYNTHUI_KNOB_DONE"    "$OUT" || { echo "FAIL: no completion token"; exit 1; }
 echo "PASS: SynthUI knob render verified"
