@@ -34,7 +34,7 @@
 #include "lvgl_rt1176.h"
 #include "lvgl_mipi_panel.h"
 #include "lvgl_gt911_indev.h"
-#include "synthui_knob.h"
+#include "synthui_rotary_knob.h"
 #include "synthui_step.h"
 
 // rt1176-only example: LPUART1 console, which the imxrt1176 core names Serial1.
@@ -276,11 +276,12 @@ static lv_obj_t *playBtnLabel, *bpmLabel, *noteLabel, *accBtn, *sldBtn, *waveBtn
 static lv_obj_t *pitchKnob;
 static int selectedStep = 0;
 
-/* knob -> parameter maps (spec §4).  The knob's default range is -140..+140
- * degrees, so the whole sweep is 280 degrees and t lands in [0,1]; the input
- * layer clamps the drag to that range, so knob01() needs no clamp of its own. */
+/* knob -> parameter maps (spec §4).  Every knob is created with an EXPLICIT
+ * -140..+140 range (the rotary widget's DC default is ±150), so the whole
+ * sweep is 280 degrees and t lands in [0,1]; the input layer clamps the drag
+ * to that range, so knob01() needs no clamp of its own. */
 static inline float knob01(lv_obj_t *k)
-{ return (synthui_knob_get_angle(k) + 140.0f) / 280.0f; }
+{ return (synthui_rotary_knob_get_angle(k) + 140.0f) / 280.0f; }
 static inline float expmap(float t, float lo, float hi)
 { return lo * powf(hi / lo, t); }
 
@@ -360,7 +361,7 @@ static void select_step(int i)
     selectedStep = i;
     synthui_step_set_selected(stepCell[i], true);
     const AcidStep st = seq.step(i);
-    synthui_knob_set_angle(pitchKnob, noteToAngle(st.note ? st.note : 33));
+    synthui_rotary_knob_set_angle(pitchKnob, noteToAngle(st.note ? st.note : 33));
     lv_label_set_text(noteLabel, st.gate ? noteName(st.note) : "--");
     lv_obj_set_style_bg_color(accBtn, st.accent ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
     lv_obj_set_style_bg_color(sldBtn, st.slide  ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
@@ -378,7 +379,7 @@ static void cbStepTap(lv_event_t *e)
 }
 static void cbPitch(lv_event_t *e)
 {
-    const uint8_t note = angleToNote(synthui_knob_get_angle((lv_obj_t *)lv_event_get_target(e)));
+    const uint8_t note = angleToNote(synthui_rotary_knob_get_angle((lv_obj_t *)lv_event_get_target(e)));
     const AcidStep st = seq.step(selectedStep);
     commit_selected(note, st.gate, st.accent, st.slide);
 }
@@ -464,11 +465,14 @@ static lv_obj_t *mkbtn(lv_obj_t *par, const char *txt, lv_event_cb_t cb,
 static lv_obj_t *mkknob(lv_obj_t *scr, int col, int row, const char *name,
                         float boot01, lv_event_cb_t cb)
 {
-    lv_obj_t *k = synthui_knob_create(scr);
+    lv_obj_t *k = synthui_rotary_knob_create(scr);
     lv_obj_set_size(k, 150, 150);
     lv_obj_set_pos(k, 15 + col * 175, 90 + row * 185);
-    synthui_knob_set_mode(k, SYNTHUI_KNOB_MODE_BOUNDED);
-    synthui_knob_set_angle(k, boot01 * 280.0f - 140.0f);
+    synthui_rotary_knob_set_mode(k, SYNTHUI_ROTARY_MODE_BOUNDED);
+    /* The DC default range is ±150; every angle<->param map in this file
+     * hardcodes ±140, so the range is stated here instead of inherited. */
+    synthui_rotary_knob_set_range(k, -140.0f, 140.0f);
+    synthui_rotary_knob_set_angle(k, boot01 * 280.0f - 140.0f);
     lv_obj_add_event_cb(k, cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_t *l = lv_label_create(scr);
     lv_label_set_text(l, name);
@@ -527,11 +531,15 @@ static lv_obj_t *build_ui(void)
     mkknob(scr, 3, 1, "SLIDE T", logf(0.06f / 0.01f) / logf(0.3f / 0.01f), cbSld);
 
     /* editor strip: pitch detent knob + note name + ACC/SLD toggles + SAW/SQR */
-    pitchKnob = synthui_knob_create(scr);
+    pitchKnob = synthui_rotary_knob_create(scr);
     lv_obj_set_size(pitchKnob, 120, 120);
     lv_obj_set_pos(pitchKnob, 15, 470);
-    synthui_knob_set_mode(pitchKnob, SYNTHUI_KNOB_MODE_DETENTS);
-    synthui_knob_set_detent_step(pitchKnob, 280.0f / 24.0f);
+    /* detents are input behavior on the rotary widget (no visual mode):
+     * bounded well + 24 semitone stops on the ±140 lattice the pitch maps
+     * above assume. */
+    synthui_rotary_knob_set_mode(pitchKnob, SYNTHUI_ROTARY_MODE_BOUNDED);
+    synthui_rotary_knob_set_range(pitchKnob, -140.0f, 140.0f);
+    synthui_rotary_knob_set_detent_step(pitchKnob, 280.0f / 24.0f);
     lv_obj_add_event_cb(pitchKnob, cbPitch, LV_EVENT_VALUE_CHANGED, NULL);
     noteLabel = lv_label_create(scr);
     lv_obj_set_style_text_color(noteLabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);

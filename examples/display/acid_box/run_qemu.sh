@@ -127,7 +127,12 @@ grep -q "ACIDBOX_DONE" "$OUT" || { echo "FAIL: setup() never completed"; exit 1;
 # frame, an X=0 frame and an X=0xFF frame ALL end in 9DC5.  Only the top half
 # discriminates, and an unanchored grep would accept the blank screen this
 # assertion exists to reject.
-grep -qE "ACIDBOX_UI_SUM=0xD3BC88D7\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
+# Re-goldened 2026-08-27 (NEW-20 Phase 2): synthui_rotary_knob replaced the
+# old knob (9 bounded knobs, explicit ±140 range; pitch knob detent-by-step).
+# The new frame was dumped (pmemsave recipe in transcript_qemu.txt) and LOOKED
+# AT: notch rotors, bounded track arcs, boot angles verified against the
+# preset (CUTOFF +21.5deg, pitch A1 at -35deg). Bit-identical across two runs.
+grep -qE "ACIDBOX_UI_SUM=0x25B30A96\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
 # The all-zero framebuffer, rejected BY NAME: 0x9BC99DC5 is the FNV of 3686400
 # zero bytes.  A blank frame is a real failure mode in this tree
 # (vglite_lvgl_test) and is otherwise indistinguishable from any other mismatch.
