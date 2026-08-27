@@ -458,6 +458,27 @@ macro(import_evkb_synthui)
         # on libm regardless of what LVGL keeps.
         target_link_libraries(SynthUI PUBLIC LVGL m)
         target_link_libraries(SynthUI PRIVATE teensy_flags)
+        # Optional flavor: import_evkb_synthui(VGLITE) additionally compiles
+        # src/vglite/ (the synthui_rotary_knob GPU compositor) and links the
+        # VGLite driver. The plain call is byte-for-byte the old behavior --
+        # the core glob above is non-recursive, so src/vglite/ is invisible to
+        # it, and the core references the compositor only through the one bool
+        # the compositor sets, so neither direction has undefined symbols.
+        # LVGL stays the SOFTWARE renderer either way (LV_USE_DRAW_VG_LITE
+        # untouched): the GPU is reached by direct vg_lite calls behind a
+        # runtime probe -- the one-ELF-both-outcomes pattern rotary_knob_bench
+        # proved, NOT vglite_lvgl_test's build split.
+        set(_evkb_synthui_args ${ARGN})
+        if("VGLITE" IN_LIST _evkb_synthui_args)
+            import_evkb_vglite()
+            file(GLOB _evkb_synthui_gpu_src CONFIGURE_DEPENDS
+                 "${_evkb_synthui_dir}/src/vglite/*.cpp")
+            target_sources(SynthUI PRIVATE ${_evkb_synthui_gpu_src})
+            target_include_directories(SynthUI PUBLIC
+                 "${_evkb_synthui_dir}/src/vglite")
+            target_link_libraries(SynthUI PUBLIC VGLite)
+        endif()
+        unset(_evkb_synthui_args)
     endif()
 endmacro()
 
