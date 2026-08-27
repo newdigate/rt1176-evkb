@@ -1,5 +1,22 @@
 acid_box -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
 ================================================================================
+2026-08-27, NEW-20 Phase 2 (synthui_rotary_knob swap). Flashed and booted on
+the EVKB:
+
+  ACIDBOX_BEGIN / CODEC_OK / PANEL_OK / I2C_OK / ACIDBOX_DONE
+  ACIDBOX_UI_SUM=0x25B30A96  -- BIT-IDENTICAL to the QEMU golden,
+
+and the SWD framebuffer dump's own FNV-1a equals that sum, so the frame on
+the glass IS the frame inspected during the re-golden (LVGL sw renders
+bit-for-bit across QEMU/silicon -- the knob pilot's result, still holding).
+Boot is silent (no bar line), GT911 up. NOT re-verified by hand this session:
+a finger on a knob and a listen -- the touch->knob->param chain is covered
+end-to-end by the QEMU injected-gesture gate (CUTOFF drag asserted there, and
+the input math is byte-identical to the old widget's), and the 2026-08-18
+15-minute play session below covered the physical interaction stack, which
+this swap did not touch. A human tap remains welcome, not blocking.
+================================================================================
+
 2026-08-18, SECOND SESSION. ★ THE LOCKUP DOES NOT EXIST. It was an artefact of
 the debugger, and this file's first version was WRONG about it. The firmware
 runs indefinitely, the touch controller comes up, and the instrument PLAYS --

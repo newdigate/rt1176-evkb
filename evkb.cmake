@@ -128,7 +128,7 @@ teensy_declare_library(fnet           FNET/src             https://github.com/ne
 teensy_declare_library(lwip           lwip                 https://github.com/newdigate/lwip            c6b25488403d08fb5886d77e193d089c87b604c0 .)
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
 teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            afb9789ed430614b74eb6ae946da6062485964cd .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library()
-teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         f6309669b634eee3050254c709a2d7517141b6a1 .) # NOT Arduino-layout: use import_evkb_synthui(). Pushed 2026-08-17; the pin then moved to a REWRITTEN history (reference/rebirth/ dropped before going public), so every SHA before e132012 is unreachable.
+teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         a18f4fb13409db438fc0950dc27c36a5ac83f3f5 .) # NOT Arduino-layout: use import_evkb_synthui(). Bumped 2026-08-27 (NEW-20 Phase 2: synthui_rotary_knob added, old knob removed). History was REWRITTEN before the 2026-08-17 public push (reference/rebirth/ dropped), so every SHA before e132012 is unreachable.
 teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          3119701c6f4f3dcf1de6d03ca1138c83e6005652 .) # NOT Arduino-layout: use import_evkb_vglite(). NXP's VGLite vendored verbatim plus this tree's bare-metal port. Since the v7 (SDK 26.06 LTS) re-vendor it is MIT THROUGHOUT -- the Apache-2.0 vg_lite_flat.{c,h} pair no longer exists upstream; NOTICE records the history.
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 teensy_declare_library(Bounce2        Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
@@ -458,6 +458,27 @@ macro(import_evkb_synthui)
         # on libm regardless of what LVGL keeps.
         target_link_libraries(SynthUI PUBLIC LVGL m)
         target_link_libraries(SynthUI PRIVATE teensy_flags)
+        # Optional flavor: import_evkb_synthui(VGLITE) additionally compiles
+        # src/vglite/ (the synthui_rotary_knob GPU compositor) and links the
+        # VGLite driver. The plain call is byte-for-byte the old behavior --
+        # the core glob above is non-recursive, so src/vglite/ is invisible to
+        # it, and the core references the compositor only through the one bool
+        # the compositor sets, so neither direction has undefined symbols.
+        # LVGL stays the SOFTWARE renderer either way (LV_USE_DRAW_VG_LITE
+        # untouched): the GPU is reached by direct vg_lite calls behind a
+        # runtime probe -- the one-ELF-both-outcomes pattern rotary_knob_bench
+        # proved, NOT vglite_lvgl_test's build split.
+        set(_evkb_synthui_args ${ARGN})
+        if("VGLITE" IN_LIST _evkb_synthui_args)
+            import_evkb_vglite()
+            file(GLOB _evkb_synthui_gpu_src CONFIGURE_DEPENDS
+                 "${_evkb_synthui_dir}/src/vglite/*.cpp")
+            target_sources(SynthUI PRIVATE ${_evkb_synthui_gpu_src})
+            target_include_directories(SynthUI PUBLIC
+                 "${_evkb_synthui_dir}/src/vglite")
+            target_link_libraries(SynthUI PUBLIC VGLite)
+        endif()
+        unset(_evkb_synthui_args)
     endif()
 endmacro()
 

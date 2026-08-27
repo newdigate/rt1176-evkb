@@ -55,7 +55,12 @@ grep -q "KNOB_GRID_SUM_SW=0x9BC99DC5" "$OUT" && \
 # ★ SOFTWARE golden. The GPU build produces DIFFERENT pixels by construction
 # (hardware AA is not LVGL's masks, and that build carries LV_USE_FLOAT=1), so
 # its value is recorded in transcript_hw_evkb.txt and must NOT be copied here.
-grep -q "KNOB_GRID_SUM_SW=0x513C4DB8" "$OUT" || \
+# Re-goldened 2026-08-27 (NEW-20 Phase 2): synthui_rotary_knob replaced the
+# old knob, rows became mode x theme (0x513C4DB8 was the old knob's scene).
+# Bit-identical across two runs; the frame was dumped via the QEMU monitor
+# (pmemsave recipe in acid_box/transcript_qemu.txt, fb 0x80100040 for this
+# elf) and inspected -- its own FNV-1a equals this value.
+grep -q "KNOB_GRID_SUM_SW=0x579E5810" "$OUT" || \
     { echo "FAIL: software grid golden"; exit 1; }
 
 grep -q "VGLITE_LVGL_DONE" "$OUT" || { echo "FAIL: no completion token"; exit 1; }

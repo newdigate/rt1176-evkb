@@ -1,5 +1,29 @@
 vglite_lvgl_test -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
 ================================================================================
+2026-08-27, NEW-20 Phase 2 RE-GOLDEN: the scene is now the synthui_rotary_knob
+grid (mode x theme rows), so BOTH goldens moved. GPU-build golden (LVGL's
+VG_LITE draw unit rendering the whole scene on the GC355):
+
+  VGLITE_CHIP_ID=0x00000355
+  VGLITE_INIT=OK err=0
+  VGLITE_LVGL=GPU
+  LVGL_FLUSHED=PASS
+  LVGL_BYTES=3686400
+  KNOB_GRID_SUM_GPU=0xA759C32C
+  VGLITE_LVGL_DONE
+
+Bit-identical across two boots. THE FRAME WAS LOOKED AT: the grid rests on
+screen in this build, so tools/rt1170-screenshot.py dumped it coherently and
+the dump's own FNV-1a equals the printed sum; the eye checked the same list
+as synthui_knob_test's grid (rotors seated, palettes, angles, focus rings,
+muted disabled column) -- rendered here by LVGL's OWN VG_LITE draw unit, not
+the widget's compositor, which this example deliberately does not attach.
+The sw golden moved to 0x579E5810 (run_qemu.sh). The two sets are still never
+reconciled (hardware AA + LV_USE_FLOAT=1). The 2026-08-17 record below is the
+OLD knob's scene -- its goldens (sw 0x513C4DB8 / gpu 0xC3C6171A) are history,
+kept for the investigation record.
+================================================================================
+
 2026-08-17. LVGL's VG_LITE draw unit renders the 16-knob grid on the GC355.
 ★ RESOLVED the same day: the artifacts this file spent most of its length on
 are FIXED -- three stacked root causes, none of them the leading hypotheses.
