@@ -1401,3 +1401,126 @@ git commit -m "rotary_knob_bench: silicon run -- 12/12 cells, fps table recorded
 - **Known deliberate deviations from the spec text, fixed by Task 1:** 150 px knobs; post-REFR_READY gpu pass; FNV-1a naming; strategy tokens.
 - **Type consistency:** `rkg_*` signatures in Task 3's header match every later use; `RKB_*` constants defined once in `rk_geometry.h`; cell/time line formats identical across firmware (Task 3/5), gate (Task 7), and vacuity (Task 8).
 - **Open risks the executor should expect:** (1) exact QEMU `-M` flags — take them from `gate-lib.sh`, not this plan; (2) `lv_image_dsc_t` field names (`header.magic`/`header.stride`) — check the vendored `lv_image_dsc_t` in `~/Development/LVGL/lvgl/src/draw/lv_image_decoder.h` if the compile disagrees; (3) `lvgl_mipi_panel_frame_done()` latching semantics — the REFR_READY count carries per-cell freshness, `frame_done` is a one-time flush confirmation; if it never re-arms per frame that is fine; (4) `vg_lite_rotate` sign convention — if silicon shows the gpu rotor mirrored vs the sw cells, negate the angle for gpu paths and note it; the per-cell goldens make it visible immediately.
+
+---
+
+## Execution addendum (2026-08-27): review findings folded in
+
+Task 3 was implemented from the code blocks above and then reviewed. **The code
+blocks in this plan were deliberately NOT rewritten** — they remain the record
+of what was planned. This section records what shipped instead, so a future
+re-executor does not reintroduce the defects by transcribing the stale blocks.
+
+### C1 — rotor stride must be 64-byte aligned (CONFIRMED, FIXED)
+
+The plan's arenas were `150 × 150 × 4 = 90,000 B`, stride 600. This part has
+`gcFEATURE_VG_16PIXELS_ALIGNED = 1` and `gcFEATURE_VG_ERROR_CHECK = 1`
+(`VGLite/Series/gc355/0x0_1216/vg_lite_options.h:80,109`), so
+`srcbuf_align_check` (`VGLite/vg_lite.c:1854-1861`, reached from `vg_lite_blit`
+at `:4533`) requires a BGRA8888 source stride to be a multiple of
+`16 px × 4 B = 64 B`. `600 % 64 = 24` → **all four `bitmap/gpu` and `strip/gpu`
+cells would have returned `VG_LITE_INVALID_ARGUMENT` and drawn nothing, while
+posting excellent frame times.** A benchmark that rewards not drawing is the
+worst failure available to this example.
+
+Shipped:
+- `CMakeLists.txt` adds `LV_DRAW_BUF_STRIDE_ALIGN=64 LV_DRAW_BUF_ALIGN=64`
+  (both `#ifndef`-guarded in `port/lv_conf.h:182-188`;
+  `lvgl_mipi_panel.cpp`'s `PANEL_PITCH_BYTES % STRIDE_ALIGN == 0` still holds,
+  2880 % 64 == 0).
+- `rk_geometry.h` gains `RKB_ROTOR_STRIDE_PX 160` / `RKB_ROTOR_STRIDE_B` /
+  `RKB_ROTOR_BYTES`; arenas are `RKB_KNOB_PX × RKB_ROTOR_STRIDE_PX`.
+- `rkg_render_rotor_argb` clears the full padded extent and `LV_ASSERT`s that
+  LVGL's derived canvas stride equals `RKB_ROTOR_STRIDE_B`, so the painter and
+  the GPU consumer cannot silently diverge.
+- `vg_wrap_argb` stride, `lv_image_dsc_t.header.stride` → 640;
+  `rotor_bytes` now reports the honest 96,000 / 6,144,000.
+
+**Measured: checksum-neutral.** All six software goldens were byte-identical
+before and after the change, so the padding columns are genuinely not sampled.
+
+### C2 — "double premultiply" — INVESTIGATED AND NOT APPLIED
+
+The review called for deleting `rkg_premultiply` on the grounds that the driver
+enables hardware source premultiply. **That did not survive checking, and the
+software premultiply was kept.** Recorded because the argument is easy to
+re-derive and get wrong a second time:
+
+- The cited mechanism does not apply. `vg_lite.c:4742`'s `premul_flag` tests
+  `blend` against `OPENVG_BLEND_SRC..ADDITIVE` (0x2000–0x2009) and
+  `VG_LITE_BLEND_NORMAL_LVGL..MULTIPLY_LVGL` (11–14). Our blend is
+  `VG_LITE_BLEND_SRC_OVER = 1`, in neither range, so `premul_flag == 0` and the
+  **first** branch is taken — a branch that sets identical registers for
+  `source->premultiplied` 0 **and** 1, and therefore cannot mean "the hardware
+  premultiplies because you declared 0".
+- `VG_LITE_BLEND_SRC_OVER` is documented as `S + D*(1 - Sa)`
+  (`inc/vg_lite.h:461`) — the *premultiplied* over. Removing the premultiply
+  while keeping that blend would be wrong in the opposite direction.
+- Decisive precedent: LVGL 9.4's own VG_LITE backend, against this same driver
+  with `gcFEATURE_VG_LVGL_SUPPORT = 0`, software-premultiplies
+  (`lv_draw_vg_lite_img.c:66`), selects `SRC_OVER`
+  (`lv_vg_lite_utils.c:958`), and never assigns `premultiplied` anywhere.
+  Our code reproduces that combination exactly.
+
+The reasoning is now a long comment above `rkg_premultiply`, and spec §6 tells
+silicon bring-up what a genuine double premultiply would look like (dark
+fringes on antialiased rotor edges) and which knob to turn if it appears.
+
+### I1 — GPU error codes are now counted, not discarded
+
+Every `vg_lite_map`/`draw`/`blit`/`finish` in the GPU path goes through
+`GPU_TRY()`, incrementing a per-cell `g_gpu_err`. GPU `cell=`/`time=` lines
+gain a trailing ` gpu_err=<n>`; **`sw` lines are unchanged**, so gate greps
+written against the plan's format still match. Spec §5 requires `gpu_err=0` in
+the hardware transcript.
+
+### I2 — `lvgl_mipi_panel_frame_done()` conjunct dropped from `BS_A_WAIT`
+
+It was vacuous: the flag latches on the first full refresh ever and is cleared
+only by another `create()`, so from cell 1 onward it was a constant true.
+`LV_EVENT_REFR_READY` alone is sufficient — it is sent from `refr_finish`
+after rendering and flushing (`lv_refr.c:439`), and this binding's flush is
+synchronous.
+
+### I3 — empty-refresh hazard documented for Phase B (Task 5)
+
+`REFR_READY` also fires when nothing was invalid (`lv_refr.c:415` → `:439`).
+Phase A is immune because it arms its counter right after `lv_screen_load()`,
+which invalidates everything. **Phase B must not inherit that assumption**: it
+must gate both its timing sample and the GPU rotor pass on real damage
+(`LV_EVENT_RENDER_READY`, or a `lvgl_mipi_panel_flushed_px()` delta), or it
+will time empty frames and blit rotors onto a frame whose well was never
+redrawn. A comment at `refr_cb` says so.
+
+### I4 — the ordering invariant is now written down
+
+No refresh may run between `cell_build_assets()` and `cell_build_scene()`:
+`lv_canvas_finish_layer()` invalidates areas of the *outgoing* screen (64 times
+for a strip cell), and only the subsequent `lv_screen_load()` supersedes them.
+Holds because both run back-to-back in `bench_step()`, after
+`lvgl_rt1176_loop()` returns. Also noted: `finish_layer` dispatching outside a
+refresh is safe only because `LV_DRAW_SW_DRAW_UNIT_CNT == 1`.
+
+### I5 — path-arena overflow is a named failure
+
+`emit()` set a sticky flag; `rkg_build_vg_paths` returns **-1** on overflow and
+the cell is reported `st=vg-overflow`, counted in a new `failed=` field on
+`crc_done`, and **not rendered** — a truncated path set would still draw and
+still time. Cannot fire today (~110 of 4096 words); it is a guard for Phase 2's
+additional variants.
+
+### Minor
+
+Canvas create/delete hoisted out of the 64-frame strip loop into
+`rkg_render_strip_argb` (one canvas, re-pointed per frame — `init_us` should
+measure rendering, not object churn; measured ~6–9 % faster);
+`#include "vg_lite.h"` moved out of `rk_geometry.h`'s `extern "C"` (it has its
+own guard); comments added for the absent-D-cache rationale at
+`vg_lite_finish`, the idempotent re-map (safe only because the vg_lite GPU base
+is 0), and the deliberate truncating `lv_value_precise_t` angle casts.
+
+### Also worth carrying forward
+
+Open risk (3) in the self-review above — "`frame_done` latching semantics …
+if it never re-arms per frame that is fine" — was **too generous**: it does not
+re-arm, which made the conjunct dead code rather than merely redundant. See I2.

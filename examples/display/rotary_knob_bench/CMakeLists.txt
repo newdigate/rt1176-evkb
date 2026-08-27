@@ -3,7 +3,23 @@ project(rotary_knob_bench)
 
 # XRGB8888 like every RK055 LVGL example. Directory scope so the definitions
 # reach the LVGL and MipiDisplay objects, not just this target.
-add_compile_definitions(LV_COLOR_DEPTH=32 PANEL_BYTES_PER_PIXEL=4)
+#
+# ★ STRIDE_ALIGN 64 IS LOAD-BEARING FOR THE GPU CELLS, not a tuning knob.
+# The GC355 has gcFEATURE_VG_16PIXELS_ALIGNED=1 and gcFEATURE_VG_ERROR_CHECK=1
+# (VGLite/Series/gc355/0x0_1216/vg_lite_options.h:80,109), so srcbuf_align_check
+# (VGLite/vg_lite.c:1854-1861, called from vg_lite_blit at :4533) REJECTS a
+# BGRA8888 blit source whose stride is not a multiple of 16 px x 4 B = 64 B.
+# The rotor is 150 px wide; at the default STRIDE_ALIGN 1 its stride is 600,
+# 600 % 64 = 24, and every bitmap/strip gpu blit would return
+# VG_LITE_INVALID_ARGUMENT -- drawing NOTHING while timing beautifully, which is
+# the worst way for a benchmark to be wrong. At 64 the stride is 640 and the
+# check passes. LVGL derives the canvas/image stride from this same macro, so
+# the CPU-side painter and the GPU-side consumer cannot disagree.
+# Both are #ifndef-guarded in port/lv_conf.h:182-188; lvgl_mipi_panel.cpp's
+# static_assert(PANEL_PITCH_BYTES % LV_DRAW_BUF_STRIDE_ALIGN == 0) still holds
+# (2880 % 64 == 0). Same reasoning the VGLITE build of vglite_lvgl_test records.
+add_compile_definitions(LV_COLOR_DEPTH=32 PANEL_BYTES_PER_PIXEL=4
+                        LV_DRAW_BUF_STRIDE_ALIGN=64 LV_DRAW_BUF_ALIGN=64)
 
 set(TEENSY_VERSION 117 CACHE STRING "")
 

@@ -119,7 +119,16 @@ Phase A, per cell:
     cell=<strategy>/<engine>/<variant> st=ok crc=0x<8hex> init_us=<n> rotor_bytes=<n>
     cell=<strategy>/gpu/<variant> st=gpu-absent          (QEMU, all six gpu cells)
 
-then `crc_done cells=12 ok=<n> gpu_absent=<n>`.
+then `crc_done cells=12 ok=<n> gpu_absent=<n> failed=<n>`.
+
+**GPU cells carry a trailing ` gpu_err=<n>` on their `cell=` and `time=` lines**
+— the count of `vg_lite_*` calls (map/draw/blit/finish) that did not return
+`VG_LITE_SUCCESS` in that cell. **The hardware transcript must show `gpu_err=0`
+on every GPU cell**; a non-zero value invalidates that cell's timing outright,
+because a rejected blit draws nothing and therefore times beautifully. It is
+appended for GPU cells only, so `sw` lines stay byte-identical for the gate's
+greps. `failed=<n>` counts cells that could not be built at all (e.g.
+`st=vg-overflow`); `ok + gpu_absent + failed == cells` is the vacuity check.
 
 Phase B, per cell:
 
@@ -136,13 +145,39 @@ this document.
 ## 6. Memory & placement
 
 - Knob size **150×150** (grid parity with `vglite_lvgl_test`: positions
-  15+c·175, 120+r·175). Rotor bitmap: ARGB8888, 150×150 = 90,000 B.
-- Filmstrip: 64 × 90,000 B = 5,760,000 B ≈ 5.49 MB — **SDRAM** (EXTMEM), one
+  15+c·175, 120+r·175). Rotor bitmap: ARGB8888, **150 rows at stride 640 B
+  (160 px — 150 rounded up to the GPU's 16-pixel alignment) = 96,000 B**.
+- Filmstrip: **64 × 96,000 B = 6,144,000 B ≈ 5.86 MB** — **SDRAM** (EXTMEM), one
   static arena rebuilt at each strip cell's init (so `init_us` carries the
   honest per-cell cost); exact bytes reported in `rotor_bytes=`.
+- ★ **The 16-pixel stride is a correctness requirement, not padding hygiene.**
+  This part has `gcFEATURE_VG_16PIXELS_ALIGNED=1` and
+  `gcFEATURE_VG_ERROR_CHECK=1`, so `srcbuf_align_check`
+  (`VGLite/vg_lite.c:1854-1861`, called from `vg_lite_blit` at `:4533`) returns
+  `VG_LITE_INVALID_ARGUMENT` for a BGRA8888 source whose stride is not a
+  multiple of 16 px × 4 B = 64 B. At the natural 150×4 = 600 the GPU bitmap and
+  strip cells would draw **nothing** while posting excellent times. The build
+  sets `LV_DRAW_BUF_STRIDE_ALIGN=64 LV_DRAW_BUF_ALIGN=64` so LVGL's canvas
+  derives the same 640 and the CPU painter cannot disagree with the GPU
+  consumer. Bonus: 96,000 is itself 64-aligned, so every filmstrip frame
+  starts aligned (at 90,000 only 1 frame in 64 did). Measured: the padding is
+  **checksum-neutral** — all six software goldens were unchanged by the switch.
 - vg_lite buffers respect the driver's alignment requirements (the 64-byte
   command-buffer lesson from VGLite Phase 1 generalizes: misalignment hangs
   the front end while every API call returns SUCCESS — check `AQHiIdle`).
+- ★ **GPU blit sources are software-premultiplied and declared
+  `premultiplied = 0`.** That pairing looks wrong and is not: the cells blit
+  with `VG_LITE_BLEND_SRC_OVER`, whose arithmetic is `S + D*(1 - Sa)` — the
+  premultiplied Porter-Duff over — and the straight-alpha alternative
+  (`VG_LITE_BLEND_NORMAL_LVGL`) is unavailable because
+  `gcFEATURE_VG_LVGL_SUPPORT = 0` here. It is exactly what LVGL 9.4's own
+  VG_LITE backend does against this driver (`lv_draw_vg_lite_img.c:66`
+  premultiplies iff `!lv_vg_lite_support_blend_normal()`;
+  `lv_vg_lite_utils.c:958` then picks `SRC_OVER`; LVGL never assigns
+  `premultiplied`). Silicon bring-up should still **look for dark fringes on
+  antialiased rotor edges** in the GPU bitmap/strip cells: if they appear, the
+  hardware is premultiplying a second time and the fix is to drop
+  `rkg_premultiply` for the GPU path, not to change the blend.
 - All bench code lives in the example directory. **No SynthUI changes in
   Phase 1** — no pin churn, no fresh-clone SKIP risk. Geometry is promoted
   into SynthUI in Phase 2.
