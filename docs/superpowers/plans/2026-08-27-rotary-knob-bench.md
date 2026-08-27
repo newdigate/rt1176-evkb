@@ -1375,15 +1375,37 @@ python3 ../../../tools/rt1170-console.py /dev/cu.usbmodem* 115200 | tee /tmp/rkb
 pyocd reset -t mimxrt1170 || (LinkServer run MIMXRT1176:MIMXRT1170-EVKB build/rotary_knob_bench.elf &)
 ```
 
-Let it run through `bench_done` (Phase A seconds; Phase B ≈ 12×64 refreshes — minutes at worst). Then Ctrl-C the reader.
+**Duration budget — do NOT Ctrl-C early.** Phase A is seconds. Phase B runs 64
+timed frames per cell: ≈2 s for a fast cell, ≈23 s for one at 2.83 fps, and a
+**wedged cell burns its full 120 s timeout**. Nominal is a few minutes; the
+worst case is ~24 min. Keep the console attached throughout and let it reach
+`bench_done`. Then Ctrl-C the reader.
 
-- [ ] **Step 3: Verify the run:** `gpu=present chip_id=` nonzero; **12** `cell=... st=ok` lines (no gpu-absent on silicon); `crc_done cells=12 ok=12 gpu_absent=0`; 12 `time=` lines; `bench_done cells=12 timed=12 gpu_absent=0`. The six sw checksums must equal the QEMU goldens EXACTLY (the pilot's QEMU≡silicon determinism); the six gpu checksums are new — **run a second boot** and confirm they are stable across boots before recording them.
+- [ ] **Step 3: Verify the run.** Check every one of these — they are ordered so that a failure explains the next line rather than being explained by it.
 
-- [ ] **Step 4: Eyeball the glass.** All 16 knobs visible: well ring, dark rotor, light index wedge at 45°; facet cells show the 8-tone fan. If a gpu cell's rotor is missing while its checksum is "stable", that is the all-zeros-FNV trap — compare against the known FNV of an unpainted region before believing it (vglite_lvgl_test measured 0x-of-zeros once; `AQHiIdle` and `vg_lite_os_irq_count()` are the diagnostics).
+  1. `gpu=present chip_id=` nonzero. On the attempt path the line also carries `vg_init=<n> vg_map=<n>`; both must be **0**. A `gpu=absent` *with* a nonzero chip id and a nonzero code means the GPU is present but init or map failed — a different fault entirely from "no GC355", and the two used to be indistinguishable.
+  2. Tallies: `crc_done cells=12 ok=12 gpu_absent=0 failed=0` and `bench_done cells=12 timed=12 gpu_absent=0 failed=0`. **`failed=0` is part of the assertion** — a nonzero value means a cell could not be built at all.
+  3. **All twelve `/gpu/` lines must read `gpu_err=0`.** A nonzero count **voids that cell's timing outright**: a rejected blit draws nothing and therefore times beautifully. Never rank a cell whose `gpu_err` is nonzero — diagnose it first.
+  4. Explicit negatives: **no `st=timeout`** and **no `st=vg-overflow`** anywhere. If `st=timeout` appears, read that cell's `gpu_err` *first* — a wedge downstream of a rejected call is a symptom, not the cause.
+  5. **12** `cell=... st=ok` lines (no `gpu-absent` on silicon) and 12 `time=` lines.
+  6. The six sw checksums must equal the QEMU goldens EXACTLY (the pilot's QEMU≡silicon determinism). The six gpu checksums are new — **run a second boot** and confirm they are stable across boots before recording them.
 
-- [ ] **Step 5: Record.** Save the full log as `transcript_hw_evkb.txt` (with a header comment noting date, board, both boots' gpu checksums). Fill spec §13's table from the `cell=`/`time=` lines. State the winner (or measured tie) in one paragraph under the table, with the RAM/init/quality trade-offs the spec §11.3 requires.
+- [ ] **Step 4: Read the `time=` lines correctly.** Fields are `frames=64 mfps_med=<n> us_med=<n> us_min=<n> us_max=<n> us_mean=<n>` plus `gpu_err=<n>` on gpu cells.
+  - **Rank on `mfps_med`, never on `us_mean`.** The mean is dragged by any single stall; the median is the honest steady-state number.
+  - **Flag any cell whose `us_max` is a large multiple of its `us_med`** — that is a stall worth naming in the write-up even when the median looks fine.
+  - The pass criterion is **`mfps_med` ≥ 30000**, and it is a **RENDER** rate, not a displayed one: `LV_DEF_REFR_PERIOD` is 33 ms, so displayed fps cannot exceed ~30 no matter how fast the renderer is. A cell can pass this criterion and still show 30 fps on the glass; that is expected, not a defect.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Watch the glass — during Phase B, not Phase A.** Phase A flashes past in well under a second; there is nothing to see. Phase B gives ~2 s per cell of *moving* rotors, which is the window to look at:
+  - Shape is right: well ring, dark rotor, light index wedge; facet cells show the 8-tone fan.
+  - **Wedge direction matches the cell's sw sibling.** `vg_lite_rotate` is clockwise-positive on a Y-down target (`vg_lite_matrix.c:140-147`, applied `p' = M·p`), which matches `rkg_polar` and LVGL, so a **mirrored** rotor is a real defect to investigate — not a sign convention to flip.
+  - **C1 REGRESSION GUARD — the strip cross-check.** `strip/gpu`'s wedge must sit at the **same angle** as `strip/sw`'s. **Twice the angle means C1 has regressed**: the filmstrip frame is already rotated, so a rotate in the blit matrix both doubles the angle and reintroduces the resample the filmstrip exists to avoid (which would also make `strip/gpu` time identically to `bitmap/gpu` — check that too).
+  - Tearing is expected (§9, single-buffered direct mode); it is not a defect.
+  - **After `bench_done` the final scene stays static on the glass — `strip/gpu/facet`. That is the frame to photograph.**
+  - If a gpu cell's rotor is missing while its checksum is "stable": the all-zeros FNV is **0x9BC99DC5**, but the scene ground is opaque `0x101820`, so a blank-rotor frame will *not* equal that constant. Compare each gpu cell against **its sw sibling's structure on the glass**, not against the zero constant alone. `AQHiIdle` bit 0 and `vg_lite_os_irq_count()` are the diagnostics, and `gpu_err` (step 3.3) should already have caught it.
+
+- [ ] **Step 6: Record.** Save the full log as `transcript_hw_evkb.txt` (with a header comment noting date, board, both boots' gpu checksums). Fill spec §13's **nine-column** table — `cell | mfps_med | us_med | us_min | us_max | us_mean | init_us | rotor_bytes | crc` — the last three coming from the Phase A `cell=` lines. State the winner (or measured tie) in one paragraph under the table, with the RAM/init/quality trade-offs spec §11.3 requires, **and record the pipelining caveat alongside it**: the bench calls `vg_lite_finish()` once per frame, so every GPU row is a **lower bound** — a pipelined renderer that never stalls on the GPU could do better than these numbers show.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 cd ~/Development/rt1170/evkb
@@ -1391,7 +1413,7 @@ git add examples/display/rotary_knob_bench/transcript_hw_evkb.txt docs/superpowe
 git commit -m "rotary_knob_bench: silicon run -- 12/12 cells, fps table recorded, winner named"
 ```
 
-- [ ] **Step 7: Linear.** Post the results table as a comment on NEW-20. NEW-12's open question (are cached GPU paths fast?) is now answered by the `vector/gpu` cells — close NEW-12 with a comment linking the table and naming the measured number. (Use the Linear MCP `save_comment` / `save_issue state=Done`; confirm with the user if anything about the numbers makes closing feel premature.)
+- [ ] **Step 8: Linear.** Post the results table as a comment on NEW-20. NEW-12's open question (are cached GPU paths fast?) is now answered by the `vector/gpu` cells — close NEW-12 with a comment linking the table and naming the measured number. (Use the Linear MCP `save_comment` / `save_issue state=Done`; confirm with the user if anything about the numbers makes closing feel premature.)
 
 ---
 
@@ -1400,7 +1422,7 @@ git commit -m "rotary_knob_bench: silicon run -- 12/12 cells, fps table recorded
 - **Spec coverage:** §1–§11 all map to tasks (§2 is context; §12 is out of scope by design; §13 is Task 10). Task 1 amends the spec where planning contradicted it.
 - **Known deliberate deviations from the spec text, fixed by Task 1:** 150 px knobs; post-REFR_READY gpu pass; FNV-1a naming; strategy tokens.
 - **Type consistency:** `rkg_*` signatures in Task 3's header match every later use; `RKB_*` constants defined once in `rk_geometry.h`; cell/time line formats identical across firmware (Task 3/5), gate (Task 7), and vacuity (Task 8).
-- **Open risks the executor should expect:** (1) exact QEMU `-M` flags — take them from `gate-lib.sh`, not this plan; (2) `lv_image_dsc_t` field names (`header.magic`/`header.stride`) — check the vendored `lv_image_dsc_t` in `~/Development/LVGL/lvgl/src/draw/lv_image_decoder.h` if the compile disagrees; (3) `lvgl_mipi_panel_frame_done()` latching semantics — the REFR_READY count carries per-cell freshness, `frame_done` is a one-time flush confirmation; if it never re-arms per frame that is fine; (4) `vg_lite_rotate` sign convention — if silicon shows the gpu rotor mirrored vs the sw cells, negate the angle for gpu paths and note it; the per-cell goldens make it visible immediately.
+- **Open risks the executor should expect:** (1) exact QEMU `-M` flags — take them from `gate-lib.sh`, not this plan; (2) `lv_image_dsc_t` field names (`header.magic`/`header.stride`) — check the vendored `lv_image_dsc_t` in `~/Development/LVGL/lvgl/src/draw/lv_image_decoder.h` if the compile disagrees; (3) `lvgl_mipi_panel_frame_done()` latching semantics — the REFR_READY count carries per-cell freshness, `frame_done` is a one-time flush confirmation; if it never re-arms per frame that is fine. **(4) was `vg_lite_rotate` sign convention — DELETED, resolved from source rather than left to the bench:** `vg_lite_rotate` builds `[[cos,-sin],[sin,cos]]` and applies it as `p' = M·p` (`vg_lite_matrix.c:140-147`), which on a **Y-down** target is clockwise-positive — the same convention as `rkg_polar` and as LVGL's `rotation`. There is therefore no sign to flip: a mirrored rotor on the glass would be a **real defect to diagnose**, and "negate the angle for gpu paths" would paper over it.
 
 ---
 
@@ -1430,9 +1452,14 @@ Shipped:
   2880 % 64 == 0).
 - `rk_geometry.h` gains `RKB_ROTOR_STRIDE_PX 160` / `RKB_ROTOR_STRIDE_B` /
   `RKB_ROTOR_BYTES`; arenas are `RKB_KNOB_PX × RKB_ROTOR_STRIDE_PX`.
-- `rkg_render_rotor_argb` clears the full padded extent and `LV_ASSERT`s that
-  LVGL's derived canvas stride equals `RKB_ROTOR_STRIDE_B`, so the painter and
-  the GPU consumer cannot silently diverge.
+- `rkg_render_rotor_argb` clears the full padded extent, and two
+  **`static_assert`s** in `rk_geometry.cpp` tie `LV_DRAW_BUF_STRIDE_ALIGN == 64`
+  and `RKB_ROTOR_STRIDE_B == 640` together, so the painter and the GPU consumer
+  cannot silently diverge. (Commit `e701c19` replaced an earlier runtime
+  `LV_ASSERT` with these: the invariant is entirely compile-time for the one
+  width this example uses, and the runtime form ran 64× per strip cell *inside*
+  the `init_us` measurement window. Mutation-tested — setting the stride to 150
+  fails the build by name.)
 - `vg_wrap_argb` stride, `lv_image_dsc_t.header.stride` → 640;
   `rotor_bytes` now reports the honest 96,000 / 6,144,000.
 

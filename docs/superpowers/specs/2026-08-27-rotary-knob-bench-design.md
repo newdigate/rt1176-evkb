@@ -2,8 +2,9 @@
 
 Date: 2026-08-27
 Status: approved (brainstorm 2026-08-27)
-Tracking: Linear NEW-12 (related; the gpu-vector cell answers its open
-question) + a new issue "RotaryKnob: render-strategy bench + widget".
+Tracking: Linear **NEW-20** ("RotaryKnob: render-strategy bench + widget") —
+the issue this document is the design for. Linear NEW-12 is related but
+separate: the gpu-vector cell answers its open question.
 
 ## 1. Goal & scope
 
@@ -12,7 +13,9 @@ A new example, `display/rotary_knob_bench`, renders the **RotaryKnob** design
 `RotaryKnob.dc.html`) through **six render paths** and measures which is
 fastest on silicon, under the exact FPSBENCH workload from
 `display/vglite_lvgl_test`: a 4×4 grid of 16 knobs, every knob's angle
-advanced every refresh (full-scene damage), success criterion **≥30 fps**
+advanced every refresh (all-16-knob damage — 16 × 150×150 = 360,000 px, not
+the full 921,600-px screen; §4 and the firmware both say so), success
+criterion **≥30 fps**
 (evaluated against `mfps_med` ≥ 30000 — a render rate, not a displayed one;
 §5 says why the distinction matters).
 
@@ -192,16 +195,27 @@ this document.
 - ★ **GPU blit sources are software-premultiplied and declared
   `premultiplied = 0`.** That pairing looks wrong and is not: the cells blit
   with `VG_LITE_BLEND_SRC_OVER`, whose arithmetic is `S + D*(1 - Sa)` — the
-  premultiplied Porter-Duff over — and the straight-alpha alternative
-  (`VG_LITE_BLEND_NORMAL_LVGL`) is unavailable because
-  `gcFEATURE_VG_LVGL_SUPPORT = 0` here. It is exactly what LVGL 9.4's own
+  premultiplied Porter-Duff over — so the source must arrive premultiplied.
+  **The straight-alpha alternative does exist on this part** (an earlier
+  revision of this section said otherwise): the driver accepts
+  `VG_LITE_BLEND_NORMAL_LVGL` and runs it *in hardware* —
+  `convert_blend` maps it to `SRC_OVER`'s own HW value
+  (`vg_lite.c:2560-2564`), and with `gcFEATURE_VG_SRC_PREMULTIPLIED = 0` here
+  the driver forces `in_premult = 0` for it (`vg_lite.c:4777-4779`), which is
+  precisely the straight-alpha lever. What `gcFEATURE_VG_LVGL_SUPPORT = 0`
+  gates is only LVGL's *own* choice — `lv_vg_lite_support_blend_normal()`
+  reads that bit and declines the mode. We follow LVGL because that is the
+  combination this driver is exercised with. It is exactly what LVGL 9.4's own
   VG_LITE backend does against this driver (`lv_draw_vg_lite_img.c:66`
   premultiplies iff `!lv_vg_lite_support_blend_normal()`;
   `lv_vg_lite_utils.c:958` then picks `SRC_OVER`; LVGL never assigns
   `premultiplied`). Silicon bring-up should still **look for dark fringes on
   antialiased rotor edges** in the GPU bitmap/strip cells: if they appear, the
-  hardware is premultiplying a second time and the fix is to drop
-  `rkg_premultiply` for the GPU path, not to change the blend.
+  hardware is premultiplying a second time, and the cheaper experiment is
+  **straight alpha + `VG_LITE_BLEND_NORMAL_LVGL`** (skip `rkg_premultiply` for
+  the GPU path *and* change the blend together). Dropping `rkg_premultiply`
+  while leaving `SRC_OVER` in place is **not** the fix — that is wrong in the
+  opposite direction and yields bright halos instead of dark ones.
 - All bench code lives in the example directory. **No SynthUI changes in
   Phase 1** — no pin churn, no fresh-clone SKIP risk. Geometry is promoted
   into SynthUI in Phase 2.
@@ -219,9 +233,17 @@ AA ≠ GPU AA ≠ resampled rotation (the two-golden-sets precedent from
   these goldens carry to the bench.
 - The six **GPU cells' CRCs are silicon-only**, recorded in
   `transcript_hw_evkb.txt` with the fps table, visually verified once.
-- For GPU cells the CRC is computed only after `vg_lite_finish` and D-cache
-  invalidate over the whole framebuffer — a CRC read through a stale cache
-  is a golden for the wrong pixels.
+- For GPU cells the CRC is computed only after `vg_lite_finish` — that
+  ordering is what stops the checksum racing the hardware.
+  **No cache maintenance is performed, deliberately.** The `imxrt1176` core
+  never writes `SCB_CCR`, so the D-cache is never enabled on this part, SDRAM
+  is coherent for free, and `arm_dcache_*` are no-ops — a clean/invalidate
+  here would be cargo cult. This is the same invariant
+  `port/lvgl_mipi_panel.cpp` documents for its flush, and the same forward
+  hazard: **if the D-cache is ever enabled over SDRAM, this site and that
+  flush become ONE change, not two** — and the failure would be invisible in
+  QEMU, which models no cache. A port to rt1062 is exactly that change: the
+  `teensy4` core *does* enable the D-cache.
 
 This is what stops "renders garbage fast" from winning the bench.
 
@@ -279,14 +301,23 @@ ranking, and disagreement is a finding in its own right.
 
 ## 10. Risks
 
-- **GPU/CPU coherency** on the shared framebuffer: `vg_lite_finish` +
-  explicit cache maintenance around every GPU cell's draw and CRC. Known
-  territory from `vglite_lvgl_test`; the diagnostic is `AQHiIdle` bit 0 and
-  counted ISRs, not API return codes.
+- **GPU/CPU ordering** on the shared framebuffer: `vg_lite_finish` before any
+  CRC. **Not** a coherency risk on this core — the `imxrt1176` core never
+  enables the D-cache (`SCB_CCR` untouched; `arm_dcache_*` are no-ops), so no
+  cache maintenance is performed or needed, exactly as
+  `port/lvgl_mipi_panel.cpp` documents for its own flush. It *becomes* a real
+  risk the day the D-cache is enabled over SDRAM, or on a port to rt1062
+  whose `teensy4` core enables it. Known territory from `vglite_lvgl_test`;
+  the diagnostic is `AQHiIdle` bit 0 and counted ISRs, not API return codes.
 - **LVGL sw arc clamp** for negative start angles — solved once in
   `synthui_knob.cpp`; reuse that fold.
-- **vg_lite fill rule** for annuli (non-zero winding, reversed inner arc) —
-  wrong winding renders a full disc; the per-cell CRC catches it.
+- **vg_lite fill rule** for annuli (non-zero winding, reversed inner arc).
+  Note the earlier claim that "wrong winding renders a full disc" was
+  **wrong** and has been removed: each ring sector is a single closed
+  contour — outer arc, line across, inner arc reversed, close — and the
+  reversal is what *closes* the contour, not what punches the hole. Such a
+  contour fills identically under non-zero and even-odd. The per-cell CRC
+  still covers the geometry; it simply is not covering this.
 - **SDRAM bandwidth** may cap all fast cells equally (framebuffer and
   filmstrip both live there). If several cells plateau at the same number,
   that plateau is the memory ceiling — report it as the finding it is.
