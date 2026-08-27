@@ -305,31 +305,83 @@ static lv_obj_t *cell_build_scene(const rkb_cell_t *c, float angle)
     return scr;
 }
 
-/* ---- Phase A state machine (Phase B arrives in Task 5) ------------------- */
-typedef enum { BS_IDLE = 0, BS_A_START, BS_A_WAIT, BS_DONE_A } rkb_state_t;
+/* ---- bench state machine (Phase A checksums, then Phase B timings) ------- */
+typedef enum { BS_IDLE = 0, BS_A_START, BS_A_WAIT, BS_B_START, BS_B_RUN,
+               BS_DONE } rkb_state_t;
 static rkb_state_t g_state = BS_IDLE;
 static int g_ci = 0;                    /* cell index 0..11 */
 static uint32_t g_ok = 0, g_absent = 0, g_failed = 0;
 static volatile uint32_t g_refr_count = 0;
 static uint32_t g_refr_at_start = 0;
 
+/* ---- Phase B timing ------------------------------------------------------ */
+#define RKB_TIMED_N 64
+static uint32_t g_us[RKB_TIMED_N];
+static volatile uint32_t g_nsamp = 0;
+static volatile bool g_timing = false;
+static volatile uint32_t g_t0 = 0;      /* micros() at LV_EVENT_REFR_START */
+static uint32_t g_frame = 0;            /* animation step, drives every angle */
+static lv_timer_t *g_anim = NULL;
+static uint32_t g_timed = 0, g_absent_b = 0, g_failed_b = 0;
+
 /* ★ LV_EVENT_REFR_READY FIRES ON EMPTY REFRESHES TOO -- lv_refr.c:415 jumps
  * straight to refr_finish when there is nothing invalid, and :439 sends the
  * event from there. Phase A tolerates that: it arms g_refr_at_start
  * immediately after lv_screen_load(), which invalidates the whole screen, so
  * the first event after arming is always a real full render.
- * ★ PHASE B (Task 5) MUST NOT INHERIT THAT ASSUMPTION. A free-running
- * measurement loop will see empty refreshes, and both sampling a frame time
- * from one and re-running gpu_rotor_pass() on one would be wrong -- the second
- * would blit rotors onto a frame LVGL never redrew the well for. Gate the
- * Phase B path on real damage (LV_EVENT_RENDER_READY for the gpu pass, or a
- * lvgl_mipi_panel_flushed_px() delta), not on this event alone. */
+ * ★ PHASE B CANNOT INHERIT THAT ASSUMPTION -- it free-runs, so it WILL meet
+ * empty refreshes, and both sampling a frame time from one (a near-zero
+ * outlier dragging us_med down for exactly the cell being ranked) and
+ * re-running gpu_rotor_pass() on one (rotors blitted onto a frame LVGL never
+ * redrew the well for) would be wrong. So damage, not REFR_READY, gates both:
+ *   LV_EVENT_RENDER_READY is sent from refr_invalid_areas (lv_refr.c:823),
+ *   which returns at its FIRST LINE (:751) when inv_p == 0. It therefore
+ *   cannot fire on an empty refresh, which is precisely the discrimination
+ *   REFR_READY lacks. g_frame_rendered latches it; REFR_READY consumes it.
+ * ★ THE GPU PASS STAYS INSIDE THE TIMED WINDOW. RENDER_READY sits between
+ * REFR_START (:387) and REFR_READY (:439), so moving the pass there does not
+ * move it out of the measurement -- required, since the bench times the whole
+ * frame including vg_lite_finish(). It also composites onto a COMPLETE
+ * software frame: draw_buf_flush() runs per area inside the loop above :823,
+ * and this binding's flush_cb is synchronous. */
+static volatile bool g_frame_rendered = false;
+
 static void refr_cb(lv_event_t *e)
 {
-    if (lv_event_get_code(e) == LV_EVENT_REFR_READY) {
+    switch (lv_event_get_code(e)) {
+    case LV_EVENT_REFR_START:
+        g_t0 = micros();
+        break;
+    case LV_EVENT_RENDER_READY:
         /* gpu rotor pass INSIDE the frame, before anyone counts it done */
         if (g_cell && g_cell->gpu && s_gpu) gpu_rotor_pass();
-        g_refr_count++;
+        g_frame_rendered = true;
+        break;
+    case LV_EVENT_REFR_READY:
+        if (g_frame_rendered) {
+            g_refr_count++;
+            if (g_timing && g_nsamp < RKB_TIMED_N)
+                g_us[g_nsamp++] = micros() - g_t0;
+        }
+        g_frame_rendered = false;
+        break;
+    default:
+        break;
+    }
+}
+
+/* One animation step for all 16 knobs, then damage them. The per-knob 22.5 deg
+ * offset keeps the grid from being 16 copies of one angle -- with the bitmap
+ * and strip cells that would let a single rotated blit or a single filmstrip
+ * frame stay warm for the entire grid and flatter those strategies. */
+static void anim_cb(lv_timer_t *t)
+{
+    (void)t;
+    g_frame++;
+    for (int k = 0; k < 16; k++) {
+        g_knob[k].angle = fmodf((float)g_frame * RKB_STEP_DEG
+                                + (float)k * 22.5f, 360.0f);
+        lv_obj_invalidate(g_knob[k].obj);
     }
 }
 
@@ -343,6 +395,21 @@ static void cell_print_a(const rkb_cell_t *c, uint32_t crc)
                    STRAT_NAME[c->strat], ENGINE_NAME(c), VAR_NAME[c->var],
                    (unsigned long)crc, (unsigned long)g_init_us,
                    (unsigned long)g_rotor_bytes);
+    if (c->gpu) Serial1.printf(" gpu_err=%lu", (unsigned long)g_gpu_err);
+    Serial1.println();
+}
+
+/* Same gpu_err rule as cell_print_a, and for the same reason: a cell that
+ * blitted nothing posts a superb time, so the gpu lines must carry the number
+ * that says whether they drew. Integer-only -- no %f anywhere in this build's
+ * printf, so millifps is the unit rather than a formatting choice. */
+static void cell_print_b(const rkb_cell_t *c, uint32_t us_med, uint32_t us_mean)
+{
+    Serial1.printf("time=%s/%s/%s frames=%d mfps_med=%lu us_med=%lu us_mean=%lu",
+                   STRAT_NAME[c->strat], ENGINE_NAME(c), VAR_NAME[c->var],
+                   RKB_TIMED_N,
+                   (unsigned long)(1000000000ull / (us_med ? us_med : 1)),
+                   (unsigned long)us_med, (unsigned long)us_mean);
     if (c->gpu) Serial1.printf(" gpu_err=%lu", (unsigned long)g_gpu_err);
     Serial1.println();
 }
@@ -361,7 +428,8 @@ static void bench_step(void)
             Serial1.printf("crc_done cells=12 ok=%lu gpu_absent=%lu failed=%lu\n",
                            (unsigned long)g_ok, (unsigned long)g_absent,
                            (unsigned long)g_failed);
-            g_state = BS_DONE_A;         /* Task 5 chains Phase B here */
+            g_ci = 0;                    /* Phase B re-walks the same 12 cells */
+            g_state = BS_B_START;
             break;
         }
         const rkb_cell_t *c = &CELLS[g_ci];
@@ -406,7 +474,80 @@ static void bench_step(void)
             g_state = BS_A_START;
         }
         break;
-    case BS_DONE_A:
+
+    case BS_B_START: {
+        if (g_ci >= 12) {
+            /* Same vacuity arithmetic as crc_done: timed + gpu_absent + failed
+             * == cells is what says no cell was quietly dropped. */
+            Serial1.printf("bench_done cells=12 timed=%lu gpu_absent=%lu failed=%lu\n",
+                           (unsigned long)g_timed, (unsigned long)g_absent_b,
+                           (unsigned long)g_failed_b);
+            g_state = BS_DONE;
+            break;
+        }
+        const rkb_cell_t *c = &CELLS[g_ci];
+        if (c->gpu && !s_gpu) {
+            Serial1.printf("time=%s/gpu/%s st=gpu-absent\n",
+                           STRAT_NAME[c->strat], VAR_NAME[c->var]);
+            g_absent_b++; g_ci++;
+            break;                        /* stay in BS_B_START, next cell */
+        }
+        g_gpu_err = 0;                    /* per-cell, as in Phase A */
+        if (!cell_build_assets(c)) {
+            Serial1.printf("time=%s/%s/%s st=vg-overflow\n",
+                           STRAT_NAME[c->strat], ENGINE_NAME(c),
+                           VAR_NAME[c->var]);
+            g_failed_b++; g_ci++;
+            break;
+        }
+        /* Angle 0 here, not RKB_CANON_DEG: the canonical angle exists to make
+         * Phase A's checksums comparable, and anim_cb overwrites it on its
+         * first tick anyway. The build_assets/build_scene ordering invariant
+         * documented above cell_build_assets() holds here for the same reason
+         * it does in Phase A -- nothing between the two calls pumps LVGL. */
+        cell_build_scene(c, 0.0f);
+        g_frame = 0;
+        g_nsamp = 0;
+        g_timing = true;
+        /* ★ 15 ms against LVGL's 33 ms refresh period, and created LAST on
+         * purpose: lv_timer_create inserts at the list HEAD (lv_timer.c:169),
+         * so anim_cb runs BEFORE the display refresh timer in every
+         * lv_timer_handler pass. Every refresh therefore has fresh damage, and
+         * the RENDER_READY gate above turns a violation of that into a stall
+         * (no samples) rather than into a fast, meaningless number. */
+        g_anim = lv_timer_create(anim_cb, 15, NULL);
+        g_state = BS_B_RUN;
+        break;
+    }
+
+    case BS_B_RUN:
+        if (g_nsamp >= RKB_TIMED_N) {
+            g_timing = false;             /* before the delete: no late sample */
+            if (g_anim) { lv_timer_delete(g_anim); g_anim = NULL; }
+            /* Sort a COPY -- g_us stays in arrival order, which is what makes
+             * a first-frame outlier visible to anyone who ever dumps it. */
+            uint32_t s[RKB_TIMED_N];
+            memcpy(s, g_us, sizeof(s));
+            for (int i = 1; i < RKB_TIMED_N; i++) {
+                const uint32_t v = s[i];
+                int j = i - 1;
+                while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; j--; }
+                s[j + 1] = v;
+            }
+            /* 64-bit accumulator: at QEMU's seconds-per-frame the uint32 sum
+             * of 64 samples is within a small factor of overflowing, and a
+             * wrapped mean beside a sane median reads as a real measurement. */
+            uint64_t sum = 0;
+            for (int i = 0; i < RKB_TIMED_N; i++) sum += s[i];
+            cell_print_b(&CELLS[g_ci], s[RKB_TIMED_N / 2],
+                         (uint32_t)(sum / RKB_TIMED_N));
+            g_timed++; g_ci++;
+            g_cell = NULL;
+            g_state = BS_B_START;
+        }
+        break;
+
+    case BS_DONE:
         break;
     }
 }
@@ -445,8 +586,14 @@ void setup()
 
     lvgl_rt1176_begin();
     lvgl_mipi_panel_create(Display);
-    lv_display_add_event_cb(lv_display_get_default(), refr_cb,
-                            LV_EVENT_REFR_READY, NULL);
+    /* All three legs of the frame go to one callback: REFR_START opens the
+     * timed window, RENDER_READY proves the frame had damage (and runs the gpu
+     * pass), REFR_READY closes it. Registering them separately is LVGL's
+     * per-code API, not three behaviours. */
+    lv_display_t *disp = lv_display_get_default();
+    lv_display_add_event_cb(disp, refr_cb, LV_EVENT_REFR_START, NULL);
+    lv_display_add_event_cb(disp, refr_cb, LV_EVENT_RENDER_READY, NULL);
+    lv_display_add_event_cb(disp, refr_cb, LV_EVENT_REFR_READY, NULL);
     g_state = BS_A_START;
 }
 
@@ -454,4 +601,13 @@ void loop()
 {
     lvgl_rt1176_loop();
     bench_step();
+
+    /* Liveness after bench_done. Without it "the last line printed" and "the
+     * image died right after printing it" are the same capture, and a gate
+     * cannot tell them apart. */
+    static uint32_t hb_last = 0, hb_n = 0;
+    if (g_state == BS_DONE && millis() - hb_last >= 2000) {
+        hb_last = millis();
+        Serial1.printf("hb n=%lu\n", (unsigned long)hb_n++);
+    }
 }
