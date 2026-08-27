@@ -35,52 +35,58 @@ angle change is old-wedge ∪ new-wedge (plus AA padding).
 
 ## 3. Widget core changes (SynthUI, `synthui_rotary_knob.cpp`)
 
-`synthui_rotary_knob_set_angle()`:
+**REVISED at implementation (same day):** the first draft stored the delta
+rects in the widget (`delta_clip[6]`/`delta_n`) for the compositor to
+scissor to. Review found the flaw before it shipped: LVGL may **join**
+invalid areas at refresh time, and a joined area can be a strict superset of
+every rect the widget knows about — the sw pass then repaints well over
+rotor pixels *between* the stored rects, and a compositor scissored to the
+stored rects would leave well-coloured holes. The widget must not
+second-guess LVGL's damage bookkeeping. Final design:
 
-1. Compute the wedge bbox at the old and the new angle: 5 samples across the
-   16° span at r16·S and r36·S about the widget centre, min/max, padded
-   **4 px** for AA (constant — AA is ~1 px regardless of S; the 5-sample
-   chord error at the largest supported size is <0.1 px).
-2. Append both rects to the instance's `delta_clip[]` (capacity
-   `RK_DELTA_MAX = 6` — three angle steps can land between two refreshes;
-   the bench animates at 15 ms against a 33 ms refresh, so two per refresh
-   is NORMAL, not a corner case) and `lv_obj_invalidate_area()` each.
-3. If the array would overflow, or the widget is mid-anything-else:
-   **escalate** — `delta_n = 0` and full `lv_obj_invalidate()`. Escalation
-   is always correct; delta is only ever an optimization.
-4. Every other setter and the input-layer state callbacks: full invalidate
-   AND `delta_n = 0` (a pending delta must never survive a full
-   invalidation — the compositor decides scissored-vs-full from `delta_n`).
+`synthui_rotary_knob_set_angle()` computes the wedge bbox at the old and the
+new angle (5 samples across the 16° span at r16·S and r36·S, min/max, padded
+**4 px** for AA — constant, because AA is ~1 px regardless of S and the
+5-sample chord error is <0.1 px at every supported size) and calls
+`lv_obj_invalidate_area()` for each. **Nothing is stored**: LVGL's inv
+buffer owns the damage, joins as it sees fit, and bounds worst cases
+(joining only ever grows damage — correctness cannot be lost, only speed
+degraded gracefully). No escalation logic, no per-instance arrays, no
+other-setter bookkeeping: every other invalidation path is untouched.
 
-`delta_clip`/`delta_n` live in the private struct (plain `lv_area_t` — the
-core stays LVGL-only, no vg_lite types). The sw path needs nothing else:
-LVGL clips the unchanged draw callback to the damage, and repainting the
-discs inside the old-wedge clip is what erases the old wedge.
+The sw path needs nothing else: LVGL clips the unchanged draw callback to
+the damage, and repainting the discs inside the old-wedge clip is what
+erases the old wedge.
 
 ## 4. GPU compositor changes (SynthUI, `src/vglite/`)
 
-Today the RENDER_READY pass redraws the full rotor for every pending
-instance. Unscissored full-rotor redraw over wedge-only sw damage is *almost*
-correct — the discs are opaque, so SRC_OVER rewrites identical pixels — but
-the body disc's outer AA rim re-blends over its own previous blend and
-converges toward pure body colour over frames. Instead of accepting that
-drift:
+Unscissored full-rotor redraw over wedge-only sw damage is *almost* correct
+— the discs are opaque, so SRC_OVER rewrites identical pixels — but the body
+disc's outer AA rim re-blends over its own previous blend and converges
+toward pure body colour over frames. The revised compositor:
 
-- If `delta_n > 0`: for each stored rect, `vg_lite_set_scissor(rect)` and
-  draw the three cached paths; after the instance,
-  `vg_lite_set_scissor(-1,-1,-1,-1)`. Inside each rect the sw pass has just
-  repainted ground+well, so the composite is exactly a fresh render there;
-  outside, nothing is touched. Exact, no drift.
-- If `delta_n == 0` (full invalidation): unscissored, as today.
-- `delta_n` is consumed (reset to 0) after compositing the instance.
+- At RENDER_READY, for each pending instance, iterate the display's OWN
+  rendered areas — `disp->inv_areas[0..inv_p)`, skipping
+  `inv_area_joined[i]` slots (merged, not rendered) — and for each area
+  that intersects the knob's coords: `vg_lite_set_scissor(clip)` (lv_area
+  x2/y2 are inclusive, the driver's right/bottom exclusive — verified
+  against `vg_lite.c`'s per-draw clamp — so pass x2+1/y2+1), draw the three
+  cached paths. Disable the scissor (`-1,-1,-1,-1`) once after the loop,
+  then the single `vg_lite_finish()`.
+- The inv areas are still populated at RENDER_READY (sent from
+  `refr_invalid_areas`, before `refr_finish` resets `inv_p`) — behaviorally
+  confirmed by §5's equality guard.
+- This is exact for wedge-delta damage, full invalidations, AND
+  partial overlaps from other objects — the Phase-2 "double-composite AA on
+  partial overlap" caveat is retired by construction, since the rotor is
+  only ever recomposited over freshly sw-painted pixels.
 - Scissor support is real on this part (`vg_lite_set_scissor` in the
   vendored driver, `gcFEATURE_VG_SCISSOR = 1` for gc355/0x0_1216 — checked
-  in source, and §5's equality guard verifies it BEHAVES on silicon).
-  **Fallback if silicon refutes the scissor** (wrong clip, error returns):
-  the gpu path drops delta — `set_angle` full-invalidates whenever the
-  compositor is enabled — and the sw path keeps the win. The equality guard
-  stays strict either way; it is what makes the fallback decision by
-  measurement instead of by argument.
+  in source; §5's equality guard verifies it BEHAVES on silicon).
+  **Fallback if silicon refutes the scissor**: the gpu path drops delta —
+  `set_angle` full-invalidates whenever the compositor is enabled — and the
+  sw path keeps the win. The equality guard stays strict either way; it
+  makes the fallback decision by measurement instead of by argument.
 
 ## 5. Regression guards (in `display/synthui_knob_test` — the bench stays a
 frozen Phase-1 artifact)
