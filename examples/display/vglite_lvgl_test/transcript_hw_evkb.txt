@@ -328,3 +328,17 @@ frame) instead of LVGL's per-task rebuild; (b) LVGL's static path caching /
 lv_obj-level render caching if adopted upstream; (c) profiling the 400 ms
 properly once a VCOM or SWO channel is available. None of these are in
 Phase 2's scope.
+
+================================================================================
+2026-08-27 LATE -- FPSBENCH before/after the wedge-delta damage (sw build,
+all-16-knob workload, -DFPSBENCH variant, separate build dirs):
+
+  pre-delta  (SynthUI a18f4fb): FPSBENCH_MEAN_US=321921  WORST_US=331740  (3.1 fps)
+  wedge-delta (SynthUI de2ff22): FPSBENCH_MEAN_US=83419   WORST_US=315970  (12.0 fps)
+
+3.9x at the widget level, matching the bench prototype's 310->71 ms. The
+after-run's WORST is the initial full-screen render, which the FPSBENCH mean
+deliberately includes; both runs printed the same KNOB_GRID_SUM_SW
+(0x579E5810), the pixel-neutrality check. Not gated -- recorded as the
+delta-damage spec's widget-level number.
+================================================================================

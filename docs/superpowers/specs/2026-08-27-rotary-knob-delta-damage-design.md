@@ -145,6 +145,42 @@ Per-knob single union bbox (halves area count), GPU-drawing the well
 (collapses the remaining sw floor to ground fill), overlap/pipelining
 (measured ceiling 4% — retired unless the sw floor shrinks to GPU scale).
 
+## 7b. Silicon findings (same day — the guard earned its keep twice)
+
+The equality guard FAILED on its first GC355 run (`KNOB_DELTA_SEQ=0xCEDF7073
+vs FULL=0x1AB18637`, `rk_gpu_err=0`) — QEMU can never execute the compositor,
+so this was the guard's first real execution. Root-caused by dumping both
+frames over SWD (their FNVs equalled the printed sums) and diffing pixels:
+
+1. **Overlapping surviving inv areas** are composited once per area, and
+   SRC_OVER AA is not idempotent (LVGL's sw renderer paints overlaps twice
+   too, but sw repainting is idempotent). Fixed preventively by disjoint
+   decomposition — each area is composited minus the rects already
+   composited for that knob. This was NOT the observed mismatch (the fix
+   changed no pixel in the failing scene) but is a real hazard for small
+   angle steps whose wedge boxes overlap.
+2. **The observed mismatch, exactly**: the diff was the two disc-edge
+   circles, full circumference, on both knobs — rim AA painted by an earlier
+   composite at an earlier ANGLE. The discs are 4-segment Bézier circle
+   approximations: geometrically rotation-invariant, but the Bézier
+   radius-error pattern rotates with the matrix, so disc-edge AA is a
+   function of the angle. §2's "the discs are rotationally invariant" was
+   true of the geometry and FALSE of the rendered pixels on the GPU path.
+   Fixed by drawing the discs with an UNROTATED matrix (translate·scale
+   only) and only the wedge with the rotated one — which the sw renderer had
+   always done, which is why QEMU passed.
+
+After both fixes: `KNOB_DELTA_SEQ == KNOB_DELTA_FULL = 0x62912661`,
+`rk_gpu_err=0`, bit-identical across two boots. Consequence: the six GPU
+scene sums moved (discs now render identically at every angle) — a NEW
+silicon-only golden set, recorded in `transcript_hw_evkb.txt`; the QEMU sw
+goldens were untouched throughout. Also measured (silicon, FPSBENCH sw
+build, all-16 workload): 321.9 → 83.4 ms/frame mean (3.1 → 12.0 fps) at the
+widget level; the worst-frame outlier is the initial full-screen render the
+FPSBENCH mean includes. What was NOT observed: any scissor-window effect on
+AA — scissored composites matched fresh pixels wherever the geometry
+matched, so `vg_lite_set_scissor` needs no fallback.
+
 ## 8. Risks
 
 - **Bbox too tight** at some size/angle → caught by the equality guard at

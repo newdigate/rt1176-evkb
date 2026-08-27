@@ -68,7 +68,7 @@ static lv_obj_t *hero;
  * sum describes (recipe: acid_box/transcript_qemu.txt). The sums printed
  * BEFORE the hold must match the golden build's -- that equality is what
  * ties the inspected frame to the pinned value. 1=grid, 2..5=row screens,
- * 6=accent. */
+ * 6=accent, 7=delta-sequence result, 8=delta fresh reference. */
 static void eyeball_hold(int n)
 {
     if (n != RK_EYEBALL_HOLD) return;
@@ -316,7 +316,9 @@ void setup()
      * damage must stay wedge-sized. The gate does the comparing; the EQ
      * verdict token is for bench readability only. */
     const uint32_t d_seq  = delta_run_sequence();
+    eyeball_hold(7);              /* framebuffer = the delta-sequence result */
     const uint32_t d_full = delta_run_fresh();
+    eyeball_hold(8);              /* framebuffer = the fresh full render */
     Serial1.printf("KNOB_DELTA_SEQ=0x%08lX\n", (unsigned long)d_seq);
     Serial1.printf("KNOB_DELTA_FULL=0x%08lX\n", (unsigned long)d_full);
     Serial1.printf("KNOB_DELTA_EQ=%s\n", d_seq == d_full ? "PASS" : "FAIL");

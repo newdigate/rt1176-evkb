@@ -1,5 +1,33 @@
 synthui_knob_test -- HARDWARE (MIMXRT1170-EVKB + RK055), synthui_rotary_knob
 ================================================================================
+2026-08-27 LATE (wedge-delta damage, SynthUI 845c280): the delta equality
+guard ran on the GC355 for the first time and FAILED (SEQ 0xCEDF7073 vs
+FULL 0x1AB18637, rk_gpu_err=0) -- the defect QEMU structurally cannot see.
+SWD dumps of both frames (FNVs == the printed sums) diffed to exactly the
+two disc-edge circles, full circumference: the 4-segment Bezier circles'
+radius-error pattern rotates with the matrix, so disc-edge AA depended on
+the angle at which the rim was last composited. Fixed by drawing the discs
+UNROTATED (only the wedge rotates -- what sw always did) plus a preventive
+one-composite-per-pixel disjoint decomposition for overlapping inv areas.
+After the fixes, and bit-identical across two boots:
+
+  rk_engine=gpu
+  KNOB_SUM_ALL=0x1EE30651
+  KNOB_SUM_ENDLESS_LIGHT=0x31604B3E
+  KNOB_SUM_BOUNDED_LIGHT=0x0465DDD8
+  KNOB_SUM_ENDLESS_DARK=0x44233661
+  KNOB_SUM_BOUNDED_DARK=0x3C8C07DA
+  KNOB_SUM_ACCENT=0xAE9E014C
+  KNOB_DELTA_SEQ=0x62912661
+  KNOB_DELTA_FULL=0x62912661
+  KNOB_DELTA_EQ=PASS
+  KNOB_DELTA_MAXAREA=3050
+  rk_gpu_err=0
+
+★ This is the CURRENT gpu golden set. It SUPERSEDES the set below (recorded
+the same day, before the matrix split): the discs now render identically at
+every angle, so every scene sum moved. The QEMU sw goldens never moved.
+================================================================================
 2026-08-27, NEW-20 Phase 2. Same ELF the QEMU gate runs (build/, VGLITE-flavor
 SynthUI, LVGL software renderer). On silicon the chip-ID probe finds the GC355
 and the widget's compositor attaches, so every checksummed screen is rendered
