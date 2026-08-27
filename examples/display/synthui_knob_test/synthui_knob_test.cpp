@@ -149,6 +149,92 @@ static lv_obj_t *build_accent_screen(void)
     return scr;
 }
 
+/* --- wedge-delta guards (spec 2026-08-27-rotary-knob-delta-damage) --------
+ * Two assertions, computed by the SAME code on both engines:
+ *   EQUALITY: an angle SEQUENCE rendered via the widget's wedge-delta damage
+ *   must be PIXEL-IDENTICAL to a fresh full render of the final state -- the
+ *   gate compares the two printed sums, so this never needs re-goldening.
+ *   A too-tight bbox (stale wedge pixels) or a broken gpu scissor fails it.
+ *   ENGAGEMENT: the largest single invalidated area during the pure-angle
+ *   segment must stay wedge-sized -- a change that quietly reverts set_angle
+ *   to full invalidation fails HERE and nowhere else. The hook records only
+ *   while s_delta_record: the deliberate state toggle afterwards SHOULD
+ *   invalidate the whole control, and must not trip the bound.
+ * LV_EVENT_INVALIDATE_AREA is a DISPLAY event (sent per lv_inv_area with the
+ * clipped area, lv_refr.c:317); the delta scene holds nothing but the two
+ * knobs, so no source filtering is needed. */
+static int32_t s_delta_maxarea = 0;
+static bool    s_delta_record = false;
+static void delta_inv_cb(lv_event_t *e)
+{
+    if (!s_delta_record) return;
+    const lv_area_t *a = (const lv_area_t *)lv_event_get_param(e);
+    const int32_t px = lv_area_get_width(a) * lv_area_get_height(a);
+    if (px > s_delta_maxarea) s_delta_maxarea = px;
+}
+
+static uint32_t sum_active_screen(void)
+{
+    lvgl_sum_reset();
+    lvgl_sum_feed(Display.framebuffer(), PANEL_FB_BYTES);
+    return lvgl_sum_value();
+}
+
+/* Two knobs -- two S values, both well types. The sequence crosses a wrap
+ * (350->10) and ends on a detent-lattice value; the mid-run focus toggle
+ * exercises the full-invalidate path interleaved with deltas. */
+static const float delta_seq[] = { 30.0f, 95.0f, 350.0f, 10.0f, -120.0f };
+#define DELTA_FINAL 78.75f
+
+static void delta_make_knobs(lv_obj_t *scr, lv_obj_t **k1, lv_obj_t **k2)
+{
+    *k1 = make_knob(scr, SYNTHUI_ROTARY_MODE_ENDLESS,
+                    SYNTHUI_ROTARY_THEME_LIGHT, LV_STATE_DEFAULT, 0.0f, 150);
+    lv_obj_set_pos(*k1, 60, 300);
+    *k2 = make_knob(scr, SYNTHUI_ROTARY_MODE_BOUNDED,
+                    SYNTHUI_ROTARY_THEME_LIGHT, LV_STATE_DEFAULT, 0.0f, 250);
+    lv_obj_set_pos(*k2, 320, 300);
+}
+
+static uint32_t delta_run_sequence(void)
+{
+    lv_obj_t *scr = lv_obj_create(NULL); opaque_bg(scr);
+    lv_obj_t *k1, *k2;
+    delta_make_knobs(scr, &k1, &k2);
+    lv_screen_load(scr);
+    lv_refr_now(NULL);                    /* settle the initial full render */
+    lv_display_add_event_cb(lv_display_get_default(), delta_inv_cb,
+                            LV_EVENT_INVALIDATE_AREA, NULL);
+    s_delta_maxarea = 0; s_delta_record = true;
+    for (unsigned i = 0; i < sizeof delta_seq / sizeof delta_seq[0]; i++) {
+        synthui_rotary_knob_set_angle(k1, delta_seq[i]);
+        synthui_rotary_knob_set_angle(k2, delta_seq[i]);
+        lv_refr_now(NULL);
+    }
+    s_delta_record = false;               /* the toggle below SHOULD be big */
+    lv_obj_add_state(k2, LV_STATE_FOCUSED);
+    lv_obj_invalidate(k2);                /* programmatic-state contract */
+    lv_refr_now(NULL);
+    synthui_rotary_knob_set_angle(k1, DELTA_FINAL);
+    synthui_rotary_knob_set_angle(k2, DELTA_FINAL);
+    lv_refr_now(NULL);
+    return sum_active_screen();
+}
+
+static uint32_t delta_run_fresh(void)
+{
+    lv_obj_t *scr = lv_obj_create(NULL); opaque_bg(scr);
+    lv_obj_t *k1, *k2;
+    delta_make_knobs(scr, &k1, &k2);
+    synthui_rotary_knob_set_angle(k1, DELTA_FINAL);
+    synthui_rotary_knob_set_angle(k2, DELTA_FINAL);
+    lv_obj_add_state(k2, LV_STATE_FOCUSED);
+    lv_screen_load(scr);
+    lv_obj_invalidate(scr);
+    lv_refr_now(NULL);
+    return sum_active_screen();
+}
+
 /* Load a screen, render it synchronously, checksum the whole framebuffer.
  * With the compositor attached, RENDER_READY fires INSIDE lv_refr_now() and
  * vg_lite_finish() retires before it returns, so the sum always includes the
@@ -224,6 +310,17 @@ void setup()
     Serial1.printf("KNOB_SUM_ACCENT=0x%08lX\n",
                    (unsigned long)sum_screen(build_accent_screen()));
     eyeball_hold(6);
+
+    /* Wedge-delta guards: sequence render must be PIXEL-IDENTICAL to a
+     * fresh full render of the final state, and the recorded per-step
+     * damage must stay wedge-sized. The gate does the comparing; the EQ
+     * verdict token is for bench readability only. */
+    const uint32_t d_seq  = delta_run_sequence();
+    const uint32_t d_full = delta_run_fresh();
+    Serial1.printf("KNOB_DELTA_SEQ=0x%08lX\n", (unsigned long)d_seq);
+    Serial1.printf("KNOB_DELTA_FULL=0x%08lX\n", (unsigned long)d_full);
+    Serial1.printf("KNOB_DELTA_EQ=%s\n", d_seq == d_full ? "PASS" : "FAIL");
+    Serial1.printf("KNOB_DELTA_MAXAREA=%ld\n", (long)s_delta_maxarea);
 
     /* gpu lines NEVER appear in a sw run -- the gate tripwires on them. */
     if (s_gpu)
