@@ -75,5 +75,22 @@ grep -qE "KNOB_SUM_BOUNDED_LIGHT=0xD9617577\r?$" "$OUT" || { echo "FAIL: bounded
 grep -qE "KNOB_SUM_ENDLESS_DARK=0x04C2E8F0\r?$"  "$OUT" || { echo "FAIL: endless/dark checksum"; exit 1; }
 grep -qE "KNOB_SUM_BOUNDED_DARK=0xD8FA331E\r?$"  "$OUT" || { echo "FAIL: bounded/dark checksum"; exit 1; }
 grep -qE "KNOB_SUM_ACCENT=0x2B17212F\r?$"        "$OUT" || { echo "FAIL: accent checksum"; exit 1; }
+# Wedge-delta guards (spec 2026-08-27-rotary-knob-delta-damage). EQUALITY is
+# computed by the GATE from the two printed sums -- not a pinned golden, so
+# it never re-goldens; a too-tight bbox (stale wedge pixels) fails here.
+# Demonstrated RED 2026-08-27: bbox pad scratch-built to 0 ->
+# "FAIL: delta render differs from full render (0x60142FF0 vs 0x6F8E52AC)".
+DSEQ=$(grep -a -oE "KNOB_DELTA_SEQ=0x[0-9A-F]{8}" "$OUT" | head -1 | cut -d= -f2)
+DFUL=$(grep -a -oE "KNOB_DELTA_FULL=0x[0-9A-F]{8}" "$OUT" | head -1 | cut -d= -f2)
+[ -n "$DSEQ" ] && [ -n "$DFUL" ] || { echo "FAIL: delta guard tokens missing"; exit 1; }
+[ "$DSEQ" = "$DFUL" ] || { echo "FAIL: delta render differs from full render ($DSEQ vs $DFUL)"; exit 1; }
+# ENGAGEMENT: the recorded per-step damage must be wedge-sized (measured
+# 3050 px; a full 250px control is 62500), not the whole control -- a change
+# that quietly reverts set_angle to full invalidation fails HERE and nowhere
+# else. Demonstrated RED 2026-08-27: set_angle scratch-reverted to
+# lv_obj_invalidate -> "FAIL: delta damage not engaged (maxarea=62500)".
+DAREA=$(grep -a -oE "KNOB_DELTA_MAXAREA=[0-9]+" "$OUT" | head -1 | cut -d= -f2)
+[ -n "$DAREA" ] && [ "$DAREA" -gt 0 ] || { echo "FAIL: delta area guard missing or zero"; exit 1; }
+[ "$DAREA" -le 8000 ] || { echo "FAIL: delta damage not engaged (maxarea=$DAREA)"; exit 1; }
 grep -q "SYNTHUI_KNOB_DONE"    "$OUT" || { echo "FAIL: no completion token"; exit 1; }
 echo "PASS: SynthUI knob render verified"
