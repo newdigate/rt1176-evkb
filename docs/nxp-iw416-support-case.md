@@ -38,7 +38,7 @@ measurement; full logs in `examples/networking/m2_hci_probe/transcript_hw_evkb.t
 >   download followed by a dead controller, with zero of our code in the path.
 >   "The download was corrupt" is no longer available as an explanation.
 >
-> Reply drafted for the forum in `docs/nxp-iw416-forum-reply-2026-08-27.md`.
+> Reply **posted to the forum 2026-08-27** — text saved at `docs/nxp-iw416-forum-reply-2026-08-27.md`. Now monitoring for a response.
 
 ---
 
