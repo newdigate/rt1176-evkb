@@ -61,10 +61,12 @@ static const rkb_cell_t *g_cell = NULL;      /* active cell, NULL = none */
  * padded frame is 96,000 B, itself 64-B aligned, so every strip frame -- not
  * just the first -- starts on a 64-B boundary. At the old 90,000-B pitch 63 of
  * the 64 frames sat 16 bytes off. */
-#define ROTOR_PX   (RKB_KNOB_PX * RKB_ROTOR_STRIDE_PX)
+/* ALLOCATED words per frame (150 rows x 160), not the 22,500 visible pixels --
+ * the name is the warning, since the two differ by the stride padding. */
+#define ROTOR_WORDS   (RKB_KNOB_PX * RKB_ROTOR_STRIDE_PX)
 #define ROTOR_B    RKB_ROTOR_BYTES
-EXTMEM __attribute__((aligned(64))) static uint32_t g_rotor[ROTOR_PX];
-EXTMEM __attribute__((aligned(64))) static uint32_t g_strip[RKB_STRIP_N][ROTOR_PX];
+EXTMEM __attribute__((aligned(64))) static uint32_t g_rotor[ROTOR_WORDS];
+EXTMEM __attribute__((aligned(64))) static uint32_t g_strip[RKB_STRIP_N][ROTOR_WORDS];
 
 static lv_image_dsc_t g_rotor_dsc;
 static lv_image_dsc_t g_strip_dsc[RKB_STRIP_N];
@@ -224,7 +226,9 @@ static bool cell_build_assets(const rkb_cell_t *c)
             size_t bytes = 0;
             const int np = rkg_build_vg_paths(c->var, g_vg_paths, g_vg_colors,
                                               &bytes);
-            if (np < 0) { g_vg_npaths = 0; return false; }
+            /* g_init_us too: leaving the previous cell's value would attach a
+             * plausible init time to a cell that never built. */
+            if (np < 0) { g_vg_npaths = 0; g_init_us = 0; return false; }
             g_vg_npaths = np;
             g_rotor_bytes = (uint32_t)bytes;
         }
@@ -232,7 +236,7 @@ static bool cell_build_assets(const rkb_cell_t *c)
     case RKB_BITMAP:
         rkg_render_rotor_argb(c->var, g_rotor, RKB_KNOB_PX, 0.0f);
         if (c->gpu) {
-            rkg_premultiply(g_rotor, ROTOR_PX);
+            rkg_premultiply(g_rotor, ROTOR_WORDS);
             vg_wrap_argb(&g_rotor_vgbuf, g_rotor);
         } else {
             memset(&g_rotor_dsc, 0, sizeof(g_rotor_dsc));
@@ -249,11 +253,11 @@ static bool cell_build_assets(const rkb_cell_t *c)
     case RKB_STRIP:
         /* ONE canvas for all 64 frames: init_us should measure rendering, not
          * lv_obj create/delete churn. */
-        rkg_render_strip_argb(c->var, g_strip[0], ROTOR_PX, RKB_STRIP_N,
+        rkg_render_strip_argb(c->var, g_strip[0], ROTOR_WORDS, RKB_STRIP_N,
                               RKB_KNOB_PX, RKB_STEP_DEG);
         for (int i = 0; i < RKB_STRIP_N; i++) {
             if (c->gpu) {
-                rkg_premultiply(g_strip[i], ROTOR_PX);
+                rkg_premultiply(g_strip[i], ROTOR_WORDS);
                 vg_wrap_argb(&g_strip_vgbuf[i], g_strip[i]);
             } else {
                 memset(&g_strip_dsc[i], 0, sizeof(g_strip_dsc[i]));

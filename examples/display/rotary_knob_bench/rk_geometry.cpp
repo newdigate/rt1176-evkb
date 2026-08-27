@@ -7,6 +7,20 @@
 
 #define RKG_DEG (3.14159265358979f / 180.0f)
 
+/* ★ THE STRIDE TIE, ENFORCED AT BUILD TIME.
+ * The arenas in rotary_knob_bench.cpp are sized at RKB_ROTOR_STRIDE_B per row;
+ * LVGL's canvas derives its own row pitch from LV_DRAW_BUF_STRIDE_ALIGN. If
+ * those two ever disagree the canvas writes rows at a pitch the buffers do not
+ * have -- and the GC355 additionally rejects any source stride that is not
+ * 16 px x 4 B aligned (see rk_geometry.h). Both facts are compile-time
+ * constants here, so neither needs to be discovered at run time.
+ * For the one width this example uses, lv_draw_buf_width_to_stride(150,
+ * ARGB8888) = round_up(150*4, 64) = 640 = RKB_ROTOR_STRIDE_B. */
+static_assert(LV_DRAW_BUF_STRIDE_ALIGN == 64,
+              "GC355 needs 16-px-aligned blit sources; see rk_geometry.h");
+static_assert(RKB_ROTOR_STRIDE_B == 640,
+              "arena pitch must match LVGL's derived canvas stride");
+
 /* ---- palette: RotaryKnob.dc.html THEME.light, state idle ---- */
 #define RKG_WELL        0xdcdce6
 #define RKG_WELL_STROKE 0xb6b8cc
@@ -118,16 +132,17 @@ void rkg_draw_rotor_sw(lv_layer_t *l, rkg_variant_t v,
 static void render_one(lv_obj_t *cv, rkg_variant_t v, uint32_t *buf, int side,
                        float th)
 {
-    /* The whole allocated extent, padding columns included: the padding is
-     * never sampled but it IS hashed by nothing and blitted by the GPU as part
-     * of a 64-B burst, so leaving it uninitialised would make the picture
-     * depend on stale SDRAM. */
+    /* The whole allocated extent, padding columns included. The padding is
+     * never sampled by the blit and never hashed -- the rotor disc spans only
+     * columns ~21..129 of 160, and the checksum is taken over the framebuffer,
+     * not over these arenas. It is zeroed so that the arena's contents are a
+     * function of the render alone rather than of whatever SDRAM held.
+     * The stride tie itself is a build-time invariant (static_asserts above),
+     * so nothing is re-checked here 64 times inside the init_us window. This
+     * function is valid only for side == RKB_KNOB_PX, which is what makes
+     * those compile-time constants sufficient. */
     memset(buf, 0, (size_t)side * (size_t)RKB_ROTOR_STRIDE_B);
     lv_canvas_set_buffer(cv, buf, side, side, LV_COLOR_FORMAT_ARGB8888);
-    /* The build's LV_DRAW_BUF_STRIDE_ALIGN must be what the arenas were sized
-     * for, or the canvas writes rows at a pitch the buffers do not have. */
-    LV_ASSERT(lv_draw_buf_width_to_stride(side, LV_COLOR_FORMAT_ARGB8888)
-              == (uint32_t)RKB_ROTOR_STRIDE_B);
     lv_layer_t layer;
     lv_canvas_init_layer(cv, &layer);
     rkg_draw_rotor_sw(&layer, v, side * 0.5f, side * 0.5f,
