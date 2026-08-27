@@ -19,7 +19,26 @@ round trip through lwip and the radio.
                    Prints `fill evicted_peers=N`.  The board's evict= counter
                    is the cross-check (read the caveat before expecting 1).
   all <ip>         the three in order; prints WIFISRV <test> PASS/FAIL lines
-Exit status is 0 only if every test selected passed.  Python 3 stdlib only.
+  soak <ip> <minutes>
+                   NEW-8: sustained MIXED load until the deadline -- repeats
+                   [echo x3, concurrent, fill] cycles, because the shapes'
+                   transitions are where the interesting failures live, with
+                   a 60 s quiet window every 20 cycles so the board's `pcb
+                   tw=` line can be watched DRAINING as well as saturating.
+                   Every soak payload is EXACTLY SOAK_SIZE (40) bytes and
+                   unique, so the board's final `sess=N/B` must satisfy
+                   B == N x 40 TO THE BYTE against this side's own counts --
+                   an accounting that closes is the assertion; a counter that
+                   merely climbs is not.  Prints a progress line per minute
+                   (a ratio cannot distinguish a constant from a rate; the
+                   intermediate points are what can).  THE PEER IS
+                   AUTHORITATIVE: compare the board's sess= DELTA across the
+                   soak, never its absolute (it may carry pre-soak history).
+Exit status is 0 only if every test selected passed.  For soak: 0 iff at
+least one exchange completed and NO byte ever came back wrong or short
+(connect failures and eviction counts are REPORTED, not failed on -- under
+deliberate pcb pressure a refused connect is data, not a defect).
+Python 3 stdlib only.
 
 ★ SELF-VERIFYING `fill`, because the obvious version is not.  "The 5th echo
 worked" does NOT imply anything was evicted: a server with more slots, or one
@@ -46,6 +65,15 @@ no test here sends a second message down a connection it already used -- it
 would be answered by a RST, and the failure would look like packet loss rather
 than like the design it is.  (wifi_client_test.cpp keeps its handle in a
 static and holds one session open; that is the other half of the API.)
+
+★ SOAK MODE DEMONSTRATED both ways before being trusted (2026-08-26), against
+a localhost one-shot simulator implementing this server's contract (4-slot
+pool, RST-eviction of the oldest silent conn on a 5th accept):
+  - clean sim:      exch=6 bytes=240 mismatch=0, accounting closes 6 x 40,
+                    evicted=1 observed -- exit 0.
+  - corrupting sim (last byte flipped in every echo): mismatch=6 exch=0,
+    "accounting will NOT close" -- exit 1.  A soak that cannot fail on a
+    corrupt echo would be decoration.
 
 ★ CAVEAT on `fill`, worth reading before you disbelieve a counter: a peer that
 merely CLOSES an unclaimed connection does not free its pool slot -- lwip
@@ -179,6 +207,152 @@ def t_fill(ip):
             s.close()
 
 
+# --- NEW-8 soak -------------------------------------------------------------
+
+SOAK_SIZE = 40          # bytes, every soak payload exactly; fits one segment
+_soak_seq = 0
+
+
+def _soak_msg(kind):
+    """Unique fixed-size payload. Unique so a stale echo from an earlier
+    exchange can never satisfy a later one; fixed-size so the board-side
+    accounting must close as B == N * SOAK_SIZE exactly."""
+    global _soak_seq
+    _soak_seq += 1
+    m = f"WIFISRV soak {_soak_seq:08d} {kind} ".encode()
+    assert len(m) <= SOAK_SIZE, f"kind {kind!r} overflows SOAK_SIZE"
+    return m + b"." * (SOAK_SIZE - len(m))
+
+
+def _soak_echo(ip, kind, st):
+    """One exchange. Three distinct outcomes, counted separately because they
+    mean different things on the board: exch (clean, board counted 40 bytes),
+    mismatch (board holds a session and SOME bytes -- the accounting will show
+    exactly how many), connfail (no session on either side)."""
+    msg = _soak_msg(kind)
+    try:
+        with socket.create_connection((ip, PORT), timeout=TIMEOUT) as s:
+            s.sendall(msg)
+            got = _recv_exactly(s, len(msg))
+    except OSError as e:
+        st["connfail"] += 1
+        st["last_err"] = f"{kind}: {type(e).__name__}: {e}"
+        return
+    if got == msg:
+        st["exch"] += 1
+        st["bytes"] += len(msg)
+    else:
+        st["mismatch"] += 1
+        what = "content mismatch" if len(got) == len(msg) else "short/absent echo"
+        st["last_err"] = f"{kind}: sent {len(msg)}B got {len(got)}B ({what})"
+
+
+def _soak_concurrent(ip, st):
+    """Two live at once, both staged before either is drained -- the soak
+    keeps exercising the two-slot case, not just the sequential one."""
+    socks = []
+    try:
+        try:
+            socks = [socket.create_connection((ip, PORT), timeout=TIMEOUT)
+                     for _ in range(2)]
+        except OSError as e:
+            st["connfail"] += 1
+            st["last_err"] = f"conc-connect: {type(e).__name__}: {e}"
+            return
+        msgs = [_soak_msg(f"c{i}") for i in range(len(socks))]
+        for s, m in zip(socks, msgs):
+            s.sendall(m)
+        for s, m in zip(socks, msgs):
+            got = _recv_exactly(s, len(m))
+            if got == m:
+                st["exch"] += 1
+                st["bytes"] += len(m)
+            else:
+                st["mismatch"] += 1
+                st["last_err"] = f"conc: sent {len(m)}B got {len(got)}B"
+    finally:
+        for s in socks:
+            s.close()
+
+
+def _soak_fill(ip, st):
+    """4 silent idlers + 1 echo through the eviction valve, as t_fill -- but
+    under soak a zero-drop fill is RECORDED (fill_nodrop), not failed:
+    leftovers from the previous cycle mean the valve's candidate set varies,
+    and the number to judge at the END is evicted vs fills, not each one."""
+    try:
+        idlers = [socket.create_connection((ip, PORT), timeout=TIMEOUT)
+                  for _ in range(4)]
+    except OSError as e:
+        st["connfail"] += 1
+        st["last_err"] = f"fill-connect: {type(e).__name__}: {e}"
+        return
+    try:
+        time.sleep(1)
+        _soak_echo(ip, "fill", st)
+        d = _count_dropped(idlers, 2.0)
+        st["evicted"] += d
+        if d == 0:
+            st["fill_nodrop"] += 1
+    finally:
+        for s in idlers:
+            s.close()
+
+
+def t_soak(ip, minutes):
+    st = dict(exch=0, bytes=0, connfail=0, mismatch=0, evicted=0,
+              fill_nodrop=0, cycles=0, last_err="")
+    t0 = time.monotonic()
+    deadline = t0 + minutes * 60.0
+    next_prog = t0 + 60.0
+
+    def progress(force=False):
+        nonlocal next_prog
+        now = time.monotonic()
+        if force or now >= next_prog:
+            print(f"SOAK t={int((now - t0) // 60)}m cycles={st['cycles']} "
+                  f"exch={st['exch']} bytes={st['bytes']} "
+                  f"connfail={st['connfail']} mismatch={st['mismatch']} "
+                  f"evicted={st['evicted']} fill_nodrop={st['fill_nodrop']}",
+                  flush=True)
+            while next_prog <= now:
+                next_prog += 60.0
+
+    while time.monotonic() < deadline:
+        for i in range(3):
+            _soak_echo(ip, f"e{i}", st)
+            time.sleep(0.5)
+        time.sleep(2)
+        _soak_concurrent(ip, st)
+        time.sleep(2)
+        _soak_fill(ip, st)
+        time.sleep(2)
+        st["cycles"] += 1
+        progress()
+        if st["cycles"] % 20 == 0 and time.monotonic() < deadline:
+            # Drain window: ~every 4 min of load, 60 s of silence.  The
+            # board's tw= should fall over this window (TIME_WAIT expiry) --
+            # saturation AND recovery are both part of the pcb measurement.
+            print(f"SOAK quiet window 60s after cycle {st['cycles']}",
+                  flush=True)
+            time.sleep(60)
+    dur = (time.monotonic() - t0) / 60.0
+    sessions = st["exch"] + st["mismatch"]
+    print(f"SOAK done minutes={dur:.1f} cycles={st['cycles']} "
+          f"exch={st['exch']} bytes={st['bytes']} connfail={st['connfail']} "
+          f"mismatch={st['mismatch']} evicted={st['evicted']} "
+          f"fill_nodrop={st['fill_nodrop']}", flush=True)
+    if st["mismatch"] == 0:
+        print(f"SOAK expect board sess DELTA = +{sessions}/+{sessions * SOAK_SIZE} "
+              f"(exactly, {sessions} x {SOAK_SIZE}B)", flush=True)
+    else:
+        print(f"SOAK accounting will NOT close: {st['mismatch']} mismatched "
+              f"exchange(s), last: {st['last_err']}", flush=True)
+    if st["last_err"] and st["mismatch"] == 0:
+        print(f"SOAK last_nonfatal: {st['last_err']}", flush=True)
+    return st["mismatch"] == 0 and st["exch"] > 0
+
+
 # ORDER MATTERS for `all`, and only this dict expresses it: `fill` must run
 # LAST. It leaves 3 unclaimed PEER_CLOSED slots behind (see the ★ CAVEAT), and
 # ahead of `echo`/`concurrent` those still pass but make the board's evict=
@@ -189,6 +363,10 @@ TESTS = {"echo": t_echo, "concurrent": t_concurrent, "fill": t_fill}
 
 
 def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "soak":
+        ok = t_soak(sys.argv[2], float(sys.argv[3]))
+        print(f"WIFISRV soak {'PASS' if ok else 'FAIL'}", flush=True)
+        sys.exit(0 if ok else 1)
     if len(sys.argv) != 3 or (sys.argv[1] not in TESTS and sys.argv[1] != "all"):
         print(__doc__)
         sys.exit(2)

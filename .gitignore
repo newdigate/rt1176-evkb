@@ -34,4 +34,5 @@ docs/*.pdf
 # -- this repo already leaked live Wi-Fi passwords once (W6, still in pushed
 # history), so the generated header is ignored before it is ever created.
 tools/esp32c6-benchap/ap_creds.h
+tools/esp8266-benchap/ap_creds.h
 tools/esp8266-uapclient/client_creds.h

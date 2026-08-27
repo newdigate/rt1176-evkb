@@ -126,3 +126,104 @@ WHAT THIS DOES NOT PROVE
 * Accept refusal (`refuse=`) was never exercised: reaching it needs all four
   slots CLAIMED, which this sketch cannot do (it holds one session).
 * The DHCP-timeout and reconnect paths -- see wifi_client_test's transcript.
+
+
+SOAK (NEW-8), 2026-08-26
+========================
+
+Date        2026-08-26, 18:31-22:31 local, 240.1 minutes continuous
+Firmware    build-hw of this example at branch nicnewdigate/new-8-soak-wifi-
+            server (soak instruments in wifi_server_test.cpp: iw416 health
+            line + pcb pressure line, every 2 s)
+Peer        wifi_peer.py soak 192.168.4.100 240 -- mixed echo/concurrent/fill
+            cycles, unique fixed 40-byte payloads, 60 s drain window every 20
+            cycles.  THE PEER IS AUTHORITATIVE; board counters are the
+            cross-check, compared as DELTAS against the stamped baseline
+            (counters carry the pre-soak smoke test).
+
+RF CONDITIONS (the 2026-08-21 bench caveat is CLOSED)
+-----------------------------------------------------
+A 2.4 GHz flexible U.FL antenna is now fitted on the card's J1 (RF_ANT0,
+Wi-Fi -- M2-MAYA-W1 datasheet UBX-22004354 R05 p.17).  Measured by the card's
+own scans through that antenna: the house AP across the room at -29..-32 dBm,
+NEIGHBOURS' APs at -74..-81 dBm -- i.e. the card now hears other buildings at
+the level it used to hear an AP on its own bench (-81..-84 dBm, W8).  W8's
+re-verify criterion ("any adjacent AP better than ~-45 dBm") is met with
+~15 dB to spare.  Bench AP: ESP8266 softAP ESP8266TEST, WPA2, channel 6,
+192.168.4.1/24 -- reflashed this session from the reconstructed in-tree
+sketch (tools/esp8266-benchap/); the Mac joined the same AP at -39 dBm.
+Board took DHCP .100 this boot (fresh lease table; the .101 in the run above
+is the same shuffle in the other direction).
+
+PEER SIDE (authoritative)
+-------------------------
+SOAK done minutes=240.1 cycles=1046 exch=6276 bytes=251040 connfail=0
+    mismatch=0 evicted=1046 fill_nodrop=0
+SOAK expect board sess DELTA = +6276/+251040 (exactly, 6276 x 40B)
+WIFISRV soak PASS                                              (exit 0)
+
+BOARD SIDE (cross-check), baseline -> final
+-------------------------------------------
+alive=1214 srv=1/0 sess=6/182    evict=1    stall=3   refuse=0   (baseline)
+alive=15654 srv=1/0 sess=6282/251222 evict=4026 stall=159 refuse=0 (final)
+
+THE ACCOUNTING, WRITTEN OUT SO IT VISIBLY BALANCES
+--------------------------------------------------
+1. BYTES.  sess delta = 6282-6 = 6276 sessions, 251222-182 = 251040 bytes.
+   6276 x 40 = 251040.  EXACT, and it equals the peer's own independent
+   count.  Every byte of 251040 made a full round trip through lwip and the
+   radio and was counted on both ends.
+2. THE VALVES, to zero residual.  1046 fills left 1046 x 3 = 3138 unclaimed
+   PEER_CLOSED leftovers (4 idlers each, minus the one the valve evicted
+   under the peer's eyes -- observed 1046/1046, fill_nodrop=0).  Their fates:
+   evicted later by new accepts   4025(evict delta) - 1046 = 2979
+   reaped by the stall valve       159 - 3(baseline)       =  156
+   still live at the final sample  (pcb act=3)             =    3
+                                                     total = 3138.  EXACT.
+3. HEALTH: ONE distinct iw416 signature across 7221 samples --
+     iw416 stranded=0 desync=0 split=0 drop=0 seqmis=0 pswake=0
+   sort -u of every sample collapses to that single line: no counter was
+   EVER non-zero at ANY sample, not merely clean at the end.
+4. refuse=0 for the whole run, as this sketch's design requires (it claims
+   no handle across passes, so the evictor always has a candidate).
+5. LINK: zero wifi_status= lines in the soak window -- the association held
+   240 unbroken minutes.  That crosses the ESP8266 softAP's default DHCP
+   lease term with no visible renewal event and no interruption.
+6. echo_short= never fired (the peer always reads; expected).
+
+PCB PRESSURE (the headline number, previously a hypothesis)
+-----------------------------------------------------------
+MEMP_NUM_TCP_PCB=5, WIFI_MAX_CONNS=4, one-shot server = board holds every
+TIME_WAIT (~120 s each).  Offered ~26 exchanges/min -- roughly 30x the
+~2.5/min that five pcbs could sustain without reclamation -- for four hours.
+Distribution over 7243 pcb samples (count, state):
+   3016 act=3 tw=1   1777 act=3 tw=2   1002 act=2 tw=2   686 act=0 tw=1
+    524 act=4 tw=0     70 act=0 tw=4     65 act=4 tw=1    53 act=0 tw=5
+     19 act=5 tw=0     13 act=0 tw=3    12 act=0 tw=2      4 act=2 tw=3
+      2 act=1 tw=1
+act+tw never exceeded 5 (an honest-walk cross-check: the two lists share the
+5-pcb pool), tw hit the full-pool 5 only inside drain windows and always
+expired back down, and act=5 tw=0 moments (pool entirely active) recovered
+without a single refused or failed connect.  CONCLUSION: lwip's
+tcp_kill_timewait self-heal -- which announces nothing and increments no
+counter -- sustained 30x the no-reclaim exchange rate for 240 minutes with a
+byte-exact accounting.  The W22 handoff's headline risk is settled: the pcb
+pool under this server's active-close design degrades NOTHING at bench rates;
+it silently recycles TIME_WAIT and the accounting stays perfect.
+
+STILL UNPROVEN, honestly
+------------------------
+* Reconnect after a GENUINE link loss: the link never dropped in 4 h, so the
+  path stayed unexercised.  (Killing the AP mid-soak would conflate the
+  resource question this run existed to answer; do it as its own experiment.)
+* refuse= remains structurally unreachable from this sketch, as documented.
+* Throughput -- unchanged; this bench AP caps at ~2.7 Mbps and the soak's
+  40-byte exchanges do not approach it.
+
+Bench incidents during the run, for the record: the MCU-Link VCOM died
+silently once BEFORE the soak (bytes stop; SWD showed DHCSR healthy-running
+and s_beginAttempts climbing -- the firmware was fine) and was revived by a
+DTR/RTS toggle on the freed port; a watchdog automated that during the soak
+and NEVER FIRED (zero interventions in 4 h).  LinkServer `run` wedged twice
+(~145% CPU, no probe traffic, empty crt_emu progress file); `flash load` +
+`flash verify` + a pyocd DAP reset did the job instead.
