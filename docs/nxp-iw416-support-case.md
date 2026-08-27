@@ -13,27 +13,32 @@ measurement; full logs in `examples/networking/m2_hci_probe/transcript_hw_evkb.t
 > <https://community.nxp.com/t5/i-MX-RT-Crossover-MCUs/BT-firmware-accepted-over-UART-but-controller-never-runs-and/m-p/2408524#M37090>
 > Watch it for replies before re-running any experiment.
 
-> ### ⏳ PENDING — NXP (Daniel) replied 2026-08-26, three preconditions before they dig deeper
+> ### ✅ ALL THREE PRECONDITIONS MET — 2026-08-27
 >
-> 1. **Complete the five-item rework.** Confirmed status: `R404` + `R1901`
->    **done**; `R183` **still fitted**, `R1816` **still fitted**, `R1902`
->    **still DNP** — the three he named are outstanding. Action: remove
->    `R183`/`R1816`, fit `R1902` (0 Ω). Consequences in
->    `docs/m2-bluetooth-hardware-rework.md` (cost ≈ zero on this setup).
-> 2. **External 5 V power, not USB.** Set jumper **`J38` to 1–2** (selects
->    `5V_DC_IN` as `5V_SYS`), feed 5 V to the **`J43`** barrel jack, slide
->    **`SW5`** on. (MIMXRT1170EVKBHUG, Table 7.)
-> 3. **Complete serial log from the UNMODIFIED NXP shell** built for
->    `board_murata_1xk_m2`. Note: the stock `edgefast_bluetooth` shell **hangs
->    in the download** (3 Mbaud corruption), so the "complete log" is banner →
->    `bt.init` → endless progress dots. The `DEBUG_PRINT`-narrated trace that
->    explains it is a middleware change, offered separately as a supplement.
+> 1. **Full rework DONE.** `R1902` fitted (0 Ω), `R1816` removed, `R183` removed,
+>    on top of `R404` + `R1901`. Our own probe re-verified the readable BT link
+>    survived the removals — clean 115200 download, `sent=131856/131840`,
+>    `framing=0`, byte-for-byte the pre-rework result.
+> 2. **External 5 V DONE.** `J38` → 1–2, 5 V on the `J43` barrel jack, `SW5` on.
+> 3. **Unmodified-shell log CAPTURED.** Built `examples/edgefast_bluetooth_examples/shell`
+>    stock — the only change is the sanctioned module selection in the board
+>    `prj.conf` (two Kconfig `choice` lines: `IW61X`→`IW416`,
+>    `board_murata_2el_m2`→`board_murata_1xk_m2`); `flexspi_nor_debug`, armgcc
+>    10.2.1, `CONFIG_BT_SIGNING=y` stock. **See §3a.**
 >
-> **Plan when the board frees up:** do (1)+(2) by hand, then this session
-> rebuilds the unmodified shell and captures the (3) log on the reworked,
-> externally-powered board — one reply that satisfies all three. **On hold
-> 2026-08-26: the board is running another session's Wi-Fi soak; do not flash
-> or drive it until that finishes.**
+> **The result changes the report.** With the flow-control rework in place, at
+> `@bt> bt.init` the firmware now **downloads successfully** (`download success!`,
+> 131,840 B in ~1.45 s — the high-speed 3 Mbaud phase) and the controller is then
+> **silent**: no `Bluetooth initialized`, `bt.init` never returns, CM7 alive and
+> blocked (DHCSR `0x01010001`, CFSR/HFSR = 0, no fault). So:
+>
+> * **Failure B (3 Mbaud download corruption) is RESOLVED by the rework** — the
+>   very phase that corrupted before now completes on NXP's own stack (§4).
+> * **Failure A is now cleanly ISOLATED** — a complete, uncorrupted, CRC-checked
+>   download followed by a dead controller, with zero of our code in the path.
+>   "The download was corrupt" is no longer available as an explanation.
+>
+> Reply drafted for the forum in `docs/nxp-iw416-forum-reply-2026-08-27.md`.
 
 ---
 
@@ -47,13 +52,17 @@ BT firmware **downloads completely and is accepted** (the ROM stops requesting
 data and does not re-announce), and the controller then **never transmits** —
 no HCI response at any baud rate.
 
-**Failure B — an EdgeFast/board bug.** NXP's stock EdgeFast download flow
-switches to **3,000,000 baud mid-download** and the link **corrupts at the
-switch** on this board; the download never completes. This is separate from
-Failure A and reproducible with NXP software only.
+**Failure B — an EdgeFast/board bug, NOW RESOLVED by the rework.** Before the
+flow-control rework, NXP's stock EdgeFast download switched to **3,000,000 baud
+mid-download** and the link **corrupted at the switch** on this board; the
+download never completed. With `R1902` fitted and `R1816` removed (2026-08-27),
+the 3 Mbaud download **completes** — `download success!` on the stock shell
+(§3a). Root cause confirmed: the missing CTS flow control.
 
-> These have different root points. Fixing B (the 3 Mbaud corruption) would not
-> address A (the post-download silence). We are asking about both, separately.
+> These have different root points, and completing the rework proves it: fixing
+> B (the 3 Mbaud corruption) did **not** address A. After a now-*successful*
+> download, the controller is still silent (§3a). **Failure A is the remaining
+> question**, and it is now isolated from any download-integrity confound.
 
 Wi-Fi (SDIO) on the same card works fully — enumeration, station, micro-AP,
 throughput — so the card, its power, and its level shifters are healthy.
@@ -130,7 +139,50 @@ silent. So this is not a stale/wrong *version*.
 
 ---
 
+## 3a. Failure A reproduced on NXP's UNMODIFIED stack (2026-08-27, full rework + external 5 V)
+
+After completing the flow-control rework (`R1902` fitted, `R1816` + `R183`
+removed) and powering the board from the `J43` barrel jack at 5 V, we built the
+stock `examples/edgefast_bluetooth_examples/shell` — unmodified but for the
+sanctioned module selection (`IW416` / `board_murata_1xk_m2`) — and typed
+`bt.init`:
+
+```
+@bt> bt.init
+[FW Download] Start to download firmware from 0x301198fc: 6812
+download starts(131840)
+...................................................................... (141 dots)
+download success!
+[FW Download]BLE FW is downloaded: 8265
+          ← then nothing, for the remaining 92 s. bt.init never returns.
+```
+
+The download moved all 131,840 bytes in **1,453 ms** (6812 → 8265) — ~90 KB/s,
+the high-speed (3 Mbaud) phase, not 115200. It **completed**, and NXP's loader
+printed `download success!`. Then the controller went silent.
+
+CPU state during the hang (SWD, console detached, `tools/rt1170-swdprobe.py --health`):
+
+```
+DHCSR 0x01010001   running (S_HALT=0, S_LOCKUP=0, S_RETIRE_ST=1)
+CFSR  0x00000000   no configurable fault
+HFSR  0x00000000   no hard fault ever taken
+```
+
+The host MCU is **alive and blocked**, not crashed — exactly what our own probe
+showed at 115200, now on NXP's own unmodified code after a *successful* download.
+This is the seam between this ticket and u-blox CA-276115.
+
+---
+
 ## 4. Failure B — EdgeFast download corrupts at the 3 Mbaud switch (MIMXRT1170-EVKB)
+
+> **✅ RESOLVED 2026-08-27 by the flow-control rework.** With `R1902` fitted and
+> `R1816` removed (real CTS back-pressure), the stock EdgeFast shell now
+> **completes** the 3 Mbaud download (`download success!`, §3a) instead of
+> corrupting. The account below is the pre-rework record and the root-cause
+> analysis that predicted the fix — it answers Question 4: the full flow-control
+> rework is what makes 3 Mbaud usable on this board.
 
 Reproducible with **NXP software only**, on **NXP's own reference board**.
 Built `examples/edgefast_bluetooth_examples/shell` for the 1170 with

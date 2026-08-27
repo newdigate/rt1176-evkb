@@ -1766,3 +1766,88 @@ u-blox.
 SDK working tree RESTORED: fw_loader_uart.c reverted (DEBUG_PRINT, flow-control
 and GPIO patches all gone).  All experiment ELFs are in /tmp.  Board carries the
 last chatty build; reflash m2_hci_probe before probe work.
+
+================================================================================
+2026-08-27  FULL REWORK DONE + EXTERNAL 5 V -- Failure B RESOLVED, and Failure A
+            reproduced on NXP's OWN UNMODIFIED stack AFTER a SUCCESSFUL download
+================================================================================
+
+The rework predicted above was completed by hand: R1902 fitted (0 ohm), R1816
+removed, R183 removed -- so LPUART2 has real CTS flow control for the first
+time.  R404 + R1901 stayed fitted.  Board powered from the J43 barrel jack at
+5 V (J38 -> 1-2, SW5 on), exactly as the MIMXRT1170EVKB HUG and the EdgeFast
+board readme ask for.  MCU-Link debug USB still attached, so LinkServer + VCOM
+work as before.
+
+--- (1) OUR OWN PROBE re-verified: the removals did NOT break the link ----------
+
+m2_hci_probe reflashed with the real FP92 image (uartIW416_bt.bin 16.92.21.p155.2,
+131,840 B, load 0x000A2010, CRC-32 0x83DFA3EA) plus the WLAN image
+(sdIW416_wlan.bin).  Clean 115200 download, byte-for-byte the pre-rework result:
+
+    bt_fw_source=nxp
+    bt_fw_download=ok chip_id=0x7201 loader_ver=0 start_inds=3 chunks=142
+                   sent=131856/131840 max_off=131840 retx=1 crc_err=0
+                   card_err=0x0001 cfg_resends=0 cfg_unexp_len=0 presync=1
+    bt_post_dnld[0..3]: n=0    bt_raw_reset[0..2]: n=0    (framing=0 throughout)
+
+Every connectivity field matches the pre-rework reference; start_inds is 3 vs 2
+only because the boot-sleep wake pulse is on (+1 greeting).  So removing R183
+(SPI-NOR SO off the PDn line) and R1816 (PHY-INT off the CTS net) cost the
+readable BT link NOTHING -- PDn still power-cycles the card, its TX is still
+readable, the whole image still downloads clean at 115200.  CM7 programmed fine
+on external 5 V, so nothing was damaged by the removals.
+
+--- (2) NXP's STOCK EdgeFast shell now DOWNLOADS SUCCESSFULLY -------------------
+
+Built examples/edgefast_bluetooth_examples/shell UNMODIFIED except the one
+sanctioned target-selection change in the board prj.conf -- swap the module from
+the default IW612/2EL to our card (these are Kconfig `choice` members, so the
+swap is the documented way to select a module, not an app edit):
+    CONFIG_...wifi_bt_module.IW61X=y               -> IW416=y
+    CONFIG_...wifi_bt_module.board_murata_2el_m2=y -> board_murata_1xk_m2=y
+(west build -b evkbmimxrt1170 --config flexspi_nor_debug -Dcore_id=cm7, armgcc
+10.2.1, CONFIG_BT_SIGNING=y stock.)  Flashed, booted, at the @bt> prompt:
+
+    @bt> bt.init
+    [FW Download] Start to download firmware from 0x301198fc: 6812
+    download starts(131840)
+    ...................................................................... (141 dots)
+    download success!
+    [FW Download]BLE FW is downloaded: 8265
+
+131,840 bytes in 1,453 ms (6812 -> 8265) -- ~90 KB/s, i.e. the HIGH-SPEED
+(3 Mbaud) phase, NOT 115200.  This is the exact phase that CORRUPTED and looped
+forever before the rework (see the chatty-loader section above).  With R1902
+fitted + R1816 removed giving real CTS back-pressure, NXP's own loader now
+reports "download success!".  ==> FAILURE B (the 3 Mbaud download corruption)
+is RESOLVED by completing the rework -- confirming the prediction made above
+that the un-done flow-control half had an observable cost, and that the cost was
+on the DOWNLOAD.
+
+--- (3) ...and the controller is STILL silent: FAILURE A persists --------------
+
+After "BLE FW is downloaded", NOTHING.  Silence for the remaining 92 s of the
+capture; bt.init never returns; no "Bluetooth initialized", no error frame.  CPU
+state over SWD, VCOM detached (tools/rt1170-swdprobe.py --health):
+
+    DHCSR 0x01010001    running (S_HALT=0, S_LOCKUP=0, S_RETIRE_ST=1)
+    CFSR  0x00000000    no configurable fault
+    HFSR  0x00000000    no hard fault ever taken
+    ICSR  VECTACTIVE=0  thread mode, not in a fault handler
+
+So on NXP's OWN UNMODIFIED stack, after a COMPLETE, UNCORRUPTED, CRC-checked
+download, the controller never runs and the host MCU is alive and blocked --
+not crashed.  Byte-for-byte what m2_hci_probe sees, now with ZERO of our code in
+the path.
+
+★★ WHY THIS IS THE STRONGER REPORT.  Failure B is now OFF THE TABLE as a
+confound: the download demonstrably SUCCEEDS.  What remains is a card that
+accepts a full firmware image and then runs no controller -- the module-level
+authentication question (u-blox CA-276115 / the NXP forum thread).  "The
+download was corrupt" can no longer be the explanation.
+
+SDK working tree RESTORED: prj.conf reverted to stock (byte-identical); only the
+built ELF (mcuxsdk/build_shell_1xk/edgefast_bluetooth_shell_cm7.elf) remains.
+Board carries the stock EdgeFast shell, hung at bt.init; reflash m2_hci_probe
+before probe work.

@@ -63,6 +63,22 @@ Id: w8978d-V0, RF878X, FP92, 16.92.21.p155.2, BT_UART   2026/03/12 17:02:37
 
 ## 3. The decisive result — NXP's own example fails identically
 
+> **UPDATE 2026-08-27 — now even more decisive, after the full rework + external
+> 5 V.** We completed the flow-control rework (`R1902` fitted, `R1816` + `R183`
+> removed) and rebuilt the stock `examples/edgefast_bluetooth_examples/shell`
+> for `board_murata_1xk_m2` (only the module selection changed). At `bt.init`
+> the BT firmware now **downloads completely and successfully** — NXP's loader
+> prints `download success!` (all 131,840 bytes, in ~1.45 s) — and the
+> controller is then **silent**: no `Bluetooth initialized`, the command never
+> returns, CM7 alive-and-blocked (DHCSR `0x01010001`, CFSR/HFSR = 0, no fault).
+> So on NXP's own unmodified stack the module **accepts a full firmware image
+> and runs no controller.** Full log in the companion NXP thread and in
+> `examples/networking/m2_hci_probe/transcript_hw_evkb.txt`.
+>
+> This removes any remaining doubt that a download-side problem is involved: the
+> download demonstrably **completes**. The original result below (a different
+> stock example hanging at `bt init`) still stands.
+
 Built from `middleware/edgefast_open/examples/shell`,
 `--toolchain armgcc --config flexspi_nor_debug`, with `IW416=y` and
 `board_murata_1xk_m2=y`. Its generated configuration confirms:
@@ -178,17 +194,22 @@ Question 3 below.)*
 **Only signature / secure-boot rejection remains**, and it is indistinguishable
 from success from the host side.
 
-### Board rework — stated for completeness
+### Board rework — now COMPLETE
 
 The MIMXRT1170-EVKB requires rework for M.2 Bluetooth. NXP's guide lists five
-changes; we have fitted **`R404`** (PDn) and **`R1901`** (module→MCU RXD), both
-verified working. Not done: fit `R1902`, remove `R1816`, remove `R183`.
+changes; **all five are now done** (2026-08-27): `R404` (PDn) and `R1901`
+(module→MCU RXD) fitted earlier, then `R1902` fitted and `R1816` + `R183`
+removed. We re-verified the readable BT link survived the removals — the full
+115,200-baud download is still clean and byte-identical (`sent=131856/131840`,
+`framing=0`).
 
-**These cannot cause this failure.** `R1902`/`R1816` concern the *host reading
-the card's RTS output* — they affect whether the host can be throttled, and
-cannot prevent the card from transmitting. The direction that would gate the
-card's transmission is its **CTS input**, which is populated, and which we have
-driven asserted with no change (row 5 above).
+**The rework did not change the outcome.** Completing it resolved a *separate*
+NXP-side download-integrity problem (a 3 Mbaud phase that previously corrupted
+now completes — companion NXP thread), but the **controller is still silent**
+after a now-*successful* download. The module-level question in §7 therefore
+stands, and is now isolated from every board-rework and download-integrity
+variable. `R1902`/`R1816` govern *host-reads-card* flow control and never gated
+the card's transmission; its **CTS input** was populated throughout.
 
 ---
 
