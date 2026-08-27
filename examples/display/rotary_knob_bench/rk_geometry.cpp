@@ -311,7 +311,7 @@ static void emit_tri(float r, float a1, float a2)
 }
 
 /* Close one path object over the arena words emitted since 'start'.
- * Callers must have checked room via room_for_path() first. */
+ * Callers must go through RKG_ADD_PATH(), which bounds n first. */
 static void finish_path(vg_lite_path_t *p, size_t start)
 {
     emit(VLC_OP_END);

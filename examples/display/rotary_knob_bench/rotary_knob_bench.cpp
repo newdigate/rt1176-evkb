@@ -660,7 +660,9 @@ void setup()
      * printed only on the attempt path -- when chip_id is 0 nothing was
      * attempted and there is no code to report. */
     vg_lite_error_t vg_init_err = VG_LITE_SUCCESS;
-    vg_lite_error_t vg_map_err  = VG_LITE_SUCCESS;
+    /* NOT_SUPPORT, not SUCCESS: if init fails, map never runs, and a 0 here
+     * would read as "map succeeded" for a call that never happened. */
+    vg_lite_error_t vg_map_err  = VG_LITE_NOT_SUPPORT;
     if (chip_id != 0u && (vg_init_err = vg_lite_init(TESS_W, TESS_H)) == VG_LITE_SUCCESS) {
         memset(&s_target, 0, sizeof(s_target));
         s_target.width   = Display.width();
