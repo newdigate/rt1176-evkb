@@ -264,4 +264,36 @@ else
           "$EVKB/$hci_rel"/build/hci_*.dbg "$EVKB/$hci_rel"/build/serial.uart "$EVKB/$hci_rel"/build/serial.dbg
 fi
 
+# --- 7. rotary_knob_bench: green fixture passes; tamper and bad-golden fail --
+# examples/display/rotary_knob_bench (Task 8): the tripwire and golden checks
+# in that gate are individually meaningless unless each can be shown to FAIL
+# when it should. Fixture is the gate's own committed transcript_qemu.txt.
+RKB="examples/display/rotary_knob_bench"
+if [ -d "$EVKB/$RKB" ] && [ -f "$EVKB/$RKB/transcript_qemu.txt" ]; then
+    run_gate "$RKB" "run_qemu.sh" "$EVKB/$RKB/transcript_qemu.txt"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_rotary_knob_bench" $result
+
+    # Tripwire: a fabricated gpu result must fail BY NAME even though every
+    # genuine assertion still passes on the rest of the capture.
+    cp "$EVKB/$RKB/transcript_qemu.txt" "$WORK/rkb_tamper.txt"
+    echo "cell=vector/gpu/notch st=ok crc=0xDEADBEEF init_us=1 rotor_bytes=0" >> "$WORK/rkb_tamper.txt"
+    run_gate "$RKB" "run_qemu.sh" "$WORK/rkb_tamper.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1                                         # must not pass
+    echo "$OUT_TEXT" | grep -q "GPU cell reported a result" || result=1  # and name it
+    report "rkb_gpu_tripwire_fires" $result
+
+    # A corrupted golden must fail naming the cell, not pass or die silently.
+    sed 's|^cell=vector/sw/notch st=ok crc=0x........|cell=vector/sw/notch st=ok crc=0xBADBADBA|' \
+        "$EVKB/$RKB/transcript_qemu.txt" > "$WORK/rkb_badcrc.txt"
+    run_gate "$RKB" "run_qemu.sh" "$WORK/rkb_badcrc.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "missing/wrong: cell=vector/sw/notch" || result=1
+    report "rkb_bad_golden_fails_by_name" $result
+else
+    echo "SKIP: rotary_knob_bench vacuity (example or fixture missing)"
+fi
+
 exit $FAILED
