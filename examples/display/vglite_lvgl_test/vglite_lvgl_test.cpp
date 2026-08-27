@@ -1,5 +1,10 @@
-/* vglite_lvgl_test - LVGL's VG_LITE draw unit on the GC355, 4x4 synthui_knob
- * grid on the RK055 (720x1280 XRGB8888).
+/* vglite_lvgl_test - LVGL's VG_LITE draw unit on the GC355, 4x4
+ * synthui_rotary_knob grid on the RK055 (720x1280 XRGB8888).
+ * (NEW-20 Phase 2 swapped the old synthui_knob for the rotary widget; rows
+ * are now mode x theme because the old four visual modes no longer exist.
+ * The widget's own direct-vg_lite compositor is deliberately NOT attached
+ * here -- this example tests LVGL's OWN VG_LITE draw unit, and a second,
+ * direct client in LVGL's command stream would be an uncontrolled mix.)
  * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT
  *
@@ -36,7 +41,7 @@
 #include "Display.h"
 #include "lvgl_rt1176.h"
 #include "lvgl_mipi_panel.h"
-#include "synthui_knob.h"
+#include "synthui_rotary_knob.h"
 
 #if LV_USE_DRAW_VG_LITE
 extern "C" {
@@ -91,7 +96,7 @@ static void fpsbench_anim_cb(lv_timer_t *t)
     step++;
     for (int k = 0; k < 16; k++)
         /* (k%4)*70-105 = col_angle[k%4]; declared later in the file */
-        synthui_knob_set_angle(fpsbench_knob[k],
+        synthui_rotary_knob_set_angle(fpsbench_knob[k],
                                (float)((k % 4) * 70 - 105)
                                + (float)((step * 7u) % 90u));
 }
@@ -160,10 +165,12 @@ static void swd_log_cb(lv_log_level_t level, const char *buf)
 static const float               col_angle[4] = { -105.0f, -35.0f, 35.0f, 105.0f };
 static const lv_state_t          col_state[4] = { LV_STATE_DEFAULT, LV_STATE_PRESSED,
                                                   LV_STATE_FOCUSED, LV_STATE_DISABLED };
-static const synthui_knob_mode_t row_mode[4]  = { SYNTHUI_KNOB_MODE_ENDLESS,
-                                                  SYNTHUI_KNOB_MODE_BOUNDED,
-                                                  SYNTHUI_KNOB_MODE_DETENTS,
-                                                  SYNTHUI_KNOB_MODE_ARC };
+static const synthui_rotary_mode_t  row_mode[4]  = {
+    SYNTHUI_ROTARY_MODE_ENDLESS, SYNTHUI_ROTARY_MODE_BOUNDED,
+    SYNTHUI_ROTARY_MODE_ENDLESS, SYNTHUI_ROTARY_MODE_BOUNDED };
+static const synthui_rotary_theme_t row_theme[4] = {
+    SYNTHUI_ROTARY_THEME_LIGHT, SYNTHUI_ROTARY_THEME_LIGHT,
+    SYNTHUI_ROTARY_THEME_DARK,  SYNTHUI_ROTARY_THEME_DARK };
 
 static bool s_gpu = false;
 
@@ -241,17 +248,18 @@ static lv_obj_t *build_grid(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 
     lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "SynthUI Knob / VGLite");
+    lv_label_set_text(title, "SynthUI RotaryKnob / VGLite");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_28, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 30);
 
     for (int r = 0; r < 4; r++) {
         for (int c = 0; c < 4; c++) {
-            lv_obj_t *k = synthui_knob_create(scr);
+            lv_obj_t *k = synthui_rotary_knob_create(scr);
             lv_obj_set_size(k, 150, 150);
-            synthui_knob_set_mode(k, row_mode[r]);
-            synthui_knob_set_angle(k, col_angle[c]);
+            synthui_rotary_knob_set_mode(k, row_mode[r]);
+            synthui_rotary_knob_set_theme(k, row_theme[r]);
+            synthui_rotary_knob_set_angle(k, col_angle[c]);
             if (col_state[c] != LV_STATE_DEFAULT) lv_obj_add_state(k, col_state[c]);
             lv_obj_set_pos(k, 15 + c * 175, 120 + r * 175);
 #ifdef FPSBENCH
