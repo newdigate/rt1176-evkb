@@ -64,11 +64,16 @@ Notes per cell family:
   LVGL's sw arc clamps negative starts (known trap).
 - **vector/gpu** — this is **NEW-12's cached-paths answer**. Paths are built
   in rotor-local coordinates once; per frame the matrix is
-  translate(center)·rotate(angle). Drawn via the sanctioned
-  `#include <vg_lite.h>` hook from the widget draw callback — **not** through
-  LVGL's VG_LITE draw unit — so LVGL source stays untouched (licence
-  firewall) and per-task path rebuild is bypassed entirely. Annular sectors
-  use non-zero winding with the inner arc reversed (plan-level detail).
+  translate(center)·rotate(angle). Drawn via direct `vg_lite_*` calls in a
+  post-`LV_EVENT_REFR_READY` GPU pass inside the timed frame (LVGL source
+  untouched) — **not** through LVGL's VG_LITE draw unit — so per-task path
+  rebuild is bypassed entirely (licence firewall). The pass runs after
+  LVGL's sw tasks because a direct GPU call issued inside
+  `LV_EVENT_DRAW_MAIN` executes immediately, while LVGL's own deferred sw
+  draw tasks (background, wells) execute later in the refresh and would
+  overpaint the rotor. For gpu cells the widget draw callback paints only
+  the well. Annular sectors use non-zero winding with the inner arc
+  reversed (plan-level detail).
 - **rotate-bitmap** — the rotor bitmap is rendered **once at init by the
   vector/sw renderer** (single source of truth for geometry) into an
   ARGB8888 buffer with transparent background. 45°-class angles are the
@@ -90,7 +95,8 @@ a controlled A/B (the `[irq]` gate precedent). The image links VGLite via
 **Phase A — correctness pass** (runs first, fast, QEMU-gateable):
 each cell renders one canonical frame at **angle 45°** (= 8 filmstrip steps,
 so the filmstrip cell lands exactly on-step; also off-axis, worst case for
-resampling), CRCs the grid region of the framebuffer, prints its cell line,
+resampling), checksums the whole framebuffer (FNV-1a via `lvgl_sum_*`, the
+tree's golden arithmetic — the token stays `crc=`), prints its cell line,
 then `crc_done cells=12 ...`.
 
 **Phase B — timing pass**: per cell, the FPSBENCH method verbatim —
@@ -123,13 +129,17 @@ Phase B, per cell:
 (`mfps` = millifps, e.g. 2830 = 2.83 fps), then
 `bench_done cells=12 timed=<n> gpu_absent=<n>` and the heartbeat.
 
+Strategy tokens in `cell=`/`time=` lines are exactly `vector`, `bitmap` and
+`strip` — not the prose names `rotate-bitmap`/`filmstrip` used elsewhere in
+this document.
+
 ## 6. Memory & placement
 
-- Rotor bitmap: ARGB8888, 120×120 = 57,600 B per rotor (widget default size
-  120, matching `synthui_knob`'s `width_def`).
-- Filmstrip: 64 × 57,600 B ≈ 3.52 MB per variant — **SDRAM**, same as the
-  framebuffers; allocated once and reused across cells; exact bytes reported
-  in `rotor_bytes=`.
+- Knob size **150×150** (grid parity with `vglite_lvgl_test`: positions
+  15+c·175, 120+r·175). Rotor bitmap: ARGB8888, 150×150 = 90,000 B.
+- Filmstrip: 64 × 90,000 B = 5,760,000 B ≈ 5.49 MB — **SDRAM** (EXTMEM), one
+  static arena rebuilt at each strip cell's init (so `init_us` carries the
+  honest per-cell cost); exact bytes reported in `rotor_bytes=`.
 - vg_lite buffers respect the driver's alignment requirements (the 64-byte
   command-buffer lesson from VGLite Phase 1 generalizes: misalignment hangs
   the front end while every API call returns SUCCESS — check `AQHiIdle`).
@@ -151,8 +161,8 @@ AA ≠ GPU AA ≠ resampled rotation (the two-golden-sets precedent from
 - The six **GPU cells' CRCs are silicon-only**, recorded in
   `transcript_hw_evkb.txt` with the fps table, visually verified once.
 - For GPU cells the CRC is computed only after `vg_lite_finish` and D-cache
-  invalidate over the grid region — a CRC read through a stale cache is a
-  golden for the wrong pixels.
+  invalidate over the whole framebuffer — a CRC read through a stale cache
+  is a golden for the wrong pixels.
 
 This is what stops "renders garbage fast" from winning the bench.
 
