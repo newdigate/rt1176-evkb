@@ -1,0 +1,80 @@
+# rotary_knob_bench — hardware transcript, MIMXRT1170-EVKB + RK055, 2026-08-27
+#
+# Complete final boot (SW4 hardware reset; MCU-Link VCOM at 115200, reader
+# attached unbuffered for the whole run). Both phases, all 12 cells,
+# bench_done, heartbeat. gpu=present chip_id=0x355, vg_init=0 vg_map=0.
+#
+# CROSS-BOOT STABILITY (the Task 10 requirement, measured, not assumed):
+#  * Phase A checksums IDENTICAL across four boots this session — the six sw
+#    cells equal the QEMU goldens exactly (QEMU ≡ silicon, the knob-pilot
+#    determinism), and the six gpu cells reproduced bit-for-bit:
+#    vector/gpu 0x249D6365 / 0xC4987C05, bitmap/gpu 0x4C5E7B0E / 0xB4687B0C,
+#    strip/gpu 0xC2F636E5 / 0xF718AC65.
+#  * Phase B mfps_med agreed within +/-1 count on all comparable cells across
+#    two complete-run boots (e.g. 3216/3216, 5534/5533, 1078/1078, 5506/5505)
+#    — the fixed-cell-order drift concern is retired by measurement.
+#  * The C1 (strip double-rotate) regression guard held BOTH ways:
+#    strip/gpu times differently from bitmap/gpu (182 ms vs 213 ms — no
+#    resample), and the post-bench_done static frame (SWD framebuffer dump)
+#    shows each knob's index wedge advancing ~22.5 deg per knob, not ~45.
+#
+# BENCH SESSION LESSONS (for the next operator):
+#  * pyocd CANNOT reset this target ('-m hw' included): DHCSR reads
+#    healthy-running, no banner ever appears, the image just keeps running
+#    (with the halt windows visible as multi-second us_max outliers in any
+#    in-flight Phase B cell). Use the board's SW4. Discard any run a probe
+#    poked mid-flight.
+#  * The MCU-Link VCOM was fully dead (0 bytes across a reset) until a USB
+#    replug — DTR/RTS revival did NOT recover it this time.
+#  * Boot lines that seem missing from a piped console log are Python BLOCK
+#    BUFFERING (stdout redirected to a file) — run the reader with
+#    python3 -u, or SIGINT (not SIGTERM) to flush.
+#
+rotary_knob_bench up
+PANEL_OK
+gpu=present chip_id=0x00000355 vg_init=0 vg_map=0
+cell=vector/sw/notch st=ok crc=0x41193045 init_us=0 rotor_bytes=0
+cell=vector/sw/facet st=ok crc=0xB7744585 init_us=0 rotor_bytes=0
+cell=vector/gpu/notch st=ok crc=0x249D6365 init_us=16 rotor_bytes=352 gpu_err=0
+cell=vector/gpu/facet st=ok crc=0xC4987C05 init_us=14 rotor_bytes=440 gpu_err=0
+cell=bitmap/sw/notch st=ok crc=0xCD1F02C5 init_us=16068 rotor_bytes=96000
+cell=bitmap/sw/facet st=ok crc=0x3837A345 init_us=17710 rotor_bytes=96000
+cell=bitmap/gpu/notch st=ok crc=0x4C5E7B0E init_us=22632 rotor_bytes=96000 gpu_err=0
+cell=bitmap/gpu/facet st=ok crc=0xB4687B0C init_us=24284 rotor_bytes=96000 gpu_err=0
+cell=strip/sw/notch st=ok crc=0x6B428FC5 init_us=923026 rotor_bytes=6144000
+cell=strip/sw/facet st=ok crc=0x572E8105 init_us=1048045 rotor_bytes=6144000
+cell=strip/gpu/notch st=ok crc=0xC2F636E5 init_us=1349578 rotor_bytes=6144000 gpu_err=0
+cell=strip/gpu/facet st=ok crc=0xF718AC65 init_us=1476600 rotor_bytes=6144000 gpu_err=0
+crc_done cells=12 ok=12 gpu_absent=0 failed=0
+time=vector/sw/notch frames=64 mfps_med=3216 us_med=310942 us_min=310645 us_max=311441 us_mean=310974
+time=vector/sw/facet frames=64 mfps_med=2867 us_med=348712 us_min=337288 us_max=349928 us_mean=346072
+time=vector/gpu/notch frames=64 mfps_med=5534 us_med=180682 us_min=180361 us_max=181059 us_mean=180722 gpu_err=0
+time=vector/gpu/facet frames=64 mfps_med=5439 us_med=183835 us_min=183544 us_max=184378 us_mean=183866 gpu_err=0
+time=bitmap/sw/notch frames=64 mfps_med=1078 us_med=927568 us_min=893115 us_max=928795 us_mean=918971
+time=bitmap/sw/facet frames=64 mfps_med=1086 us_med=920633 us_min=884806 us_max=921318 us_mean=911686
+time=bitmap/gpu/notch frames=64 mfps_med=4674 us_med=213905 us_min=212926 us_max=214571 us_mean=213880 gpu_err=0
+time=bitmap/gpu/facet frames=64 mfps_med=4685 us_med=213411 us_min=212509 us_max=214333 us_mean=213400 gpu_err=0
+time=strip/sw/notch frames=64 mfps_med=2585 us_med=386705 us_min=386533 us_max=387558 us_mean=386750
+time=strip/sw/facet frames=64 mfps_med=2620 us_med=381576 us_min=377341 us_max=382381 us_mean=380695
+time=strip/gpu/notch frames=64 mfps_med=5506 us_med=181592 us_min=181383 us_max=182304 us_mean=181661 gpu_err=0
+time=strip/gpu/facet frames=64 mfps_med=5485 us_med=182294 us_min=182116 us_max=182923 us_mean=182352 gpu_err=0
+bench_done cells=12 timed=12 gpu_absent=0 failed=0
+hb n=0
+hb n=1
+hb n=2
+hb n=3
+hb n=4
+hb n=5
+hb n=6
+hb n=7
+hb n=8
+hb n=9
+hb n=10
+hb n=11
+hb n=12
+hb n=13
+hb n=14
+hb n=15
+hb n=16
+hb n=17
+hb n=18

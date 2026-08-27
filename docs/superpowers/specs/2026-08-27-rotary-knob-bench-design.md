@@ -344,11 +344,54 @@ accumulator), then replacement of the old knob in `synthui_knob_test`,
 `synthui_step_test`, `acid_box` and `vglite_lvgl_test` with re-goldening —
 each a deliberate step in its own spec, informed by §13's numbers.
 
-## 13. Results (to be filled from silicon)
+## 13. Results — measured on silicon 2026-08-27 (EVKB + RK055, 996 MHz)
+
+From the complete final boot in `transcript_hw_evkb.txt`. Phase A checksums
+identical across four boots (sw cells ≡ the QEMU goldens); Phase B `mfps_med`
+reproduced within ±1 count across two complete boots — the fixed-order drift
+concern is retired by measurement. All `gpu_err=0`, `failed=0`, no timeouts.
 
 | cell | mfps_med | us_med | us_min | us_max | us_mean | init_us | rotor_bytes | crc |
 |---|---|---|---|---|---|---|---|---|
-| *(12 rows after the hardware run)* | | | | | | | | |
+| vector/sw/notch | 3216 | 310942 | 310645 | 311441 | 310974 | 0 | 0 | 0x41193045 |
+| vector/sw/facet | 2867 | 348712 | 337288 | 349928 | 346072 | 0 | 0 | 0xB7744585 |
+| **vector/gpu/notch** | **5534** | 180682 | 180361 | 181059 | 180722 | 16 | 352 | 0x249D6365 |
+| **vector/gpu/facet** | **5439** | 183835 | 183544 | 184378 | 183866 | 14 | 440 | 0xC4987C05 |
+| bitmap/sw/notch | 1078 | 927568 | 893115 | 928795 | 918971 | 16068 | 96000 | 0xCD1F02C5 |
+| bitmap/sw/facet | 1086 | 920633 | 884806 | 921318 | 911686 | 17710 | 96000 | 0x3837A345 |
+| bitmap/gpu/notch | 4674 | 213905 | 212926 | 214571 | 213880 | 22632 | 96000 | 0x4C5E7B0E |
+| bitmap/gpu/facet | 4685 | 213411 | 212509 | 214333 | 213400 | 24284 | 96000 | 0xB4687B0C |
+| strip/sw/notch | 2585 | 386705 | 386533 | 387558 | 386750 | 923026 | 6144000 | 0x6B428FC5 |
+| strip/sw/facet | 2620 | 381576 | 377341 | 382381 | 380695 | 1048045 | 6144000 | 0x572E8105 |
+| strip/gpu/notch | 5506 | 181592 | 181383 | 182304 | 181661 | 1349578 | 6144000 | 0xC2F636E5 |
+| strip/gpu/facet | 5485 | 182294 | 182116 | 182923 | 182352 | 1476600 | 6144000 | 0xF718AC65 |
+
+**Winner: `vector/gpu` — cached `vg_lite` paths + a per-frame rotation
+matrix.** It ties `strip/gpu` on speed (5.53/5.44 vs 5.51/5.49 fps — inside
+the cross-boot noise) and beats it on every other axis: ~400 **bytes** of
+path data vs 6.1 MB of SDRAM filmstrip, ~15 µs init vs ~1.4 s, and exact
+hardware AA at every angle vs 5.625° quantisation. `bitmap/gpu` trails at
+4.7 fps (the per-frame bilinear resample), and `bitmap/sw` — LVGL's software
+image rotation — is the worst strategy measured, 1.08 fps, 3–5× slower than
+everything else.
+
+**NEW-12's question is answered by measurement**: with paths built once and
+only a matrix per frame, the GPU is **1.72–1.90× faster** than the software
+renderer on the same scene (180 vs 311 ms/frame) — where the per-task
+path-rebuilding backend measured 0.87× (slower). Path construction was the
+bottleneck.
+
+**The ≥30 fps criterion is NOT met by any strategy** at this workload — the
+best cell renders at 5.5 fps. Two structural reasons, both actionable in
+Phase 2: (a) every cell still pays the LVGL software floor each frame — the
+well and ground repaint of all 16 damaged knob areas (~360 k px of sw
+compositing) happens before any rotor strategy runs, and it bounds even an
+infinitely fast rotor; (b) the GPU rows are a **pipelining lower bound** —
+the bench calls `vg_lite_finish()` once per frame, fully serialising CPU and
+GPU, so a renderer that overlapped them could do better than these numbers.
+The facet-vs-notch spread on `vector/gpu` is only 3.4 ms/frame for 3× the
+paths — path count is nearly free once construction is cached, which is
+exactly the §2 prediction.
 
 Rank on `mfps_med` (§5): `us_mean` can be dominated by a single stalled frame,
 and `us_max` is what exposes one. Every GPU row must read `gpu_err=0` or its
