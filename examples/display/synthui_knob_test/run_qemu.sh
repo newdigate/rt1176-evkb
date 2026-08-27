@@ -53,7 +53,15 @@ grep -qE "LVGL_BYTES=3686400\r?$" "$OUT" || { echo "FAIL: wrong byte count"; exi
 # Provenance: recorded 2026-08-27 (NEW-20 Phase 2, synthui_rotary_knob
 # replacing the old knob) against SynthUI local 2610cb8+ (pin bumped at
 # close-out), vendored LVGL 9.4.0, XRGB8888 (LV_COLOR_DEPTH=32), montserrat
-# 14/28; bit-identical across two consecutive QEMU runs.  These are the
+# 14/28; bit-identical across two consecutive QEMU runs.  THE FRAMES WERE
+# LOOKED AT, not merely reproduced: -DRK_EYEBALL_HOLD builds (see
+# CMakeLists.txt) held the grid and accent screens for a QEMU-monitor
+# pmemsave (framebuffer 0x80300040 for THIS elf -- read LCDIFv2 0x4080820c,
+# do not reuse another example's address), and the dumps' own FNV-1a equalled
+# the pinned sums while the eye checked: endless/bounded wells, light/dark
+# palettes (dark index #ffd24a), focus rings/tracks in the index color,
+# muted disabled column, per-column angles -105/-35/+35/+105, and the four
+# DC accent colors.  These are the
 # SOFTWARE renderer's sums: on silicon the same ELF composites rotors on the
 # GC355 (rk_engine=gpu) and produces a DIFFERENT, silicon-only golden set in
 # transcript_hw_evkb.txt -- two golden sets, never reconciled

@@ -61,6 +61,24 @@ static const uint32_t accent_opt[4] = { SYNTHUI_ROTARY_ACCENT_DEFAULT,
 
 static lv_obj_t *hero;
 
+#ifdef RK_EYEBALL_HOLD
+/* Diagnostic builds only (-DRK_EYEBALL_HOLD=<1..6> at configure time,
+ * separate build dir, never a golden): spin forever after the n-th
+ * checksummed screen so the QEMU monitor can pmemsave the exact frame that
+ * sum describes (recipe: acid_box/transcript_qemu.txt). The sums printed
+ * BEFORE the hold must match the golden build's -- that equality is what
+ * ties the inspected frame to the pinned value. 1=grid, 2..5=row screens,
+ * 6=accent. */
+static void eyeball_hold(int n)
+{
+    if (n != RK_EYEBALL_HOLD) return;
+    Serial1.printf("RK_EYEBALL_HOLD=%d\n", n);
+    for (;;) { }
+}
+#else
+#define eyeball_hold(n) ((void)0)
+#endif
+
 static void opaque_bg(lv_obj_t *scr)
 {   /* Opaque ground forces LVGL to paint every pixel: fully-defined frames. */
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x101820), LV_PART_MAIN);
@@ -194,14 +212,18 @@ void setup()
     Serial1.printf("LVGL_BYTES=%lu\n",
                    (unsigned long)(lvgl_mipi_panel_flushed_px() * PANEL_BYTES_PER_PIXEL));
     Serial1.printf("KNOB_SUM_ALL=0x%08lX\n", (unsigned long)lvgl_sum_value());
+    eyeball_hold(1);
 
     /* Phase 2: one golden per feature axis (the acid-bass lesson: a single
      * aggregate sum can freeze half a feature without changing color). */
-    for (int r = 0; r < 4; r++)
+    for (int r = 0; r < 4; r++) {
         Serial1.printf("KNOB_SUM_%s=0x%08lX\n", row_name[r],
                        (unsigned long)sum_screen(build_row_screen(r)));
+        eyeball_hold(2 + r);
+    }
     Serial1.printf("KNOB_SUM_ACCENT=0x%08lX\n",
                    (unsigned long)sum_screen(build_accent_screen()));
+    eyeball_hold(6);
 
     /* gpu lines NEVER appear in a sw run -- the gate tripwires on them. */
     if (s_gpu)

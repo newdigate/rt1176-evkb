@@ -32,3 +32,11 @@ teensy_target_link_libraries(synthui_knob_test cores MipiDisplay PXP)
 # directly here too, not only pulled in transitively via SynthUI's PUBLIC
 # edge, because this target also compiles port/lvgl_mipi_panel.cpp itself.
 target_link_libraries(synthui_knob_test.elf SynthUI LVGL VGLite stdc++)
+
+# Diagnostic eyeball build (separate build dir, NEVER a golden):
+#   cmake -B build-eye -DRK_EYEBALL_HOLD=<1..6> -DCMAKE_TOOLCHAIN_FILE=...
+# holds after the n-th checksummed screen so the QEMU monitor can pmemsave the
+# exact frame that sum describes (recipe in acid_box/transcript_qemu.txt).
+if(RK_EYEBALL_HOLD)
+    add_compile_definitions(RK_EYEBALL_HOLD=${RK_EYEBALL_HOLD})
+endif()
