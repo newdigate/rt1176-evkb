@@ -106,8 +106,9 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **121 gates** — the merge of
-THREE independent lines, plus the first two Bluetooth gates. The Arduino WiFi facade added THREE
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **122 gates** — the merge of
+THREE independent lines, plus the first two Bluetooth gates and NEW-20's one
+new gate. The Arduino WiFi facade added THREE
 (`networking/wifi_client_test` and its `[wifi]` variant — enumeration plus a
 REAL 802.11 scan against the model's deliberate zero-BSS reply, asserting an
 honest WL_NO_SSID_AVAIL — and `networking/wifi_server_test`); the uAP line added
@@ -120,7 +121,18 @@ its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
 `networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
 more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
 That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
-121.
+122.
+
+NEW-20 added ONE — `display/rotary_knob_bench`, the RotaryKnob render-strategy
+bench: 12 cells ({vector,bitmap,strip} × {sw,gpu} × {notch,facet}) in ONE ELF,
+LVGL kept software-only and the GC355 reached by DIRECT vg_lite calls behind
+the chip-ID probe — which is what makes a single image safe everywhere where
+vglite_lvgl_test needed a build split. Its gate pins the six SOFTWARE cells'
+Phase A goldens and asserts the six GPU cells report an honest `gpu-absent`
+(two tripwires: no `/gpu/` line may carry a result in QEMU, and `gpu_err=`
+may never appear there). Phase B (the fps measurement) runs after `crc_done`
+and is deliberately NOT gated — QEMU timing is meaningless; silicon is where
+the bench's question is answered. 121 before it.
 
 BT-1 added the tree's FIRST TWO BLUETOOTH GATES, both on the new
 `networking/m2_hci_probe`. `run_qemu.sh` is the card-ABSENT fallback — with no
@@ -417,8 +429,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **121 passed, 0 failed, 0 SKIP**, or
-**120 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **122 passed, 0 failed, 0 SKIP**, or
+**121 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
 fresh-clone-red set: its injected gestures come from the `touch-script`
@@ -446,6 +458,41 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-08-27: 122 gates discovered, 120 passed, 2 failed** on the
+first CLEAN single-run sweep of the NEW-20 branch — and both reds were
+dispositioned WITH EVIDENCE, neither a regression.
+`rt1176:display/rotary_knob_bench` green in 3 s on its first sweep;
+`rt1176:dualcore/cm4_audio_test` green in 4 s. The two reds:
+  * `m2_rx_demo[txaggr]` failed under sweep load ("7 of 6 frames") and PASSES
+    idle — the documented load-sensitivity class, on a gate not previously
+    suspect (the second time that has happened; `cm4_wire_int_slave_test` was
+    the first).
+  * `m2_hci_probe[hci]` fails idle too, and the cause is a NEW CLASS worth
+    naming: its build dir had been RECONFIGURED the same morning (09:08) by
+    the concurrent BT bench workstream with the real firmware blob
+    (`M2RADIO_IW416_BT_FW` set, `M2_BT_UART_DNLD=ON`), so the gate ran a
+    BENCH-configured ELF against fake-controller assertions. PROVEN, not
+    inferred: the bench build was set aside, the committed configuration
+    built fresh, both gates run — PASS and PASS — and the bench build
+    restored untouched. A bench-configured build makes its own gate red BY
+    DESIGN; this machine's sweep stays red on that one gate until the BT
+    workstream's build dir returns to the gate configuration. qemu2 was ruled
+    out first (binary Aug 22, tree clean), and every source repo is clean at
+    its pin — configure-time CACHE VARIABLES are a build-dir state axis that
+    `git status` cannot see.
+`LICENSE-AUDIT: PASS` the same day with the new
+`examples/display/rotary_knob_bench` manifest entry walked (24682 dep
+paths). The vacuity suite
+runs 22/22 the same day, including the three new rotary_knob_bench cases
+(green fixture replays, gpu tripwire fires by name, corrupted golden fails by
+name).
+★ An earlier sweep attempt that same afternoon was VOID and is deliberately
+not the measurement: three overlapping runner instances (two killed by a
+command timeout, one detached with its output lost) — the shared-capture-path
+hazard in its purest form. One sweep at a time, output captured, or it did
+not happen.
+
+The previous count's measurement, kept per convention:
 ✅ **Measured 2026-08-24: 121 passed, 0 failed, 0 SKIP** (`gates: 121 passed`,
 exit 0), re-measured in the MAIN CHECKOUT on master after the two sibling repos
 were pushed and both `evkb.cmake` pins bumped — `rt1176:dualcore/cm4_audio_test`

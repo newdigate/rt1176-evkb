@@ -338,6 +338,7 @@ examples/display/pxp_decimate_test:pxp_decimate_test examples/display/pxp_yuv_te
 examples/display/rk055_panel_test:rk055_panel_test \
 examples/display/rk055_touch_test:rk055_touch_test \
 examples/display/rpi_panel_test:rpi_panel_test \
+examples/display/rotary_knob_bench:rotary_knob_bench \
 examples/display/synthui_knob_test:synthui_knob_test \
 examples/display/synthui_step_test:synthui_step_test \
 examples/display/vglite_lvgl_test:vglite_lvgl_test \
