@@ -144,6 +144,20 @@ two-engine test, `import_evkb_synthui(VGLITE)`, engine tripwires),
 is ±150), `vglite_lvgl_test` (mode × theme rows). `synthui_step_test` was
 NOT touched — the issue listed it in error (it has no knobs) and its
 unchanged golden is the cross-widget control. Gate count unchanged at 122.
+★ **Wedge-delta damage followed the same evening** (spec+findings docs
+2026-08-27): `set_angle` invalidates only the old∪new index-wedge boxes
+(the notch discs are rotationally invariant), and the GPU compositor
+scissors to the DISPLAY's actual rendered areas (`disp->inv_areas` — never
+to widget-stored rects: LVGL joins areas into supersets, and a
+stored-rect scissor leaves well-coloured holes; found in review before it
+shipped). Measured on silicon before implementing: 180→45 ms/frame
+(5.5→22.3 fps gpu), 310→71 ms (sw), on the all-16-knob worst case — the
+LVGL sw floor was 96% of the frame and `vg_lite_finish` only 6.6 ms, so
+pipelining is a dead lever for the vector strategy. Guarded in
+`synthui_knob_test` by an EQUALITY check (delta-sequence CRC must equal a
+fresh full render — gate-compared, never re-goldened) and an ENGAGEMENT
+check (per-step damage ≤8000 px), both demonstrated RED. No other golden
+moved — consumers gate only fresh full renders.
 
 BT-1 added the tree's FIRST TWO BLUETOOTH GATES, both on the new
 `networking/m2_hci_probe`. `run_qemu.sh` is the card-ABSENT fallback — with no
