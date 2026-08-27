@@ -133,6 +133,17 @@ Phase A goldens and asserts the six GPU cells report an honest `gpu-absent`
 may never appear there). Phase B (the fps measurement) runs after `crc_done`
 and is deliberately NOT gated — QEMU timing is meaningless; silicon is where
 the bench's question is answered. 121 before it.
+★ **NEW-20 Phase 2 (2026-08-27) shipped the production widget on the bench's
+winner**: `synthui_rotary_knob` in SynthUI (notch variant, vector/gpu —
+3 cached vg_lite paths + a per-frame matrix — behind an opt-in compositor,
+LVGL-sw fallback everywhere else), old `synthui_knob` DELETED from SynthUI
+(`synthui_knob_math.h` stays — the input layer reuses it), and THREE
+consumers re-goldened: `synthui_knob_test` (now the rotary widget's
+two-engine test, `import_evkb_synthui(VGLITE)`, engine tripwires),
+`acid_box` (bounded ±140 stated explicitly — the widget's DC default range
+is ±150), `vglite_lvgl_test` (mode × theme rows). `synthui_step_test` was
+NOT touched — the issue listed it in error (it has no knobs) and its
+unchanged golden is the cross-widget control. Gate count unchanged at 122.
 
 BT-1 added the tree's FIRST TWO BLUETOOTH GATES, both on the new
 `networking/m2_hci_probe`. `run_qemu.sh` is the card-ABSENT fallback — with no
@@ -647,13 +658,18 @@ which names neither the path nor the limit.
 
 ★ **`display/vglite_lvgl_test` gates the SOFTWARE build of a two-build
 example.** The GPU build (`build-vglite/`, LVGL's VG_LITE unit on the GC355)
-is silicon-only with its OWN golden (`0xC3C6171A`) — two golden sets, never
+is silicon-only with its OWN golden — two golden sets, never
 reconciled (hardware AA ≠ LVGL mask arithmetic, and the GPU build carries
-`LV_USE_FLOAT=1`). The Phase-2 fps criterion was measured and NOT met
+`LV_USE_FLOAT=1`). Since NEW-20 Phase 2 the scene is a
+`synthui_rotary_knob` grid (sw golden `0x579E5810`; the pre-swap pair was
+sw `0x513C4DB8` / gpu `0xC3C6171A`). The VGLite-Phase-2 fps criterion was
+measured on the OLD knob and NOT met
 (software 2.83 fps, GPU 2.45 fps, CPU-bound in the backend's per-task path
-construction) — the GPU path is pixel-correct but not an optimisation as it
-stands; `docs/superpowers/specs/2026-08-17-vglite-phase2-design.md` has the
-verdict and the follow-up shape.
+construction) — that per-task path rebuild diagnosis is what NEW-20's bench
+confirmed and what the rotary widget's cached-path compositor answers;
+`docs/superpowers/specs/2026-08-17-vglite-phase2-design.md` has the original
+verdict, `2026-08-27-rotary-knob-bench-design.md` §13 the measurement that
+superseded it.
 
 ★ **No gate is SKIP-class any more.** For one day `display/synthui_knob_test`
 and `display/vglite_probe` were: SynthUI and VGLite were unpushed, their import
