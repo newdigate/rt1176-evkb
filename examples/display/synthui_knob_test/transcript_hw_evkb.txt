@@ -46,4 +46,5 @@ sets can never be reconciled.
 Console: MCU-Link VCOM (/dev/cu.usbmodem5DQ2DDHVWO5EI3) via
 tools/rt1170-console.py. Flash: LinkServer 26.6.137, flash load -> verify
 (VCOM free) -> attach reader -> reset via backgrounded `LinkServer run`,
-per the standing bench order. The board was left running this example.
+per the standing bench order. (The board was subsequently reflashed to
+acid_box for its own silicon check the same session.)
