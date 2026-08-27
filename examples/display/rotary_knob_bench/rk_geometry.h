@@ -34,7 +34,8 @@ extern "C" {
  * with gcFEATURE_VG_16PIXELS_ALIGNED=1 and ERROR_CHECK=1 on this part), and a
  * rejected blit draws NOTHING while the cell still times fast. The build sets
  * LV_DRAW_BUF_STRIDE_ALIGN=64 so LVGL's canvas derives the identical 640-byte
- * stride; rkg_render_rotor_argb asserts the two agree rather than trusting it.
+ * stride; two static_asserts in rk_geometry.cpp tie the two together at COMPILE
+ * time, so a mismatch is a build failure rather than a run-time discovery.
  * Buffers are therefore RKB_KNOB_PX rows of RKB_ROTOR_STRIDE_PX pixels: the
  * last 10 px of every row are padding the GPU never samples. */
 #define RKB_ROTOR_STRIDE_PX 160

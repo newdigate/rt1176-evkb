@@ -172,11 +172,22 @@ void rkg_render_strip_argb(rkg_variant_t v, uint32_t *base, size_t stride_words,
  *
  * The gpu cells blit with VG_LITE_BLEND_SRC_OVER, whose documented arithmetic
  * is "RGB: S + D*(1 - Sa)" (inc/vg_lite.h:461) -- the PREMULTIPLIED Porter-Duff
- * over. Straight alpha would need S*Sa + D*(1 - Sa), which is a different
- * enumerator (VG_LITE_BLEND_NORMAL_LVGL, :481) and is unavailable here:
- * gcFEATURE_VG_LVGL_SUPPORT is 0 on this part (gc355/0x0_1216).
+ * over. So the source must arrive premultiplied, and it does.
  *
- * That is exactly what LVGL 9.4's own VG_LITE backend does against this same
+ * ★ THE STRAIGHT-ALPHA ALTERNATIVE EXISTS ON THIS PART -- an earlier version of
+ * this comment said it did not, and that was wrong. VG_LITE_BLEND_NORMAL_LVGL
+ * (:481, "S*Sa + D*(1 - Sa)") is accepted BY THE DRIVER and runs in HARDWARE
+ * here: convert_blend maps it to SRC_OVER's own HW value (vg_lite.c:2560-2564),
+ * and because gcFEATURE_VG_SRC_PREMULTIPLIED is 0 on this part the driver
+ * forces in_premult = 0 for it (vg_lite.c:4777-4779) -- that IS the
+ * straight-alpha lever. (Its software-emulation path at :4537 is not taken
+ * either, since for NORMAL_LVGL that branch also requires SRC_PREMULTIPLIED.)
+ * What gcFEATURE_VG_LVGL_SUPPORT = 0 actually gates is LVGL's OWN choice:
+ * lv_vg_lite_support_blend_normal() reads that bit and declines the mode.
+ *
+ * We follow LVGL rather than the lever because it is the combination this
+ * driver is exercised with. That is exactly what LVGL 9.4's VG_LITE backend
+ * does against this same
  * driver: lv_draw_vg_lite_img.c:66 premultiplies in software precisely when
  * !lv_vg_lite_support_blend_normal(), and lv_vg_lite_utils.c:958 then selects
  * SRC_OVER. LVGL never sets vg_lite_buffer_t.premultiplied at all (no
@@ -191,7 +202,13 @@ void rkg_render_strip_argb(rkg_variant_t v, uint32_t *base, size_t stride_words,
  * source->premultiplied 0 and 1 IDENTICALLY. It therefore cannot be read as
  * "the hardware premultiplies because you declared 0". Consistent with
  * gcFEATURE_BIT_VG_HW_PREMULTIPLY's own header gloss: "HW multiplier can accept
- * either premultiplied or not" (inc/vg_lite.h:209). */
+ * either premultiplied or not" (inc/vg_lite.h:209).
+ *
+ * ★ IF DARK FRINGES DO APPEAR on antialiased rotor edges on silicon, the cheap
+ * experiment is STRAIGHT ALPHA + VG_LITE_BLEND_NORMAL_LVGL (skip this function
+ * for the gpu path and change the blend) -- NOT dropping this function while
+ * keeping SRC_OVER, which would be wrong in the opposite direction and produce
+ * bright halos instead. */
 void rkg_premultiply(uint32_t *buf, size_t npx)
 {
     for (size_t i = 0; i < npx; i++) {
@@ -293,7 +310,8 @@ static void emit_tri(float r, float a1, float a2)
     emit(VLC_OP_CLOSE);
 }
 
-/* Close one path object over the arena words emitted since 'start'. */
+/* Close one path object over the arena words emitted since 'start'.
+ * Callers must have checked room via room_for_path() first. */
 static void finish_path(vg_lite_path_t *p, size_t start)
 {
     emit(VLC_OP_END);
@@ -305,6 +323,17 @@ static void finish_path(vg_lite_path_t *p, size_t start)
                       41.0f * RKG_FIX, 41.0f * RKG_FIX);
 }
 
+/* Close the pending path and record its colour -- but ONLY if paths[n] is
+ * inside the caller's array. The facet variant already uses exactly 9 of the 9
+ * slots, so the next variant Phase 2 adds is the one that would have walked off
+ * the end; this trips the same sticky flag the arena guard uses, so overflow of
+ * either kind surfaces as the one -1 the caller already handles. */
+#define RKG_ADD_PATH(col) do {                                   \
+        if (n >= RKG_VG_MAX_PATHS) { s_vg_overflow = true; break; } \
+        finish_path(&paths[n], start);                           \
+        colors_abgr[n] = abgr(col); n++;                         \
+    } while (0)
+
 int rkg_build_vg_paths(rkg_variant_t v, vg_lite_path_t *paths,
                        uint32_t *colors_abgr, size_t *out_bytes)
 {
@@ -313,21 +342,20 @@ int rkg_build_vg_paths(rkg_variant_t v, vg_lite_path_t *paths,
     int n = 0;
     size_t start;
     if (v == RKG_NOTCH) {
-        start = s_vg_used; emit_circle(36.0f);
-        finish_path(&paths[n], start); colors_abgr[n++] = abgr(RKG_BODY);
-        start = s_vg_used; emit_circle(27.0f);
-        finish_path(&paths[n], start); colors_abgr[n++] = abgr(RKG_INNER);
+        start = s_vg_used; emit_circle(36.0f);  RKG_ADD_PATH(RKG_BODY);
+        start = s_vg_used; emit_circle(27.0f);  RKG_ADD_PATH(RKG_INNER);
         start = s_vg_used; emit_ring(16.0f, 36.0f, -8.0f, 8.0f);
-        finish_path(&paths[n], start); colors_abgr[n++] = abgr(RKG_INDEX);
+        RKG_ADD_PATH(RKG_INDEX);
     } else {
         for (int i = 0; i < 8; i++) {
             const float a1 = (float)i * 45.0f + 22.5f;
             start = s_vg_used; emit_tri(36.0f, a1, a1 + 45.0f);
-            finish_path(&paths[n], start); colors_abgr[n++] = abgr(RKG_TONES[i]);
+            RKG_ADD_PATH(RKG_TONES[i]);
         }
         start = s_vg_used; emit_ring(20.0f, 36.0f, -22.5f, 22.5f);
-        finish_path(&paths[n], start); colors_abgr[n++] = abgr(RKG_INDEX);
+        RKG_ADD_PATH(RKG_INDEX);
     }
     *out_bytes = s_vg_used * sizeof(int32_t);
     return s_vg_overflow ? -1 : n;
 }
+#undef RKG_ADD_PATH

@@ -31,13 +31,18 @@ grep -q "^gpu=absent"          "$OUT" || { echo "FAIL: QEMU must report gpu=abse
 
 # TRIPWIRES FIRST: a fabricated result is worse than a missing one, so these
 # outrank the golden checks.
-#   1. No gpu cell may report a result with no GPU present.
+#   1. No gpu cell may report ANY per-cell OUTCOME with no GPU present -- not
+#      just a result. With no GPU the only legal disposition is st=gpu-absent,
+#      decided before a single vg_lite_* call; a crc, a timing, a timeout or a
+#      build failure all mean the cell was entered, and a fabricated FAILURE
+#      would slip past a check that only looked for fabricated successes.
 #   2. gpu_err= exists only on silicon gpu lines; in a QEMU capture ANY
 #      occurrence means a sw line grew the token or a gpu cell ran.
 # DEMONSTRATED RED 2026-08-27: appending
 # 'cell=vector/gpu/notch st=ok crc=0xDEADBEEF init_us=1 rotor_bytes=0' to a
 # passing capture failed tripwire 1 by name.
-if grep -E "^(cell|time)=[a-z]+/gpu/" "$OUT" | grep -qE "crc=|mfps_med="; then
+if grep -E "^(cell|time)=[a-z]+/gpu/" "$OUT" \
+   | grep -qE "crc=|mfps_med=|st=timeout|st=vg-overflow"; then
     echo "FAIL: a GPU cell reported a result with no GPU present"; exit 1
 fi
 if grep -q "gpu_err=" "$OUT"; then

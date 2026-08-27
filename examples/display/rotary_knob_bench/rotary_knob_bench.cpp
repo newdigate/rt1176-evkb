@@ -144,9 +144,12 @@ static void gpu_rotor_pass(void)
     for (int k = 0; k < 16; k++) {
         vg_lite_matrix_t m; vg_lite_identity(&m);
         vg_lite_translate(g_knob[k].cx, g_knob[k].cy, &m);
-        vg_lite_rotate(g_knob[k].angle, &m);
+        /* ★ THE ROTATE BELONGS TO THE STRATEGY, NOT TO THE LOOP. It used to sit
+         * here, above the switch, which silently broke the strip cells in BOTH
+         * ways that matter -- see the RKB_STRIP case. */
         switch (g_cell->strat) {
         case RKB_VECTOR:
+            vg_lite_rotate(g_knob[k].angle, &m);
             vg_lite_scale(RKB_KNOB_S / 16.0f, RKB_KNOB_S / 16.0f, &m);
             for (int p = 0; p < g_vg_npaths; p++)
                 GPU_TRY(vg_lite_draw(&s_target, &g_vg_paths[p],
@@ -154,6 +157,9 @@ static void gpu_rotor_pass(void)
                                      VG_LITE_BLEND_SRC_OVER, g_vg_colors[p]));
             break;
         case RKB_BITMAP:
+            /* One frame, rotated live: this IS the strategy. BI_LINEAR because
+             * a real rotation lands between source texels. */
+            vg_lite_rotate(g_knob[k].angle, &m);
             vg_lite_translate(-(RKB_KNOB_PX * 0.5f), -(RKB_KNOB_PX * 0.5f), &m);
             GPU_TRY(vg_lite_blit(&s_target, &g_rotor_vgbuf, &m,
                                  VG_LITE_BLEND_SRC_OVER, 0,
@@ -162,10 +168,24 @@ static void gpu_rotor_pass(void)
         case RKB_STRIP: {
             const int idx = ((int)lroundf(g_knob[k].angle / RKB_STEP_DEG))
                             & (RKB_STRIP_N - 1);
+            /* ★ NO rotate: the frame IS the rotation (spec section 3,
+             * "identity matrix"). Rotating a pre-rotated frame both doubles the
+             * angle and reintroduces the resample the filmstrip exists to
+             * avoid. The second error is the dangerous one -- it would have
+             * made strip/gpu perform exactly bitmap/gpu's work, and the bench
+             * would have concluded the filmstrip buys nothing on the GPU.
+             * The sw side never had this bug (d.rotation stays 0 there), and
+             * that asymmetry is the tell. */
             vg_lite_translate(-(RKB_KNOB_PX * 0.5f), -(RKB_KNOB_PX * 0.5f), &m);
+            /* ★ FILTER_POINT, and it is now HONEST rather than merely cheaper:
+             * with the rotate gone the transform is a pure translate by
+             * integers (every knob centre is an integer and the 75 px offset is
+             * exact), so source texels land on destination pixels 1:1 and there
+             * is nothing to interpolate. This is what declares section 4's
+             * "zero interpolation" in code instead of in prose. */
             GPU_TRY(vg_lite_blit(&s_target, &g_strip_vgbuf[idx], &m,
                                  VG_LITE_BLEND_SRC_OVER, 0,
-                                 VG_LITE_FILTER_BI_LINEAR));
+                                 VG_LITE_FILTER_POINT));
             break;
         }
         }
@@ -633,7 +653,15 @@ void setup()
      * negative instead of a hang. */
     vg_lite_init_mem(VGLITE_RT1176_REGISTER_BASE, 0u, vglite_pool, VGLITE_POOL_BYTES);
     const uint32_t chip_id = vg_lite_hal_probe_chip_id();
-    if (chip_id != 0u && vg_lite_init(TESS_W, TESS_H) == VG_LITE_SUCCESS) {
+    /* ★ ONE BOOL CANNOT SAY WHY. s_gpu collapses "no GC355 here" (the QEMU
+     * case) and "the GPU is present but init or map FAILED" (a silicon case,
+     * and the one that would otherwise present as a board that mysteriously
+     * reports every gpu cell absent). These two codes separate them. They are
+     * printed only on the attempt path -- when chip_id is 0 nothing was
+     * attempted and there is no code to report. */
+    vg_lite_error_t vg_init_err = VG_LITE_SUCCESS;
+    vg_lite_error_t vg_map_err  = VG_LITE_SUCCESS;
+    if (chip_id != 0u && (vg_init_err = vg_lite_init(TESS_W, TESS_H)) == VG_LITE_SUCCESS) {
         memset(&s_target, 0, sizeof(s_target));
         s_target.width   = Display.width();
         s_target.height  = Display.height();
@@ -644,10 +672,20 @@ void setup()
         s_target.address = (uint32_t)(uintptr_t)Display.framebuffer();
         /* ★ REGISTER the framebuffer with the driver or every draw "succeeds"
          * and changes nothing (vglite_probe, measured on silicon). */
-        s_gpu = (vg_lite_map(&s_target, VG_LITE_MAP_USER_MEMORY, 0) == VG_LITE_SUCCESS);
+        vg_map_err = vg_lite_map(&s_target, VG_LITE_MAP_USER_MEMORY, 0);
+        s_gpu = (vg_map_err == VG_LITE_SUCCESS);
     }
-    Serial1.printf("gpu=%s chip_id=0x%08lX\n", s_gpu ? "present" : "absent",
-                   (unsigned long)chip_id);
+    /* The `gpu=present`/`gpu=absent` PREFIX is load-bearing -- run_qemu.sh
+     * prefix-greps it -- so the codes are appended, never interpolated. The
+     * token is deliberately NOT spelled `gpu_err=`: that name belongs to the
+     * per-cell counter and the gate has a tripwire on it. */
+    if (chip_id != 0u)
+        Serial1.printf("gpu=%s chip_id=0x%08lX vg_init=%d vg_map=%d\n",
+                       s_gpu ? "present" : "absent", (unsigned long)chip_id,
+                       (int)vg_init_err, (int)vg_map_err);
+    else
+        Serial1.printf("gpu=%s chip_id=0x%08lX\n", s_gpu ? "present" : "absent",
+                       (unsigned long)chip_id);
 
     lvgl_rt1176_begin();
     lvgl_mipi_panel_create(Display);
@@ -667,9 +705,11 @@ void loop()
     lvgl_rt1176_loop();
     bench_step();
 
-    /* Liveness after bench_done. Without it "the last line printed" and "the
-     * image died right after printing it" are the same capture, and a gate
-     * cannot tell them apart. */
+    /* Liveness after bench_done, FOR THE SILICON TRANSCRIPT -- no gate greps
+     * hb. Without it "the bench finished and the image is still running" and
+     * "the image died the instant it printed its last line" are the same
+     * capture, and on the bench that distinction is the difference between a
+     * completed run and one to repeat. The QEMU gate stops at bench_done. */
     static uint32_t hb_last = 0, hb_n = 0;
     if (g_state == BS_DONE && millis() - hb_last >= 2000) {
         hb_last = millis();
