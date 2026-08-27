@@ -12,6 +12,7 @@
  */
 #include <Arduino.h>
 #include <string.h>
+#include <math.h>
 #include "Display.h"
 #include "lvgl_rt1176.h"
 #include "lvgl_mipi_panel.h"
@@ -32,6 +33,282 @@ EXTMEM __attribute__((aligned(64))) static uint8_t vglite_pool[VGLITE_POOL_BYTES
 
 static bool s_gpu = false;
 static vg_lite_buffer_t s_target;     /* the panel framebuffer, mapped */
+
+/* ---- cell table ---------------------------------------------------------- */
+typedef enum { RKB_VECTOR = 0, RKB_BITMAP, RKB_STRIP } rkb_strat_t;
+typedef struct { rkb_strat_t strat; bool gpu; rkg_variant_t var; } rkb_cell_t;
+
+static const rkb_cell_t CELLS[12] = {
+    { RKB_VECTOR, false, RKG_NOTCH }, { RKB_VECTOR, false, RKG_FACET },
+    { RKB_VECTOR, true,  RKG_NOTCH }, { RKB_VECTOR, true,  RKG_FACET },
+    { RKB_BITMAP, false, RKG_NOTCH }, { RKB_BITMAP, false, RKG_FACET },
+    { RKB_BITMAP, true,  RKG_NOTCH }, { RKB_BITMAP, true,  RKG_FACET },
+    { RKB_STRIP,  false, RKG_NOTCH }, { RKB_STRIP,  false, RKG_FACET },
+    { RKB_STRIP,  true,  RKG_NOTCH }, { RKB_STRIP,  true,  RKG_FACET },
+};
+static const char *STRAT_NAME[3]  = { "vector", "bitmap", "strip" };
+static const char *VAR_NAME[2]    = { "notch", "facet" };
+#define ENGINE_NAME(c) ((c)->gpu ? "gpu" : "sw")
+
+/* ---- per-knob state and scene -------------------------------------------- */
+typedef struct { lv_obj_t *obj; float angle; float cx, cy; } rkb_knob_t;
+static rkb_knob_t g_knob[16];
+static const rkb_cell_t *g_cell = NULL;      /* active cell, NULL = none */
+
+/* ---- rotor/strip arenas (SDRAM; rebuilt at each cell's init) ------------- */
+#define ROTOR_PX   (RKB_KNOB_PX * RKB_KNOB_PX)
+#define ROTOR_B    (ROTOR_PX * 4)
+EXTMEM __attribute__((aligned(64))) static uint32_t g_rotor[ROTOR_PX];
+EXTMEM __attribute__((aligned(64))) static uint32_t g_strip[RKB_STRIP_N][ROTOR_PX];
+
+static lv_image_dsc_t g_rotor_dsc;
+static lv_image_dsc_t g_strip_dsc[RKB_STRIP_N];
+static vg_lite_buffer_t g_rotor_vgbuf;
+static vg_lite_buffer_t g_strip_vgbuf[RKB_STRIP_N];
+
+/* vector/gpu cached paths */
+static vg_lite_path_t g_vg_paths[RKG_VG_MAX_PATHS];
+static uint32_t       g_vg_colors[RKG_VG_MAX_PATHS];
+static int            g_vg_npaths = 0;
+
+static uint32_t g_init_us = 0, g_rotor_bytes = 0;
+
+/* ---- widget draw: LV_EVENT_DRAW_MAIN on a plain lv_obj ------------------- */
+static void knob_draw_cb(lv_event_t *e)
+{
+    rkb_knob_t *k = (rkb_knob_t *)lv_event_get_user_data(e);
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_obj_t *obj = lv_event_get_current_target_obj(e);
+    lv_area_t coords; lv_obj_get_coords(obj, &coords);
+    const float cx = (float)coords.x1 + RKB_KNOB_PX * 0.5f;
+    const float cy = (float)coords.y1 + RKB_KNOB_PX * 0.5f;
+
+    /* The well is common SW code in EVERY cell -- the constant addend that
+     * keeps the A/B about the rotor strategy alone (spec section 3). */
+    rkg_draw_well_sw(layer, cx, cy, RKB_KNOB_S);
+    if (g_cell == NULL || g_cell->gpu) return;   /* gpu rotor: post-refresh pass */
+
+    switch (g_cell->strat) {
+    case RKB_VECTOR:
+        rkg_draw_rotor_sw(layer, g_cell->var, cx, cy, RKB_KNOB_S, k->angle);
+        break;
+    case RKB_BITMAP: {
+        lv_draw_image_dsc_t d; lv_draw_image_dsc_init(&d);
+        d.src = &g_rotor_dsc;
+        d.rotation = (int32_t)lroundf(k->angle * 10.0f);  /* 0.1 deg units */
+        d.pivot.x = RKB_KNOB_PX / 2; d.pivot.y = RKB_KNOB_PX / 2;
+        d.antialias = 1;
+        lv_draw_image(layer, &d, &coords);
+        break;
+    }
+    case RKB_STRIP: {
+        const int idx = ((int)lroundf(k->angle / RKB_STEP_DEG))
+                        & (RKB_STRIP_N - 1);
+        lv_draw_image_dsc_t d; lv_draw_image_dsc_init(&d);
+        d.src = &g_strip_dsc[idx];
+        lv_draw_image(layer, &d, &coords);
+        break;
+    }
+    }
+}
+
+/* ---- gpu rotor pass (post-REFR_READY, inside the timed frame) ------------ */
+static void gpu_rotor_pass(void)
+{
+    for (int k = 0; k < 16; k++) {
+        vg_lite_matrix_t m; vg_lite_identity(&m);
+        vg_lite_translate(g_knob[k].cx, g_knob[k].cy, &m);
+        vg_lite_rotate(g_knob[k].angle, &m);
+        switch (g_cell->strat) {
+        case RKB_VECTOR:
+            vg_lite_scale(RKB_KNOB_S / 16.0f, RKB_KNOB_S / 16.0f, &m);
+            for (int p = 0; p < g_vg_npaths; p++)
+                vg_lite_draw(&s_target, &g_vg_paths[p], VG_LITE_FILL_NON_ZERO,
+                             &m, VG_LITE_BLEND_SRC_OVER, g_vg_colors[p]);
+            break;
+        case RKB_BITMAP:
+            vg_lite_translate(-(RKB_KNOB_PX * 0.5f), -(RKB_KNOB_PX * 0.5f), &m);
+            vg_lite_blit(&s_target, &g_rotor_vgbuf, &m,
+                         VG_LITE_BLEND_SRC_OVER, 0, VG_LITE_FILTER_BI_LINEAR);
+            break;
+        case RKB_STRIP: {
+            const int idx = ((int)lroundf(g_knob[k].angle / RKB_STEP_DEG))
+                            & (RKB_STRIP_N - 1);
+            vg_lite_translate(-(RKB_KNOB_PX * 0.5f), -(RKB_KNOB_PX * 0.5f), &m);
+            vg_lite_blit(&s_target, &g_strip_vgbuf[idx], &m,
+                         VG_LITE_BLEND_SRC_OVER, 0, VG_LITE_FILTER_BI_LINEAR);
+            break;
+        }
+        }
+    }
+    /* Retire before anyone reads the framebuffer -- checksumming earlier
+     * would race the hardware (vglite_probe). */
+    vg_lite_finish();
+}
+
+/* ---- cell lifecycle ------------------------------------------------------ */
+static void vg_wrap_argb(vg_lite_buffer_t *b, uint32_t *px)
+{
+    memset(b, 0, sizeof(*b));
+    b->width = RKB_KNOB_PX; b->height = RKB_KNOB_PX;
+    b->stride = RKB_KNOB_PX * 4;
+    b->tiled = VG_LITE_LINEAR;
+    b->format = VG_LITE_BGRA8888;   /* premultiplied ARGB8888 words */
+    b->memory = px;
+    b->address = (uint32_t)(uintptr_t)px;
+    vg_lite_map(b, VG_LITE_MAP_USER_MEMORY, 0);
+}
+
+/* Only reached for gpu cells when s_gpu -- the BS_*_START guards
+ * short-circuit the absent case before any vg_lite_* call. */
+static void cell_build_assets(const rkb_cell_t *c)
+{
+    const uint32_t t0 = micros();
+    g_rotor_bytes = 0;
+    switch (c->strat) {
+    case RKB_VECTOR:
+        if (c->gpu) {
+            size_t bytes = 0;
+            g_vg_npaths = rkg_build_vg_paths(c->var, g_vg_paths, g_vg_colors,
+                                             &bytes);
+            g_rotor_bytes = (uint32_t)bytes;
+        }
+        break;
+    case RKB_BITMAP:
+        rkg_render_rotor_argb(c->var, g_rotor, RKB_KNOB_PX, 0.0f);
+        if (c->gpu) {
+            rkg_premultiply(g_rotor, ROTOR_PX);
+            vg_wrap_argb(&g_rotor_vgbuf, g_rotor);
+        } else {
+            memset(&g_rotor_dsc, 0, sizeof(g_rotor_dsc));
+            g_rotor_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+            g_rotor_dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
+            g_rotor_dsc.header.w = RKB_KNOB_PX;
+            g_rotor_dsc.header.h = RKB_KNOB_PX;
+            g_rotor_dsc.header.stride = RKB_KNOB_PX * 4;
+            g_rotor_dsc.data_size = ROTOR_B;
+            g_rotor_dsc.data = (const uint8_t *)g_rotor;
+        }
+        g_rotor_bytes = ROTOR_B;
+        break;
+    case RKB_STRIP:
+        for (int i = 0; i < RKB_STRIP_N; i++) {
+            rkg_render_rotor_argb(c->var, g_strip[i], RKB_KNOB_PX,
+                                  (float)i * RKB_STEP_DEG);
+            if (c->gpu) {
+                rkg_premultiply(g_strip[i], ROTOR_PX);
+                vg_wrap_argb(&g_strip_vgbuf[i], g_strip[i]);
+            } else {
+                memset(&g_strip_dsc[i], 0, sizeof(g_strip_dsc[i]));
+                g_strip_dsc[i].header.magic = LV_IMAGE_HEADER_MAGIC;
+                g_strip_dsc[i].header.cf = LV_COLOR_FORMAT_ARGB8888;
+                g_strip_dsc[i].header.w = RKB_KNOB_PX;
+                g_strip_dsc[i].header.h = RKB_KNOB_PX;
+                g_strip_dsc[i].header.stride = RKB_KNOB_PX * 4;
+                g_strip_dsc[i].data_size = ROTOR_B;
+                g_strip_dsc[i].data = (const uint8_t *)g_strip[i];
+            }
+        }
+        g_rotor_bytes = (uint32_t)ROTOR_B * RKB_STRIP_N;
+        break;
+    }
+    g_init_us = micros() - t0;
+}
+
+static lv_obj_t *cell_build_scene(const rkb_cell_t *c, float angle)
+{
+    g_cell = c;
+    lv_obj_t *scr = lv_obj_create(NULL);
+    /* Opaque ground: every pixel defined, so the checksum means something
+     * (vglite_lvgl_test). No labels -- no font dependence in the goldens. */
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x101820), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+    for (int r = 0; r < 4; r++) {
+        for (int col = 0; col < 4; col++) {
+            const int k = r * 4 + col;
+            lv_obj_t *o = lv_obj_create(scr);
+            lv_obj_remove_style_all(o);
+            lv_obj_set_size(o, RKB_KNOB_PX, RKB_KNOB_PX);
+            lv_obj_set_pos(o, 15 + col * 175, 120 + r * 175);
+            lv_obj_add_event_cb(o, knob_draw_cb, LV_EVENT_DRAW_MAIN, &g_knob[k]);
+            g_knob[k].obj = o;
+            g_knob[k].angle = angle;
+            g_knob[k].cx = 15.0f + col * 175.0f + RKB_KNOB_PX * 0.5f;
+            g_knob[k].cy = 120.0f + r * 175.0f + RKB_KNOB_PX * 0.5f;
+        }
+    }
+    lv_obj_t *old = lv_screen_active();
+    lv_screen_load(scr);
+    if (old) lv_obj_delete(old);
+    return scr;
+}
+
+/* ---- Phase A state machine (Phase B arrives in Task 5) ------------------- */
+typedef enum { BS_IDLE = 0, BS_A_START, BS_A_WAIT, BS_DONE_A } rkb_state_t;
+static rkb_state_t g_state = BS_IDLE;
+static int g_ci = 0;                    /* cell index 0..11 */
+static uint32_t g_ok = 0, g_absent = 0;
+static volatile uint32_t g_refr_count = 0;
+static uint32_t g_refr_at_start = 0;
+
+static void refr_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_REFR_READY) {
+        /* gpu rotor pass INSIDE the frame, before anyone counts it done */
+        if (g_cell && g_cell->gpu && s_gpu) gpu_rotor_pass();
+        g_refr_count++;
+    }
+}
+
+static void cell_print_a(const rkb_cell_t *c, uint32_t crc)
+{
+    Serial1.printf("cell=%s/%s/%s st=ok crc=0x%08lX init_us=%lu rotor_bytes=%lu\n",
+                   STRAT_NAME[c->strat], ENGINE_NAME(c), VAR_NAME[c->var],
+                   (unsigned long)crc, (unsigned long)g_init_us,
+                   (unsigned long)g_rotor_bytes);
+}
+
+static void bench_step(void)
+{
+    switch (g_state) {
+    case BS_IDLE:
+        break;
+    case BS_A_START: {
+        if (g_ci >= 12) {
+            Serial1.printf("crc_done cells=12 ok=%lu gpu_absent=%lu\n",
+                           (unsigned long)g_ok, (unsigned long)g_absent);
+            g_state = BS_DONE_A;         /* Task 5 chains Phase B here */
+            break;
+        }
+        const rkb_cell_t *c = &CELLS[g_ci];
+        if (c->gpu && !s_gpu) {
+            Serial1.printf("cell=%s/gpu/%s st=gpu-absent\n",
+                           STRAT_NAME[c->strat], VAR_NAME[c->var]);
+            g_absent++; g_ci++;
+            break;                        /* stay in BS_A_START, next cell */
+        }
+        cell_build_assets(c);
+        cell_build_scene(c, RKB_CANON_DEG);
+        g_refr_at_start = g_refr_count;
+        g_state = BS_A_WAIT;
+        break;
+    }
+    case BS_A_WAIT:
+        /* One full refresh has retired (gpu pass included, done in refr_cb)
+         * and the direct-mode flush is complete. */
+        if (g_refr_count > g_refr_at_start && lvgl_mipi_panel_frame_done()) {
+            lvgl_sum_reset();
+            lvgl_sum_feed(Display.framebuffer(), PANEL_FB_BYTES);
+            cell_print_a(&CELLS[g_ci], lvgl_sum_value());
+            g_ok++; g_ci++;
+            g_cell = NULL;
+            g_state = BS_A_START;
+        }
+        break;
+    case BS_DONE_A:
+        break;
+    }
+}
 
 void setup()
 {
@@ -67,10 +344,13 @@ void setup()
 
     lvgl_rt1176_begin();
     lvgl_mipi_panel_create(Display);
-    /* State machine armed in Task 4; nothing more yet. */
+    lv_display_add_event_cb(lv_display_get_default(), refr_cb,
+                            LV_EVENT_REFR_READY, NULL);
+    g_state = BS_A_START;
 }
 
 void loop()
 {
     lvgl_rt1176_loop();
+    bench_step();
 }
