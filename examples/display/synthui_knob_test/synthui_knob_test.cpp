@@ -23,6 +23,8 @@
  *      angles, never checksummed).
  */
 #include <Arduino.h>
+#include <string.h>
+#include <math.h>
 #include "Display.h"
 #include "lvgl_rt1176.h"
 #include "lvgl_mipi_panel.h"
@@ -60,6 +62,93 @@ static const uint32_t accent_opt[4] = { SYNTHUI_ROTARY_ACCENT_DEFAULT,
                                         0xffd24a, 0x5be0a0, 0xff6a52 };
 
 static lv_obj_t *hero;
+
+static void opaque_bg(lv_obj_t *scr);
+static lv_obj_t *make_knob(lv_obj_t *parent, synthui_rotary_mode_t m,
+                           synthui_rotary_theme_t th, lv_state_t st,
+                           float angle, int32_t size);
+
+/* --- rk_fps: the widget-level render-rate number (gpu-well spec section 4).
+ * Runs AFTER SYNTHUI_KNOB_DONE, so the QEMU gate (which stops at DONE)
+ * never waits on it or parses it -- the bench's ungated-Phase-B precedent.
+ * In QEMU the number is timing-meaningless and nothing asserts it; on
+ * silicon it is what the >=30 fps acceptance criterion reads. Method is the
+ * bench's: REFR_START->REFR_READY intervals, damage-gated by RENDER_READY
+ * (which structurally cannot fire on an empty refresh), the screen-load
+ * frame skipped, a 15 ms timer advancing all 16 angles through the widget's
+ * own delta-damage path. */
+#define RK_FPS_N 64
+static uint32_t g_fps_us[RK_FPS_N];
+static volatile uint32_t g_fps_n = 0;
+static volatile bool g_fps_timing = false, g_fps_skip = false;
+static volatile bool g_fps_rendered = false;
+static volatile uint32_t g_fps_t0 = 0;
+static lv_obj_t *g_fps_knob[16];
+
+static void fps_refr_cb(lv_event_t *e)
+{
+    switch (lv_event_get_code(e)) {
+    case LV_EVENT_REFR_START:  g_fps_t0 = micros(); break;
+    case LV_EVENT_RENDER_READY: g_fps_rendered = true; break;
+    case LV_EVENT_REFR_READY:
+        if (g_fps_rendered && g_fps_timing) {
+            if (g_fps_skip) g_fps_skip = false;
+            else if (g_fps_n < RK_FPS_N)
+                g_fps_us[g_fps_n++] = micros() - g_fps_t0;
+        }
+        g_fps_rendered = false;
+        break;
+    default: break;
+    }
+}
+
+static void fps_anim_cb(lv_timer_t *t)
+{
+    (void)t;
+    static uint32_t step = 0;
+    step++;
+    for (int k = 0; k < 16; k++)
+        synthui_rotary_knob_set_angle(g_fps_knob[k],
+            fmodf((float)step * 5.625f + (float)k * 22.5f, 360.0f));
+}
+
+static void rk_fps_phase(void)
+{
+    lv_obj_t *scr = lv_obj_create(NULL); opaque_bg(scr);
+    for (int r = 0; r < 4; r++)
+        for (int c = 0; c < 4; c++) {
+            lv_obj_t *k = make_knob(scr, row_mode[r], row_theme[r],
+                                    LV_STATE_DEFAULT, 0.0f, 150);
+            lv_obj_set_pos(k, 15 + c * 175, 120 + r * 175);
+            g_fps_knob[r * 4 + c] = k;
+        }
+    lv_screen_load(scr);
+    g_fps_n = 0; g_fps_skip = true; g_fps_timing = true;
+    lv_display_t *disp = lv_display_get_default();
+    lv_display_add_event_cb(disp, fps_refr_cb, LV_EVENT_REFR_START, NULL);
+    lv_display_add_event_cb(disp, fps_refr_cb, LV_EVENT_RENDER_READY, NULL);
+    lv_display_add_event_cb(disp, fps_refr_cb, LV_EVENT_REFR_READY, NULL);
+    lv_timer_t *anim = lv_timer_create(fps_anim_cb, 15, NULL);
+    const uint32_t t0 = millis();
+    while (g_fps_n < RK_FPS_N && millis() - t0 < 120000u)
+        lvgl_rt1176_loop();
+    g_fps_timing = false;
+    lv_timer_delete(anim);
+    uint32_t s[RK_FPS_N];
+    const uint32_t n = g_fps_n ? g_fps_n : 1;
+    memcpy(s, (const void *)g_fps_us, sizeof(s));
+    for (uint32_t i = 1; i < n; i++) {
+        const uint32_t v = s[i]; int32_t j = (int32_t)i - 1;
+        while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; j--; }
+        s[j + 1] = v;
+    }
+    Serial1.printf("rk_fps frames=%lu mfps_med=%lu us_med=%lu us_min=%lu"
+                   " us_max=%lu engine=%s\n",
+                   (unsigned long)g_fps_n,
+                   (unsigned long)(1000000000ull / (s[n / 2] ? s[n / 2] : 1)),
+                   (unsigned long)s[n / 2], (unsigned long)s[0],
+                   (unsigned long)s[n - 1], s_gpu ? "gpu" : "sw");
+}
 
 #ifdef RK_EYEBALL_HOLD
 /* Diagnostic builds only (-DRK_EYEBALL_HOLD=<1..6> at configure time,
@@ -329,6 +418,9 @@ void setup()
         Serial1.printf("rk_gpu_err=%lu\n",
                        (unsigned long)synthui_rotary_gpu_errors());
     Serial1.println("SYNTHUI_KNOB_DONE");
+
+    /* rk_fps AFTER the gate's last token (the gate reaps at DONE) */
+    rk_fps_phase();
 
     /* Phase 3: hero spin, glass-only, after every token. */
     lv_obj_t *scr = lv_obj_create(NULL); opaque_bg(scr);
