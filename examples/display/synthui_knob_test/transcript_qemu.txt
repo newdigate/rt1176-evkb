@@ -14,5 +14,6 @@ KNOB_DELTA_SEQ=0x6F8E52AC
 KNOB_DELTA_FULL=0x6F8E52AC
 KNOB_DELTA_EQ=PASS
 KNOB_DELTA_MAXAREA=3050
+rk_vsync flips=15 isrs=15 timeouts=0
 SYNTHUI_KNOB_DONE
-rk_fps frames=64 mfps_med=32169 us_med=31085 us_min=19053 us_max=100618 engine=sw
+rk_fps frames=64 mfps_med=32540 us_med=30731 us_min=20632 us_max=106744 engine=sw

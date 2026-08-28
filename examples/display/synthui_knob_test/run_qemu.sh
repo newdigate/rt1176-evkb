@@ -92,5 +92,9 @@ DFUL=$(grep -a -oE "KNOB_DELTA_FULL=0x[0-9A-F]{8}" "$OUT" | head -1 | cut -d= -f
 DAREA=$(grep -a -oE "KNOB_DELTA_MAXAREA=[0-9]+" "$OUT" | head -1 | cut -d= -f2)
 [ -n "$DAREA" ] && [ "$DAREA" -gt 0 ] || { echo "FAIL: delta area guard missing or zero"; exit 1; }
 [ "$DAREA" -le 8000 ] || { echo "FAIL: delta damage not engaged (maxarea=$DAREA)"; exit 1; }
+# vsync-fence health (db pipeline): a timeout means the fence silently
+# degraded to unfenced v1 behaviour -- the tear-free property would be gone
+# with every golden still green, so it must fail by name here.
+grep -qE "rk_vsync flips=[0-9]+ isrs=[0-9]+ timeouts=0\r?$" "$OUT" || { echo "FAIL: vsync fence unhealthy or missing"; exit 1; }
 grep -q "SYNTHUI_KNOB_DONE"    "$OUT" || { echo "FAIL: no completion token"; exit 1; }
 echo "PASS: SynthUI knob render verified"

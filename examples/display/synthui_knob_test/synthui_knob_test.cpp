@@ -264,10 +264,14 @@ static void delta_inv_cb(lv_event_t *e)
     if (px > s_delta_maxarea) s_delta_maxarea = px;
 }
 
+/* Checksum the buffer that was PRESENTED (flipped to glass) -- in db mode
+ * Display.framebuffer() is only one of the two buffers. flip_sync() first,
+ * so a pending flip has retired and scanned_fb() names the front buffer. */
 static uint32_t sum_active_screen(void)
 {
+    lvgl_mipi_panel_flip_sync();
     lvgl_sum_reset();
-    lvgl_sum_feed(Display.framebuffer(), PANEL_FB_BYTES);
+    lvgl_sum_feed(lvgl_mipi_panel_scanned_fb(), PANEL_FB_BYTES);
     return lvgl_sum_value();
 }
 
@@ -335,9 +339,7 @@ static uint32_t sum_screen(lv_obj_t *scr)
     lv_screen_load(scr);
     lv_obj_invalidate(scr);
     lv_refr_now(NULL);
-    lvgl_sum_reset();
-    lvgl_sum_feed(Display.framebuffer(), PANEL_FB_BYTES);
-    return lvgl_sum_value();
+    return sum_active_screen();
 }
 
 void setup()
@@ -371,14 +373,23 @@ void setup()
         (chip_id != 0u) && (vg_lite_init(TESS_W, TESS_H) == VG_LITE_SUCCESS);
 
     lvgl_rt1176_begin();
-    lvgl_mipi_panel_create(Display);
+    /* v4/v5 double-buffered create: LVGL renders off-screen, the LCDIFv2
+     * flips at vsync. Together with the pre-flip compose hook below this
+     * makes the GPU composite tear-free BY CONSTRUCTION -- the scanout can
+     * never see an intermediate state (the white/dark square flashes on the
+     * 60 fps videos, 2026-08-28). */
+    lvgl_mipi_panel_create_db(Display);
 
     /* Attach the compositor only when the GPU is genuinely up; a false here
      * leaves the widget fully software -- the honest negative the gate pins. */
-    if (vg_up)
-        s_gpu = synthui_rotary_gpu_begin(Display.framebuffer(),
-                                         Display.width(), Display.height(),
-                                         Display.width() * PANEL_BYTES_PER_PIXEL);
+    if (vg_up) {
+        s_gpu = synthui_rotary_gpu_begin_deferred(
+                    Display.width(), Display.height(),
+                    Display.width() * PANEL_BYTES_PER_PIXEL);
+        /* the app owns the wiring: compositor <- pre-flip hook -> panel */
+        if (s_gpu)
+            lvgl_mipi_panel_set_preflip_cb(synthui_rotary_gpu_compose_into);
+    }
     Serial1.printf("rk_engine=%s\n", s_gpu ? "gpu" : "sw");
 
     /* Phase 1: grid is the FIRST refresh, so LVGL_BYTES pins a whole-screen
@@ -387,8 +398,9 @@ void setup()
     uint32_t t0 = millis();
     while (!lvgl_mipi_panel_frame_done() && (millis() - t0) < 5000)
         lvgl_rt1176_loop();
+    lvgl_mipi_panel_flip_sync();
     lvgl_sum_reset();
-    lvgl_sum_feed(Display.framebuffer(), PANEL_FB_BYTES);
+    lvgl_sum_feed(lvgl_mipi_panel_scanned_fb(), PANEL_FB_BYTES);
     Serial1.printf("LVGL_FLUSHED=%s\n",
                    lvgl_mipi_panel_frame_done() ? "PASS" : "FAIL");
     Serial1.printf("LVGL_BYTES=%lu\n",
@@ -431,6 +443,12 @@ void setup()
                        (unsigned long)vg_lite_os_irq_count(),
                        (unsigned long)vg_lite_os_wait_timeouts());
     }
+    /* vsync-fence health (db mode, both engines): timeouts must be 0 or the
+     * pipeline silently degraded to unfenced v1 behaviour -- gated in QEMU. */
+    Serial1.printf("rk_vsync flips=%lu isrs=%lu timeouts=%lu\n",
+                   (unsigned long)lvgl_mipi_panel_flips(),
+                   (unsigned long)lvgl_mipi_panel_vsync_isrs(),
+                   (unsigned long)lvgl_mipi_panel_vsync_timeouts());
     Serial1.println("SYNTHUI_KNOB_DONE");
 
     /* rk_fps AFTER the gate's last token (the gate reaps at DONE) */
