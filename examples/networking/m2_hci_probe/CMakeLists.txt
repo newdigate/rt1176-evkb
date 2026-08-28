@@ -159,7 +159,20 @@ if(M2_BT_WAKE_PULSE)
     add_definitions(-DM2_BT_WAKE_PULSE=1)
 endif()
 
-option(M2_BT_ASSERT_CTS "Assert the card's CTS input (holds the ENET PHY in reset)" OFF)
+# ★ REQUIRED FOR HCI ON HARDWARE (found 2026-08-28 on the Murata 1XK / IW416).
+# The IW416 firmware gates its HCI transmit on the host RTS line; with it
+# UNdriven the card downloads perfectly and then never answers HCI (measured:
+# hci_reset=no_response at every baud, framing=0).  Driving BT_UART_RTS
+# (GPIO_DISP_B2_13) low = the card's CTS asserted = clear to send, and the
+# WHOLE handshake then works on attempt 1 at 115200: HCI_Reset CC, Read Local
+# Version (mfr 0x0048 Marvell), BD_ADDR, Buffer Size, BR/EDR inquiry.  The rate
+# was never the issue -- the controller runs HCI at the download rate.
+# ★ Kept an EXPLICIT OPTION, default OFF: the QEMU gates model no UART flow
+# control, so the default build stays byte-identical.  Bench build sets
+# -DM2_BT_ASSERT_CTS=ON.  Caveat: the assert holds the 1 Gb ENET PHY in reset
+# via R1866 -- BT-only, not alongside 1 G Ethernet.  For A2DP media rates,
+# revisit dynamic hardware RXRTSE; this static assert suffices for BT-1/BT-2.
+option(M2_BT_ASSERT_CTS "Assert host RTS=card CTS -- REQUIRED for HW HCI; holds the 1G ENET PHY in reset" OFF)
 if(M2_BT_ASSERT_CTS)
     add_definitions(-DM2_BT_ASSERT_CTS=1)
 endif()

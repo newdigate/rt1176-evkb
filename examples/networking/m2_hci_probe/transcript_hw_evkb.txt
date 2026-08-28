@@ -1909,3 +1909,55 @@ which is a firmware/provisioning behaviour, not a wire.
 
 Board now carries the stock EdgeFast 1XK shell with a LIVE Bluetooth controller
 (Murata card); reflash m2_hci_probe before returning to probe work.
+
+================================================================================
+2026-08-28  OUR CLEAN-ROOM HCI TRANSPORT VALIDATED ON SILICON -- the missing
+            piece was the HOST RTS, nothing else.  BT-1 done on hardware.
+================================================================================
+
+m2_hci_probe (OUR M2Radio/hci driver, real FP92 blob) on the Murata 1XK card.
+First with the default (no flow control): the download is perfect and the
+controller never answers --
+
+    bt_fw_download=ok chip_id=0x7201 ... sent=131856/131840 crc_err=0   card=1
+    hci_reset=timeout reason=no_response attempts=10 framing=0
+    bt_baud_try=3000000/921600/460800/115200  st=no_response  framing=0
+
+Rebuilt with -DM2_BT_ASSERT_CTS=ON (drive the host RTS low = the card's CTS input
+asserted, so the controller is clear to send), SAME everything else:
+
+    bt_raw_reset[0]: n=7 hex=040E0401030C00        <- Command Complete, HCI_Reset
+    hci_reset=ok attempts=1 timeouts=0 framing=0
+    hci_version: hci_ver=15 hci_rev=0x8300 lmp_ver=15 manufacturer=0x0048 lmp_subver=0x109B
+    bd_addr=A0:CD:F3:C5:B9:F3
+    hci_buffer: acl_len=1021 acl_num=7 sco_len=120 sco_num=6
+    inquiry=started
+    inquiry_complete: status=0x00 n=0
+    hb card=1 btfw=ok hci=ok  (35+ heartbeats, timeouts=0, framing=0)
+
+★★ THE ROOT CAUSE WAS ONLY THE HOST RTS -- NOT THE BAUD RATE.  The raw reset AND
+the driver both succeed at 115200 on attempt 1; the baud sweep never runs.  So
+the controller runs HCI at the DOWNLOAD rate (115200 for us), and the IW416
+firmware gates its HCI transmit on the host's RTS line (BT_UART_RTS =
+GPIO_DISP_B2_13).  Our probe never asserted it, so the controller sat mute.  The
+3 Mbaud / 0xFC09-set-baud theories from instrumenting EdgeFast were red herrings
+-- EdgeFast works because of its RTS/CTS FLOW CONTROL, not its 3 M rate.
+manufacturer=0x0048 is Marvell, the IW416 lineage.
+
+★ HOW EDGEFAST WAS INSTRUMENTED (its source, LA_OPT facts-only): its HCI UART
+opens with enableRxRTS/enableTxCTS = 1 (hardware RTS/CTS on).  That flow control
+is the thing our probe lacked.  Also settled a scare along the way:
+board.h's `BOARD_BT_UART_BASEADDR LPUART7` is a STALE default -- the RevC3
+netlist (BT_UART_* -> GPIO_DISP_B2_10-13, bridged to LPUART2_TXD/RXD via
+R2019/R2020) and the shell's own pin-mux both put the M.2 BT UART on LPUART2,
+matching this tree.  Our probe was on the right UART all along.
+
+★ THE FIX IS AN EXPLICIT OPTION, NOT THE DEFAULT.  Build the bench image with
+-DM2_BT_ASSERT_CTS=ON to get HCI on hardware.  Default stays OFF so the 121 QEMU
+gates (which model no UART flow control) are byte-unchanged.  Caveat: the assert
+holds the 1 Gb PHY in reset via R1866 -- fine for BT-only, mutually exclusive
+with 1 G Ethernet.  For A2DP media rates, revisit proper dynamic hardware RXRTSE
+flow control; the static assert is sufficient for BT-1/BT-2 control traffic.
+
+Board now carries m2_hci_probe (M2_BT_ASSERT_CTS build) with a live, answering
+HCI controller on the Murata card.
