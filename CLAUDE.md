@@ -158,6 +158,22 @@ pipelining is a dead lever for the vector strategy. Guarded in
 fresh full render — gate-compared, never re-goldened) and an ENGAGEMENT
 check (per-step damage ≤8000 px), both demonstrated RED. No other golden
 moved — consumers gate only fresh full renders.
+★ **The GPU well followed (2026-08-28) and MET the ≥30 fps criterion:
+42.4 fps** on the all-16-knob worst case (the compositor draws well+rotor;
+sw side is ground fill only). Three silicon defects on the way, ALL caught
+by the delta equality guard run per boot, none visible in QEMU: the VGLite
+port's wait consumed stale IRQ flags (fixed: flag AND `AQHiIdle` idle,
+VGLite 2e17773); a winding-2 multi-subpath track path was the machine's one
+source of per-boot render nondeterminism (ten boots, ten checksums — fixed:
+single-contour track, SynthUI 7856f35); the apparent scissor-window fill
+inversion was fallout of that track, so wedge-delta damage ships on both
+engines. ★ GPU goldens in `synthui_knob_test` now require REPEATED-boot
+stability — one defect hid behind exactly one boot. ★ Bench reality: the
+MCU-Link DAP wedges after repeated flash/run/kill cycles (fix: replug the
+DEBUG USB — a board power cycle does NOT clear it, and once it took BOTH
+cold together); pyocd and gdb `monitor reset` cannot reboot this target, so
+unattended reset loops do not exist — SW4-press loops with a persistent
+console reader are the wedge-free procedure.
 
 BT-1 added the tree's FIRST TWO BLUETOOTH GATES, both on the new
 `networking/m2_hci_probe`. `run_qemu.sh` is the card-ABSENT fallback — with no

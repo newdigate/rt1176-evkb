@@ -86,6 +86,55 @@ and nothing asserts it.
 - Close-out: sweep (SynthUI core touched → consumer ELFs rebuild; their
   goldens must hold), vacuity, audit, pin bump + FORCE_FETCH gate run.
 
+## 5b. Silicon findings (same day) — three defects, all caught by the guard
+
+The delta equality guard, run per boot on the GC355, failed repeatedly
+before the lever shipped; each failure was a real defect. The final
+configuration is bit-stable across repeated boots at **42.4 fps** on the
+all-16-knob worst case (23.6 ms/frame — acceptance ≥30 fps MET, 41%
+margin), `KNOB_DELTA_EQ=PASS`, `rk_gpu_err=0`, wedge-delta damage restored
+on BOTH engines.
+
+1. **The port's interrupt wait consumed stale flags.** `rk_gpu_diag`
+   measured ~3 IRQs per finish once the well grew the command stream; the
+   OR-accumulated flag satisfies a later wait instantly, so a split frame
+   could "finish" mid-execution. Fixed in the VGLite port (2e17773): a wait
+   requires the flag AND `AQHiIdle` bit 0 — the Phase-1 diagnostic promoted
+   to a completion condition. (Measured `wait_timeouts=0` after — the drain
+   costs nothing.)
+2. **The multi-subpath track was the sole nondeterminism in the system.**
+   Ten boots gave ten frame checksums — bounded scenes only, endless
+   bit-stable — surviving pool zeroing and settle delays. The track was the
+   only winding-2 geometry (ring + two overlapping cap circles in one
+   path); stale tessellation state is evidently consumed at subpath-overlap
+   regions. Rebuilt as ONE simple contour (outer arc → 180° cap arc →
+   inner arc reversed → cap arc → close, winding 1 everywhere): every sum
+   became bit-stable AND the render got faster (42.4 → from 37.5 interim /
+   42.4 full-damage ms figures — the winding-2 tessellation was itself
+   expensive).
+3. **The §4-era "window slicing geometry inverts fill" theory was
+   track-fallout, not a scissor law.** With the single-contour track, the
+   original wedge-delta windows render pixel-identically to fresh full
+   renders on the gpu (three boots, `SEQ=FULL=0x7C9EC8DB`), so the
+   delta-damage spec's engine-neutral policy stands after all. The
+   fill-to-window-edge overspill reproduced only while the winding-2 track
+   was in the frame.
+
+Also adopted: the app zeroes `vglite_pool` before `vg_lite_init_mem`
+(uninitialized GPU working memory was implicated throughout — the RT1062
+"DMAMEM is never zeroed" lesson, GPU edition; the determinism evidence was
+collected with it in place). `rk_gpu_diag irqs= wait_timeouts=` joins the
+transcript contract beside `rk_gpu_err`.
+
+Method note for the record: the decisive instruments were (a) a
+firmware-side SEQ-vs-FULL pixel diff (shadow framebuffer in SDRAM, printed
+over VCOM — immune to the probe tooling), and (b) SW4-press boot loops with
+a persistent console reader, adopted after repeated flash/run/kill cycles
+wedged the MCU-Link DAP. Unattended resets were re-tested and remain
+impossible on this bench: pyocd reset does nothing (reconfirmed), and
+gdb-mediated `monitor reset` parks the core at the reset vector under the
+connect script's vector catches.
+
 ## 6. Risks
 
 - **Track cap discs** double-covering the track ring's ends (both painted

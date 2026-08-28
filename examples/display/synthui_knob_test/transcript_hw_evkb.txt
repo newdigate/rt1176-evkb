@@ -1,5 +1,36 @@
 synthui_knob_test -- HARDWARE (MIMXRT1170-EVKB + RK055), synthui_rotary_knob
 ================================================================================
+2026-08-28 (GPU WELL, SynthUI 7856f35 + VGLite 2e17773): the compositor now
+draws the well too, and THIS is the ~30 fps lever landing. CURRENT gpu
+golden set -- bit-identical across THREE boots (SW4-press boots with a
+persistent console reader; the earlier sets below are superseded):
+
+  rk_engine=gpu
+  KNOB_SUM_ALL=0xA5399CF5
+  KNOB_SUM_ENDLESS_LIGHT=0x59874426
+  KNOB_SUM_BOUNDED_LIGHT=0x6258A78E
+  KNOB_SUM_ENDLESS_DARK=0x1FFA0312
+  KNOB_SUM_BOUNDED_DARK=0x6AE7AFC7
+  KNOB_SUM_ACCENT=0xBE9D96C8
+  KNOB_DELTA_SEQ=0x7C9EC8DB
+  KNOB_DELTA_FULL=0x7C9EC8DB
+  KNOB_DELTA_EQ=PASS
+  KNOB_DELTA_MAXAREA=3050
+  rk_gpu_err=0
+  rk_gpu_diag irqs=64 wait_timeouts=0
+  rk_fps frames=64 mfps_med=42360 us_med=23607 us_min=23470 us_max=44431 engine=gpu
+
+★ rk_fps 42360 = 42.4 fps at the all-16-knob delta workload: the >=30 fps
+criterion (bench spec section 1) is MET, 41% margin. The road here found
+three real defects, every one caught by the delta equality guard run per
+boot -- gpu-well spec section 5b has the full account (stale-flag waits ->
+AQHiIdle drain in the VGLite port; the winding-2 multi-subpath track was
+the machine's ONE source of per-boot nondeterminism -> single-contour
+track; the wedge-window "overspill" was track-fallout, so wedge-delta
+ships on both engines). Single-boot golden evidence is hereby deprecated
+for gpu sums in this example: REPEATED-boot stability is part of the
+contract, because defect 2 hid behind exactly one boot.
+================================================================================
 2026-08-27 LATE (wedge-delta damage, SynthUI 845c280): the delta equality
 guard ran on the GC355 for the first time and FAILED (SEQ 0xCEDF7073 vs
 FULL 0x1AB18637, rk_gpu_err=0) -- the defect QEMU structurally cannot see.
