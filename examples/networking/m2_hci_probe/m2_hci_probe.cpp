@@ -372,6 +372,13 @@ static uint16_t      s_connHandle = 0;
 static volatile bool s_pairDone = false;   static uint8_t s_pairStatus = 0xFF;
 static volatile bool s_authDone = false;   static uint8_t s_authStatus = 0xFF;
 static volatile bool s_echoDone = false;   static const uint8_t s_echoId = 0x42;
+static const uint16_t    s_sdpLocalCid = 0x0040;
+static volatile uint16_t s_sdpRemoteCid = 0;
+static volatile bool     s_l2cConnDone = false;  static volatile uint16_t s_l2cResult = 0xFFFF;
+static volatile bool     s_cfgRspRcvd = false;   static volatile bool s_cfgReqSeen = false;
+static volatile uint8_t  s_cfgReqId = 0;
+static uint8_t           s_cfgReqOpts[32];        static volatile uint8_t s_cfgReqOptLen = 0;
+static volatile bool     s_sdpDone = false;      static volatile uint16_t s_avdtpVer = 0;
 static volatile bool s_encDone  = false;   static uint8_t s_encStatus  = 0xFF;
 static uint8_t       s_encEnabled = 0;
 static uint8_t       s_linkKey[16];        static volatile bool s_haveLinkKey = false;
@@ -464,19 +471,139 @@ static void onEvent(void *, uint8_t code, const uint8_t *p, uint8_t len) {
 }
 
 #if defined(M2_BT_CONNECT)
-// --- B5: L2CAP -- watch the signalling channel (CID 0x0001) for the Echo Response.
-// onAcl() receives the L2CAP PDU (ACL header already stripped): len(2) CID(2) payload.
+// L2CAP signalling codes (Core Vol 3 Part A) + SDP (Vol 3 Part B)
+static const uint8_t  L2CAP_CMD_REJECT = 0x01;
+static const uint8_t  L2CAP_CONN_REQ   = 0x02;
+static const uint8_t  L2CAP_CONN_RSP   = 0x03;
+static const uint8_t  L2CAP_CFG_REQ    = 0x04;
+static const uint8_t  L2CAP_CFG_RSP    = 0x05;
+static const uint8_t  L2CAP_ECHO_RSP   = 0x09;
+static const uint16_t PSM_SDP          = 0x0001;
+static const uint8_t  SDP_SSA_REQ      = 0x06;   // Service Search Attribute Request
+static const uint8_t  s_l2cId          = 0x10;
+
+// Frame an L2CAP B-frame on `cid` and write it as a raw ACL packet.
+static void sendL2cap(uint16_t cid, const uint8_t *payload, uint16_t plen) {
+    uint16_t hf = (uint16_t)((s_connHandle & 0x0FFF) | (0x02u << 12));   // PB=first auto-flushable
+    uint8_t pkt[80];
+    uint16_t aclLen = (uint16_t)(4 + plen);
+    pkt[0] = 0x02;
+    pkt[1] = (uint8_t)(hf & 0xFF);     pkt[2] = (uint8_t)(hf >> 8);
+    pkt[3] = (uint8_t)(aclLen & 0xFF); pkt[4] = (uint8_t)(aclLen >> 8);
+    pkt[5] = (uint8_t)(plen & 0xFF);   pkt[6] = (uint8_t)(plen >> 8);     // L2CAP length
+    pkt[7] = (uint8_t)(cid & 0xFF);    pkt[8] = (uint8_t)(cid >> 8);      // L2CAP CID
+    memcpy(pkt + 9, payload, plen);
+    hciIo.write(pkt, (size_t)(9 + plen));
+}
+
+// --- B5/B6: L2CAP RX -- Echo Response, the SDP channel's CO signalling, and the
+// SDP response.  onAcl() gets the L2CAP PDU (ACL header stripped): len(2) CID(2) payload.
 static void onAcl(void *, uint16_t handle, const uint8_t *d, uint16_t len) {
     if (len < 4) return;
     uint16_t cid = (uint16_t)(d[2] | (d[3] << 8));
-    if (cid == 0x0001 && len >= 8) {                 // L2CAP signalling C-frame
+    if (cid == 0x0001 && len >= 8) {                          // L2CAP signalling
         uint8_t code = d[4], id = d[5];
-        CONSOLE.print("l2cap_sig: code=0x"); printHex8(code); CONSOLE.print(" id="); CONSOLE.println(id);
-        if (code == 0x09 && id == s_echoId) { CONSOLE.println("l2cap_echo_rsp=ok (B5 DONE)"); s_echoDone = true; }
+        if (code == L2CAP_ECHO_RSP && id == s_echoId) {
+            CONSOLE.println("l2cap_echo_rsp=ok (B5 DONE)"); s_echoDone = true;
+        } else if (code == L2CAP_CONN_RSP && len >= 16) {
+            s_sdpRemoteCid = (uint16_t)(d[8]  | (d[9]  << 8));   // Destination CID (peer's)
+            s_l2cResult    = (uint16_t)(d[12] | (d[13] << 8));
+            CONSOLE.print("l2cap_conn_rsp: dcid=0x"); printHex16(s_sdpRemoteCid);
+            CONSOLE.print(" result="); CONSOLE.println(s_l2cResult);
+            if (s_l2cResult != 0x0001) s_l2cConnDone = true;   // 0x0001 = pending; wait for the FINAL response
+        } else if (code == L2CAP_CFG_REQ && len >= 12) {        // peer configures OUR endpoint
+            uint16_t cmdLen = (uint16_t)(d[6] | (d[7] << 8));   // command payload: DCID(2)+Flags(2)+options
+            uint16_t optLen = (cmdLen > 4) ? (uint16_t)(cmdLen - 4) : 0;
+            if ((uint16_t)(12 + optLen) > len) optLen = (len > 12) ? (uint16_t)(len - 12) : 0;
+            if (optLen > sizeof(s_cfgReqOpts)) optLen = sizeof(s_cfgReqOpts);
+            for (uint16_t i = 0; i < optLen; i++) s_cfgReqOpts[i] = d[12 + i];   // echo them back on accept
+            s_cfgReqOptLen = (uint8_t)optLen;
+            s_cfgReqId = id; s_cfgReqSeen = true;               // answered from the main loop (no TX in the RX callback)
+            CONSOLE.print("l2cap_cfg_req(peer) id="); CONSOLE.print(id);
+            CONSOLE.print(" opts="); CONSOLE.print(optLen); CONSOLE.print(":");
+            for (uint16_t i = 0; i < optLen; i++) { CONSOLE.print(' '); printHex8(d[12 + i]); }
+            CONSOLE.println();
+        } else if (code == L2CAP_CFG_RSP && len >= 14) {
+            uint16_t result = (uint16_t)(d[12] | (d[13] << 8));
+            CONSOLE.print("l2cap_cfg_rsp: result="); CONSOLE.println(result);
+            if (result == 0) s_cfgRspRcvd = true;
+        } else {
+            CONSOLE.print("l2cap_sig: code=0x"); printHex8(code); CONSOLE.print(" id="); CONSOLE.println(id);
+        }
+    } else if (cid == s_sdpLocalCid && len >= 5) {            // SDP response on our channel
+        CONSOLE.print("sdp_rsp: pdu=0x"); printHex8(d[4]); CONSOLE.print(" len="); CONSOLE.println(len);
+        CONSOLE.print("sdp_rsp_bytes:");
+        for (uint16_t i = 4; i < len && i < 100; i++) { CONSOLE.print(' '); printHex8(d[i]); }
+        CONSOLE.println();
+        for (uint16_t i = 4; i + 5 < len; i++)               // scan for AVDTP UUID 0x0019 + UINT16 version
+            if (d[i] == 0x19 && d[i+1] == 0x00 && d[i+2] == 0x19 && d[i+3] == 0x09) {
+                s_avdtpVer = (uint16_t)((d[i+4] << 8) | d[i+5]); break;
+            }
+        s_sdpDone = true;
     } else {
         CONSOLE.print("acl_rx: handle=0x"); printHex16(handle);
         CONSOLE.print(" cid=0x"); printHex16(cid); CONSOLE.print(" len="); CONSOLE.println(len);
     }
+}
+
+// --- B6: open an L2CAP CO channel to the SDP PSM (0x0001), then a Service Search
+// Attribute Request for the AudioSink service's ProtocolDescriptorList -- reads
+// the sink's AVDTP version off the wire (B6's un-fakeable assertion).
+static void probeSdp() {
+    CONSOLE.println("sdp: L2CAP connect to PSM 0x0001");
+    s_l2cConnDone = false; s_cfgRspRcvd = false; s_cfgReqSeen = false;
+    s_sdpDone = false; s_avdtpVer = 0; s_sdpRemoteCid = 0;
+    uint8_t con[8] = { L2CAP_CONN_REQ, s_l2cId, 0x04, 0x00,
+                       (uint8_t)(PSM_SDP & 0xFF), (uint8_t)(PSM_SDP >> 8),
+                       (uint8_t)(s_sdpLocalCid & 0xFF), (uint8_t)(s_sdpLocalCid >> 8) };
+    sendL2cap(0x0001, con, 8);
+    uint32_t t0 = millis();
+    while (!s_l2cConnDone && millis() - t0 < 5000) delay(10);
+    if (!s_l2cConnDone || s_l2cResult != 0) { CONSOLE.println("sdp=fail (L2CAP connect)"); return; }
+    uint8_t cfg[8] = { L2CAP_CFG_REQ, (uint8_t)(s_l2cId + 1), 0x04, 0x00,
+                       (uint8_t)(s_sdpRemoteCid & 0xFF), (uint8_t)(s_sdpRemoteCid >> 8),
+                       0x00, 0x00 };
+    sendL2cap(0x0001, cfg, 8);
+    t0 = millis();
+    bool cfgRspSent = false;
+    while ((!s_cfgRspRcvd || !cfgRspSent) && millis() - t0 < 5000) {
+        if (s_cfgReqSeen && !cfgRspSent) {                     // answer the peer's config request from here
+            uint8_t optLen = s_cfgReqOptLen;                   // echo the peer's proposed options on accept
+            uint8_t rsp[10 + 32];
+            rsp[0] = L2CAP_CFG_RSP; rsp[1] = s_cfgReqId;
+            uint16_t rlen = (uint16_t)(6 + optLen);            // SCID(2)+Flags(2)+Result(2)+options
+            rsp[2] = (uint8_t)(rlen & 0xFF); rsp[3] = (uint8_t)(rlen >> 8);
+            rsp[4] = (uint8_t)(s_sdpLocalCid & 0xFF); rsp[5] = (uint8_t)(s_sdpLocalCid >> 8);
+            rsp[6] = 0x00; rsp[7] = 0x00;                      // Flags = 0
+            rsp[8] = 0x00; rsp[9] = 0x00;                      // Result = 0x0000 (success)
+            for (uint8_t i = 0; i < optLen; i++) rsp[10 + i] = s_cfgReqOpts[i];
+            sendL2cap(0x0001, rsp, (uint16_t)(10 + optLen));
+            CONSOLE.print("l2cap_cfg_rsp(ours)=ok echo_opts="); CONSOLE.println(optLen);
+            cfgRspSent = true;
+        }
+        delay(10);
+    }
+    if (!s_cfgRspRcvd || !cfgRspSent) { CONSOLE.println("sdp=fail (L2CAP config)"); return; }
+    CONSOLE.print("sdp_channel=open rcid=0x"); printHex16(s_sdpRemoteCid); CONSOLE.println();
+    uint8_t req[18] = { SDP_SSA_REQ, 0x00, 0x01, 0x00, 0x0D,
+                        0x35, 0x03, 0x19, 0x11, 0x0B,      // ServiceSearchPattern: DES{ UUID16 AudioSink 0x110B }
+                        0x03, 0xF0,                        // MaxAttributeByteCount = 1008
+                        0x35, 0x03, 0x09, 0x00, 0x04,      // AttributeIDList: DES{ UINT16 ProtocolDescriptorList 0x0004 }
+                        0x00 };                            // ContinuationState
+    delay(500);                                             // let the peer's SDP server settle after config
+    CONSOLE.print("sdp_req_bytes:");
+    for (int i = 0; i < 18; i++) { CONSOLE.print(' '); printHex8(req[i]); }
+    CONSOLE.println();
+    for (int attempt = 1; attempt <= 3 && !s_sdpDone; attempt++) {
+        sendL2cap(s_sdpRemoteCid, req, 18);
+        CONSOLE.print("sdp_ssa_req: AudioSink(0x110B) attr 0x0004 attempt=");
+        CONSOLE.println(attempt);
+        t0 = millis();
+        while (!s_sdpDone && millis() - t0 < 2000) delay(10);
+    }
+    if (!s_sdpDone)  { CONSOLE.println("sdp=timeout (no response)"); return; }
+    if (s_avdtpVer)  { CONSOLE.print("sdp_avdtp_version=0x"); printHex16(s_avdtpVer); CONSOLE.println(" (B6 DONE)"); }
+    else               CONSOLE.println("sdp_avdtp_version=not_found (got response, no AVDTP UUID)");
 }
 #endif
 
@@ -639,6 +766,8 @@ static void probeConnect() {
     uint32_t te = millis();
     while (!s_echoDone && millis() - te < 5000) delay(10);
     if (!s_echoDone) CONSOLE.println("l2cap_echo=timeout (no Echo Response)");
+
+    probeSdp();   // B6
 }
 #endif
 

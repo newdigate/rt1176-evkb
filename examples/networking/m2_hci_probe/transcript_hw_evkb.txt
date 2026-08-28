@@ -2042,3 +2042,73 @@ reported a false timeout matching on 0x0A before the fix).
 
 ACL TX is a raw transport write for now; sendAcl belongs in M2Radio/bt at
 productization.  Next: B6 -- SDP client (query the sink's AVDTP version).
+
+--------------------------------------------------------------------------------
+2026-08-28  BT-2 . B6 -- L2CAP CO channel to SDP established; SDP readback
+            pending a compliant peer (the OpenMove's SDP server is silent).
+--------------------------------------------------------------------------------
+
+B6 opens a connection-oriented L2CAP channel to the SDP PSM (0x0001), runs the
+4-way config handshake, then issues a Service Search Attribute Request for the
+AudioSink (0x110B) record's ProtocolDescriptorList (attr 0x0004) to read the
+sink's AVDTP version off the wire.  On silicon, everything up to the peer's SDP
+reply works -- the OpenMove then sends nothing.
+
+The channel comes up clean (this run used a browse-all diagnostic query):
+
+    connect_secure=ok encryption=on (B4 DONE)
+    l2cap_echo_rsp=ok (B5 DONE)
+    sdp: L2CAP connect to PSM 0x0001
+    l2cap_conn_rsp: dcid=0x02C0 result=1           <- PENDING
+    l2cap_conn_rsp: dcid=0x02C0 result=0           <- final: success
+    l2cap_cfg_req(peer) id=1 opts=4: 01 02 30 00   <- peer proposes MTU=48
+    l2cap_cfg_rsp: result=0                         <- peer accepts our config
+    l2cap_cfg_rsp(ours)=ok echo_opts=4             <- we accept + echo the MTU
+    sdp_channel=open rcid=0x02C0
+    sdp_req_bytes: 06 00 01 00 0F 35 03 19 10 02 03 00 35 05 0A 00 00 FF FF 00
+    sdp_ssa_req: browse-all (PublicBrowseRoot) attr 0x0000-0xFFFF attempt=1/2/3
+    sdp=timeout (no response)
+
+The SDP request is byte-perfect (a textbook ServiceSearchAttributeRequest), the
+channel is open and configured in both directions, and the controller confirms
+every TX (Num_Completed_Packets, code=0x13) -- yet the OpenMove answers NOTHING,
+to both a targeted AudioSink query and a standard browse-all, across three
+retries with a 500 ms settle.  A compliant SDP server must return at least an
+empty result; this one is silent.  Conclusion: the OpenMove's SDP server is
+non-responsive on a channel it itself opened -- a peer quirk, not our framing.
+The H4 RX path hands every ACL packet to onAcl (verified: no acl_rx on any CID),
+so nothing is dropped on our side -- nothing is being sent.
+
+DECISION (2026-08-28): close B6's attribute readback against a COMPLIANT SDP
+peer -- an ESP32 esp_a2dp_sink running Bluedroid, or a Pi/Linux + BlueZ -- not
+the OpenMove.  The probe is peer-agnostic; the same connect -> pair -> encrypt
+-> SDP flow should return the AVDTP version cleanly against a real SDP server.
+(An ESP32-S3/C3/C6 cannot serve: A2DP is BR/EDR Classic and those parts are
+BLE-only.  A classic ESP32-WROOM-32 can, and doubles as the BT-3 sink.)
+
+Two REAL driver bugs were found and fixed on the way, both verified on silicon:
+
+  1. Bus fault in B6's first cut -- sendL2cap() (a transport write) was called
+     from inside the onAcl RX-pump callback (the L2CAP Config Response).  Writing
+     to the transport from the RX callback faults (DHCSR 0x01010001 running,
+     CFSR 0x00000400 IMPRECISERR, SHCSR BUSFAULTACT -- spinning in the fault
+     handler, console silent).  Fix: record the peer's Config Request in onAcl
+     and SEND the Config Response from probeSdp's main loop.  B5 never hit this
+     because its onAcl never wrote to the transport.
+
+  2. Pending-Connection-Response race -- the L2CAP Connection Response arrives
+     twice (result=1 "pending", then result=0 "success").  The connect-wait loop
+     treated ANY Conn Rsp as done, so when the two landed in separate HCI pump
+     cycles it bailed on the pending one (result != 0 -> "sdp=fail (L2CAP
+     connect)").  Two runs passed by luck (both responses in one pump); the third
+     failed.  Fix: a pending response (0x0001) does NOT set connDone -- keep
+     waiting for the final response.
+
+Also added (correctness, verified accepted by the peer): on the peer's Config
+Request we now CAPTURE its options and ECHO them back with Result=success (the
+OpenMove proposes MTU=48; we accept it), instead of answering with an empty
+option list.
+
+All B6 code stays under #if defined(M2_BT_CONNECT) (default OFF), so the 121
+QEMU gates are byte-identical.  ACL TX remains a raw transport write; sendAcl +
+the SDP/AVDTP client belong in M2Radio/bt at productization.
