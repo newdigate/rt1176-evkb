@@ -298,6 +298,26 @@ static const uint16_t OP_REMOTE_NAME_REQ  = 0x0419;
 static const uint8_t  EV_INQUIRY_COMPLETE = 0x01;
 static const uint8_t  EV_INQUIRY_RESULT   = 0x02;
 static const uint8_t  EV_REMOTE_NAME_DONE = 0x07;
+#if defined(M2_BT_CONNECT)
+// B4: ACL connection + SSP Just-Works pairing + encryption (Core 5.2 Vol 4 Part E)
+static const uint16_t OP_CREATE_CONNECTION   = 0x0405;
+static const uint16_t OP_AUTH_REQUESTED      = 0x0411;
+static const uint16_t OP_SET_CONN_ENCRYPTION = 0x0413;
+static const uint16_t OP_LINK_KEY_REQ_NEG    = 0x040C;
+static const uint16_t OP_IO_CAP_REQ_REPLY    = 0x042B;
+static const uint16_t OP_USER_CONF_REQ_REPLY = 0x042C;
+static const uint16_t OP_WRITE_SSP_MODE      = 0x0C56;
+static const uint16_t OP_SET_EVENT_MASK      = 0x0C01;
+static const uint8_t  EV_CONNECTION_COMPLETE = 0x03;
+static const uint8_t  EV_AUTH_COMPLETE       = 0x06;
+static const uint8_t  EV_ENCRYPTION_CHANGE   = 0x08;
+static const uint8_t  EV_LINK_KEY_REQUEST    = 0x17;
+static const uint8_t  EV_LINK_KEY_NOTIFY     = 0x18;
+static const uint8_t  EV_IO_CAP_REQUEST      = 0x31;
+static const uint8_t  EV_IO_CAP_RESPONSE     = 0x32;
+static const uint8_t  EV_USER_CONF_REQUEST   = 0x33;
+static const uint8_t  EV_SIMPLE_PAIRING_DONE = 0x36;
+#endif
 
 static void printHex8(uint8_t v)   { if (v < 0x10) CONSOLE.print('0'); CONSOLE.print(v, HEX); }
 static void printHex16(uint16_t v) { printHex8((uint8_t)(v >> 8)); printHex8((uint8_t)v); }
@@ -346,6 +366,15 @@ static uint8_t       s_foundN = 0;
 static volatile bool s_inqDone = false;
 static uint8_t       s_inqStatus = 0xFF;
 static volatile bool s_nameDone = false;
+#if defined(M2_BT_CONNECT)
+static volatile bool s_connDone = false;   static uint8_t s_connStatus = 0xFF;
+static uint16_t      s_connHandle = 0;
+static volatile bool s_pairDone = false;   static uint8_t s_pairStatus = 0xFF;
+static volatile bool s_authDone = false;   static uint8_t s_authStatus = 0xFF;
+static volatile bool s_encDone  = false;   static uint8_t s_encStatus  = 0xFF;
+static uint8_t       s_encEnabled = 0;
+static uint8_t       s_linkKey[16];        static volatile bool s_haveLinkKey = false;
+#endif
 
 static void onEvent(void *, uint8_t code, const uint8_t *p, uint8_t len) {
     if (code == EV_INQUIRY_RESULT) {
@@ -370,7 +399,65 @@ static void onEvent(void *, uint8_t code, const uint8_t *p, uint8_t len) {
                 if (memcmp(s_found[i].r.bd, nm.bd, 6) == 0) { s_found[i].name = nm; s_found[i].named = true; }
         }
         s_nameDone = true;
-    } else {
+    }
+#if defined(M2_BT_CONNECT)
+    else if (code == EV_CONNECTION_COMPLETE && len >= 11) {
+        // status(1) handle(2) bd(6) link_type(1) encryption_mode(1)
+        s_connStatus = p[0]; s_connHandle = (uint16_t)(p[1] | (p[2] << 8));
+        CONSOLE.print("conn_complete: status=0x"); printHex8(p[0]);
+        CONSOLE.print(" handle=0x"); printHex16(s_connHandle);
+        CONSOLE.print(" bd="); printBd(p + 3);
+        CONSOLE.print(" link_type="); CONSOLE.println(p[9]);
+        s_connDone = true;
+    }
+    else if (code == EV_LINK_KEY_REQUEST && len >= 6) {
+        CONSOLE.print("link_key_req: bd="); printBd(p); CONSOLE.println(" -> neg_reply (no stored key)");
+        hci.submit(OP_LINK_KEY_REQ_NEG, p, 6, nullptr, nullptr);
+    }
+    else if (code == EV_IO_CAP_REQUEST && len >= 6) {
+        uint8_t rp[9]; memcpy(rp, p, 6);
+        rp[6] = 0x03;   // IO capability = NoInputNoOutput -> Just Works
+        rp[7] = 0x00;   // OOB data not present
+        rp[8] = 0x04;   // AuthRequirements = General Bonding, MITM not required
+        CONSOLE.print("io_cap_req: bd="); printBd(p); CONSOLE.println(" -> NoInputNoOutput/gen-bonding");
+        hci.submit(OP_IO_CAP_REQ_REPLY, rp, 9, nullptr, nullptr);
+    }
+    else if (code == EV_IO_CAP_RESPONSE && len >= 9) {
+        CONSOLE.print("io_cap_rsp: bd="); printBd(p);
+        CONSOLE.print(" io_cap="); CONSOLE.print(p[6]);
+        CONSOLE.print(" auth="); CONSOLE.println(p[8]);
+    }
+    else if (code == EV_USER_CONF_REQUEST && len >= 10) {
+        uint32_t nv = (uint32_t)p[6] | ((uint32_t)p[7] << 8) | ((uint32_t)p[8] << 16) | ((uint32_t)p[9] << 24);
+        CONSOLE.print("user_conf_req: bd="); printBd(p);
+        CONSOLE.print(" numeric="); CONSOLE.print(nv); CONSOLE.println(" -> accept (Just Works)");
+        hci.submit(OP_USER_CONF_REQ_REPLY, p, 6, nullptr, nullptr);
+    }
+    else if (code == EV_SIMPLE_PAIRING_DONE && len >= 7) {
+        s_pairStatus = p[0];
+        CONSOLE.print("pairing_complete: status=0x"); printHex8(p[0]);
+        CONSOLE.print(" bd="); printBd(p + 1); CONSOLE.println();
+        s_pairDone = true;
+    }
+    else if (code == EV_LINK_KEY_NOTIFY && len >= 23) {
+        memcpy(s_linkKey, p + 6, 16); s_haveLinkKey = true;
+        CONSOLE.print("link_key: bd="); printBd(p); CONSOLE.print(" type="); CONSOLE.print(p[22]);
+        CONSOLE.print(" key="); for (int i = 0; i < 16; i++) printHex8(s_linkKey[i]); CONSOLE.println();
+    }
+    else if (code == EV_AUTH_COMPLETE && len >= 3) {
+        s_authStatus = p[0]; s_authDone = true;
+        CONSOLE.print("auth_complete: status=0x"); printHex8(p[0]);
+        CONSOLE.print(" handle=0x"); printHex16((uint16_t)(p[1] | (p[2] << 8))); CONSOLE.println();
+    }
+    else if (code == EV_ENCRYPTION_CHANGE && len >= 4) {
+        s_encStatus = p[0]; s_encEnabled = p[3];
+        CONSOLE.print("encryption_change: status=0x"); printHex8(p[0]);
+        CONSOLE.print(" handle=0x"); printHex16((uint16_t)(p[1] | (p[2] << 8)));
+        CONSOLE.print(" enabled="); CONSOLE.println(p[3]);
+        s_encDone = true;
+    }
+#endif
+    else {
         CONSOLE.print("hci_event: code=0x"); printHex8(code); CONSOLE.print(" len="); CONSOLE.println(len);
     }
 }
@@ -442,6 +529,81 @@ static void probeInquiry() {
         CONSOLE.print(" name=\""); CONSOLE.print(s_found[i].name.name); CONSOLE.println("\"");
     }
 }
+
+#if defined(M2_BT_CONNECT)
+// --- B4: connect + SSP Just-Works pairing + encryption to a discovered device ---
+// The SSP events (link-key/IO-capability/user-confirmation) are unsolicited, so
+// onEvent() answers them via submit() while this flow waits on the state flags --
+// the same pump-driven pattern probeInquiry() uses.  Un-fakeable assertion:
+// Encryption_Change status=0x00 enabled=1, plus the headset's own "connected".
+static void probeConnect() {
+    int t = -1;                                     // first inquiry hit that is Audio/Video (major class 4)
+    for (uint8_t i = 0; i < s_foundN; i++)
+        if (((s_found[i].r.cod >> 8) & 0x1F) == 0x04) { t = i; break; }
+    if (t < 0) { CONSOLE.println("connect=skipped (no A/V device in inquiry)"); return; }
+    const Found &d = s_found[t];
+    CONSOLE.print("connect: target="); printBd(d.r.bd);
+    CONSOLE.print(" name=\""); CONSOLE.print(d.named ? d.name.name : "?"); CONSOLE.println("\"");
+
+    Hci::Reply r;
+    // Enable ALL HCI events, incl. the SSP request events (0x31-0x36) which sit
+    // ABOVE the post-Reset default mask.  Without this the controller cannot ask
+    // the host to run Simple Pairing, and Authentication_Requested fails 0x05.
+    uint8_t evmask[8]; memset(evmask, 0xFF, sizeof evmask);
+    Hci::Error me = hci.run(OP_SET_EVENT_MASK, evmask, sizeof evmask, &r, 1000, idleMs);
+    CONSOLE.print("event_mask: st="); CONSOLE.print(me == Hci::OK ? "ok" : Hci::errorName(me));
+    CONSOLE.print(" status=0x"); printHex8(r.status); CONSOLE.println();
+    uint8_t sspOn = 0x01;
+    Hci::Error we = hci.run(OP_WRITE_SSP_MODE, &sspOn, 1, &r, 1000, idleMs);   // enable host SSP support
+    CONSOLE.print("ssp_mode: st="); CONSOLE.print(we == Hci::OK ? "ok" : Hci::errorName(we));
+    CONSOLE.print(" status=0x"); printHex8(r.status); CONSOLE.println();
+
+    // Create_Connection: bd(6) pkt_type(2)=0xCC18 psrm(1) reserved(1) clk(2,bit15=valid) role_switch(1)
+    uint8_t p[13];
+    memcpy(p, d.r.bd, 6);
+    p[6] = 0x18; p[7] = 0xCC;
+    p[8] = d.r.psrm; p[9] = 0x00;
+    p[10] = (uint8_t)(d.r.clockOffset & 0xFF);
+    p[11] = (uint8_t)((d.r.clockOffset >> 8) | 0x80);
+    p[12] = 0x01;
+    s_connDone = false; s_connStatus = 0xFF;
+    Hci::Error e = hci.run(OP_CREATE_CONNECTION, p, sizeof p, &r, 2000, idleMs);
+    if (e != Hci::OK || !r.statusEvent) { printFail("connect", e, r, "not_command_status"); return; }
+    uint32_t t0 = millis();
+    while (!s_connDone && millis() - t0 < 15000) delay(10);
+    if (!s_connDone)          { CONSOLE.println("connect=timeout (no Connection_Complete)"); return; }
+    if (s_connStatus != 0x00) { CONSOLE.print("connect=fail status=0x"); printHex8(s_connStatus); CONSOLE.println(); return; }
+    CONSOLE.print("connect=ok handle=0x"); printHex16(s_connHandle); CONSOLE.println();
+
+    // Authentication_Requested -> Link_Key_Request(neg) -> SSP -> Link_Key_Notification
+    //   -> Authentication_Complete.  Encryption needs the link AUTHENTICATED, so
+    //   wait for Auth_Complete (which follows Simple_Pairing_Complete + the link
+    //   key), NOT just Simple_Pairing_Complete -- else Set_Connection_Encryption
+    //   races ahead and returns 0x2F Insufficient Security.
+    s_pairDone = false; s_authDone = false; s_haveLinkKey = false;
+    uint8_t hp[2] = { (uint8_t)(s_connHandle & 0xFF), (uint8_t)(s_connHandle >> 8) };
+    hci.run(OP_AUTH_REQUESTED, hp, 2, &r, 2000, idleMs);
+    t0 = millis();
+    while (!s_authDone && millis() - t0 < 25000) delay(10);
+    CONSOLE.print("pairing=");  CONSOLE.print(s_pairDone && s_pairStatus == 0x00 ? "ok" : "incomplete");
+    CONSOLE.print(" auth=");    CONSOLE.print(s_authDone && s_authStatus == 0x00 ? "ok" : "fail/timeout");
+    CONSOLE.print(" link_key="); CONSOLE.println(s_haveLinkKey ? "stored" : "none");
+    if (!s_authDone || s_authStatus != 0x00) { CONSOLE.println("connect_secure=fail (auth incomplete)"); return; }
+
+    // Set_Connection_Encryption -> Encryption_Change (the un-fakeable B4 assertion)
+    s_encDone = false;
+    uint8_t ep[3] = { (uint8_t)(s_connHandle & 0xFF), (uint8_t)(s_connHandle >> 8), 0x01 };
+    hci.run(OP_SET_CONN_ENCRYPTION, ep, 3, &r, 2000, idleMs);
+    t0 = millis();
+    while (!s_encDone && millis() - t0 < 10000) delay(10);
+    if (s_encDone && s_encStatus == 0x00 && s_encEnabled)
+        CONSOLE.println("connect_secure=ok encryption=on (B4 DONE)");
+    else {
+        CONSOLE.print("connect_secure=fail status=0x"); printHex8(s_encDone ? s_encStatus : 0xFF);
+        CONSOLE.print(" enabled="); CONSOLE.println(s_encEnabled);
+    }
+}
+#endif
 
 
 // ---------------------------------------------------------------------------
@@ -901,6 +1063,9 @@ void setup() {
         printCounters(); CONSOLE.println();
         probeIdentity();
         probeInquiry();
+#if defined(M2_BT_CONNECT)
+        probeConnect();
+#endif
     } else if (s_hciSt == Hci::TIMEOUT) {
         CONSOLE.print("hci_reset=timeout reason=no_response attempts=10");
         printCounters(); CONSOLE.println();

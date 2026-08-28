@@ -1982,3 +1982,42 @@ and Remote_Name_Request resolved each to the same name.  All at 115200 with the
 host RTS asserted; hci=ok, timeouts=0, framing=0.
 
 Next: B4 -- ACL Create_Connection + SSP Just-Works pairing to C0:86:B3:31:29:2F.
+
+--------------------------------------------------------------------------------
+2026-08-28  BT-2 . B4 -- authenticated, ENCRYPTED BR/EDR link to the Shokz.
+--------------------------------------------------------------------------------
+
+Bench build (-DM2_BT_ASSERT_CTS=ON -DM2_BT_CONNECT=ON), Shokz OpenMove in pairing
+mode.  Our clean-room connect + SSP Just-Works + encryption path:
+
+    connect: target=C0:86:B3:31:29:2F name="OpenMove by Shokz"
+    event_mask: st=ok    ssp_mode: st=ok
+    conn_complete: status=0x00 handle=0x0001 link_type=1
+    connect=ok handle=0x0001
+    link_key_req -> neg_reply (no stored key)
+    io_cap_req -> NoInputNoOutput/gen-bonding
+    io_cap_rsp: io_cap=3 auth=4
+    user_conf_req: numeric=880620 -> accept (Just Works)
+    pairing_complete: status=0x00
+    link_key: type=4 key=<16 bytes>
+    auth_complete: status=0x00
+    encryption_change: status=0x00 handle=0x0001 enabled=1
+    connect_secure=ok encryption=on (B4 DONE)
+
+B4's un-fakeable assertion, met: Encryption_Change status=0x00 enabled=1 on a
+real authenticated link to the headset -- plus the Shokz's own "connected" voice
+prompt.  Full SSP Just-Works: IO cap NoInputNoOutput on both sides -> numeric
+comparison auto-accepted -> link key type 4 generated and stored.
+
+★ TWO BUGS FOUND AND FIXED HERE, both worth keeping:
+  1. The SSP request events (IO_Capability_Request 0x31 .. Simple_Pairing_Complete
+     0x36) sit ABOVE the post-Reset default HCI Event Mask, so the controller
+     could not ask the host to pair: Authentication_Requested failed 0x05 with NO
+     io_cap_req in between.  Fix: Set_Event_Mask all-ones (0x0C01) before connect.
+  2. Set_Connection_Encryption must wait for Authentication_Complete, not just
+     Simple_Pairing_Complete -- firing it after pairing-complete but before
+     auth-complete returns 0x2F Insufficient Security.  Event order is
+     pairing_complete -> link_key -> auth_complete -> (then) encryption.
+
+Link key is in RAM only (not yet persisted) -- reconnect after reboot re-pairs.
+Next: B5 -- L2CAP basic mode (signalling channel, Echo Request -> Echo Response).

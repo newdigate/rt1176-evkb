@@ -177,6 +177,15 @@ if(M2_BT_ASSERT_CTS)
     add_definitions(-DM2_BT_ASSERT_CTS=1)
 endif()
 
+# BT-2 . B4: after inquiry, connect to the first Audio/Video device, do SSP
+# Just-Works pairing (IO cap NoInputNoOutput, general bonding) and turn on
+# encryption.  Bench-only (needs a real headset in pairing mode); default OFF so
+# the QEMU gates are byte-identical.  Requires M2_BT_ASSERT_CTS on hardware.
+option(M2_BT_CONNECT "B4: ACL Create_Connection + SSP Just-Works pairing + encryption to a discovered device" OFF)
+if(M2_BT_CONNECT)
+    add_definitions(-DM2_BT_CONNECT=1)
+endif()
+
 teensy_add_executable(m2_hci_probe m2_hci_probe.cpp ${M2_FW_SRC} ${M2_BT_FW_SRC})
 teensy_target_link_libraries(m2_hci_probe cores M2Radio)
 target_include_directories(m2_hci_probe.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
