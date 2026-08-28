@@ -2021,3 +2021,24 @@ comparison auto-accepted -> link key type 4 generated and stored.
 
 Link key is in RAM only (not yet persisted) -- reconnect after reboot re-pairs.
 Next: B5 -- L2CAP basic mode (signalling channel, Echo Request -> Echo Response).
+
+--------------------------------------------------------------------------------
+2026-08-28  BT-2 . B5 -- L2CAP basic mode: Echo Request -> Echo Response.
+--------------------------------------------------------------------------------
+
+Same bench build, over the B4 encrypted link to the Shokz.  A raw ACL packet
+carrying an L2CAP Echo Request on the signalling channel (CID 0x0001):
+
+    connect_secure=ok encryption=on (B4 DONE)
+    l2cap_echo_req: id=66
+    l2cap_sig: code=0x09 id=66
+    l2cap_echo_rsp=ok (B5 DONE)
+
+B5's un-fakeable assertion, met: a spec-mandated L2CAP Echo round trip -- our
+Echo Request (code 0x08, id 0x42) drew the peer's Echo Response (code 0x09, same
+id) back over the link.  ★ Note the codes: Echo Request = 0x08, Echo Response =
+0x09 (NOT 0x0A, which is Information Request -- an easy conflation; the first run
+reported a false timeout matching on 0x0A before the fix).
+
+ACL TX is a raw transport write for now; sendAcl belongs in M2Radio/bt at
+productization.  Next: B6 -- SDP client (query the sink's AVDTP version).

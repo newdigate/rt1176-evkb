@@ -371,6 +371,7 @@ static volatile bool s_connDone = false;   static uint8_t s_connStatus = 0xFF;
 static uint16_t      s_connHandle = 0;
 static volatile bool s_pairDone = false;   static uint8_t s_pairStatus = 0xFF;
 static volatile bool s_authDone = false;   static uint8_t s_authStatus = 0xFF;
+static volatile bool s_echoDone = false;   static const uint8_t s_echoId = 0x42;
 static volatile bool s_encDone  = false;   static uint8_t s_encStatus  = 0xFF;
 static uint8_t       s_encEnabled = 0;
 static uint8_t       s_linkKey[16];        static volatile bool s_haveLinkKey = false;
@@ -461,6 +462,23 @@ static void onEvent(void *, uint8_t code, const uint8_t *p, uint8_t len) {
         CONSOLE.print("hci_event: code=0x"); printHex8(code); CONSOLE.print(" len="); CONSOLE.println(len);
     }
 }
+
+#if defined(M2_BT_CONNECT)
+// --- B5: L2CAP -- watch the signalling channel (CID 0x0001) for the Echo Response.
+// onAcl() receives the L2CAP PDU (ACL header already stripped): len(2) CID(2) payload.
+static void onAcl(void *, uint16_t handle, const uint8_t *d, uint16_t len) {
+    if (len < 4) return;
+    uint16_t cid = (uint16_t)(d[2] | (d[3] << 8));
+    if (cid == 0x0001 && len >= 8) {                 // L2CAP signalling C-frame
+        uint8_t code = d[4], id = d[5];
+        CONSOLE.print("l2cap_sig: code=0x"); printHex8(code); CONSOLE.print(" id="); CONSOLE.println(id);
+        if (code == 0x09 && id == s_echoId) { CONSOLE.println("l2cap_echo_rsp=ok (B5 DONE)"); s_echoDone = true; }
+    } else {
+        CONSOLE.print("acl_rx: handle=0x"); printHex16(handle);
+        CONSOLE.print(" cid=0x"); printHex16(cid); CONSOLE.print(" len="); CONSOLE.println(len);
+    }
+}
+#endif
 
 // --- B1: identity ---------------------------------------------------------------
 static void probeIdentity() {
@@ -601,7 +619,26 @@ static void probeConnect() {
     else {
         CONSOLE.print("connect_secure=fail status=0x"); printHex8(s_encDone ? s_encStatus : 0xFF);
         CONSOLE.print(" enabled="); CONSOLE.println(s_encEnabled);
+        return;
     }
+
+    // B5: L2CAP basic mode -- Echo Request on the signalling channel (CID 0x0001).
+    // Echo is a spec-mandated L2CAP round trip, so a well-formed request MUST draw
+    // an Echo Response (code 0x09) from any L2CAP peer -- the un-fakeable B5 proof.
+    // Sent as a raw ACL packet through the transport (sendAcl belongs in M2Radio/bt
+    // at productization; this validates the round trip first).
+    hci.onAcl(onAcl, nullptr);
+    s_echoDone = false;
+    uint16_t hf = (uint16_t)((s_connHandle & 0x0FFF) | (0x02u << 12));   // PB=first auto-flushable
+    uint8_t pkt[13] = {
+        0x02, (uint8_t)(hf & 0xFF), (uint8_t)(hf >> 8), 0x08, 0x00,      // H4 ACL type + handle + data_len=8
+        0x04, 0x00, 0x01, 0x00,                                         // L2CAP: length=4, CID=0x0001
+        0x08, s_echoId, 0x00, 0x00 };                                   // Echo Request, id, cmd_len=0
+    hciIo.write(pkt, sizeof pkt);
+    CONSOLE.print("l2cap_echo_req: id="); CONSOLE.println(s_echoId);
+    uint32_t te = millis();
+    while (!s_echoDone && millis() - te < 5000) delay(10);
+    if (!s_echoDone) CONSOLE.println("l2cap_echo=timeout (no Echo Response)");
 }
 #endif
 
