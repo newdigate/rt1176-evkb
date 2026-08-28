@@ -34,6 +34,8 @@
 extern "C" {
 #include "vg_lite.h"
 #include "vg_lite_platform.h"
+uint32_t vg_lite_os_irq_count(void);
+uint32_t vg_lite_os_wait_timeouts(void);
 }
 
 /* Same pool siting and reasoning as the bench: EXTMEM (SDRAM), not DMAMEM --
@@ -356,6 +358,11 @@ void setup()
 
     /* ASK BEFORE COMMITTING (vglite_probe): vg_lite_init() SPINS on absent
      * hardware, so the chip-ID read is what makes QEMU a clean negative. */
+    /* Zero the GPU working pool: command buffers and the tessellation
+     * buffer live here, EXTMEM is never zeroed by startup (the RT1062
+     * DMAMEM lesson, GPU edition), and the 2026-08-28 determinism runs were
+     * all taken with this in place. Costs ~3 ms once. */
+    memset(vglite_pool, 0, VGLITE_POOL_BYTES);
     vg_lite_init_mem(VGLITE_RT1176_REGISTER_BASE, 0u, vglite_pool,
                      VGLITE_POOL_BYTES);
     const uint32_t chip_id = vg_lite_hal_probe_chip_id();
@@ -414,9 +421,16 @@ void setup()
     Serial1.printf("KNOB_DELTA_MAXAREA=%ld\n", (long)s_delta_maxarea);
 
     /* gpu lines NEVER appear in a sw run -- the gate tripwires on them. */
-    if (s_gpu)
+    if (s_gpu) {
         Serial1.printf("rk_gpu_err=%lu\n",
                        (unsigned long)synthui_rotary_gpu_errors());
+        /* silicon-only diagnostics: IRQs vs waits (the stale-flag detector)
+         * and bounded-wait timeouts -- both must be sane or the sums above
+         * are timing accidents (the 2026-08-28 lesson). */
+        Serial1.printf("rk_gpu_diag irqs=%lu wait_timeouts=%lu\n",
+                       (unsigned long)vg_lite_os_irq_count(),
+                       (unsigned long)vg_lite_os_wait_timeouts());
+    }
     Serial1.println("SYNTHUI_KNOB_DONE");
 
     /* rk_fps AFTER the gate's last token (the gate reaps at DONE) */
