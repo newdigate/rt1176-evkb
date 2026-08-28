@@ -1961,3 +1961,24 @@ flow control; the static assert is sufficient for BT-1/BT-2 control traffic.
 
 Board now carries m2_hci_probe (M2_BT_ASSERT_CTS build) with a live, answering
 HCI controller on the Murata card.
+
+--------------------------------------------------------------------------------
+2026-08-28  BT-2 . B2 -- BR/EDR inquiry + Remote_Name_Request find a REAL device.
+--------------------------------------------------------------------------------
+
+Same bench build (-DM2_BT_ASSERT_CTS=ON), with a Shokz OpenMove headset in
+pairing mode.  Our clean-room BR/EDR inquiry + remote-name path:
+
+    inquiry=started
+    inq: bd=C0:86:B3:31:29:2F cod=0x240418 psrm=1 clk=0x0EA8    (x8)
+    inquiry_complete: status=0x00 n=8
+    inq_name: bd=C0:86:B3:31:29:2F status=0x00 name="OpenMove by Shokz"   (x8)
+
+B2's un-fakeable assertion, met: the headphones' NAME ("OpenMove by Shokz") and
+BD_ADDR (C0:86:B3:31:29:2F) read off the wire.  cod=0x240418 = Audio/Video major
+device class (a headset), which independently confirms the device kind.  The
+device answered inquiry 8 times (normal -- inquiry collects repeated responses)
+and Remote_Name_Request resolved each to the same name.  All at 115200 with the
+host RTS asserted; hci=ok, timeouts=0, framing=0.
+
+Next: B4 -- ACL Create_Connection + SSP Just-Works pairing to C0:86:B3:31:29:2F.
