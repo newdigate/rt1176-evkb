@@ -35,10 +35,27 @@
 #include "lvgl_mipi_panel.h"
 #include "lvgl_gt911_indev.h"
 #include "synthui_rotary_knob.h"
+#include "synthui_rotary_knob_gpu.h"
 #include "synthui_step.h"
+
+extern "C" {
+#include "vg_lite.h"
+#include "vg_lite_platform.h"
+}
 
 // rt1176-only example: LPUART1 console, which the imxrt1176 core names Serial1.
 #define CONSOLE Serial1
+
+/* GC355 working pool -- synthui_knob_test's siting and reasoning verbatim:
+ * EXTMEM (SDRAM), not DMAMEM (a 2 MB pool overflows the 512K OCRAM at link
+ * time), zeroed before vg_lite_init_mem because startup never zeroes EXTMEM
+ * (the RT1062 DMAMEM lesson, GPU edition).  In QEMU the chip-ID probe reads 0
+ * and nothing here is touched past that read. */
+#define VGLITE_POOL_BYTES (2u * 1024u * 1024u)
+EXTMEM __attribute__((aligned(64))) static uint8_t vglite_pool[VGLITE_POOL_BYTES];
+#define TESS_W 256
+#define TESS_H 256
+static bool s_gpu = false;
 
 /* --- audio graph ---------------------------------------------------------- *
  * ★ DECLARATION ORDER IS UPDATE ORDER and both the transport and the
@@ -252,6 +269,13 @@ static void audio_probe_poll(void)
             }
             CONSOLE.println("]");
             memset(stepPeakRms, 0, sizeof(stepPeakRms));
+            /* Fence health beside every bar line, so the counter is witnessed
+             * for the whole gated run (play + taps + drag), not only at boot.
+             * The gate rejects ANY of these lines carrying timeouts!=0. */
+            CONSOLE.printf("ACIDBOX_VSYNC flips=%lu isrs=%lu timeouts=%lu\n",
+                           (unsigned long)lvgl_mipi_panel_flips(),
+                           (unsigned long)lvgl_mipi_panel_vsync_isrs(),
+                           (unsigned long)lvgl_mipi_panel_vsync_timeouts());
         }
         lastSeenStep = s;
     }
@@ -611,8 +635,34 @@ void setup()
 
     lvgl_rt1176_begin();
     diag_mark();               /* after lvgl_rt1176_begin() */
-    lv_display_t *disp = lvgl_mipi_panel_create(Display);
-    diag_mark();               /* after lvgl_mipi_panel_create() */
+
+    /* GC355 probe BEFORE any compositor commitment (synthui_knob_test's
+     * wiring): vg_lite_init() SPINS on absent hardware, so the chip-ID read
+     * is what makes QEMU a clean negative. */
+    memset(vglite_pool, 0, VGLITE_POOL_BYTES);
+    vg_lite_init_mem(VGLITE_RT1176_REGISTER_BASE, 0u, vglite_pool,
+                     VGLITE_POOL_BYTES);
+    const bool vg_up = (vg_lite_hal_probe_chip_id() != 0u) &&
+                       (vg_lite_init(TESS_W, TESS_H) == VG_LITE_SUCCESS);
+
+    /* v4/v5 double-buffered create + the pre-flip compose hook: LVGL renders
+     * off-screen and the LCDIFv2 flips at vsync, and when the GC355 is up the
+     * knob compositor draws into that off-screen buffer right before the flip
+     * is requested -- tear-free BY CONSTRUCTION (the scanout-flash finding,
+     * gpu-well spec section 5c; the single-buffer begin() can flash a
+     * damage-box-sized square when the scanline crosses mid-composite).  In
+     * QEMU vg_up is false, every knob stays fully software, and the only
+     * behavioural change is the fenced flip. */
+    lv_display_t *disp = lvgl_mipi_panel_create_db(Display);
+    diag_mark();               /* after lvgl_mipi_panel_create_db() */
+    if (vg_up && synthui_rotary_gpu_begin_deferred(
+                     Display.width(), Display.height(),
+                     Display.width() * PANEL_BYTES_PER_PIXEL)) {
+        s_gpu = true;
+        /* the app owns the wiring: compositor <- pre-flip hook -> panel */
+        lvgl_mipi_panel_set_preflip_cb(synthui_rotary_gpu_compose_into);
+    }
+    CONSOLE.printf("ACIDBOX_ENGINE=%s\n", s_gpu ? "gpu" : "sw");
 
     load_preset();
     default_patch();
@@ -633,9 +683,13 @@ void setup()
     uint32_t t0 = millis();
     while (!lvgl_mipi_panel_frame_done() && (millis() - t0) < 5000)
         lvgl_rt1176_loop();
+    /* db mode: checksum the PRESENTED buffer, never Display.framebuffer() --
+     * flip_sync() first so the pending flip has retired and scanned_fb()
+     * names the front buffer (synthui_knob_test's sum contract). */
+    lvgl_mipi_panel_flip_sync();
     lvgl_sum_reset();
     diag_mark();               /* after the frame_done wait loop */
-    lvgl_sum_feed(Display.framebuffer(), PANEL_FB_BYTES);
+    lvgl_sum_feed(lvgl_mipi_panel_scanned_fb(), PANEL_FB_BYTES);
     diag_mark();               /* after the 3.6 MB checksum   == :591 pre-diag */
     CONSOLE.printf("ACIDBOX_UI_SUM=0x%08lX\n", (unsigned long)lvgl_sum_value());
     CONSOLE.printf("PLAYING=%d\n", transport.playing() ? 1 : 0);
@@ -667,6 +721,17 @@ void setup()
                        (unsigned)touch.lastI2cStatus(),
                        (unsigned long)touch.lastDeviceId());
     }
+    /* gpu lines NEVER appear in a sw run -- the gate tripwires on them. */
+    if (s_gpu)
+        CONSOLE.printf("ACIDBOX_GPU_ERR=%lu\n",
+                       (unsigned long)synthui_rotary_gpu_errors());
+    /* vsync-fence health (db mode, both engines): a timeout means the
+     * pipeline silently degraded to unfenced v1 rendering (tearing possible)
+     * and must fail by name, not by eye -- gated in QEMU. */
+    CONSOLE.printf("ACIDBOX_VSYNC flips=%lu isrs=%lu timeouts=%lu\n",
+                   (unsigned long)lvgl_mipi_panel_flips(),
+                   (unsigned long)lvgl_mipi_panel_vsync_isrs(),
+                   (unsigned long)lvgl_mipi_panel_vsync_timeouts());
     diag_mark();               /* setup() COMPLETE */
     CONSOLE.println("ACIDBOX_DONE");
 }

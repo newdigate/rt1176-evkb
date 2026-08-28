@@ -18,7 +18,11 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 import_evkb_audio_full()
 
 import_evkb_lvgl()
-import_evkb_synthui()
+# VGLITE flavor: compiles SynthUI's rotary-knob GPU compositor and links the
+# VGLite driver.  LVGL stays the SOFTWARE renderer (one ELF, both engines --
+# the rotary_knob_bench pattern): the GC355 is reached only by direct vg_lite
+# calls behind the chip-ID probe, so this same image is safe in QEMU.
+import_evkb_synthui(VGLITE)
 # panels/rk055 selects the panel; one MIPI-DSI host, one panel dir ever live.
 import_evkb_library(MipiDisplay soc panels/rk055)
 import_evkb_library(PXP)              # Display::fillScreen() paints via the PXP
@@ -42,7 +46,7 @@ teensy_target_link_libraries(acid_box
 # `.elf` target rather than the teensy_ wrapper -- see lvgl_rk055_panel_test for
 # why.  LVGL is named directly, not only pulled in transitively via SynthUI's
 # PUBLIC edge, because this target also compiles port/lvgl_mipi_panel.cpp itself.
-target_link_libraries(acid_box.elf SynthUI LVGL CMSIS-DSP stdc++ m)
+target_link_libraries(acid_box.elf SynthUI LVGL VGLite CMSIS-DSP stdc++ m)
 
 # GT911::read() is [[nodiscard]] and this tree carries no -Werror: without this
 # a dropped poll result in the indev port warns and the build SUCCEEDS.  Scoped

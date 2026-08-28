@@ -1,5 +1,35 @@
 acid_box -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
 ================================================================================
+2026-08-28, TEAR-FREE PIPELINE + GPU KNOBS (import_evkb_synthui(VGLITE),
+lvgl_mipi_panel_create_db + the compositor's deferred mode via the pre-flip
+hook -- synthui_knob_test's exact wiring, applied to this consumer).  Flashed,
+then FOUR SW4-press boots with a persistent console reader (the wedge-free
+procedure), all four bit-identical:
+
+  ACIDBOX_ENGINE=gpu
+  ACIDBOX_UI_SUM=0x1479CEE8      <- THE SILICON GOLDEN, four boots
+  ACIDBOX_GPU_ERR=0
+  ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
+
+★ THE QEMU<->SILICON BIT-IDENTITY OF THE BOOT FRAME IS GONE, BY DESIGN.  With
+the GC355 compositing every knob's well+rotor on silicon, this example now has
+TWO golden sets like synthui_knob_test and vglite_lvgl_test (hardware AA is
+not LVGL mask arithmetic; the sets are never reconciled): QEMU/sw stays
+0x25B30A96, silicon/gpu is 0x1479CEE8.  The section below records the LAST
+example whose frame matched QEMU bit-for-bit -- keep it for the history, but
+do not expect that equality from any build after this date.
+
+Live interaction in the same capture (a human playing the instrument between
+boots): CUTOFF drag samples tracking the finger both directions, pitch-detent
+edits stepping note-by-note (STEP[0]=note37..42, then 31/28/25/24 down to the
+clamp), gates toggled off during playback with the per-step RMS table
+following (steps 12/13/11 muted -> their columns collapse), PLAYING start and
+stop, and fence witnesses healthy THROUGHOUT under playback + touch load
+(flips up to 332, flips==isrs, timeouts=0 on every line).  Verdict on glass by
+eye: "looks and feels great" -- no scanout flash, which is the property the
+db+pre-flip pipeline buys and no checksum can certify (the 2026-08-28
+scanout-flash lesson: only a camera or an eye sees a tear).
+================================================================================
 2026-08-27, NEW-20 Phase 2 (synthui_rotary_knob swap). Flashed and booted on
 the EVKB:
 

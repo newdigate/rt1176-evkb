@@ -186,6 +186,13 @@ the flip, so scanout only ever presents complete frames. Pixel-neutral
 and `rk_fps` now measures the vsync-locked pipeline (32.1 fps; unfenced
 compute ~42). Checksums in db mode must read the PRESENTED buffer
 (`flip_sync()` + `scanned_fb()`), never `Display.framebuffer()`.
+★ **`display/acid_box` joined the same pipeline the next day (2026-08-28)**:
+`import_evkb_synthui(VGLITE)`, `create_db` + deferred compositor behind the
+chip-ID probe. Its QEMU golden HELD (0x25B30A96 — sw path untouched, gate
+grew engine/GPU tripwires and per-bar `ACIDBOX_VSYNC timeouts=0` witnesses,
+all demonstrated RED), but its famous QEMU↔silicon bit-identity is GONE BY
+DESIGN: silicon now composites knobs on the GC355 and owns a separate gpu
+golden (0x1479CEE8, four boots bit-identical). Gate count unchanged.
 
 BT-1 added the tree's FIRST TWO BLUETOOTH GATES, both on the new
 `networking/m2_hci_probe`. `run_qemu.sh` is the card-ABSENT fallback — with no

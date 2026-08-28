@@ -110,6 +110,27 @@ grep -q "PANEL_OK" "$OUT" || { echo "FAIL: panel bring-up"; exit 1; }
 grep -q "I2C_OK"   "$OUT" || { echo "FAIL: touch bring-up"; exit 1; }
 grep -q "ACIDBOX_DONE" "$OUT" || { echo "FAIL: setup() never completed"; exit 1; }
 
+# --- the engine, and the pipeline's fence ------------------------------------
+# One ELF, both engines (synthui_knob_test's pattern): QEMU has no GC355, so the
+# chip-ID probe must read 0 and every knob stays software.  The tripwires keep a
+# QEMU run from ever CLAIMING the gpu -- a fake claim would turn the golden into
+# a statement about hardware this machine does not model.
+# RED 2026-08-28, all three via qrun's REAL_QEMU replay of a doctored passing
+# capture: ENGINE line flipped to gpu -> "engine line missing or not sw";
+# ACIDBOX_GPU_ERR=0 appended -> "TRIPWIRE gpu error counter in QEMU"; one
+# mid-run witness set to timeouts=3 -> "vsync fence timed out during the run".
+grep -qE "^ACIDBOX_ENGINE=sw\r?$" "$OUT" || { echo "FAIL: engine line missing or not sw"; exit 1; }
+grep -q "ACIDBOX_ENGINE=gpu" "$OUT" && { echo "FAIL: TRIPWIRE gpu engine claimed in QEMU"; exit 1; }
+grep -q "ACIDBOX_GPU_ERR="   "$OUT" && { echo "FAIL: TRIPWIRE gpu error counter in QEMU"; exit 1; }
+# vsync-fence health (db pipeline): a timeout silently degrades rendering to the
+# unfenced v1 path (tearing possible, the scanout-flash class), so it must fail
+# BY NAME -- and on ANY witness line, because the per-bar lines are what cover
+# the play/tap/drag portion of the run rather than only boot.
+grep -qE "^ACIDBOX_VSYNC flips=[0-9]+ isrs=[0-9]+ timeouts=0\r?$" "$OUT" \
+    || { echo "FAIL: vsync fence line missing"; exit 1; }
+grep -E "^ACIDBOX_VSYNC " "$OUT" | grep -vqE "timeouts=0\r?$" \
+    && { echo "FAIL: vsync fence timed out during the run"; exit 1; }
+
 # --- the boot frame ----------------------------------------------------------
 # GOLDEN — FNV-1a over the whole 720x1280 XRGB8888 framebuffer, taken before the
 # indev exists, so it is a statement about the SCENE and nothing about touch.
