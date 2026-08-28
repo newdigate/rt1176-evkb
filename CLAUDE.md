@@ -174,6 +174,18 @@ DEBUG USB — a board power cycle does NOT clear it, and once it took BOTH
 cold together); pyocd and gdb `monitor reset` cannot reboot this target, so
 unattended reset loops do not exist — SW4-press loops with a persistent
 console reader are the wedge-free procedure.
+★ **The scanout flash and the tear-free pipeline (2026-08-28 evening)**: a
+compositor drawing into LIVE scanout flashes damage-box squares (~1/s beat
+between refresh and 60 Hz scan) that NO CHECKSUM can see — CRCs read after
+finish; only a camera/eye catches it (60 fps video + frame extraction is
+the instrument). Fixed structurally: `synthui_knob_test` now runs
+`lvgl_mipi_panel_create_db()` with the port's new PRE-FLIP compose hook —
+the compositor's deferred mode draws into the off-screen back buffer before
+the flip, so scanout only ever presents complete frames. Pixel-neutral
+(every golden held, QEMU and silicon), `rk_vsync … timeouts=0` is gated,
+and `rk_fps` now measures the vsync-locked pipeline (32.1 fps; unfenced
+compute ~42). Checksums in db mode must read the PRESENTED buffer
+(`flip_sync()` + `scanned_fb()`), never `Display.framebuffer()`.
 
 BT-1 added the tree's FIRST TWO BLUETOOTH GATES, both on the new
 `networking/m2_hci_probe`. `run_qemu.sh` is the card-ABSENT fallback — with no

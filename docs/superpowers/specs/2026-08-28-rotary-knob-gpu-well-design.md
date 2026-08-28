@@ -135,6 +135,38 @@ impossible on this bench: pyocd reset does nothing (reconfirmed), and
 gdb-mediated `monitor reset` parks the core at the reset vector under the
 connect script's vector catches.
 
+## 5c. The scanout flash, and the tear-free pipeline (same day, evening)
+
+A 60 fps video of the spinning hero showed damage-box-sized squares
+flashing about once a second — the composite's intermediate states (well
+drawn, body not yet) caught by the LCDIF scanline, beating between the
+~30 fps refresh and the 60 Hz scanout. Invisible to every checksum by
+construction (CRCs read after `vg_lite_finish`); only a camera or an eye
+can see it. Two-step resolution, both verified by the frame-extraction
+method used to find it:
+
+1. **Well annulus (r35..39)** — the body covers r<36 opaquely, so the disc
+   under it bought nothing but a high-contrast intermediate. Pixel-neutral
+   (all sums bit-equal, three boots) and faster, but only lowered the
+   flash's contrast: the user still saw a darker square.
+2. **The structural fix**: `lvgl_mipi_panel_create_db()` (the v4/v5
+   double-buffered, vsync-ISR-fenced path) plus a new **pre-flip compose
+   hook** in the panel port — the compositor's deferred mode
+   (`begin_deferred` + `compose_into`) draws into the just-rendered
+   OFF-SCREEN buffer right before the flip is requested, so scanout can
+   only ever present fully-composed frames. LVGL's own `refr_sync_areas`
+   carries the composited pixels between the two buffers because the
+   composite writes only inside LVGL's dirty areas. No SynthUI↔port
+   coupling: the app wires the two.
+
+Verified: every golden unchanged in QEMU AND on silicon (the db pipeline is
+pixel-neutral end to end); three boots bit-identical; `rk_vsync flips=15
+isrs=15 timeouts=0` (the fence health line, now gated — a vsync timeout
+silently degrades to unfenced v1 behaviour and must fail by name);
+**glitch confirmed gone on glass by eye**. `rk_fps` semantics changed with
+the fence: 32.1 fps vsync-locked (still above criterion), with the ~42 fps
+unfenced compute figure retained in the transcript for capacity questions.
+
 ## 6. Risks
 
 - **Track cap discs** double-covering the track ring's ends (both painted

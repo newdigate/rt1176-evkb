@@ -1,5 +1,30 @@
 synthui_knob_test -- HARDWARE (MIMXRT1170-EVKB + RK055), synthui_rotary_knob
 ================================================================================
+2026-08-28 LATE (TEAR-FREE PIPELINE, LVGL f3e264c + SynthUI 48062a0): a 60 fps
+video showed damage-box-sized squares flashing ~1/s on the spinning hero --
+the composite's intermediate states caught by the scanline, since the
+compositor drew into LIVE scanout (invisible to every checksum: CRCs read
+after finish). Two-step fix: the well became an ANNULUS r35..39 (pixel-
+neutral, verified: all sums bit-equal across three boots; lowered the
+flash's contrast but could not remove it), then the STRUCTURAL fix -- the
+example now uses lvgl_mipi_panel_create_db() and the compositor's deferred
+mode, composing into the OFF-SCREEN back buffer via the panel's new
+pre-flip hook, so the scanout can only ever see fully-composed frames.
+Verified across three boots, all bit-identical AND equal to the pre-db
+golden set (the pipeline is pixel-neutral):
+
+  KNOB_SUM_ALL=0xA5399CF5            (and the full row/accent set as below)
+  KNOB_DELTA_SEQ=FULL=0x7C9EC8DB, EQ=PASS, MAXAREA=3050
+  rk_gpu_err=0, rk_gpu_diag irqs=64 wait_timeouts=0
+  rk_vsync flips=15 isrs=15 timeouts=0     <- the fence, gated in QEMU too
+  rk_fps frames=64 mfps_med=32120 us_med=31133 engine=gpu
+
+★ rk_fps SEMANTICS CHANGED with the fence: it now measures the vsync-locked
+pipeline (render + wait to the next 60 Hz slot), 32.1 fps -- still above
+the >=30 criterion. The unfenced compute capacity remains the 2026-08-28
+morning figure (~42 fps, 23.6 ms). GLITCH CONFIRMED GONE ON GLASS by eye
+after the db build (user verification, spinning hero watched).
+================================================================================
 2026-08-28 (GPU WELL, SynthUI 7856f35 + VGLite 2e17773): the compositor now
 draws the well too, and THIS is the ~30 fps lever landing. CURRENT gpu
 golden set -- bit-identical across THREE boots (SW4-press boots with a
