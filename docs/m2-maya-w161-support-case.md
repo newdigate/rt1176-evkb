@@ -4,6 +4,28 @@
 measurement from this board, not an estimate. Full logs:
 `examples/networking/m2_hci_probe/transcript_hw_evkb.txt`.
 
+> ## ✅ ANSWERED BY SUBSTITUTION — 2026-08-28: it IS the module
+>
+> A genuine **Embedded Artists Murata Type 1XK M.2 (EAR00385)** — the same IW416
+> silicon, the module NXP's `board_murata_1xk_m2` profile targets — was dropped
+> into the same J54 slot, on the same reworked + externally-powered board, with
+> the **identical** SDK, firmware image and EdgeFast shell binary. At `bt.init`:
+>
+> ```
+> download success!  →  Bluetooth initialized  →  Settings Loaded
+> ```
+>
+> **The controller runs.** The u-blox MAYA-W161, same everything, downloads
+> identically and then never runs a controller. **Only the card changed, and the
+> fault moved with it** — so the board, the rework, the external power, the SDK,
+> the stock NXP firmware and NXP's EdgeFast stack are all proven correct, and the
+> fault is the **u-blox MAYA-W161 module**. This confirms the secure-boot /
+> signature-provisioning hypothesis (§6) by substitution: the stock NXP
+> `uartIW416_bt.bin` runs on genuine Murata IW416 and is silently not-run on the
+> u-blox part after an identical, CRC-validated download. The remaining question
+> for u-blox is now narrow — follow-up drafted in
+> `docs/m2-maya-w161-ublox-followup-2026-08-28.md`.
+
 > ## ✅ FILED WITH u-blox — case **CA-276115**, 2026-08-25
 >
 > Submitted through the u-blox portal's Contact Customer Support form. The

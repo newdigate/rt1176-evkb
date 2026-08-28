@@ -6,6 +6,23 @@ what NXP uniquely owns: the **IW416 ROM's firmware-authentication behaviour**
 and an **EdgeFast download bug on NXP's own reference board**. Every figure is a
 measurement; full logs in `examples/networking/m2_hci_probe/transcript_hw_evkb.txt`.
 
+> ## ✅ RESOLVED — NOT NXP — 2026-08-28: a genuine Murata 1XK runs; the u-blox part is the fault
+>
+> A genuine **Murata Type 1XK M.2 (EAR00385, Embedded Artists)** — the IW416
+> module NXP's `board_murata_1xk_m2` profile targets — was substituted into the
+> same reworked, externally-powered board, with the **identical** SDK, stock
+> `uartIW416_bt.bin`, and unmodified EdgeFast shell binary. `bt.init` →
+> `download success!` → **`Bluetooth initialized`** → `Settings Loaded`: the
+> controller runs. The u-blox MAYA-W161, same everything, downloads identically
+> and stays silent.
+>
+> **This exonerates NXP entirely** — board, SDK, stock firmware and the EdgeFast
+> stack all work; the fault is the **u-blox MAYA-W161 module** (its firmware
+> provisioning / secure-boot). Failure A is a u-blox-module issue, not an NXP one;
+> Failure B was already fixed by the rework. A short thank-you / closing note for
+> the forum thread is drafted in `docs/nxp-iw416-forum-close-2026-08-28.md`; the
+> module question moves to u-blox (CA-276115).
+
 > ## ✅ POSTED to the NXP community forum — 2026-08-26
 >
 > A formal NXP support request needs a registered company; NXP directed this to

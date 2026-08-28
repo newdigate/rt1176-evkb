@@ -1851,3 +1851,61 @@ SDK working tree RESTORED: prj.conf reverted to stock (byte-identical); only the
 built ELF (mcuxsdk/build_shell_1xk/edgefast_bluetooth_shell_cm7.elf) remains.
 Board carries the stock EdgeFast shell, hung at bt.init; reflash m2_hci_probe
 before probe work.
+
+================================================================================
+2026-08-28  DECISIVE SUBSTITUTION TEST -- a genuine Murata 1XK (IW416) RUNS the
+            controller; the u-blox MAYA-W161 does not.  THE FAULT IS THE MODULE.
+================================================================================
+
+Swapped the u-blox M2-MAYA-W161 out of J54 for a genuine **Embedded Artists
+Murata Type 1XK M.2** (EAR00385) -- the exact module NXP's `board_murata_1xk_m2`
+profile is built for, same IW416 silicon.  EVERYTHING ELSE HELD IDENTICAL: same
+board, same five-item rework, same external 5 V, same SDK, same stock
+`uartIW416_bt.bin`, same EdgeFast shell ELF
+(build_shell_1xk/edgefast_bluetooth_shell_cm7.elf).  Only the card changed.
+
+    @bt> bt.init
+    [FW Download] Start to download firmware from 0x301198fc: 6929
+    download starts(131840)
+    ...................................................................... (141 dots)
+    download success!
+    [FW Download]BLE FW is downloaded: 8381
+    @bt> Bluetooth initialized
+    Settings Loaded
+
+**`Bluetooth initialized` + `Settings Loaded` -- the controller RAN.**  That line
+prints only after bt_enable() gets HCI replies (HCI_Reset, Read_Local_Version,
+Read_BD_ADDR, ...).  On the u-blox MAYA-W161, the SAME image at the SAME point
+(the 2026-08-27 section above) was SILENT and bt.init never returned.
+
+The differential is total and clean:
+
+    variable          u-blox MAYA-W161         Murata 1XK (EAR00385)
+    board/rework/pwr  identical                identical
+    SDK/fw/shell ELF  identical                identical
+    download          download success!        download success!
+    after download    SILENCE, no controller   Bluetooth initialized   <==
+
+**CONCLUSION: the fault is the u-blox MAYA-W161 MODULE** -- not the board, the
+rework, the external power, the SDK, the stock NXP firmware, or NXP's EdgeFast
+stack, ALL of which are proven correct by the Murata card running to a live
+controller on this very setup.  The stock NXP `uartIW416_bt.bin` executes on
+genuine Murata IW416 silicon and is silently not-run on the u-blox part after an
+identical, CRC-validated download.
+
+This confirms the last surviving hypothesis BY SUBSTITUTION: the u-blox MAYA-W161
+requires u-blox-specific firmware provisioning (a u-blox-signed image, or an
+OTP/secure-boot key the stock NXP image is not signed against).  "download
+success!" was never acceptance-to-RUN -- it is the ROM loader taking bytes; the
+authentication/execution gate is what the u-blox part fails and the Murata part
+passes.  That gate is u-blox's -- CA-276115 now has its decisive evidence.
+
+Ruled out that this is a u-blox card DEFECT rather than provisioning: the same
+u-blox card's Wi-Fi works fully (SDIO station / uAP / throughput) and its BT UART
+carried the entire 131,840-byte download in both directions with the ROM greeting
+intact -- card, power, level shifters and BT UART all electrically sound.  The
+only thing that does not happen is the controller starting after a good download,
+which is a firmware/provisioning behaviour, not a wire.
+
+Board now carries the stock EdgeFast 1XK shell with a LIVE Bluetooth controller
+(Murata card); reflash m2_hci_probe before returning to probe work.
