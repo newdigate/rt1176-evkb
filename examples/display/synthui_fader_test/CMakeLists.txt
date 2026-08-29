@@ -22,6 +22,11 @@ teensy_add_executable(synthui_fader_test
     synthui_fader_test.cpp
     ${_lvgl_dir}/port/lvgl_mipi_panel.cpp)
 teensy_target_link_libraries(synthui_fader_test cores MipiDisplay PXP)
+
+# SynthUI and LVGL are plain CMake static-lib targets (see lvgl_rk055_panel_test
+# for why teensy_target_link_libraries cannot link them). LVGL is named
+# directly here too, not only pulled in transitively via SynthUI's PUBLIC
+# edge, because this target also compiles port/lvgl_mipi_panel.cpp itself.
 target_link_libraries(synthui_fader_test.elf SynthUI LVGL stdc++)
 
 # Diagnostic eyeball build (separate build dir, NEVER a golden):

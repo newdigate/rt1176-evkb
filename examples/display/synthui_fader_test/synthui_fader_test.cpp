@@ -48,7 +48,9 @@ static void opaque_bg(lv_obj_t *scr)
 }
 
 /* The one bank builder both the golden and the fresh reference use -- the
- * equality guard depends on the two paths sharing this code. */
+ * equality guard depends on the two paths sharing this code. Re-points
+ * g_fader[] as a side effect -- callers must build the bank they are about
+ * to drive LAST. */
 static lv_obj_t *build_bank(const float *vals, bool pressed5)
 {
     lv_obj_t *scr = lv_obj_create(NULL); opaque_bg(scr);
@@ -108,9 +110,12 @@ static void delta_inv_cb(lv_event_t *e)
     if (px > s_delta_maxarea) s_delta_maxarea = px;
 }
 
-/* Fixed-seed LCG -> value steps in [-0.06, +0.06] (spec section 9; covers
- * Phase B's ~0.052 max animation step, so the guard exercises what the
- * bench runs). */
+/* Fixed-seed LCG -> value steps in [-0.06, +0.06] (spec section 9).
+ * Phase B's animation is STEP-indexed (tt advances 15 ms per frame), so
+ * its max per-frame delta is 0.5*2pi*0.5*0.015 ~= 0.024 -- the LCG
+ * envelope covers it ~2.5x over.  The spec's 0.052 figure assumed a
+ * wall-clocked 30 fps animation this code deliberately does not use
+ * (the knob's step-indexed house pattern). */
 static uint32_t s_lcg;
 static float lcg_delta(void)
 {
@@ -141,7 +146,7 @@ static uint32_t delta_run_sequence(void)
     lv_obj_add_state(g_fader[5], LV_STATE_PRESSED);
     lv_obj_invalidate(g_fader[5]);     /* programmatic-state contract */
     lv_refr_now(NULL);
-    for (int i = 0; i < 16; i++) {     /* two more steps on the new state */
+    for (int i = 0; i < 16; i++) {     /* one more step on the new state */
         float v = g_vals[i] + lcg_delta();
         if (v < 0.0f) v = 0.0f;
         if (v > 1.0f) v = 1.0f;
@@ -153,7 +158,8 @@ static uint32_t delta_run_sequence(void)
 }
 
 /* --- fd_fps: knob-test machinery (REFR_START->REFR_READY, damage-gated by
- * RENDER_READY, screen-load frame skipped), run for a fixed wall time. */
+ * RENDER_READY, first timed frame discarded (g_fps_skip)), run for a fixed
+ * wall time. */
 #define FD_FPS_MAX 4096
 static uint32_t g_fps_us[FD_FPS_MAX];
 static volatile uint32_t g_fps_n = 0, g_fps_frames = 0;
@@ -222,9 +228,10 @@ static void fd_fps_phase(const char *tag, bool full_inv, uint32_t run_ms)
         while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; j--; }
         s[j + 1] = v;
     }
-    Serial1.printf("%s frames=%lu secs=%lu fps_avg=%lu mfps_med=%lu"
+    Serial1.printf("%s frames=%lu n=%lu secs=%lu fps_avg=%lu mfps_med=%lu"
                    " us_med=%lu us_max=%lu\n", tag,
                    (unsigned long)g_fps_frames,
+                   (unsigned long)g_fps_n,
                    (unsigned long)(elapsed / 1000u),
                    (unsigned long)((uint64_t)g_fps_frames * 1000u / elapsed),
                    (unsigned long)(1000000000ull / (s[n / 2] ? s[n / 2] : 1)),
