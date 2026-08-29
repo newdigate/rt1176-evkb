@@ -168,6 +168,7 @@ static volatile bool g_fps_rendered = false;
 static volatile uint32_t g_fps_t0 = 0;
 static bool g_anim_full_inv = false;
 static uint32_t g_anim_step = 0;
+static uint32_t g_anim_n = 16;   /* how many faders the anim drives (scaling probe) */
 
 static void fps_refr_cb(lv_event_t *e)
 {
@@ -194,7 +195,7 @@ static void fd_anim_cb(lv_timer_t *t)
     (void)t;
     g_anim_step++;
     const float tt = (float)g_anim_step * 0.015f;   /* 15 ms timer */
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < (int)g_anim_n; i++) {
         synthui_fader_set_value(g_fader[i],
             0.5f + 0.5f * sinf(6.2831853f * 0.5f * tt
                                + (float)i * 0.3926991f));  /* 2*pi/16 */
@@ -236,6 +237,32 @@ static void fd_fps_phase(const char *tag, bool full_inv, uint32_t run_ms)
                    (unsigned long)((uint64_t)g_fps_frames * 1000u / elapsed),
                    (unsigned long)(1000000000ull / (s[n / 2] ? s[n / 2] : 1)),
                    (unsigned long)s[n / 2], (unsigned long)s[n - 1]);
+}
+
+/* --- Phase C probes (NEW-23 fps diagnosis): snapshot the port's cumulative
+ * counters around an fps phase, so each phase reports its OWN per-flip fence
+ * wait and rendered px.  px_pf also exposes the direct-mode prev+current
+ * damage join, which the analytic damage estimate does not include. */
+static uint32_t s_pr_px0, s_pr_wait0, s_pr_flips0, s_pr_to0;
+static void probe_mark(void)
+{
+    s_pr_px0    = lvgl_mipi_panel_flushed_px();
+    s_pr_wait0  = lvgl_mipi_panel_wait_us();
+    s_pr_flips0 = lvgl_mipi_panel_flips();
+    s_pr_to0    = lvgl_mipi_panel_vsync_timeouts();
+}
+static void probe_print(const char *tag)
+{
+    const uint32_t fl = lvgl_mipi_panel_flips() - s_pr_flips0;
+    const uint32_t wu = lvgl_mipi_panel_wait_us() - s_pr_wait0;
+    const uint32_t px = lvgl_mipi_panel_flushed_px() - s_pr_px0;
+    Serial1.printf("%s flips=%lu timeouts=%lu wait_us_tot=%lu px_tot=%lu"
+                   " wait_us_pf=%lu px_pf=%lu\n", tag,
+                   (unsigned long)fl,
+                   (unsigned long)(lvgl_mipi_panel_vsync_timeouts() - s_pr_to0),
+                   (unsigned long)wu, (unsigned long)px,
+                   (unsigned long)(fl ? wu / fl : 0),
+                   (unsigned long)(fl ? px / fl : 0));
 }
 
 void setup()
@@ -301,8 +328,33 @@ void setup()
      * A fresh bank so the animation starts from a known state. */
     lv_screen_load(build_bank(g_vals, false));
     lv_refr_now(NULL);
+    probe_mark();
     fd_fps_phase("fd_fps", false, 60000u);
+    probe_print("fd_probe_delta");
+    probe_mark();
     fd_fps_phase("fd_fps_fullinv", true, 10000u);
+    probe_print("fd_probe_fullinv");
+
+    /* Phase C (NEW-23 fps diagnosis): scaling probes.  ONE fader animating
+     * separates per-widget draw cost from per-refresh pipeline cost; a
+     * minimum-tick bank separates per-primitive (draw task) cost from
+     * per-pixel cost.  All ungated, all after crc_done. */
+    g_anim_n = 1;
+    lv_screen_load(build_bank(g_vals, false));
+    lv_refr_now(NULL);
+    probe_mark();
+    fd_fps_phase("fd_fps_one", false, 15000u);
+    probe_print("fd_probe_one");
+
+    g_anim_n = 16;
+    lv_screen_load(build_bank(g_vals, false));
+    lv_refr_now(NULL);
+    for (int i = 0; i < 16; i++) synthui_fader_set_ticks(g_fader[i], 2);
+    lv_refr_now(NULL);
+    probe_mark();
+    fd_fps_phase("fd_fps_min", false, 15000u);
+    probe_print("fd_probe_min");
+
     /* leave the bank animating for the eyes/camera pass + soak */
     g_anim_full_inv = false;
     lv_timer_create(fd_anim_cb, 15, NULL);
