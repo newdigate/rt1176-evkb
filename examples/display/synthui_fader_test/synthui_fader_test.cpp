@@ -3,6 +3,14 @@
  * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT
  *
+ * ONE ELF, BOTH ENGINES (the knob test's pattern): LVGL is always the
+ * software renderer; the GC355 is reached only by the widget's opt-in
+ * compositor behind the chip-ID probe. QEMU has no GC355, so there
+ * fd_engine=sw and the goldens below are the software renderer's --
+ * asserted by the gate. On silicon fd_engine=gpu and the SAME tokens carry
+ * the GPU sums, recorded in transcript_hw_evkb.txt (two golden sets, never
+ * reconciled -- hardware AA is not LVGL mask arithmetic).
+ *
  * Scene: the spec section-9 16-fader bank, 2x8 at 78x210, config axes
  * exercised inside the ONE golden (values i/15; center on 4..7; 12
  * DISABLED; 13 PRESSED, so all three palettes are golden-pinned; panel
@@ -14,7 +22,9 @@
  * Phase B (after crc_done, ungated -- QEMU timing is meaningless): 60 s
  * all-16 sine animation -> fd_fps, then a 10 s full-invalidate run ->
  * fd_fps_fullinv, the honest what-delta-buys baseline (spec section 10).
- * The bank keeps animating forever afterwards for the eyes/camera pass. */
+ * The bank keeps animating forever afterwards for the eyes/camera pass.
+ * Phase C's probes are SW-PATH INSTRUMENTS ONLY -- see the comment above
+ * probe_mark()/probe_print() below for why they go silent on GPU cost. */
 #include <Arduino.h>
 #include <string.h>
 #include <math.h>
@@ -260,8 +270,15 @@ static void fd_fps_phase(const char *tag, bool full_inv, uint32_t run_ms)
 
 /* --- Phase C probes (NEW-23 fps diagnosis): snapshot the port's cumulative
  * counters around an fps phase, so each phase reports its OWN per-flip fence
- * wait and rendered px.  px_pf also exposes the direct-mode prev+current
- * damage join, which the analytic damage estimate does not include. */
+ * wait and rendered px.
+ * ★ THESE ARE SW-PATH INSTRUMENTS. In gpu mode fd_draw paints nothing and
+ * every path/draw/finish happens inside the pre-flip compositor, OUTSIDE
+ * LVGL's flush accounting -- so px_pf then counts only the ground LVGL
+ * still renders, NOT the GPU's work, and wait_us_pf is the only figure
+ * that keeps its sw meaning. Do not read px_pf as a GPU cost breakdown;
+ * the engine= field on the fd_fps* lines says which regime produced the
+ * numbers. The 1-fader / min-tick scaling phases likewise answer the
+ * per-primitive-vs-per-pixel question only for the sw path. */
 static uint32_t s_pr_px0, s_pr_wait0, s_pr_flips0, s_pr_to0;
 static void probe_mark(void)
 {
@@ -276,12 +293,13 @@ static void probe_print(const char *tag)
     const uint32_t wu = lvgl_mipi_panel_wait_us() - s_pr_wait0;
     const uint32_t px = lvgl_mipi_panel_flushed_px() - s_pr_px0;
     Serial1.printf("%s flips=%lu timeouts=%lu wait_us_tot=%lu px_tot=%lu"
-                   " wait_us_pf=%lu px_pf=%lu\n", tag,
+                   " wait_us_pf=%lu px_pf=%lu engine=%s\n", tag,
                    (unsigned long)fl,
                    (unsigned long)(lvgl_mipi_panel_vsync_timeouts() - s_pr_to0),
                    (unsigned long)wu, (unsigned long)px,
                    (unsigned long)(fl ? wu / fl : 0),
-                   (unsigned long)(fl ? px / fl : 0));
+                   (unsigned long)(fl ? px / fl : 0),
+                   s_gpu ? "gpu" : "sw");
 }
 
 void setup()
