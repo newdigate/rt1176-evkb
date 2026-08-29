@@ -1,5 +1,34 @@
 # M.2 Bluetooth on the MIMXRT1170-EVKB — A2DP source and sink, as Audio-library nodes
 
+> ## ★★ STATUS 2026-08-29 — SUPERSEDES THE 2026-08-25 BLOCK BELOW
+>
+> **The programme is UNBLOCKED and BT-2 is COMPLETE on silicon.** The 08-25
+> block's two headline conclusions are both obsolete:
+>
+> * **The fault was the u-blox MAYA-W161 MODULE, not the design** — proven by
+>   substitution 2026-08-28: a genuine Embedded Artists Murata Type 1XK
+>   (EAR00385, same IW416 silicon) in the same J54 socket runs the controller
+>   with the same stock firmware (`bt.init` → `Bluetooth initialized`). u-blox
+>   case CA-276115 tracks the MAYA-W161 provisioning question.
+> * **The USB-dongle recommendation is WITHDRAWN.** Our clean-room
+>   `M2Radio/hci` transport works on silicon on the Murata card. Root cause of
+>   the residual silence was the HOST RTS (`-DM2_BT_ASSERT_CTS=ON`), not the
+>   baud — the controller runs HCI at the download rate.
+> * **BT-1 validated on silicon (NEW-21); BT-2 COMPLETE 2026-08-29 (NEW-6,
+>   commit `5c27e40`)**: authenticated+encrypted BR/EDR link, L2CAP basic
+>   mode, SDP — `sdp_avdtp_version=0x0103` read from two real headsets, AVDTP
+>   Discover returning 2 audio-SNK SEPs. The 08-28 "silent peer" verdict was
+>   retracted: it was our L2CAP cfg-rsp SCID bug. Next: BT-3 (NEW-9).
+>
+> ★ **LE Audio on this card is RULED OUT (NEW-22 rejected 2026-08-29).** The
+> IW416's LE feature set stops at LE 2M / long range / PAST — no isochronous
+> channels (an *optional* 5.2 feature), no LC3. NXP positions LE Audio on the
+> IW61x tier ("supported utilizing Isochronous channels", LC3 on the host over
+> HCI), and the MCUXpresso SDK's own LE Audio examples for this exact board
+> (`unicast_media_sender` etc.) require the Embedded Artists **2EL (IW612)**
+> module — the 1XK/IW416 is not listed for any of them. Any future LE work on
+> this card is control-plane only (GAP/GATT); there is no LE audio path.
+
 > ## ★ STATUS 2026-08-25 — READ BEFORE PLANNING FROM THIS DOCUMENT
 >
 > **BT-1 (the HCI transport) is BUILT, GATED AND DONE.** BT-2/3/4 are **blocked

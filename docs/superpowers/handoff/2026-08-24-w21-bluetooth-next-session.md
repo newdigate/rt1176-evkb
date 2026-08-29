@@ -1,5 +1,17 @@
 # W21 handoff: where the M.2 Bluetooth programme actually stands
 
+> ## ★★ SUPERSEDED 2026-08-28/29 — historical record only
+>
+> The mystery this file exists to hand off is SOLVED, and its headline
+> recommendation is withdrawn. Proven by substitution: the fault was the
+> **u-blox MAYA-W161 module itself** (CA-276115) — a genuine Murata 1XK
+> (same IW416) runs the controller on the same board, same rework, same
+> firmware. Our clean-room `M2Radio/hci` transport then worked on silicon;
+> the residual silence was the **host RTS** (`-DM2_BT_ASSERT_CTS=ON`), not
+> the baud. **The USB dongle is NOT needed.** BT-1 validated (NEW-21),
+> BT-2 complete on the M.2 card (NEW-6, commit `5c27e40`). Current status
+> lives in `docs/superpowers/specs/2026-08-23-m2-bluetooth-a2dp-programme-design.md`.
+
 **Read this before touching Bluetooth.** W20 built the whole HCI transport and
 it works; the card does not. Five days of hypotheses are recorded here so the
 next session does not re-run any of them.
