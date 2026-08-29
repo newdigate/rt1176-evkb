@@ -379,6 +379,18 @@ static volatile bool     s_cfgRspRcvd = false;   static volatile bool s_cfgReqSe
 static volatile uint8_t  s_cfgReqId = 0;
 static uint8_t           s_cfgReqOpts[32];        static volatile uint8_t s_cfgReqOptLen = 0;
 static volatile bool     s_sdpDone = false;      static volatile uint16_t s_avdtpVer = 0;
+static const uint16_t    s_avdtpLocalCid = 0x0041;   // AVDTP CO channel (distinct from SDP's 0x0040)
+static volatile bool     s_avdtpDone = false;    static volatile uint8_t s_avdtpHdr = 0, s_avdtpSig = 0;
+static uint8_t           s_avdtpSeps[48];         static volatile uint8_t s_avdtpSepLen = 0;
+// Peer-initiated (reverse) channel -- the Shokz opens one back at us on AVDTP contact.
+static const uint16_t    s_revLocalCid = 0x0042;
+static volatile bool     s_revConnSeen = false;   static volatile uint8_t  s_revConnId = 0;
+static volatile uint16_t s_revPsm = 0;            static volatile uint16_t s_revRemoteCid = 0;
+static volatile bool     s_revCfgReqSeen = false; static volatile uint8_t  s_revCfgReqId = 0;
+static uint8_t           s_revCfgOpts[32];        static volatile uint8_t  s_revCfgOptLen = 0;
+static volatile bool     s_revCfgRspRcvd = false;
+static volatile bool     s_revCmdSeen = false;    static volatile uint8_t  s_revCmdHdr = 0, s_revCmdSig = 0;
+static volatile uint16_t s_revCmdCid = 0;         // peer endpoint to answer the command on
 static volatile bool s_encDone  = false;   static uint8_t s_encStatus  = 0xFF;
 static uint8_t       s_encEnabled = 0;
 static uint8_t       s_linkKey[16];        static volatile bool s_haveLinkKey = false;
@@ -512,21 +524,41 @@ static void onAcl(void *, uint16_t handle, const uint8_t *d, uint16_t len) {
             CONSOLE.print(" result="); CONSOLE.println(s_l2cResult);
             if (s_l2cResult != 0x0001) s_l2cConnDone = true;   // 0x0001 = pending; wait for the FINAL response
         } else if (code == L2CAP_CFG_REQ && len >= 12) {        // peer configures OUR endpoint
+            uint16_t dcid   = (uint16_t)(d[8] | (d[9] << 8));   // which endpoint of ours it targets
             uint16_t cmdLen = (uint16_t)(d[6] | (d[7] << 8));   // command payload: DCID(2)+Flags(2)+options
             uint16_t optLen = (cmdLen > 4) ? (uint16_t)(cmdLen - 4) : 0;
             if ((uint16_t)(12 + optLen) > len) optLen = (len > 12) ? (uint16_t)(len - 12) : 0;
             if (optLen > sizeof(s_cfgReqOpts)) optLen = sizeof(s_cfgReqOpts);
-            for (uint16_t i = 0; i < optLen; i++) s_cfgReqOpts[i] = d[12 + i];   // echo them back on accept
-            s_cfgReqOptLen = (uint8_t)optLen;
-            s_cfgReqId = id; s_cfgReqSeen = true;               // answered from the main loop (no TX in the RX callback)
+            if (dcid == s_revLocalCid) {                        // the peer-initiated channel
+                for (uint16_t i = 0; i < optLen; i++) s_revCfgOpts[i] = d[12 + i];
+                s_revCfgOptLen = (uint8_t)optLen;
+                s_revCfgReqId = id; s_revCfgReqSeen = true;     // answered from the main loop
+            } else {
+                for (uint16_t i = 0; i < optLen; i++) s_cfgReqOpts[i] = d[12 + i];   // echo them back on accept
+                s_cfgReqOptLen = (uint8_t)optLen;
+                s_cfgReqId = id; s_cfgReqSeen = true;           // answered from the main loop (no TX in the RX callback)
+            }
             CONSOLE.print("l2cap_cfg_req(peer) id="); CONSOLE.print(id);
+            CONSOLE.print(" dcid=0x"); printHex16(dcid);
             CONSOLE.print(" opts="); CONSOLE.print(optLen); CONSOLE.print(":");
             for (uint16_t i = 0; i < optLen; i++) { CONSOLE.print(' '); printHex8(d[12 + i]); }
             CONSOLE.println();
         } else if (code == L2CAP_CFG_RSP && len >= 14) {
+            uint16_t scid   = (uint16_t)(d[8]  | (d[9]  << 8));
             uint16_t result = (uint16_t)(d[12] | (d[13] << 8));
-            CONSOLE.print("l2cap_cfg_rsp: result="); CONSOLE.println(result);
-            if (result == 0) s_cfgRspRcvd = true;
+            CONSOLE.print("l2cap_cfg_rsp: scid=0x"); printHex16(scid);
+            CONSOLE.print(" result="); CONSOLE.println(result);
+            if (result == 0) {                                  // match either endpoint of the reverse channel
+                if (scid == s_revLocalCid || (s_revRemoteCid && scid == s_revRemoteCid)) s_revCfgRspRcvd = true;
+                else s_cfgRspRcvd = true;
+            }
+        } else if (code == L2CAP_CONN_REQ && len >= 12) {       // peer opens a channel TO us
+            s_revPsm       = (uint16_t)(d[8]  | (d[9]  << 8));
+            s_revRemoteCid = (uint16_t)(d[10] | (d[11] << 8));
+            s_revConnId = id; s_revConnSeen = true;             // accepted from the main loop
+            CONSOLE.print("l2cap_conn_req(peer) id="); CONSOLE.print(id);
+            CONSOLE.print(" psm=0x"); printHex16(s_revPsm);
+            CONSOLE.print(" scid=0x"); printHex16(s_revRemoteCid); CONSOLE.println();
         } else {
             CONSOLE.print("l2cap_sig: code=0x"); printHex8(code); CONSOLE.print(" id="); CONSOLE.println(id);
         }
@@ -540,6 +572,38 @@ static void onAcl(void *, uint16_t handle, const uint8_t *d, uint16_t len) {
                 s_avdtpVer = (uint16_t)((d[i+4] << 8) | d[i+5]); break;
             }
         s_sdpDone = true;
+    } else if (cid == s_avdtpLocalCid && len >= 6) {         // AVDTP signalling on OUR channel
+        uint8_t mt = (uint8_t)(d[4] & 0x03);                 // hdr = (tlabel<<4)|(pkt_type<<2)|msg_type
+        CONSOLE.print("avdtp_rsp: hdr=0x"); printHex8(d[4]);
+        CONSOLE.print(" sig=0x"); printHex8(d[5]); CONSOLE.print(" len="); CONSOLE.println(len);
+        CONSOLE.print("avdtp_rsp_bytes:");
+        for (uint16_t i = 4; i < len && i < 100; i++) { CONSOLE.print(' '); printHex8(d[i]); }
+        CONSOLE.println();
+        if (mt == 0x00) {                                    // a COMMAND from the peer -- answer from main loop
+            s_revCmdHdr = d[4]; s_revCmdSig = d[5]; s_revCmdCid = s_sdpRemoteCid; s_revCmdSeen = true;
+        } else {
+            s_avdtpHdr = d[4]; s_avdtpSig = d[5];
+            uint16_t n = 0;                                  // capture the SEP list (everything after the 2-byte header)
+            for (uint16_t i = 6; i < len && n < sizeof(s_avdtpSeps); i++) s_avdtpSeps[n++] = d[i];
+            s_avdtpSepLen = (uint8_t)n;
+            s_avdtpDone = true;
+        }
+    } else if (cid == s_revLocalCid && len >= 6) {           // data on the PEER-initiated channel
+        uint8_t mt = (uint8_t)(d[4] & 0x03);
+        CONSOLE.print("rev_rx: hdr=0x"); printHex8(d[4]);
+        CONSOLE.print(" sig=0x"); printHex8(d[5]); CONSOLE.print(" len="); CONSOLE.println(len);
+        CONSOLE.print("rev_rx_bytes:");
+        for (uint16_t i = 4; i < len && i < 100; i++) { CONSOLE.print(' '); printHex8(d[i]); }
+        CONSOLE.println();
+        if (mt == 0x00) {                                    // peer command -> main loop answers
+            s_revCmdHdr = d[4]; s_revCmdSig = d[5]; s_revCmdCid = s_revRemoteCid; s_revCmdSeen = true;
+        } else if (mt == 0x02 && d[5] == 0x01) {             // a Discover ACCEPT landing here still counts
+            s_avdtpHdr = d[4]; s_avdtpSig = d[5];
+            uint16_t n = 0;
+            for (uint16_t i = 6; i < len && n < sizeof(s_avdtpSeps); i++) s_avdtpSeps[n++] = d[i];
+            s_avdtpSepLen = (uint8_t)n;
+            s_avdtpDone = true;
+        }
     } else {
         CONSOLE.print("acl_rx: handle=0x"); printHex16(handle);
         CONSOLE.print(" cid=0x"); printHex16(cid); CONSOLE.print(" len="); CONSOLE.println(len);
@@ -573,7 +637,10 @@ static void probeSdp() {
             rsp[0] = L2CAP_CFG_RSP; rsp[1] = s_cfgReqId;
             uint16_t rlen = (uint16_t)(6 + optLen);            // SCID(2)+Flags(2)+Result(2)+options
             rsp[2] = (uint8_t)(rlen & 0xFF); rsp[3] = (uint8_t)(rlen >> 8);
-            rsp[4] = (uint8_t)(s_sdpLocalCid & 0xFF); rsp[5] = (uint8_t)(s_sdpLocalCid >> 8);
+            // ★ SCID in a Config RESPONSE names the endpoint of the device RECEIVING it
+            // (= the peer's CID) -- measured off a real stack's own response (scid=ours).
+            // Sending OUR cid here made the peer drop the channel's data silently.
+            rsp[4] = (uint8_t)(s_sdpRemoteCid & 0xFF); rsp[5] = (uint8_t)(s_sdpRemoteCid >> 8);
             rsp[6] = 0x00; rsp[7] = 0x00;                      // Flags = 0
             rsp[8] = 0x00; rsp[9] = 0x00;                      // Result = 0x0000 (success)
             for (uint8_t i = 0; i < optLen; i++) rsp[10 + i] = s_cfgReqOpts[i];
@@ -604,6 +671,137 @@ static void probeSdp() {
     if (!s_sdpDone)  { CONSOLE.println("sdp=timeout (no response)"); return; }
     if (s_avdtpVer)  { CONSOLE.print("sdp_avdtp_version=0x"); printHex16(s_avdtpVer); CONSOLE.println(" (B6 DONE)"); }
     else               CONSOLE.println("sdp_avdtp_version=not_found (got response, no AVDTP UUID)");
+}
+
+// Service the PEER-initiated L2CAP channel and any AVDTP command the peer sends
+// us.  All TX from MAIN context -- never from onAcl (that bus-faults).
+static bool s_revAccepted = false, s_revCfgAnswered = false;
+static void serviceReverse() {
+    if (s_revConnSeen) {
+        s_revConnSeen = false;
+        uint8_t rsp[12] = { L2CAP_CONN_RSP, s_revConnId, 0x08, 0x00,
+                            (uint8_t)(s_revLocalCid & 0xFF),  (uint8_t)(s_revLocalCid >> 8),   // DCID = our end
+                            (uint8_t)(s_revRemoteCid & 0xFF), (uint8_t)(s_revRemoteCid >> 8),  // SCID = echo theirs
+                            0x00, 0x00, 0x00, 0x00 };          // Result=success, Status=0
+        sendL2cap(0x0001, rsp, 12);
+        uint8_t cfg[8] = { L2CAP_CFG_REQ, (uint8_t)(s_l2cId + 2), 0x04, 0x00,
+                           (uint8_t)(s_revRemoteCid & 0xFF), (uint8_t)(s_revRemoteCid >> 8),
+                           0x00, 0x00 };                        // our config of their endpoint (no options)
+        sendL2cap(0x0001, cfg, 8);
+        s_revAccepted = true;
+        CONSOLE.print("rev_accept: psm=0x"); printHex16(s_revPsm);
+        CONSOLE.print(" our_cid=0x"); printHex16(s_revLocalCid); CONSOLE.println();
+    }
+    if (s_revCfgReqSeen) {
+        s_revCfgReqSeen = false;
+        uint8_t optLen = s_revCfgOptLen;
+        uint8_t rsp[10 + 32];
+        rsp[0] = L2CAP_CFG_RSP; rsp[1] = s_revCfgReqId;
+        uint16_t rlen = (uint16_t)(6 + optLen);
+        rsp[2] = (uint8_t)(rlen & 0xFF); rsp[3] = (uint8_t)(rlen >> 8);
+        rsp[4] = (uint8_t)(s_revRemoteCid & 0xFF); rsp[5] = (uint8_t)(s_revRemoteCid >> 8);  // peer's CID (see SCID note)
+        rsp[6] = 0x00; rsp[7] = 0x00;                           // Flags
+        rsp[8] = 0x00; rsp[9] = 0x00;                           // Result = success
+        for (uint8_t i = 0; i < optLen; i++) rsp[10 + i] = s_revCfgOpts[i];
+        sendL2cap(0x0001, rsp, (uint16_t)(10 + optLen));
+        s_revCfgAnswered = true;
+        CONSOLE.print("rev_cfg_rsp(ours)=ok echo_opts="); CONSOLE.println(optLen);
+    }
+    if (s_revCmdSeen) {
+        s_revCmdSeen = false;
+        uint8_t tl = (uint8_t)(s_revCmdHdr & 0xF0);             // keep the peer's transaction label
+        if (s_revCmdSig == 0x01 && s_revCmdCid) {               // peer runs Discover on US: one audio-SOURCE SEP
+            uint8_t rsp[4] = { (uint8_t)(tl | 0x02), 0x01, 0x04, 0x00 };  // accept; seid=1 in_use=0; audio/SRC
+            sendL2cap(s_revCmdCid, rsp, 4);
+            CONSOLE.println("rev_avdtp: answered peer Discover with 1 audio-SRC SEP");
+        } else {
+            CONSOLE.print("rev_avdtp: peer cmd sig=0x"); printHex8(s_revCmdSig);
+            CONSOLE.println(" (logged, not answered)");
+        }
+    }
+}
+static bool revOpen() { return s_revAccepted && s_revCfgAnswered && s_revCfgRspRcvd; }
+
+// --- B6-alt: open an L2CAP CO channel to the AVDTP PSM (0x0019) and send an
+// AVDTP Discover -- an A2DP sink MUST answer with its Stream End Points (SEPs).
+// Proves our L2CAP data-channel RECEIVE path (never confirmed against a peer that
+// stays silent) and reads the sink's real endpoints/media types off the wire.
+static void probeAvdtp() {
+    CONSOLE.println("avdtp: L2CAP connect to PSM 0x0019");
+    s_l2cConnDone = false; s_cfgRspRcvd = false; s_cfgReqSeen = false;
+    s_avdtpDone = false; s_avdtpSepLen = 0; s_sdpRemoteCid = 0;
+    s_revConnSeen = false; s_revCfgReqSeen = false; s_revCfgRspRcvd = false;
+    s_revCmdSeen = false; s_revPsm = 0; s_revRemoteCid = 0; s_revCmdCid = 0;
+    s_revAccepted = false; s_revCfgAnswered = false;
+    uint8_t con[8] = { L2CAP_CONN_REQ, s_l2cId, 0x04, 0x00,
+                       0x19, 0x00,                            // PSM = 0x0019 (AVDTP)
+                       (uint8_t)(s_avdtpLocalCid & 0xFF), (uint8_t)(s_avdtpLocalCid >> 8) };
+    sendL2cap(0x0001, con, 8);
+    uint32_t t0 = millis();
+    while (!s_l2cConnDone && millis() - t0 < 5000) delay(10);
+    if (!s_l2cConnDone || s_l2cResult != 0) { CONSOLE.println("avdtp=fail (L2CAP connect)"); return; }
+    uint8_t cfg[8] = { L2CAP_CFG_REQ, (uint8_t)(s_l2cId + 1), 0x04, 0x00,
+                       (uint8_t)(s_sdpRemoteCid & 0xFF), (uint8_t)(s_sdpRemoteCid >> 8),
+                       0x00, 0x00 };
+    sendL2cap(0x0001, cfg, 8);
+    t0 = millis();
+    bool cfgRspSent = false;
+    while ((!s_cfgRspRcvd || !cfgRspSent) && millis() - t0 < 5000) {
+        if (s_cfgReqSeen && !cfgRspSent) {
+            uint8_t optLen = s_cfgReqOptLen;
+            uint8_t rsp[10 + 32];
+            rsp[0] = L2CAP_CFG_RSP; rsp[1] = s_cfgReqId;
+            uint16_t rlen = (uint16_t)(6 + optLen);
+            rsp[2] = (uint8_t)(rlen & 0xFF); rsp[3] = (uint8_t)(rlen >> 8);
+            rsp[4] = (uint8_t)(s_sdpRemoteCid & 0xFF); rsp[5] = (uint8_t)(s_sdpRemoteCid >> 8);  // peer's CID (see SCID note)
+            rsp[6] = 0x00; rsp[7] = 0x00;                     // Flags
+            rsp[8] = 0x00; rsp[9] = 0x00;                     // Result = success
+            for (uint8_t i = 0; i < optLen; i++) rsp[10 + i] = s_cfgReqOpts[i];
+            sendL2cap(0x0001, rsp, (uint16_t)(10 + optLen));
+            CONSOLE.print("l2cap_cfg_rsp(ours)=ok echo_opts="); CONSOLE.println(optLen);
+            cfgRspSent = true;
+        }
+        serviceReverse();                                     // the peer's reverse channel opens mid-config
+        delay(10);
+    }
+    if (!s_cfgRspRcvd || !cfgRspSent) { CONSOLE.println("avdtp=fail (L2CAP config)"); return; }
+    CONSOLE.print("avdtp_channel=open rcid=0x"); printHex16(s_sdpRemoteCid); CONSOLE.println();
+    uint16_t sigCid = s_sdpRemoteCid;                        // snapshot: peer's endpoint of OUR channel
+    uint32_t tw = millis();                                  // let the peer's reverse channel finish opening
+    while (!revOpen() && millis() - tw < 2000) { serviceReverse(); delay(10); }
+    CONSOLE.print("rev_channel="); CONSOLE.println(revOpen() ? "open" : "not_open");
+    // AVDTP Discover: header = (tlabel=1 << 4) | (single<<2) | command(0) = 0x10; signal id = 0x01.
+    uint8_t disc[2] = { 0x10, 0x01 };
+    for (int attempt = 1; attempt <= 3 && !s_avdtpDone; attempt++) {
+        sendL2cap(sigCid, disc, 2);
+        CONSOLE.print("avdtp_discover attempt="); CONSOLE.println(attempt);
+        t0 = millis();
+        while (!s_avdtpDone && millis() - t0 < 2000) { serviceReverse(); delay(10); }
+    }
+    if (!s_avdtpDone && revOpen() && s_revPsm == 0x0019) {   // peer may treat ITS channel as the signalling one
+        CONSOLE.println("avdtp_discover: retrying on the peer-initiated channel");
+        uint8_t disc2[2] = { 0x20, 0x01 };                   // fresh transaction label
+        for (int attempt = 1; attempt <= 2 && !s_avdtpDone; attempt++) {
+            sendL2cap(s_revRemoteCid, disc2, 2);
+            t0 = millis();
+            while (!s_avdtpDone && millis() - t0 < 2000) { serviceReverse(); delay(10); }
+        }
+    }
+    if (!s_avdtpDone) { CONSOLE.println("avdtp=timeout (no Discover response)"); return; }
+    uint8_t mt = s_avdtpHdr & 0x03;                           // message type: 2=accept, 3=reject
+    if (mt != 0x02) { CONSOLE.print("avdtp_discover=reject/other msg_type="); CONSOLE.println(mt); return; }
+    int nSeps = s_avdtpSepLen / 2;
+    CONSOLE.print("avdtp_seps n="); CONSOLE.println(nSeps);
+    for (uint8_t i = 0; i + 1 < s_avdtpSepLen; i += 2) {      // each SEP = 2 octets
+        uint8_t b0 = s_avdtpSeps[i], b1 = s_avdtpSeps[i + 1];
+        uint8_t seid = b0 >> 2, inUse = (b0 >> 1) & 1;
+        uint8_t media = b1 >> 4, tsep = (b1 >> 3) & 1;        // tsep: 0=SRC, 1=SNK
+        CONSOLE.print("  sep seid="); CONSOLE.print(seid);
+        CONSOLE.print(" in_use="); CONSOLE.print(inUse);
+        CONSOLE.print(" media="); CONSOLE.print(media == 0 ? "audio" : media == 1 ? "video" : "multi");
+        CONSOLE.print(" type="); CONSOLE.println(tsep ? "SNK" : "SRC");
+    }
+    CONSOLE.println("avdtp_discover=ok (sink capabilities read off the wire)");
 }
 #endif
 
@@ -683,8 +881,14 @@ static void probeInquiry() {
 // Encryption_Change status=0x00 enabled=1, plus the headset's own "connected".
 static void probeConnect() {
     int t = -1;                                     // first inquiry hit that is Audio/Video (major class 4)
-    for (uint8_t i = 0; i < s_foundN; i++)
-        if (((s_found[i].r.cod >> 8) & 0x1F) == 0x04) { t = i; break; }
+#if defined(M2_BT_TARGET_NAME)
+    for (uint8_t i = 0; i < s_foundN; i++)          // bench knob: prefer a named device when visible
+        if (((s_found[i].r.cod >> 8) & 0x1F) == 0x04 && s_found[i].named &&
+            strstr(s_found[i].name.name, M2_BT_TARGET_NAME)) { t = i; break; }
+#endif
+    if (t < 0)
+        for (uint8_t i = 0; i < s_foundN; i++)
+            if (((s_found[i].r.cod >> 8) & 0x1F) == 0x04) { t = i; break; }
     if (t < 0) { CONSOLE.println("connect=skipped (no A/V device in inquiry)"); return; }
     const Found &d = s_found[t];
     CONSOLE.print("connect: target="); printBd(d.r.bd);
@@ -719,6 +923,17 @@ static void probeConnect() {
     if (!s_connDone)          { CONSOLE.println("connect=timeout (no Connection_Complete)"); return; }
     if (s_connStatus != 0x00) { CONSOLE.print("connect=fail status=0x"); printHex8(s_connStatus); CONSOLE.println(); return; }
     CONSOLE.print("connect=ok handle=0x"); printHex16(s_connHandle); CONSOLE.println();
+
+#if defined(M2_BT_SDP_BEFORE_PAIRING)
+    // Experiment: query SDP on the UNENCRYPTED link, before ANY authentication.
+    // SDP is meant to be reachable pre-bond; if the peer answers here where it was
+    // silent post-encryption, that is the difference.  Isolated: stop after SDP.
+    CONSOLE.println("sdp_phase=before_pairing (link NOT authenticated/encrypted)");
+    hci.onAcl(onAcl, nullptr);
+    probeSdp();
+    CONSOLE.println("sdp_before_pairing=done");
+    return;
+#endif
 
     // Authentication_Requested -> Link_Key_Request(neg) -> SSP -> Link_Key_Notification
     //   -> Authentication_Complete.  Encryption needs the link AUTHENTICATED, so
@@ -767,7 +982,11 @@ static void probeConnect() {
     while (!s_echoDone && millis() - te < 5000) delay(10);
     if (!s_echoDone) CONSOLE.println("l2cap_echo=timeout (no Echo Response)");
 
+#if defined(M2_BT_AVDTP_DISCOVER)
+    probeAvdtp();  // B6-alt: AVDTP Discover on the encrypted link -- the sink WILL answer
+#else
     probeSdp();   // B6
+#endif
 }
 #endif
 

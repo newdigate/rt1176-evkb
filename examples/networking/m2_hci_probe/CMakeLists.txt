@@ -186,6 +186,31 @@ if(M2_BT_CONNECT)
     add_definitions(-DM2_BT_CONNECT=1)
 endif()
 
+# Experiment: run the B6 SDP query on the UNENCRYPTED link, right after
+# Create_Connection and BEFORE authentication -- some devices only serve SDP
+# pre-bond.  Isolates the pre-pairing SDP path and stops there.  Requires
+# M2_BT_CONNECT; default OFF so the gates are byte-identical.
+option(M2_BT_SDP_BEFORE_PAIRING "B6 experiment: query SDP before pairing/encryption (unencrypted link)" OFF)
+if(M2_BT_SDP_BEFORE_PAIRING)
+    add_definitions(-DM2_BT_SDP_BEFORE_PAIRING=1)
+endif()
+
+# B6-alt: after the encrypted link, open an L2CAP CO channel to the AVDTP PSM
+# (0x0019) and send an AVDTP Discover -- an A2DP sink MUST answer with its Stream
+# End Points.  Replaces the SDP query (probeSdp) with probeAvdtp.  Requires
+# M2_BT_CONNECT; default OFF so the gates are byte-identical.
+option(M2_BT_AVDTP_DISCOVER "B6-alt: AVDTP Discover on the encrypted link (reads the sink's stream endpoints)" OFF)
+if(M2_BT_AVDTP_DISCOVER)
+    add_definitions(-DM2_BT_AVDTP_DISCOVER=1)
+endif()
+
+# Bench knob: with several headsets discoverable at once, prefer the inquiry hit
+# whose resolved name contains this substring (else first Audio/Video hit).
+set(M2_BT_TARGET_NAME "" CACHE STRING "Prefer the A/V inquiry hit whose name contains this substring")
+if(NOT M2_BT_TARGET_NAME STREQUAL "")
+    add_definitions(-DM2_BT_TARGET_NAME="${M2_BT_TARGET_NAME}")
+endif()
+
 teensy_add_executable(m2_hci_probe m2_hci_probe.cpp ${M2_FW_SRC} ${M2_BT_FW_SRC})
 teensy_target_link_libraries(m2_hci_probe cores M2Radio)
 target_include_directories(m2_hci_probe.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

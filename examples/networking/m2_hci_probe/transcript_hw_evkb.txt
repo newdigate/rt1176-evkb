@@ -2112,3 +2112,112 @@ option list.
 All B6 code stays under #if defined(M2_BT_CONNECT) (default OFF), so the 121
 QEMU gates are byte-identical.  ACL TX remains a raw transport write; sendAcl +
 the SDP/AVDTP client belong in M2Radio/bt at productization.
+
+--------------------------------------------------------------------------------
+2026-08-29  BT-2 . B6 DONE -- SDP reads AVDTP v1.3 from TWO real headsets, and
+            the "silent peer" verdict of 2026-08-28 is RETRACTED: it was OUR
+            L2CAP Config Response SCID bug, found via a second headset.
+--------------------------------------------------------------------------------
+
+★★ RETRACTION FIRST, because the previous section published a wrong verdict.
+"The OpenMove's SDP server is non-responsive ... a peer quirk, not our framing"
+is FALSE.  The peer was discarding our data because OUR L2CAP Configuration
+Response mis-addressed the channel, so from the peer's side configuration never
+completed and every later data frame on that channel was silently dropped --
+exactly the symptom: channel open on our side, baseband ACKs for every TX
+(Num_Completed_Packets), and no reply ever.  SDP before pairing (tried first,
+on the unencrypted link right after Create_Connection) failed the same way for
+the same reason -- that experiment eliminated the encryption-gate theory but
+could not see this bug.
+
+THE BUG.  In an L2CAP Configuration RESPONSE the Source CID field names the
+endpoint of the device RECEIVING the response (the requester's own CID) -- the
+same perspective rule as the Request's Destination CID.  Our response carried
+OUR local CID instead of the peer's.  Measured off a real stack rather than
+argued from the spec: the OneOdio's own Config Response to us carried
+scid=0x0041, which is OUR endpoint -- the receiver's, not the sender's:
+
+    (ours)  l2cap_cfg_req  -> dcid=0x0040 (their endpoint)
+    (theirs) l2cap_cfg_rsp <- scid=0x0041 result=0   <- 0x0041 is OURS
+    (theirs) l2cap_cfg_req -> dcid=0x0041 (our endpoint)
+    (ours)  l2cap_cfg_rsp  -> scid=0x0041  ★ WRONG -- must be THEIR 0x0040
+
+Fix: the Config Response's SCID is now the peer's CID at all three sites
+(probeSdp, probeAvdtp, serviceReverse).  One field, four days of "silent peer".
+
+★ HOW IT WAS FOUND -- a SECOND headset.  A OneOdio A70 (bd 86:29:35:75:CD:93,
+cod 0x240404) appeared in inquiry alongside the Shokz and sorted first, so the
+probe targeted it: pairing, encryption and echo all passed (B4/B5 now hold on
+two independent devices), and it TOO ignored a well-formed AVDTP Discover on an
+open channel.  Two unrelated commercial stacks ignoring baseband-ACKed data is
+not two broken peers; that is what finally pointed the lens at our config
+exchange, and its Config Response printed the field convention that convicted
+ours.  One data point is an anecdote; the second one is a bearing.
+
+WITH THE FIX, EVERYTHING ANSWERS.
+
+B6 (the plan's assertion): SDP ServiceSearchAttributeRequest for the AudioSink
+(0x110B) ProtocolDescriptorList (attr 0x0004), answered on attempt 1 by BOTH
+headsets, byte-identical PDLs:
+
+    sdp_rsp: pdu=0x07 len=39
+    sdp_rsp_bytes: 07 00 01 00 1E 00 1B 36 00 18 36 00 15 09 00 04 35 10
+                   35 06 19 01 00 09 00 19   <- L2CAP (0x0100), PSM 0x0019
+                   35 06 19 00 19 09 01 03   <- AVDTP (0x0019), version 0x0103
+                   00
+    sdp_avdtp_version=0x0103 (B6 DONE)
+
+AVDTP v1.3 read out of a real AudioSink service record -- a value this firmware
+cannot invent.  OneOdio 2026-08-29; Shokz same day via the new
+M2_BT_TARGET_NAME=Shokz bench knob (with two headsets discoverable the probe
+takes the first A/V hit, so the exoneration run pinned the target by name).
+Note the Shokz still shows its signature pending->success double Connection
+Response and MTU=48 config; both handled.
+
+B6-alt, run before the SDP retest (M2_BT_AVDTP_DISCOVER=ON): AVDTP Discover on
+PSM 0x0019 against the OneOdio --
+
+    avdtp_rsp: hdr=0x12 sig=0x01 len=10
+    avdtp_rsp_bytes: 12 01 04 08 08 08
+    avdtp_seps n=2
+      sep seid=1 in_use=0 media=audio type=SNK
+      sep seid=2 in_use=0 media=audio type=SNK
+    avdtp_discover=ok (sink capabilities read off the wire)
+
+Two audio-SINK stream endpoints -- the exact data BT-3's SET_CONFIGURATION
+needs, already reachable from this stack.
+
+★ THE PEER-INITIATED CHANNEL IS REAL AND NOW HANDLED.  On AVDTP contact both
+headsets open an L2CAP channel BACK at us (the Shokz did it on 2026-08-28 and
+it went unanswered; that run's Discover timeout now has two sufficient causes).
+serviceReverse() -- main-context only, per the bus-fault rule -- accepts it,
+answers its Config Request (options echoed, SCID = peer's CID), and sends our
+own Config Request.  The OneOdio's reverse channel is PSM 0x0001: it SDP-queries
+US (a ServiceSearchAttributeRequest for the DeviceID/PnP record, vendor/product
+attrs 0x0201-0x0203) -- logged, not yet answered; an SDP SERVER is BT-3+ work.
+After the probe finished it also sent its own AVDTP Discover COMMAND on our
+signalling channel (hdr=0x00 sig=0x01) -- the sink drives AVDTP at us too, so
+BT-3 must answer Discover as a source (serviceReverse already replies with one
+audio-SRC SEP when live).
+
+★ OPEN OBSERVATION -- one unreproduced bus fault.  The first run of the
+reverse-channel build (2026-08-29, Shokz targeted, console empty) left the core
+spinning in the bus-fault handler: DHCSR 0x01010001, CFSR 0x00000400
+(IMPRECISERR), SHCSR 0x00070002 -- the same signature as the TX-from-onAcl bug,
+whose fix is still in place.  Four subsequent runs through the same and more
+code (serviceReverse fully exercised) completed clean, so it is recorded here
+as unexplained rather than attributed.  The zero-byte console of that run is
+ALSO unexplained (boot output alone should have appeared); treat "empty capture
++ fault state" as one event, not two independent failures, until it recurs.
+
+Fixed along the way in these sessions (details in the 2026-08-28 section):
+TX-from-onAcl bus fault; pending-Connection-Response race; Config Request
+option echo.  All of it under M2_BT_CONNECT (default OFF) -- the 121 QEMU gates
+are byte-identical.
+
+**BT-2 IS COMPLETE**: B2 inquiry+name, B4 connect+SSP+encryption (two devices),
+B5 L2CAP echo, B6 SDP AVDTP-version readback (two devices) -- every phase
+proven on silicon against real headsets.  The ESP32-WROOM on order is NOT
+needed for BT-2; it remains the designated BT-3 sink (audible DAC).  Next:
+BT-3 -- AVDTP GET_CAPABILITIES -> SET_CONFIGURATION -> OPEN -> START, SBC, and
+an SDP server of our own.
