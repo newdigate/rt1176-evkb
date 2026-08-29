@@ -296,4 +296,37 @@ else
     echo "SKIP: rotary_knob_bench vacuity (example or fixture missing)"
 fi
 
+# --- 8. synthui_fader_test: green fixture passes; bad golden and a missing
+# damage counter fail by name (NEW-23).  The missing-counter case is the
+# spec's "absent counter must not read as proof" requirement -- and it also
+# regression-guards the gate's DAREA extraction, which originally aborted
+# under set -e on a missing token instead of reaching its named FAIL
+# (fixed 018a4e8).
+FDT="examples/display/synthui_fader_test"
+if [ -d "$EVKB/$FDT" ] && [ -f "$EVKB/$FDT/transcript_qemu.txt" ]; then
+    run_gate "$FDT" "run_qemu.sh" "$EVKB/$FDT/transcript_qemu.txt"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_synthui_fader_test" $result
+
+    # A corrupted golden must fail naming the check, not pass or die silently.
+    sed 's|^fd_crc=0x........|fd_crc=0xBADBADBA|' \
+        "$EVKB/$FDT/transcript_qemu.txt" > "$WORK/fd_badcrc.txt"
+    run_gate "$FDT" "run_qemu.sh" "$WORK/fd_badcrc.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "FAIL: bank checksum" || result=1
+    report "fader_bad_golden_fails_by_name" $result
+
+    # A capture with NO fd_damage line must fail as a missing guard --
+    # an absent counter must never read as the good outcome.
+    grep -v "^fd_damage " "$EVKB/$FDT/transcript_qemu.txt" > "$WORK/fd_nodmg.txt"
+    run_gate "$FDT" "run_qemu.sh" "$WORK/fd_nodmg.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "delta damage guard missing" || result=1
+    report "fader_missing_damage_counter_fails" $result
+else
+    echo "SKIP: synthui_fader_test vacuity (example or fixture missing)"
+fi
+
 exit $FAILED
