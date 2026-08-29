@@ -1,0 +1,12 @@
+SYNTHUI_FADER_BEGIN
+PANEL_OK
+fd_scene=16 grid=2x8 size=78x210
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+fd_crc=0xAB66DE0D
+fd_delta_crc=0xEA9A04AB
+fd_fresh_crc=0xEA9A04AB
+fd_delta_eq=PASS
+fd_damage max=3234 total=2724337 steps=64
+fd_vsync flips=68 isrs=68 timeouts=0
+crc_done
