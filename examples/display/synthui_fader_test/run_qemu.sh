@@ -49,8 +49,10 @@ grep -qE "fd_crc=0xAB66DE0D\r?$" "$OUT" || { echo "FAIL: bank checksum"; exit 1;
 # scale) -> "FAIL: delta render differs from full render (0x6EACD7B3 vs
 # 0xEA9A04AB)". NOTE: a smaller 2.5 -> 0.5 edit (2 units / ~1.56px) does
 # NOT fail -- fd_cap_extent's own +2px rounding slack absorbs any deficit
-# under ~1.6px at this scale, so the guard's real sensitivity floor is
-# below 2 units but above the deliberately small first probe.
+# under ~1.6px at this scale, so what these two probes establish is
+# 2 units < sensitivity floor <= 6 units: the +2 px inflation absorbs any
+# cut smaller than 2 px (2.56 units at this scale), and the 6-unit cut
+# demonstrably exceeds it.
 DSEQ=$(grep -a -oE "fd_delta_crc=0x[0-9A-F]{8}" "$OUT" | head -1 | cut -d= -f2)
 DFUL=$(grep -a -oE "fd_fresh_crc=0x[0-9A-F]{8}" "$OUT" | head -1 | cut -d= -f2)
 [ -n "$DSEQ" ] && [ -n "$DFUL" ] || { echo "FAIL: delta guard tokens missing"; exit 1; }
