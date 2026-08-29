@@ -26,6 +26,18 @@ grep -q "LVGL_FLUSHED=PASS" "$OUT" || { echo "FAIL: no full refresh"; exit 1; }
 # Flushed AREA of the first refresh -- 720*1280*4 at XRGB8888. Value greps
 # are ANCHORED (CR-tolerant \r?$): a golden must match the WHOLE value.
 grep -qE "LVGL_BYTES=3686400\r?$" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; }
+# Engine honesty: QEMU has no GC355, so the run must SAY software. A GPU
+# claim with no GPU present -- or the gpu error counter appearing at all --
+# must fail by name (the knob gate's tripwire discipline).
+# Demonstrated RED 2026-08-29: a fake "fd_engine=gpu" line appended right
+# after the genuine print -> "FAIL: TRIPWIRE gpu engine claimed in QEMU".
+# Demonstrated RED 2026-08-29: a fake "fd_gpu_err=0" line appended the same
+# way -> "FAIL: TRIPWIRE gpu error counter in QEMU".
+# Demonstrated RED 2026-08-29: the genuine print changed to
+# s_gpu ? "gpu" : "swx" -> "FAIL: engine line missing or not sw".
+grep -qE "fd_engine=sw\r?$" "$OUT" || { echo "FAIL: engine line missing or not sw"; exit 1; }
+grep -q  "fd_engine=gpu" "$OUT" && { echo "FAIL: TRIPWIRE gpu engine claimed in QEMU"; exit 1; }
+grep -q  "fd_gpu_err="   "$OUT" && { echo "FAIL: TRIPWIRE gpu error counter in QEMU"; exit 1; }
 # GOLDEN CHECKSUM -- FNV-1a over the whole 720x1280 PRESENTED buffer, the
 # spec section-9 bank (all config axes inside the one scene: three states,
 # center on/off, four panel greys, three tick counts). RECORDED, not

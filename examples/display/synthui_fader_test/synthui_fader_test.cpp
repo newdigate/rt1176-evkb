@@ -22,6 +22,24 @@
 #include "lvgl_rt1176.h"
 #include "lvgl_mipi_panel.h"
 #include "synthui_fader.h"
+#include "synthui_fader_gpu.h"
+
+extern "C" {
+#include "vg_lite.h"
+#include "vg_lite_platform.h"
+uint32_t vg_lite_os_irq_count(void);
+uint32_t vg_lite_os_wait_timeouts(void);
+}
+
+/* Same pool siting and reasoning as the knob test: EXTMEM (SDRAM), not
+ * DMAMEM -- a 2 MB pool overflows OCRAM at link time, and the GPU reaches
+ * SDRAM as a bus master exactly as it reaches the framebuffer. */
+#define VGLITE_POOL_BYTES (2u * 1024u * 1024u)
+EXTMEM __attribute__((aligned(64))) static uint8_t vglite_pool[VGLITE_POOL_BYTES];
+#define TESS_W 256
+#define TESS_H 256
+
+static bool s_gpu = false;
 
 static const uint32_t panel_opt[4] = {
     SYNTHUI_FADER_PANEL_DEFAULT, SYNTHUI_FADER_PANEL_DARK,
@@ -230,13 +248,14 @@ static void fd_fps_phase(const char *tag, bool full_inv, uint32_t run_ms)
         s[j + 1] = v;
     }
     Serial1.printf("%s frames=%lu n=%lu secs=%lu fps_avg=%lu mfps_med=%lu"
-                   " us_med=%lu us_max=%lu\n", tag,
+                   " us_med=%lu us_max=%lu engine=%s\n", tag,
                    (unsigned long)g_fps_frames,
                    (unsigned long)g_fps_n,
                    (unsigned long)(elapsed / 1000u),
                    (unsigned long)((uint64_t)g_fps_frames * 1000u / elapsed),
                    (unsigned long)(1000000000ull / (s[n / 2] ? s[n / 2] : 1)),
-                   (unsigned long)s[n / 2], (unsigned long)s[n - 1]);
+                   (unsigned long)s[n / 2], (unsigned long)s[n - 1],
+                   s_gpu ? "gpu" : "sw");
 }
 
 /* --- Phase C probes (NEW-23 fps diagnosis): snapshot the port's cumulative
@@ -281,11 +300,33 @@ void setup()
     }
     Display.fillScreen(0x0000);
 
+    /* ASK BEFORE COMMITTING (vglite_probe): vg_lite_init() SPINS on absent
+     * hardware, so the chip-ID read is what makes QEMU a clean negative.
+     * Zero the GPU working pool: EXTMEM is never zeroed by startup. */
+    memset(vglite_pool, 0, VGLITE_POOL_BYTES);
+    vg_lite_init_mem(VGLITE_RT1176_REGISTER_BASE, 0u, vglite_pool,
+                     VGLITE_POOL_BYTES);
+    const uint32_t chip_id = vg_lite_hal_probe_chip_id();
+    Serial1.printf("FD_CHIP_ID=0x%08lX\n", (unsigned long)chip_id);
+    const bool vg_up =
+        (chip_id != 0u) && (vg_lite_init(TESS_W, TESS_H) == VG_LITE_SUCCESS);
+
     lvgl_rt1176_begin();
     /* db pipeline: LVGL renders off-screen, the LCDIFv2 flips at vsync --
      * complete frames only, the tear-free-by-construction property the
      * checksums cannot see (spec section 1). */
     lvgl_mipi_panel_create_db(Display);
+
+    /* Attach the compositor only when the GPU is genuinely up; a false here
+     * leaves the widget fully software -- the honest negative the gate pins. */
+    if (vg_up) {
+        s_gpu = synthui_fader_gpu_begin_deferred(
+                    Display.width(), Display.height(),
+                    Display.width() * PANEL_BYTES_PER_PIXEL);
+        if (s_gpu)
+            lvgl_mipi_panel_set_preflip_cb(synthui_fader_gpu_compose_into);
+    }
+    Serial1.printf("fd_engine=%s\n", s_gpu ? "gpu" : "sw");
 
     Serial1.println("fd_scene=16 grid=2x8 size=78x210");
 
@@ -322,6 +363,13 @@ void setup()
                    (unsigned long)lvgl_mipi_panel_flips(),
                    (unsigned long)lvgl_mipi_panel_vsync_isrs(),
                    (unsigned long)lvgl_mipi_panel_vsync_timeouts());
+    if (s_gpu) {
+        Serial1.printf("fd_gpu_err=%lu\n",
+                       (unsigned long)synthui_fader_gpu_errors());
+        Serial1.printf("fd_gpu_diag irqs=%lu wait_timeouts=%lu\n",
+                       (unsigned long)vg_lite_os_irq_count(),
+                       (unsigned long)vg_lite_os_wait_timeouts());
+    }
     Serial1.println("crc_done");
 
     /* Phase B (ungated; silicon is where these numbers answer NEW-23).
