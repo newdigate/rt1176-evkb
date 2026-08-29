@@ -106,9 +106,9 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **122 gates** — the merge of
-THREE independent lines, plus the first two Bluetooth gates and NEW-20's one
-new gate. The Arduino WiFi facade added THREE
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **123 gates** — the merge of
+THREE independent lines, plus the first two Bluetooth gates, NEW-20's one new
+gate and NEW-23's one. The Arduino WiFi facade added THREE
 (`networking/wifi_client_test` and its `[wifi]` variant — enumeration plus a
 REAL 802.11 scan against the model's deliberate zero-BSS reply, asserting an
 honest WL_NO_SSID_AVAIL — and `networking/wifi_server_test`); the uAP line added
@@ -121,7 +121,7 @@ its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
 `networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
 more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
 That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
-122.
+123.
 
 NEW-20 added ONE — `display/rotary_knob_bench`, the RotaryKnob render-strategy
 bench: 12 cells ({vector,bitmap,strip} × {sw,gpu} × {notch,facet}) in ONE ELF,
@@ -193,6 +193,19 @@ grew engine/GPU tripwires and per-bar `ACIDBOX_VSYNC timeouts=0` witnesses,
 all demonstrated RED), but its famous QEMU↔silicon bit-identity is GONE BY
 DESIGN: silicon now composites knobs on the GC355 and owns a separate gpu
 golden (0x1479CEE8, four boots bit-identical). Gate count unchanged.
+
+NEW-23 added ONE — `display/synthui_fader_test`, the SynthUI Fader's
+sw-delta gate (spec 2026-08-29): ONE bank golden with every config axis
+inside it (three states, center, four panel greys, three tick counts), the
+delta-equality guard (a 66-step LCG sequence's checksum must EQUAL a fresh
+full render — gate-compared, never re-goldened), the engagement bound
+(max single invalidated area ≤6000 px; measured 3234, a full-invalidate
+revert measures 16380 and the equality guard stays GREEN on it — only the
+engagement check sees that defect), and the vsync witness. The widget is
+LVGL-sw ONLY by design — no GPU TU unless the silicon checkpoint misses
+30 fps. All three guards demonstrated RED by name; the RED probes also
+measured the cap-extent's real sensitivity floor (2 < floor ≤ 6 units —
+the +2 px damage inflation absorbs cuts under 2 px). 122 before it.
 
 BT-1 added the tree's FIRST TWO BLUETOOTH GATES, both on the new
 `networking/m2_hci_probe`. `run_qemu.sh` is the card-ABSENT fallback — with no
@@ -489,8 +502,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **122 passed, 0 failed, 0 SKIP**, or
-**121 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **123 passed, 0 failed, 0 SKIP**, or
+**122 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
 fresh-clone-red set: its injected gestures come from the `touch-script`
@@ -517,6 +530,22 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-08-29: 123 gates discovered, 121 passed, 2 failed** on
+the NEW-23 fader close-out — `rt1176:display/synthui_fader_test` green in
+21 s on its first sweep, and the two reds are the SAME two as 2026-08-27,
+each re-dispositioned with fresh evidence: `m2_hci_probe[hci]` still runs
+a BENCH-configured ELF (`M2_BT_UART_DNLD=ON` + the real firmware blob in
+its CMakeCache — the build-dir-state class `git status` cannot see), and
+`m2_rx_demo[txaggr]` passed idle the same day (the documented
+load-sensitivity class). `LICENSE-AUDIT: PASS` the same day with the new
+`examples/display/synthui_fader_test` manifest entry walked (24672 dep
+paths). Vacuity suite 28/28 the same day, the three new fader cases
+included (corrupted golden and missing damage counter both fail by name).
+★ The sweep ran via a FRESH `/tmp/fd23` symlink: `/tmp/ev` still points at
+the `rt1176-evkb-m2-maya-w161` checkout, and the wrong-tree sweep it would
+have produced is the exact trap the 2026-08-23 note warns about — read the
+symlink before trusting a sweep taken through one.
 
 ✅ **Measured 2026-08-27: 122 gates discovered, 120 passed, 2 failed** on the
 first CLEAN single-run sweep of the NEW-20 branch — and both reds were
