@@ -355,6 +355,16 @@ void setup()
     fd_fps_phase("fd_fps_min", false, 15000u);
     probe_print("fd_probe_min");
 
+    /* Pool health after every scene this image ever builds: an exhausted
+     * lv_malloc pool would invalidate the phases above silently. */
+    {
+        lv_mem_monitor_t mm;
+        lv_mem_monitor(&mm);
+        Serial1.printf("fd_mem total=%lu used_pct=%u max_used=%lu frag_pct=%u\n",
+                       (unsigned long)mm.total_size, (unsigned)mm.used_pct,
+                       (unsigned long)mm.max_used, (unsigned)mm.frag_pct);
+    }
+
     /* leave the bank animating for the eyes/camera pass + soak */
     g_anim_full_inv = false;
     lv_timer_create(fd_anim_cb, 15, NULL);
