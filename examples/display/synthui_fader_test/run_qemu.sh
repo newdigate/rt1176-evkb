@@ -65,7 +65,7 @@ DFUL=$(grep -a -oE "fd_fresh_crc=0x[0-9A-F]{8}" "$OUT" | head -1 | cut -d= -f2)
 # Demonstrated RED 2026-08-29: set_value scratch-reverted to
 # lv_obj_invalidate -> "FAIL: delta damage not engaged (max=16380)" with
 # the equality guard still PASS on the same capture.
-DAREA=$(grep -a -oE "fd_damage max=[0-9]+" "$OUT" | head -1 | grep -oE "[0-9]+$")
+DAREA=$(grep -a -oE "fd_damage max=[0-9]+" "$OUT" | head -1 | cut -d= -f2)
 [ -n "$DAREA" ] && [ "$DAREA" -gt 0 ] || { echo "FAIL: delta damage guard missing or zero"; exit 1; }
 [ "$DAREA" -le 6000 ] || { echo "FAIL: delta damage not engaged (max=$DAREA)"; exit 1; }
 # vsync-fence health (db pipeline): a timeout means the tear-free property
