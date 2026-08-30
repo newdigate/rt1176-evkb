@@ -156,10 +156,20 @@ int main(void)
     assert(vgc_count_runs_col(buf, W, H, W, 8) == 0);
 
     /* --- vgc_filled_rows: the degenerate-geometry extent ------------------ */
-    int ymin = -1, ymax = -1;
+    /* ★ THE SENTINEL MUST BE A VALUE THE IMPLEMENTATION CANNOT PRODUCE.
+     * vgc_filled_rows initialises its own internal lo/hi to -1, so a test
+     * sentinel of -1 makes the untouched-out-param assertion VACUOUS: delete
+     * the implementation's `if (n)` guard -- the single most likely way to
+     * break that contract -- and the unguarded write stores -1 over -1, which
+     * this assertion cannot distinguish from not writing at all. Measured: the
+     * -1 version stayed GREEN against exactly that defect. -99 is outside the
+     * implementation's reachable range, so the assertion has power. The
+     * contract matters because path/degenerate-zero-area distinguishes
+     * "nothing was drawn" from "row 0 is filled" using it. */
+    int ymin = -99, ymax = -99;
     clear_bg();
     assert(vgc_filled_rows(buf, W, H, W, &ymin, &ymax) == 0);
-    assert(ymin == -1 && ymax == -1);             /* untouched when nothing is filled */
+    assert(ymin == -99 && ymax == -99);           /* untouched when nothing is filled */
     set_fill(3, 7, 9, 9);                         /* rows 7..8 */
     assert(vgc_filled_rows(buf, W, H, W, &ymin, &ymax) == 12);
     assert(ymin == 7 && ymax == 8);
@@ -323,11 +333,17 @@ Expected: `predicates_test: OK`, exit 0.
 
 - [ ] **Step 5: Mutate one predicate to prove the test can see it**
 
-A test that has never failed on a real defect is decoration. Temporarily change `vgc_count_runs_col`'s `if (f && !in) runs++;` to `if (f) runs++;` (count filled pixels instead of runs) and re-run.
+A test that has never failed on a real defect is decoration. Mutate `vgc_count_runs_col` so it counts filled pixels instead of runs, and re-run.
+
+★ Use `if (f && in >= 0) runs++;`, NOT the naive `if (f) runs++;`. The naive form orphans `in` and dies under this file's own `-Werror` on `-Wunused-but-set-variable` — a red that proves the COMPILER noticed, not that the TEST can see the defect. `in >= 0` is always true here, so the mutant is semantically identical while keeping `in` read.
 
 Run: `./examples/display/vglite_conformance/tests/run.sh`
 
 Expected: FAIL — assertion on the one-band case (`== 1`, gets 2). Revert the mutation and re-run to confirm `predicates_test: OK`.
+
+Then mutate the OTHER contract: delete the `if (n)` guard at the end of `vgc_filled_rows` and re-run.
+
+Expected: FAIL on the untouched-out-param assertion. If it stays GREEN, the test's sentinel has collided with the implementation's internal init and the assertion is vacuous — see the ★ note in the test above. Revert and confirm green.
 
 - [ ] **Step 6: Commit**
 
