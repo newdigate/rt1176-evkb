@@ -24,8 +24,10 @@
 |---|---|
 | `examples/display/vglite_conformance/vgc_predicates.h` | PURE pixel-buffer predicates (fill count, run count, row extent, FNV-1a). No vg_lite, no Arduino — host-compilable. |
 | `examples/display/vglite_conformance/tests/predicates_test.c` | Host unit test for the above, against synthetic buffers. |
-| `examples/display/vglite_conformance/tests/run.sh` | Builds + runs the host test with the system `cc`. |
-| `examples/display/vglite_conformance/vgc_harness.h` | Case-table types, scratch-buffer geometry/extern, colour helpers, shared path arena API. |
+| `examples/display/vglite_conformance/tests/arena_test.c` | Host unit test for the path arena, against a stubbed `vg_lite_init_path`. Added in Task 2 after review: the arena is the highest-risk unit in the harness and was the only one without a test. |
+| `examples/display/vglite_conformance/tests/run.sh` | Builds + runs both host tests with the system `cc`. |
+| `examples/display/vglite_conformance/vgc_harness.h` | Case-table types, scratch-buffer geometry/extern, colour helpers, shared path arena API, and the shared per-case draw helpers (`vgc_ident`, `vgc_draw_path`, `vgc_finish_into`, `vgc_fb`). |
+| `examples/display/vglite_conformance/vgc_arena.cpp` | The path arena, split out in Task 2 so it can be host-tested independently of VGLite init and the run loop. |
 | `examples/display/vglite_conformance/vgc_cases_path.cpp` | The 12 Phase-1 paths/contours/winding cases + the case table. |
 | `examples/display/vglite_conformance/vgc_dangerous.cpp` | The opt-in `-DVGC_DANGEROUS=1` case (unterminated path). Empty table otherwise. |
 | `examples/display/vglite_conformance/vglite_conformance.cpp` | `setup()`: init, engine detection, scratch map, the run loop, the summary line. |
@@ -961,6 +963,35 @@ git add examples/display/vglite_conformance/
 git commit -m "NEW-32: vglite_conformance harness skeleton (engine-absent path)"
 ```
 
+#### As-built: what review changed, and the API Task 3 codes against
+
+Task 2 shipped over three commits — `fbf5b77` (as planned, with two justified deviations), `8414ea7` (API fixes) and `19e87ce` (the arena split + its host test). **The blocks above are the starting point; the committed files are authoritative.** The API Task 3 must use:
+
+```c
+const uint32_t   *vgc_fb(void);                 /* the ONE access path to the scratch */
+uint32_t          vgc_px(int x, int y);         /* range-checked; OOB counted, see below */
+uint32_t          vgc_px_oob(void);  void vgc_px_oob_reset(void);
+vg_lite_matrix_t *vgc_ident(void);
+void              vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule,
+                                uint32_t color, vg_lite_error_t *acc);
+void              vgc_finish_into(vg_lite_error_t *acc);
+vg_lite_error_t   vgc_finish_path(vg_lite_path_t *p, float x0, float y0,
+                                  float x1, float y1);   /* was bool */
+void              vgc_emit_rect_cw (int32_t x, int32_t y, int32_t w, int32_t h);
+void              vgc_emit_rect_ccw(int32_t x, int32_t y, int32_t w, int32_t h);
+```
+
+★ **The finding that mattered most: `vgc_finish_path` left `*p` as stack garbage on the overflow path.** Task 3 declares `vg_lite_path_t p;` uninitialised in eight `run()` bodies, so a case that ignored the failure would have drawn a path whose `path` pointer and `path_length` were stack garbage — exactly the unterminated-path-data condition that hangs the Vivante front end while every call returns SUCCESS. **The harness would have been manufacturing the failure it exists to measure.** Fixed by zeroing `*p` before the early return, and by returning `vg_lite_error_t` so a discarded result looks wrong.
+
+Other changes Task 3 inherits:
+- **Two access paths to the scratch buffer collapsed into one.** A case-local `fb()` returning `vgc_scratch.memory` would already disagree with the harness on the engine-absent path, where `.memory` is NULL while the backing array is valid.
+- **No status is discarded any more.** A failed `vgc_clear()` now yields `pixel=skip detail=clear_failed:N` instead of a verdict computed from a contaminated buffer, and the repeat run's API status is compared and surfaced as `api2=` in the detail.
+- **`detail` is sanitised** (spaces → `_`, empty → `none`) so it can never break the checker's field parse, and a NULL table entry is a named skip line rather than a hard fault.
+- **`vgc_px` out-of-range is COUNTED, not sentinelled** — `0` is transparent black, a word a Phase-2 blending case could legitimately produce, so no return value is safely "impossible". A non-zero count turns the case into `detail=px_oob:N` and a skip, so an instrument bug can never be spelled as `ok` or `broken`.
+- **The corrected S8 fixup fact**, read from the source: `vg_lite_init_path` READS byte `num-1` but WRITES one byte at `4*(num-1)` — for an 11-byte S8 path, a single-byte write **29 bytes past the end**. Materially worse than "four bytes where one was meant". Ending on an explicit `VLC_OP_END` means the branch never fires.
+
+★ **The arena was the highest-risk unit in the harness and had no test** while Task 1's simpler pure predicates had 39 checks. It is now `vgc_arena.cpp` with `tests/arena_test.c` — 42 checks pinning path word counts, bounds padding, sequential non-overlap, mid-sequence reset, overflow refusal with `*p` zeroed, and the `VLC_OP_END` terminator. Three mutants demonstrated RED, each failing the line it targets, and the deleted-early-return and off-by-one mutants are DISTINGUISHABLE from each other rather than lumped. Host suite total is now **81 checks** across the two tests, both run by `tests/run.sh`.
+
 ---
 
 ### Task 3: The twelve paths/contours/winding cases
@@ -997,34 +1028,19 @@ Replace `examples/display/vglite_conformance/vgc_cases_path.cpp` with:
 #include <stdio.h>
 #include <string.h>
 
-/* ---- shared drawing helpers ----------------------------------------------- */
-
-static vg_lite_matrix_t s_identity_ready;
-
-static vg_lite_matrix_t *ident(void)
-{
-    vg_lite_identity(&s_identity_ready);
-    return &s_identity_ready;
-}
-
-/* Draw a path already built in the arena. Accumulates the first non-success
- * status into *acc. */
-static void draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
-                      vg_lite_error_t *acc)
-{
-    const vg_lite_error_t e = vg_lite_draw(&vgc_scratch, p, rule, ident(),
-                                           VG_LITE_BLEND_NONE, color);
-    if (e != VG_LITE_SUCCESS && *acc == VG_LITE_SUCCESS) *acc = e;
-}
-
-static void finish_into(vg_lite_error_t *acc)
-{
-    const vg_lite_error_t e = vg_lite_finish();
-    if (e != VG_LITE_SUCCESS && *acc == VG_LITE_SUCCESS) *acc = e;
-}
-
-/* The whole scratch, for the count predicates. */
-static const uint32_t *fb(void) { return (const uint32_t *)vgc_scratch.memory; }
+/* ---- shared drawing helpers live in the HARNESS ----------------------------
+ * ★ `vgc_ident()`, `vgc_draw_path()`, `vgc_finish_into()` and `vgc_fb()` are
+ * declared in vgc_harness.h, NOT defined here. They were local to this file in
+ * the plan's first draft and were promoted in Task 2 for two reasons that only
+ * showed up under review:
+ *  - draw/finish implement a contract the HEADER already states ("the FIRST
+ *    non-success code"). A contract specified in one place and re-implemented
+ *    in each of Phases 1, 2 and 3 will silently diverge.
+ *  - a local `fb()` returning `vgc_scratch.memory` would be a SECOND access
+ *    path to the scratch buffer, disagreeing with the harness's own
+ *    `vgc_px`/`vgc_scratch_sum` the moment a later case re-points the buffer
+ *    -- and already disagreeing on the engine-absent path, where
+ *    `vgc_scratch.memory` is NULL while the backing array is valid. */
 
 /* ---- 1. path/single-contour-rect ------------------------------------------
  * THE BASELINE. One closed rect, one contour, one draw. 80x80 at (24,24). */
@@ -1040,16 +1056,16 @@ static vg_lite_error_t run_single_rect(void)
     vg_lite_error_t acc = VG_LITE_SUCCESS;
     vg_lite_path_t p;
     vgc_emit_rect_cw(R_X, R_Y, R_W, R_H);
-    if (!vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
 static vgc_verdict_t check_single_rect(char *d, size_t n)
 {
-    const int fill   = vgc_count_filled(fb(), VGC_W, VGC_H, VGC_W);
+    const int fill   = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
     const int centre = vgc_is_filled(vgc_px(64, 64));
     const int corner = vgc_is_filled(vgc_px(10, 10));
     snprintf(d, n, "fill=%d,expect=%d,centre=%d,corner=%d",
@@ -1072,17 +1088,17 @@ static vg_lite_error_t run_multi_contour(void)
     vg_lite_error_t acc = VG_LITE_SUCCESS;
     vg_lite_path_t p;
     for (int i = 0; i < 4; i++) vgc_emit_rect_cw(R_X, BAR_Y[i], R_W, BAR_H);
-    if (!vgc_finish_path(&p, R_X, BAR_Y[0], R_X + R_W, BAR_Y[3] + BAR_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, BAR_Y[0], R_X + R_W, BAR_Y[3] + BAR_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
 static vgc_verdict_t check_multi_contour(char *d, size_t n)
 {
-    const int runs = vgc_count_runs_col(fb(), VGC_W, VGC_H, VGC_W, 64);
-    const int fill = vgc_count_filled(fb(), VGC_W, VGC_H, VGC_W);
+    const int runs = vgc_count_runs_col(vgc_fb(), VGC_W, VGC_H, VGC_W, 64);
+    const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
     snprintf(d, n, "runs=%d,expect=4,fill=%d", runs, fill);
     return runs == 4 ? VGC_OK : VGC_BROKEN;
 }
@@ -1102,10 +1118,10 @@ static vg_lite_error_t run_ring_two_contour(void)
     vg_lite_path_t p;
     vgc_emit_rect_cw(R_X, R_Y, R_W, R_H);
     vgc_emit_rect_ccw(I_X, I_Y, I_W, I_H);
-    if (!vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
@@ -1129,16 +1145,16 @@ static vg_lite_error_t run_ring_two_draws(void)
     vg_lite_path_t outer, inner;
 
     vgc_emit_rect_cw(R_X, R_Y, R_W, R_H);
-    if (!vgc_finish_path(&outer, R_X, R_Y, R_X + R_W, R_Y + R_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&outer, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&outer, R_X, R_Y, R_X + R_W, R_Y + R_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&outer, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
 
     vgc_emit_rect_cw(I_X, I_Y, I_W, I_H);
-    if (!vgc_finish_path(&inner, I_X, I_Y, I_X + I_W, I_Y + I_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&inner, VG_LITE_FILL_NON_ZERO, VGC_BG_COLOR, &acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&inner, I_X, I_Y, I_X + I_W, I_Y + I_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&inner, VG_LITE_FILL_NON_ZERO, VGC_BG_COLOR, &acc);
 
-    finish_into(&acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
@@ -1166,10 +1182,10 @@ static vg_lite_error_t run_evenodd_nonzero(void)
 
     /* pass 1: EVEN_ODD, sampled and then cleared away */
     emit_nested();
-    if (!vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_EVEN_ODD, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_EVEN_ODD, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     s_eo_rim    = vgc_is_filled(vgc_px(32, 64));
     s_eo_centre = vgc_is_filled(vgc_px(64, 64));
     s_eo_sum    = vgc_scratch_sum();
@@ -1179,10 +1195,10 @@ static vg_lite_error_t run_evenodd_nonzero(void)
     const vg_lite_error_t ce = vgc_clear();
     if (ce != VG_LITE_SUCCESS && acc == VG_LITE_SUCCESS) acc = ce;
     emit_nested();
-    if (!vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
@@ -1240,9 +1256,10 @@ static vg_lite_error_t run_self_intersecting(void)
     vg_lite_path_t p;
 
     emit_star();
-    if (!vgc_finish_path(&p, 16, 14, 112, 104)) return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_EVEN_ODD, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, 16, 14, 112, 104);
+      if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_EVEN_ODD, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     s_star_eo_centre = vgc_is_filled(vgc_px(64, 64));   /* centre pentagon */
     s_star_eo_tip    = vgc_is_filled(vgc_px(64, 22));   /* inside the top point */
     s_star_eo_sum    = vgc_scratch_sum();
@@ -1251,9 +1268,10 @@ static vg_lite_error_t run_self_intersecting(void)
     const vg_lite_error_t ce = vgc_clear();
     if (ce != VG_LITE_SUCCESS && acc == VG_LITE_SUCCESS) acc = ce;
     emit_star();
-    if (!vgc_finish_path(&p, 16, 14, 112, 104)) return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, 16, 14, 112, 104);
+      if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
@@ -1310,9 +1328,9 @@ static vg_lite_error_t run_triangle(vg_lite_format_t fmt, void *data,
     vg_lite_path_t p;
     memset(&p, 0, sizeof(p));
     vg_lite_init_path(&p, fmt, VG_LITE_HIGH, bytes, data, 9.0f, 9.0f, 71.0f, 71.0f);
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
-    s_fmt_fill[slot] = vgc_count_filled(fb(), VGC_W, VGC_H, VGC_W);
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
+    s_fmt_fill[slot] = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
     return acc;
 }
 
@@ -1364,9 +1382,9 @@ static vg_lite_error_t run_fmt_agreement(void)
         memset(&p, 0, sizeof(p));
         vg_lite_init_path(&p, v[i].f, VG_LITE_HIGH, v[i].n, v[i].d,
                           9.0f, 9.0f, 71.0f, 71.0f);
-        draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-        finish_into(&acc);
-        s_agree[i] = vgc_count_filled(fb(), VGC_W, VGC_H, VGC_W);
+        vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+        vgc_finish_into(&acc);
+        s_agree[i] = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
         sums[i]    = vgc_scratch_sum();
     }
     s_agree_sum = vgc_fnv(sums, sizeof(sums));
@@ -1402,17 +1420,17 @@ static vg_lite_error_t run_degenerate(void)
     vgc_emit(VLC_OP_LINE); vgc_emit(R_X + R_W);   vgc_emit(DEG_Y);
     vgc_emit(VLC_OP_LINE); vgc_emit(R_X);         vgc_emit(DEG_Y);
     vgc_emit(VLC_OP_CLOSE);
-    if (!vgc_finish_path(&p, R_X, DEG_Y, R_X + R_W, DEG_Y))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, DEG_Y, R_X + R_W, DEG_Y);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
 static vgc_verdict_t check_degenerate(char *d, size_t n)
 {
     int ymin = -1, ymax = -1;
-    const int fill = vgc_filled_rows(fb(), VGC_W, VGC_H, VGC_W, &ymin, &ymax);
+    const int fill = vgc_filled_rows(vgc_fb(), VGC_W, VGC_H, VGC_W, &ymin, &ymax);
     snprintf(d, n, "fill=%d,ymin=%d,ymax=%d", fill, ymin, ymax);
     if (fill == 0) return VGC_OK;                       /* nothing drawn: fine */
     return (ymin >= DEG_Y - 1 && ymax <= DEG_Y + 1) ? VGC_OK : VGC_BROKEN;
