@@ -1,3 +1,89 @@
+=== GPU (GC355) -- NEW-23 acceptance, 2026-08-30 ===
+SynthUI 3401ab1 (one contour per path + clip culling); four SW4 boots.
+Criterion mfps_med >= 30000 MET. Goldens bit-identical across all four boots.
+Render verified against the sw golden by SWD framebuffer capture: tick
+ladders match run-for-run (14 light runs, y within 1px), per-fader mean
+abs diff 6.8-25.8/255 scaling with tick count (antialiasing, as expected
+-- two golden sets, never reconciled).
+
+SYNTHUI_FADER_BEGIN
+PANEL_OK
+FD_CHIP_ID=0x00000355
+fd_engine=gpu
+fd_scene=16 grid=2x8 size=78x210
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+fd_crc=0x141D0A41
+fd_delta_crc=0xE929A5E4
+fd_fresh_crc=0xE929A5E4
+fd_delta_eq=PASS
+fd_damage max=3234 total=2724337 steps=64
+fd_vsync flips=68 isrs=68 timeouts=0
+fd_gpu_err=0
+fd_gpu_diag irqs=1023 wait_timeouts=0
+crc_done
+fd_fps frames=1751 n=1751 secs=60 fps_avg=29 mfps_med=30448 us_med=32842 us_max=73027 engine=gpu
+fd_probe_delta flips=1752 timeouts=0 wait_us_tot=3695835 px_tot=73721571 wait_us_pf=2109 px_pf=42078 engine=gpu
+fd_fps_fullinv frames=195 n=195 secs=10 fps_avg=19 mfps_med=20621 us_med=48492 us_max=53339 engine=gpu
+fd_probe_fullinv flips=196 timeouts=0 wait_us_tot=1528455 px_tot=51367680 wait_us_pf=7798 px_pf=262080 engine=gpu
+fd_fps_one frames=446 n=446 secs=15 fps_avg=29 mfps_med=409668 us_med=2441 us_max=2689 engine=gpu
+fd_probe_one flips=447 timeouts=0 wait_us_tot=13690 px_tot=1273118 wait_us_pf=30 px_pf=2848 engine=gpu
+fd_fps_min frames=437 n=437 secs=15 fps_avg=29 mfps_med=30489 us_med=32798 us_max=64691 engine=gpu
+fd_probe_min flips=438 timeouts=0 wait_us_tot=1179468 px_tot=18508721 wait_us_pf=2692 px_pf=42257 engine=gpu
+fd_mem total=1042484 used_pct=3 max_used=29700 frag_pct=1
+SYNTHUI_FADER_BEGIN
+PANEL_OK
+FD_CHIP_ID=0x00000355
+fd_engine=gpu
+fd_scene=16 grid=2x8 size=78x210
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+fd_crc=0x141D0A41
+fd_delta_crc=0xE929A5E4
+fd_fresh_crc=0xE929A5E4
+fd_delta_eq=PASS
+fd_damage max=3234 total=2724337 steps=64
+fd_vsync flips=68 isrs=68 timeouts=0
+fd_gpu_err=0
+fd_gpu_diag irqs=1023 wait_timeouts=0
+crc_done
+SYNTHUI_FADER_BEGIN
+PANEL_OK
+FD_CHIP_ID=0x00000355
+fd_engine=gpu
+fd_scene=16 grid=2x8 size=78x210
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+fd_crc=0x141D0A41
+fd_delta_crc=0xE929A5E4
+fd_fresh_crc=0xE929A5E4
+fd_delta_eq=PASS
+fd_damage max=3234 total=2724337 steps=64
+fd_vsync flips=68 isrs=68 timeouts=0
+fd_gpu_err=0
+fd_gpu_diag irqs=1023 wait_timeouts=0
+crc_done
+SYNTHUI_FADER_BEGIN
+PANEL_OK
+FD_CHIP_ID=0x00000355
+fd_engine=gpu
+fd_scene=16 grid=2x8 size=78x210
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+fd_crc=0x141D0A41
+fd_delta_crc=0xE929A5E4
+fd_fresh_crc=0xE929A5E4
+fd_delta_eq=PASS
+fd_damage max=3234 total=2724337 steps=64
+fd_vsync flips=68 isrs=68 timeouts=0
+fd_gpu_err=0
+fd_gpu_diag irqs=1023 wait_timeouts=0
+crc_done
+
+=== SOFTWARE (LVGL sw-delta) -- the superseded baseline, 2026-08-29 ===
+Same example, sw engine: the 30 fps criterion was NOT met (11 fps),
+which is what motivated the GPU compositor. Kept as the before/after.
+
 SYNTHUI_FADER_BEGIN
 PANEL_OK
 fd_scene=16 grid=2x8 size=78x210
