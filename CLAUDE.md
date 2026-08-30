@@ -206,6 +206,18 @@ LVGL-sw ONLY by design — no GPU TU unless the silicon checkpoint misses
 30 fps. All three guards demonstrated RED by name; the RED probes also
 measured the cap-extent's real sensitivity floor (2 < floor ≤ 6 units —
 the +2 px damage inflation absorbs cuts under 2 px). 122 before it.
+★ **The silicon checkpoint MISSED, and the widget gained the GPU TU it was
+designed to avoid.** The sw path measured 11 fps against a ~76 ms fixed
+per-refresh LVGL cost (uncached-SDRAM draw-task churn, ~90 µs/task —
+diagnosed with the Phase C probes and filed as a separate platform issue),
+so the fader gained a GC355 compositor (`import_evkb_synthui(VGLITE)`,
+deferred pre-flip compose) which MET the criterion at `mfps_med=30448`
+against the `>= 30000` bound, with `fd_delta_eq=PASS` and goldens
+bit-identical across four SW4 boots (`fd_crc=0x141D0A41`,
+`delta==fresh=0xE929A5E4`). QEMU still asserts `fd_engine=sw` and the sw
+goldens are unmoved; the GPU set is recorded only in
+`transcript_hw_evkb.txt` (two golden sets, never reconciled — same
+discipline as `vglite_lvgl_test` and `acid_box`).
 
 BT-1 added the tree's FIRST TWO BLUETOOTH GATES, both on the new
 `networking/m2_hci_probe`. `run_qemu.sh` is the card-ABSENT fallback — with no
@@ -530,6 +542,28 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-08-30: 123 gates discovered, 122 passed, 1 failed**, on
+the NEW-23 GPU-compositor close-out (`display/synthui_fader_test` gained the
+GC355 compositor; `fd_fps mfps_med=30448` accepted on silicon against the
+`>= 30000` criterion, goldens bit-identical across four SW4 boots). The ONE
+red is `m2_hci_probe[hci]`, confirmed the SAME bench-configured-build-dir
+class as 2026-08-27/29 — its `CMakeCache.txt` still carries
+`M2RADIO_IW416_BT_FW` and `M2_BT_UART_DNLD=ON` from the concurrent BT bench
+workstream, checked directly rather than assumed. `dualcore/cm4_audio_test`
+and `m2_rx_demo[txaggr]` both passed clean on this run (the latter re-run
+idle is unnecessary when it already passed in the sweep). Both SynthUI
+(`3401ab1`) and LVGL (`9951934`) were pushed and their `evkb.cmake` pins
+bumped; a `-DEVKB_FORCE_FETCH=ON` build of `display/synthui_fader_test`
+CLONED both from GitHub at the new pins (confirmed in the configure log's
+`git clone`/`Already at requested ref` lines, not assumed) and its gate
+PASSED against that fetched-source ELF. `LICENSE-AUDIT: PASS` the same day,
+`display/synthui_fader_test` manifest walked at 24703 dep paths. Vacuity
+suite ran GREEN, but at **25/25**, not the 28/28 the 2026-08-29 entry below
+states — recounting the `report` call sites in `tools/gate-vacuity.test.sh`
+also gives 25, so that entry's 28 looks like a documentation slip rather
+than a case count that changed; left as written below rather than edited,
+per the convention of not rewriting a prior measurement's own account.
 
 ✅ **Measured 2026-08-29: 123 gates discovered, 121 passed, 2 failed** on
 the NEW-23 fader close-out — `rt1176:display/synthui_fader_test` green in
@@ -1200,6 +1234,26 @@ not hung.
   `VG_LITE_SUCCESS`.** That cost most of Phase 1. When a device API insists
   everything worked, read the device's own status register (`AQHiIdle`, 0x004,
   bit 0 = front end).
+  ★★ **This GC355/driver renders ONLY THE FIRST CONTOUR of a vg_lite path —
+  every subpath after the first `VLC_OP_MOVE` is silently dropped, and every
+  API call still returns `VG_LITE_SUCCESS`.** Found 2026-08-29/30 building the
+  fader's GPU compositor (NEW-23), from a static SWD framebuffer capture: the
+  software golden draws 12 visible ticks per fader (y=143,157,170,…,291) while
+  the GPU drew exactly two — tick i=0 (the first rect of the bright pass's
+  path) and i=1 (the first of the dim pass's), and nothing else, on every
+  boot. The same rule explains a cap that rendered SOLID DARK: its border was
+  a two-contour ring, and the first contour — the outer rounded rect — filled
+  solid in the border colour (`0x20262A`). It also explains per-boot-varying
+  whole-framebuffer checksums (7 boots, 7 values) that vanished once every
+  path became single-contour. **This SUPERSEDES the earlier belief that
+  disjoint same-winding subpaths are fine** — the tick evidence disproves it —
+  and it is why the sibling rotary compositor always worked: every path it
+  builds is already a single contour. The fix is one `vg_lite_draw()` per
+  contour, plus culling shapes whose screen bbox misses the clip (which pays
+  for the extra draws: during animation the clip is a narrow strip, so only
+  2-3 tick runs survive per frame). **Rule for any future vg_lite path in this
+  tree: build and submit one contour per draw call — never rely on multiple
+  `VLC_OP_MOVE`s inside one path to render more than the first.**
 - **Dual-core model**: the CM7 stages/boots/hot-swaps CM4 images and talks over
   the MU mailbox. Key constraints: main-eDMA completion IRQs reach the CM7
   only (CM4 interrupt-driven DMA needs eDMA_LPSR + an LPSR peripheral);
