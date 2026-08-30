@@ -994,7 +994,7 @@ Other changes Task 3 inherits:
 
 ---
 
-### Task 3: The twelve paths/contours/winding cases
+### Task 3: The thirteen paths/contours/winding cases
 
 **Files:**
 - Modify: `examples/display/vglite_conformance/vgc_cases_path.cpp` (replace wholesale)
@@ -1492,7 +1492,7 @@ cd examples/display/vglite_conformance && ../../../tools/qrun -M mimxrt1170-evk 
 Expected: 12 `vgc case_begin=` lines, 12 `vgc case=` lines all with `api=skip pixel=skip … repeat=skip`, and:
 
 ```
-vgc_summary engine=absent cases=12 ok=0 broken=0 skip=12 dangerous=off repeat_differs=0
+vgc_summary engine=absent cases=13 ok=0 broken=0 skip=13 dangerous=off repeat_differs=0
 ```
 
 - [ ] **Step 4: Commit**
@@ -1516,7 +1516,7 @@ Shipped as `db4c38a` plus a follow-up landing the host geometry test. Changes fr
 ★ **`path/two-draws-ring` draws twice WITHOUT clearing between, and that is correct** — it reads like a violation of the harness's "a multi-render case must clear itself" rule but is not. That rule concerns sub-renders measured one after another (cases 5, 6, 11); case 4's two draws compose ONE picture and the second is *meant* to land on the first. A ★ note in the file says so, because the obvious "fix" would silently erase the plate the inset punches through.
 
 ★ **`tests/cases_path_geom_test.cpp` is the third host suite, and its NEGATIVE arm is the point.** It compiles the REAL `run()`/`check()`/`sum()` functions and the real arena against a scanline reference rasteriser, in two arms:
-- **positive** — a correct rasteriser (all contours, both fill rules): all twelve must report `ok`;
+- **positive** — a correct rasteriser (all contours, both fill rules): all thirteen must report `ok`;
 - **negative** — a rasteriser re-broken to drop every contour after the first, i.e. THIS GC355's actual defect: `path/multi-contour-disjoint`, `path/two-contour-ring-nonzero` and `path/evenodd-vs-nonzero` must go BROKEN **by name**, and all six controls plus the whole format set must stay `ok`.
 
 The negative arm is what makes the matrix trustworthy: it proves the probe cases can go red on the defect they are aimed at, and that a red there is not a harness artefact. Without it a green positive arm would be equally consistent with a matrix that cannot detect anything. It also settled three numbers the target cannot check — the star's sample points (centre 15.00 px clear of the nearest edge, tip 2.45 px), case 1's ±6 % band against a 320 px perimeter, and that pixel-centre sampling alone costs −1.7 % of the triangle's area, which the ±8 % band must hold *on top of* antialiasing.
@@ -1546,14 +1546,14 @@ cd examples/display/vglite_conformance
 ../../../tools/qrun -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel build-danger/vglite_conformance.elf -display none -serial stdio | grep -E "vgc_summary|case_begin=path/unterminated"
 ```
 
-Expected: `cases=13`, `dangerous=on`, and a `vgc case_begin=path/unterminated` line. Then confirm the default build is untouched:
+Expected: `cases=14`, `dangerous=on`, and a `vgc case_begin=path/unterminated` line. Then confirm the default build is untouched:
 
 ```bash
 cd examples/display/vglite_conformance
 ../../../tools/qrun -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel build/vglite_conformance.elf -display none -serial stdio | grep vgc_summary
 ```
 
-Expected: `cases=12 … dangerous=off`.
+Expected: `cases=13 … dangerous=off`.
 
 - [ ] **Step 3: Add `build-danger` to the example's ignore surface**
 
@@ -1634,10 +1634,10 @@ grep -q "pixel=broken" "$OUT" && { echo "FAIL: TRIPWIRE a case reported broken i
 # every tripwire above vacuously (the harness skeleton did exactly that before
 # the case table landed), and a truncated capture would look like a smaller
 # matrix that happened to pass. Both are refused here: the case-line count is
-# compared against the summary's own cases= field, and against the expected 12.
+# compared against the summary's own cases= field, and against the expected 13.
 CASES=$(grep -a -c "^vgc case=" "$OUT" || true)
 BEGINS=$(grep -a -c "^vgc case_begin=" "$OUT" || true)
-[ "$CASES" -eq 12 ] || { echo "FAIL: expected 12 case lines, got $CASES"; exit 1; }
+[ "$CASES" -eq 13 ] || { echo "FAIL: expected 13 case lines, got $CASES"; exit 1; }
 [ "$BEGINS" -eq "$CASES" ] || \
     { echo "FAIL: $BEGINS case_begin lines but $CASES case lines (a case did not finish)"; exit 1; }
 
@@ -1646,6 +1646,7 @@ BEGINS=$(grep -a -c "^vgc case_begin=" "$OUT" || true)
 # place, but a table that shrinks and grows in the same commit is exactly the
 # drift this names.
 for id in path/single-contour-rect path/multi-contour-disjoint \
+          path/multi-contour-close-padded \
           path/two-contour-ring-nonzero path/two-draws-ring \
           path/evenodd-vs-nonzero path/self-intersecting \
           path/format-s8 path/format-s16 path/format-s32 path/format-fp32 \
@@ -1655,9 +1656,9 @@ for id in path/single-contour-rect path/multi-contour-disjoint \
 done
 
 # The summary must AGREE with the case lines, and must say the default build.
-# Demonstrated RED 2026-08-30: cases=12 edited to cases=11 in the capture ->
+# Demonstrated RED 2026-08-30: cases=13 edited to cases=12 in the capture ->
 # "FAIL: summary line missing or disagrees with the case lines".
-grep -qE "^vgc_summary engine=absent cases=12 ok=0 broken=0 skip=12 dangerous=off repeat_differs=0\r?$" "$OUT" || \
+grep -qE "^vgc_summary engine=absent cases=13 ok=0 broken=0 skip=13 dangerous=off repeat_differs=0\r?$" "$OUT" || \
     { echo "FAIL: summary line missing or disagrees with the case lines"; exit 1; }
 
 # A bounded wait that gave up means the completion path is wrong even when the
@@ -1717,7 +1718,7 @@ grep -v "^vgc case=path/degenerate-zero-area" build/vglite_conformance.uart > /t
 REAL_QEMU=/tmp/vgc-fake-qemu FAKE_CAPTURE=/tmp/vgc_short.uart GATE_TIMEOUT=120 QRUN_TIMEOUT=40 ./run_qemu.sh; echo "rc=$?"
 ```
 
-Expected: `FAIL: expected 12 case lines, got 11`, `rc=1`.
+Expected: `FAIL: expected 13 case lines, got 12`, `rc=1`.
 
 Then confirm the gate is still green for real (no `REAL_QEMU` in the environment):
 
@@ -1821,7 +1822,7 @@ if [ -d "$EVKB/$VGC" ] && [ -f "$EVKB/$VGC/transcript_qemu.txt" ]; then
     run_gate "$VGC" "run_qemu.sh" "$WORK/vgc_short.txt"; rc=$?
     result=0
     [ "$rc" -ne 0 ] || result=1
-    echo "$OUT_TEXT" | grep -q "expected 12 case lines, got 11" || result=1
+    echo "$OUT_TEXT" | grep -q "expected 13 case lines, got 12" || result=1
     report "vgc_truncated_matrix_fails" $result
 else
     echo "SKIP: vglite_conformance vacuity (example or fixture missing)"
@@ -1858,8 +1859,8 @@ triples rendering one at a time into a 128×128 BGRA8888 EXTMEM scratch, each
 case printing TWO INDEPENDENT VERDICTS — `api=` (what the driver said) and
 `pixel=` (what a structural CPU-side predicate found) — because every GC355
 defect this tree has hit reported success while producing the wrong picture.
-Phase 1 is the twelve paths/contours/winding cases. Its gate asserts the
-HONEST NEGATIVE (`vgc_engine=absent`, all twelve `pixel=skip`) with three
+Phase 1 is the thirteen paths/contours/winding cases. Its gate asserts the
+HONEST NEGATIVE (`vgc_engine=absent`, all thirteen `pixel=skip`) with three
 tripwires — no case may report `pixel=ok`, none may report `pixel=broken`, and
 no `api=success` may appear with no GPU — plus a case-line COUNT check, since
 every tripwire above is satisfied vacuously by an empty matrix. 123 before it.
@@ -1930,6 +1931,20 @@ Create `examples/display/vglite_conformance/expected_silicon.txt`:
 
 path/single-contour-rect      ok     same  # the baseline; a broken control invalidates the whole matrix
 path/multi-contour-disjoint   broken same  # only the first contour renders: expect runs=1, not 4
+# ★ THE DISCRIMINATOR, and the one line here whose answer is not predicted with
+# confidence. Same four bars as the case above; the ONLY variable is that the
+# contour-boundary CLOSEs are padded to 0x01010101 instead of 0x00000001.
+# NXP's own driver carries a CHIPID==0x355-gated workaround doing exactly that
+# padding, at exactly that condition (vg_lite_path.c:556-570, inside
+# vg_lite_append_path -- which nothing in this tree calls, so the one-contour
+# rule was only ever measured on the UNPADDED encoding). If this reports `ok`
+# while the case above reports `broken`, the real rule is the far narrower
+# "a CLOSE slot padded with 0x00 terminates the path" and BOTH shipping
+# compositors could stop working around it. Predicted `broken` only because
+# that is the conservative reading of the existing evidence -- a flip to `ok`
+# here is the most valuable single result the matrix can produce, not a drift
+# to be explained away.
+path/multi-contour-close-padded broken same  # see the ★ above -- this cell is a hypothesis test, not a feature probe
 path/two-contour-ring-nonzero broken same  # first-contour-only: the reversed inner contour is dropped, the ring fills solid
 path/two-draws-ring           ok     same  # SAFE USAGE control for the case above -- plate + inset plate, two single-contour draws
 path/evenodd-vs-nonzero       broken same  # the EVEN_ODD hole needs the second contour, which is dropped; nz half is expected right
@@ -2027,7 +2042,7 @@ cd /Users/nicholasnewdigate/Development/rt1170/evkb
 ./tools/vglite-conformance-check.sh /tmp/vgc_synth.txt
 ```
 
-Expected: `VGLITE-CONFORMANCE: PASS (12 cases match …)`, exit 0.
+Expected: `VGLITE-CONFORMANCE: PASS (13 cases match …)`, exit 0.
 
 Now three RED demonstrations:
 
@@ -2318,7 +2333,7 @@ grep -E "^vgc_engine=|^vgc_summary|^vgc_timeouts=" transcript_hw_evkb.txt
 grep -c "^vgc case=" transcript_hw_evkb.txt
 ```
 
-Expected: `vgc_engine=gpu …`, `cases=12`, `dangerous=off`, and 12 case lines.
+Expected: `vgc_engine=gpu …`, `cases=13`, `dangerous=off`, and 13 case lines.
 If `vgc_timeouts=` is non-zero, the completion path is wrong even where the
 pixels look right — that is a finding, not a nuisance, and it goes in the doc.
 
