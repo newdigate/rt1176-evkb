@@ -48,15 +48,82 @@ extern "C" {
 
 extern vg_lite_buffer_t vgc_scratch;
 
-/* Clear the scratch target to VGC_BG_COLOR and finish. Every run() starts
- * here, so a case cannot contaminate its neighbour. */
+/* Clear the scratch target to VGC_BG_COLOR and finish.
+ *
+ * The harness calls this before every run(), so a case cannot contaminate its
+ * neighbour.
+ *
+ * ★ A CASE THAT RENDERS MORE THAN ONCE MUST CALL THIS ITSELF between its
+ * sub-renders. The harness's clear happens ONCE, before run() is entered; it
+ * cannot see inside a case that draws, measures, and draws again. Forget it
+ * and sub-render N+1 composites over N, which does not fail -- it yields a
+ * plausible-looking wrong verdict, i.e. the instrument fabricating a GC355
+ * defect. That is the top risk named in spec section 11, and it is on the case
+ * author, not the harness. Cases known to need it: evenodd-vs-nonzero,
+ * self-intersecting, format-agreement. Such a case must also supply the
+ * vgc_case_t::sum hook, since only its LAST sub-render survives in the
+ * buffer. */
 vg_lite_error_t vgc_clear(void);
 
-/* FNV-1a over the whole scratch buffer, rows only (stride-aware). */
+/* ---- scratch access ------------------------------------------------------
+ * ★ ONE ACCESS PATH, AND IT IS NOT vgc_scratch.memory. Everything that reads
+ * rendered pixels goes through vgc_fb(); vgc_px() and vgc_scratch_sum() are
+ * implemented on top of it. Reading via vgc_scratch.memory instead would be a
+ * SECOND path that agrees today and diverges twice over: a later case that
+ * re-points vgc_scratch, and the engine-absent path, where vgc_scratch is
+ * never populated at all (the field setup lives inside the init success
+ * branch) so .memory is NULL while the underlying array is a valid zeroed
+ * buffer. A predicate reading through NULL is a fault; reading through a
+ * stale pointer is worse, because it answers. */
+const uint32_t *vgc_fb(void);
+
+/* FNV-1a over the whole scratch buffer.
+ *
+ * The buffer is PACKED by construction -- it is a fixed static array of
+ * VGC_W * VGC_H * 4 bytes, and vgc_scratch.stride is set to VGC_W * 4 from
+ * the same constants in the one place that initialises it. There is no stride
+ * to be aware of, which is why this hashes a flat byte count rather than
+ * walking rows. If a future case ever gives the target a stride wider than its
+ * width, this function and vgc_px() both have to learn about it. */
 uint32_t vgc_scratch_sum(void);
 
-/* Read one scratch pixel as a memory word. */
+/* Read one scratch pixel as a memory word.
+ *
+ * ★ OUT-OF-RANGE IS COUNTED, NOT ANSWERED. An (x,y) outside the buffer
+ * returns 0 and bumps a sticky counter that the harness reads after check().
+ * A case whose check() went out of range is reported pixel=skip with
+ * detail=px_oob:N and never contributes an ok or a broken -- because the
+ * alternative is the instrument returning a plausible word for a caller's
+ * typo, which is exactly the failure vgc_count_runs_col's -1 contract exists
+ * to prevent (see vgc_predicates.h). A defect in the probe must never be
+ * spellable as a measurement of the GPU. Note 0 is NOT a safe sentinel on its
+ * own here -- it is transparent black, a word a blending case could legally
+ * produce -- so the COUNTER is the mechanism and the return value is only
+ * damage limitation. */
 uint32_t vgc_px(int x, int y);
+/* Out-of-range vgc_px() calls since the last vgc_px_oob_reset(). */
+uint32_t vgc_px_oob(void);
+void     vgc_px_oob_reset(void);
+
+/* ---- per-case helpers ----------------------------------------------------
+ * These live here rather than in each case file because Phase 2 and Phase 3
+ * would otherwise each re-declare them, and because vgc_draw_path/
+ * vgc_finish_into implement the status-accumulation contract that
+ * vgc_case_t::run is specified in terms of. A contract stated in one place
+ * and re-implemented in three diverges silently. */
+
+/* A pointer to an identity matrix, re-identity'd on every call. Valid until
+ * the next vgc_ident(). */
+vg_lite_matrix_t *vgc_ident(void);
+
+/* Draw `p` into vgc_scratch with VG_LITE_BLEND_NONE and the identity matrix.
+ * The FIRST non-success status is accumulated into *acc; a later success
+ * never clears an earlier failure. */
+void vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
+                   vg_lite_error_t *acc);
+
+/* vg_lite_finish(), accumulating the first non-success into *acc. */
+void vgc_finish_into(vg_lite_error_t *acc);
 
 /* ---- shared path arena ----------------------------------------------------
  * Cases emit path words here. vg_lite_draw() -> push_data() memcpys the path
@@ -68,30 +135,61 @@ uint32_t vgc_px(int x, int y);
  * VG_LITE_SUCCESS. */
 #define VGC_ARENA_WORDS 512
 
-void     vgc_arena_reset(void);
-void     vgc_emit(int32_t w);
+/* Drop every word emitted so far and clear the overflow latch. THE HARNESS
+ * ALREADY CALLS THIS before each run() (and again before the repeat run), so
+ * a case wanting one arena's worth of paths need not call it at all. A case
+ * calls it only to reuse the arena WITHIN a run() -- which is safe the instant
+ * the preceding vg_lite_draw() has returned, per the note above, but which
+ * also invalidates every vg_lite_path_t already initialised over the arena. */
+void vgc_arena_reset(void);
+void vgc_emit(int32_t w);
+
 /* Terminates the path with an explicit VLC_OP_END and inits `p` over the
  * words emitted since the last vgc_arena_reset()/vgc_finish_path().
  *
- * ★ EXPLICIT END, NEVER A TRAILING CLOSE. vg_lite_init_path() rewrites a
- * trailing VLC_OP_CLOSE into VLC_OP_END in place, and its VG_LITE_S8 branch
- * does so through an (int*) cast -- four bytes where one was meant. Ending on
- * an explicit END means the fixup never fires, so no case here is measuring
- * that fixup instead of the hardware.
+ * ★ EXPLICIT END, NEVER A TRAILING CLOSE, AND THE REASON IS AN OUT-OF-BOUNDS
+ * WRITE. vg_lite_init_path() rewrites a trailing VLC_OP_CLOSE into VLC_OP_END
+ * in place, and its VG_LITE_S8 branch reads and writes at DIFFERENT offsets
+ * (vg_lite_path.c:203-205, read verbatim):
+ *
+ *     if (path_data && (*((char*)path_data + num - 1) == VLC_OP_CLOSE))
+ *         *(char*)((int*)path_data + num - 1) = VLC_OP_END;
+ *
+ * The test reads byte num-1 -- correct, the last element. The store writes ONE
+ * byte at (char*)path_data + 4*(num-1), four times the intended offset. For an
+ * 11-byte S8 path that is a single-byte write at offset 40: 29 bytes PAST the
+ * end of the array, into whatever follows it in .data. (S16 is unaffected --
+ * that branch reads and writes the same 2*(num-1).)
+ *
+ * Ending on an explicit END means the branch never fires at all, since
+ * VLC_OP_END is 0x00 and VLC_OP_CLOSE is 0x01, so no case here can be
+ * corrupted by that fixup or can accidentally end up measuring it instead of
+ * the hardware.
  *
  * Bounds are padded one unit on every side: the driver derives its
  * tessellation window from this box (rounded, not exact), and an exact bound
  * can land a half-pixel short at a tile boundary.
  *
- * Returns false if the arena overflowed; the caller must NOT draw. */
-bool vgc_finish_path(vg_lite_path_t *p, float x0, float y0, float x1, float y1);
+ * ★ ON OVERFLOW: returns VG_LITE_OUT_OF_RESOURCES and leaves *p ZEROED. The
+ * zeroing is not tidiness -- callers declare vg_lite_path_t on the stack, and
+ * a caller that ignored the status and drew anyway would hand the GPU a path
+ * pointer and length made of stack garbage. That is precisely the
+ * unterminated-path-data condition described above: the harness would be
+ * manufacturing the one failure it exists to measure. Zeroed, the worst a
+ * dropped status can do is submit path=NULL, path_length=0. The status is a
+ * vg_lite_error_t rather than a bool so that discarding it reads as wrong at
+ * the call site. */
+vg_lite_error_t vgc_finish_path(vg_lite_path_t *p,
+                                float x0, float y0, float x1, float y1);
 
 /* Emit a closed axis-aligned rect contour (CW: x,y -> x+w,y -> x+w,y+h ->
  * x,y+h). Coordinates are S32 path units == scratch pixels (identity matrix,
- * no fixed-point scaling: these cases probe geometry, not transforms). */
-void vgc_emit_rect_cw(float x, float y, float w, float h);
+ * no fixed-point scaling: these cases probe geometry, not transforms), so the
+ * parameters are int32_t -- floats here would truncate toward zero at the
+ * call site and quietly mislead the first sub-pixel case that tried them. */
+void vgc_emit_rect_cw(int32_t x, int32_t y, int32_t w, int32_t h);
 /* The same rect wound the other way (CCW), for non-zero hole cutting. */
-void vgc_emit_rect_ccw(float x, float y, float w, float h);
+void vgc_emit_rect_ccw(int32_t x, int32_t y, int32_t w, int32_t h);
 
 /* ---- the case table ------------------------------------------------------ */
 typedef enum { VGC_SKIP = 0, VGC_OK = 1, VGC_BROKEN = 2 } vgc_verdict_t;
@@ -102,7 +200,8 @@ typedef struct {
     const char *id;                 /* stable slug -- expected_silicon.txt keys on it */
     /* Issues the vg_lite calls under test into vgc_scratch and finishes.
      * Returns VG_LITE_SUCCESS if every call succeeded, else the FIRST
-     * non-success code. The harness has already cleared the scratch. */
+     * non-success code. The harness has already cleared the scratch and reset
+     * the arena. */
     vg_lite_error_t (*run)(void);
     /* Reads scratch pixels and answers ONE structural question. Writes a
      * short "k=v,k=v" string (no spaces) into `detail`. */
@@ -111,7 +210,14 @@ typedef struct {
      * LAST sub-render in the scratch buffer, so the harness's default
      * repeat= sum would cover only that one. Such a case supplies this to
      * return an FNV accumulated over EVERY sub-render. NULL => the harness
-     * uses vgc_scratch_sum(). */
+     * uses vgc_scratch_sum().
+     *
+     * ★ ORDERING, which constrains what it may depend on: the harness calls
+     * sum() immediately after run() and BEFORE check(), then runs the case a
+     * second time and calls sum() again with NO check() in between. So sum()
+     * must stand on its own -- it may not read state that check() computes,
+     * and it must return the same value for the same rendering whether or not
+     * check() has ever run. */
     uint32_t (*sum)(void);
 } vgc_case_t;
 

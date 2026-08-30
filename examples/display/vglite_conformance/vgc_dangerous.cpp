@@ -48,12 +48,10 @@ static vg_lite_error_t run_unterminated(void)
     vg_lite_init_path(&p, VG_LITE_S32, VG_LITE_HIGH,
                       (uint32_t)sizeof(s_unterm), s_unterm,
                       23.0f, 23.0f, 105.0f, 105.0f);
-    vg_lite_matrix_t m;
-    vg_lite_identity(&m);
-    const vg_lite_error_t e = vg_lite_draw(&vgc_scratch, &p, VG_LITE_FILL_NON_ZERO,
-                                           &m, VG_LITE_BLEND_NONE, VGC_FILL_COLOR);
-    const vg_lite_error_t f = vg_lite_finish();
-    return e != VG_LITE_SUCCESS ? e : f;
+    vg_lite_error_t acc = VG_LITE_SUCCESS;
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
+    return acc;
 }
 
 static vgc_verdict_t check_unterminated(char *d, size_t n)

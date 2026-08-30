@@ -6,26 +6,14 @@ set(TEENSY_VERSION 117 CACHE STRING "")
 # Opt-in matrix including the cases that can HANG the front end (spec
 # section 6). NEVER configured into build/ -- use a separate build-danger dir.
 #
-# Placed above teensy_add_executable() for LOCALITY ONLY -- it is the first
-# thing that distinguishes this build from the default one, so it reads first.
-# It is NOT a correctness requirement, and this comment exists to stop the
-# placement being mistaken for one.
-#
-# MEASURED (CMake 4.4.2, 2026-08-30): both orderings produce IDENTICAL flags.
-# Configured -DVGC_DANGEROUS=ON with this block above the target and again
-# with it below, then diffed the generated
-# CMakeFiles/vglite_conformance.elf.dir/flags.make: no difference, and
-# -DVGC_DANGEROUS=1 present in CXX_DEFINES in BOTH (checked, so "identical"
-# is not two arms that both dropped it). The directory COMPILE_DEFINITIONS
-# property is resolved at GENERATE time for every target in the directory,
-# not captured at target-creation time.
-#
-# The after-ordering is a SHIPPED pattern here, not a hypothetical:
-# examples/display/synthui_fader_test/CMakeLists.txt:39 puts
-# add_compile_definitions(FD_EYEBALL_HOLD=...) below its
-# teensy_add_executable() at :23, and that define is genuinely consumed at
-# synthui_fader_test.cpp:61 in the NEW-23 diagnostic build. Nothing here
-# forbids it.
+# Above teensy_add_executable() for LOCALITY only -- it is what distinguishes
+# this build from the default one, so it reads first. Placement is NOT a
+# correctness requirement: MEASURED (CMake 4.4.2, 2026-08-30) by configuring
+# -DVGC_DANGEROUS=ON both above and below the target and diffing the generated
+# CMakeFiles/vglite_conformance.elf.dir/flags.make -- identical, with
+# -DVGC_DANGEROUS=1 present in CXX_DEFINES in BOTH arms (checked, so
+# "identical" is not two arms that each dropped it). The directory
+# COMPILE_DEFINITIONS property is resolved at generate time.
 if(VGC_DANGEROUS)
     add_compile_definitions(VGC_DANGEROUS=1)
 endif()
