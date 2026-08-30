@@ -37,14 +37,21 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/vgc-tests.XXXXXX")
 trap 'rm -rf "$OUT"' EXIT INT TERM HUP
 
+# ★ DERIVED, not written down. The trailer said "3 suites" as a literal, so a
+# fourth suite would have made it print a lie -- and a count is the one thing in
+# a test trailer a reader takes on trust.
 rc=0
+nsuites=0
 failed_suites=''
+
+suite() { nsuites=$((nsuites + 1)); }
 
 note_fail() {
     rc=1
     failed_suites="$failed_suites $1"
 }
 
+suite
 # --- predicates_test --------------------------------------------------------
 if cc -std=c11 -Wall -Wextra -Werror -O1 \
       -o "$OUT/predicates_test" "$DIR/predicates_test.c"; then
@@ -54,6 +61,7 @@ else
     note_fail predicates_test
 fi
 
+suite
 # --- arena_test -------------------------------------------------------------
 if c++ -std=c++14 -Wall -Wextra -Werror -O1 -I "$DIR/stub" \
        -o "$OUT/arena_test" "$DIR/arena_test.cpp" "$DIR/../vgc_arena.cpp"; then
@@ -63,6 +71,7 @@ else
     note_fail arena_test
 fi
 
+suite
 # --- cases_path_geom_test ---------------------------------------------------
 # Links the REAL case table (vgc_cases_path.cpp) and the REAL arena against the
 # suite's own reference rasteriser. -I "$DIR/.." so the case file's
@@ -82,6 +91,6 @@ echo "=="
 if [ "$rc" -ne 0 ]; then
     echo "run.sh: FAILED --$failed_suites"
 else
-    echo "run.sh: OK (3 suites)"
+    echo "run.sh: OK ($nsuites suites)"
 fi
 exit "$rc"

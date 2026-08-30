@@ -6,7 +6,9 @@
  * probes it first: on this GC355 a path renders only its FIRST contour, every
  * subpath after the first VLC_OP_MOVE vanishing while every vg_lite_* call
  * returns VG_LITE_SUCCESS. Three cases here measure that directly
- * (multi-contour-disjoint, two-contour-ring-nonzero, evenodd-vs-nonzero) and
+ * (multi-contour-disjoint, two-contour-ring-nonzero, evenodd-vs-nonzero), a
+ * fourth (multi-contour-close-padded) discriminates WHY they fail, and each
+ * probe is
  * each is PAIRED with a control that must pass if the harness is sound:
  * single-contour-rect (the baseline -- if THIS is broken nothing else in the
  * matrix means anything), two-draws-ring (the safe usage) and
@@ -95,13 +97,19 @@ static vgc_verdict_t check_single_rect(char *d, size_t n)
     const int corner = vgc_is_filled(vgc_px(10, 10));
     snprintf(d, n, "fill=%d,expect=%d,centre=%d,corner=%d",
              fill, R_AREA, centre, corner);
-    /* +/-6% is 384 px against a 320 px perimeter: wide enough that a whole
-     * antialiased boundary ring landing either side of the 50% threshold is
-     * absorbed, narrow enough that the nearest WRONG shape this case could
-     * produce is rejected. The wrong shapes worth naming are all far outside
-     * it -- a dropped draw is 0, a full-target fill is 16384, and the 32x32
-     * inset used by cases 3-5 is 1024. */
-    const int lo = R_AREA - R_AREA * 6 / 100, hi = R_AREA + R_AREA * 6 / 100;
+    /* ★ +/-3%, NOT the +/-6% this started at, and the reason is that a
+     * baseline has to be the TIGHTEST case in the matrix rather than the
+     * loosest. 6% is 384 px, and a rect rendered FOUR PIXELS TOO NARROW is
+     * 76*80 = 6080 -- inside that band. This is the case every other verdict
+     * leans on, so a wrong-by-4-px baseline reading `ok` would quietly
+     * authorise the whole matrix. 3% is 192 px: it still absorbs a half-pixel
+     * raster offset all round (one row plus one column of an 80x80 rect is
+     * ~160 px) and an entire antialiased 320 px perimeter landing either side
+     * of the 50% threshold, while narrowing the smallest error it will accept
+     * from 4 px to 2 px. The far-wrong shapes were never the question: a
+     * dropped draw is 0, a full-target fill 16384, the 32x32 inset used by
+     * cases 4-6 is 1024. */
+    const int lo = R_AREA - R_AREA * 3 / 100, hi = R_AREA + R_AREA * 3 / 100;
     return (centre && !corner && fill >= lo && fill <= hi) ? VGC_OK : VGC_BROKEN;
 }
 
@@ -136,7 +144,102 @@ static vgc_verdict_t check_multi_contour(char *d, size_t n)
     return runs == 4 ? VGC_OK : VGC_BROKEN;
 }
 
-/* ---- 3. path/two-contour-ring-nonzero --------------------------------------
+/* ---- 3. path/multi-contour-close-padded ------------------------------------
+ * ★ A DISCRIMINATOR BETWEEN TWO HYPOTHESES, NOT A PROBE OF A FEATURE, and it
+ * is the most valuable cell in this matrix if it disagrees with case 2.
+ *
+ * The tree's recorded rule is "the GC355 renders only the FIRST contour of a
+ * path". That was only ever measured on ONE encoding -- the raw arena words
+ * this file's other cases emit. There is a narrower rule that fits the same
+ * evidence, and NXP's own driver thinks it is the real one:
+ *
+ *   vg_lite_path.c:556-570, inside vg_lite_append_path(), guarded by
+ *   `#if (CHIPID == 0x355)` -- and CHIPID IS 0x355 for our Series
+ *   (VGLite/Series/gc355/0x0_1216/vg_lite_options.h:31, which evkb.cmake
+ *   selects) -- special-cases EXACTLY "a CLOSE at a contour boundary"
+ *   (`cmd[i] == VLC_OP_CLOSE && cmd[i+1] == VLC_OP_MOVE`) and writes that
+ *   CLOSE as 0x01010101 across the whole 4-byte element instead of as a
+ *   single byte.
+ *
+ * An opcode is one byte at the base of a slot and the rest is padding (see the
+ * format-* note below), so the arena's ordinary CLOSE is `01 00 00 00`.
+ * MEASURED, by dumping the arena rather than reading the source:
+ *
+ *     slot 12 @ 48 : 01 00 00 00   CLOSE, then three 0x00 bytes
+ *     slot 13 @ 52 : 02 00 00 00   MOVE -- the next contour
+ *
+ * and VLC_OP_END is 0x00. So every contour boundary in cases 2, 4 and 6 is a
+ * CLOSE followed by three END bytes inside its own slot. That is a complete
+ * and mundane mechanism for "the path stopped after the first contour", and it
+ * is the one the vendor gates on this exact chip.
+ *
+ * This case is case 2's geometry EXACTLY -- same four bars, same coordinates,
+ * same predicate, same column -- with the ONLY variable the contour-boundary
+ * CLOSE encoding. So:
+ *   ok here + broken in case 2  =>  the rule is not "one contour per path" at
+ *       all, it is "a CLOSE slot padded with 0x00 terminates the path"; both
+ *       shipping compositors are working around something they could simply
+ *       encode away, and docs/gc355-vglite-quirks.md must say the narrow thing.
+ *   broken in both              =>  the one-contour rule is confirmed on a
+ *       SECOND encoding and is that much stronger.
+ * Either answer is worth the case; there is no outcome in which it says
+ * nothing. It has to ride the same boot as case 2 because the bench boot is
+ * one hand-pressed button.
+ *
+ * ★ THE BYTES ARE BUILT HERE, NOT OBTAINED FROM vg_lite_append_path(). That
+ * function reads cmd[i + 1] at i == seg_count - 1 (vg_lite_path.c:557), one
+ * past the end of the caller's array -- so the vendor's own workaround is
+ * reachable only through an out-of-bounds read. Nothing in this tree calls it
+ * (grepped: the only hits are LVGL's ThorVG shim, which IMPLEMENTS the API for
+ * a PC simulator and is not built here), which is also why the padded encoding
+ * has never been exercised on this board.
+ *
+ * ★ THE HOST GEOMETRY SUITE CANNOT ANSWER THIS. Both of its model rasterisers
+ * read the opcode byte and ignore the slot's padding, so this case behaves
+ * there exactly like case 2 -- ok under a correct model, broken under the
+ * first-contour model. That agreement is a check that the two cases really are
+ * one variable apart; it is NOT evidence about the padding. Only silicon can
+ * separate the hypotheses. */
+
+/* VLC_OP_CLOSE with its three pad bytes set to 0x01 instead of 0x00, as an S32
+ * path element. Spelled as one constant because it is a byte pattern rather
+ * than an arithmetic value, and because 0x01010101 is what the vendor's source
+ * literally writes. */
+#define VGC_CLOSE_PADDED_S32 ((int32_t)0x01010101)
+
+/* vgc_emit_rect_cw's contour with the padded terminator. Local to this file
+ * rather than added to the arena: the arena's API already expresses it --
+ * vgc_emit() takes the raw word -- so no seam was needed, and a shared
+ * vgc_emit_rect_cw_padded() would invite Phase 2 and 3 authors to adopt an
+ * encoding whose behaviour is exactly what is still in question. */
+static void emit_bar_close_padded(int32_t x, int32_t y, int32_t w, int32_t h)
+{
+    vgc_emit(VLC_OP_MOVE); vgc_emit(x);     vgc_emit(y);
+    vgc_emit(VLC_OP_LINE); vgc_emit(x + w); vgc_emit(y);
+    vgc_emit(VLC_OP_LINE); vgc_emit(x + w); vgc_emit(y + h);
+    vgc_emit(VLC_OP_LINE); vgc_emit(x);     vgc_emit(y + h);
+    vgc_emit(VGC_CLOSE_PADDED_S32);
+}
+
+static vg_lite_error_t run_multi_contour_padded(void)
+{
+    vg_lite_error_t acc = VG_LITE_SUCCESS;
+    vg_lite_path_t p;
+    /* ★ ONLY THE BOUNDARY CLOSES ARE PADDED -- bars 0..2, whose CLOSE is
+     * followed by a MOVE. The LAST bar's CLOSE is followed by the END that
+     * vgc_finish_path appends, so it is not at a contour boundary and the
+     * vendor's condition would not fire on it either. Padding it as well would
+     * be a second, unasked variable in a case whose whole value is having
+     * exactly one. */
+    for (int i = 0; i < 3; i++) emit_bar_close_padded(R_X, BAR_Y[i], R_W, BAR_H);
+    vgc_emit_rect_cw(R_X, BAR_Y[3], R_W, BAR_H);
+    VGC_FINISH_OR_RETURN(&p, R_X, BAR_Y[0], R_X + R_W, BAR_Y[3] + BAR_H);
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
+    return acc;
+}
+
+/* ---- 4. path/two-contour-ring-nonzero --------------------------------------
  * Outer CW + reversed inner CCW in ONE path under NON_ZERO: the classic hole.
  * EXPECTED BROKEN: the inner contour is dropped and the ring fills solid. */
 
@@ -157,7 +260,7 @@ static vg_lite_error_t run_ring_two_contour(void)
     return acc;
 }
 
-/* Shared by cases 3 and 4: rim filled AND centre background is the ring.
+/* Shared by cases 4 and 5: rim filled AND centre background is the ring.
  * (32,64) is inside the outer plate (24..104) and clear of the inner one
  * (48..80) by 16 px; (64,64) is the inner plate's centre. */
 static vgc_verdict_t check_ring(char *d, size_t n)
@@ -168,8 +271,8 @@ static vgc_verdict_t check_ring(char *d, size_t n)
     return (rim && !centre) ? VGC_OK : VGC_BROKEN;
 }
 
-/* ---- 4. path/two-draws-ring ------------------------------------------------
- * THE SAFE-USAGE CONTROL for case 3. Same ring, built as a filled plate with
+/* ---- 5. path/two-draws-ring ------------------------------------------------
+ * THE SAFE-USAGE CONTROL for case 4. Same ring, built as a filled plate with
  * an inset plate in the background colour over it: two single-contour paths,
  * two draws. This is the construction both shipping compositors use.
  *
@@ -180,7 +283,7 @@ static vgc_verdict_t check_ring(char *d, size_t n)
  * ★ THIS IS THE ONE CASE THAT DRAWS TWICE AND MUST *NOT* CLEAR BETWEEN, which
  * is why it takes no sum() hook either. vgc_harness.h's rule is about
  * sub-RENDERS -- separate pictures measured one after another, as in cases 5,
- * 6 and 11. Here the two draws compose ONE picture and the second is meant to
+ * 7 and 12. Here the two draws compose ONE picture and the second is meant to
  * land on the first, so the buffer holds the whole render when check() and the
  * harness's default sum() read it. Clearing between would erase the plate the
  * inset is supposed to punch through. */
@@ -202,7 +305,7 @@ static vg_lite_error_t run_ring_two_draws(void)
     return acc;
 }
 
-/* ---- 5. path/evenodd-vs-nonzero --------------------------------------------
+/* ---- 6. path/evenodd-vs-nonzero --------------------------------------------
  * Nested rects with the SAME winding, drawn under each fill rule. EVEN_ODD
  * must cut the hole, NON_ZERO must fill solid -- that difference IS the fill
  * rule, and it is the only thing this case asks about.
@@ -264,25 +367,38 @@ static vgc_verdict_t check_evenodd_nonzero(char *d, size_t n)
     return (s_eo_rim && !s_eo_centre && nz_rim && nz_centre) ? VGC_OK : VGC_BROKEN;
 }
 
-/* ---- 6. path/self-intersecting ---------------------------------------------
+/* ---- 7. path/self-intersecting ---------------------------------------------
  * A pentagram: ONE contour that crosses itself. The centre pentagon is EMPTY
  * under EVEN_ODD (crossing number 2) and FILLED under NON_ZERO (winding 2),
  * and the five tips are filled under both. This is the case that distinguishes
  * the two fill rules on a single contour -- so unlike case 5 it should pass on
- * this GC355, which makes it case 5's control as well as its own probe.
+ * this GC355, which makes it case 6's control as well as its own probe.
  *
  * Vertices: r=50 about (64,64), at -90 + k*144 degrees, k = 0..4, connected in
  * that order. Integers, rounded once here so the geometry is fixed.
  *
  * ★ THE TWO SAMPLE POINTS HAVE MARGIN, WHICH MATTERS BECAUSE THIS IS A
- * CONTROL -- a false BROKEN here would wrongly discredit the whole matrix.
- * Computed against the ROUNDED integer vertices below, as perpendicular
- * distance to the nearest of the five edges: centre (64,64) is 15.00 px clear
- * (edge V2-V3), tip (64,22) is 2.45 px clear (edge V0-V1). The tip is the
- * tight one by construction -- it sits inside a spike -- and 2.45 px is still
- * two full pixels of antialiased boundary away from the 50% threshold. Both
- * were then confirmed by rendering this exact integer path through a host
- * scanline rasteriser: see the file header. */
+ * CONTROL -- a false BROKEN here would wrongly discredit case 6, one of the
+ * three headline probes. The margins are ANALYTIC: perpendicular distance from
+ * the sample to the nearest of the five edges of the ROUNDED integer path.
+ * Centre (64,64) is 15.00 px clear (edge V2-V3); tip (64,40) is 7.97 px clear
+ * (edge V0-V1).
+ *
+ * ★ THE TIP SAMPLE IS (64,40), NOT THE (64,22) THIS STARTED AT. Both lie in
+ * the top spike with crossing number 1 and winding 1, so the case asks exactly
+ * the same question -- but 22 is only 2.45 px from an edge, which was the
+ * tightest point in the whole matrix and sitting on a CONTROL. Sweeping the
+ * axis of symmetry, clearance peaks at y=40: 2.45 px at 22, 4.91 at 30, 7.97
+ * at 40, 5.00 at 44. That is 3.3x the margin for nothing, and 40 is still
+ * 8.55 px above the inner pentagon's upper vertices at y=48.55, so it cannot
+ * stray into the region this case requires to be EMPTY under EVEN_ODD.
+ *
+ * ★ AND NOTE WHAT THE HOST SUITE CANNOT SAY ABOUT THIS. Its rasteriser has no
+ * antialiasing and samples at pixel centres, so it confirms INSIDE/OUTSIDE and
+ * nothing more -- it is structurally unable to tell whether 2.45 px survives a
+ * real AA boundary or a half-pixel raster offset, which is the only question
+ * a margin is about. That is why the number is defended analytically here
+ * rather than by pointing at a green test. */
 
 static const int STAR[5][2] = {
     {  64,  14 },   /* -90 deg */
@@ -314,7 +430,7 @@ static vg_lite_error_t run_self_intersecting(void)
     vgc_draw_path(&p, VG_LITE_FILL_EVEN_ODD, VGC_FILL_COLOR, &acc);
     vgc_finish_into(&acc);
     s_star_eo_centre = vgc_is_filled(vgc_px(64, 64));   /* centre pentagon */
-    s_star_eo_tip    = vgc_is_filled(vgc_px(64, 22));   /* inside the top point */
+    s_star_eo_tip    = vgc_is_filled(vgc_px(64, 40));   /* inside the top point */
     s_star_eo_sum    = vgc_scratch_sum();
 
     vgc_arena_reset();
@@ -336,24 +452,27 @@ static uint32_t sum_self_intersecting(void)
 static vgc_verdict_t check_self_intersecting(char *d, size_t n)
 {
     const int nz_centre = vgc_is_filled(vgc_px(64, 64));
-    const int nz_tip    = vgc_is_filled(vgc_px(64, 22));
+    const int nz_tip    = vgc_is_filled(vgc_px(64, 40));
     snprintf(d, n, "eo_centre=%d,eo_tip=%d,nz_centre=%d,nz_tip=%d",
              s_star_eo_centre, s_star_eo_tip, nz_centre, nz_tip);
     return (!s_star_eo_centre && s_star_eo_tip && nz_centre && nz_tip)
            ? VGC_OK : VGC_BROKEN;
 }
 
-/* ---- 7-11. path/format-* ---------------------------------------------------
+/* ---- 8-12. path/format-* ---------------------------------------------------
  * The SAME right triangle in each of the four path coordinate formats. The
  * driver reads path data as an array of the FORMAT's element width -- opcodes
  * included -- so each format needs its own typed array rather than a shared
  * int32_t arena.
  *
- * Vertices (10,10),(70,10),(10,70): area 1800 px, and inside the signed 8-bit
- * range so VG_LITE_S8 can express it. Each format's own case checks its fill
- * count against that analytic area, so each stands alone; path/format-agreement
- * then checks all four counts against EACH OTHER, which is the cross-format
- * question the per-format cases cannot ask.
+ * Vertices (10,10),(70,10),(10,70): area 1800 px, all of them small positive
+ * integers so VG_LITE_S8 can hold them. Note what that does NOT cover: every
+ * coordinate here is 10 or 70, so a sign-extension bug in the narrow formats
+ * is invisible to these cases and they must not be read as evidence about one.
+ * Negative coordinates are a clipping question and belong to Phase 3. Each
+ * format's own case checks its fill count against the analytic area, so each
+ * stands alone; path/format-agreement then checks all four against EACH OTHER,
+ * which is the cross-format question the per-format cases cannot ask.
  *
  * ★ AN OPCODE IS ONE BYTE AT THE BASE OF A FORMAT-WIDTH SLOT, NOT A VALUE OF
  * THE FORMAT'S TYPE -- which is invisible for S8/S16/S32 and WRONG for FP32.
@@ -454,14 +573,24 @@ static vg_lite_error_t run_fmt_f32(void)
 static vgc_verdict_t check_fmt(char *d, size_t n)
 {
     const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
+    /* ★ AREA ALONE DOES NOT SAY "THE RIGHT TRIANGLE", it says "roughly the
+     * right amount of ink" -- and a mirrored or transposed triangle has
+     * exactly the same area, so a format whose coordinates decoded x and y the
+     * wrong way round would pass a count-only check. Two samples pin the
+     * ORIENTATION against the hypotenuse x+y=80: (20,20) is deep inside
+     * (sum 41), (60,60) well outside (sum 121), and no reflection of this
+     * triangle about either axis or the diagonal satisfies both. Cheap, and it
+     * turns "some shape of the right size" into "this shape". */
+    const int in  = vgc_is_filled(vgc_px(20, 20));
+    const int out = vgc_is_filled(vgc_px(60, 60));
     /* +/-8%: the triangle's perimeter is ~205 px, so a pixel of antialiased
      * boundary either way is ~5.7% of 1800. Sampling at pixel centres alone
      * costs -1.7% (1770 measured on the host reference), so the band has to
      * hold both; it still rejects a dropped draw (0) and any wrong shape this
      * case could plausibly produce. */
     const int lo = TRI_AREA - TRI_AREA * 8 / 100, hi = TRI_AREA + TRI_AREA * 8 / 100;
-    snprintf(d, n, "fill=%d,expect=%d", fill, TRI_AREA);
-    return (fill >= lo && fill <= hi) ? VGC_OK : VGC_BROKEN;
+    snprintf(d, n, "fill=%d,expect=%d,in=%d,out=%d", fill, TRI_AREA, in, out);
+    return (fill >= lo && fill <= hi && in && !out) ? VGC_OK : VGC_BROKEN;
 }
 
 /* path/format-agreement: renders all four again, in one run, and compares.
@@ -472,6 +601,23 @@ static vgc_verdict_t check_fmt(char *d, size_t n)
 
 static int      s_agree[4];
 static uint32_t s_agree_sum;
+/* ★ THE PER-FORMAT FULL-BUFFER CHECKSUMS WERE BEING COMPUTED AND THROWN AWAY.
+ * run() already hashes each render; folding them only into s_agree_sum spends
+ * them on repeat= and leaves the check comparing four INTEGERS. Four renders
+ * each wrong the same way agree perfectly on a count, and so do four different
+ * shapes of equal area -- so a count-only agreement is far weaker than data
+ * already in hand.
+ *
+ * ★ REPORTED, NEVER ASSERTED, and that is deliberate rather than timid: FP32
+ * may legitimately reach the same shape down a different precision path, so
+ * requiring bit-equality would manufacture a `broken` out of a correct GPU. As
+ * a reported field it is strictly additive -- same_px=1 on silicon settles
+ * cross-format agreement far more strongly than four equal integers ever
+ * could, and same_px=0 alongside four EQUAL counts is itself a finding worth
+ * having in the transcript. Note the null case it CANNOT distinguish: four
+ * empty buffers are also bit-identical, which is why the zero-count test below
+ * is what actually fails that render. */
+static int      s_agree_same_px;
 
 static vg_lite_error_t run_fmt_agreement(void)
 {
@@ -496,6 +642,7 @@ static vg_lite_error_t run_fmt_agreement(void)
         s_agree[i] = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
         sums[i]    = vgc_scratch_sum();
     }
+    s_agree_same_px = (sums[1] == sums[0] && sums[2] == sums[0] && sums[3] == sums[0]);
     s_agree_sum = vgc_fnv(sums, sizeof(sums));
     return acc;
 }
@@ -504,8 +651,10 @@ static uint32_t sum_fmt_agreement(void) { return s_agree_sum; }
 
 static vgc_verdict_t check_fmt_agreement(char *d, size_t n)
 {
-    snprintf(d, n, "s8=%d,s16=%d,s32=%d,fp32=%d",
-             s_agree[0], s_agree[1], s_agree[2], s_agree[3]);
+    /* 83 bytes worst case against VGC_DETAIL_MAX's 96, counted rather than
+     * hoped: four %d bounded by the 16384-pixel target, plus same_px. */
+    snprintf(d, n, "s8=%d,s16=%d,s32=%d,fp32=%d,same_px=%d",
+             s_agree[0], s_agree[1], s_agree[2], s_agree[3], s_agree_same_px);
     /* NON-ZERO FIRST, and it is not belt-and-braces: four EMPTY renders agree
      * perfectly, so equality alone makes this case green on a GPU that draws
      * nothing at all. Testing slot 0 here and equality below gives each test
@@ -517,7 +666,7 @@ static vgc_verdict_t check_fmt_agreement(char *d, size_t n)
     return VGC_OK;
 }
 
-/* ---- 12. path/degenerate-zero-area -----------------------------------------
+/* ---- 13. path/degenerate-zero-area -----------------------------------------
  * A zero-height rect. BOTH outcomes are acceptable -- nothing drawn, or a
  * hairline on the degenerate row -- because the point is that the outcome is
  * DEFINED and RECORDED rather than a crash or a hang. Anything OUTSIDE the
@@ -566,6 +715,10 @@ static vgc_verdict_t check_degenerate(char *d, size_t n)
 const vgc_case_t vgc_path_cases[] = {
     { "path/single-contour-rect",     run_single_rect,       check_single_rect,       NULL },
     { "path/multi-contour-disjoint",  run_multi_contour,     check_multi_contour,     NULL },
+    /* Same geometry and the SAME predicate as the line above; the only
+     * variable is the contour-boundary CLOSE encoding. Adjacent on purpose --
+     * the pair is read as one answer. */
+    { "path/multi-contour-close-padded", run_multi_contour_padded, check_multi_contour,  NULL },
     { "path/two-contour-ring-nonzero",run_ring_two_contour,  check_ring,              NULL },
     { "path/two-draws-ring",          run_ring_two_draws,    check_ring,              NULL },
     { "path/evenodd-vs-nonzero",      run_evenodd_nonzero,   check_evenodd_nonzero,   sum_evenodd_nonzero },

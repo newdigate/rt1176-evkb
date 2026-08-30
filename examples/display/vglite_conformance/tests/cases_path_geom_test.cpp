@@ -234,17 +234,34 @@ static void parse_path(const vg_lite_path_t *p)
     }
 }
 
+/* Set by arm 3: model a GPU that accepts everything and draws NOTHING. */
+static int g_draw_nothing;
+
 void vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
                    vg_lite_error_t *acc)
 {
     (void)acc;
     parse_path(p);
     if (g_one_contour_only && g_ncon > 1) g_ncon = 1;
+    if (g_draw_nothing) g_ncon = 0;
+
+    /* ★ THE BOUNDING BOX IS ENFORCED, because on hardware it IS enforced and
+     * getting it wrong is silent. The driver derives its tessellation window
+     * from path->bounding_box; a box that under-covers the geometry clips the
+     * render while every vg_lite_* call returns SUCCESS -- the exact failure
+     * class this whole example exists to catch. Every box in the file under
+     * test is correct today, but nothing CHECKED that, and Phase 2 and 3
+     * authors will write new ones. Honouring it here turns a bbox typo into a
+     * host-visible failure instead of a bench cycle. Four lines. */
+    const float bx0 = p->bounding_box[0], by0 = p->bounding_box[1];
+    const float bx1 = p->bounding_box[2], by1 = p->bounding_box[3];
 
     for (int y = 0; y < VGC_H; y++) {
         const float sy = (float)y + 0.5f;
+        if (sy < by0 || sy > by1) continue;
         for (int x = 0; x < VGC_W; x++) {
             const float sx = (float)x + 0.5f;
+            if (sx < bx0 || sx > bx1) continue;
             int wind = 0, cross = 0;
             for (int c = 0; c < g_ncon; c++) {
                 const int s = g_cstart[c], len = g_clen[c];
@@ -273,8 +290,10 @@ void vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
 typedef struct {
     vgc_verdict_t   verdict;
     vg_lite_error_t api;
+    vg_lite_error_t api2;      /* the SECOND run's status -- the harness prints it */
     uint32_t        oob;
     int             repeat_same;
+    int             hook_distinct;  /* a sum() hook must not be the live buffer */
     char            detail[VGC_DETAIL_MAX];
 } case_result_t;
 
@@ -285,13 +304,21 @@ static void run_one(const vgc_case_t *c, case_result_t *r)
     vgc_px_oob_reset();
     vgc_clear();
     r->api = c->run();
-    const uint32_t sum1 = c->sum ? c->sum() : vgc_scratch_sum();
+    const uint32_t live1 = vgc_scratch_sum();
+    const uint32_t sum1  = c->sum ? c->sum() : live1;
+    /* ★ A HOOK THAT RETURNS THE LIVE BUFFER IS A HOOK THAT DOES NOTHING, and
+     * the failure is invisible: repeat= keeps comparing something, just not
+     * every sub-render. vgc_harness.h names a multi-render case without a
+     * working hook as its top risk, and this is the only place that can see
+     * it. Cases WITHOUT a hook are exempt by construction -- for them sum1 IS
+     * live1. */
+    r->hook_distinct = c->sum ? (sum1 != live1) : 1;
     r->verdict = c->check(r->detail, sizeof(r->detail));
     r->oob = vgc_px_oob();
 
     vgc_arena_reset();
     vgc_clear();
-    (void)c->run();
+    r->api2 = c->run();
     const uint32_t sum2 = c->sum ? c->sum() : vgc_scratch_sum();
     r->repeat_same = (sum1 == sum2);
 }
@@ -300,9 +327,18 @@ static void run_one(const vgc_case_t *c, case_result_t *r)
  * the table is a control and must survive that model unchanged. */
 static int is_multi_contour_probe(const char *id)
 {
-    return strcmp(id, "path/multi-contour-disjoint")   == 0 ||
-           strcmp(id, "path/two-contour-ring-nonzero") == 0 ||
-           strcmp(id, "path/evenodd-vs-nonzero")       == 0;
+    /* ★ path/multi-contour-close-padded IS IN THIS SET, and its membership is
+     * a statement about the MODEL, not about silicon. Both model rasterisers
+     * read the opcode byte and ignore the slot's padding, so the padded case
+     * is byte-for-byte the same geometry to them and must behave exactly like
+     * multi-contour-disjoint in both arms. That agreement is what proves the
+     * two cases really are one variable apart. It is NOT evidence about the
+     * padding hypothesis -- only the bench can separate those, which is the
+     * whole reason that case exists. */
+    return strcmp(id, "path/multi-contour-disjoint")    == 0 ||
+           strcmp(id, "path/multi-contour-close-padded") == 0 ||
+           strcmp(id, "path/two-contour-ring-nonzero")  == 0 ||
+           strcmp(id, "path/evenodd-vs-nonzero")        == 0;
 }
 
 int main(void)
@@ -312,7 +348,7 @@ int main(void)
     /* The table's size is part of what the gate and expected_silicon.txt key
      * on, and both arms below iterate it -- so an accidental table edit must
      * not quietly shrink what this suite covers. */
-    CHECK(vgc_path_case_count == 12);
+    CHECK(vgc_path_case_count == 13);
 
     /* ---- ARM 1: a CORRECT GPU. Everything must be ok. ---------------------- */
     printf("-- arm 1: correct rasteriser (all contours, both fill rules)\n");
@@ -324,13 +360,23 @@ int main(void)
         const vgc_case_t *c = &vgc_path_cases[i];
         case_result_t r;
         run_one(c, &r);
-        printf("   %-32s %-6s %s\n", c->id,
+        printf("   %-34s %-6s %s\n", c->id,
                r.verdict == VGC_OK ? "ok" : r.verdict == VGC_BROKEN ? "BROKEN" : "skip",
                r.detail);
-        CHECK_CASE(r.verdict == VGC_OK,               c->id, "verdict ok");
-        CHECK_CASE(r.api == VG_LITE_SUCCESS,          c->id, "api success");
-        CHECK_CASE(r.oob == 0u,                       c->id, "no out-of-range px read");
-        CHECK_CASE(r.repeat_same,                     c->id, "repeat identical");
+        CHECK_CASE(r.verdict == VGC_OK,   c->id, "verdict ok");
+        /* ★ RELABELLED, because "api success" overstated it. This suite's
+         * vgc_finish_into is a no-op and its vg_lite_draw always succeeds, so
+         * the ONLY reachable non-success here is vgc_finish_path refusing an
+         * arena overflow. That is worth pinning -- an overflow returns early
+         * and leaves the case measuring a path it never drew -- but it is not
+         * a statement about any driver. */
+        CHECK_CASE(r.api == VG_LITE_SUCCESS,  c->id, "arena did not overflow");
+        CHECK_CASE(r.oob == 0u,               c->id, "no out-of-range px read");
+        CHECK_CASE(r.repeat_same,             c->id, "repeat identical");
+        /* api2 is a field the harness PRINTS and the gate can assert on; with
+         * the second run's status discarded it was never exercised at all. */
+        CHECK_CASE(r.api2 == r.api,           c->id, "second run's status matches");
+        CHECK_CASE(r.hook_distinct,           c->id, "sum hook is not the live buffer");
 
         /* One numeric pin, on the baseline only. 6400 is the exact analytic
          * area of an 80x80 integer-aligned rect under centre sampling, so it
@@ -361,7 +407,7 @@ int main(void)
         case_result_t r;
         run_one(c, &r);
         const int probe = is_multi_contour_probe(c->id);
-        printf("   %-32s %-6s %s\n", c->id,
+        printf("   %-34s %-6s %s\n", c->id,
                r.verdict == VGC_OK ? "ok" : r.verdict == VGC_BROKEN ? "BROKEN" : "skip",
                r.detail);
         CHECK_CASE(r.verdict == (probe ? VGC_BROKEN : VGC_OK), c->id,
@@ -380,7 +426,7 @@ int main(void)
             const vgc_case_t *c = &vgc_path_cases[i];
             if (!is_multi_contour_probe(c->id)) continue;
             run_one(c, &r);
-            if (strcmp(c->id, "path/multi-contour-disjoint") == 0)
+            if (strncmp(c->id, "path/multi-contour", 18) == 0)
                 CHECK_CASE(strstr(r.detail, "runs=1,") != NULL, c->id,
                            "reports one run, not four");
             else if (strcmp(c->id, "path/two-contour-ring-nonzero") == 0)
@@ -393,6 +439,35 @@ int main(void)
     }
     CHECK(g_parse_error == 0);
     CHECK(g_close_fixup_fired == 0);
+
+    /* ---- ARM 3: a GPU that accepts everything and DRAWS NOTHING. ---------
+     * ★ ARM 2 LEAVES A HOLE THIS CLOSES. Under the first-contour model nine of
+     * the thirteen cases are controls that must stay ok -- so nine predicates
+     * hard-wired to `return VGC_OK` would survive both arms so far. A null GPU
+     * is the cheapest model that forces almost all of them to speak: twelve of
+     * thirteen must go broken. The exception is real rather than a
+     * concession -- path/degenerate-zero-area accepts "nothing drawn" BY
+     * DESIGN (a zero-area path legitimately rasterises to nothing), so it is
+     * asserted ok here, which also pins that its `fill == 0` branch is live. */
+    printf("-- arm 3: null rasteriser (every call succeeds, nothing is drawn)\n");
+    g_one_contour_only = 0;
+    g_draw_nothing = 1;
+    g_parse_error = 0;
+
+    for (size_t i = 0; i < vgc_path_case_count; i++) {
+        const vgc_case_t *c = &vgc_path_cases[i];
+        case_result_t r;
+        run_one(c, &r);
+        const int degenerate = strcmp(c->id, "path/degenerate-zero-area") == 0;
+        printf("   %-34s %-6s %s\n", c->id,
+               r.verdict == VGC_OK ? "ok" : r.verdict == VGC_BROKEN ? "BROKEN" : "skip",
+               r.detail);
+        CHECK_CASE(r.verdict == (degenerate ? VGC_OK : VGC_BROKEN), c->id,
+                   degenerate ? "accepts an empty render by design"
+                              : "goes BROKEN when nothing is drawn");
+    }
+    g_draw_nothing = 0;
+    CHECK(g_parse_error == 0);
 
     printf("--\n");
     if (failed) {
