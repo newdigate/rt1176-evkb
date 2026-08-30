@@ -29,6 +29,7 @@ import_evkb_vglite()
 
 teensy_add_executable(vglite_conformance
     vglite_conformance.cpp
+    vgc_arena.cpp
     vgc_cases_path.cpp
     vgc_dangerous.cpp)
 teensy_target_link_libraries(vglite_conformance cores)
