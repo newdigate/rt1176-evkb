@@ -353,6 +353,18 @@ git add examples/display/vglite_conformance/vgc_predicates.h \
 git commit -m "NEW-32: conformance probe pixel predicates + host unit test"
 ```
 
+#### As-built: what review changed, and the contracts later tasks inherit
+
+Task 1 shipped over three commits — `f89f287` (as planned), `845b5ca` and `924b89d` (review fixes). **The code blocks above are the starting point, not the final state**; the committed files are authoritative. Two rounds of review found four surviving mutants, each demonstrated RED and then closed. What later tasks must know:
+
+1. **`vgc_count_runs_col` returns `-1` for an out-of-range `x`, not `0`.** The original `0` was indistinguishable from "this column has no filled runs", so a typo'd column index in a `check()` would read as *the contour did not render* — the instrument fabricating a GC355 defect, which is the exact risk this whole exercise is built to avoid. Changed while there were zero callers.
+2. **Callers of `vgc_filled_rows` must seed `ymin`/`ymax` with a value outside `[0,h)`**, and must check the return value before reading them. Task 3's `check_degenerate` does both.
+3. **`stride_words >= w` is a documented precondition**, not a checked one — deliberately, since every caller is in-tree and a runtime check would be overbuilding for an instrument whose value is its simplicity.
+4. **`vgc_is_filled` is valid ONLY under the black-background/white-fill convention.** Phase 2's colour cases will need their own predicate — a pure-red fill makes this one return 0 for every pixel, reading as "nothing rendered".
+5. **The test now follows the tree's `PASS:`/`FAIL:` per-check convention** (`tools/gate-vacuity.test.sh`'s shape) rather than aborting on the first `assert`. For an instrument, "which predicates are still trustworthy" is the question you most want answered on a red run — a first-failure abort tells you nothing about the other four. 39 checks; a red run reports `predicates_test: FAILED (N of 39 checks)`.
+
+★ **The single most valuable fix was the FNV NUL case.** A `strlen`-flavoured `vgc_fnv` (`i < n && b[i]`) survived the original suite. The scratch buffer clears to `0xFF000000`, whose first byte is `0x00`, so that bug would return the offset basis for *every* render and make the `repeat=` determinism check vacuously green forever — with nothing else in the tree able to see it. Both new pins (`0xDC954658`, `0x050C5D1F`) were computed independently before being written down.
+
 ---
 
 ### Task 2: Harness header and the example skeleton (builds, engine-absent path only)
