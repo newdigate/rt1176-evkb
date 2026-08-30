@@ -559,11 +559,13 @@ CLONED both from GitHub at the new pins (confirmed in the configure log's
 `git clone`/`Already at requested ref` lines, not assumed) and its gate
 PASSED against that fetched-source ELF. `LICENSE-AUDIT: PASS` the same day,
 `display/synthui_fader_test` manifest walked at 24703 dep paths. Vacuity
-suite ran GREEN, but at **25/25**, not the 28/28 the 2026-08-29 entry below
-states — recounting the `report` call sites in `tools/gate-vacuity.test.sh`
-also gives 25, so that entry's 28 looks like a documentation slip rather
-than a case count that changed; left as written below rather than edited,
-per the convention of not rewriting a prior measurement's own account.
+suite ran GREEN at **25/25** — and that exposed a wrong number in the
+2026-08-29 entry below, which claimed 28/28. Re-counted two ways (a live
+run's `PASS:` lines, and the suite's own `report` call sites): 25 both
+times. No case was lost; the 28 was a miscount carried in from a summary,
+and it has been CORRECTED in place rather than left standing, because a
+stale pass-count is exactly the kind of number a later sweep gets diffed
+against.
 
 ✅ **Measured 2026-08-29: 123 gates discovered, 121 passed, 2 failed** on
 the NEW-23 fader close-out — `rt1176:display/synthui_fader_test` green in
@@ -574,8 +576,14 @@ its CMakeCache — the build-dir-state class `git status` cannot see), and
 `m2_rx_demo[txaggr]` passed idle the same day (the documented
 load-sensitivity class). `LICENSE-AUDIT: PASS` the same day with the new
 `examples/display/synthui_fader_test` manifest entry walked (24672 dep
-paths). Vacuity suite 28/28 the same day, the three new fader cases
+paths). Vacuity suite 25/25 the same day, the three new fader cases
 included (corrupted golden and missing damage counter both fail by name).
+★ That figure read "28/28" until 2026-08-30; it was WRONG — a miscount
+carried into this entry from a subagent's summary, not a suite that shrank.
+Counted twice since: `grep -c "^PASS:"` on a live run gives 25, and the
+suite's own `report` call sites agree. A pass COUNT in this file is a claim
+like any other; re-derive it from a run rather than from a report about a
+run.
 ★ The sweep ran via a FRESH `/tmp/fd23` symlink: `/tmp/ev` still points at
 the `rt1176-evkb-m2-maya-w161` checkout, and the wrong-tree sweep it would
 have produced is the exact trap the 2026-08-23 note warns about — read the
