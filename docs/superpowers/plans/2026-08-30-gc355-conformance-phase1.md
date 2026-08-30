@@ -2081,6 +2081,42 @@ git add examples/display/vglite_conformance/expected_silicon.txt \
 git commit -m "NEW-32: pre-registered silicon expectations + drift checker"
 ```
 
+#### As-built: the `pair:` mechanism, and why it is not an escape hatch
+
+Shipped as `803157a`. The plan's flat `<id> <verdict> <repeat>` format could not express the discriminator: `path/multi-contour-close-padded` has TWO scientifically admissible outcomes, and pinning it as an ordinary expected-`broken` cell would have turned the *good* result — the narrow rule, the most valuable answer the matrix can produce — into a red gate.
+
+A verdict may now also be **`pair:<name>`**, deferring the case to a set of joint tuples enumerated by `pair` lines:
+
+```
+path/multi-contour-disjoint     pair:contour-encoding  same
+path/multi-contour-close-padded pair:contour-encoding  same
+
+pair contour-encoding path/multi-contour-disjoint=broken,path/multi-contour-close-padded=broken meaning=wide-one-contour-rule-confirmed-on-a-second-encoding
+pair contour-encoding path/multi-contour-disjoint=broken,path/multi-contour-close-padded=ok     meaning=narrow-rule-a-zero-padded-CLOSE-slot-terminates-the-path
+```
+
+The checker matches the observed TUPLE and prints the matching `meaning=`, so a transcript records which hypothesis the boot selected rather than merely "green".
+
+★ **Four rules stop this becoming a general "any of these is fine" escape hatch**, each a CONFIG ERROR (exit 2) rather than a silent pass:
+1. **Joint, not per-case.** `disjoint=broken` appears in EVERY admissible tuple, so the mechanism cannot silence drift on it — `disjoint` turning `ok` still reds the checker. Verified: `disjoint=ok,close-padded=ok` fails and lists both admissible tuples.
+2. Every tuple must assign a verdict to **exactly** the members — a member cannot be quietly dropped while the pair keeps passing.
+3. A pair must admit **≥2 and strictly fewer than 2^members** tuples. One admitting every combination is rejected by name as an escape hatch.
+4. Every tuple needs a **distinct `meaning=`** slug — an outcome that cannot be said to mean something has no business being admissible, and distinctness stops the list being padded with copies to satisfy rule 3.
+
+Separately, any `broken` or `pair:` line must carry a non-empty `#` reason or the file is rejected: a new quirk cannot be pinned in without stating what was believed.
+
+★ **The checker reads fields BY NAME, not by position** — the case line carries `api2=` between `api=` and `pixel=`, the exact trap that had already broken the gate's per-id grep once in this work.
+
+Demonstrated: green; a control flipping to `broken`; a known quirk silently turning `ok` (drift in the *other* direction — a checker that only looked for regressions would report that as health); a shrinking matrix; `repeat` → `differs`; the QEMU capture REFUSED by name rather than diffed; both admissible arms green with their meanings printed; and all four anti-abuse rules firing.
+
+---
+
+### Task 8 as-built
+
+`docs/gc355-vglite-quirks.md` shipped as `1b09b83`; the VGLite README cross-link as `687cc43` in that sibling repo (neither pushed). Every case id and every file/line citation was verified against the source rather than carried from this plan — `CHIPID 0x355` confirmed for the Series `evkb.cmake` selects, `vg_lite_path.c:556-570` confirmed inside `vg_lite_append_path`, and the "no caller" claim re-grepped (the only hits are LVGL's ThorVG shim, gated by `LV_USE_VG_LITE_THORVG=0` and not built).
+
+★ Two `(none)` rows in Known-but-not-yet-probed carry a reason amounting to **un-probeable**, not "not done yet": the 64-byte alignment would have to provoke a front-end hang the boot cannot recover from, and an unmapped target would make EVERY case read broken rather than isolating as a row. Said explicitly so a later phase does not treat them as a backlog. The stale-IRQ row is different again — the probe cannot recreate the defect but DOES witness the fix each boot via `vgc_timeouts=`/`vgc_irqs=`, so it is marked `(none, by design)`.
+
 ---
 
 ### Task 8: `docs/gc355-vglite-quirks.md` skeleton
