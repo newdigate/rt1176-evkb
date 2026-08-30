@@ -12,19 +12,26 @@ safe usage · evidence**.
 > distinguishes a working feature from a broken one, so the only currency here
 > is a probe case that looked at pixels.
 
-## ⚠ SILICON STATUS: **NOT YET MEASURED**
+## ✅ SILICON STATUS: **MEASURED 2026-08-30**
 
-**Phase 1 has not been run on the board.** Every verdict in the Phase 1 table
-below is the **PRE-REGISTERED EXPECTATION** from
-`examples/display/vglite_conformance/expected_silicon.txt` — a prediction
-written *before* the boot, so that the boot can confirm or refute a stated
-claim rather than rubber-stamp whatever the board printed.
+Transcript: `examples/display/vglite_conformance/transcript_hw_evkb.txt`.
+VGLite Series `gc355/0x0_1216`, `vgc_chip_id=0x00000355`, target 128×128
+BGRA8888, tessellation 64×64, `vgc_timeouts=0 vgc_irqs=75`.
+Result: `cases=13 ok=12 broken=1 repeat_differs=1`.
 
-**Do not quote a verdict from this document as a measurement.** Until this
-banner is replaced with a transcript date, the Verdict column says what we
-*expect*, not what the GC355 *does*. The words `expected` and `UNKNOWN` in that
-column are load-bearing. After the Phase 1 boot each cell is replaced with the
-measured answer and this section is replaced with the transcript's date.
+**TWO BOOTS, BYTE-IDENTICAL** — every verdict and every detail number. That
+matters: this tree has seen a GC355 defect hide behind exactly one boot
+(NEW-20's winding-2 track, ten boots and ten checksums), so a single-boot GPU
+result is not trusted here.
+
+Verify a fresh transcript against the pre-registered expectation with
+`tools/vglite-conformance-check.sh`; it fails on drift in **either**
+direction.
+
+**Three of the Phase 1 predictions were WRONG, all in the same direction** —
+predicted `broken`, measured `ok`. They are recorded as measured, with the
+reason for each change written into `expected_silicon.txt`, and they are the
+reason [the mechanism note](#what-is-and-is-not-established) below exists.
 
 Phases 2, 3 and 4 have no cases built at all; their sections are marked
 accordingly and their rows are claims carried over from working code, not
@@ -77,14 +84,14 @@ status banner.
 
 | Feature | Verdict | Safe usage | Case |
 |---|---|---|---|
-| single-contour filled path | expected OK | the only path shape to rely on | `path/single-contour-rect` |
-| several disjoint contours in ONE path | expected BROKEN | **one contour per path, one `vg_lite_draw` per contour** | `path/multi-contour-disjoint` |
-| the same, with CLOSE slots padded `0x01010101` | **UNKNOWN — the discriminator** | see [the discriminator](#the-discriminator-a-padded-close-slot) below | `path/multi-contour-close-padded` |
-| hole cut by a reversed inner contour (non-zero) | expected BROKEN | don't; draw a filled plate, then an inset plate in the backdrop colour | `path/two-contour-ring-nonzero`, control `path/two-draws-ring` |
-| `VG_LITE_FILL_EVEN_ODD` vs `NON_ZERO` across nested contours | expected BROKEN | the fill rule cannot rescue a dropped contour | `path/evenodd-vs-nonzero` |
-| fill rules on ONE self-intersecting contour | expected OK | both rules honoured — this is the fill-rule usage that works | `path/self-intersecting` |
-| path coordinate formats S8 / S16 / S32 / FP32 | expected OK | all four usable; **the opcode is one BYTE at the base of a format-width slot**, not a value of the format's type, so each format needs its own typed array | `path/format-s8`, `path/format-s16`, `path/format-s32`, `path/format-fp32`, agreement: `path/format-agreement` |
-| degenerate (zero-area) geometry | expected OK | safe to emit; nothing, or a hairline on the degenerate row — do not rely on which | `path/degenerate-zero-area` |
+| single-contour filled path | **OK** — `fill=6400`, exactly the analytic area | the only path shape to rely on | `path/single-contour-rect` |
+| four DISJOINT contours in ONE path, ordinary CLOSE | **BROKEN** — `runs=1` of 4, `fill=1393` (one bar plus antialiasing) | **one contour per path, one `vg_lite_draw` per contour** | `path/multi-contour-disjoint` |
+| the same, with CLOSE slots padded `0x01010101` | **OK** — `runs=4`, `fill=5120`. **The encoding is the only variable.** | see [the discriminator](#the-discriminator-a-padded-close-slot) below | `path/multi-contour-close-padded` |
+| hole cut by a reversed inner contour (non-zero) | **OK** — `rim=1 centre=0`, the hole IS cut. **Prediction refuted.** | the plate + inset-plate construction still works and is what ships; this row no longer forces it | `path/two-contour-ring-nonzero`, control `path/two-draws-ring` |
+| `VG_LITE_FILL_EVEN_ODD` vs `NON_ZERO` across nested contours | **OK** — `eo_centre=0 nz_centre=1`, both rules honoured. **Prediction refuted.** BUT `repeat=differs` | the only case in the matrix whose two identical renders differ — see the nondeterminism note | `path/evenodd-vs-nonzero` |
+| fill rules on ONE self-intersecting contour | **OK** — pentagram centre empty under EVEN_ODD, filled under NON_ZERO | both rules honoured — this is the fill-rule usage that works | `path/self-intersecting` |
+| path coordinate formats S8 / S16 / S32 / FP32 | **OK** — all four `fill=1830`, and `same_px=1`: the four renders are BIT-IDENTICAL, not merely equal in area | all four usable; **the opcode is one BYTE at the base of a format-width slot**, not a value of the format's type, so each format needs its own typed array | `path/format-s8`, `path/format-s16`, `path/format-s32`, `path/format-fp32`, agreement: `path/format-agreement` |
+| degenerate (zero-area) geometry | **OK** — `fill=0`, nothing drawn | safe to emit; nothing, or a hairline on the degenerate row — do not rely on which | `path/degenerate-zero-area` |
 | a path with no `VLC_OP_END` | **UNPROBED in the default build** | never emit one; refuse a truncated path rather than drawing it | `path/unterminated` — opt-in `-DVGC_DANGEROUS=ON` only |
 
 Notes on three of those rows:
@@ -101,10 +108,22 @@ Notes on three of those rows:
   the case exists so the outcome is *recorded* if someone chooses to look, not
   so it rides every boot.
 
-### The discriminator: a padded CLOSE slot
+### The discriminator: a padded CLOSE slot — **ANSWERED 2026-08-30**
 
-**This is the most important open question in this document.** Two hypotheses
-fit every observation this tree has made, and one boot separates them.
+**The padded encoding renders; the ordinary one does not.**
+
+```
+path/multi-contour-disjoint      pixel=broken   runs=1, expect=4, fill=1393
+path/multi-contour-close-padded  pixel=ok       runs=4, expect=4, fill=5120
+```
+
+Identical geometry, identical predicate, identical column; the *only*
+difference is that the second pads its contour-boundary `VLC_OP_CLOSE` slots to
+`0x01010101`. `expected_silicon.txt` records this as the pair's
+`narrow-rule-a-zero-padded-CLOSE-slot-terminates-the-path` outcome, and both
+boots produced it.
+
+The background that made this experiment worth running follows.
 
 `path/multi-contour-disjoint` and `path/multi-contour-close-padded` are the
 two arms of **one experiment**: identical geometry, identical predicate,
@@ -163,6 +182,50 @@ punishing the discovery it was built to catch. `disjoint=broken` is pinned in
 > what both compositors ship.
 
 ---
+
+### What IS and IS NOT established
+
+**Settled.** The CLOSE encoding matters, decisively — see the numbers above.
+Four disjoint bars in one path render as one contour with the ordinary
+`01 00 00 00` slot and as all four with `01 01 01 01`.
+
+**Refuted.** *"This GC355 renders only the FIRST CONTOUR of a path"*, **as
+stated**, is wrong. Two nested-contour paths using the **ordinary** CLOSE
+encoding rendered **both** contours correctly — the non-zero ring cut its hole
+(`rim=1 centre=0`) and the same-winding nest honoured both fill rules
+(`eo_centre=0 nz_centre=1`). A truncate-at-the-first-CLOSE story explains the
+four bars and explains **neither** of these, because both carry the same
+CLOSE-then-MOVE boundary.
+
+**Open.** What distinguishes them. The matrix does not separate:
+
+| candidate | what would settle it |
+|---|---|
+| DISJOINT vs NESTED contours | a case with **two disjoint** bars |
+| FOUR contours vs TWO | a case with **four nested** rings |
+| the winding relationship | both of the above, compared |
+
+Two cases, one further boot. That is the obvious Phase 1b.
+
+**What to do meanwhile.** Keep following one-contour-per-path in
+`synthui_rotary_knob_gpu.cpp` and `synthui_fader_gpu.cpp`. It is the
+conservative reading, it is known to work, and nothing above licenses relaxing
+it — the padded-CLOSE result says a *different* construction also works, not
+that the current one is unnecessary.
+
+### Nondeterminism: `path/evenodd-vs-nonzero`
+
+The only case in the matrix reporting `repeat=differs`. Its two **identical**
+back-to-back renders produce different pixels — and they do so
+**reproducibly**: byte-identical on both boots. So this is not boot-to-boot
+noise but a repeatable in-boot difference between two identical draw
+sequences, which is a stranger and more tractable thing.
+
+It matters even though the pixels are *right*: a nondeterministic path is
+unsafe to build a delta-rendering compositor on, which is exactly how NEW-20's
+winding-2 track defect presented before it was found. Both shipping
+compositors guard against this class with a delta-equality check run per boot;
+nothing here suggests relaxing that.
 
 ## Known, but not yet probed
 
