@@ -87,10 +87,19 @@ int main(void)
     assert(vgc_count_runs_col(buf, W, H, W, 8) == 0);
 
     /* --- vgc_filled_rows: the degenerate-geometry extent ------------------ */
-    int ymin = -1, ymax = -1;
+    /* ★ THE SENTINEL MUST BE A VALUE THE IMPLEMENTATION CANNOT PRODUCE.
+     * vgc_filled_rows tracks its extent in internal lo/hi initialised to -1,
+     * so a test that primed ymin/ymax to -1 could not see the single most
+     * likely way to break the untouched contract: dropping the `if (n)` guard
+     * writes -1 over -1 and the assertion below passes unchanged. Measured --
+     * with the guard removed and -1 sentinels, this suite stayed GREEN. -99 is
+     * outside the implementation's whole value space (a real answer is a row
+     * index in [0,h), an untouched answer is whatever we put here), so the
+     * assertion now has power in exactly the case it exists for. */
+    int ymin = -99, ymax = -99;
     clear_bg();
     assert(vgc_filled_rows(buf, W, H, W, &ymin, &ymax) == 0);
-    assert(ymin == -1 && ymax == -1);             /* untouched when nothing is filled */
+    assert(ymin == -99 && ymax == -99);           /* untouched when nothing is filled */
     set_fill(3, 7, 9, 9);                         /* rows 7..8 */
     assert(vgc_filled_rows(buf, W, H, W, &ymin, &ymax) == 12);
     assert(ymin == 7 && ymax == 8);
