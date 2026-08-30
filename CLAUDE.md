@@ -583,6 +583,43 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-08-30: 124 gates discovered, 123 passed, 1 failed, 0 SKIP**,
+on the NEW-32 Phase 1 close-out (`display/vglite_conformance`, the GC355/VGLite
+conformance harness — green in 10 s on its first sweep). The ONE red is
+`m2_hci_probe[hci]`, the SAME bench-configured-build-dir class as 2026-08-27/29
+and dispositioned the same way — checked directly rather than assumed: its
+`CMakeCache.txt` still carries `M2RADIO_IW416_BT_FW`, `M2_BT_UART_DNLD=ON` and
+`M2_BT_ASSERT_CTS=ON` from the concurrent BT bench workstream (dated Aug 29), so
+it runs a bench-configured ELF against fake-controller assertions. Not a
+regression. `LICENSE-AUDIT: PASS` the same day with the new
+`examples/display/vglite_conformance` manifest walked (**129 dep paths**).
+Vacuity suite **29/29**, re-derived from a live run — four new cases
+(`green_still_passes_vglite_conformance`, the `pixel=ok` tripwire, the
+`api2=success` tripwire, the truncated matrix), each demonstrated RED by name
+first.
+★ **QEMU cannot reach ONE LINE of this example's pixel logic** — every case
+reports `pixel=skip` with no GC355 — so it carries THREE HOST SUITES
+(`tests/run.sh`, **209 checks**) over the pure predicates, the path arena, and
+the case geometry itself. The geometry suite compiles the REAL case functions
+against three model rasterisers: a correct GPU, a first-contour-only GPU, and a
+GPU that draws nothing. **The negative arms are the point** — demonstrated: a
+case hard-wired to `VGC_OK` leaves arm 1 GREEN and is caught only by arm 3, so a
+positive-only suite is equally consistent with a matrix that cannot detect
+anything.
+★ Silicon: `cases=13 ok=12 broken=1 repeat_differs=1`, `vgc_timeouts=0`, TWO
+BOOTS BYTE-IDENTICAL, diffed against the PRE-REGISTERED `expected_silicon.txt`
+by `tools/vglite-conformance-check.sh`. Three predictions were REFUTED and each
+carries a written reason; the transcript was never pasted over the expectation.
+See the VGLite note in Architecture for what that measurement changed.
+★ **`LinkServer flash … load` REFUSED THIS EXAMPLE'S `.elf` and accepted its
+`.hex`** — `Flash operation exited with code -11`, 0 of 38060 bytes written, 4/4
+reproducible, while `vglite_probe` (32 KB) and `synthui_fader_test` (302 KB, one
+write) flashed clean immediately before and after. So it is neither size nor a
+wedged probe: it is LinkServer's ELF program-header path choking on this image.
+`flash … load build/<name>.hex` writes the same bytes and `verify` reports
+"File matches flash" on both sections. Reach for the `.hex` before suspecting
+the board.
+
 ✅ **Measured 2026-08-30: 123 gates discovered, 122 passed, 1 failed**, on
 the NEW-23 GPU-compositor close-out (`display/synthui_fader_test` gained the
 GC355 compositor; `fd_fps mfps_med=30448` accepted on silicon against the
@@ -1302,24 +1339,39 @@ not hung.
   2-3 tick runs survive per frame). **Rule for any future vg_lite path in this
   tree: build and submit one contour per draw call — never rely on multiple
   `VLC_OP_MOVE`s inside one path to render more than the first.**
-  ★★ **THAT ONE-CONTOUR RULE MAY BE OVER-BROAD, and NEW-32 Phase 1 is what
-  will settle it.** NXP's own driver carries a `CHIPID == 0x355`-gated
-  workaround (`vg_lite_path.c:556-570`, inside `vg_lite_append_path`) that pads
-  a `VLC_OP_CLOSE` element slot with `0x01010101` — triggered PRECISELY when a
-  CLOSE is followed by a MOVE, i.e. at a contour boundary. Every path this tree
-  builds writes CLOSE as a bare `int32_t`, so its slot is `01 00 00 00` — and
-  `VLC_OP_END` is `0x00`, meaning **every contour boundary we have ever emitted
-  carries three END bytes inside the CLOSE slot**. Nothing here calls
-  `vg_lite_append_path` (the only hits are LVGL's ThorVG PC shim, not built),
-  so the rule above was measured ONLY on the unpadded encoding.
-  `display/vglite_conformance`'s `path/multi-contour-close-padded` is the
-  discriminator: identical geometry to `path/multi-contour-disjoint` with the
-  CLOSE slots padded, so the encoding is the only variable. If it renders and
-  its neighbour does not, the real rule is the far narrower "a CLOSE slot
-  padded with `0x00` terminates the path" and both compositors could drop their
-  one-contour workarounds. **Until that boot, keep following the
-  one-contour-per-path rule** — it is the conservative reading and it is known
-  to work.
+  ★★ **THAT ONE-CONTOUR RULE IS REFUTED AS STATED — measured 2026-08-30, two
+  boots byte-identical.** `display/vglite_conformance` ran it as a controlled
+  experiment and the wide rule did not survive. What DID: the **CLOSE
+  ENCODING** matters, decisively. Four DISJOINT bars in one path render as ONE
+  contour with the ordinary `01 00 00 00` CLOSE slot (`runs=1`, `fill=1393` —
+  one bar plus antialiasing) and as ALL FOUR with the slot padded to
+  `01 01 01 01` (`runs=4`, `fill=5120`). Identical geometry, identical
+  predicate; the encoding is the only variable. That padding is exactly NXP's
+  own `CHIPID == 0x355` workaround (`vg_lite_path.c:556-570`, inside
+  `vg_lite_append_path` — which nothing here calls, the only hits being LVGL's
+  ThorVG PC shim), and `VLC_OP_END` being `0x00` is why: every contour boundary
+  this tree has ever emitted carries three END bytes inside its CLOSE slot.
+  ★★ **But the wide rule is refuted, not merely narrowed, and the mechanism is
+  NOT identified.** Two NESTED-contour paths using the ORDINARY encoding
+  rendered BOTH contours correctly — the non-zero ring cut its hole
+  (`rim=1 centre=0`) and the same-winding nest honoured both fill rules
+  (`eo_centre=0 nz_centre=1`). A truncate-at-the-first-CLOSE story explains the
+  four bars and explains NEITHER of those, which carry the same CLOSE-then-MOVE
+  boundary. Three Phase-1 predictions were wrong in exactly this direction
+  (predicted `broken`, measured `ok`); each is recorded with its reason in
+  `expected_silicon.txt` rather than re-goldened away. What the matrix does not
+  separate is DISJOINT-vs-NESTED from FOUR-contours-vs-TWO — two more cases and
+  one boot would.
+  ★ **KEEP FOLLOWING ONE-CONTOUR-PER-PATH** in `synthui_rotary_knob_gpu.cpp`
+  and `synthui_fader_gpu.cpp` meanwhile. It is the conservative reading, it is
+  known to work, and the padded-CLOSE result says a DIFFERENT construction also
+  works — not that the current one is unnecessary.
+  ★ `path/evenodd-vs-nonzero` is the matrix's only `repeat=differs`: its two
+  IDENTICAL back-to-back renders produce different pixels, REPRODUCIBLY
+  (byte-identical on both boots). Not boot-to-boot noise but a repeatable
+  in-boot difference between two identical draw sequences — the class that hid
+  NEW-20's winding-2 track defect, and the reason both compositors keep a
+  per-boot delta-equality check.
   ★ `docs/gc355-vglite-quirks.md` is the reference for all of this — one row
   per feature (verdict · safe usage · evidence), every row citing the
   `display/vglite_conformance` case id that establishes it, so a claim without
