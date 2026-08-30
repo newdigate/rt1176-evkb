@@ -343,6 +343,7 @@ examples/display/synthui_fader_test:synthui_fader_test \
 examples/display/synthui_knob_test:synthui_knob_test \
 examples/display/synthui_step_test:synthui_step_test \
 examples/display/vglite_lvgl_test:vglite_lvgl_test \
+examples/display/vglite_conformance:vglite_conformance \
 examples/display/vglite_probe:vglite_probe \
 examples/dualcore/cm4_audio_test:cm4_audio_test \
 examples/dualcore/cm4_audiostream_test:cm4_audiostream_test \

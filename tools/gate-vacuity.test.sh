@@ -329,4 +329,54 @@ else
     echo "SKIP: synthui_fader_test vacuity (example or fixture missing)"
 fi
 
+# --- 9. vglite_conformance: green fixture passes; a fabricated ok verdict, a
+# fabricated api2=success and a truncated matrix all fail by name (NEW-32).
+# The ok tripwire is the whole reason this gate exists -- QEMU has no GC355, so
+# a harness that reported `ok` for cases it never ran would sail through every
+# other assertion. The api2 case pins a NEAR-MISS the gate was originally
+# written with: the tripwire's first form grepped `api=success`, which does NOT
+# match a fabricated `api2=success`, so half the verdict surface was
+# unprotected. The truncated-matrix case pins the count check, which is what
+# stops a short capture reading as a smaller matrix that happened to pass.
+VGC="examples/display/vglite_conformance"
+if [ -d "$EVKB/$VGC" ] && [ -f "$EVKB/$VGC/transcript_qemu.txt" ]; then
+    run_gate "$VGC" "run_qemu.sh" "$EVKB/$VGC/transcript_qemu.txt"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_vglite_conformance" $result
+
+    # A fabricated passing verdict must fail BY NAME even though every genuine
+    # assertion still passes on the rest of the capture.
+    cp "$EVKB/$VGC/transcript_qemu.txt" "$WORK/vgc_ok.txt"
+    echo "vgc case=path/single-contour-rect api=success pixel=ok detail=fill=6400 repeat=same" \
+        >> "$WORK/vgc_ok.txt"
+    run_gate "$VGC" "run_qemu.sh" "$WORK/vgc_ok.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1                                          # must not pass
+    echo "$OUT_TEXT" | grep -q "a case reported ok in QEMU" || result=1  # and name it
+    report "vgc_ok_tripwire_fires" $result
+
+    # The near-miss: api2=success alone, with every other column in the skip
+    # shape, so ONLY the `api2?=success` form of the tripwire can see it.
+    cp "$EVKB/$VGC/transcript_qemu.txt" "$WORK/vgc_api2.txt"
+    echo "vgc case=path/single-contour-rect api=skip api2=success pixel=skip detail=engine=absent repeat=skip" \
+        >> "$WORK/vgc_api2.txt"
+    run_gate "$VGC" "run_qemu.sh" "$WORK/vgc_api2.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "an API call succeeded in QEMU" || result=1
+    report "vgc_api2_tripwire_fires" $result
+
+    # A capture missing one case line must fail as a short matrix, not pass as
+    # a smaller one.
+    grep -v "^vgc case=path/degenerate-zero-area" \
+        "$EVKB/$VGC/transcript_qemu.txt" > "$WORK/vgc_short.txt"
+    run_gate "$VGC" "run_qemu.sh" "$WORK/vgc_short.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "expected 13 case lines, got 12" || result=1
+    report "vgc_truncated_matrix_fails" $result
+else
+    echo "SKIP: vglite_conformance vacuity (example or fixture missing)"
+fi
+
 exit $FAILED

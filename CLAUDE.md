@@ -106,9 +106,9 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **123 gates** — the merge of
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **124 gates** — the merge of
 THREE independent lines, plus the first two Bluetooth gates, NEW-20's one new
-gate and NEW-23's one. The Arduino WiFi facade added THREE
+gate, NEW-23's one and NEW-32's one. The Arduino WiFi facade added THREE
 (`networking/wifi_client_test` and its `[wifi]` variant — enumeration plus a
 REAL 802.11 scan against the model's deliberate zero-BSS reply, asserting an
 honest WL_NO_SSID_AVAIL — and `networking/wifi_server_test`); the uAP line added
@@ -121,7 +121,7 @@ its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
 `networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
 more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
 That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
-123.
+124.
 
 NEW-20 added ONE — `display/rotary_knob_bench`, the RotaryKnob render-strategy
 bench: 12 cells ({vector,bitmap,strip} × {sw,gpu} × {notch,facet}) in ONE ELF,
@@ -218,6 +218,46 @@ bit-identical across four SW4 boots (`fd_crc=0x141D0A41`,
 goldens are unmoved; the GPU set is recorded only in
 `transcript_hw_evkb.txt` (two golden sets, never reconciled — same
 discipline as `vglite_lvgl_test` and `acid_box`).
+
+NEW-32 Phase 1 added ONE — `display/vglite_conformance`, the GC355/VGLite
+conformance harness (spec 2026-08-30): a case table of `{id, run, check}`
+triples rendering one at a time into a 128×128 BGRA8888 EXTMEM scratch, each
+case printing TWO INDEPENDENT VERDICTS — `api=` (what the driver said) and
+`pixel=` (what a structural CPU-side predicate found) — because every GC355
+defect this tree has hit reported success while producing the wrong picture.
+Phase 1 is thirteen paths/contours/winding cases. Its gate asserts the HONEST
+NEGATIVE (`vgc_engine=absent`, all thirteen `pixel=skip`) with three tripwires
+— no case may report `pixel=ok`, none may report `pixel=broken`, and no
+`api=`/`api2=` may say `success` with no GPU — plus a case-line COUNT check and
+a `case_begin`-vs-`case` equality check, since every tripwire above is
+satisfied VACUOUSLY by an empty matrix and an unfinished case is how a GPU hang
+would present. 123 before it.
+★ **No panel.** The core's startup brings up the SEMC SDRAM before `setup()`,
+so EXTMEM is live without `Display.begin()`; this is the only display example
+linking neither MipiDisplay nor LVGL.
+★ **The tessellation buffer is 64×64 against a 128×128 target, deliberately.**
+A tess buffer ≥ the target puts the driver in its `ts_is_fullscreen == 1`
+regime, where scissor left/top clamping is silently disabled — a different
+machine from the one the shipping compositors run on (720×1280 target, 256×256
+tess). Phase 3's `scissor/tess-fullscreen` case probes the other regime on
+purpose.
+★ **QEMU cannot reach one line of the pixel logic** (every case reports
+`pixel=skip`), so the example carries THREE HOST SUITES run by
+`examples/display/vglite_conformance/tests/run.sh` — 209 checks over the pure
+predicates, the path arena, and the case geometry itself. The geometry suite
+compiles the REAL case functions against three model rasterisers: a correct
+GPU (all thirteen must report `ok`), a first-contour-only GPU modelling this
+GC355's known defect (the probe cases must go BROKEN **by name**, every control
+must stay `ok`), and a GPU that draws nothing. **The negative arms are the
+point** — a positive-only suite is equally consistent with a matrix that cannot
+detect anything, demonstrated: a case hard-wired to `VGC_OK` leaves arm 1 green
+and is caught only by arm 3.
+★ It says NOTHING about what the silicon does. The silicon matrix is ONE boot,
+diffed against the PRE-REGISTERED `expected_silicon.txt` by
+`tools/vglite-conformance-check.sh`, which fails on drift in EITHER direction:
+a quirk that silently DISAPPEARS after an SDK bump matters as much as a new
+one, because it means the driver changed under us.
+`docs/gc355-vglite-quirks.md` is the reference the matrix feeds.
 
 BT-1 added the tree's FIRST TWO BLUETOOTH GATES, both on the new
 `networking/m2_hci_probe`. `run_qemu.sh` is the card-ABSENT fallback — with no
@@ -1262,6 +1302,28 @@ not hung.
   2-3 tick runs survive per frame). **Rule for any future vg_lite path in this
   tree: build and submit one contour per draw call — never rely on multiple
   `VLC_OP_MOVE`s inside one path to render more than the first.**
+  ★★ **THAT ONE-CONTOUR RULE MAY BE OVER-BROAD, and NEW-32 Phase 1 is what
+  will settle it.** NXP's own driver carries a `CHIPID == 0x355`-gated
+  workaround (`vg_lite_path.c:556-570`, inside `vg_lite_append_path`) that pads
+  a `VLC_OP_CLOSE` element slot with `0x01010101` — triggered PRECISELY when a
+  CLOSE is followed by a MOVE, i.e. at a contour boundary. Every path this tree
+  builds writes CLOSE as a bare `int32_t`, so its slot is `01 00 00 00` — and
+  `VLC_OP_END` is `0x00`, meaning **every contour boundary we have ever emitted
+  carries three END bytes inside the CLOSE slot**. Nothing here calls
+  `vg_lite_append_path` (the only hits are LVGL's ThorVG PC shim, not built),
+  so the rule above was measured ONLY on the unpadded encoding.
+  `display/vglite_conformance`'s `path/multi-contour-close-padded` is the
+  discriminator: identical geometry to `path/multi-contour-disjoint` with the
+  CLOSE slots padded, so the encoding is the only variable. If it renders and
+  its neighbour does not, the real rule is the far narrower "a CLOSE slot
+  padded with `0x00` terminates the path" and both compositors could drop their
+  one-contour workarounds. **Until that boot, keep following the
+  one-contour-per-path rule** — it is the conservative reading and it is known
+  to work.
+  ★ `docs/gc355-vglite-quirks.md` is the reference for all of this — one row
+  per feature (verdict · safe usage · evidence), every row citing the
+  `display/vglite_conformance` case id that establishes it, so a claim without
+  a probe case is visibly a claim without evidence.
 - **Dual-core model**: the CM7 stages/boots/hot-swaps CM4 images and talks over
   the MU mailbox. Key constraints: main-eDMA completion IRQs reach the CM7
   only (CM4 interrupt-driven DMA needs eDMA_LPSR + an LPSR peripheral);
