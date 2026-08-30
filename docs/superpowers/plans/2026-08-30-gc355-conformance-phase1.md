@@ -1510,7 +1510,8 @@ Shipped as `db4c38a` plus a follow-up landing the host geometry test. Changes fr
 2. **`check_degenerate` seeds `-99`, not `-1`** — `-1` is the one sentinel `vgc_predicates.h` documents as unusable, and Task 1 measured a broken predicate staying green with it.
 3. **`s_fmt_fill[4]` dropped; `check_fmt` counts live pixels** like every other case. That removes four pieces of static state and with them the only route by which one format case could read another's leftovers.
 4. **`check_fmt_agreement`'s non-zero test was dead as written** (`!= s_agree[0] || == 0` — equality already implies slot 0 non-zero once the loop passes). Split so each test has one job.
-5. `VGC_FINISH_OR_RETURN` replaces the twelve inline error blocks; the `return` is in the name so the control flow is visible at the call site.
+5. `VGC_FINISH_OR_RETURN` replaces the ten inline error blocks; the `return` is in the name so the control flow is visible at the call site.
+6. `tests/stub/vg_lite.h` gained `VG_LITE_FP32 = 3` (verified against the real `inc/vg_lite.h`: S8/S16/S32/FP32 really are 0/1/2/3) — the stub now serves two suites and its header says what it models and what each suite must supply for itself.
 
 ★ **`path/two-draws-ring` draws twice WITHOUT clearing between, and that is correct** — it reads like a violation of the harness's "a multi-render case must clear itself" rule but is not. That rule concerns sub-renders measured one after another (cases 5, 6, 11); case 4's two draws compose ONE picture and the second is *meant* to land on the first. A ★ note in the file says so, because the obvious "fix" would silently erase the plate the inset punches through.
 
