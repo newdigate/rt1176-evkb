@@ -1315,9 +1315,25 @@ static int16_t s_tri_s16[] = { VLC_OP_MOVE, 10, 10, VLC_OP_LINE, 70, 10,
                                VLC_OP_LINE, 10, 70, VLC_OP_CLOSE, VLC_OP_END };
 static int32_t s_tri_s32[] = { VLC_OP_MOVE, 10, 10, VLC_OP_LINE, 70, 10,
                                VLC_OP_LINE, 10, 70, VLC_OP_CLOSE, VLC_OP_END };
-static float   s_tri_f32[] = { (float)VLC_OP_MOVE, 10, 10, (float)VLC_OP_LINE, 70, 10,
-                               (float)VLC_OP_LINE, 10, 70, (float)VLC_OP_CLOSE,
-                               (float)VLC_OP_END };
+/* ★ THE FP32 ARRAY ABOVE IS WRONG AS FIRST WRITTEN — corrected in Task 3.
+ * An opcode is ONE BYTE AT THE BASE OF A FORMAT-WIDTH SLOT, not a value of
+ * the format's type. `(float)VLC_OP_MOVE` is 2.0f = 0x40000000, whose first
+ * byte is 0x00 == VLC_OP_END, so the path terminates immediately: measured on
+ * the host reference rasteriser as `format-fp32 broken fill=0` and
+ * `format-agreement broken … fp32=0` — two fabricated BROKENs.
+ * Confirmed in two independent places in the driver:
+ *   vg_lite_path.c:223-227  the FP32 CLOSE->END fixup tests
+ *                           *(char*)((float*)path_data + num - 1) -- a CHAR
+ *                           read at the float slot's base;
+ *   vg_lite_stroke.c:5148   builds an FP32 path as
+ *                           `cpath = (char*)pathdata + offset;
+ *                            *cpath = VLC_OP_MOVE; fpath++;`
+ *                           -- one byte written, the whole 4-byte slot skipped.
+ * S8/S16/S32 get the right byte 0 for free on little-endian ARM, which is why
+ * only FP32 was affected. The committed file builds the FP32 array through its
+ * BYTES (a memcpy-based helper), rebuilt on each use so nothing can be left
+ * mutated between the harness's two identical runs. */
+static float   s_tri_f32[11];   /* built byte-wise -- see the ★ note above */
 
 static int s_fmt_fill[4];   /* s8, s16, s32, fp32 */
 
@@ -1485,6 +1501,26 @@ vgc_summary engine=absent cases=12 ok=0 broken=0 skip=12 dangerous=off repeat_di
 git add examples/display/vglite_conformance/vgc_cases_path.cpp
 git commit -m "NEW-32: paths/contours/winding conformance cases"
 ```
+
+#### As-built: what changed, and the third host suite
+
+Shipped as `db4c38a` plus a follow-up landing the host geometry test. Changes from the blocks above:
+
+1. **The FP32 array was wrong** — see the ★ note in the code above. It would have fabricated two BROKENs on the bench.
+2. **`check_degenerate` seeds `-99`, not `-1`** — `-1` is the one sentinel `vgc_predicates.h` documents as unusable, and Task 1 measured a broken predicate staying green with it.
+3. **`s_fmt_fill[4]` dropped; `check_fmt` counts live pixels** like every other case. That removes four pieces of static state and with them the only route by which one format case could read another's leftovers.
+4. **`check_fmt_agreement`'s non-zero test was dead as written** (`!= s_agree[0] || == 0` — equality already implies slot 0 non-zero once the loop passes). Split so each test has one job.
+5. `VGC_FINISH_OR_RETURN` replaces the twelve inline error blocks; the `return` is in the name so the control flow is visible at the call site.
+
+★ **`path/two-draws-ring` draws twice WITHOUT clearing between, and that is correct** — it reads like a violation of the harness's "a multi-render case must clear itself" rule but is not. That rule concerns sub-renders measured one after another (cases 5, 6, 11); case 4's two draws compose ONE picture and the second is *meant* to land on the first. A ★ note in the file says so, because the obvious "fix" would silently erase the plate the inset punches through.
+
+★ **`tests/cases_path_geom_test.cpp` is the third host suite, and its NEGATIVE arm is the point.** It compiles the REAL `run()`/`check()`/`sum()` functions and the real arena against a scanline reference rasteriser, in two arms:
+- **positive** — a correct rasteriser (all contours, both fill rules): all twelve must report `ok`;
+- **negative** — a rasteriser re-broken to drop every contour after the first, i.e. THIS GC355's actual defect: `path/multi-contour-disjoint`, `path/two-contour-ring-nonzero` and `path/evenodd-vs-nonzero` must go BROKEN **by name**, and all six controls plus the whole format set must stay `ok`.
+
+The negative arm is what makes the matrix trustworthy: it proves the probe cases can go red on the defect they are aimed at, and that a red there is not a harness artefact. Without it a green positive arm would be equally consistent with a matrix that cannot detect anything. It also settled three numbers the target cannot check — the star's sample points (centre 15.00 px clear of the nearest edge, tip 2.45 px), case 1's ±6 % band against a 320 px perimeter, and that pixel-centre sampling alone costs −1.7 % of the triangle's area, which the ±8 % band must hold *on top of* antialiasing.
+
+★ **It says nothing about what the silicon does.** It exercises this file's geometry against a MODEL of a correct GPU and a MODEL of the known defect. The silicon answer is `transcript_hw_evkb.txt` diffed against `expected_silicon.txt`, and a green host run must never be read as a bench result.
 
 ---
 
