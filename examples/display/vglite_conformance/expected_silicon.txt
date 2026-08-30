@@ -1,0 +1,132 @@
+# expected_silicon.txt - the PRE-REGISTERED silicon expectation for
+# display/vglite_conformance (NEW-32 Phase 1).
+# Copyright (c) 2026 Nicholas Newdigate
+# SPDX-License-Identifier: MIT
+#
+# Spec: docs/superpowers/specs/2026-08-30-gc355-conformance-design.md
+#
+# ★ WRITTEN BEFORE THE FIRST SILICON BOOT. Every verdict below is a PREDICTION
+# derived from the design's reasoning and from what this tree has already
+# measured about the GC355 -- not a transcription of what a board printed. That
+# ordering is the whole point of the file. A file written AFTER the boot cannot
+# be wrong, because it says whatever the board said; written first, the boot
+# CONFIRMS or REFUTES a stated claim, and a refuted prediction is a finding
+# rather than an embarrassment. (The design names the rubber-stamp hazard as a
+# risk in section 11; this file and tools/vglite-conformance-check.sh are the
+# control for it.)
+#
+# ★ EVERY CHANGE TO THIS FILE CARRIES A REASON, AND A VERDICT FLIPPING TO `ok`
+# NEEDS THE MOST. The temptation is identical to re-goldening a checksum
+# because the picture "looks fine": paste the transcript over the expectation
+# and the drift disappears along with the finding. So:
+#   * broken -> ok  is NOT good news until it is EXPLAINED. Either the driver
+#     changed under us (an SDK re-vendor, a Series/CHIPID switch, a
+#     vg_lite_options.h flag) or OUR USAGE changed (the case now encodes its
+#     path differently, so it is no longer asking the old question). Name
+#     which, in the line's reason, with the SHA or the pin that moved. An
+#     unexplained flip to ok means the safe-usage rules that shipping code
+#     (SynthUI's rotary and fader compositors) is BUILT ON may no longer be
+#     load-bearing -- or may no longer be sufficient. Both matter.
+#   * ok -> broken  is a new quirk or a regression in our usage; same
+#     obligation, opposite direction.
+#   * repeat same -> differs  is nondeterminism, which is a first-class GC355
+#     symptom in this tree (7 boots, 7 checksums on the fader) and a finding on
+#     its own even when the pixels are right.
+#   * adding or removing a case line means the matrix moved: run_qemu.sh's id
+#     list and the case table in vgc_cases_path.cpp must agree, or one of the
+#     three is now measuring less than the other two think.
+#
+# ★ WHAT THE CHECKER DOES WITH THIS FILE.
+#   tools/vglite-conformance-check.sh <transcript> [expected]
+# extracts `<id> <pixel> <repeat>` from the transcript's `vgc case=` lines and
+# diffs them against the table below. It FAILS ON DRIFT IN EITHER DIRECTION --
+# a quirk that silently DISAPPEARS matters as much as one that appears. A
+# disappearing quirk is not merely good news to be filed: it means the driver
+# moved under us, and the workarounds two shipping compositors carry could be
+# simplified (or, worse, have become the wrong shape). It also refuses a
+# transcript whose engine is not `gpu` by name rather than diffing it -- a QEMU
+# capture is all-skip and would "differ" from every line here for a reason that
+# is not drift -- and it fails when a case is present in one file and not the
+# other, because a matrix that quietly shrinks passes every per-case comparison
+# vacuously, the same way a SKIP hides in a gate count.
+#
+# ---- FORMAT ----------------------------------------------------------------
+#   <case-id>  <pixel-verdict>  <repeat>        # reason
+#
+#   pixel-verdict : ok | broken | pair:<name>
+#   repeat        : same | differs
+#
+# A `broken` or `pair:` line MUST carry a non-empty `#` reason; the checker
+# rejects the file (exit 2) otherwise, so a new broken cell cannot be added
+# without saying why it is expected.
+#
+# `pair:<name>` defers the PIXEL verdict of two-or-more cases to the joint
+# outcomes enumerated by the `pair` lines at the bottom of the file. It exists
+# for ONE situation: two cases that are a single experiment with more than one
+# scientifically admissible answer. See the pair block for what stops it being
+# an escape hatch. `repeat` is still pinned per case even for pair members --
+# nondeterminism is never admissible.
+#
+# ---- THE PATH MATRIX (Phase 1) ---------------------------------------------
+# Order matches vgc_cases_path.cpp's table, which is itself deliberate.
+
+path/single-contour-rect            ok       same    # THE BASELINE. A broken control invalidates every row below it -- this is the rect both shipping compositors draw thousands of times a second.
+path/multi-contour-disjoint         pair:contour-encoding  same    # Four bars, one path, ordinary CLOSE encoding. Predicted broken (runs=1, not 4) by the tree's recorded one-contour rule -- but see the pair block: the joint answer with close-padded is the finding, not this cell alone.
+path/multi-contour-close-padded     pair:contour-encoding  same    # THE DISCRIMINATOR. Identical geometry to the line above; the ONLY variable is that its contour-boundary CLOSE slots are padded 0x01010101 (NXP's own CHIPID==0x355 workaround, vg_lite_path.c:556-570) instead of 0x00000001. Both outcomes are admissible and each means something -- see the pair block.
+path/two-contour-ring-nonzero       broken   same    # Outer CW + reversed inner CCW in ONE path under NON_ZERO. The reversed contour is the SECOND one, so first-contour-only drops it and the ring fills solid. This is the exact shape that rendered a fader cap solid dark (NEW-23).
+path/two-draws-ring                 ok       same    # THE SAFE-USAGE CONTROL for the line above: same ring as plate + inset plate, two single-contour draws. This is what both shipping compositors do, so a broken here would mean the ground under SynthUI moved.
+path/evenodd-vs-nonzero             broken   same    # Nested same-winding rects under each fill rule. The EVEN_ODD hole needs the second contour, which first-contour-only drops, so EVEN_ODD fills solid and eo_centre reads 1.
+path/self-intersecting              ok       same    # A pentagram: ONE contour, so first-contour-only does not bite. Both fill rules must be honoured (EVEN_ODD empty centre, NON_ZERO filled) -- this is case 6's control as well as its own probe.
+path/format-s8                      ok       same
+path/format-s16                     ok       same
+path/format-s32                     ok       same    # The encoding every path in this tree already uses; a broken here would be the most consequential single result in the matrix.
+path/format-fp32                    ok       same
+path/format-agreement               ok       same    # The four formats must agree WITH EACH OTHER, not merely each be plausible on its own -- four identically-wrong renders would satisfy the four cases above and fail only here.
+path/degenerate-zero-area           ok       same    # A zero-height rect: nothing drawn OR a hairline within row 64 +/-1 both count as ok, because the point is that the outcome is DEFINED. Anything outside that band is invented geometry and reads broken.
+
+# ---- PAIRS: one experiment, more than one admissible answer ----------------
+#
+# ★ WHY THIS EXISTS. path/multi-contour-close-padded is not an independent
+# probe of a feature; it is the second arm of ONE experiment whose first arm is
+# path/multi-contour-disjoint. Two answers are both scientifically admissible
+# and both are worth the boot:
+#
+#   disjoint=broken, close-padded=broken
+#       The wide rule ("the GC355 renders only a path's FIRST contour") is
+#       confirmed on a SECOND encoding and is that much stronger.
+#   disjoint=broken, close-padded=ok
+#       The real rule is far NARROWER -- "a CLOSE slot padded with 0x00
+#       terminates the path" -- because VLC_OP_END is 0x00 and the arena's
+#       ordinary CLOSE is `01 00 00 00`, i.e. a CLOSE followed by three END
+#       bytes inside its own slot. This is the single most valuable result the
+#       matrix can produce: both shipping compositors could then drop their
+#       one-contour-per-draw workarounds by changing an encoding.
+#
+# Writing close-padded as a plain expected `broken` would turn the GOOD outcome
+# into a red gate, which is backwards -- the checker would be punishing the
+# discovery it was built to catch.
+#
+# ★ WHAT STOPS THIS BEING AN "ANY OF THESE IS FINE" ESCAPE HATCH. The
+# admissible set is over the JOINT tuple, not over each case separately, and
+# the checker enforces four things (each a config error, exit 2, not a silent
+# pass):
+#   1. A pair member has NO verdict of its own. Only the tuples below are
+#      admissible; any other combination is drift and fails by name. Note
+#      disjoint=broken is pinned in EVERY tuple, so this mechanism cannot
+#      silence drift on it -- disjoint turning ok still reds the checker, and
+#      that is correct: it would mean the unpadded encoding started working,
+#      which is a driver change needing an explanation.
+#   2. Every tuple must assign a verdict to EXACTLY the pair's members -- no
+#      more, no fewer -- so a member cannot be quietly dropped from the
+#      experiment while the pair keeps passing.
+#   3. A pair must admit at least two tuples and STRICTLY FEWER than all
+#      2^members combinations. A pair that admits everything is rejected as an
+#      escape hatch rather than accepted as an expectation.
+#   4. Every tuple carries a distinct `meaning=` slug: an outcome that cannot
+#      be said to MEAN something has no business being admissible, and
+#      distinctness stops the list being padded with copies to reach rule 3.
+#
+# Format: pair <name> <id>=<verdict>,<id>=<verdict>[,...] meaning=<slug>
+
+pair contour-encoding path/multi-contour-disjoint=broken,path/multi-contour-close-padded=broken meaning=wide-one-contour-rule-confirmed-on-a-second-encoding
+pair contour-encoding path/multi-contour-disjoint=broken,path/multi-contour-close-padded=ok     meaning=narrow-rule-a-zero-padded-CLOSE-slot-terminates-the-path
