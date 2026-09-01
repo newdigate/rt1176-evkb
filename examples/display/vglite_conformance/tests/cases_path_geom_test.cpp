@@ -17,7 +17,7 @@
  *   - one that draws NOTHING, under which fourteen of fifteen must go broken
  *     (degenerate-zero-area legitimately stays ok -- "nothing drawn" is an
  *     accepted outcome there); and
- *   - one that draws the right SHAPE plus 256 px of ink that is not in the
+ *   - one that draws the right SHAPE plus 400 px of ink that is not in the
  *     path, placed where no structural sample point or sampled column can see
  *     it, under which fourteen of fifteen must go broken BY THE COVERAGE
  *     FIELD (cover=stray:).
@@ -259,10 +259,10 @@ static int g_draw_nothing;
 static int g_stray_ink;
 
 #define STRAY_X0 0
-#define STRAY_X1 16
-#define STRAY_Y0 108
+#define STRAY_X1 20
+#define STRAY_Y0 104
 #define STRAY_Y1 124
-#define STRAY_PX ((STRAY_X1 - STRAY_X0) * (STRAY_Y1 - STRAY_Y0))   /* 256 */
+#define STRAY_PX ((STRAY_X1 - STRAY_X0) * (STRAY_Y1 - STRAY_Y0))   /* 400 */
 
 void vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
                    vg_lite_error_t *acc)
@@ -617,9 +617,11 @@ int main(void)
      * hard-wired to pass and all three arms would stay green. That is the
      * positive-only-suite hazard this file's own header names, one level down.
      *
-     * The model: the correct rasteriser, PLUS a 16x16 block of the draw colour
-     * at x 0..16, y 108..124 -- 256 px, more than every tolerance in the file
-     * under test (the largest is the pentagram's 139). It is deliberately
+     * The model: the correct rasteriser, PLUS a 20x20 block of the draw colour
+     * at x 0..20, y 104..124 -- 400 px, comfortably more than every tolerance
+     * in the file under test (the largest is the pentagram's 237, and a block
+     * that only just cleared it would make this arm a test of the block's
+     * size). It is deliberately
      * clear of every structural sample point (10,10), (20,20), (32,64),
      * (60,60), (64,40), (64,64) and of column 64, which vgc_count_runs_col
      * reads -- so NO structural predicate can see it. That is the point: this

@@ -112,24 +112,40 @@
  * comparison is reported inside `detail=` as cover=ok / cover=stray:<N> /
  * cover=short:<N> so a failure is diagnosable from a transcript alone.
  *
- * ★ TWO TOLERANCE CLASSES, DERIVED FROM THE MEASUREMENTS ABOVE RATHER THAN
- * CHOSEN:
+ * ★ EVERY TOLERANCE IS k * PERIMETER, NEVER A PERCENTAGE OF AREA, and the
+ * shape of that rule is itself a finding. Rasterisation error lives on the
+ * BOUNDARY, so it scales with boundary LENGTH; a percentage of area is only a
+ * proxy for that, and the proxy breaks down precisely on the thin spiky shapes
+ * where it would matter. The perimeter used is the sum of the EMITTED
+ * contours' perimeters -- not the rendered region's -- because an interior
+ * contour can still leave a tessellation seam even where it encloses nothing.
+ * Only k differs, and it is set by whether the boundary is axis-aligned:
+ *
  *   AXIS-ALIGNED (every edge horizontal or vertical, every coordinate an
- *     integer) -- silicon matches the analytic EXACTLY, proven twice. The
- *     bound is ABSOLUTE: perimeter/8, where the perimeter is the sum of the
- *     EMITTED contours' perimeters (not the rendered region's -- the larger,
- *     more forgiving figure, since an interior contour can still leave a
- *     tessellation seam). For the 80x80 baseline that is 40 px against a
- *     measured excess of 0, and for the nested rings 120 px against a
- *     measured 1171. Generous where the instrument is exact; two orders below
- *     stray scale.
- *   ANTIALIASED (any diagonal or curve) -- the boundary is real and the two
- *     rasterisers straddle the analytic: the host model samples pixel centres
- *     and UNDER-counts (triangle 1770), silicon OVER-counts (1830), against
- *     an analytic 1800. +/-5% = +/-90 holds both with 60 px to spare on each
- *     side and still rejects a 20% excess. 4% would also hold them, at 42 px
- *     of margin; 5% buys the extra without approaching the thing being
- *     caught.
+ *     integer) -- k = 1/8. Silicon matches the analytic EXACTLY here, proven
+ *     twice, so the whole bound is headroom: 40 px on the 80x80 baseline
+ *     against a measured excess of 0, 120 px on the nested rings against a
+ *     measured 1171.
+ *   ANTIALIASED (any diagonal or curve) -- k = 1/2, i.e. HALF A PIXEL of
+ *     coverage uncertainty along the boundary, which is the most an edge
+ *     thresholded at ~50% coverage can be out by. The two rasterisers
+ *     straddle the analytic: the host model samples pixel centres and
+ *     UNDER-counts (triangle 1770), silicon OVER-counts (1830), against 1800.
+ *     The triangle's 204 px of boundary gives 102, holding both with 72 px to
+ *     spare and still rejecting a 20% excess (360).
+ *
+ * ★ A FLAT +/-5% WAS TRIED FIRST AND WOULD HAVE PUT A FALSE `broken` ON A
+ * CONTROL, which is worth recording because it is the failure mode this file
+ * is most anxious about (a false broken on path/self-intersecting would
+ * wrongly discredit path/evenodd-vs-nonzero, one of the headline probes).
+ * Silicon's +30 on the triangle is ALL on the hypotenuse -- the legs are
+ * axis-aligned and those are exact -- so the measured rate is 30/84.85 =
+ * 0.354 px per unit of diagonal. The pentagram is 474 px of boundary and ALL
+ * of it diagonal, predicting ~168 px of legitimate excess. A 5% band on its
+ * 2792 px is 140: the control would have gone red on a correct render. Under
+ * k = 1/2 the bound is 237, which holds 168 and still catches 20% (558).
+ * The percentage rule was not merely loose in the wrong place -- it was the
+ * wrong quantity.
  *
  * ★ COVERAGE IS ONLY MEANINGFUL WHEN THE STRUCTURE IS RIGHT, so it is
  * evaluated ONLY IF the structural predicate passed; otherwise the case
@@ -173,16 +189,16 @@ static vgc_cover_t vgc_cover_within(int fill, int expect, int tol)
     return c;
 }
 
-/* Axis-aligned integer geometry: absolute bound of perimeter/8. */
+/* Axis-aligned integer geometry: 1/8 px of slack per unit of boundary. */
 static vgc_cover_t vgc_cover_axis(int fill, int expect, int perimeter)
 {
     return vgc_cover_within(fill, expect, perimeter / 8);
 }
 
-/* Anything with a diagonal or a curve: +/-5% of the analytic area. */
-static vgc_cover_t vgc_cover_aa(int fill, int expect)
+/* Anything with a diagonal or a curve: 1/2 px per unit of boundary. */
+static vgc_cover_t vgc_cover_aa(int fill, int expect, int perimeter)
 {
-    return vgc_cover_within(fill, expect, expect * 5 / 100);
+    return vgc_cover_within(fill, expect, perimeter / 2);
 }
 
 /* ---- 1. path/single-contour-rect ------------------------------------------
@@ -755,6 +771,12 @@ static const int STAR[5][2] = {
  * EVEN_ODD's area would be 3655 - 2*862.70 = 1929.60 -- not checked here, for
  * the same reason as evenodd-vs-nonzero: pass 1 is cleared before check(). */
 #define STAR_NZ_AREA 2792
+/* The five emitted edges, sum of |Vi - Vi+1| over the rounded integer
+ * vertices: 474.36, truncated. ALL of it diagonal -- the longest boundary in
+ * the matrix, on the second-smallest area -- which is exactly why this case
+ * settles that the tolerance must scale with perimeter and not with area.
+ * tol = 474/2 = 237, against a predicted silicon excess of ~168. */
+#define STAR_PERIM 474
 
 static int      s_star_eo_centre, s_star_eo_tip;
 static uint32_t s_star_eo_sum;
@@ -806,7 +828,7 @@ static vgc_verdict_t check_self_intersecting(char *d, size_t n)
     /* Pass 2 (NON_ZERO) is what is in the buffer -- see STAR_NZ_AREA. */
     const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
     const vgc_cover_t cv = structural
-        ? vgc_cover_aa(fill, STAR_NZ_AREA) : vgc_cover_na();
+        ? vgc_cover_aa(fill, STAR_NZ_AREA, STAR_PERIM) : vgc_cover_na();
     snprintf(d, n, "eo_centre=%d,eo_tip=%d,nz_centre=%d,nz_tip=%d,fill=%d,%s",
              s_star_eo_centre, s_star_eo_tip, nz_centre, nz_tip, fill, cv.s);
     return (structural && cv.ok) ? VGC_OK : VGC_BROKEN;
@@ -858,6 +880,11 @@ static vgc_verdict_t check_self_intersecting(char *d, size_t n)
  * pointer (it is the function that would perform that fixup). */
 
 #define TRI_AREA 1800
+/* 60 + 60 + 60*sqrt(2) = 204.85, truncated. Two legs axis-aligned and one
+ * hypotenuse; the whole figure is nevertheless in the ANTIALIASED class,
+ * because one diagonal is enough to put real coverage error on the boundary.
+ * tol = 204/2 = 102, against a model reading -30 and a silicon reading +30. */
+#define TRI_PERIM 204
 
 /* 11 slots each: MOVE x y | LINE x y | LINE x y | CLOSE | END. The opcode-only
  * slots (CLOSE, END) still occupy a full element -- the driver advances the
@@ -936,19 +963,20 @@ static vgc_verdict_t check_fmt(char *d, size_t n)
      * turns "some shape of the right size" into "this shape". */
     const int in  = vgc_is_filled(vgc_px(20, 20));
     const int out = vgc_is_filled(vgc_px(60, 60));
-    /* ★ +/-8% TIGHTENED TO +/-5%, AND THE JUSTIFICATION IS NOW A MEASUREMENT
-     * RATHER THAN AN ESTIMATE. 8% was sized from "the triangle's perimeter is
-     * ~205 px, so a pixel of antialiased boundary either way is ~5.7%". Both
-     * rasterisers have since been read: the host model under-counts at 1770
-     * (-1.7%, pixel-centre sampling) and silicon over-counts at 1830 (+1.7%),
-     * against the analytic 1800. The real spread is 60 px, not 205. +/-5% =
-     * +/-90 holds both with 60 px of margin on each side, and -- unlike 8% =
-     * 144 -- it is comfortably below the ~20% stray-geometry excess that
-     * four-nested-rings turned out to be carrying. This is the ANTIALIASED
-     * class: the hypotenuse is a real diagonal, so the perimeter/8 bound the
-     * axis-aligned cases use would be the wrong instrument here. */
-    const vgc_cover_t cv = (in && !out) ? vgc_cover_aa(fill, TRI_AREA)
-                                        : vgc_cover_na();
+    /* ★ +/-8% OF AREA REPLACED BY TRI_PERIM/2 = 102 px, AND THE JUSTIFICATION
+     * IS NOW A MEASUREMENT RATHER THAN AN ESTIMATE. 8% (144 px) was sized from
+     * "the triangle's perimeter is ~205 px, so a pixel of antialiased boundary
+     * either way is ~5.7%" -- the right instinct, expressed in the wrong
+     * units. Both rasterisers have since been read: the host model
+     * under-counts at 1770 (pixel-centre sampling) and silicon over-counts at
+     * 1830, against the analytic 1800. The real spread is 60 px, not 205.
+     * Half a pixel along the 204 px boundary is 102: it holds both readings
+     * with 72 px to spare and rejects the ~20% excess that four-nested-rings
+     * turned out to be carrying (360 px). This is the ANTIALIASED class --
+     * the hypotenuse is a real diagonal, so the k = 1/8 the axis-aligned
+     * cases use would be the wrong constant here. */
+    const vgc_cover_t cv = (in && !out)
+        ? vgc_cover_aa(fill, TRI_AREA, TRI_PERIM) : vgc_cover_na();
     snprintf(d, n, "fill=%d,expect=%d,in=%d,out=%d,%s",
              fill, TRI_AREA, in, out, cv.s);
     return (in && !out && cv.ok) ? VGC_OK : VGC_BROKEN;
@@ -1037,7 +1065,7 @@ static vgc_verdict_t check_fmt_agreement(char *d, size_t n)
             const int b = s_agree[worst] - TRI_AREA;
             if ((a < 0 ? -a : a) > (b < 0 ? -b : b)) worst = i;
         }
-        cv = vgc_cover_aa(s_agree[worst], TRI_AREA);
+        cv = vgc_cover_aa(s_agree[worst], TRI_AREA, TRI_PERIM);
     }
     /* 67 bytes worst case against VGC_DETAIL_MAX's 96, counted rather than
      * hoped: five %d each bounded by the 16384-pixel target (5 digits), plus
