@@ -86,12 +86,59 @@ uint32_t vgc_px(int x, int y)
 
 uint32_t vgc_scratch_sum(void) { return vgc_fnv(s_fb, sizeof(s_fb)); }
 
+/* ---- ★★ vg_lite_color_t IN, MEMORY WORD OUT. THE MODEL MODELS THE TARGET. --
+ * Every colour that reaches this model is a vg_lite_color_t, which is ABGR --
+ * alpha high, RED IN THE LOW BYTE. Every colour a predicate reads back is a
+ * scratch memory word, which for this VG_LITE_BGRA8888 target is ARGB -- alpha
+ * high, BLUE in the low byte (vgc_color.h: VGC_B=0, VGC_G=1, VGC_R=2,
+ * VGC_A=3). The two are not the same order, so the store has to convert, and
+ * this is where.
+ *
+ * ★ THE MAPPING IS MEASURED, NOT A CONVENTION CHOSEN HERE. vglite_probe
+ * cleared a VG_LITE_BGRA8888 target with the vg_lite_color_t 0xFF204060 --
+ * which the driver reads as ABGR, so B=0x20, G=0x40, R=0x60 -- and memory
+ * returned 0xFF604020, red in bits 23:16 (vglite_probe.cpp:56-59, quoted in
+ * vgc_color.h). So the conversion swaps bytes 0 and 2 and leaves bytes 1 and 3
+ * alone. This function reproduces that reading exactly: feed it 0xFF204060 and
+ * it returns 0xFF604020.
+ *
+ * ★★ WHY CONVERT AT ALL, RATHER THAN LETTING THE CASES SPEAK ABGR. Because the
+ * whole design compiles the REAL case functions against this model. A colour
+ * case written in vg_lite_color_t order to suit an unswizzled model would be
+ * WRONG ON SILICON -- the model would have dictated the cases instead of
+ * standing in for the hardware, which is the one thing a stand-in may never
+ * do. The model's framebuffer must contain what the real framebuffer contains.
+ *
+ * ★ AND THIS DOES NOT MAKE ARM 1 CIRCULAR. What is encoded here is a fact
+ * measured on silicon, not an assumption the suite then confirms about itself.
+ * A green arm 1 says the colour cases read this model correctly; it says
+ * NOTHING about whether the hardware still lays bytes out this way. That is
+ * color/solid-word-order's job, ON SILICON, ONCE PER BOOT -- the role
+ * path/single-contour-rect plays for geometry. Read its result before trusting
+ * any colour verdict below it, and never quote a green host suite in its
+ * place.
+ *
+ * ★ INVISIBLE TO PHASE 1, WHICH IS WHY THIS SAT UNDECIDED UNTIL NOW. Every
+ * path case draws VGC_FILL_COLOR (0xFFFFFFFF) over VGC_BG_COLOR (0xFF000000);
+ * both are FIXED POINTS of a byte-0/byte-2 swap, so no path arm can tell the
+ * two orders apart and all 199 of their checks are unmoved by this function
+ * existing. If one of them ever moves, the swizzle is in the wrong place. */
+static uint32_t mem_word(uint32_t abgr)
+{
+    return (abgr & 0xFF00FF00u)            /* alpha (byte 3) and green (byte 1) */
+         | ((abgr & 0x000000FFu) << 16)    /* red   byte 0 -> byte 2 */
+         | ((abgr >> 16) & 0x000000FFu);   /* blue  byte 2 -> byte 0 */
+}
+
 /* ONE clear implementation, and vgc_clear() is vgc_clear_to(VGC_BG_COLOR) --
  * the same shape vglite_conformance.cpp uses, for the same reason: two copies
- * are two chances to diverge on the half a caller cannot see. */
+ * are two chances to diverge on the half a caller cannot see. The parameter is
+ * a vg_lite_color_t, exactly as vg_lite_clear's is, so it converts on store
+ * like every other colour entering the buffer. */
 vg_lite_error_t vgc_clear_to(uint32_t abgr)
 {
-    for (size_t i = 0; i < (size_t)VGC_W * VGC_H; i++) s_fb[i] = abgr;
+    const uint32_t w = mem_word(abgr);
+    for (size_t i = 0; i < (size_t)VGC_W * VGC_H; i++) s_fb[i] = w;
     return VG_LITE_SUCCESS;
 }
 
@@ -232,35 +279,7 @@ static int g_stray_ink;
 #define STRAY_Y1 124
 #define STRAY_PX ((STRAY_X1 - STRAY_X0) * (STRAY_Y1 - STRAY_Y0))   /* 400 */
 
-/* ---- ★★ THE ONE FIDELITY GAP A COLOUR CASE WILL HIT FIRST -----------------
- * THIS MODEL'S FRAMEBUFFER HOLDS THE vg_lite_color_t WORD, NOT THE MEMORY
- * WORD, AND THE TWO ARE R<->B SWAPPED. The store below is `s_fb[o] = color`
- * (blended); on the board vg_lite_draw writes a BGRA8888 pixel whose memory
- * word is ARGB. vgc_color.h records the measurement -- vglite_probe cleared
- * with the vg_lite_color_t 0xFF204060 (ABGR: B=0x20, G=0x40, R=0x60) and read
- * 0xFF604020 back out of memory -- so vg_lite_color_t byte 0 is RED while
- * memory-word byte 0 is BLUE (VGC_B=0, VGC_R=2).
- *
- * It is invisible in Phase 1 and will not stay invisible. Every Phase 1 case
- * draws VGC_FILL_COLOR (0xFFFFFFFF) over VGC_BG_COLOR (0xFF000000), both
- * byte-symmetric, so no arm can tell the two orders apart -- which is exactly
- * why nothing here has ever had to decide. A colour case is the opposite:
- * color/solid-word-order fills pure red and asserts vgc_ch(px, VGC_R) ==
- * 0xFF, and against this model UNCHANGED that reads the BLUE byte and reports
- * pixel=broken on a case that is correct on silicon -- the instrument
- * fabricating a defect in the one case every later colour verdict is read
- * against.
- *
- * Deliberately NOT fixed here, because the fix is a decision about the colour
- * suite and not about the rasteriser: either this model swizzles on store (and
- * every existing sum/checksum in the path arms is unaffected only because
- * black and white are palindromes -- check that before believing it), or the
- * colour cases are written against vg_lite_color_t order and say so. Whoever
- * writes the colour case-geometry suite must choose ONE and pin it, the way
- * arena_test pins the opcode values. The ALPHA byte is byte 3 either way,
- * which is why the blend below can be order-agnostic.
- *
- * ---- the reference blend --------------------------------------------------
+/* ---- the reference blend --------------------------------------------------
  * SRC_OVER as `src*a + dst*(1 - a)` on the three colour bytes, with `a` the
  * source colour's alpha byte scaled 1/255, and `Sa + Da*(1 - Sa)` on the alpha
  * byte.
@@ -272,31 +291,52 @@ static int g_stray_ink;
  * expected_silicon.txt, and the two must agree. That is the discipline that
  * validated the pentagram in Phase 1b (analytic 2792.30 vs model 2792).
  *
- * ★★ THE COLOUR ROW IS NOT THE ONE THE DRIVER HEADER PRINTS AGAINST THIS MODE,
- * AND THAT DISAGREEMENT IS THE POINT OF color/premultiplied-srcover. Read
- * verbatim from ~/Development/VGLite/inc/vg_lite.h:
- *   :452  "S and D represent source and destination non-premultiplied RGB
+ * ★★ THE DRIVER'S OWN HEADER SUPPORTS TWO READINGS OF THIS MODE, AND THEY
+ * DISAGREE. This model implements ONE OF THEM. Read verbatim from
+ * ~/Development/VGLite/inc/vg_lite.h:
+ * ★ LINE NUMBERS ARE grep -n ON THAT FILE, NOT COPIED. The Phase 2 spec's
+ * version of this list cites :451/:457/:460 for the first three; measured here
+ * they are :452/:458/:461. The other two (:481, :137) agree. Same facts,
+ * one-off citations -- believe the grep.
+ *   :452  "S and D represent source and destination NON-PREMULTIPLIED RGB
  *          color channels."
- *   :461  VG_LITE_BLEND_SRC_OVER = 1   RGB: S + D*(1 - Sa)
- *   :462                                A:  Sa + Da*(1 - Sa)
- *   :481  VG_LITE_BLEND_NORMAL_LVGL = 11  RGB: S*Sa + D*(1 - Sa)
- *   :136-137  VG_LITE_BLEND_PREMULTIPLY_SRC_OVER is #defined to NORMAL_LVGL.
- * So the header states S is NON-premultiplied and then gives mode 1 an RGB row
- * with no `*Sa` in it, while mode 11 -- a genuinely different enumerator --
- * carries the `*Sa`. Taken literally, mode 1 over black would return the
- * SOURCE AT FULL STRENGTH whatever its alpha.
+ *   :454  "SP and DP represent source and destination alpha-premultiplied RGB
+ *          color channels (S*Sa, D*Da)."
+ *   :458  section heading: "Non-premultiplied Blending modes"
+ *   :461  VG_LITE_BLEND_SRC_OVER    = 1     RGB: S + D*(1 - Sa)
+ *   :462                                     A:  Sa + Da*(1 - Sa)
+ *   :481  VG_LITE_BLEND_NORMAL_LVGL = 11    RGB: S*Sa + D*(1 - Sa)
+ *   :136-137  #define VG_LITE_BLEND_PREMULTIPLY_SRC_OVER VG_LITE_BLEND_NORMAL_LVGL
  *
- * This model implements the OTHER reading -- `S*Sa + D*(1 - Sa)`, ordinary
- * non-premultiplied compositing -- because that is the "correct" column of the
- * Phase 2 design (section 3: white at alpha 0x80 over black is ~128 correct,
- * ~64 double-premultiply, 255 alpha-ignored), and because a rasteriser that
- * returned 255 there could not tell a right answer from a hardware defect.
- * ★ IT IS AN ASSUMPTION, NOT A FINDING. Which of the three the GC355 actually
- * does for mode 1 is unmeasured, and color/premultiplied-srcover exists to
- * measure exactly that -- so that case must ACCEPT all three outcomes and
- * report which it saw, never fail the two this model does not produce. A case
- * that only accepts this model's answer would be the instrument presupposing
- * its own result.
+ * Those statements cannot all be taken at face value at once:
+ *   - :452 and :458 file mode 1 under NON-premultiplied, but :461's
+ *     `S + D*(1 - Sa)` is the PREMULTIPLIED operator -- no `*Sa` term, so a
+ *     non-premultiplied S composites at full strength whatever its alpha.
+ *   - :481 gives a DIFFERENT enumerator the formula `S*Sa + D*(1 - Sa)`, which
+ *     is what :452's own convention makes SRC_OVER mean.
+ *   - :136-137 then aliases that one PREMULTIPLY_SRC_OVER. The names and the
+ *     formulas are inverted against each other.
+ *
+ * ★ THE TWO READINGS, LABELLED AS THE PHASE 2 SPEC LABELS THEM (section 3 --
+ * keep these letters agreeing with it; A and B swapped across two documents is
+ * the exact divergence this shared model exists to prevent):
+ *     reading A   S*Sa + D*(1 - Sa)   white @ 0x80 over black -> 128
+ *     reading B   S + D*(1 - Sa)      header-literal          -> 255
+ *
+ * ★ THIS MODEL IMPLEMENTS READING A, AND THAT IS A CHOICE, NOT A FINDING. A
+ * rasteriser that produced 255 could not tell reading B from a hardware defect,
+ * and 128 is the value the rest of Phase 2 is derived against. THE HARDWARE MAY
+ * DO READING B. Nothing here knows, and nothing here may be quoted as if it
+ * did.
+ *
+ * ★ SO THE CASES MUST NOT INHERIT THIS CHOICE, and they do not.
+ * color/premultiplied-srcover and blend/srcover-arithmetic ADMIT BOTH readings
+ * and report which they saw (`model=A` / `model=B` in detail=); only a third
+ * value is broken -- ~64 in case 2 being the double-premultiply defect.
+ * blend/srcover-double sidesteps the question altogether by predicting its
+ * second composite from its MEASURED first. A case that accepted only this
+ * model's answer would be the instrument presupposing its own result, and a
+ * green arm 1 would be evidence of nothing but its own construction.
  *
  * ★ THE ALPHA BYTE IS BLENDED BY ITS OWN ROW, `Sa + Da*(1 - Sa)` (:462), not
  * by the colour formula -- `Sa*Sa + Da*(1 - Sa)` is not any convention's
@@ -330,6 +370,20 @@ void vgc_draw_path_blend(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
                          vg_lite_blend_t blend, vg_lite_error_t *acc)
 {
     (void)acc;
+    /* vg_lite_color_t in, memory word out -- see mem_word. Converted ONCE, at
+     * the top, so every store below (shape and stray block alike) is in the
+     * same order the destination already is: blending an ABGR source against
+     * an ARGB destination would pair red with blue and produce a colour
+     * neither the hardware nor the case ever asked for.
+     *
+     * ★ CONVERTING BEFORE THE BLEND RATHER THAN AFTER IS SAFE, AND IT WAS
+     * MEASURED RATHER THAN ARGUED. model_blend is per-channel and takes its `a`
+     * from BYTE 3, which mem_word leaves alone, so the swizzle COMMUTES with
+     * the blend: mem_word(model_blend(s, d, m)) == model_blend(mem_word(s),
+     * mem_word(d), m). Checked over 800000 random (s, d) pairs across both
+     * modes -- 0 mismatches. That is why it belongs at the edge where the
+     * color argument enters and not inside the arithmetic. */
+    const uint32_t src = mem_word(color);
     parse_path(p);
     if (g_one_contour_only && g_ncon > 1) g_ncon = 1;
     if (g_draw_nothing) g_ncon = 0;
@@ -369,7 +423,7 @@ void vgc_draw_path_blend(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
             const int in = (rule == VG_LITE_FILL_EVEN_ODD) ? (cross & 1) : (wind != 0);
             if (in) {
                 const size_t o = (size_t)y * VGC_W + (size_t)x;
-                s_fb[o] = model_blend(color, s_fb[o], blend);
+                s_fb[o] = model_blend(src, s_fb[o], blend);
                 painted++;
             }
         }
@@ -402,11 +456,11 @@ void vgc_draw_path_blend(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
      * BLEND_NONE that is the plain store this has always been, and under
      * SRC_OVER a raw store would make the stray ink brighter than any pixel
      * the modelled GPU could actually produce. */
-    if (g_stray_ink && painted && color != VGC_BG_COLOR) {
+    if (g_stray_ink && painted && src != mem_word(VGC_BG_COLOR)) {
         for (int y = STRAY_Y0; y < STRAY_Y1; y++)
             for (int x = STRAY_X0; x < STRAY_X1; x++) {
                 const size_t o = (size_t)y * VGC_W + (size_t)x;
-                s_fb[o] = model_blend(color, s_fb[o], blend);
+                s_fb[o] = model_blend(src, s_fb[o], blend);
             }
     }
 }
