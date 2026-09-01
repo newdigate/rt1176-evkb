@@ -12,13 +12,21 @@
 #                         tolerances and predicates, against a model of a
 #                         correct GPU AND a model of this GC355's known
 #                         one-contour-per-path defect (C++)
+#   cases_color_test      the five colour/blend cases' sample point, tolerances,
+#                         reading bands and alpha checks, against FIVE models:
+#                         correct / draws-nothing / double-premultiplying /
+#                         R-B-permuting / alpha-ignoring (C++)
 #
 # ★ WHAT A GREEN RUN HERE DOES NOT SAY: nothing about the real silicon. No GPU
-# is involved. cases_path_geom_test in particular calibrates the instrument
-# against FOUR MODELS (correct / first-contour-only / draws-nothing /
-# stray-ink); the silicon's answers live in the example's
-# transcript_hw_evkb.txt and expected_silicon.txt. That file's header says so
+# is involved. cases_path_geom_test calibrates the instrument against FOUR
+# MODELS (correct / first-contour-only / draws-nothing / stray-ink) and
+# cases_color_test against FIVE; the silicon's answers live in the example's
+# transcript_hw_evkb.txt and expected_silicon.txt. Those files' headers say so
 # at length, and it is worth repeating at the entry point.
+#
+# ★ cases_color_test's models are models of a BLEND, and model.h picks reading
+# A of SRC_OVER because it has to rasterise something. THE HARDWARE MAY DO
+# READING B. A green colour suite is not a vote for either.
 #
 # ★ WHY THIS SUITE EXISTS AT ALL: the QEMU gate cannot reach the pixel logic.
 # QEMU has no GC355, so every case there reports pixel=skip -- a green gate
@@ -101,6 +109,21 @@ if c++ -std=c++14 -Wall -Wextra -Werror -O1 -I "$DIR/stub" -I "$DIR/.." \
 else
     echo "BUILD-FAILED: cases_path_geom_test"
     note_fail cases_path_geom_test
+fi
+
+suite
+# --- cases_color_test -------------------------------------------------------
+# Same shape as cases_path_geom_test one suite up: the REAL colour case table
+# (vgc_cases_color.cpp) and the REAL arena, linked against the shared model and
+# the shared case-lifecycle mirror.
+if c++ -std=c++14 -Wall -Wextra -Werror -O1 -I "$DIR/stub" -I "$DIR/.." \
+       -o "$OUT/cases_color_test" \
+       "$DIR/cases_color_test.cpp" \
+       "$DIR/../vgc_cases_color.cpp" "$DIR/../vgc_arena.cpp"; then
+    "$OUT/cases_color_test" || note_fail cases_color_test
+else
+    echo "BUILD-FAILED: cases_color_test"
+    note_fail cases_color_test
 fi
 
 # --- trailer ----------------------------------------------------------------

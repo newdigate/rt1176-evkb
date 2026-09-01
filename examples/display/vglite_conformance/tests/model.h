@@ -123,8 +123,34 @@ uint32_t vgc_scratch_sum(void) { return vgc_fnv(s_fb, sizeof(s_fb)); }
  * both are FIXED POINTS of a byte-0/byte-2 swap, so no path arm can tell the
  * two orders apart and all 199 of their checks are unmoved by this function
  * existing. If one of them ever moves, the swizzle is in the wrong place. */
+/* ---- COLOUR ARM SWITCH 1 of 3: R/B PERMUTING ------------------------------
+ * Set by the colour suite's arm 5. Models a target whose memory word is NOT
+ * the order vglite_probe measured -- red left in byte 0, blue moved to byte 2,
+ * i.e. the swizzle above not happening. Every predicate that reads a NAMED
+ * channel (vgc_ch(px, VGC_R) is byte 2) then reads the wrong byte.
+ *
+ * ★ IT IS THE COLOUR ANALOGUE OF g_one_contour_only, NOT A SECOND SPELLING OF
+ * "correct". A GPU that laid bytes out this way would still return SUCCESS
+ * from every call and still produce a picture of the right SHAPE -- which is
+ * why the matrix needs a case that reads the raw word rather than trusting the
+ * channel names, and why that case is the one thing this arm must break.
+ *
+ * It is OFF by default and touched by no path arm: every path case draws
+ * VGC_FILL_COLOR (0xFFFFFFFF) over VGC_BG_COLOR (0xFF000000) and both are
+ * fixed points of any byte permutation, so the 199 path checks cannot see this
+ * switch in either position.
+ * ★ MEASURED BOTH WAYS RATHER THAN ARGUED FROM THE FIXED POINTS: with
+ * g_permute_rb forced to 1 for the whole of cases_path_geom_test's main, that
+ * suite still reports OK (199 checks) -- the same count and the same checks as
+ * with it 0. */
+static int g_permute_rb;
+
 static uint32_t mem_word(uint32_t abgr)
 {
+    if (g_permute_rb)
+        return (abgr & 0xFF00FF00u)            /* alpha and green, as always */
+             | (abgr & 0x000000FFu)            /* red stays in byte 0 */
+             | (((abgr >> 16) & 0x000000FFu) << 16);  /* blue stays in byte 2 */
     return (abgr & 0xFF00FF00u)            /* alpha (byte 3) and green (byte 1) */
          | ((abgr & 0x000000FFu) << 16)    /* red   byte 0 -> byte 2 */
          | ((abgr >> 16) & 0x000000FFu);   /* blue  byte 2 -> byte 0 */
@@ -350,17 +376,44 @@ static int g_stray_ink;
  * scales by /255 or /256, is unknown -- which is exactly what the deliberately
  * generous tolerances in vgc_cases_color.cpp exist to absorb. Do NOT treat
  * this model as correct to within 1 LSB. */
+/* ---- COLOUR ARM SWITCH 2 of 3: ALPHA-IGNORING -----------------------------
+ * Set by the colour suite's arm 4. Models a GPU that writes the source raw
+ * whatever the blend mode says -- the ONE defect a saturated-white source
+ * cannot show on the colour channel, because reading B's `S + D*(1 - Sa)` is
+ * observationally identical to a raw store when S is 255 (255 over black; 287
+ * clamped to 255 over grey 0x40). Measured, and it is why cases 2-4 judge the
+ * ALPHA row: before they did, all three reported ok against this arm.
+ *
+ * ★ THE COLOUR CHANNEL STAYS GREEN UNDER THIS ARM AND THAT IS CORRECT, not a
+ * weak assertion. The suite pins the break to the alpha field (a=128 where
+ * `Sa + Da*(1 - Sa)` gives 255) precisely because the colour field cannot see
+ * it. An arm whose failure could come from either field would not have told us
+ * which check was doing the work. */
+static int g_alpha_ignoring;
+
+/* ---- COLOUR ARM SWITCH 3 of 3: DOUBLE-PREMULTIPLY -------------------------
+ * Set by the colour suite's arm 3. Models a GPU that premultiplies a source
+ * that was already premultiplied, so alpha lands on the colour channels TWICE:
+ * 255*a*a = 64.3. That is color/premultiplied-srcover's NAMED failure mode,
+ * and this is the only thing in the tree that can make it happen.
+ *
+ * The ALPHA byte is untouched (i != 3): doubling it would be a different
+ * defect, and the point of this arm is that case 2 goes broken on `v=` while
+ * its alpha row stays conforming -- the exact complement of arm 4. */
+static int g_double_premul;
+
 static uint32_t model_blend(uint32_t src, uint32_t dst, vg_lite_blend_t mode)
 {
-    if (mode == VG_LITE_BLEND_NONE) return src;
+    if (mode == VG_LITE_BLEND_NONE || g_alpha_ignoring) return src;
     /* SRC_OVER */
     const int a = (int)((src >> 24) & 0xFFu);
     uint32_t out = 0;
     for (int i = 0; i < 4; i++) {
         const int s = (int)((src >> (i * 8)) & 0xFFu);
         const int d = (int)((dst >> (i * 8)) & 0xFFu);
+        const int sp = (g_double_premul && i != 3) ? ((s * a + 127) / 255) : s;
         const int v = (i == 3) ? (a + (d * (255 - a) + 127) / 255)
-                               : ((s * a + d * (255 - a) + 127) / 255);
+                               : ((sp * a + d * (255 - a) + 127) / 255);
         out |= ((uint32_t)v) << (i * 8);
     }
     return out;

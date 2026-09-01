@@ -68,12 +68,16 @@
  * blend, the harness services (vgc_fb/vgc_px/vgc_clear/vgc_draw_path/...) and
  * the arm switches (g_one_contour_only, g_draw_nothing, g_stray_ink) are all
  * there, so the Phase 2 colour case-geometry suite gets exactly the same ones
- * rather than a second copy that agrees today. What stays HERE is everything
- * that knows what a case is called: the four arm drivers and their
+ * rather than a second copy that agrees today. THE CASE LIFECYCLE (run_one,
+ * case_result_t) LIVES IN harness_mirror.h for the same reason -- it mirrors
+ * run_case() in vglite_conformance.cpp, and a second copy that lost a step
+ * would go on reporting a check it had stopped performing. What stays HERE is
+ * everything that knows what a case is called: the four arm drivers and their
  * expectations. model.h pulls in vgc_harness.h and vgc_predicates.h; the
  * harness include below is kept because this file names vgc_case_t,
  * vgc_path_cases and VGC_OK directly. */
 #include "model.h"
+#include "harness_mirror.h"
 #include "../vgc_harness.h"
 #include <stdio.h>
 #include <string.h>
@@ -108,45 +112,11 @@ static int checks = 0;
     } while (0)
 
 /* ---- running one case, exactly as the harness does ------------------------
- * The sequence mirrors run_case() in vglite_conformance.cpp: reset the arena
- * and the oob counter, clear, run, sum, check -- then clear and run AGAIN and
- * sum, which is what makes the repeat= comparison meaningful. Deviating here
- * would test the cases under a lifecycle they never see. */
-typedef struct {
-    vgc_verdict_t   verdict;
-    vg_lite_error_t api;
-    vg_lite_error_t api2;      /* the SECOND run's status -- the harness prints it */
-    uint32_t        oob;
-    int             repeat_same;
-    int             hook_distinct;  /* a sum() hook must not be the live buffer */
-    char            detail[VGC_DETAIL_MAX];
-} case_result_t;
-
-static void run_one(const vgc_case_t *c, case_result_t *r)
-{
-    memset(r, 0, sizeof(*r));
-    vgc_arena_reset();
-    vgc_px_oob_reset();
-    vgc_clear();
-    r->api = c->run();
-    const uint32_t live1 = vgc_scratch_sum();
-    const uint32_t sum1  = c->sum ? c->sum() : live1;
-    /* ★ A HOOK THAT RETURNS THE LIVE BUFFER IS A HOOK THAT DOES NOTHING, and
-     * the failure is invisible: repeat= keeps comparing something, just not
-     * every sub-render. vgc_harness.h names a multi-render case without a
-     * working hook as its top risk, and this is the only place that can see
-     * it. Cases WITHOUT a hook are exempt by construction -- for them sum1 IS
-     * live1. */
-    r->hook_distinct = c->sum ? (sum1 != live1) : 1;
-    r->verdict = c->check(r->detail, sizeof(r->detail));
-    r->oob = vgc_px_oob();
-
-    vgc_arena_reset();
-    vgc_clear();
-    r->api2 = c->run();
-    const uint32_t sum2 = c->sum ? c->sum() : vgc_scratch_sum();
-    r->repeat_same = (sum1 == sum2);
-}
+ * PROMOTED TO tests/harness_mirror.h in Phase 2, where the colour suite gets
+ * the SAME sequence rather than a second copy of it. The reasoning is in that
+ * file's header; the short version is that a copy which lost the arena reset
+ * between the two runs would keep printing "repeat identical" while having
+ * stopped comparing anything. */
 
 /* The SIX cases aimed at the contour-encoding question. Everything else in
  * the table is a control and must survive that model unchanged.
