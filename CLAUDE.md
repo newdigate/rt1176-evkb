@@ -225,7 +225,7 @@ triples rendering one at a time into a 128×128 BGRA8888 EXTMEM scratch, each
 case printing TWO INDEPENDENT VERDICTS — `api=` (what the driver said) and
 `pixel=` (what a structural CPU-side predicate found) — because every GC355
 defect this tree has hit reported success while producing the wrong picture.
-Phase 1 is thirteen paths/contours/winding cases; Phase 1b (2026-09-01) added two more, taking the matrix to FIFTEEN. Its gate asserts the HONEST
+Phase 1 is thirteen paths/contours/winding cases; Phase 1b (2026-09-01) added two more and answered the mechanism question, taking the matrix to FIFTEEN. Its gate asserts the HONEST
 NEGATIVE (`vgc_engine=absent`, all thirteen `pixel=skip`) with three tripwires
 — no case may report `pixel=ok`, none may report `pixel=broken`, and no
 `api=`/`api2=` may say `success` with no GPU — plus a case-line COUNT check and
@@ -1368,17 +1368,27 @@ not hung.
   (predicted `broken`, measured `ok`); each is recorded with its reason in
   `expected_silicon.txt` rather than re-goldened away. What the matrix does not
   separate is DISJOINT-vs-NESTED from FOUR-contours-vs-TWO. **Phase 1b
-  (2026-09-01) BUILT the two cases that do** — `path/two-disjoint-bars` and
-  `path/four-nested-rings`, completing a 2×2 in which each of the four
-  outcomes names a different rule. Both are pre-registered in
-  `expected_silicon.txt` (disjointness hypothesis: `broken` + `ok`) and are
-  BUILT, NOT YET MEASURED — do not read the pre-registration as a result.
-  `four-nested-rings`' `runs=` is a COUNTER of surviving contours, not a
-  pass/fail, so it reports how many the GPU honoured.
-  ★ **KEEP FOLLOWING ONE-CONTOUR-PER-PATH** in `synthui_rotary_knob_gpu.cpp`
-  and `synthui_fader_gpu.cpp` meanwhile. It is the conservative reading, it is
-  known to work, and the padded-CLOSE result says a DIFFERENT construction also
-  works — not that the current one is unnecessary.
+  (2026-09-01, two boots) ANSWERED IT: DISJOINTNESS is the variable.** Two
+  disjoint contours fail exactly as four do (`path/two-disjoint-bars`,
+  `runs=1` of 2, byte-identical on both boots); four nested contours work
+  exactly as two do (`path/four-nested-rings`, `runs=4`). So the rule is
+  neither "only the first contour renders" nor "more than two breaks" — it is
+  DISJOINT contours in one path under the ordinary zero-padded CLOSE encoding.
+  ★★ **AND THE SECOND BOOT CHANGED THE CONCLUSION.** `four-nested-rings` read
+  `repeat=same` on boot 1 and `repeat=differs` on boot 2. One boot would have
+  recorded that nested contours are clean. They render CORRECTLY every time and
+  NOT DETERMINISTICALLY, and two of the three nested cases now show it. **So
+  this does NOT license nested multi-contour paths** — correct-but-
+  nondeterministic is unsafe for a delta-rendering compositor, which is exactly
+  how NEW-20's winding-2 defect presented. `expected_silicon.txt` records that
+  cell's repeat as `unstable`, a third state the checker takes ONLY on
+  `repeat`, ONLY with a written reason, and always while printing which way the
+  run landed.
+  ★ **KEEP FOLLOWING ONE-CONTOUR-PER-PATH** — now for two independent reasons.
+  The mechanism is still unidentified: "disjoint" describes the geometry, not
+  why the tessellator drops it. One clue: bar 0 renders 1393 px inside the
+  four-bar path and 1322 px inside the two-bar path — same bar, different
+  bounding box, and the driver derives its tessellation window from that box.
   ★ `path/evenodd-vs-nonzero` is the matrix's only `repeat=differs`: its two
   IDENTICAL back-to-back renders produce different pixels, REPRODUCIBLY
   (byte-identical on both boots). Not boot-to-boot noise but a repeatable

@@ -109,7 +109,20 @@ BEGIN { err = 0; ncase = 0 }
     if (n != 3) { die("case line must be: <id> <ok|broken|pair:NAME> <same|differs>"); next }
     id = f[1]; v = f[2]; r = f[3]
     if (v != "ok" && v != "broken" && v !~ /^pair:[^ \t]+$/) { die("bad verdict \"" v "\" (want ok, broken or pair:NAME)"); next }
-    if (r != "same" && r != "differs") { die("bad repeat \"" r "\" (want same or differs)"); next }
+    # ★ `unstable` is a THIRD repeat expectation, and it is NOT an escape
+    # hatch -- it records a MEASURED fact that same|differs cannot express: a
+    # case observed BOTH ways across boots. Pinning `same` reds half the future
+    # runs and pinning `differs` reds the other half; either trains a reader to
+    # ignore this checker, which is worse than the drift it would report.
+    # It is admissible ONLY on the repeat field, never on a pixel verdict -- an
+    # intermittently WRONG PICTURE is a defect, not a recorded property -- and
+    # like `broken` it must carry a written reason. The actual reading is
+    # still PRINTED for each run (see the UNSTABLE line below), so nothing
+    # is hidden.
+    if (r != "same" && r != "differs" && r != "unstable") { die("bad repeat \"" r "\" (want same, differs or unstable)"); next }
+    if (r == "unstable" && comment !~ /[^ \t]/) {
+        die("an `unstable` repeat line must carry a non-empty # reason"); next
+    }
     if (id in cverd) { die("duplicate case id " id); next }
     # ★ A `broken` or `pair:` cell must SAY WHY it is expected. Without this a
     # new quirk can be pinned into the file by whoever pasted it there, with no
@@ -288,7 +301,12 @@ BEGIN {
         }
         # repeat is pinned per case even for pair members: an admissible
         # range of PIXEL outcomes never makes nondeterminism admissible.
-        if (orep[id] != erep[id]) {
+        if (erep[id] == "unstable") {
+            # Admissible either way -- but say which, every run. An `unstable`
+            # cell that quietly stopped varying is itself worth noticing, and a
+            # reader must never have to guess what this boot actually did.
+            printf "UNSTABLE %-33s repeat: %s (expected unstable -- both readings admissible)\n", id, orep[id]
+        } else if (orep[id] != erep[id]) {
             printf "DRIFT  %-34s repeat: expected %-7s got %s\n", id, erep[id], orep[id]; drift++
         }
     }
@@ -344,6 +362,10 @@ Work out WHICH of the two changed before touching either file:
         shipping compositors carry were built on that quirk, and they may now
         be unnecessary, or the wrong shape. Find the WHY, write it into the
         line's reason, and only then move the verdict.
+  * repeat expected `unstable`
+        The case is KNOWN to vary between boots and both readings are
+        admissible; the UNSTABLE line above says which this run gave. That is
+        a recorded property, not a pass. It never applies to a pixel verdict.
   * repeat same -> differs
         NONDETERMINISM, a finding in its own right even when the pixels are
         right. This tree has seen 7 boots produce 7 checksums. Do not average

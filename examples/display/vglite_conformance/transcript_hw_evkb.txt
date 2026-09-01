@@ -4,9 +4,13 @@ vgc_engine=gpu target=128x128 fmt=1025 tess=64x64
 vgc case_begin=path/single-contour-rect
 vgc case=path/single-contour-rect api=success api2=same pixel=ok detail=fill=6400,expect=6400,centre=1,corner=0 repeat=same
 vgc case_begin=path/multi-contour-disjoint
-vgc case=path/multi-contour-disjoint api=success api2=same pixel=broken detail=runs=1,expect=4,fill=1393 repeat=same
+vgc case=path/multi-contour-disjoint api=success api2=same pixel=broken detail=runs=1,expect=4,fill=1393,y0=16,y1=32 repeat=same
 vgc case_begin=path/multi-contour-close-padded
-vgc case=path/multi-contour-close-padded api=success api2=same pixel=ok detail=runs=4,expect=4,fill=5120 repeat=same
+vgc case=path/multi-contour-close-padded api=success api2=same pixel=ok detail=runs=4,expect=4,fill=5120,y0=16,y1=115 repeat=same
+vgc case_begin=path/two-disjoint-bars
+vgc case=path/two-disjoint-bars api=success api2=same pixel=broken detail=runs=1,expect=2,fill=1322 repeat=same
+vgc case_begin=path/four-nested-rings
+vgc case=path/four-nested-rings api=success api2=same pixel=ok detail=runs=4,expect=4,fill=6875,expfill=5760 repeat=differs
 vgc case_begin=path/two-contour-ring-nonzero
 vgc case=path/two-contour-ring-nonzero api=success api2=same pixel=ok detail=rim=1,centre=0,expect=rim1centre0 repeat=same
 vgc case_begin=path/two-draws-ring
@@ -27,6 +31,6 @@ vgc case_begin=path/format-agreement
 vgc case=path/format-agreement api=success api2=same pixel=ok detail=s8=1830,s16=1830,s32=1830,fp32=1830,same_px=1 repeat=same
 vgc case_begin=path/degenerate-zero-area
 vgc case=path/degenerate-zero-area api=success api2=same pixel=ok detail=fill=0,ymin=-99,ymax=-99 repeat=same
-vgc_summary engine=gpu cases=13 ok=12 broken=1 skip=0 dangerous=off repeat_differs=1
-vgc_timeouts=0 vgc_irqs=75
+vgc_summary engine=gpu cases=15 ok=13 broken=2 skip=0 dangerous=off repeat_differs=2
+vgc_timeouts=0 vgc_irqs=83
 VGC_DONE

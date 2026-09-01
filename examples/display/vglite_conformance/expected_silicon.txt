@@ -73,8 +73,8 @@
 path/single-contour-rect            ok       same    # THE BASELINE. A broken control invalidates every row below it -- this is the rect both shipping compositors draw thousands of times a second.
 path/multi-contour-disjoint         pair:contour-encoding  same    # Four bars, one path, ordinary CLOSE encoding. Predicted broken (runs=1, not 4) by the tree's recorded one-contour rule -- but see the pair block: the joint answer with close-padded is the finding, not this cell alone.
 path/multi-contour-close-padded     pair:contour-encoding  same    # THE DISCRIMINATOR. Identical geometry to the line above; the ONLY variable is that its contour-boundary CLOSE slots are padded 0x01010101 (NXP's own CHIPID==0x355 workaround, vg_lite_path.c:556-570) instead of 0x00000001. Both outcomes are admissible and each means something -- see the pair block.
-path/two-disjoint-bars              broken   same    # PHASE 1b, HALF OF A 2x2 -- A HYPOTHESIS UNDER TEST, not a confident forecast. This is multi-contour-disjoint with two bars DELETED (bars 0 and 2, y=16 and y=72): same x-extent, same bar height, same column, same ordinary CLOSE encoding, so the ONLY variable is the contour count. Predicted `broken` because the DISJOINTNESS hypothesis says count is irrelevant. If it measures `ok`, then COUNT is the variable and disjointness is not -- that is the informative outcome, NOT a failure, and the drift it raises should be read as the experiment answering rather than as a regression.
-path/four-nested-rings              ok       same    # PHASE 1b, THE OTHER HALF. Four concentric alternating-winding rects under NON_ZERO; down column x=64 the winding goes 1,0,1,0,1,0,1 so a correct render shows FOUR bands. `runs` is therefore a COUNTER of surviving contours (1=outer only/solid, 2=one ring, 3=ring+core, 4=correct) -- this cell reports HOW MANY the GPU honoured, which is worth more than a pass/fail. Predicted `ok` because two nested contours already render (two-contour-ring-nonzero, evenodd-vs-nonzero). If it measures `broken`, COUNT is the variable.
+path/two-disjoint-bars              broken   same    # PHASE 1b, MEASURED 2026-09-01, TWO BOOTS BYTE-IDENTICAL: runs=1 expect=2 fill=1322. The pre-registered `broken` HELD. This is multi-contour-disjoint with two bars deleted, so the only variable is contour count -- and TWO disjoint contours fail exactly as FOUR do. With four-nested-rings ok, the 2x2 is complete and DISJOINTNESS IS THE VARIABLE: contour count is irrelevant. See the Phase 1b note below.
+path/four-nested-rings              ok       unstable # PHASE 1b, MEASURED 2026-09-01 over TWO boots. Four concentric alternating-winding rects under NON_ZERO; `runs` COUNTS surviving contours (1=outer only, 2=one ring, 3=ring+core, 4=correct). VERDICT: runs=4 on BOTH boots -- all four nested contours render, and the pre-registered `ok` held. REPEAT IS `unstable` AND THAT IS THE FINDING, not a hedge: boot 1 read `same` with fill=6931, boot 2 read `differs` with fill=6875. The picture is STRUCTURALLY right every time and NOT DETERMINISTIC, and the nondeterminism is itself intermittent -- a SINGLE boot recorded `same` and would have licensed "nested contours are clean", which they are not. n=2, one reading each way; more boots would characterise the rate. This is the SECOND nested case to show it (evenodd-vs-nonzero differs on all four boots on record), and together they are why the disjointness result below must NOT be read as permission to use nested multi-contour paths in a delta-rendering compositor.
 path/two-contour-ring-nonzero       ok       same    # MEASURED 2026-08-30, two boots byte-identical: rim=1 centre=0 -- the hole IS cut. PREDICTED broken and the prediction was WRONG. Outer CW + reversed inner CCW in ONE path under NON_ZERO, i.e. a CLOSE-then-MOVE boundary of exactly the kind that kills path/multi-contour-disjoint -- and it renders. REASON FOR THE CHANGE: the wide "only the first contour renders" rule that this prediction came from is REFUTED as stated; see the mechanism note below the pair block. Left as a plain `ok` rather than folded into the pair because its encoding is not the variable under test.
 path/two-draws-ring                 ok       same    # THE SAFE-USAGE CONTROL for the line above: same ring as plate + inset plate, two single-contour draws. This is what both shipping compositors do, so a broken here would mean the ground under SynthUI moved.
 path/evenodd-vs-nonzero             ok       differs # MEASURED 2026-08-30, two boots byte-identical: eo_centre=0 nz_centre=1 -- both fill rules honoured, so the second contour renders here too. PREDICTED broken/same and BOTH halves were wrong. REASON FOR THE VERDICT: same as two-contour-ring-nonzero -- the wide one-contour rule is refuted. REASON FOR repeat=differs: the two IDENTICAL renders the harness runs back-to-back produce different pixels, and they do so REPRODUCIBLY (identical on both boots), so this is not boot-to-boot noise but a repeatable in-boot difference between two identical draw sequences. It is the ONLY case in the matrix that does this, and it is a finding in its own right -- pixels being right does not make a nondeterministic path safe to build on. DO NOT relax this to `same` without an explanation of what changed.
@@ -185,4 +185,37 @@ pair contour-encoding path/multi-contour-disjoint=broken,path/multi-contour-clos
 #
 # NOT YET MEASURED. These two lines are predictions; the thirteen above them
 # are measurements. Do not read them the same way.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# ★★ PHASE 1b ANSWERED, 2026-09-01, two boots. DISJOINTNESS IS THE VARIABLE.
+#
+#                  2 contours          4 contours
+#   disjoint       BROKEN (runs=1)     BROKEN (runs=1)
+#   nested         OK                  OK (runs=4)
+#
+# Two disjoint contours fail exactly as four do; four nested contours work
+# exactly as two do. So the rule is neither "only the first contour renders"
+# nor "more than two contours breaks" -- it is DISJOINT contours in one path,
+# under the ordinary (zero-padded) CLOSE encoding. Padding the CLOSE slot to
+# 0x01010101 fixes the disjoint case (multi-contour-close-padded, ok).
+#
+# ★★ AND THE SECOND BOOT CHANGED THE CONCLUSION. four-nested-rings read
+# repeat=same on boot 1 and repeat=differs on boot 2. One boot would have
+# recorded that nested contours render cleanly. They render CORRECTLY --
+# runs=4 every time -- but NOT DETERMINISTICALLY, and two of the three nested
+# cases in this matrix now show it.
+#
+# SO: this result does NOT license nested multi-contour paths. A structurally
+# correct but nondeterministic path is unsafe for a delta-rendering
+# compositor, which is exactly how NEW-20's winding-2 track defect presented.
+# BOTH COMPOSITORS KEEP ONE-CONTOUR-PER-PATH -- now for two independent
+# reasons rather than one.
+#
+# STILL OPEN: the mechanism. "Disjoint" is a description of the geometry, not
+# an explanation of why the tessellator drops it. And bar 0 renders 1393 px
+# inside the four-bar path but 1322 px inside the two-bar path -- the same
+# 80x16 bar, 71 px apart. The paths differ only in their bounding box, from
+# which the driver derives its tessellation window, so the tile grid and its
+# edge antialiasing differ. Plausible; not established.
 # ---------------------------------------------------------------------------
