@@ -103,6 +103,8 @@ cell says *Prediction refuted*, the pre-registered expectation was wrong and
 | single-contour filled path | **OK** — `fill=6400`, exactly the analytic area | the only path shape to rely on | `path/single-contour-rect` |
 | four DISJOINT contours in ONE path, ordinary CLOSE | **BROKEN** — `runs=1` of 4, `fill=1393` (one bar plus antialiasing) | **one contour per path, one `vg_lite_draw` per contour** | `path/multi-contour-disjoint` |
 | the same, with CLOSE slots padded `0x01010101` | **OK** — `runs=4`, `fill=5120`. **The encoding is the only variable.** | see [the discriminator](#the-discriminator-a-padded-close-slot) below | `path/multi-contour-close-padded` |
+| two DISJOINT contours in one path, ordinary CLOSE | **PENDING — Phase 1b** | — | `path/two-disjoint-bars` |
+| four NESTED contours in one path, ordinary CLOSE | **PENDING — Phase 1b** | — | `path/four-nested-rings` |
 | hole cut by a reversed inner contour (non-zero) | **OK** — `rim=1 centre=0`, the hole IS cut. **Prediction refuted.** | the plate + inset-plate construction still works and is what ships; this row no longer forces it | `path/two-contour-ring-nonzero`, control `path/two-draws-ring` |
 | `VG_LITE_FILL_EVEN_ODD` vs `NON_ZERO` across nested contours | **OK** — `eo_centre=0 nz_centre=1`, both rules honoured. **Prediction refuted.** BUT `repeat=differs` | the only case in the matrix whose two identical renders differ — see the nondeterminism note | `path/evenodd-vs-nonzero` |
 | fill rules on ONE self-intersecting contour | **OK** — pentagram centre empty under EVEN_ODD, filled under NON_ZERO | both rules honoured — this is the fill-rule usage that works | `path/self-intersecting` |
@@ -214,15 +216,34 @@ encoding rendered **both** contours correctly — the non-zero ring cut its hole
 four bars and explains **neither** of these, because both carry the same
 CLOSE-then-MOVE boundary.
 
-**Open.** What distinguishes them. The matrix does not separate:
+**Open — and the two cases that settle it are now BUILT, awaiting one boot.**
+Phase 1b (2026-09-01) added `path/two-disjoint-bars` and
+`path/four-nested-rings`, completing a 2×2 against the measured cells:
 
-| candidate | what would settle it |
-|---|---|
-| DISJOINT vs NESTED contours | a case with **two disjoint** bars |
-| FOUR contours vs TWO | a case with **four nested** rings |
-| the winding relationship | both of the above, compared |
+|  | 2 contours | 4 contours |
+|---|---|---|
+| **disjoint** | `two-disjoint-bars` *(pending)* | `multi-contour-disjoint` — **BROKEN** |
+| **nested** | ring / evenodd — **OK** | `four-nested-rings` *(pending)* |
 
-Two cases, one further boot. That is the obvious Phase 1b.
+Every outcome names a different rule:
+
+| `two-disjoint-bars` | `four-nested-rings` | rule |
+|---|---|---|
+| broken | ok | **DISJOINTNESS** is the variable; count is irrelevant |
+| ok | broken | **COUNT** is the variable; disjointness is irrelevant |
+| broken | broken | nesting protects only at two contours |
+| ok | ok | only the four-disjoint *combination* breaks — an interaction |
+
+`four-nested-rings`' predicate is a **counter, not a pass/fail**: four
+concentric alternating-winding rects under NON_ZERO give four filled bands down
+the centre column, so *k* contours rendered → *k* runs. That cell reports **how
+many** contours the GPU honoured.
+
+`expected_silicon.txt` pre-registers `two-disjoint-bars = broken` and
+`four-nested-rings = ok` — the disjointness hypothesis. It is a hypothesis
+under test, and a refutation is the informative outcome. They are deliberately
+NOT a `pair:`: all four combinations are coherent, and a pair admitting every
+combination would make any result green and the experiment worthless.
 
 **What to do meanwhile.** Keep following one-contour-per-path in
 `synthui_rotary_knob_gpu.cpp` and `synthui_fader_gpu.cpp`. It is the

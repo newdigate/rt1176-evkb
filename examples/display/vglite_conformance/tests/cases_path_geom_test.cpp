@@ -8,12 +8,19 @@
  *
  * It IS an exercise of vgc_cases_path.cpp's own geometry, sample points,
  * tolerances and predicates -- the REAL run()/check()/sum() functions, linked
- * and called -- against two MODELS of a GPU:
+ * and called -- against THREE MODELS of a GPU:
  *   - a correct one (a scanline reference rasteriser honouring every contour
- *     and both fill rules), under which all fifteen cases must report ok; and
+ *     and both fill rules), under which all fifteen cases must report ok;
  *   - this GC355's KNOWN defect (the same rasteriser dropping every contour
  *     after the first), under which the six cases aimed at that defect must
- *     report broken BY NAME and every control must stay ok.
+ *     report broken BY NAME and every control must stay ok; and
+ *   - one that draws NOTHING, under which fourteen of fifteen must go broken
+ *     (degenerate-zero-area legitimately stays ok -- "nothing drawn" is an
+ *     accepted outcome there).
+ * ★ THE LAST ARM IS NOT REDUNDANT. Measured: a case hard-wired to VGC_OK
+ * leaves arm 1 GREEN and arm 2 green for every control, and is caught ONLY by
+ * arm 3. A positive-only suite is equally consistent with a matrix that cannot
+ * detect anything.
  *
  * It is NOT a statement about what the real silicon does. Not one line here
  * touches a GPU. The silicon's answers live in the example's

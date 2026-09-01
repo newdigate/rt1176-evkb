@@ -225,7 +225,7 @@ triples rendering one at a time into a 128×128 BGRA8888 EXTMEM scratch, each
 case printing TWO INDEPENDENT VERDICTS — `api=` (what the driver said) and
 `pixel=` (what a structural CPU-side predicate found) — because every GC355
 defect this tree has hit reported success while producing the wrong picture.
-Phase 1 is thirteen paths/contours/winding cases. Its gate asserts the HONEST
+Phase 1 is thirteen paths/contours/winding cases; Phase 1b (2026-09-01) added two more, taking the matrix to FIFTEEN. Its gate asserts the HONEST
 NEGATIVE (`vgc_engine=absent`, all thirteen `pixel=skip`) with three tripwires
 — no case may report `pixel=ok`, none may report `pixel=broken`, and no
 `api=`/`api2=` may say `success` with no GPU — plus a case-line COUNT check and
@@ -248,7 +248,7 @@ purpose.
 `examples/display/vglite_conformance/tests/run.sh` — 209 checks over the pure
 predicates, the path arena, and the case geometry itself. The geometry suite
 compiles the REAL case functions against three model rasterisers: a correct
-GPU (all thirteen must report `ok`), a first-contour-only GPU modelling this
+GPU (all fifteen must report `ok`), a first-contour-only GPU modelling this
 GC355's known defect (the probe cases must go BROKEN **by name**, every control
 must stay `ok`), and a GPU that draws nothing. **The negative arms are the
 point** — a positive-only suite is equally consistent with a matrix that cannot
@@ -1367,8 +1367,14 @@ not hung.
   boundary. Three Phase-1 predictions were wrong in exactly this direction
   (predicted `broken`, measured `ok`); each is recorded with its reason in
   `expected_silicon.txt` rather than re-goldened away. What the matrix does not
-  separate is DISJOINT-vs-NESTED from FOUR-contours-vs-TWO — two more cases and
-  one boot would.
+  separate is DISJOINT-vs-NESTED from FOUR-contours-vs-TWO. **Phase 1b
+  (2026-09-01) BUILT the two cases that do** — `path/two-disjoint-bars` and
+  `path/four-nested-rings`, completing a 2×2 in which each of the four
+  outcomes names a different rule. Both are pre-registered in
+  `expected_silicon.txt` (disjointness hypothesis: `broken` + `ok`) and are
+  BUILT, NOT YET MEASURED — do not read the pre-registration as a result.
+  `four-nested-rings`' `runs=` is a COUNTER of surviving contours, not a
+  pass/fail, so it reports how many the GPU honoured.
   ★ **KEEP FOLLOWING ONE-CONTOUR-PER-PATH** in `synthui_rotary_knob_gpu.cpp`
   and `synthui_fader_gpu.cpp` meanwhile. It is the conservative reading, it is
   known to work, and the padded-CLOSE result says a DIFFERENT construction also
