@@ -7,14 +7,15 @@
 # run is the case count):
 #   predicates_test       the pure pixel predicates      (C -- vgc_predicates.h is pure C)
 #   arena_test            the shared path arena          (C++ -- see its header)
-#   cases_path_geom_test  the thirteen path cases' geometry, sample points,
+#   cases_path_geom_test  the fifteen path cases' geometry, sample points,
 #                         tolerances and predicates, against a model of a
 #                         correct GPU AND a model of this GC355's known
 #                         one-contour-per-path defect (C++)
 #
 # ★ WHAT A GREEN RUN HERE DOES NOT SAY: nothing about the real silicon. No GPU
 # is involved. cases_path_geom_test in particular calibrates the instrument
-# against two MODELS; the silicon's answers live in the example's
+# against FOUR MODELS (correct / first-contour-only / draws-nothing /
+# stray-ink); the silicon's answers live in the example's
 # transcript_hw_evkb.txt and expected_silicon.txt. That file's header says so
 # at length, and it is worth repeating at the entry point.
 #
