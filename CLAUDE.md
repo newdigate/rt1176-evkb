@@ -106,9 +106,9 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **123 gates** — the merge of
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **124 gates** — the merge of
 THREE independent lines, plus the first two Bluetooth gates, NEW-20's one new
-gate and NEW-23's one. The Arduino WiFi facade added THREE
+gate, NEW-23's one and NEW-32's one. The Arduino WiFi facade added THREE
 (`networking/wifi_client_test` and its `[wifi]` variant — enumeration plus a
 REAL 802.11 scan against the model's deliberate zero-BSS reply, asserting an
 honest WL_NO_SSID_AVAIL — and `networking/wifi_server_test`); the uAP line added
@@ -121,7 +121,7 @@ its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
 `networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
 more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
 That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
-123.
+124.
 
 NEW-20 added ONE — `display/rotary_knob_bench`, the RotaryKnob render-strategy
 bench: 12 cells ({vector,bitmap,strip} × {sw,gpu} × {notch,facet}) in ONE ELF,
@@ -218,6 +218,48 @@ bit-identical across four SW4 boots (`fd_crc=0x141D0A41`,
 goldens are unmoved; the GPU set is recorded only in
 `transcript_hw_evkb.txt` (two golden sets, never reconciled — same
 discipline as `vglite_lvgl_test` and `acid_box`).
+
+NEW-32 Phase 1 added ONE — `display/vglite_conformance`, the GC355/VGLite
+conformance harness (spec 2026-08-30): a case table of `{id, run, check}`
+triples rendering one at a time into a 128×128 BGRA8888 EXTMEM scratch, each
+case printing TWO INDEPENDENT VERDICTS — `api=` (what the driver said) and
+`pixel=` (what a structural CPU-side predicate found) — because every GC355
+defect this tree has hit reported success while producing the wrong picture.
+Phase 1 is thirteen paths/contours/winding cases. Its gate asserts the HONEST
+NEGATIVE (`vgc_engine=absent`, all thirteen `pixel=skip`) with three tripwires
+— no case may report `pixel=ok`, none may report `pixel=broken`, and no
+`api=`/`api2=` may say `success` with no GPU — plus a case-line COUNT check and
+a `case_begin`-vs-`case` equality check, since every tripwire above is
+satisfied VACUOUSLY by an empty matrix and an unfinished case is how a GPU hang
+would present. 123 before it.
+★ **No panel.** The core's startup brings up the SEMC SDRAM before `setup()`,
+so EXTMEM is live without `Display.begin()`. It is the only **VGLite** example
+that links neither MipiDisplay nor LVGL — `vglite_probe` and `vglite_lvgl_test`
+both do. (Seven non-VGLite display examples also link neither: the four `pxp_*`
+ones, both `camera_preview_*` and `ssd1306_display`.)
+★ **The tessellation buffer is 64×64 against a 128×128 target, deliberately.**
+A tess buffer ≥ the target puts the driver in its `ts_is_fullscreen == 1`
+regime, where scissor left/top clamping is silently disabled — a different
+machine from the one the shipping compositors run on (720×1280 target, 256×256
+tess). Phase 3's `scissor/tess-fullscreen` case probes the other regime on
+purpose.
+★ **QEMU cannot reach one line of the pixel logic** (every case reports
+`pixel=skip`), so the example carries THREE HOST SUITES run by
+`examples/display/vglite_conformance/tests/run.sh` — 209 checks over the pure
+predicates, the path arena, and the case geometry itself. The geometry suite
+compiles the REAL case functions against three model rasterisers: a correct
+GPU (all thirteen must report `ok`), a first-contour-only GPU modelling this
+GC355's known defect (the probe cases must go BROKEN **by name**, every control
+must stay `ok`), and a GPU that draws nothing. **The negative arms are the
+point** — a positive-only suite is equally consistent with a matrix that cannot
+detect anything, demonstrated: a case hard-wired to `VGC_OK` leaves arm 1 green
+and is caught only by arm 3.
+★ It says NOTHING about what the silicon does. The silicon matrix is ONE boot,
+diffed against the PRE-REGISTERED `expected_silicon.txt` by
+`tools/vglite-conformance-check.sh`, which fails on drift in EITHER direction:
+a quirk that silently DISAPPEARS after an SDK bump matters as much as a new
+one, because it means the driver changed under us.
+`docs/gc355-vglite-quirks.md` is the reference the matrix feeds.
 
 BT-1 added the tree's FIRST TWO BLUETOOTH GATES, both on the new
 `networking/m2_hci_probe`. `run_qemu.sh` is the card-ABSENT fallback — with no
@@ -542,6 +584,48 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-08-30: 124 gates discovered, 123 passed, 1 failed, 0 SKIP**,
+on the NEW-32 Phase 1 close-out (`display/vglite_conformance`, the GC355/VGLite
+conformance harness — green in 10 s on its first sweep). The ONE red is
+`m2_hci_probe[hci]`, the SAME bench-configured-build-dir class as 2026-08-27/29
+and dispositioned the same way — checked directly rather than assumed: its
+`CMakeCache.txt` still carries `M2RADIO_IW416_BT_FW`, `M2_BT_UART_DNLD=ON` and
+`M2_BT_ASSERT_CTS=ON` from the concurrent BT bench workstream (dated Aug 29), so
+it runs a bench-configured ELF against fake-controller assertions. Not a
+regression. `LICENSE-AUDIT: PASS` the same day with the new
+`examples/display/vglite_conformance` manifest walked (**129 dep paths**).
+Vacuity suite **29/29**, re-derived from a live run — four new cases
+(`green_still_passes_vglite_conformance`, the `pixel=ok` tripwire, the
+`api2=success` tripwire, the truncated matrix), each demonstrated RED by name
+first.
+★ **QEMU cannot reach ONE LINE of this example's pixel logic** — every case
+reports `pixel=skip` with no GC355 — so it carries THREE HOST SUITES
+(`tests/run.sh`, **209 checks**) over the pure predicates, the path arena, and
+the case geometry itself. The geometry suite compiles the REAL case functions
+against three model rasterisers: a correct GPU, a first-contour-only GPU, and a
+GPU that draws nothing. **The negative arms are the point** — demonstrated: a
+case hard-wired to `VGC_OK` leaves arm 1 GREEN and is caught only by arm 3, so a
+positive-only suite is equally consistent with a matrix that cannot detect
+anything.
+★ Silicon: `cases=13 ok=12 broken=1 repeat_differs=1`, `vgc_timeouts=0`, TWO
+BOOTS BYTE-IDENTICAL, diffed against the PRE-REGISTERED `expected_silicon.txt`
+by `tools/vglite-conformance-check.sh`. Three predictions were REFUTED — two VERDICT
+predictions (`two-contour-ring-nonzero`, `evenodd-vs-nonzero`: both predicted
+`broken`, measured `ok`) and one REPEAT prediction (`evenodd-vs-nonzero`:
+`same` → `differs`). Two verdict lines changed in `expected_silicon.txt`, each
+with a written reason; `multi-contour-close-padded` was never a prediction, it
+was pre-registered as a `pair:` with both outcomes admissible. The transcript
+was never pasted over the expectation.
+See the VGLite note in Architecture for what that measurement changed.
+★ **`LinkServer flash … load` REFUSED THIS EXAMPLE'S `.elf` and accepted its
+`.hex`** — `Flash operation exited with code -11`, 0 of 38060 bytes written, 4/4
+reproducible, while `vglite_probe` (32 KB) and `synthui_fader_test` (302 KB, one
+write) flashed clean immediately before and after. So it is neither size nor a
+wedged probe: it is LinkServer's ELF program-header path choking on this image.
+`flash … load build/<name>.hex` writes the same bytes and `verify` reports
+"File matches flash" on both sections. Reach for the `.hex` before suspecting
+the board.
 
 ✅ **Measured 2026-08-30: 123 gates discovered, 122 passed, 1 failed**, on
 the NEW-23 GPU-compositor close-out (`display/synthui_fader_test` gained the
@@ -1262,6 +1346,43 @@ not hung.
   2-3 tick runs survive per frame). **Rule for any future vg_lite path in this
   tree: build and submit one contour per draw call — never rely on multiple
   `VLC_OP_MOVE`s inside one path to render more than the first.**
+  ★★ **THAT ONE-CONTOUR RULE IS REFUTED AS STATED — measured 2026-08-30, two
+  boots byte-identical.** `display/vglite_conformance` ran it as a controlled
+  experiment and the wide rule did not survive. What DID: the **CLOSE
+  ENCODING** matters, decisively. Four DISJOINT bars in one path render as ONE
+  contour with the ordinary `01 00 00 00` CLOSE slot (`runs=1`, `fill=1393` —
+  one bar plus antialiasing) and as ALL FOUR with the slot padded to
+  `01 01 01 01` (`runs=4`, `fill=5120`). Identical geometry, identical
+  predicate; the encoding is the only variable. That padding is exactly NXP's
+  own `CHIPID == 0x355` workaround (`vg_lite_path.c:556-570`, inside
+  `vg_lite_append_path` — which nothing here calls, the only hits being LVGL's
+  ThorVG PC shim), and `VLC_OP_END` being `0x00` is why: every contour boundary
+  this tree has ever emitted carries three END bytes inside its CLOSE slot.
+  ★★ **But the wide rule is refuted, not merely narrowed, and the mechanism is
+  NOT identified.** Two NESTED-contour paths using the ORDINARY encoding
+  rendered BOTH contours correctly — the non-zero ring cut its hole
+  (`rim=1 centre=0`) and the same-winding nest honoured both fill rules
+  (`eo_centre=0 nz_centre=1`). A truncate-at-the-first-CLOSE story explains the
+  four bars and explains NEITHER of those, which carry the same CLOSE-then-MOVE
+  boundary. Three Phase-1 predictions were wrong in exactly this direction
+  (predicted `broken`, measured `ok`); each is recorded with its reason in
+  `expected_silicon.txt` rather than re-goldened away. What the matrix does not
+  separate is DISJOINT-vs-NESTED from FOUR-contours-vs-TWO — two more cases and
+  one boot would.
+  ★ **KEEP FOLLOWING ONE-CONTOUR-PER-PATH** in `synthui_rotary_knob_gpu.cpp`
+  and `synthui_fader_gpu.cpp` meanwhile. It is the conservative reading, it is
+  known to work, and the padded-CLOSE result says a DIFFERENT construction also
+  works — not that the current one is unnecessary.
+  ★ `path/evenodd-vs-nonzero` is the matrix's only `repeat=differs`: its two
+  IDENTICAL back-to-back renders produce different pixels, REPRODUCIBLY
+  (byte-identical on both boots). Not boot-to-boot noise but a repeatable
+  in-boot difference between two identical draw sequences — the class that hid
+  NEW-20's winding-2 track defect, and the reason both compositors keep a
+  per-boot delta-equality check.
+  ★ `docs/gc355-vglite-quirks.md` is the reference for all of this — one row
+  per feature (verdict · safe usage · evidence), every row citing the
+  `display/vglite_conformance` case id that establishes it, so a claim without
+  a probe case is visibly a claim without evidence.
 - **Dual-core model**: the CM7 stages/boots/hot-swaps CM4 images and talks over
   the MU mailbox. Key constraints: main-eDMA completion IRQs reach the CM7
   only (CM4 interrupt-driven DMA needs eDMA_LPSR + an LPSR peripheral);

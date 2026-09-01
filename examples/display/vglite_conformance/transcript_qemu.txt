@@ -1,0 +1,33 @@
+VGC_BEGIN
+vgc_chip_id=0x00000000
+vgc_engine=absent reason=no_chip_id
+vgc case_begin=path/single-contour-rect
+vgc case=path/single-contour-rect api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/multi-contour-disjoint
+vgc case=path/multi-contour-disjoint api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/multi-contour-close-padded
+vgc case=path/multi-contour-close-padded api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/two-contour-ring-nonzero
+vgc case=path/two-contour-ring-nonzero api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/two-draws-ring
+vgc case=path/two-draws-ring api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/evenodd-vs-nonzero
+vgc case=path/evenodd-vs-nonzero api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/self-intersecting
+vgc case=path/self-intersecting api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/format-s8
+vgc case=path/format-s8 api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/format-s16
+vgc case=path/format-s16 api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/format-s32
+vgc case=path/format-s32 api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/format-fp32
+vgc case=path/format-fp32 api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/format-agreement
+vgc case=path/format-agreement api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=path/degenerate-zero-area
+vgc case=path/degenerate-zero-area api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc_summary engine=absent cases=13 ok=0 broken=0 skip=13 dangerous=off repeat_differs=0
+vgc_timeouts=0 vgc_irqs=0
+VGC_DONE
+vgc_hb t=5000

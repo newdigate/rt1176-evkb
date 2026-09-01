@@ -289,6 +289,41 @@ clone: **zero**.
 `e132012` is unreachable. A pin restored from this repo's git history will not
 fetch.
 
+## `rt1176:display/vglite_conformance` — the gate asserts the HONEST NEGATIVE
+
+**Not broken. Green, and green means less than it looks** — the same class as
+`vglite_probe` below, one question further on.
+
+QEMU has no GC355 model, so this gate asserts that the firmware ASKS whether a
+GPU is present, is told no, and reports all thirteen cases as `pixel=skip` —
+cleanly, without hanging, and **without claiming any case passed**. Three
+tripwires enforce that last part (no `pixel=ok`, no `pixel=broken`, and no
+`api=`/`api2=` reporting `success`), plus a case-line COUNT check and a
+`case_begin`-vs-`case` equality check — because every tripwire above is
+satisfied VACUOUSLY by an empty matrix, and an unfinished case is how a GPU
+hang would present.
+
+**It says NOTHING about whether the GC355 renders these cases correctly.** That
+is silicon-only. The measured matrix is
+`examples/display/vglite_conformance/transcript_hw_evkb.txt` (2026-08-30, two
+boots byte-identical), diffed against the PRE-REGISTERED
+`expected_silicon.txt` by `tools/vglite-conformance-check.sh`, which fails on
+drift in EITHER direction — a quirk that silently disappears after an SDK bump
+matters as much as a new one.
+
+**QEMU cannot reach one line of the pixel logic**, so the example carries THREE
+HOST suites (`tests/run.sh`, 209 checks) over the pure predicates, the path
+arena, and the case geometry itself — the last compiling the REAL case
+functions against three model rasterisers (a correct GPU, a first-contour-only
+GPU, and one that draws nothing). Its NEGATIVE arms are the point: a case
+hard-wired to `VGC_OK` leaves the correct-GPU arm GREEN and is caught only by
+the draws-nothing arm. Run them as well as the sweep.
+
+★ **Bench note:** `LinkServer flash … load` REFUSES this example's `.elf`
+(`Flash operation exited with code -11`, 0 of 38060 bytes, 4/4 reproducible)
+while other images flash clean either side of it. Use `build/<name>.hex`. The
+failure presents as a dead board.
+
 ## `rt1176:display/vglite_probe` — QEMU gates the FALLBACK, not the GPU
 
 ★ **QEMU has no GC355 model.** This gate asserts that a chip-ID probe result

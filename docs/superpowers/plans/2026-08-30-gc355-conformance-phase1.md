@@ -24,8 +24,10 @@
 |---|---|
 | `examples/display/vglite_conformance/vgc_predicates.h` | PURE pixel-buffer predicates (fill count, run count, row extent, FNV-1a). No vg_lite, no Arduino — host-compilable. |
 | `examples/display/vglite_conformance/tests/predicates_test.c` | Host unit test for the above, against synthetic buffers. |
-| `examples/display/vglite_conformance/tests/run.sh` | Builds + runs the host test with the system `cc`. |
-| `examples/display/vglite_conformance/vgc_harness.h` | Case-table types, scratch-buffer geometry/extern, colour helpers, shared path arena API. |
+| `examples/display/vglite_conformance/tests/arena_test.c` | Host unit test for the path arena, against a stubbed `vg_lite_init_path`. Added in Task 2 after review: the arena is the highest-risk unit in the harness and was the only one without a test. |
+| `examples/display/vglite_conformance/tests/run.sh` | Builds + runs both host tests with the system `cc`. |
+| `examples/display/vglite_conformance/vgc_harness.h` | Case-table types, scratch-buffer geometry/extern, colour helpers, shared path arena API, and the shared per-case draw helpers (`vgc_ident`, `vgc_draw_path`, `vgc_finish_into`, `vgc_fb`). |
+| `examples/display/vglite_conformance/vgc_arena.cpp` | The path arena, split out in Task 2 so it can be host-tested independently of VGLite init and the run loop. |
 | `examples/display/vglite_conformance/vgc_cases_path.cpp` | The 12 Phase-1 paths/contours/winding cases + the case table. |
 | `examples/display/vglite_conformance/vgc_dangerous.cpp` | The opt-in `-DVGC_DANGEROUS=1` case (unterminated path). Empty table otherwise. |
 | `examples/display/vglite_conformance/vglite_conformance.cpp` | `setup()`: init, engine detection, scratch map, the run loop, the summary line. |
@@ -156,10 +158,20 @@ int main(void)
     assert(vgc_count_runs_col(buf, W, H, W, 8) == 0);
 
     /* --- vgc_filled_rows: the degenerate-geometry extent ------------------ */
-    int ymin = -1, ymax = -1;
+    /* ★ THE SENTINEL MUST BE A VALUE THE IMPLEMENTATION CANNOT PRODUCE.
+     * vgc_filled_rows initialises its own internal lo/hi to -1, so a test
+     * sentinel of -1 makes the untouched-out-param assertion VACUOUS: delete
+     * the implementation's `if (n)` guard -- the single most likely way to
+     * break that contract -- and the unguarded write stores -1 over -1, which
+     * this assertion cannot distinguish from not writing at all. Measured: the
+     * -1 version stayed GREEN against exactly that defect. -99 is outside the
+     * implementation's reachable range, so the assertion has power. The
+     * contract matters because path/degenerate-zero-area distinguishes
+     * "nothing was drawn" from "row 0 is filled" using it. */
+    int ymin = -99, ymax = -99;
     clear_bg();
     assert(vgc_filled_rows(buf, W, H, W, &ymin, &ymax) == 0);
-    assert(ymin == -1 && ymax == -1);             /* untouched when nothing is filled */
+    assert(ymin == -99 && ymax == -99);           /* untouched when nothing is filled */
     set_fill(3, 7, 9, 9);                         /* rows 7..8 */
     assert(vgc_filled_rows(buf, W, H, W, &ymin, &ymax) == 12);
     assert(ymin == 7 && ymax == 8);
@@ -323,11 +335,17 @@ Expected: `predicates_test: OK`, exit 0.
 
 - [ ] **Step 5: Mutate one predicate to prove the test can see it**
 
-A test that has never failed on a real defect is decoration. Temporarily change `vgc_count_runs_col`'s `if (f && !in) runs++;` to `if (f) runs++;` (count filled pixels instead of runs) and re-run.
+A test that has never failed on a real defect is decoration. Mutate `vgc_count_runs_col` so it counts filled pixels instead of runs, and re-run.
+
+★ Use `if (f && in >= 0) runs++;`, NOT the naive `if (f) runs++;`. The naive form orphans `in` and dies under this file's own `-Werror` on `-Wunused-but-set-variable` — a red that proves the COMPILER noticed, not that the TEST can see the defect. `in >= 0` is always true here, so the mutant is semantically identical while keeping `in` read.
 
 Run: `./examples/display/vglite_conformance/tests/run.sh`
 
 Expected: FAIL — assertion on the one-band case (`== 1`, gets 2). Revert the mutation and re-run to confirm `predicates_test: OK`.
+
+Then mutate the OTHER contract: delete the `if (n)` guard at the end of `vgc_filled_rows` and re-run.
+
+Expected: FAIL on the untouched-out-param assertion. If it stays GREEN, the test's sentinel has collided with the implementation's internal init and the assertion is vacuous — see the ★ note in the test above. Revert and confirm green.
 
 - [ ] **Step 6: Commit**
 
@@ -336,6 +354,18 @@ git add examples/display/vglite_conformance/vgc_predicates.h \
         examples/display/vglite_conformance/tests/
 git commit -m "NEW-32: conformance probe pixel predicates + host unit test"
 ```
+
+#### As-built: what review changed, and the contracts later tasks inherit
+
+Task 1 shipped over three commits — `f89f287` (as planned), `845b5ca` and `924b89d` (review fixes). **The code blocks above are the starting point, not the final state**; the committed files are authoritative. Two rounds of review found four surviving mutants, each demonstrated RED and then closed. What later tasks must know:
+
+1. **`vgc_count_runs_col` returns `-1` for an out-of-range `x`, not `0`.** The original `0` was indistinguishable from "this column has no filled runs", so a typo'd column index in a `check()` would read as *the contour did not render* — the instrument fabricating a GC355 defect, which is the exact risk this whole exercise is built to avoid. Changed while there were zero callers.
+2. **Callers of `vgc_filled_rows` must seed `ymin`/`ymax` with a value outside `[0,h)`**, and must check the return value before reading them. Task 3's `check_degenerate` does both.
+3. **`stride_words >= w` is a documented precondition**, not a checked one — deliberately, since every caller is in-tree and a runtime check would be overbuilding for an instrument whose value is its simplicity.
+4. **`vgc_is_filled` is valid ONLY under the black-background/white-fill convention.** Phase 2's colour cases will need their own predicate — a pure-red fill makes this one return 0 for every pixel, reading as "nothing rendered".
+5. **The test now follows the tree's `PASS:`/`FAIL:` per-check convention** (`tools/gate-vacuity.test.sh`'s shape) rather than aborting on the first `assert`. For an instrument, "which predicates are still trustworthy" is the question you most want answered on a red run — a first-failure abort tells you nothing about the other four. 39 checks; a red run reports `predicates_test: FAILED (N of 39 checks)`.
+
+★ **The single most valuable fix was the FNV NUL case.** A `strlen`-flavoured `vgc_fnv` (`i < n && b[i]`) survived the original suite. The scratch buffer clears to `0xFF000000`, whose first byte is `0x00`, so that bug would return the offset basis for *every* render and make the `repeat=` determinism check vacuously green forever — with nothing else in the tree able to see it. Both new pins (`0xDC954658`, `0x050C5D1F`) were computed independently before being written down.
 
 ---
 
@@ -933,9 +963,38 @@ git add examples/display/vglite_conformance/
 git commit -m "NEW-32: vglite_conformance harness skeleton (engine-absent path)"
 ```
 
+#### As-built: what review changed, and the API Task 3 codes against
+
+Task 2 shipped over three commits — `fbf5b77` (as planned, with two justified deviations), `8414ea7` (API fixes) and `19e87ce` (the arena split + its host test). **The blocks above are the starting point; the committed files are authoritative.** The API Task 3 must use:
+
+```c
+const uint32_t   *vgc_fb(void);                 /* the ONE access path to the scratch */
+uint32_t          vgc_px(int x, int y);         /* range-checked; OOB counted, see below */
+uint32_t          vgc_px_oob(void);  void vgc_px_oob_reset(void);
+vg_lite_matrix_t *vgc_ident(void);
+void              vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule,
+                                uint32_t color, vg_lite_error_t *acc);
+void              vgc_finish_into(vg_lite_error_t *acc);
+vg_lite_error_t   vgc_finish_path(vg_lite_path_t *p, float x0, float y0,
+                                  float x1, float y1);   /* was bool */
+void              vgc_emit_rect_cw (int32_t x, int32_t y, int32_t w, int32_t h);
+void              vgc_emit_rect_ccw(int32_t x, int32_t y, int32_t w, int32_t h);
+```
+
+★ **The finding that mattered most: `vgc_finish_path` left `*p` as stack garbage on the overflow path.** Task 3 declares `vg_lite_path_t p;` uninitialised in eight `run()` bodies, so a case that ignored the failure would have drawn a path whose `path` pointer and `path_length` were stack garbage — exactly the unterminated-path-data condition that hangs the Vivante front end while every call returns SUCCESS. **The harness would have been manufacturing the failure it exists to measure.** Fixed by zeroing `*p` before the early return, and by returning `vg_lite_error_t` so a discarded result looks wrong.
+
+Other changes Task 3 inherits:
+- **Two access paths to the scratch buffer collapsed into one.** A case-local `fb()` returning `vgc_scratch.memory` would already disagree with the harness on the engine-absent path, where `.memory` is NULL while the backing array is valid.
+- **No status is discarded any more.** A failed `vgc_clear()` now yields `pixel=skip detail=clear_failed:N` instead of a verdict computed from a contaminated buffer, and the repeat run's API status is compared and surfaced as `api2=` in the detail.
+- **`detail` is sanitised** (spaces → `_`, empty → `none`) so it can never break the checker's field parse, and a NULL table entry is a named skip line rather than a hard fault.
+- **`vgc_px` out-of-range is COUNTED, not sentinelled** — `0` is transparent black, a word a Phase-2 blending case could legitimately produce, so no return value is safely "impossible". A non-zero count turns the case into `detail=px_oob:N` and a skip, so an instrument bug can never be spelled as `ok` or `broken`.
+- **The corrected S8 fixup fact**, read from the source: `vg_lite_init_path` READS byte `num-1` but WRITES one byte at `4*(num-1)` — for an 11-byte S8 path, a single-byte write **29 bytes past the end**. Materially worse than "four bytes where one was meant". Ending on an explicit `VLC_OP_END` means the branch never fires.
+
+★ **The arena was the highest-risk unit in the harness and had no test** while Task 1's simpler pure predicates had 39 checks. It is now `vgc_arena.cpp` with `tests/arena_test.cpp` — 42 checks pinning path word counts, bounds padding, sequential non-overlap, mid-sequence reset, overflow refusal with `*p` zeroed, and the `VLC_OP_END` terminator. Three mutants demonstrated RED, each failing the line it targets, and the deleted-early-return and off-by-one mutants are DISTINGUISHABLE from each other rather than lumped. Host suite total is now **81 checks** across the two tests, both run by `tests/run.sh`.
+
 ---
 
-### Task 3: The twelve paths/contours/winding cases
+### Task 3: The thirteen paths/contours/winding cases
 
 **Files:**
 - Modify: `examples/display/vglite_conformance/vgc_cases_path.cpp` (replace wholesale)
@@ -969,34 +1028,19 @@ Replace `examples/display/vglite_conformance/vgc_cases_path.cpp` with:
 #include <stdio.h>
 #include <string.h>
 
-/* ---- shared drawing helpers ----------------------------------------------- */
-
-static vg_lite_matrix_t s_identity_ready;
-
-static vg_lite_matrix_t *ident(void)
-{
-    vg_lite_identity(&s_identity_ready);
-    return &s_identity_ready;
-}
-
-/* Draw a path already built in the arena. Accumulates the first non-success
- * status into *acc. */
-static void draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
-                      vg_lite_error_t *acc)
-{
-    const vg_lite_error_t e = vg_lite_draw(&vgc_scratch, p, rule, ident(),
-                                           VG_LITE_BLEND_NONE, color);
-    if (e != VG_LITE_SUCCESS && *acc == VG_LITE_SUCCESS) *acc = e;
-}
-
-static void finish_into(vg_lite_error_t *acc)
-{
-    const vg_lite_error_t e = vg_lite_finish();
-    if (e != VG_LITE_SUCCESS && *acc == VG_LITE_SUCCESS) *acc = e;
-}
-
-/* The whole scratch, for the count predicates. */
-static const uint32_t *fb(void) { return (const uint32_t *)vgc_scratch.memory; }
+/* ---- shared drawing helpers live in the HARNESS ----------------------------
+ * ★ `vgc_ident()`, `vgc_draw_path()`, `vgc_finish_into()` and `vgc_fb()` are
+ * declared in vgc_harness.h, NOT defined here. They were local to this file in
+ * the plan's first draft and were promoted in Task 2 for two reasons that only
+ * showed up under review:
+ *  - draw/finish implement a contract the HEADER already states ("the FIRST
+ *    non-success code"). A contract specified in one place and re-implemented
+ *    in each of Phases 1, 2 and 3 will silently diverge.
+ *  - a local `fb()` returning `vgc_scratch.memory` would be a SECOND access
+ *    path to the scratch buffer, disagreeing with the harness's own
+ *    `vgc_px`/`vgc_scratch_sum` the moment a later case re-points the buffer
+ *    -- and already disagreeing on the engine-absent path, where
+ *    `vgc_scratch.memory` is NULL while the backing array is valid. */
 
 /* ---- 1. path/single-contour-rect ------------------------------------------
  * THE BASELINE. One closed rect, one contour, one draw. 80x80 at (24,24). */
@@ -1012,16 +1056,16 @@ static vg_lite_error_t run_single_rect(void)
     vg_lite_error_t acc = VG_LITE_SUCCESS;
     vg_lite_path_t p;
     vgc_emit_rect_cw(R_X, R_Y, R_W, R_H);
-    if (!vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
 static vgc_verdict_t check_single_rect(char *d, size_t n)
 {
-    const int fill   = vgc_count_filled(fb(), VGC_W, VGC_H, VGC_W);
+    const int fill   = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
     const int centre = vgc_is_filled(vgc_px(64, 64));
     const int corner = vgc_is_filled(vgc_px(10, 10));
     snprintf(d, n, "fill=%d,expect=%d,centre=%d,corner=%d",
@@ -1044,17 +1088,17 @@ static vg_lite_error_t run_multi_contour(void)
     vg_lite_error_t acc = VG_LITE_SUCCESS;
     vg_lite_path_t p;
     for (int i = 0; i < 4; i++) vgc_emit_rect_cw(R_X, BAR_Y[i], R_W, BAR_H);
-    if (!vgc_finish_path(&p, R_X, BAR_Y[0], R_X + R_W, BAR_Y[3] + BAR_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, BAR_Y[0], R_X + R_W, BAR_Y[3] + BAR_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
 static vgc_verdict_t check_multi_contour(char *d, size_t n)
 {
-    const int runs = vgc_count_runs_col(fb(), VGC_W, VGC_H, VGC_W, 64);
-    const int fill = vgc_count_filled(fb(), VGC_W, VGC_H, VGC_W);
+    const int runs = vgc_count_runs_col(vgc_fb(), VGC_W, VGC_H, VGC_W, 64);
+    const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
     snprintf(d, n, "runs=%d,expect=4,fill=%d", runs, fill);
     return runs == 4 ? VGC_OK : VGC_BROKEN;
 }
@@ -1074,10 +1118,10 @@ static vg_lite_error_t run_ring_two_contour(void)
     vg_lite_path_t p;
     vgc_emit_rect_cw(R_X, R_Y, R_W, R_H);
     vgc_emit_rect_ccw(I_X, I_Y, I_W, I_H);
-    if (!vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
@@ -1101,16 +1145,16 @@ static vg_lite_error_t run_ring_two_draws(void)
     vg_lite_path_t outer, inner;
 
     vgc_emit_rect_cw(R_X, R_Y, R_W, R_H);
-    if (!vgc_finish_path(&outer, R_X, R_Y, R_X + R_W, R_Y + R_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&outer, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&outer, R_X, R_Y, R_X + R_W, R_Y + R_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&outer, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
 
     vgc_emit_rect_cw(I_X, I_Y, I_W, I_H);
-    if (!vgc_finish_path(&inner, I_X, I_Y, I_X + I_W, I_Y + I_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&inner, VG_LITE_FILL_NON_ZERO, VGC_BG_COLOR, &acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&inner, I_X, I_Y, I_X + I_W, I_Y + I_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&inner, VG_LITE_FILL_NON_ZERO, VGC_BG_COLOR, &acc);
 
-    finish_into(&acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
@@ -1138,10 +1182,10 @@ static vg_lite_error_t run_evenodd_nonzero(void)
 
     /* pass 1: EVEN_ODD, sampled and then cleared away */
     emit_nested();
-    if (!vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_EVEN_ODD, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_EVEN_ODD, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     s_eo_rim    = vgc_is_filled(vgc_px(32, 64));
     s_eo_centre = vgc_is_filled(vgc_px(64, 64));
     s_eo_sum    = vgc_scratch_sum();
@@ -1151,10 +1195,10 @@ static vg_lite_error_t run_evenodd_nonzero(void)
     const vg_lite_error_t ce = vgc_clear();
     if (ce != VG_LITE_SUCCESS && acc == VG_LITE_SUCCESS) acc = ce;
     emit_nested();
-    if (!vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, R_Y, R_X + R_W, R_Y + R_H);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
@@ -1212,9 +1256,10 @@ static vg_lite_error_t run_self_intersecting(void)
     vg_lite_path_t p;
 
     emit_star();
-    if (!vgc_finish_path(&p, 16, 14, 112, 104)) return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_EVEN_ODD, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, 16, 14, 112, 104);
+      if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_EVEN_ODD, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     s_star_eo_centre = vgc_is_filled(vgc_px(64, 64));   /* centre pentagon */
     s_star_eo_tip    = vgc_is_filled(vgc_px(64, 22));   /* inside the top point */
     s_star_eo_sum    = vgc_scratch_sum();
@@ -1223,9 +1268,10 @@ static vg_lite_error_t run_self_intersecting(void)
     const vg_lite_error_t ce = vgc_clear();
     if (ce != VG_LITE_SUCCESS && acc == VG_LITE_SUCCESS) acc = ce;
     emit_star();
-    if (!vgc_finish_path(&p, 16, 14, 112, 104)) return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, 16, 14, 112, 104);
+      if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
@@ -1269,9 +1315,25 @@ static int16_t s_tri_s16[] = { VLC_OP_MOVE, 10, 10, VLC_OP_LINE, 70, 10,
                                VLC_OP_LINE, 10, 70, VLC_OP_CLOSE, VLC_OP_END };
 static int32_t s_tri_s32[] = { VLC_OP_MOVE, 10, 10, VLC_OP_LINE, 70, 10,
                                VLC_OP_LINE, 10, 70, VLC_OP_CLOSE, VLC_OP_END };
-static float   s_tri_f32[] = { (float)VLC_OP_MOVE, 10, 10, (float)VLC_OP_LINE, 70, 10,
-                               (float)VLC_OP_LINE, 10, 70, (float)VLC_OP_CLOSE,
-                               (float)VLC_OP_END };
+/* ★ THE FP32 ARRAY ABOVE IS WRONG AS FIRST WRITTEN — corrected in Task 3.
+ * An opcode is ONE BYTE AT THE BASE OF A FORMAT-WIDTH SLOT, not a value of
+ * the format's type. `(float)VLC_OP_MOVE` is 2.0f = 0x40000000, whose first
+ * byte is 0x00 == VLC_OP_END, so the path terminates immediately: measured on
+ * the host reference rasteriser as `format-fp32 broken fill=0` and
+ * `format-agreement broken … fp32=0` — two fabricated BROKENs.
+ * Confirmed in two independent places in the driver:
+ *   vg_lite_path.c:223-227  the FP32 CLOSE->END fixup tests
+ *                           *(char*)((float*)path_data + num - 1) -- a CHAR
+ *                           read at the float slot's base;
+ *   vg_lite_stroke.c:5148   builds an FP32 path as
+ *                           `cpath = (char*)pathdata + offset;
+ *                            *cpath = VLC_OP_MOVE; fpath++;`
+ *                           -- one byte written, the whole 4-byte slot skipped.
+ * S8/S16/S32 get the right byte 0 for free on little-endian ARM, which is why
+ * only FP32 was affected. The committed file builds the FP32 array through its
+ * BYTES (a memcpy-based helper), rebuilt on each use so nothing can be left
+ * mutated between the harness's two identical runs. */
+static float   s_tri_f32[11];   /* built byte-wise -- see the ★ note above */
 
 static int s_fmt_fill[4];   /* s8, s16, s32, fp32 */
 
@@ -1282,9 +1344,9 @@ static vg_lite_error_t run_triangle(vg_lite_format_t fmt, void *data,
     vg_lite_path_t p;
     memset(&p, 0, sizeof(p));
     vg_lite_init_path(&p, fmt, VG_LITE_HIGH, bytes, data, 9.0f, 9.0f, 71.0f, 71.0f);
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
-    s_fmt_fill[slot] = vgc_count_filled(fb(), VGC_W, VGC_H, VGC_W);
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
+    s_fmt_fill[slot] = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
     return acc;
 }
 
@@ -1336,9 +1398,9 @@ static vg_lite_error_t run_fmt_agreement(void)
         memset(&p, 0, sizeof(p));
         vg_lite_init_path(&p, v[i].f, VG_LITE_HIGH, v[i].n, v[i].d,
                           9.0f, 9.0f, 71.0f, 71.0f);
-        draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-        finish_into(&acc);
-        s_agree[i] = vgc_count_filled(fb(), VGC_W, VGC_H, VGC_W);
+        vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+        vgc_finish_into(&acc);
+        s_agree[i] = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
         sums[i]    = vgc_scratch_sum();
     }
     s_agree_sum = vgc_fnv(sums, sizeof(sums));
@@ -1374,17 +1436,17 @@ static vg_lite_error_t run_degenerate(void)
     vgc_emit(VLC_OP_LINE); vgc_emit(R_X + R_W);   vgc_emit(DEG_Y);
     vgc_emit(VLC_OP_LINE); vgc_emit(R_X);         vgc_emit(DEG_Y);
     vgc_emit(VLC_OP_CLOSE);
-    if (!vgc_finish_path(&p, R_X, DEG_Y, R_X + R_W, DEG_Y))
-        return VG_LITE_OUT_OF_RESOURCES;
-    draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
-    finish_into(&acc);
+    { const vg_lite_error_t fe = vgc_finish_path(&p, R_X, DEG_Y, R_X + R_W, DEG_Y);
+          if (fe != VG_LITE_SUCCESS) return fe; }
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
     return acc;
 }
 
 static vgc_verdict_t check_degenerate(char *d, size_t n)
 {
     int ymin = -1, ymax = -1;
-    const int fill = vgc_filled_rows(fb(), VGC_W, VGC_H, VGC_W, &ymin, &ymax);
+    const int fill = vgc_filled_rows(vgc_fb(), VGC_W, VGC_H, VGC_W, &ymin, &ymax);
     snprintf(d, n, "fill=%d,ymin=%d,ymax=%d", fill, ymin, ymax);
     if (fill == 0) return VGC_OK;                       /* nothing drawn: fine */
     return (ymin >= DEG_Y - 1 && ymax <= DEG_Y + 1) ? VGC_OK : VGC_BROKEN;
@@ -1430,7 +1492,7 @@ cd examples/display/vglite_conformance && ../../../tools/qrun -M mimxrt1170-evk 
 Expected: 12 `vgc case_begin=` lines, 12 `vgc case=` lines all with `api=skip pixel=skip … repeat=skip`, and:
 
 ```
-vgc_summary engine=absent cases=12 ok=0 broken=0 skip=12 dangerous=off repeat_differs=0
+vgc_summary engine=absent cases=13 ok=0 broken=0 skip=13 dangerous=off repeat_differs=0
 ```
 
 - [ ] **Step 4: Commit**
@@ -1439,6 +1501,27 @@ vgc_summary engine=absent cases=12 ok=0 broken=0 skip=12 dangerous=off repeat_di
 git add examples/display/vglite_conformance/vgc_cases_path.cpp
 git commit -m "NEW-32: paths/contours/winding conformance cases"
 ```
+
+#### As-built: what changed, and the third host suite
+
+Shipped as `db4c38a` plus a follow-up landing the host geometry test. Changes from the blocks above:
+
+1. **The FP32 array was wrong** — see the ★ note in the code above. It would have fabricated two BROKENs on the bench.
+2. **`check_degenerate` seeds `-99`, not `-1`** — `-1` is the one sentinel `vgc_predicates.h` documents as unusable, and Task 1 measured a broken predicate staying green with it.
+3. **`s_fmt_fill[4]` dropped; `check_fmt` counts live pixels** like every other case. That removes four pieces of static state and with them the only route by which one format case could read another's leftovers.
+4. **`check_fmt_agreement`'s non-zero test was dead as written** (`!= s_agree[0] || == 0` — equality already implies slot 0 non-zero once the loop passes). Split so each test has one job.
+5. `VGC_FINISH_OR_RETURN` replaces the ten inline error blocks; the `return` is in the name so the control flow is visible at the call site.
+6. `tests/stub/vg_lite.h` gained `VG_LITE_FP32 = 3` (verified against the real `inc/vg_lite.h`: S8/S16/S32/FP32 really are 0/1/2/3) — the stub now serves two suites and its header says what it models and what each suite must supply for itself.
+
+★ **`path/two-draws-ring` draws twice WITHOUT clearing between, and that is correct** — it reads like a violation of the harness's "a multi-render case must clear itself" rule but is not. That rule concerns sub-renders measured one after another (cases 6, 7, 12); case 5's two draws compose ONE picture and the second is *meant* to land on the first. A ★ note in the file says so, because the obvious "fix" would silently erase the plate the inset punches through.
+
+★ **`tests/cases_path_geom_test.cpp` is the third host suite, and its NEGATIVE arm is the point.** It compiles the REAL `run()`/`check()`/`sum()` functions and the real arena against a scanline reference rasteriser, in two arms:
+- **positive** — a correct rasteriser (all contours, both fill rules): all thirteen must report `ok`;
+- **negative** — a rasteriser re-broken to drop every contour after the first, i.e. THIS GC355's actual defect: `path/multi-contour-disjoint`, `path/two-contour-ring-nonzero` and `path/evenodd-vs-nonzero` must go BROKEN **by name**, and all six controls plus the whole format set must stay `ok`.
+
+The negative arm is what makes the matrix trustworthy: it proves the probe cases can go red on the defect they are aimed at, and that a red there is not a harness artefact. Without it a green positive arm would be equally consistent with a matrix that cannot detect anything. It also settled three numbers the target cannot check — the star's sample points (centre 15.00 px clear of the nearest edge, tip 2.45 px), case 1's ±6 % band against a 320 px perimeter, and that pixel-centre sampling alone costs −1.7 % of the triangle's area, which the ±8 % band must hold *on top of* antialiasing.
+
+★ **It says nothing about what the silicon does.** It exercises this file's geometry against a MODEL of a correct GPU and a MODEL of the known defect. The silicon answer is `transcript_hw_evkb.txt` diffed against `expected_silicon.txt`, and a green host run must never be read as a bench result.
 
 ---
 
@@ -1463,14 +1546,14 @@ cd examples/display/vglite_conformance
 ../../../tools/qrun -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel build-danger/vglite_conformance.elf -display none -serial stdio | grep -E "vgc_summary|case_begin=path/unterminated"
 ```
 
-Expected: `cases=13`, `dangerous=on`, and a `vgc case_begin=path/unterminated` line. Then confirm the default build is untouched:
+Expected: `cases=14`, `dangerous=on`, and a `vgc case_begin=path/unterminated` line. Then confirm the default build is untouched:
 
 ```bash
 cd examples/display/vglite_conformance
 ../../../tools/qrun -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel build/vglite_conformance.elf -display none -serial stdio | grep vgc_summary
 ```
 
-Expected: `cases=12 … dangerous=off`.
+Expected: `cases=13 … dangerous=off`.
 
 - [ ] **Step 3: Add `build-danger` to the example's ignore surface**
 
@@ -1551,10 +1634,10 @@ grep -q "pixel=broken" "$OUT" && { echo "FAIL: TRIPWIRE a case reported broken i
 # every tripwire above vacuously (the harness skeleton did exactly that before
 # the case table landed), and a truncated capture would look like a smaller
 # matrix that happened to pass. Both are refused here: the case-line count is
-# compared against the summary's own cases= field, and against the expected 12.
+# compared against the summary's own cases= field, and against the expected 13.
 CASES=$(grep -a -c "^vgc case=" "$OUT" || true)
 BEGINS=$(grep -a -c "^vgc case_begin=" "$OUT" || true)
-[ "$CASES" -eq 12 ] || { echo "FAIL: expected 12 case lines, got $CASES"; exit 1; }
+[ "$CASES" -eq 13 ] || { echo "FAIL: expected 13 case lines, got $CASES"; exit 1; }
 [ "$BEGINS" -eq "$CASES" ] || \
     { echo "FAIL: $BEGINS case_begin lines but $CASES case lines (a case did not finish)"; exit 1; }
 
@@ -1563,6 +1646,7 @@ BEGINS=$(grep -a -c "^vgc case_begin=" "$OUT" || true)
 # place, but a table that shrinks and grows in the same commit is exactly the
 # drift this names.
 for id in path/single-contour-rect path/multi-contour-disjoint \
+          path/multi-contour-close-padded \
           path/two-contour-ring-nonzero path/two-draws-ring \
           path/evenodd-vs-nonzero path/self-intersecting \
           path/format-s8 path/format-s16 path/format-s32 path/format-fp32 \
@@ -1572,9 +1656,9 @@ for id in path/single-contour-rect path/multi-contour-disjoint \
 done
 
 # The summary must AGREE with the case lines, and must say the default build.
-# Demonstrated RED 2026-08-30: cases=12 edited to cases=11 in the capture ->
+# Demonstrated RED 2026-08-30: cases=13 edited to cases=12 in the capture ->
 # "FAIL: summary line missing or disagrees with the case lines".
-grep -qE "^vgc_summary engine=absent cases=12 ok=0 broken=0 skip=12 dangerous=off repeat_differs=0\r?$" "$OUT" || \
+grep -qE "^vgc_summary engine=absent cases=13 ok=0 broken=0 skip=13 dangerous=off repeat_differs=0\r?$" "$OUT" || \
     { echo "FAIL: summary line missing or disagrees with the case lines"; exit 1; }
 
 # A bounded wait that gave up means the completion path is wrong even when the
@@ -1634,7 +1718,7 @@ grep -v "^vgc case=path/degenerate-zero-area" build/vglite_conformance.uart > /t
 REAL_QEMU=/tmp/vgc-fake-qemu FAKE_CAPTURE=/tmp/vgc_short.uart GATE_TIMEOUT=120 QRUN_TIMEOUT=40 ./run_qemu.sh; echo "rc=$?"
 ```
 
-Expected: `FAIL: expected 12 case lines, got 11`, `rc=1`.
+Expected: `FAIL: expected 13 case lines, got 12`, `rc=1`.
 
 Then confirm the gate is still green for real (no `REAL_QEMU` in the environment):
 
@@ -1738,7 +1822,7 @@ if [ -d "$EVKB/$VGC" ] && [ -f "$EVKB/$VGC/transcript_qemu.txt" ]; then
     run_gate "$VGC" "run_qemu.sh" "$WORK/vgc_short.txt"; rc=$?
     result=0
     [ "$rc" -ne 0 ] || result=1
-    echo "$OUT_TEXT" | grep -q "expected 12 case lines, got 11" || result=1
+    echo "$OUT_TEXT" | grep -q "expected 13 case lines, got 12" || result=1
     report "vgc_truncated_matrix_fails" $result
 else
     echo "SKIP: vglite_conformance vacuity (example or fixture missing)"
@@ -1775,8 +1859,8 @@ triples rendering one at a time into a 128×128 BGRA8888 EXTMEM scratch, each
 case printing TWO INDEPENDENT VERDICTS — `api=` (what the driver said) and
 `pixel=` (what a structural CPU-side predicate found) — because every GC355
 defect this tree has hit reported success while producing the wrong picture.
-Phase 1 is the twelve paths/contours/winding cases. Its gate asserts the
-HONEST NEGATIVE (`vgc_engine=absent`, all twelve `pixel=skip`) with three
+Phase 1 is the thirteen paths/contours/winding cases. Its gate asserts the
+HONEST NEGATIVE (`vgc_engine=absent`, all thirteen `pixel=skip`) with three
 tripwires — no case may report `pixel=ok`, none may report `pixel=broken`, and
 no `api=success` may appear with no GPU — plus a case-line COUNT check, since
 every tripwire above is satisfied vacuously by an empty matrix. 123 before it.
@@ -1847,6 +1931,20 @@ Create `examples/display/vglite_conformance/expected_silicon.txt`:
 
 path/single-contour-rect      ok     same  # the baseline; a broken control invalidates the whole matrix
 path/multi-contour-disjoint   broken same  # only the first contour renders: expect runs=1, not 4
+# ★ THE DISCRIMINATOR, and the one line here whose answer is not predicted with
+# confidence. Same four bars as the case above; the ONLY variable is that the
+# contour-boundary CLOSEs are padded to 0x01010101 instead of 0x00000001.
+# NXP's own driver carries a CHIPID==0x355-gated workaround doing exactly that
+# padding, at exactly that condition (vg_lite_path.c:556-570, inside
+# vg_lite_append_path -- which nothing in this tree calls, so the one-contour
+# rule was only ever measured on the UNPADDED encoding). If this reports `ok`
+# while the case above reports `broken`, the real rule is the far narrower
+# "a CLOSE slot padded with 0x00 terminates the path" and BOTH shipping
+# compositors could stop working around it. Predicted `broken` only because
+# that is the conservative reading of the existing evidence -- a flip to `ok`
+# here is the most valuable single result the matrix can produce, not a drift
+# to be explained away.
+path/multi-contour-close-padded broken same  # see the ★ above -- this cell is a hypothesis test, not a feature probe
 path/two-contour-ring-nonzero broken same  # first-contour-only: the reversed inner contour is dropped, the ring fills solid
 path/two-draws-ring           ok     same  # SAFE USAGE control for the case above -- plate + inset plate, two single-contour draws
 path/evenodd-vs-nonzero       broken same  # the EVEN_ODD hole needs the second contour, which is dropped; nz half is expected right
@@ -1944,7 +2042,7 @@ cd /Users/nicholasnewdigate/Development/rt1170/evkb
 ./tools/vglite-conformance-check.sh /tmp/vgc_synth.txt
 ```
 
-Expected: `VGLITE-CONFORMANCE: PASS (12 cases match …)`, exit 0.
+Expected: `VGLITE-CONFORMANCE: PASS (13 cases match …)`, exit 0.
 
 Now three RED demonstrations:
 
@@ -1982,6 +2080,42 @@ git add examples/display/vglite_conformance/expected_silicon.txt \
         tools/vglite-conformance-check.sh
 git commit -m "NEW-32: pre-registered silicon expectations + drift checker"
 ```
+
+#### As-built: the `pair:` mechanism, and why it is not an escape hatch
+
+Shipped as `803157a`. The plan's flat `<id> <verdict> <repeat>` format could not express the discriminator: `path/multi-contour-close-padded` has TWO scientifically admissible outcomes, and pinning it as an ordinary expected-`broken` cell would have turned the *good* result — the narrow rule, the most valuable answer the matrix can produce — into a red gate.
+
+A verdict may now also be **`pair:<name>`**, deferring the case to a set of joint tuples enumerated by `pair` lines:
+
+```
+path/multi-contour-disjoint     pair:contour-encoding  same
+path/multi-contour-close-padded pair:contour-encoding  same
+
+pair contour-encoding path/multi-contour-disjoint=broken,path/multi-contour-close-padded=broken meaning=wide-one-contour-rule-confirmed-on-a-second-encoding
+pair contour-encoding path/multi-contour-disjoint=broken,path/multi-contour-close-padded=ok     meaning=narrow-rule-a-zero-padded-CLOSE-slot-terminates-the-path
+```
+
+The checker matches the observed TUPLE and prints the matching `meaning=`, so a transcript records which hypothesis the boot selected rather than merely "green".
+
+★ **Four rules stop this becoming a general "any of these is fine" escape hatch**, each a CONFIG ERROR (exit 2) rather than a silent pass:
+1. **Joint, not per-case.** `disjoint=broken` appears in EVERY admissible tuple, so the mechanism cannot silence drift on it — `disjoint` turning `ok` still reds the checker. Verified: `disjoint=ok,close-padded=ok` fails and lists both admissible tuples.
+2. Every tuple must assign a verdict to **exactly** the members — a member cannot be quietly dropped while the pair keeps passing.
+3. A pair must admit **≥2 and strictly fewer than 2^members** tuples. One admitting every combination is rejected by name as an escape hatch.
+4. Every tuple needs a **distinct `meaning=`** slug — an outcome that cannot be said to mean something has no business being admissible, and distinctness stops the list being padded with copies to satisfy rule 3.
+
+Separately, any `broken` or `pair:` line must carry a non-empty `#` reason or the file is rejected: a new quirk cannot be pinned in without stating what was believed.
+
+★ **The checker reads fields BY NAME, not by position** — the case line carries `api2=` between `api=` and `pixel=`, the exact trap that had already broken the gate's per-id grep once in this work.
+
+Demonstrated: green; a control flipping to `broken`; a known quirk silently turning `ok` (drift in the *other* direction — a checker that only looked for regressions would report that as health); a shrinking matrix; `repeat` → `differs`; the QEMU capture REFUSED by name rather than diffed; both admissible arms green with their meanings printed; and all four anti-abuse rules firing.
+
+---
+
+### Task 8 as-built
+
+`docs/gc355-vglite-quirks.md` shipped as `1b09b83`; the VGLite README cross-link as `687cc43` in that sibling repo (neither pushed). Every case id and every file/line citation was verified against the source rather than carried from this plan — `CHIPID 0x355` confirmed for the Series `evkb.cmake` selects, `vg_lite_path.c:556-570` confirmed inside `vg_lite_append_path`, and the "no caller" claim re-grepped (the only hits are LVGL's ThorVG shim, gated by `LV_USE_VG_LITE_THORVG=0` and not built).
+
+★ Two `(none)` rows in Known-but-not-yet-probed carry a reason amounting to **un-probeable**, not "not done yet": the 64-byte alignment would have to provoke a front-end hang the boot cannot recover from, and an unmapped target would make EVERY case read broken rather than isolating as a row. Said explicitly so a later phase does not treat them as a backlog. The stale-IRQ row is different again — the probe cannot recreate the defect but DOES witness the fix each boot via `vgc_timeouts=`/`vgc_irqs=`, so it is marked `(none, by design)`.
 
 ---
 
@@ -2235,7 +2369,7 @@ grep -E "^vgc_engine=|^vgc_summary|^vgc_timeouts=" transcript_hw_evkb.txt
 grep -c "^vgc case=" transcript_hw_evkb.txt
 ```
 
-Expected: `vgc_engine=gpu …`, `cases=12`, `dangerous=off`, and 12 case lines.
+Expected: `vgc_engine=gpu …`, `cases=13`, `dangerous=off`, and 13 case lines.
 If `vgc_timeouts=` is non-zero, the completion path is wrong even where the
 pixels look right — that is a finding, not a nuisance, and it goes in the doc.
 
@@ -2327,6 +2461,22 @@ git add CLAUDE.md && git commit -m "NEW-32 Phase 1 close-out: sweep 124, GC355 c
 ```
 
 ---
+
+### Tasks 9–11 as-built: the silicon boot, and what it changed
+
+**Task 9 (pre-bench verification).** Sweep 124 discovered / 123 passed / 1 failed / 0 SKIP; the red is `m2_hci_probe[hci]`, confirmed the documented bench-config class from its `CMakeCache.txt` (`M2RADIO_IW416_BT_FW`, `M2_BT_UART_DNLD=ON`, `M2_BT_ASSERT_CTS=ON`, dated Aug 29) rather than assumed. `LICENSE-AUDIT: PASS` at 129 dep paths. Vacuity 29/29, re-derived from a live run.
+
+**Task 10 (the silicon boot).** Two boots, byte-identical: `cases=13 ok=12 broken=1 repeat_differs=1`, `vgc_timeouts=0 vgc_irqs=75`, `chip_id=0x00000355`.
+
+★ **The discriminator answered, and it is the result the whole phase existed for.** `path/multi-contour-disjoint` broken (`runs=1`, `fill=1393`) beside `path/multi-contour-close-padded` ok (`runs=4`, `fill=5120`) — identical geometry, the CLOSE encoding the only variable. The `pair:` mechanism recognised the joint outcome and named it rather than reporting a red gate, which is exactly why it was built.
+
+★ **Three predictions were wrong** — two verdicts (`two-contour-ring-nonzero`, `evenodd-vs-nonzero`, both predicted `broken`, measured `ok`) and one repeat (`evenodd-vs-nonzero`, `same` → `differs`). Two lines changed in `expected_silicon.txt`, each with a written reason. **The wide one-contour rule is refuted, not merely narrowed**: two NESTED-contour paths on the ORDINARY encoding rendered both contours, which a truncate-at-the-first-CLOSE story cannot explain. The mechanism is NOT identified and is labelled so everywhere; two further cases and one boot would separate disjoint-vs-nested from four-vs-two.
+
+★★ **`LinkServer flash … load` REFUSED this example's `.elf`** — `code -11`, 0 of 38060 bytes, 4/4 reproducible — while `vglite_probe` (32 KB) and `synthui_fader_test` (302 KB in ONE write) flashed clean immediately before and after. Neither size nor a wedged probe: LinkServer's ELF program-header path. `flash … load build/<name>.hex` works and `verify` reports "File matches flash". Diagnosed by an A-B-A control, not by guessing.
+
+★ **Two bench mistakes worth not repeating.** The MCU-Link VCOM is the port whose suffix matches the probe serial in LinkServer's own log (`[5DQ2DDHVWO5EI]` → `/dev/cu.usbmodem5DQ2DDHVWO5EI3`); reading the other port captured nothing and cost a press. And `tools/rt1170-console.py` captures are classified as BINARY by `file`, so plain `grep`/`awk` silently skip them — use `grep -a`, which is why every gate in this tree already does.
+
+**Task 11 (close-out).** CLAUDE.md's measured-sweep entry and its VGLite section updated (the latter now says the rule is refuted as stated, and keeps the conservative guidance); `docs/KNOWN-BROKEN-GATES.md` gained a `vglite_conformance` section, since the gate points readers at that file; NEW-32 updated. A whole-branch final review then found 14 items — no Critical, none touching a measurement, verdict, gate assertion or code path — including two `★`s of mine carrying false claims (the "only display example linking neither MipiDisplay nor LVGL" count, and "three predictions, all in the same direction", which is not checkable as stated). All fixed before merge.
 
 ## Self-review notes
 
