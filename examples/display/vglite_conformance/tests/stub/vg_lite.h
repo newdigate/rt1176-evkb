@@ -42,8 +42,18 @@
 typedef enum { VG_LITE_SUCCESS = 0, VG_LITE_OUT_OF_RESOURCES = 5 } vg_lite_error_t;
 typedef enum { VG_LITE_S8 = 0, VG_LITE_S16 = 1, VG_LITE_S32 = 2,
                VG_LITE_FP32 = 3 } vg_lite_format_t;
-typedef enum { VG_LITE_LOW = 0, VG_LITE_MEDIUM = 1, VG_LITE_HIGH = 2 } vg_lite_quality_t;
+/* Real order and real values (inc/vg_lite.h:253-259) -- HIGH is 0 and LOW is
+ * 3, i.e. the REVERSE of the intuitive reading, and VG_LITE_UPPER exists
+ * between them. arena_test asserts on VG_LITE_HIGH, so a convenient ordering
+ * here would be a stub vouching for a value the driver does not use. */
+typedef enum { VG_LITE_HIGH = 0, VG_LITE_UPPER = 1, VG_LITE_MEDIUM = 2,
+               VG_LITE_LOW = 3 } vg_lite_quality_t;
 typedef enum { VG_LITE_FILL_NON_ZERO = 0, VG_LITE_FILL_EVEN_ODD = 1 } vg_lite_fill_t;
+/* Only the two modes the harness names, at their real values
+ * (inc/vg_lite.h:459-461). No suite renders through a blend mode -- each
+ * supplies its own vgc_draw_path -- so this exists purely so
+ * vgc_harness.h's vgc_draw_path_blend declaration parses on the host. */
+typedef enum { VG_LITE_BLEND_NONE = 0, VG_LITE_BLEND_SRC_OVER = 1 } vg_lite_blend_t;
 
 typedef struct { float m[3][3]; }            vg_lite_matrix_t;
 typedef struct { void *memory; uint32_t address; int32_t width, height, stride; } vg_lite_buffer_t;

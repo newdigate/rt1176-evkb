@@ -163,21 +163,10 @@
  * silently; written as a rule, the moment two-disjoint-bars reports runs=2 its
  * 2560 px expectation starts being checked. */
 
-typedef struct {
-    int  ok;
-    char s[24];     /* "cover=stray:" (12) + an int (11) + NUL */
-} vgc_cover_t;
-
-/* Not applicable: the structural predicate failed, so there is no correct
- * area to compare against. Never fails a case on its own. */
-static vgc_cover_t vgc_cover_na(void)
-{
-    vgc_cover_t c;
-    c.ok = 1;
-    snprintf(c.s, sizeof(c.s), "cover=n/a");
-    return c;
-}
-
+/* vgc_cover_t and vgc_cover_na() live in vgc_harness.h so a second case file
+ * can reach them (Phase 2's colour cases are all cover=n/a, and spelling that
+ * literal twice would put the field name in two files). The tolerance helpers
+ * below stay static: nothing outside this file needs them. */
 static vgc_cover_t vgc_cover_within(int fill, int expect, int tol)
 {
     vgc_cover_t c;
