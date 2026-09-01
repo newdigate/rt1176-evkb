@@ -31,7 +31,17 @@ vgc case_begin=path/format-agreement
 vgc case=path/format-agreement api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
 vgc case_begin=path/degenerate-zero-area
 vgc case=path/degenerate-zero-area api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
-vgc_summary engine=absent cases=15 ok=0 broken=0 skip=15 dangerous=off repeat_differs=0
+vgc case_begin=color/solid-word-order
+vgc case=color/solid-word-order api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=color/premultiplied-srcover
+vgc case=color/premultiplied-srcover api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=blend/srcover-arithmetic
+vgc case=blend/srcover-arithmetic api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=blend/srcover-double
+vgc case=blend/srcover-double api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=blend/none-honours-alpha
+vgc case=blend/none-honours-alpha api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc_summary engine=absent cases=20 ok=0 broken=0 skip=20 dangerous=off repeat_differs=0
 vgc_timeouts=0 vgc_irqs=0
 VGC_DONE
 vgc_hb t=5000

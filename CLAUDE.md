@@ -225,7 +225,7 @@ triples rendering one at a time into a 128×128 BGRA8888 EXTMEM scratch, each
 case printing TWO INDEPENDENT VERDICTS — `api=` (what the driver said) and
 `pixel=` (what a structural CPU-side predicate found) — because every GC355
 defect this tree has hit reported success while producing the wrong picture.
-Phase 1 is thirteen paths/contours/winding cases; Phase 1b (2026-09-01) added two more and answered the mechanism question, taking the matrix to FIFTEEN. Its gate asserts the HONEST
+Phase 1 is thirteen paths/contours/winding cases; Phase 1b (2026-09-01) added two more and answered the mechanism question, and Phase 2 (2026-09-01) added FIVE COLOUR/BLEND cases, taking the matrix to TWENTY. Its gate asserts the HONEST
 NEGATIVE (`vgc_engine=absent`, all thirteen `pixel=skip`) with three tripwires
 — no case may report `pixel=ok`, none may report `pixel=broken`, and no
 `api=`/`api2=` may say `success` with no GPU — plus a case-line COUNT check and
@@ -248,7 +248,7 @@ purpose.
 `examples/display/vglite_conformance/tests/run.sh` — 209 checks over the pure
 predicates, the path arena, and the case geometry itself. The geometry suite
 compiles the REAL case functions against three model rasterisers: a correct
-GPU (all fifteen must report `ok`), a first-contour-only GPU modelling this
+GPU (all twenty must report `ok`), a first-contour-only GPU modelling this
 GC355's known defect (the probe cases must go BROKEN **by name**, every control
 must stay `ok`), and a GPU that draws nothing. **The negative arms are the
 point** — a positive-only suite is equally consistent with a matrix that cannot
@@ -1362,7 +1362,7 @@ not hung.
   NOT identified.** Two NESTED-contour paths using the ORDINARY encoding
   rendered BOTH contours correctly — the non-zero ring cut its hole
   (`rim=1 centre=0`) and the same-winding nest honoured both fill rules
-  (`eo_centre=0 nz_centre=1`). A truncate-at-the-first-CLOSE story explains the
+  (`eoc=0 nzc=1`). A truncate-at-the-first-CLOSE story explains the
   four bars and explains NEITHER of those, which carry the same CLOSE-then-MOVE
   boundary. Three Phase-1 predictions were wrong in exactly this direction
   (predicted `broken`, measured `ok`); each is recorded with its reason in
@@ -1411,6 +1411,27 @@ not hung.
   `broken`, not `ok`. Tolerance is `k*perimeter`, NEVER a percentage of area —
   a 5% band would have false-`broken`ed `self-intersecting`, a CONTROL, since a
   pentagram carries 474 px of all-diagonal boundary on 2792 px of area.
+  ★★ **PHASE 2 (2026-09-01) FOUND THAT THE MATRIX HAD NEVER TESTED THE BLEND
+  MODE PRODUCTION USES.** All fifteen Phase 1 cases render with
+  `VG_LITE_BLEND_NONE`; both shipping compositors use `VG_LITE_BLEND_SRC_OVER`
+  exclusively, twelve call sites. Five colour/blend cases are BUILT AND AWAIT A
+  BOOT (matrix 15 → 20, sweep unchanged at 124; host suites 305 → 410 checks).
+  ★ **The driver's own header is internally inconsistent about whether
+  `SRC_OVER` is premultiplied** — `inc/vg_lite.h:452`/`:458` file mode 1 as
+  non-premultiplied while `:461` gives it `S + D*(1-Sa)`, the PREmultiplied
+  operator, and `:481` gives mode 11 the non-premultiplied `S*Sa + D*(1-Sa)`
+  which `:137` aliases `PREMULTIPLY_SRC_OVER`. Names and formulas inverted. The
+  cases admit BOTH readings and report which, rather than pre-judging.
+  ★ **The alpha row is the one unambiguous part and it is what catches a GPU
+  that discards alpha**: `:462` gives `A: Sa + Da*(1-Sa)` = 255 over an opaque
+  backdrop under BOTH readings, while alpha-ignoring leaves 128. Without it,
+  a saturated white source makes reading B observationally identical to writing
+  the source raw. `blend/none-honours-alpha` deliberately does NOT judge alpha
+  — `BLEND_NONE`'s row is `A: Sa`, so 128 is correct there.
+  ★ **The "SRC_OVER of AA paths is not idempotent" quirk is RETIRED, not
+  confirmed**: that drift is correct alpha compositing, true of every
+  conforming implementation. `blend/srcover-double` instead asserts the second
+  composite lands where the formula predicts FROM THE MEASURED FIRST.
   ★ **KEEP FOLLOWING ONE-CONTOUR-PER-PATH** — now for two independent reasons.
   The mechanism is still unidentified: "disjoint" describes the geometry, not
   why the tessellator drops it. One clue: bar 0 renders 1393 px inside the

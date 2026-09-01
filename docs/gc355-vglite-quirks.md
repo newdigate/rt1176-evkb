@@ -106,7 +106,7 @@ cell says *Prediction refuted*, the pre-registered expectation was wrong and
 | two DISJOINT contours in one path, ordinary CLOSE | **BROKEN** — `runs=1` of 2. Two fail exactly as four do | **one contour per path**, or pad the CLOSE slot | `path/two-disjoint-bars` |
 | four NESTED contours in one path, ordinary CLOSE | **BROKEN** — structure right (`runs=4`, all four honoured) but **~1150 STRAY PIXELS** (6931/6875 vs an analytic 5760), varying between boots | do **not** use it | `path/four-nested-rings` |
 | hole cut by a reversed inner contour (non-zero) | **BROKEN** — sample points say the hole is right (`rim=1 centre=0`) but `fill=4607` vs an analytic 5376: **`cover=short:769`, 14 % of the ring missing** | don't; draw a filled plate then an inset plate in the backdrop colour — its control measures EXACT | `path/two-contour-ring-nonzero`, control `path/two-draws-ring` |
-| `VG_LITE_FILL_EVEN_ODD` vs `NON_ZERO` across nested contours | **OK** — `eo_centre=0 nz_centre=1`, both rules honoured. **Prediction refuted.** BUT `repeat=differs` | the only case in the matrix whose two identical renders differ — see the nondeterminism note | `path/evenodd-vs-nonzero` |
+| `VG_LITE_FILL_EVEN_ODD` vs `NON_ZERO` across nested contours | **OK** — `eoc=0 nzc=1`, both rules honoured. **Prediction refuted.** BUT `repeat=differs` | the only case in the matrix whose two identical renders differ — see the nondeterminism note | `path/evenodd-vs-nonzero` |
 | fill rules on ONE self-intersecting contour | **OK** — pentagram centre empty under EVEN_ODD, filled under NON_ZERO | both rules honoured — this is the fill-rule usage that works | `path/self-intersecting` |
 | path coordinate formats S8 / S16 / S32 / FP32 | **OK** — all four `fill=1830`, and `same_px=1`: the four renders are BIT-IDENTICAL, not merely equal in area | all four usable; **the opcode is one BYTE at the base of a format-width slot**, not a value of the format's type, so each format needs its own typed array | `path/format-s8`, `path/format-s16`, `path/format-s32`, `path/format-fp32`, agreement: `path/format-agreement` |
 | degenerate (zero-area) geometry | **OK** — `fill=0`, nothing drawn | safe to emit; nothing, or a hairline on the degenerate row — do not rely on which | `path/degenerate-zero-area` |
@@ -212,7 +212,7 @@ Four disjoint bars in one path render as one contour with the ordinary
 stated**, is wrong. Two nested-contour paths using the **ordinary** CLOSE
 encoding rendered **both** contours correctly — the non-zero ring cut its hole
 (`rim=1 centre=0`) and the same-winding nest honoured both fill rules
-(`eo_centre=0 nz_centre=1`). A truncate-at-the-first-CLOSE story explains the
+(`eoc=0 nzc=1`). A truncate-at-the-first-CLOSE story explains the
 four bars and explains **neither** of these, because both carry the same
 CLOSE-then-MOVE boundary.
 
@@ -369,14 +369,77 @@ is exactly what the Case column is for.
 
 ---
 
-## Gradients & colour — Phase 2
+## Colour & blend — Phase 2
+
+### ⚠ BUILT, NOT YET MEASURED. Five cases awaiting one bench boot.
+
+**Why this phase, and not the gradients the original spec listed:** every one of
+the fifteen Phase 1 cases renders with `VG_LITE_BLEND_NONE`, while **both
+shipping compositors use `VG_LITE_BLEND_SRC_OVER` exclusively** — twelve call
+sites. The matrix had never tested the blend mode production uses, while the
+gradient APIs it *would* have tested are already routed around by solid strips
+in both widgets.
+
+| Feature | Verdict | Safe usage | Case |
+|---|---|---|---|
+| memory word order (ARGB) of a `BGRA8888` target | **PENDING** — already measured in `vglite_probe`; this re-confirms per boot | red is byte 2; `vg_lite_color_t` is the other order (ABGR) | `color/solid-word-order` |
+| `SRC_OVER` source term over black | **PENDING** — two readings both admissible, see below | — | `color/premultiplied-srcover` |
+| `SRC_OVER` over a non-zero backdrop | **PENDING** | — | `blend/srcover-arithmetic` |
+| `SRC_OVER` self-consistency across two composites | **PENDING** — reading-agnostic | — | `blend/srcover-double` |
+| `BLEND_NONE` with a non-opaque source | **PENDING** — recorded, not judged | every Phase 1 case used an opaque colour; nothing is known about this | `blend/none-honours-alpha` |
+
+### ★★ The driver's own header is inconsistent about whether `SRC_OVER` is premultiplied
+
+Found while building the reference rasteriser. From `~/Development/VGLite/inc/vg_lite.h`:
+
+- `:452` — "S and D represent source and destination **non-premultiplied** RGB color channels"
+- `:458` — section heading "**Non-premultiplied** Blending modes"
+- `:461` — `VG_LITE_BLEND_SRC_OVER = 1` → `RGB: S + D*(1 - Sa)` — **no `*Sa`**, the *premultiplied* operator
+- `:481` — `VG_LITE_BLEND_NORMAL_LVGL = 11` → `RGB: S*Sa + D*(1 - Sa)` — the *non*-premultiplied operator
+- `:137` — `#define VG_LITE_BLEND_PREMULTIPLY_SRC_OVER VG_LITE_BLEND_NORMAL_LVGL`
+
+**Names and formulas are inverted against each other.** So two readings of mode 1
+are both defensible, and the cases report which rather than pre-judging:
+
+| | reading **A** = `S*Sa + D*(1-Sa)` | reading **B** = `S + D*(1-Sa)` |
+|---|---|---|
+| over black | 128 | 255 |
+| over grey 0x40 | 160 | 287 → clamps to 255 |
+
+★ **Cases 2 and 3 must agree on which.** A disagreement means the hardware
+implements neither formula consistently — a bigger finding than which it is.
+
+★ **The alpha row is the one part with no ambiguity**, and it is what catches a
+GPU that discards alpha: `:462` gives `A: Sa + Da*(1-Sa)`, which over an opaque
+backdrop is 255 under **both** readings, while alpha-ignoring leaves 128. With a
+saturated white source, reading B is otherwise *observationally identical* to
+writing the source raw — so without the alpha check those cases could not tell
+a conforming GPU from one that ignores alpha at all. `blend/none-honours-alpha`
+deliberately does **not** judge alpha: `BLEND_NONE`'s row is `A: Sa`
+(`:459-460`), so a raw write leaving 128 is correct there.
+
+### The one entry this phase retires rather than confirms
+
+The Phase 1 quirk table lists *"SRC_OVER of AA paths is not idempotent —
+double-composited edges drift"*. **That is arithmetically correct compositing**
+— a 50 %-coverage edge composited twice gives `0.75s + 0.25d` — and true of
+every conforming implementation. A case confirming "twice ≠ once" would confirm
+nothing about this GPU. `blend/srcover-double` instead asserts the second
+composite lands where the same formula predicts **from the measured first**,
+which holds under either reading.
+
+## Gradients — deferred
 
 ### ⚠ NOT YET PROBED. Nothing in this section has a case.
 
-Spec case ids awaiting implementation: `grad/legacy-linear`,
-`grad/ext-linear-static`, `grad/ext-linear-moved`, `grad/ramp-word-order`,
-`color/solid-word-order`, `color/premultiplied-srcover`, `blend/modes`
-(design spec §4, "Gradients & colour").
+Deferred by the Phase 2 design (2026-09-01), which went to colour and blend
+instead — the surface both compositors actually use, and which no case had ever
+touched. Still unbuilt: `grad/legacy-linear`, `grad/ext-linear-static`,
+`grad/ext-linear-moved`, `grad/ramp-word-order`.
+
+★ Two entries that used to sit here are now **built** and appear in the Colour
+& blend section above: the ABGR/ARGB word order (`color/solid-word-order`) and
+premultiplied src-over (`color/premultiplied-srcover`).
 
 What the shipping compositors currently assert **without a probe case** —
 each a claim awaiting evidence:
@@ -385,21 +448,7 @@ each a claim awaiting evidence:
 |---|---|---|
 | Legacy `vg_lite_draw_grad` is **GC255-only**. On our GC355 it rendered **solid black** and produced a **per-boot-varying checksum** on silicon, while every `vg_lite_*` call returned `VG_LITE_SUCCESS`. NXP's own `vglite_layer.c` calls it only when `chip_id == 0x255`. | `SynthUI/src/vglite/synthui_fader_gpu.cpp:79-82` | `grad/legacy-linear` — **not built** |
 | The EXT ramp is **placement-dependent**. `vg_lite_update_linear_grad()` transforms the gradient line by `grad->matrix`, derives a screen-space length from it, then **overwrites both** `grad->matrix` and `grad->linear_grad` and allocates a new ramp surface **without freeing the previous one**. So a moving widget cannot cache a ramp — it must rebuild (and leaks if it does not clear). | `SynthUI/src/vglite/synthui_fader_gpu.cpp:83-99` | `grad/ext-linear-static`, `grad/ext-linear-moved` — **not built** |
-| `vg_lite_color_t` is **ABGR** (red in the low byte), while ramp image words are **ARGB**. | `synthui_rotary_knob_gpu.cpp:219`, `synthui_fader_gpu.cpp:233` — measured by `vglite_probe` | `grad/ramp-word-order`, `color/solid-word-order` — **not built** |
 | `vg_lite_set_grad()` returns success with `count=0` and **silently substitutes** a black→white ramp. | design spec §4 | `grad/legacy-linear` — **not built** |
-
-Also unverified here and worth a case when Phase 2 lands: whether src-over is
-applied **premultiplied** (50 % white over black should read ≈128, not 64 or
-255) — `color/premultiplied-srcover`.
-
-**Until then, the safe usage is what the fader ships:** solid interpolated
-strips built from the same `emit_rect` / `finish_path` / `vg_lite_draw`
-machinery as every other shape, which is proven on this silicon and
-deterministic by construction (no ramp memory to sample). Note that **LVGL is
-not a safe reference for the EXT API** — it contains the same two mistakes and
-ships `LV_VG_LITE_DISABLE_LINEAR_GRADIENT_EXT` to route around the path.
-
----
 
 ## Images, blits & scissor — Phase 3
 
