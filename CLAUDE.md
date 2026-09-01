@@ -233,8 +233,10 @@ a `case_begin`-vs-`case` equality check, since every tripwire above is
 satisfied VACUOUSLY by an empty matrix and an unfinished case is how a GPU hang
 would present. 123 before it.
 ★ **No panel.** The core's startup brings up the SEMC SDRAM before `setup()`,
-so EXTMEM is live without `Display.begin()`; this is the only display example
-linking neither MipiDisplay nor LVGL.
+so EXTMEM is live without `Display.begin()`. It is the only **VGLite** example
+that links neither MipiDisplay nor LVGL — `vglite_probe` and `vglite_lvgl_test`
+both do. (Seven non-VGLite display examples also link neither: the four `pxp_*`
+ones, both `camera_preview_*` and `ssd1306_display`.)
 ★ **The tessellation buffer is 64×64 against a 128×128 target, deliberately.**
 A tess buffer ≥ the target puts the driver in its `ts_is_fullscreen == 1`
 regime, where scissor left/top clamping is silently disabled — a different
@@ -608,8 +610,13 @@ positive-only suite is equally consistent with a matrix that cannot detect
 anything.
 ★ Silicon: `cases=13 ok=12 broken=1 repeat_differs=1`, `vgc_timeouts=0`, TWO
 BOOTS BYTE-IDENTICAL, diffed against the PRE-REGISTERED `expected_silicon.txt`
-by `tools/vglite-conformance-check.sh`. Three predictions were REFUTED and each
-carries a written reason; the transcript was never pasted over the expectation.
+by `tools/vglite-conformance-check.sh`. Three predictions were REFUTED — two VERDICT
+predictions (`two-contour-ring-nonzero`, `evenodd-vs-nonzero`: both predicted
+`broken`, measured `ok`) and one REPEAT prediction (`evenodd-vs-nonzero`:
+`same` → `differs`). Two verdict lines changed in `expected_silicon.txt`, each
+with a written reason; `multi-contour-close-padded` was never a prediction, it
+was pre-registered as a `pair:` with both outcomes admissible. The transcript
+was never pasted over the expectation.
 See the VGLite note in Architecture for what that measurement changed.
 ★ **`LinkServer flash … load` REFUSED THIS EXAMPLE'S `.elf` and accepted its
 `.hex`** — `Flash operation exited with code -11`, 0 of 38060 bytes written, 4/4

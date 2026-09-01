@@ -15,8 +15,13 @@ safe usage · evidence**.
 ## ✅ SILICON STATUS: **MEASURED 2026-08-30**
 
 Transcript: `examples/display/vglite_conformance/transcript_hw_evkb.txt`.
-VGLite Series `gc355/0x0_1216`, `vgc_chip_id=0x00000355`, target 128×128
-BGRA8888, tessellation 64×64, `vgc_timeouts=0 vgc_irqs=75`.
+VGLite pin **`2e17773`** (`evkb.cmake`), Series `gc355/0x0_1216`,
+`vgc_chip_id=0x00000355`, target 128×128 BGRA8888, tessellation 64×64,
+`vgc_timeouts=0 vgc_irqs=75`.
+
+★ **The pin is recorded because the checker's whole drift rationale is "the
+driver moved under us".** Attributing a future red to an SDK re-vendor or a
+pin bump should not need git archaeology.
 Result: `cases=13 ok=12 broken=1 repeat_differs=1`.
 
 **TWO BOOTS, BYTE-IDENTICAL** — every verdict and every detail number. That
@@ -28,8 +33,12 @@ Verify a fresh transcript against the pre-registered expectation with
 `tools/vglite-conformance-check.sh`; it fails on drift in **either**
 direction.
 
-**Three of the Phase 1 predictions were WRONG, all in the same direction** —
-predicted `broken`, measured `ok`. They are recorded as measured, with the
+**Three Phase 1 predictions were WRONG**: two VERDICT predictions
+(`path/two-contour-ring-nonzero` and `path/evenodd-vs-nonzero`, both predicted
+`broken`, measured `ok`) and one REPEAT prediction (`path/evenodd-vs-nonzero`,
+predicted `same`, measured `differs`). Two verdict lines changed in
+`expected_silicon.txt`; `path/multi-contour-close-padded` was never a
+prediction — it was pre-registered as a `pair:` with both outcomes admissible. They are recorded as measured, with the
 reason for each change written into `expected_silicon.txt`, and they are the
 reason [the mechanism note](#what-is-and-is-not-established) below exists.
 
@@ -38,6 +47,12 @@ accordingly and their rows are claims carried over from working code, not
 probe results.
 
 ## Re-running it
+
+★ **Flash the `.hex`, not the `.elf`.** `LinkServer flash … load` REFUSES this
+example's ELF — `Flash operation exited with code -11`, 0 of 38060 bytes written,
+4/4 reproducible — while other images flash clean either side of it. It is
+LinkServer's ELF program-header path, not the board; the failure presents as a
+dead board, which is why it is here in the recipe.
 
 ```sh
 cd examples/display/vglite_conformance
@@ -79,8 +94,9 @@ verdict; it says nothing about the GC355.
 
 ## Paths, contours & winding — Phase 1
 
-**Verdicts below are PRE-REGISTERED EXPECTATIONS, not measurements.** See the
-status banner.
+**Verdicts below are MEASURED** (2026-08-30, two boots byte-identical). Where a
+cell says *Prediction refuted*, the pre-registered expectation was wrong and
+`expected_silicon.txt` carries the reason for the change.
 
 | Feature | Verdict | Safe usage | Case |
 |---|---|---|---|
@@ -177,7 +193,8 @@ arrive as a red gate — a plain expected `broken` would have the checker
 punishing the discovery it was built to catch. `disjoint=broken` is pinned in
 *both* tuples, so the mechanism cannot silence drift on that arm.
 
-> **Until that boot: keep following one-contour-per-path.** It is the
+> **Keep following one-contour-per-path** (that was true before the boot and
+> is still the guidance after it — see *What to do meanwhile* below). It is the
 > conservative reading of the current evidence and it is known to work — it is
 > what both compositors ship.
 

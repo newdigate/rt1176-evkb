@@ -3,12 +3,21 @@
  * SPDX-License-Identifier: MIT
  *
  * The area that produced the ONE-CONTOUR-PER-PATH rule, which is why the spec
- * probes it first: on this GC355 a path renders only its FIRST contour, every
- * subpath after the first VLC_OP_MOVE vanishing while every vg_lite_* call
- * returns VG_LITE_SUCCESS. Three cases here measure that directly
- * (multi-contour-disjoint, two-contour-ring-nonzero, evenodd-vs-nonzero), a
- * fourth (multi-contour-close-padded) discriminates WHY they fail, and each
- * probe is
+ * probes it first -- and MEASURING IT REFUTED THE RULE AS STATED (silicon
+ * 2026-08-30, two boots byte-identical; see docs/gc355-vglite-quirks.md and
+ * expected_silicon.txt):
+ *   - multi-contour-disjoint      BROKEN  runs=1 of 4, fill=1393
+ *   - multi-contour-close-padded  ok      runs=4, fill=5120
+ *   - two-contour-ring-nonzero    ok      rim=1 centre=0 -- the hole IS cut
+ *   - evenodd-vs-nonzero          ok      both fill rules honoured (repeat=differs)
+ * So the CLOSE ENCODING is what breaks a DISJOINT multi-contour path (a
+ * zero-padded slot carries three VLC_OP_END bytes), while NESTED contours
+ * render correctly through the ordinary encoding. A truncate-at-the-first-CLOSE
+ * story explains the first line and NEITHER of the last two. The mechanism is
+ * NOT identified; what the matrix does not separate is DISJOINT-vs-NESTED from
+ * FOUR-contours-vs-TWO.
+ * Four cases here probe that area directly (multi-contour-disjoint,
+ * multi-contour-close-padded, two-contour-ring-nonzero, evenodd-vs-nonzero) and
  * each is PAIRED with a control that must pass if the harness is sound:
  * single-contour-rect (the baseline -- if THIS is broken nothing else in the
  * matrix means anything), two-draws-ring (the safe usage) and
@@ -23,7 +32,7 @@
  * exercise one line of the pixel logic -- every case there reports skip, so a
  * green gate says nothing at all about what is below. The real check_*()
  * functions were compiled against a scanline reference rasteriser (one that
- * honours ALL contours and both fill rules, i.e. a correct GPU) and all twelve
+ * honours ALL contours and both fill rules, i.e. a correct GPU) and all thirteen
  * reported ok. That is what says a `broken` from the bench is the silicon and
  * not a mis-placed sample point or a too-tight tolerance. Measured there:
  * rect fill 6400/6400; triangle 1770 against the analytic 1800 (-1.7%, inside
@@ -33,7 +42,7 @@
  *
  * ★ AND THE NEGATIVE ARM, which is the half that matters for an instrument:
  * with the same rasteriser re-broken to drop every contour after the first --
- * this GC355's actual defect -- the three probe cases went BROKEN by name
+ * this GC355's actual defect -- the probe cases went BROKEN by name
  * (runs=1 fill=1280; rim=1 centre=1; eo_centre=1) while ALL SIX controls and
  * the whole format set stayed ok. A matrix that cannot go red on the defect it
  * is aimed at would be decoration. */
@@ -59,7 +68,7 @@
 /* Terminate the arena path and BAIL OUT of run() on overflow.
  *
  * The macro exists because the alternative -- a braced block per call site --
- * appears twelve times in this file and reads as noise, and because dropping
+ * appears at every vgc_finish_path call site in this file and reads as noise, and because dropping
  * the status is the one thing that must not happen: vgc_finish_path() zeroes
  * *p on overflow, so a caller that carried on would submit path=NULL and
  * measure the harness rather than the GPU. The name carries the `return` so
@@ -371,7 +380,7 @@ static vgc_verdict_t check_evenodd_nonzero(char *d, size_t n)
  * A pentagram: ONE contour that crosses itself. The centre pentagon is EMPTY
  * under EVEN_ODD (crossing number 2) and FILLED under NON_ZERO (winding 2),
  * and the five tips are filled under both. This is the case that distinguishes
- * the two fill rules on a single contour -- so unlike case 5 it should pass on
+ * the two fill rules on a single contour -- so unlike case 6 it should pass on
  * this GC355, which makes it case 6's control as well as its own probe.
  *
  * Vertices: r=50 about (64,64), at -90 + k*144 degrees, k = 0..4, connected in

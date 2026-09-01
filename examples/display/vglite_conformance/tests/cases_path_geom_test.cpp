@@ -10,9 +10,9 @@
  * tolerances and predicates -- the REAL run()/check()/sum() functions, linked
  * and called -- against two MODELS of a GPU:
  *   - a correct one (a scanline reference rasteriser honouring every contour
- *     and both fill rules), under which all twelve cases must report ok; and
+ *     and both fill rules), under which all thirteen cases must report ok; and
  *   - this GC355's KNOWN defect (the same rasteriser dropping every contour
- *     after the first), under which the three cases aimed at that defect must
+ *     after the first), under which the four cases aimed at that defect must
  *     report broken BY NAME and every control must stay ok.
  *
  * It is NOT a statement about what the real silicon does. Not one line here
@@ -34,7 +34,7 @@
  *
  * ★ THE NEGATIVE ARM IS THE HALF THAT MATTERS. A suite that only ran the
  * correct-GPU model would pass against a case table that cannot detect
- * anything at all -- twelve predicates hard-wired to VGC_OK included. The
+ * anything at all -- thirteen predicates hard-wired to VGC_OK included. The
  * first-contour-only arm is what says a `broken` on the bench is a GC355
  * finding rather than a harness artefact, and it is asserted here rather than
  * printed for the same reason every other guard in this tree is: an
@@ -68,7 +68,7 @@ static int checks = 0;
     } while (0)
 
 /* Per-case variant: the failure message has to name the CASE, since the same
- * source line runs for all twelve and `#cond` alone would not say which one
+ * source line runs for all thirteen and `#cond` alone would not say which one
  * went red. */
 #define CHECK_CASE(cond, id, what)                                       \
     do {                                                                 \
@@ -323,7 +323,7 @@ static void run_one(const vgc_case_t *c, case_result_t *r)
     r->repeat_same = (sum1 == sum2);
 }
 
-/* The three cases aimed at the one-contour-per-path defect. Everything else in
+/* The four cases aimed at the contour-encoding question. Everything else in
  * the table is a control and must survive that model unchanged. */
 static int is_multi_contour_probe(const char *id)
 {
@@ -396,7 +396,7 @@ int main(void)
      * there presents as memory corruption, not as a failed call. */
     CHECK(g_close_fixup_fired == 0);
 
-    /* ---- ARM 2: THIS GC355's DEFECT. The three probes must go red. --------- */
+    /* ---- ARM 2: THIS GC355's DEFECT. The probes must go red. --------- */
     printf("-- arm 2: first-contour-only rasteriser (this GC355's defect)\n");
     g_one_contour_only = 1;
     g_parse_error = 0;

@@ -990,7 +990,7 @@ Other changes Task 3 inherits:
 - **`vgc_px` out-of-range is COUNTED, not sentinelled** — `0` is transparent black, a word a Phase-2 blending case could legitimately produce, so no return value is safely "impossible". A non-zero count turns the case into `detail=px_oob:N` and a skip, so an instrument bug can never be spelled as `ok` or `broken`.
 - **The corrected S8 fixup fact**, read from the source: `vg_lite_init_path` READS byte `num-1` but WRITES one byte at `4*(num-1)` — for an 11-byte S8 path, a single-byte write **29 bytes past the end**. Materially worse than "four bytes where one was meant". Ending on an explicit `VLC_OP_END` means the branch never fires.
 
-★ **The arena was the highest-risk unit in the harness and had no test** while Task 1's simpler pure predicates had 39 checks. It is now `vgc_arena.cpp` with `tests/arena_test.c` — 42 checks pinning path word counts, bounds padding, sequential non-overlap, mid-sequence reset, overflow refusal with `*p` zeroed, and the `VLC_OP_END` terminator. Three mutants demonstrated RED, each failing the line it targets, and the deleted-early-return and off-by-one mutants are DISTINGUISHABLE from each other rather than lumped. Host suite total is now **81 checks** across the two tests, both run by `tests/run.sh`.
+★ **The arena was the highest-risk unit in the harness and had no test** while Task 1's simpler pure predicates had 39 checks. It is now `vgc_arena.cpp` with `tests/arena_test.cpp` — 42 checks pinning path word counts, bounds padding, sequential non-overlap, mid-sequence reset, overflow refusal with `*p` zeroed, and the `VLC_OP_END` terminator. Three mutants demonstrated RED, each failing the line it targets, and the deleted-early-return and off-by-one mutants are DISTINGUISHABLE from each other rather than lumped. Host suite total is now **81 checks** across the two tests, both run by `tests/run.sh`.
 
 ---
 
@@ -1513,7 +1513,7 @@ Shipped as `db4c38a` plus a follow-up landing the host geometry test. Changes fr
 5. `VGC_FINISH_OR_RETURN` replaces the ten inline error blocks; the `return` is in the name so the control flow is visible at the call site.
 6. `tests/stub/vg_lite.h` gained `VG_LITE_FP32 = 3` (verified against the real `inc/vg_lite.h`: S8/S16/S32/FP32 really are 0/1/2/3) — the stub now serves two suites and its header says what it models and what each suite must supply for itself.
 
-★ **`path/two-draws-ring` draws twice WITHOUT clearing between, and that is correct** — it reads like a violation of the harness's "a multi-render case must clear itself" rule but is not. That rule concerns sub-renders measured one after another (cases 5, 6, 11); case 4's two draws compose ONE picture and the second is *meant* to land on the first. A ★ note in the file says so, because the obvious "fix" would silently erase the plate the inset punches through.
+★ **`path/two-draws-ring` draws twice WITHOUT clearing between, and that is correct** — it reads like a violation of the harness's "a multi-render case must clear itself" rule but is not. That rule concerns sub-renders measured one after another (cases 6, 7, 12); case 5's two draws compose ONE picture and the second is *meant* to land on the first. A ★ note in the file says so, because the obvious "fix" would silently erase the plate the inset punches through.
 
 ★ **`tests/cases_path_geom_test.cpp` is the third host suite, and its NEGATIVE arm is the point.** It compiles the REAL `run()`/`check()`/`sum()` functions and the real arena against a scanline reference rasteriser, in two arms:
 - **positive** — a correct rasteriser (all contours, both fill rules): all thirteen must report `ok`;
@@ -2461,6 +2461,22 @@ git add CLAUDE.md && git commit -m "NEW-32 Phase 1 close-out: sweep 124, GC355 c
 ```
 
 ---
+
+### Tasks 9–11 as-built: the silicon boot, and what it changed
+
+**Task 9 (pre-bench verification).** Sweep 124 discovered / 123 passed / 1 failed / 0 SKIP; the red is `m2_hci_probe[hci]`, confirmed the documented bench-config class from its `CMakeCache.txt` (`M2RADIO_IW416_BT_FW`, `M2_BT_UART_DNLD=ON`, `M2_BT_ASSERT_CTS=ON`, dated Aug 29) rather than assumed. `LICENSE-AUDIT: PASS` at 129 dep paths. Vacuity 29/29, re-derived from a live run.
+
+**Task 10 (the silicon boot).** Two boots, byte-identical: `cases=13 ok=12 broken=1 repeat_differs=1`, `vgc_timeouts=0 vgc_irqs=75`, `chip_id=0x00000355`.
+
+★ **The discriminator answered, and it is the result the whole phase existed for.** `path/multi-contour-disjoint` broken (`runs=1`, `fill=1393`) beside `path/multi-contour-close-padded` ok (`runs=4`, `fill=5120`) — identical geometry, the CLOSE encoding the only variable. The `pair:` mechanism recognised the joint outcome and named it rather than reporting a red gate, which is exactly why it was built.
+
+★ **Three predictions were wrong** — two verdicts (`two-contour-ring-nonzero`, `evenodd-vs-nonzero`, both predicted `broken`, measured `ok`) and one repeat (`evenodd-vs-nonzero`, `same` → `differs`). Two lines changed in `expected_silicon.txt`, each with a written reason. **The wide one-contour rule is refuted, not merely narrowed**: two NESTED-contour paths on the ORDINARY encoding rendered both contours, which a truncate-at-the-first-CLOSE story cannot explain. The mechanism is NOT identified and is labelled so everywhere; two further cases and one boot would separate disjoint-vs-nested from four-vs-two.
+
+★★ **`LinkServer flash … load` REFUSED this example's `.elf`** — `code -11`, 0 of 38060 bytes, 4/4 reproducible — while `vglite_probe` (32 KB) and `synthui_fader_test` (302 KB in ONE write) flashed clean immediately before and after. Neither size nor a wedged probe: LinkServer's ELF program-header path. `flash … load build/<name>.hex` works and `verify` reports "File matches flash". Diagnosed by an A-B-A control, not by guessing.
+
+★ **Two bench mistakes worth not repeating.** The MCU-Link VCOM is the port whose suffix matches the probe serial in LinkServer's own log (`[5DQ2DDHVWO5EI]` → `/dev/cu.usbmodem5DQ2DDHVWO5EI3`); reading the other port captured nothing and cost a press. And `tools/rt1170-console.py` captures are classified as BINARY by `file`, so plain `grep`/`awk` silently skip them — use `grep -a`, which is why every gate in this tree already does.
+
+**Task 11 (close-out).** CLAUDE.md's measured-sweep entry and its VGLite section updated (the latter now says the rule is refuted as stated, and keeps the conservative guidance); `docs/KNOWN-BROKEN-GATES.md` gained a `vglite_conformance` section, since the gate points readers at that file; NEW-32 updated. A whole-branch final review then found 14 items — no Critical, none touching a measurement, verdict, gate assertion or code path — including two `★`s of mine carrying false claims (the "only display example linking neither MipiDisplay nor LVGL" count, and "three predictions, all in the same direction", which is not checkable as stated). All fixed before merge.
 
 ## Self-review notes
 

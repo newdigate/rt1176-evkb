@@ -7,7 +7,7 @@
 # run is the case count):
 #   predicates_test       the pure pixel predicates      (C -- vgc_predicates.h is pure C)
 #   arena_test            the shared path arena          (C++ -- see its header)
-#   cases_path_geom_test  the twelve path cases' geometry, sample points,
+#   cases_path_geom_test  the thirteen path cases' geometry, sample points,
 #                         tolerances and predicates, against a model of a
 #                         correct GPU AND a model of this GC355's known
 #                         one-contour-per-path defect (C++)
