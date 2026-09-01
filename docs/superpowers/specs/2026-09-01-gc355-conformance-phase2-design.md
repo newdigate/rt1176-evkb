@@ -50,10 +50,51 @@ paths mis-cover, so it is the one uncovered arm that would test it.
 | # | id | setup | what it settles |
 |---|---|---|---|
 | 1 | `color/solid-word-order` | pure red, opaque, `BLEND_NONE` | **The bootstrap control.** Exactly one channel saturated and the rest zero — *and* that it is the channel every downstream predicate assumes |
-| 2 | `color/premultiplied-srcover` | white @ α=0x80 over **black**, `SRC_OVER` | ≈128 correct · ≈64 double-premultiply · 255 alpha ignored. Exercises the `src*a` term alone |
-| 3 | `blend/srcover-arithmetic` | white @ α=0x80 over **grey 0x40**, `SRC_OVER` | ≈160. Non-zero backdrop, so it exercises **both** terms of `src*a + dst*(1-a)` |
-| 4 | `blend/srcover-double` | case 3's draw, twice | ≈207, **derived from the same formula**. Retires the idempotence entry as arithmetic rather than a quirk |
+| 2 | `color/premultiplied-srcover` | white @ α=0x80 over **black**, `SRC_OVER` | ≈128 **or** 255 — the two readings below, reported. ≈64 is a double-premultiply defect |
+| 3 | `blend/srcover-arithmetic` | white @ α=0x80 over **grey 0x40**, `SRC_OVER` | ≈160 **or** 255. Non-zero backdrop, so it exercises the destination term too |
+| 4 | `blend/srcover-double` | case 3's draw, twice | **Reading-agnostic**: the second composite must land where the formula predicts *from the measured first*. Retires the idempotence entry as arithmetic rather than a quirk |
 | 5 | `blend/none-honours-alpha` | white @ α=0x80 over grey, `BLEND_NONE` | Recorded, not judged — either answer is defensible |
+
+### ★★ The driver's own header is inconsistent about whether `SRC_OVER` is premultiplied
+
+Found while building the reference rasteriser, and it means cases 2–4 must **not**
+pre-judge the answer. From `~/Development/VGLite/inc/vg_lite.h`:
+
+- `:451` — "S and D represent source and destination **non-premultiplied** RGB color channels"
+- `:457` — section heading: "**Non-premultiplied** Blending modes"
+- `:460` — `VG_LITE_BLEND_SRC_OVER = 1` → `RGB: S + D*(1 - Sa)` — **no `*Sa`**, which is the *premultiplied* operator
+- `:481` — `VG_LITE_BLEND_NORMAL_LVGL = 11` → `RGB: S*Sa + D*(1 - Sa)` — the *non*-premultiplied operator
+- `:137` — `#define VG_LITE_BLEND_PREMULTIPLY_SRC_OVER VG_LITE_BLEND_NORMAL_LVGL`
+
+So the names and the formulas are **inverted against each other**: the mode filed
+under "non-premultiplied" carries the premultiplied formula, and the one aliased
+"PREMULTIPLY" carries the non-premultiplied one. Two readings are therefore both
+defensible for mode 1, which is what the compositors pass:
+
+| | reading **A** (`S*Sa + D*(1-Sa)`) | reading **B** (`S + D*(1-Sa)`, header-literal) |
+|---|---|---|
+| case 2, over black | **128** | **255** |
+| case 3, over grey 64 | **160** | 255 + 32 → clamps to **255** |
+
+**Cases 2 and 3 admit both and report which**, as `model=A` / `model=B` in
+`detail=`. A third value is `broken` — ≈64 in case 2 is the double-premultiply
+defect, and anything else means neither reading holds.
+
+★ **The two cases must agree.** If case 2 reports A and case 3 reports B, the
+hardware is not implementing either formula consistently, and that is a bigger
+finding than which formula it is. They are separate cases rather than one, so
+the transcript shows both readings side by side and a human can see the
+disagreement; nothing enforces it mechanically, because doing so would need
+cross-case state the harness forbids.
+
+★ **Case 4 sidesteps the question entirely, and that is why it is worth having.**
+Rather than pinning an absolute value it renders once, **measures** the result,
+renders again, and asserts the second lands where the same formula predicts
+*from the measured first*. That holds under either reading — under A, 160 → 207;
+under B, 255 → 255 — so it tests the *operator's self-consistency* without
+depending on which operator it is. It is also exactly what the design said case 4
+was for: "the double-composite becomes a DERIVED prediction from the same
+formula".
 
 Cases 2 and 3 are complementary, not redundant: `SRC_OVER` over black is
 degenerate because `dst*(1-a)` vanishes, so case 2 alone cannot distinguish a
