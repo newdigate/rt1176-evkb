@@ -2,10 +2,11 @@
 # Host unit tests for the conformance probe's instrument code. Runs on the
 # development machine's own cc/c++ -- no toolchain, no board, no QEMU.
 #
-# Three suites, all PASS:/FAIL:-per-check with a count at the end (the
+# Four suites, all PASS:/FAIL:-per-check with a count at the end (the
 # convention CLAUDE.md treats as authoritative: `grep -c "^PASS:"` on a live
 # run is the case count):
 #   predicates_test       the pure pixel predicates      (C -- vgc_predicates.h is pure C)
+#   color_test            the pure colour predicates     (C -- vgc_color.h is pure C)
 #   arena_test            the shared path arena          (C++ -- see its header)
 #   cases_path_geom_test  the fifteen path cases' geometry, sample points,
 #                         tolerances and predicates, against a model of a
@@ -60,6 +61,21 @@ if cc -std=c11 -Wall -Wextra -Werror -O1 \
 else
     echo "BUILD-FAILED: predicates_test"
     note_fail predicates_test
+fi
+
+suite
+# --- color_test -------------------------------------------------------------
+# Pure C over vgc_color.h alone, exactly as predicates_test is pure over
+# vgc_predicates.h -- deliberately NOT linked against vgc_harness.h, which
+# pulls in vg_lite.h and would force this suite to C++ plus the stub. The
+# VGC_ABGR_A/VGC_ABGR identity that lives in the harness will be pinned by the
+# colour case-geometry suite instead, which includes the harness anyway.
+if cc -std=c11 -Wall -Wextra -Werror -O1 \
+      -o "$OUT/color_test" "$DIR/color_test.c"; then
+    "$OUT/color_test" || note_fail color_test
+else
+    echo "BUILD-FAILED: color_test"
+    note_fail color_test
 fi
 
 suite
