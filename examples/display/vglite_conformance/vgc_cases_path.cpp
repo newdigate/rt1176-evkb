@@ -14,10 +14,17 @@
  * zero-padded slot carries three VLC_OP_END bytes), while NESTED contours
  * render correctly through the ordinary encoding. A truncate-at-the-first-CLOSE
  * story explains the first line and NEITHER of the last two. The mechanism is
- * NOT identified; what the matrix does not separate is DISJOINT-vs-NESTED from
- * FOUR-contours-vs-TWO.
- * Four cases here probe that area directly (multi-contour-disjoint,
- * multi-contour-close-padded, two-contour-ring-nonzero, evenodd-vs-nonzero) and
+ * NOT identified.
+ *
+ * What the Phase 1 matrix did not separate is DISJOINT-vs-NESTED from
+ * FOUR-contours-vs-TWO -- the four rows above vary both at once. PHASE 1b ADDS
+ * THE TWO MISSING CELLS OF THAT 2x2: two-disjoint-bars (disjoint, two) and
+ * four-nested-rings (nested, four). BUILT, NOT YET MEASURED -- they are
+ * pre-registered in expected_silicon.txt and await a bench boot; do not read
+ * the prediction there as a result.
+ * Six cases here probe that area directly (multi-contour-disjoint,
+ * multi-contour-close-padded, two-disjoint-bars, four-nested-rings,
+ * two-contour-ring-nonzero, evenodd-vs-nonzero) and
  * each is PAIRED with a control that must pass if the harness is sound:
  * single-contour-rect (the baseline -- if THIS is broken nothing else in the
  * matrix means anything), two-draws-ring (the safe usage) and
@@ -148,8 +155,25 @@ static vgc_verdict_t check_multi_contour(char *d, size_t n)
      * one bar rendered is fill~1280, all four merged into one block would be
      * ~8000. runs= alone cannot tell those apart. */
     const int runs = vgc_count_runs_col(vgc_fb(), VGC_W, VGC_H, VGC_W, 64);
-    const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
-    snprintf(d, n, "runs=%d,expect=4,fill=%d", runs, fill);
+    /* ★ y0/y1 SAY *WHICH* BAR SURVIVED, and that was missing from the silicon
+     * reading. Measured 2026-08-30 this cell was runs=1,fill=1393 and nothing
+     * in it distinguished "bar 0 rendered" from a partial render straddling
+     * two bars -- fill~1280 is one bar's worth either way. Bar i occupies
+     * BAR_Y[i]..BAR_Y[i]+BAR_H, i.e. 16, 44, 72, 100, so the extent names it.
+     *
+     * FREE, in the sense that matters here: vgc_filled_rows returns the SAME
+     * total filled-pixel count vgc_count_filled did, so `fill=` is unchanged
+     * in meaning and still comparable with the recorded 1393 -- and `detail=`
+     * is not part of the expectation at all (tools/vglite-conformance-check.sh
+     * parses only pixel= and repeat=), so this cannot move a golden.
+     *
+     * Seeded -99 rather than -1: vgc_filled_rows leaves both out-params
+     * UNTOUCHED when nothing is filled, and its own note records that a -1
+     * seed makes "untouched" indistinguishable from the internal state it
+     * tracks. Same convention as check_degenerate below. */
+    int ymin = -99, ymax = -99;
+    const int fill = vgc_filled_rows(vgc_fb(), VGC_W, VGC_H, VGC_W, &ymin, &ymax);
+    snprintf(d, n, "runs=%d,expect=4,fill=%d,y0=%d,y1=%d", runs, fill, ymin, ymax);
     return runs == 4 ? VGC_OK : VGC_BROKEN;
 }
 
@@ -246,6 +270,113 @@ static vg_lite_error_t run_multi_contour_padded(void)
     vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
     vgc_finish_into(&acc);
     return acc;
+}
+
+/* ---- 3b. path/two-disjoint-bars --------------------------------------------
+ * ★ ONE HALF OF THE PHASE 1b 2x2. This is path/multi-contour-disjoint with two
+ * bars DELETED -- same x-extent, same bar height, same sample column, same
+ * ordinary CLOSE encoding, same predicate shape. The ONLY variable is the
+ * contour COUNT.
+ *
+ * Phase 1 left two variables confounded: four DISJOINT contours broke
+ * (runs=1 of 4) while two NESTED ones rendered fine, so "disjointness" and
+ * "more than two" both fit the evidence equally. Read this WITH
+ * path/four-nested-rings:
+ *   this broken + rings ok  =>  DISJOINTNESS is the variable, count is not
+ *   this ok + rings broken  =>  COUNT is the variable, disjointness is not
+ *   both broken             =>  nesting protects only at two contours
+ *   both ok                 =>  only the four-disjoint COMBINATION breaks
+ * Every cell of that table names a different rule, so there is no outcome in
+ * which the pair says nothing.
+ *
+ * Bars 0 and 2 of the existing four (y=16 and y=72), so the gap between them
+ * is 56 px -- adjacency cannot be confused with a merge, and the sampled
+ * column crosses background between them either way. */
+static vg_lite_error_t run_two_disjoint(void)
+{
+    vg_lite_error_t acc = VG_LITE_SUCCESS;
+    vg_lite_path_t p;
+    vgc_emit_rect_cw(R_X, BAR_Y[0], R_W, BAR_H);
+    vgc_emit_rect_cw(R_X, BAR_Y[2], R_W, BAR_H);
+    VGC_FINISH_OR_RETURN(&p, R_X, BAR_Y[0], R_X + R_W, BAR_Y[2] + BAR_H);
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
+    return acc;
+}
+
+static vgc_verdict_t check_two_disjoint(char *d, size_t n)
+{
+    /* runs COUNTS surviving contours here: 2 = both, 1 = only the first.
+     * fill= discriminates the failure modes exactly as it does in case 2 --
+     * one bar is 1280, both are 2560, a merge spanning y 16..88 would be far
+     * larger. Verified on the host against a winding-number rasteriser before
+     * this reached a GPU: k=1 gives runs=1 fill=1280, k=2 gives runs=2
+     * fill=2560 with the column filled over [16,32) and [72,88). */
+    const int runs = vgc_count_runs_col(vgc_fb(), VGC_W, VGC_H, VGC_W, 64);
+    const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
+    snprintf(d, n, "runs=%d,expect=2,fill=%d", runs, fill);
+    return runs == 2 ? VGC_OK : VGC_BROKEN;
+}
+
+/* ---- 3c. path/four-nested-rings --------------------------------------------
+ * ★ THE OTHER HALF OF THE 2x2, and its predicate is a COUNTER rather than a
+ * pass/fail -- which is what makes it worth more than a yes/no. It does not
+ * merely say whether nesting survives at four contours; it reports HOW MANY
+ * contours the GPU honoured.
+ *
+ * Four concentric rects with ALTERNATING winding under NON_ZERO. Down column
+ * x=64 the winding number runs 1,0,1,0,1,0,1, so a correct render shows FOUR
+ * separated filled bands of 12 px each. If only the first k contours survive,
+ * exactly k runs appear:
+ *   1 => one solid 96x96 block (outer only), fill 9216
+ *   2 => one ring,                            fill 4032
+ *   3 => ring plus a solid core,              fill 6336
+ *   4 => correct,                             fill 5760
+ *
+ * ★ VERIFIED ON THE HOST BEFORE IT REACHED A GPU, against a winding-number
+ * rasteriser independent of the tests/ model, measured with these same
+ * predicates: all four rects contain x=64 horizontally (spans 16..112,
+ * 28..100, 40..88, 52..76); the bands are [16,28) [40,52) [76,88) [100,112);
+ * runs came out 1, 2, 3, 4 for k = 1, 2, 3, 4; and the k=4 fill matched the
+ * analytic (96^2-72^2) + (48^2-24^2) = 4032 + 1728 = 5760 exactly. A wrong
+ * predicate here would fabricate a GC355 finding, which is the top risk this
+ * example exists to avoid, so the arithmetic was re-derived rather than
+ * carried over from the plan.
+ *
+ * Arena cost: 4 rects x 13 words + END = 53 of VGC_ARENA_WORDS (512). */
+#define NR_N 4
+static const int NR_XY[NR_N] = { 16, 28, 40, 52 };   /* origin of each rect */
+static const int NR_WH[NR_N] = { 96, 72, 48, 24 };   /* and its side */
+
+static vg_lite_error_t run_four_nested(void)
+{
+    vg_lite_error_t acc = VG_LITE_SUCCESS;
+    vg_lite_path_t p;
+    for (int i = 0; i < NR_N; i++) {
+        /* Alternating winding IS the instrument: without it every contour
+         * contributes +1 and the whole 96x96 fills solid under NON_ZERO,
+         * collapsing the counter to runs=1 for a correct GPU. */
+        if (i & 1) vgc_emit_rect_ccw(NR_XY[i], NR_XY[i], NR_WH[i], NR_WH[i]);
+        else       vgc_emit_rect_cw (NR_XY[i], NR_XY[i], NR_WH[i], NR_WH[i]);
+    }
+    VGC_FINISH_OR_RETURN(&p, NR_XY[0], NR_XY[0],
+                         NR_XY[0] + NR_WH[0], NR_XY[0] + NR_WH[0]);
+    vgc_draw_path(&p, VG_LITE_FILL_NON_ZERO, VGC_FILL_COLOR, &acc);
+    vgc_finish_into(&acc);
+    return acc;
+}
+
+static vgc_verdict_t check_four_nested(char *d, size_t n)
+{
+    const int runs = vgc_count_runs_col(vgc_fb(), VGC_W, VGC_H, VGC_W, 64);
+    const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
+    /* expfill= is carried so a reader can tell a right count from a right
+     * PICTURE: runs=4 with a fill far from 5760 would mean four bands in the
+     * wrong places, which the run count alone cannot see. It is a reading, not
+     * a bound -- the verdict is runs alone, since antialiasing moves fill by a
+     * perimeter's worth and this case must not go broken on that. */
+    snprintf(d, n, "runs=%d,expect=4,fill=%d,expfill=5760", runs, fill);
+    return runs == 4 ? VGC_OK : VGC_BROKEN;
 }
 
 /* ---- 4. path/two-contour-ring-nonzero --------------------------------------
@@ -728,6 +859,12 @@ const vgc_case_t vgc_path_cases[] = {
      * variable is the contour-boundary CLOSE encoding. Adjacent on purpose --
      * the pair is read as one answer. */
     { "path/multi-contour-close-padded", run_multi_contour_padded, check_multi_contour,  NULL },
+    /* The Phase 1b 2x2. These two separate DISJOINT-vs-NESTED from
+     * FOUR-vs-TWO, which the four lines above leave confounded, and they are
+     * placed here so every contour-encoding case sits together and is read as
+     * one answer. See their case comments for the outcome table. */
+    { "path/two-disjoint-bars",       run_two_disjoint,      check_two_disjoint,      NULL },
+    { "path/four-nested-rings",       run_four_nested,       check_four_nested,       NULL },
     { "path/two-contour-ring-nonzero",run_ring_two_contour,  check_ring,              NULL },
     { "path/two-draws-ring",          run_ring_two_draws,    check_ring,              NULL },
     { "path/evenodd-vs-nonzero",      run_evenodd_nonzero,   check_evenodd_nonzero,   sum_evenodd_nonzero },
