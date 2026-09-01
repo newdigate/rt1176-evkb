@@ -1384,6 +1384,33 @@ not hung.
   cell's repeat as `unstable`, a third state the checker takes ONLY on
   `repeat`, ONLY with a written reason, and always while printing which way the
   run landed.
+  ★★★ **WITH COVERAGE CHECKED, ALL FOUR CELLS OF THE 2x2 ARE BROKEN** (measured
+  2026-09-01, two boots, every verdict identical). `two-contour-ring-nonzero`
+  had reported `ok` since Phase 1 on two sample points and NO fill check —
+  with one it reads `fill=4607` vs analytic 5376, `cover=short:769`, 14% of the
+  ring MISSING. So nested multi-contour paths are wrong in BOTH directions:
+  two nested draw 769 px too FEW, four draw ~1150 too MANY. "Nested is OK" was
+  an artefact of checking only structure.
+  ★ **`path/two-draws-ring` is now the load-bearing control of the whole
+  matrix**: the SAME ring built as two single-contour paths and two draws
+  measures `fill=5376` EXACTLY, beside a single-path version of the identical
+  ring that is 769 px short. One-contour-per-path is therefore DIRECTLY
+  MEASURED against its own counterexample rather than a conservative guess —
+  and it is what both compositors already do.
+  ★★ **STRAY COVERAGE, and it reframes all of the above.** Measured fill vs
+  exact analytic area: the two axis-aligned CONTROLS land EXACTLY
+  (`single-contour-rect` 6400, `multi-contour-close-padded` 5120 — zero AA cost
+  on this pipeline) while every unpadded multi-contour path draws EXTRA —
+  disjoint-4 +113, disjoint-2 +42, nested-4 **+1171** — and the excess scales
+  with how much path data FOLLOWS the first CLOSE. **That is not truncation and
+  not antialiasing: it is the parser continuing and MISREADING**, which also
+  explains the nondeterminism (a desynchronised parse reads whatever is in
+  memory). `display/vglite_conformance`'s `pixel=` verdict now requires the
+  structural predicate AND fill within tolerance, so it means the picture is
+  RIGHT rather than merely structurally right; `four-nested-rings` is therefore
+  `broken`, not `ok`. Tolerance is `k*perimeter`, NEVER a percentage of area —
+  a 5% band would have false-`broken`ed `self-intersecting`, a CONTROL, since a
+  pentagram carries 474 px of all-diagonal boundary on 2792 px of area.
   ★ **KEEP FOLLOWING ONE-CONTOUR-PER-PATH** — now for two independent reasons.
   The mechanism is still unidentified: "disjoint" describes the geometry, not
   why the tessellator drops it. One clue: bar 0 renders 1393 px inside the

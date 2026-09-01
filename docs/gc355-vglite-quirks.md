@@ -104,8 +104,8 @@ cell says *Prediction refuted*, the pre-registered expectation was wrong and
 | four DISJOINT contours in ONE path, ordinary CLOSE | **BROKEN** — `runs=1` of 4, `fill=1393` (one bar plus antialiasing) | **one contour per path, one `vg_lite_draw` per contour** | `path/multi-contour-disjoint` |
 | the same, with CLOSE slots padded `0x01010101` | **OK** — `runs=4`, `fill=5120`. **The encoding is the only variable.** | see [the discriminator](#the-discriminator-a-padded-close-slot) below | `path/multi-contour-close-padded` |
 | two DISJOINT contours in one path, ordinary CLOSE | **BROKEN** — `runs=1` of 2. Two fail exactly as four do | **one contour per path**, or pad the CLOSE slot | `path/two-disjoint-bars` |
-| four NESTED contours in one path, ordinary CLOSE | **OK structurally** — `runs=4`, all four honoured — but **NOT DETERMINISTIC** (`repeat` read `same` on one boot, `differs` on the next) | do **not** rely on it: correct-but-nondeterministic is unsafe for delta rendering | `path/four-nested-rings` |
-| hole cut by a reversed inner contour (non-zero) | **OK** — `rim=1 centre=0`, the hole IS cut. **Prediction refuted.** | the plate + inset-plate construction still works and is what ships; this row no longer forces it | `path/two-contour-ring-nonzero`, control `path/two-draws-ring` |
+| four NESTED contours in one path, ordinary CLOSE | **BROKEN** — structure right (`runs=4`, all four honoured) but **~1150 STRAY PIXELS** (6931/6875 vs an analytic 5760), varying between boots | do **not** use it | `path/four-nested-rings` |
+| hole cut by a reversed inner contour (non-zero) | **BROKEN** — sample points say the hole is right (`rim=1 centre=0`) but `fill=4607` vs an analytic 5376: **`cover=short:769`, 14 % of the ring missing** | don't; draw a filled plate then an inset plate in the backdrop colour — its control measures EXACT | `path/two-contour-ring-nonzero`, control `path/two-draws-ring` |
 | `VG_LITE_FILL_EVEN_ODD` vs `NON_ZERO` across nested contours | **OK** — `eo_centre=0 nz_centre=1`, both rules honoured. **Prediction refuted.** BUT `repeat=differs` | the only case in the matrix whose two identical renders differ — see the nondeterminism note | `path/evenodd-vs-nonzero` |
 | fill rules on ONE self-intersecting contour | **OK** — pentagram centre empty under EVEN_ODD, filled under NON_ZERO | both rules honoured — this is the fill-rule usage that works | `path/self-intersecting` |
 | path coordinate formats S8 / S16 / S32 / FP32 | **OK** — all four `fill=1830`, and `same_px=1`: the four renders are BIT-IDENTICAL, not merely equal in area | all four usable; **the opcode is one BYTE at the base of a format-width slot**, not a value of the format's type, so each format needs its own typed array | `path/format-s8`, `path/format-s16`, `path/format-s32`, `path/format-fp32`, agreement: `path/format-agreement` |
@@ -220,8 +220,8 @@ CLOSE-then-MOVE boundary.
 
 |  | 2 contours | 4 contours |
 |---|---|---|
-| **disjoint** | **BROKEN** (`runs=1`) | **BROKEN** (`runs=1`) |
-| **nested** | **OK** | **OK** (`runs=4`) |
+| **disjoint** | **BROKEN** (structure, `runs=1`) | **BROKEN** (structure, `runs=1`) |
+| **nested** | **BROKEN** (`cover=short:769`) | **BROKEN** (`cover=stray:1115`) |
 
 Two disjoint contours fail exactly as four do; four nested contours work
 exactly as two do. The rule is neither *"only the first contour renders"* nor
@@ -249,6 +249,76 @@ with a written reason, and always while *printing which way the run landed* —
 so nothing is hidden. Pinning `same` would red half the future runs and
 pinning `differs` the other half; either teaches a reader to ignore the
 checker.
+
+### ★★★ With coverage checked, all four cells of the 2×2 are BROKEN
+
+`pixel=ok` used to mean *the structure is right*. Now it means *the picture is
+right*, and that changed the Phase 1b conclusion:
+
+|  | 2 contours | 4 contours |
+|---|---|---|
+| **disjoint** | **BROKEN** (structure, `runs=1`) | **BROKEN** (structure, `runs=1`) |
+| **nested** | **BROKEN** (`cover=short:769`) | **BROKEN** (`cover=stray:1115`) |
+
+*"Nested is OK"* was an artefact of checking only structure. Two of the three
+nested cases pass their sample-point predicates while drawing the wrong number
+of pixels — **in opposite directions**: two nested contours draw 769 **too few**,
+four draw ~1150 **too many**.
+
+**The one construction that measures exactly is `path/two-draws-ring`** — the
+same ring geometry, built as two single-contour paths and two draws, `fill=5376`
+exact on both boots, sitting beside a single-path version of the identical ring
+that is 769 px short. So one-contour-per-path is no longer a conservative guess
+that happened to work: it is **directly measured against its own counterexample**,
+and it is what both compositors already do.
+
+★ **A refined hypothesis, not yet a rule.** Both nested cases that fail on
+coverage involve **opposite windings** (hole cutting) — the ring is outer CW +
+inner CCW, `four-nested-rings` alternates. The nested case that passes coverage
+(`evenodd-vs-nonzero` pass 2) is same-winding with no hole cut, and is
+nondeterministic anyway. So the variable may be **hole cutting** rather than
+nesting. The gap that would test it: `evenodd`'s pass 1 *is* an EVEN_ODD hole
+and is not coverage-checked.
+
+### ★★ Stray coverage — what the fill numbers say, and why `pixel=ok` got stricter
+
+Comparing measured `fill` against exact analytic area across both boots:
+
+| case | shape | analytic | silicon | excess |
+|---|---|---|---|---|
+| `single-contour-rect` | 1 axis-aligned rect | 6400 | **6400** | **0** |
+| `multi-contour-close-padded` | 4 bars, padded CLOSE | 5120 | **5120** | **0** |
+| `multi-contour-disjoint` | 4 bars, ordinary CLOSE | 1280 (bar 0) | 1393 | **+113** |
+| `two-disjoint-bars` | 2 bars, ordinary CLOSE | 1280 (bar 0) | 1322 | **+42** |
+| `four-nested-rings` | 4 nested rects | 5760 | 6931 / 6875 | **+1171 / +1115** |
+
+The first two are controls and they are **exact** — this pipeline costs zero
+antialiasing on axis-aligned integer rects. (A diagonal does cost: the triangle
+measures 1830 against 1800.) So those excesses are **stray geometry — pixels
+drawn that are not in the path** — and **the excess scales with how much path
+data follows the first CLOSE**.
+
+**That is not truncation.** A path that stopped at the zero-padded CLOSE would
+measure exactly 1280. It is the parser **continuing and misreading**, which
+also explains the nondeterminism: a desynchronised parse reads whatever is in
+memory.
+
+Consequently `pixel=ok` now requires the structural predicate **and** fill
+within tolerance of the analytic area — so it means *the picture is right*, not
+merely *the structure is right*. Four cases that reported no fill at all now do.
+
+★ **Tolerance is `k × perimeter`, never a percentage of area.** Rasterisation
+error lives on the boundary. A 5 % area band would have put a false `broken` on
+`path/self-intersecting` — a *control* — because a pentagram carries 474 px of
+all-diagonal boundary on only 2792 px of area. Axis-aligned `k=1/8`,
+antialiased `k=1/2`, the latter from the one measured rate (the triangle's +30
+is all on its hypotenuse, so 30/84.85 = 0.354 px per unit of diagonal).
+
+★ The host suite gained a **fourth arm** — a stray-ink rasteriser drawing the
+right shape plus 400 px that are not in the path. Without it the coverage
+check's failing branch was executed by nothing, so the whole check could have
+been hard-wired to pass with arms 1–3 still green. Demonstrated: hard-wiring it
+leaves arms 1–3 green and fails 14 cases by name in arm 4.
 
 ### Still open
 

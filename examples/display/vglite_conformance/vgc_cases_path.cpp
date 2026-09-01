@@ -86,6 +86,121 @@
         if (fe_ != VG_LITE_SUCCESS) return fe_;                               \
     } while (0)
 
+/* ---- COVERAGE: "the structure is right" is NOT "the picture is right" ------
+ *
+ * ★★ WHY THIS EXISTS, AND WHY THE TOLERANCES ARE THE SIZE THEY ARE. Two
+ * silicon boots (2026-08-30, 2026-09-01) measured this pipeline against exact
+ * analytic areas, and the two AXIS-ALIGNED controls came back EXACT:
+ *
+ *     single-contour-rect          analytic 6400   silicon 6400   excess    0
+ *     multi-contour-close-padded   analytic 5120   silicon 5120   excess    0
+ *     format-s8/16/32/fp32         analytic 1800   silicon 1830   excess  +30
+ *     four-nested-rings            analytic 5760   silicon 6931/6875  +1171/+1115
+ *
+ * So this GC355 rasterises an axis-aligned integer-coordinate rect with ZERO
+ * antialiasing excess, and a diagonal costs ~30 px on an 1800 px triangle.
+ * Which makes four-nested-rings' +1171 -- a fifth again of the whole shape --
+ * STRAY GEOMETRY: pixels drawn that are not in the path. And it was reporting
+ * `pixel=ok`, because its predicate counts RUNS down one column and nothing
+ * looked at the amount of ink. Four further cases printed no fill at all, so
+ * they could have been doing the same thing invisibly.
+ *
+ * ★ FOLDED INTO pixel=, NOT ADDED AS A NEW VERDICT FIELD. A render carrying
+ * 20% stray geometry IS wrong, so `pixel=ok` has to mean "the picture is
+ * right" rather than "the structure is right". The case-line SHAPE is parsed
+ * by run_qemu.sh and tools/vglite-conformance-check.sh and must not move; the
+ * comparison is reported inside `detail=` as cover=ok / cover=stray:<N> /
+ * cover=short:<N> so a failure is diagnosable from a transcript alone.
+ *
+ * ★ EVERY TOLERANCE IS k * PERIMETER, NEVER A PERCENTAGE OF AREA, and the
+ * shape of that rule is itself a finding. Rasterisation error lives on the
+ * BOUNDARY, so it scales with boundary LENGTH; a percentage of area is only a
+ * proxy for that, and the proxy breaks down precisely on the thin spiky shapes
+ * where it would matter. The perimeter used is the sum of the EMITTED
+ * contours' perimeters -- not the rendered region's -- because an interior
+ * contour can still leave a tessellation seam even where it encloses nothing.
+ * Only k differs, and it is set by whether the boundary is axis-aligned:
+ *
+ *   AXIS-ALIGNED (every edge horizontal or vertical, every coordinate an
+ *     integer) -- k = 1/8. Silicon matches the analytic EXACTLY here, proven
+ *     twice, so the whole bound is headroom: 40 px on the 80x80 baseline
+ *     against a measured excess of 0, 120 px on the nested rings against a
+ *     measured 1171.
+ *   ANTIALIASED (any diagonal or curve) -- k = 1/2, i.e. HALF A PIXEL of
+ *     coverage uncertainty along the boundary, which is the most an edge
+ *     thresholded at ~50% coverage can be out by. The two rasterisers
+ *     straddle the analytic: the host model samples pixel centres and
+ *     UNDER-counts (triangle 1770), silicon OVER-counts (1830), against 1800.
+ *     The triangle's 204 px of boundary gives 102, holding both with 72 px to
+ *     spare and still rejecting a 20% excess (360).
+ *
+ * ★ A FLAT +/-5% WAS TRIED FIRST AND WOULD HAVE PUT A FALSE `broken` ON A
+ * CONTROL, which is worth recording because it is the failure mode this file
+ * is most anxious about (a false broken on path/self-intersecting would
+ * wrongly discredit path/evenodd-vs-nonzero, one of the headline probes).
+ * Silicon's +30 on the triangle is ALL on the hypotenuse -- the legs are
+ * axis-aligned and those are exact -- so the measured rate is 30/84.85 =
+ * 0.354 px per unit of diagonal. The pentagram is 474 px of boundary and ALL
+ * of it diagonal, predicting ~168 px of legitimate excess. A 5% band on its
+ * 2792 px is 140: the control would have gone red on a correct render. Under
+ * k = 1/2 the bound is 237, which holds 168 and still catches 20% (558).
+ * The percentage rule was not merely loose in the wrong place -- it was the
+ * wrong quantity.
+ *
+ * ★ COVERAGE IS ONLY MEANINGFUL WHEN THE STRUCTURE IS RIGHT, so it is
+ * evaluated ONLY IF the structural predicate passed; otherwise the case
+ * reports cover=n/a. That is not a softening -- a structurally wrong case is
+ * already BROKEN and cannot be rescued by it -- it is what stops the probe
+ * asserting a "correct area" for a picture that is admittedly the wrong
+ * picture. path/multi-contour-disjoint and path/two-disjoint-bars are the
+ * cases this actually bites on today: both are EXPECTED BROKEN (runs=1 of
+ * 4 / of 2), so "the analytic area" would be a claim about a render that did
+ * not happen. Their fill is still PRINTED -- it is what surfaced this whole
+ * finding -- it is simply not judged.
+ *
+ * ★ AND IT IS A RULE, NOT A PER-CASE EXCLUSION LIST. Written as a list, a
+ * future case that started rendering correctly would keep its exemption
+ * silently; written as a rule, the moment two-disjoint-bars reports runs=2 its
+ * 2560 px expectation starts being checked. */
+
+typedef struct {
+    int  ok;
+    char s[24];     /* "cover=stray:" (12) + an int (11) + NUL */
+} vgc_cover_t;
+
+/* Not applicable: the structural predicate failed, so there is no correct
+ * area to compare against. Never fails a case on its own. */
+static vgc_cover_t vgc_cover_na(void)
+{
+    vgc_cover_t c;
+    c.ok = 1;
+    snprintf(c.s, sizeof(c.s), "cover=n/a");
+    return c;
+}
+
+static vgc_cover_t vgc_cover_within(int fill, int expect, int tol)
+{
+    vgc_cover_t c;
+    const int d = fill - expect;
+    c.ok = (d >= -tol && d <= tol);
+    if (c.ok)       snprintf(c.s, sizeof(c.s), "cover=ok");
+    else if (d > 0) snprintf(c.s, sizeof(c.s), "cover=stray:%d", d);
+    else            snprintf(c.s, sizeof(c.s), "cover=short:%d", -d);
+    return c;
+}
+
+/* Axis-aligned integer geometry: 1/8 px of slack per unit of boundary. */
+static vgc_cover_t vgc_cover_axis(int fill, int expect, int perimeter)
+{
+    return vgc_cover_within(fill, expect, perimeter / 8);
+}
+
+/* Anything with a diagonal or a curve: 1/2 px per unit of boundary. */
+static vgc_cover_t vgc_cover_aa(int fill, int expect, int perimeter)
+{
+    return vgc_cover_within(fill, expect, perimeter / 2);
+}
+
 /* ---- 1. path/single-contour-rect ------------------------------------------
  * THE BASELINE. One closed rect, one contour, one draw. 80x80 at (24,24). */
 
@@ -93,7 +208,8 @@
 #define R_Y 24
 #define R_W 80
 #define R_H 80
-#define R_AREA (R_W * R_H)      /* 6400 */
+#define R_AREA (R_W * R_H)              /* 80*80        = 6400 */
+#define R_PERIM (2 * (R_W + R_H))       /* 2*(80+80)    =  320 -> tol 40 */
 
 static vg_lite_error_t run_single_rect(void)
 {
@@ -111,22 +227,27 @@ static vgc_verdict_t check_single_rect(char *d, size_t n)
     const int fill   = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
     const int centre = vgc_is_filled(vgc_px(64, 64));
     const int corner = vgc_is_filled(vgc_px(10, 10));
-    snprintf(d, n, "fill=%d,expect=%d,centre=%d,corner=%d",
-             fill, R_AREA, centre, corner);
-    /* ★ +/-3%, NOT the +/-6% this started at, and the reason is that a
-     * baseline has to be the TIGHTEST case in the matrix rather than the
-     * loosest. 6% is 384 px, and a rect rendered FOUR PIXELS TOO NARROW is
-     * 76*80 = 6080 -- inside that band. This is the case every other verdict
-     * leans on, so a wrong-by-4-px baseline reading `ok` would quietly
-     * authorise the whole matrix. 3% is 192 px: it still absorbs a half-pixel
-     * raster offset all round (one row plus one column of an 80x80 rect is
-     * ~160 px) and an entire antialiased 320 px perimeter landing either side
-     * of the 50% threshold, while narrowing the smallest error it will accept
-     * from 4 px to 2 px. The far-wrong shapes were never the question: a
-     * dropped draw is 0, a full-target fill 16384, the 32x32 inset used by
-     * cases 4-6 is 1024. */
-    const int lo = R_AREA - R_AREA * 3 / 100, hi = R_AREA + R_AREA * 3 / 100;
-    return (centre && !corner && fill >= lo && fill <= hi) ? VGC_OK : VGC_BROKEN;
+    const int structural = centre && !corner;
+    /* ★ THE FILL BOUND USED TO BE +/-3% HERE AND IS NOW THE COVERAGE CHECK'S
+     * +/-40, and the history is worth keeping because the direction of travel
+     * has been one way. It started at +/-6% (384 px) and was tightened to 3%
+     * (192 px) on the argument that a baseline must be the TIGHTEST case in
+     * the matrix rather than the loosest -- 6% admits a rect rendered FOUR
+     * PIXELS TOO NARROW (76*80 = 6080), and this is the case every other
+     * verdict leans on. Both bands were sized for an antialiased 320 px
+     * perimeter landing either side of the 50% threshold. THE SILICON SAYS
+     * THAT NEVER HAPPENS: two boots measured 6400 against an analytic 6400,
+     * excess zero. So the AA argument does not apply to axis-aligned integer
+     * geometry at all, and R_PERIM/8 = 40 px is the honest bound -- still four
+     * times the largest excess this pipeline has ever shown on such a shape
+     * (the +30 on a diagonal), and it narrows the smallest detectable error
+     * from 2 px of width to under half a pixel. The far-wrong shapes were
+     * never the question: a dropped draw is 0, a full-target fill 16384. */
+    const vgc_cover_t cv = structural ? vgc_cover_axis(fill, R_AREA, R_PERIM)
+                                      : vgc_cover_na();
+    snprintf(d, n, "fill=%d,expect=%d,centre=%d,corner=%d,%s",
+             fill, R_AREA, centre, corner, cv.s);
+    return (structural && cv.ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* ---- 2. path/multi-contour-disjoint ----------------------------------------
@@ -135,6 +256,12 @@ static vgc_verdict_t check_single_rect(char *d, size_t n)
 
 static const int BAR_Y[4] = { 16, 44, 72, 100 };
 #define BAR_H 16
+#define BAR_AREA  (R_W * BAR_H)                 /* 80*16              = 1280 */
+#define BAR_PERIM (2 * (R_W + BAR_H))           /* 2*(80+16)          =  192 */
+#define BARS4_AREA  (4 * BAR_AREA)              /* four bars          = 5120 */
+#define BARS4_PERIM (4 * BAR_PERIM)             /* 4*192 =  768 -> tol   96 */
+#define BARS2_AREA  (2 * BAR_AREA)              /* two bars           = 2560 */
+#define BARS2_PERIM (2 * BAR_PERIM)             /* 2*192 =  384 -> tol   48 */
 
 static vg_lite_error_t run_multi_contour(void)
 {
@@ -173,8 +300,19 @@ static vgc_verdict_t check_multi_contour(char *d, size_t n)
      * tracks. Same convention as check_degenerate below. */
     int ymin = -99, ymax = -99;
     const int fill = vgc_filled_rows(vgc_fb(), VGC_W, VGC_H, VGC_W, &ymin, &ymax);
-    snprintf(d, n, "runs=%d,expect=4,fill=%d,y0=%d,y1=%d", runs, fill, ymin, ymax);
-    return runs == 4 ? VGC_OK : VGC_BROKEN;
+    /* ★ COVERAGE ONLY WHEN runs==4, WHICH IS WHY multi-contour-disjoint READS
+     * cover=n/a ON THIS SILICON AND ITS PADDED TWIN DOES NOT. The disjoint
+     * cell is EXPECTED BROKEN (runs=1: one bar of four, measured fill 1393
+     * against bar 0's 1280), and "the correct area" of a render that admits
+     * it drew the wrong picture is not a quantity. The padded cell renders all
+     * four (measured 5120 == the analytic exactly), so its area IS well
+     * defined and is now checked. Same function, same expectation, different
+     * answer -- because the rule is about the STRUCTURE, not about the id. */
+    const vgc_cover_t cv = (runs == 4)
+        ? vgc_cover_axis(fill, BARS4_AREA, BARS4_PERIM) : vgc_cover_na();
+    snprintf(d, n, "runs=%d,expect=4,fill=%d,y0=%d,y1=%d,%s",
+             runs, fill, ymin, ymax, cv.s);
+    return (runs == 4 && cv.ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* ---- 3. path/multi-contour-close-padded ------------------------------------
@@ -314,8 +452,15 @@ static vgc_verdict_t check_two_disjoint(char *d, size_t n)
      * fill=2560 with the column filled over [16,32) and [72,88). */
     const int runs = vgc_count_runs_col(vgc_fb(), VGC_W, VGC_H, VGC_W, 64);
     const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
-    snprintf(d, n, "runs=%d,expect=2,fill=%d", runs, fill);
-    return runs == 2 ? VGC_OK : VGC_BROKEN;
+    /* cover=n/a on this silicon for the same reason as its four-bar parent:
+     * runs=1, so the picture is admittedly wrong and 2560 is not its area.
+     * The measured 1322 is still printed -- and it is 42 px ABOVE bar 0's
+     * exact 1280 in a path whose only other content is a bar 56 px away,
+     * which is a reading worth having whether or not anything judges it. */
+    const vgc_cover_t cv = (runs == 2)
+        ? vgc_cover_axis(fill, BARS2_AREA, BARS2_PERIM) : vgc_cover_na();
+    snprintf(d, n, "runs=%d,expect=2,fill=%d,%s", runs, fill, cv.s);
+    return (runs == 2 && cv.ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* ---- 3c. path/four-nested-rings --------------------------------------------
@@ -347,6 +492,10 @@ static vgc_verdict_t check_two_disjoint(char *d, size_t n)
 #define NR_N 4
 static const int NR_XY[NR_N] = { 16, 28, 40, 52 };   /* origin of each rect */
 static const int NR_WH[NR_N] = { 96, 72, 48, 24 };   /* and its side */
+/* (96^2 - 72^2) + (48^2 - 24^2) = 4032 + 1728. */
+#define NR_AREA  5760
+/* Sum of the four EMITTED contours: 4*(96+72+48+24) = 960 -> tol 120. */
+#define NR_PERIM (4 * (96 + 72 + 48 + 24))
 
 static vg_lite_error_t run_four_nested(void)
 {
@@ -370,13 +519,24 @@ static vgc_verdict_t check_four_nested(char *d, size_t n)
 {
     const int runs = vgc_count_runs_col(vgc_fb(), VGC_W, VGC_H, VGC_W, 64);
     const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
-    /* expfill= is carried so a reader can tell a right count from a right
-     * PICTURE: runs=4 with a fill far from 5760 would mean four bands in the
-     * wrong places, which the run count alone cannot see. It is a reading, not
-     * a bound -- the verdict is runs alone, since antialiasing moves fill by a
-     * perimeter's worth and this case must not go broken on that. */
-    snprintf(d, n, "runs=%d,expect=4,fill=%d,expfill=5760", runs, fill);
-    return runs == 4 ? VGC_OK : VGC_BROKEN;
+    /* ★★ expfill= WAS A READING AND IS NOW A BOUND, AND THIS IS THE CASE THAT
+     * FORCED THE WHOLE COVERAGE CHECK. The comment here used to say the
+     * verdict is runs alone "since antialiasing moves fill by a perimeter's
+     * worth and this case must not go broken on that". Two silicon boots
+     * refuted the premise: this pipeline draws axis-aligned integer rects with
+     * ZERO antialiasing excess (rect 6400/6400, four bars 5120/5120), while
+     * THIS case measured 6931 and 6875 against the analytic 5760 -- +1171 and
+     * +1115, a fifth again of the shape, and differing between boots. That is
+     * not a perimeter's worth of AA; it is geometry the path does not contain.
+     * And it was reporting pixel=ok, because runs=4 is exactly what a correct
+     * render and a correct-render-plus-stray-ink both produce.
+     *
+     * NR_PERIM/8 = 120 px. Both silicon readings are ~10x outside it. */
+    const vgc_cover_t cv = (runs == 4)
+        ? vgc_cover_axis(fill, NR_AREA, NR_PERIM) : vgc_cover_na();
+    snprintf(d, n, "runs=%d,expect=4,fill=%d,expfill=%d,%s",
+             runs, fill, NR_AREA, cv.s);
+    return (runs == 4 && cv.ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* ---- 4. path/two-contour-ring-nonzero --------------------------------------
@@ -387,6 +547,13 @@ static vgc_verdict_t check_four_nested(char *d, size_t n)
 #define I_Y 48
 #define I_W 32
 #define I_H 32
+/* The ring both cases 4 and 5 produce: 80*80 - 32*32 = 6400 - 1024. */
+#define RING_AREA  (R_AREA - (I_W * I_H))
+/* Both contours emitted: 2*(80+80) + 2*(32+32) = 320 + 128 = 448 -> tol 56.
+ * The RENDERED region's boundary is the same 448 here, since the hole is a
+ * real edge; where the two differ this file takes the emitted figure, which
+ * is never the smaller. */
+#define RING_PERIM (R_PERIM + 2 * (I_W + I_H))
 
 static vg_lite_error_t run_ring_two_contour(void)
 {
@@ -407,8 +574,20 @@ static vgc_verdict_t check_ring(char *d, size_t n)
 {
     const int rim    = vgc_is_filled(vgc_px(32, 64));   /* inside outer, outside inner */
     const int centre = vgc_is_filled(vgc_px(64, 64));   /* inside inner */
-    snprintf(d, n, "rim=%d,centre=%d,expect=rim1centre0", rim, centre);
-    return (rim && !centre) ? VGC_OK : VGC_BROKEN;
+    const int structural = rim && !centre;
+    /* ★ THIS CASE PRINTED NO FILL AT ALL UNTIL NOW, and neither did case 5,
+     * evenodd-vs-nonzero or self-intersecting. Two sample points say the hole
+     * is cut SOMEWHERE and the rim is inked SOMEWHERE; they cannot see a ring
+     * a fifth too heavy, which is exactly what four-nested-rings turned out to
+     * be while reporting a clean structural verdict. There is no silicon
+     * reading for this cell to compare against -- the number did not exist --
+     * so the next boot measures it for the first time. */
+    const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
+    const vgc_cover_t cv = structural
+        ? vgc_cover_axis(fill, RING_AREA, RING_PERIM) : vgc_cover_na();
+    snprintf(d, n, "rim=%d,centre=%d,expect=rim1centre0,fill=%d,%s",
+             rim, centre, fill, cv.s);
+    return (structural && cv.ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* ---- 5. path/two-draws-ring ------------------------------------------------
@@ -502,9 +681,27 @@ static vgc_verdict_t check_evenodd_nonzero(char *d, size_t n)
 {
     const int nz_rim    = vgc_is_filled(vgc_px(32, 64));
     const int nz_centre = vgc_is_filled(vgc_px(64, 64));
-    snprintf(d, n, "eo_rim=%d,eo_centre=%d,nz_rim=%d,nz_centre=%d",
-             s_eo_rim, s_eo_centre, nz_rim, nz_centre);
-    return (s_eo_rim && !s_eo_centre && nz_rim && nz_centre) ? VGC_OK : VGC_BROKEN;
+    const int structural = s_eo_rim && !s_eo_centre && nz_rim && nz_centre;
+    /* ★ WHICH SUB-RENDER THIS MEASURES: PASS 2, the NON_ZERO one, because
+     * that is the only render still in the buffer when the harness calls
+     * check() (pass 1 was sampled into the s_eo_* statics and then CLEARED
+     * away by run() itself). Under NON_ZERO two SAME-winding nested rects both
+     * contribute +1, so the hole is not cut and the correct picture is the
+     * outer 80x80 SOLID: 6400, not the ring. The tolerance is nevertheless
+     * built from BOTH emitted contours (RING_PERIM = 448 -> 56), since the
+     * inner contour is drawn and can leave a tessellation seam even where it
+     * cuts nothing.
+     *
+     * ★ NOTE WHAT IS NOT COVERED: pass 1's EVEN_ODD area (which should be the
+     * 5376 ring). Measuring it would mean stashing a fifth number in a file
+     * static, and this case's job is the fill-RULE difference, which the four
+     * sample points already answer. The gap is named rather than hidden. */
+    const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
+    const vgc_cover_t cv = structural
+        ? vgc_cover_axis(fill, R_AREA, RING_PERIM) : vgc_cover_na();
+    snprintf(d, n, "eo_rim=%d,eo_centre=%d,nz_rim=%d,nz_centre=%d,fill=%d,%s",
+             s_eo_rim, s_eo_centre, nz_rim, nz_centre, fill, cv.s);
+    return (structural && cv.ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* ---- 7. path/self-intersecting ---------------------------------------------
@@ -547,6 +744,39 @@ static const int STAR[5][2] = {
     { 112,  49 },   /* 342    */
     {  35, 104 },   /* 126    */
 };
+
+/* ★ THE NON_ZERO AREA OF THE ROUNDED-INTEGER PENTAGRAM, DERIVED EXACTLY --
+ * not taken from the model rasteriser, though the two agree to a third of a
+ * pixel, which is the point of saying so.
+ *
+ * The shoelace of a self-crossing polygon integrates the WINDING NUMBER, so
+ * for a pentagram it counts the inner pentagon TWICE (winding 2) and the five
+ * points once. The NON_ZERO region is every point of winding != 0, i.e. the
+ * points plus the inner pentagon ONCE:
+ *
+ *     |shoelace(V0..V4)|                                    = 3655
+ *     inner pentagon (the five non-adjacent edge crossings) =  862.70
+ *     NON_ZERO area = 3655 - 862.70                         = 2792.30
+ *
+ * The five crossings are computed from the ROUNDED integer vertices actually
+ * emitted -- (75.278,49), (82.148,70.323), (64,83.286), (45.852,70.323),
+ * (52.722,49) -- so this is the area of the shape the case really draws, not
+ * of the ideal r=50 pentagram it was derived from. The suite's pixel-centre
+ * model rasteriser independently reports 2792 for the same shape.
+ *
+ * ★ ANTIALIASED CLASS: every edge here is a diagonal, so the +/-5% band (139
+ * px) applies rather than a perimeter bound. The 474 px of emitted edge is
+ * the longest boundary in the matrix, which is precisely why an absolute
+ * bound derived from axis-aligned measurements would be the wrong instrument.
+ * EVEN_ODD's area would be 3655 - 2*862.70 = 1929.60 -- not checked here, for
+ * the same reason as evenodd-vs-nonzero: pass 1 is cleared before check(). */
+#define STAR_NZ_AREA 2792
+/* The five emitted edges, sum of |Vi - Vi+1| over the rounded integer
+ * vertices: 474.36, truncated. ALL of it diagonal -- the longest boundary in
+ * the matrix, on the second-smallest area -- which is exactly why this case
+ * settles that the tolerance must scale with perimeter and not with area.
+ * tol = 474/2 = 237, against a predicted silicon excess of ~168. */
+#define STAR_PERIM 474
 
 static int      s_star_eo_centre, s_star_eo_tip;
 static uint32_t s_star_eo_sum;
@@ -593,10 +823,15 @@ static vgc_verdict_t check_self_intersecting(char *d, size_t n)
 {
     const int nz_centre = vgc_is_filled(vgc_px(64, 64));
     const int nz_tip    = vgc_is_filled(vgc_px(64, 40));
-    snprintf(d, n, "eo_centre=%d,eo_tip=%d,nz_centre=%d,nz_tip=%d",
-             s_star_eo_centre, s_star_eo_tip, nz_centre, nz_tip);
-    return (!s_star_eo_centre && s_star_eo_tip && nz_centre && nz_tip)
-           ? VGC_OK : VGC_BROKEN;
+    const int structural = !s_star_eo_centre && s_star_eo_tip
+                           && nz_centre && nz_tip;
+    /* Pass 2 (NON_ZERO) is what is in the buffer -- see STAR_NZ_AREA. */
+    const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
+    const vgc_cover_t cv = structural
+        ? vgc_cover_aa(fill, STAR_NZ_AREA, STAR_PERIM) : vgc_cover_na();
+    snprintf(d, n, "eo_centre=%d,eo_tip=%d,nz_centre=%d,nz_tip=%d,fill=%d,%s",
+             s_star_eo_centre, s_star_eo_tip, nz_centre, nz_tip, fill, cv.s);
+    return (structural && cv.ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* ---- 8-12. path/format-* ---------------------------------------------------
@@ -645,6 +880,11 @@ static vgc_verdict_t check_self_intersecting(char *d, size_t n)
  * pointer (it is the function that would perform that fixup). */
 
 #define TRI_AREA 1800
+/* 60 + 60 + 60*sqrt(2) = 204.85, truncated. Two legs axis-aligned and one
+ * hypotenuse; the whole figure is nevertheless in the ANTIALIASED class,
+ * because one diagonal is enough to put real coverage error on the boundary.
+ * tol = 204/2 = 102, against a model reading -30 and a silicon reading +30. */
+#define TRI_PERIM 204
 
 /* 11 slots each: MOVE x y | LINE x y | LINE x y | CLOSE | END. The opcode-only
  * slots (CLOSE, END) still occupy a full element -- the driver advances the
@@ -723,14 +963,23 @@ static vgc_verdict_t check_fmt(char *d, size_t n)
      * turns "some shape of the right size" into "this shape". */
     const int in  = vgc_is_filled(vgc_px(20, 20));
     const int out = vgc_is_filled(vgc_px(60, 60));
-    /* +/-8%: the triangle's perimeter is ~205 px, so a pixel of antialiased
-     * boundary either way is ~5.7% of 1800. Sampling at pixel centres alone
-     * costs -1.7% (1770 measured on the host reference), so the band has to
-     * hold both; it still rejects a dropped draw (0) and any wrong shape this
-     * case could plausibly produce. */
-    const int lo = TRI_AREA - TRI_AREA * 8 / 100, hi = TRI_AREA + TRI_AREA * 8 / 100;
-    snprintf(d, n, "fill=%d,expect=%d,in=%d,out=%d", fill, TRI_AREA, in, out);
-    return (fill >= lo && fill <= hi && in && !out) ? VGC_OK : VGC_BROKEN;
+    /* ★ +/-8% OF AREA REPLACED BY TRI_PERIM/2 = 102 px, AND THE JUSTIFICATION
+     * IS NOW A MEASUREMENT RATHER THAN AN ESTIMATE. 8% (144 px) was sized from
+     * "the triangle's perimeter is ~205 px, so a pixel of antialiased boundary
+     * either way is ~5.7%" -- the right instinct, expressed in the wrong
+     * units. Both rasterisers have since been read: the host model
+     * under-counts at 1770 (pixel-centre sampling) and silicon over-counts at
+     * 1830, against the analytic 1800. The real spread is 60 px, not 205.
+     * Half a pixel along the 204 px boundary is 102: it holds both readings
+     * with 72 px to spare and rejects the ~20% excess that four-nested-rings
+     * turned out to be carrying (360 px). This is the ANTIALIASED class --
+     * the hypotenuse is a real diagonal, so the k = 1/8 the axis-aligned
+     * cases use would be the wrong constant here. */
+    const vgc_cover_t cv = (in && !out)
+        ? vgc_cover_aa(fill, TRI_AREA, TRI_PERIM) : vgc_cover_na();
+    snprintf(d, n, "fill=%d,expect=%d,in=%d,out=%d,%s",
+             fill, TRI_AREA, in, out, cv.s);
+    return (in && !out && cv.ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* path/format-agreement: renders all four again, in one run, and compares.
@@ -791,19 +1040,40 @@ static uint32_t sum_fmt_agreement(void) { return s_agree_sum; }
 
 static vgc_verdict_t check_fmt_agreement(char *d, size_t n)
 {
-    /* 83 bytes worst case against VGC_DETAIL_MAX's 96, counted rather than
-     * hoped: four %d bounded by the 16384-pixel target, plus same_px. */
-    snprintf(d, n, "s8=%d,s16=%d,s32=%d,fp32=%d,same_px=%d",
-             s_agree[0], s_agree[1], s_agree[2], s_agree[3], s_agree_same_px);
     /* NON-ZERO FIRST, and it is not belt-and-braces: four EMPTY renders agree
      * perfectly, so equality alone makes this case green on a GPU that draws
      * nothing at all. Testing slot 0 here and equality below gives each test
      * one job -- the two folded into one loop condition left the slot-0 check
      * unreachable, since equality already implies it. */
-    if (s_agree[0] == 0) return VGC_BROKEN;
+    int structural = (s_agree[0] != 0);
     for (int i = 1; i < 4; i++)
-        if (s_agree[i] != s_agree[0]) return VGC_BROKEN;
-    return VGC_OK;
+        if (s_agree[i] != s_agree[0]) structural = 0;
+
+    /* ★ COVERAGE APPLIES TO ALL FOUR SUB-RENDERS, NOT ONLY THE LAST ONE IN
+     * THE BUFFER, and here that is free: run() already captured every count.
+     * It is also where coverage adds the most to this particular case --
+     * "the four formats agree" is satisfied by four IDENTICALLY WRONG renders,
+     * which is the one failure mode the equality test structurally cannot see.
+     * The worst offender is reported, so a transcript names the size of the
+     * error rather than only its existence. ANTIALIASED class: same triangle
+     * as the four cases above, +/-5% of 1800. */
+    vgc_cover_t cv = vgc_cover_na();
+    if (structural) {
+        int worst = 0;                          /* index of the worst offender */
+        for (int i = 1; i < 4; i++) {
+            const int a = s_agree[i]     - TRI_AREA;
+            const int b = s_agree[worst] - TRI_AREA;
+            if ((a < 0 ? -a : a) > (b < 0 ? -b : b)) worst = i;
+        }
+        cv = vgc_cover_aa(s_agree[worst], TRI_AREA, TRI_PERIM);
+    }
+    /* 67 bytes worst case against VGC_DETAIL_MAX's 96, counted rather than
+     * hoped: five %d each bounded by the 16384-pixel target (5 digits), plus
+     * the longest cover token, "cover=stray:16384" (17). */
+    snprintf(d, n, "s8=%d,s16=%d,s32=%d,fp32=%d,same_px=%d,%s",
+             s_agree[0], s_agree[1], s_agree[2], s_agree[3], s_agree_same_px,
+             cv.s);
+    return (structural && cv.ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* ---- 13. path/degenerate-zero-area -----------------------------------------
@@ -842,7 +1112,13 @@ static vgc_verdict_t check_degenerate(char *d, size_t n)
      * drawn, which is a reading rather than an ambiguity. */
     int ymin = -99, ymax = -99;
     const int fill = vgc_filled_rows(vgc_fb(), VGC_W, VGC_H, VGC_W, &ymin, &ymax);
-    snprintf(d, n, "fill=%d,ymin=%d,ymax=%d", fill, ymin, ymax);
+    /* ★ THE ONE CASE WITH NO ANALYTIC AREA AT ALL, and it is a design fact
+     * rather than an omission: a zero-height rect may legitimately rasterise
+     * to NOTHING or to a hairline, so no single number is the correct answer
+     * and there is nothing for coverage to compare against. Printed as n/a
+     * anyway so that EVERY case line in the matrix carries a cover= field --
+     * a grep for cases lacking one would otherwise be a grep for nothing. */
+    snprintf(d, n, "fill=%d,ymin=%d,ymax=%d,cover=n/a", fill, ymin, ymax);
     if (fill == 0) return VGC_OK;                       /* nothing drawn: fine */
     return (ymin >= DEG_Y - 1 && ymax <= DEG_Y + 1) ? VGC_OK : VGC_BROKEN;
 }
