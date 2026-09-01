@@ -41,6 +41,12 @@
  * model=none), case 4 is reading-agnostic by construction, and only a THIRD
  * value is broken.
  *
+ * ★ WHAT CASES 2-4 *DO* ASSERT WITHOUT AMBIGUITY IS THE ALPHA ROW, and it is
+ * not decoration -- it is the only thing in those cases that can see a GPU
+ * which discards alpha. See the C_EXP_ALPHA note below for the measurement
+ * that forced it. Case 5 deliberately does NOT, because BLEND_NONE's alpha row
+ * is a different one.
+ *
  * ★ THE TWO SRC_OVER CASES MUST AGREE, AND NOTHING HERE ENFORCES IT. If
  * case 2 reports A and case 3 reports B the hardware implements neither
  * formula consistently, which is a bigger finding than which formula it is.
@@ -140,6 +146,40 @@
 #define C_EXP3_B  255   /* B: 255   + 64*(1-a) = 286.9, clamped to 255        */
 #define C_EXP5_RAW 255  /* BLEND_NONE as ":459  RGB: S, No blend"             */
 #define C_EXP5_MOD 128  /* BLEND_NONE modulating by alpha: 255*a = 128.0      */
+
+/* ---- SRC_OVER's ALPHA row, and why cases 2-4 judge it ----------------------
+ * ★★ THE COLOUR CHANNEL ALONE CANNOT SEE A GPU THAT DISCARDS ALPHA, AND THAT
+ * WAS MEASURED, NOT SUSPECTED. With a SATURATED source (white, 255), reading B
+ * -- `S + D*(1 - Sa)` -- is OBSERVATIONALLY IDENTICAL to writing S raw: over
+ * black it is 255 + 0 = 255, and over grey 0x40 it is 286.9 clamped to 255.
+ * Both are exactly what a GPU ignoring alpha entirely would write. So a
+ * verdict computed from the colour channel and admitting reading B reports
+ * `ok` for an alpha-ignoring implementation, and case 4's prediction rides on
+ * the same value and reports `ok` too. Run against a deliberately
+ * alpha-ignoring reference rasteriser, cases 2, 3 and 4 ALL PASSED with
+ * `model=B`.
+ *
+ * ★ THE ALPHA ROW IS WHAT SEPARATES THEM, AND IT IS THE ONE PART OF SRC_OVER
+ * WITH NO PREMULTIPLY QUESTION ATTACHED. inc/vg_lite.h:462 gives it
+ * unambiguously as `A: Sa + Da*(1 - Sa)`, the same row under BOTH readings --
+ * there is nothing here to pre-judge, which is exactly why this check can be
+ * asserted where the colour channel's cannot. The backdrop is opaque
+ * (vgc_clear's and vgc_clear_to's colours both carry alpha 0xFF), so Da = 255
+ * and the answer is 128 + 255*0.498 = 255 under A and under B alike. An
+ * alpha-ignoring GPU leaves the source's own 0x80 = 128. A 127-wide gap that
+ * no rounding model closes, tested with the same +/-4 as everything else.
+ *
+ * ★ AND IT IS COVERAGE, NOT A WORKAROUND: the alpha row is half the operator
+ * and nothing in this matrix looked at it before.
+ *
+ * ★★ CASE 5 MUST NOT GAIN THIS CHECK, and the asymmetry is deliberate rather
+ * than an oversight. BLEND_NONE's alpha row is `A: Sa` (:459-460), so a raw
+ * write leaving a = 0x80 is CORRECT there. Judging alpha in case 5 would
+ * report broken on conforming hardware -- the opposite mistake, and the one
+ * this file is most anxious about. Case 5 records alpha and judges only the
+ * colour channel; the note at that case says so again where a reader will be
+ * standing when the question occurs to them. */
+#define C_EXP_ALPHA 255
 
 /* ---- shared drawing ------------------------------------------------------- */
 
@@ -251,7 +291,8 @@ static vg_lite_error_t run_word_order(void)
  * term: with D = 0 the destination term vanishes, so whatever comes back is
  * the source contribution alone.
  *
- * ok at ~128 (reading A) or ~255 (reading B); broken otherwise. ~64 is the
+ * ok at ~128 (reading A) or ~255 (reading B) ON THE COLOUR CHANNEL, AND alpha
+ * at 255 (:462, the same row under both readings); broken otherwise. ~64 is the
  * NAMED failure mode -- alpha applied TWICE, i.e. 255*a*a = 64.3 -- and it
  * must read broken, which it does: 64 is 60 outside the nearest band.
  *
@@ -263,18 +304,19 @@ static vgc_verdict_t check_premul_srcover(char *d, size_t n)
 {
     const uint32_t px = vgc_px(C_SX, C_SY);
     const int      v  = vgc_ch(px, C_SAMPLE_CH);
-    /* Alpha is RECORDED, NEVER JUDGED. The header gives it its own row
-     * (:462, `A: Sa + Da*(1 - Sa)`), which over an opaque backdrop is 255
-     * under both readings -- so it discriminates nothing and asserting on it
-     * would add a broken branch no host arm exercises. It is worth printing:
-     * a 191 here would be `Sa*Sa + Da*(1 - Sa)`, which is no convention's
-     * SRC_OVER and would be a finding. */
+    /* JUDGED, not merely recorded -- see the C_EXP_ALPHA note. Over black the
+     * colour channel is 255 under reading B and 255 under a GPU that discards
+     * alpha, so v= alone cannot tell a conforming SRC_OVER from one that
+     * ignores the alpha term. The alpha row (:462) is unambiguous under both
+     * readings and is what separates them. A 191 here would be
+     * `Sa*Sa + Da*(1 - Sa)`, which is no convention's SRC_OVER at all. */
     const int      a  = vgc_ch(px, VGC_A);
+    const int      a_ok = vgc_near(a, C_EXP_ALPHA, C_TOL);
     const char *const model = reading_of(v, C_EXP2_A, C_EXP2_B, "A", "B");
     const vgc_cover_t cv = vgc_cover_na();
 
     snprintf(d, n, "v=%d,a=%d,model=%s,%s", v, a, model ? model : "none", cv.s);
-    return model ? VGC_OK : VGC_BROKEN;
+    return (model && a_ok) ? VGC_OK : VGC_BROKEN;
 }
 
 static vg_lite_error_t run_premul_srcover(void)
@@ -290,7 +332,8 @@ static vg_lite_error_t run_premul_srcover(void)
  * reading is the result; disagreement between them is a larger finding than
  * either value.
  *
- * ok at ~160 (A) or ~255 (B, clamped from 286.9); broken otherwise. In
+ * ok at ~160 (A) or ~255 (B, clamped from 286.9) on the colour channel, AND
+ * alpha at 255; broken otherwise. In
  * particular ~128 -- the case-2 answer -- would mean the destination term was
  * dropped, and reads broken here. */
 
@@ -298,12 +341,16 @@ static vgc_verdict_t check_srcover_arith(char *d, size_t n)
 {
     const uint32_t px = vgc_px(C_SX, C_SY);
     const int      v  = vgc_ch(px, C_SAMPLE_CH);
-    const int      a  = vgc_ch(px, VGC_A);      /* recorded, not judged */
+    /* JUDGED, for the reason at C_EXP_ALPHA: over grey 0x40 reading B clamps
+     * to 255, which is also what a GPU discarding alpha writes, so the colour
+     * channel cannot separate the two here either. */
+    const int      a  = vgc_ch(px, VGC_A);
+    const int      a_ok = vgc_near(a, C_EXP_ALPHA, C_TOL);
     const char *const model = reading_of(v, C_EXP3_A, C_EXP3_B, "A", "B");
     const vgc_cover_t cv = vgc_cover_na();
 
     snprintf(d, n, "v=%d,a=%d,model=%s,%s", v, a, model ? model : "none", cv.s);
-    return model ? VGC_OK : VGC_BROKEN;
+    return (model && a_ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* Clear to grey, then one draw. The clear is not a second SUB-RENDER in the
@@ -388,12 +435,23 @@ static uint32_t sum_srcover_double(void)
 
 static vgc_verdict_t check_srcover_double(char *d, size_t n)
 {
-    const int v2   = vgc_ch(vgc_px(C_SX, C_SY), C_SAMPLE_CH);
+    const uint32_t px = vgc_px(C_SX, C_SY);
+    const int v2   = vgc_ch(px, C_SAMPLE_CH);
     const int pred = srcover_predict(s_dbl_v1);
+    /* JUDGED HERE TOO, and this case needs it MORE than 2 and 3 do rather than
+     * less. Its whole design is to predict v2 from the MEASURED v1, so a GPU
+     * discarding alpha is self-consistent by construction -- it writes 255,
+     * then 255, and the prediction from 255 is 255. Measured: against an
+     * alpha-ignoring rasteriser this case reported ok on the colour channel
+     * alone. Alpha after two composites over an opaque backdrop is 255 under
+     * both readings (255 is a fixed point of `Sa + Da*(1 - Sa)`), so the
+     * expectation is the same one cases 2 and 3 use. */
+    const int a    = vgc_ch(px, VGC_A);
+    const int a_ok = vgc_near(a, C_EXP_ALPHA, C_TOL);
     const vgc_cover_t cv = vgc_cover_na();
 
-    snprintf(d, n, "v1=%d,v2=%d,pred=%d,%s", s_dbl_v1, v2, pred, cv.s);
-    return vgc_near(v2, pred, C_TOL_DBL) ? VGC_OK : VGC_BROKEN;
+    snprintf(d, n, "v1=%d,v2=%d,a=%d,pred=%d,%s", s_dbl_v1, v2, a, pred, cv.s);
+    return (vgc_near(v2, pred, C_TOL_DBL) && a_ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* ---- 5. blend/none-honours-alpha -------------------------------------------
@@ -423,12 +481,23 @@ static vgc_verdict_t check_none_alpha(char *d, size_t n)
 {
     const uint32_t px = vgc_px(C_SX, C_SY);
     const int      v  = vgc_ch(px, C_SAMPLE_CH);
-    /* Alpha is the MOST informative recorded field in this case: the header
-     * says BLEND_NONE writes `A: Sa` (:459), so a raw store leaves 0x80 in the
-     * alpha byte while a mode that had quietly composited would leave 0xFF.
-     * Still recorded rather than judged -- v= is the question, and adding a
-     * second judged quantity would add a broken branch with no host arm behind
-     * it. */
+    /* ★★ RECORDED, NEVER JUDGED -- AND THIS IS THE ONE PLACE IN THE FILE WHERE
+     * THAT IS A DELIBERATE ASYMMETRY RATHER THAN A GAP. Cases 2, 3 and 4 all
+     * ASSERT alpha == 255, because SRC_OVER's alpha row is
+     * `Sa + Da*(1 - Sa)` (:462) and the colour channel alone cannot see a GPU
+     * that discards alpha. BLEND_NONE's alpha row is a DIFFERENT row:
+     * `A: Sa` (:459-460). A raw write therefore leaves the source's own
+     * 0x80 = 128 in the alpha byte, and that is CORRECT. Applying cases 2-4's
+     * check here would report broken on conforming hardware -- the exact
+     * inverse of the mistake the alpha check exists to prevent, and a far
+     * worse one, since an instrument that invents defects is not an
+     * instrument.
+     *
+     * It is still the most informative recorded field in this case: 128 says
+     * the source was stored raw, 255 would say the mode had quietly
+     * composited against the opaque backdrop. Printed, so a boot answers it
+     * either way; not judged, because both answers are defensible exactly as
+     * both v= answers are. */
     const int      a  = vgc_ch(px, VGC_A);
     const char *const read = reading_of(v, C_EXP5_MOD, C_EXP5_RAW,
                                         "modulated", "raw");
