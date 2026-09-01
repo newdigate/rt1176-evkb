@@ -8,7 +8,7 @@
  *
  * It IS an exercise of vgc_cases_path.cpp's own geometry, sample points,
  * tolerances and predicates -- the REAL run()/check()/sum() functions, linked
- * and called -- against THREE MODELS of a GPU:
+ * and called -- against FOUR MODELS of a GPU:
  *   - a correct one (a scanline reference rasteriser honouring every contour
  *     and both fill rules), under which all fifteen cases must report ok;
  *   - this GC355's KNOWN defect (the same rasteriser dropping every contour
@@ -16,11 +16,21 @@
  *     report broken BY NAME and every control must stay ok; and
  *   - one that draws NOTHING, under which fourteen of fifteen must go broken
  *     (degenerate-zero-area legitimately stays ok -- "nothing drawn" is an
- *     accepted outcome there).
- * ★ THE LAST ARM IS NOT REDUNDANT. Measured: a case hard-wired to VGC_OK
- * leaves arm 1 GREEN and arm 2 green for every control, and is caught ONLY by
- * arm 3. A positive-only suite is equally consistent with a matrix that cannot
- * detect anything.
+ *     accepted outcome there); and
+ *   - one that draws the right SHAPE plus 256 px of ink that is not in the
+ *     path, placed where no structural sample point or sampled column can see
+ *     it, under which fourteen of fifteen must go broken BY THE COVERAGE
+ *     FIELD (cover=stray:).
+ * ★ ARMS 3 AND 4 ARE NOT REDUNDANT, AND EACH CLOSES A HOLE THE OTHERS LEAVE.
+ * Measured for arm 3: a case hard-wired to VGC_OK leaves arm 1 GREEN and arm 2
+ * green for every control, and is caught ONLY by arm 3. Arm 4 is the same
+ * argument one level down: arms 1-3 only ever reach cover=ok and cover=n/a --
+ * the coverage check's FAILING branch is never executed, so it could be
+ * hard-wired to pass and all three would stay green. Arm 4 models the exact
+ * defect that motivated coverage (four-nested-rings rendering 1171 px of
+ * excess while reporting pixel=ok) and is the only arm that can see it. A
+ * positive-only suite is equally consistent with a matrix that cannot detect
+ * anything.
  *
  * It is NOT a statement about what the real silicon does. Not one line here
  * touches a GPU. The silicon's answers live in the example's
@@ -244,6 +254,16 @@ static void parse_path(const vg_lite_path_t *p)
 /* Set by arm 3: model a GPU that accepts everything and draws NOTHING. */
 static int g_draw_nothing;
 
+/* Set by arm 4: model a GPU that draws the right shape AND some ink that is
+ * not in the path. See the arm's comment for the block's placement. */
+static int g_stray_ink;
+
+#define STRAY_X0 0
+#define STRAY_X1 16
+#define STRAY_Y0 108
+#define STRAY_Y1 124
+#define STRAY_PX ((STRAY_X1 - STRAY_X0) * (STRAY_Y1 - STRAY_Y0))   /* 256 */
+
 void vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
                    vg_lite_error_t *acc)
 {
@@ -251,6 +271,7 @@ void vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
     parse_path(p);
     if (g_one_contour_only && g_ncon > 1) g_ncon = 1;
     if (g_draw_nothing) g_ncon = 0;
+    int painted = 0;
 
     /* ★ THE BOUNDING BOX IS ENFORCED, because on hardware it IS enforced and
      * getting it wrong is silent. The driver derives its tessellation window
@@ -284,8 +305,36 @@ void vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
                 }
             }
             const int in = (rule == VG_LITE_FILL_EVEN_ODD) ? (cross & 1) : (wind != 0);
-            if (in) s_fb[(size_t)y * VGC_W + (size_t)x] = color;
+            if (in) { s_fb[(size_t)y * VGC_W + (size_t)x] = color; painted++; }
         }
+    }
+
+    /* ★ THE STRAY BLOCK IS PAINTED ONLY IF THE DRAW ACTUALLY INKED SOMETHING,
+     * which is what keeps path/degenerate-zero-area out of arm 4. That case
+     * rasterises to nothing BY DESIGN and its check accepts it; giving it
+     * invented geometry would make it go broken for a STRUCTURAL reason
+     * (ymin/ymax outside row 64 +/-1) and blur the one thing arm 4 is trying
+     * to isolate. Every other case inks something, so every other case gets
+     * the block.
+     *
+     * It is painted OUTSIDE the bounding-box loop on purpose: stray geometry
+     * that stayed inside the path's own box would be a weaker model of the
+     * real defect, which produced 1171 px of excess on a 5760 px shape.
+     *
+     * ★ AND NOT FOR A BACKGROUND-COLOURED DRAW, which is a fix for a bug in
+     * this model rather than a concession. path/two-draws-ring composes its
+     * hole by drawing an inset plate in VGC_BG_COLOR over the plate, so the
+     * unconditional version painted a WHITE block on draw 1 and then a BLACK
+     * one over the same pixels on draw 2 -- the stray ink erased itself, the
+     * case reported cover=ok, and arm 4 failed it for a reason that had
+     * nothing to do with the case. Measured, before this line existed:
+     *   path/two-draws-ring  ok  rim=1,centre=0,...,fill=5376,cover=ok
+     * "Stray INK" means ink; a defect that spuriously erased would be a
+     * different model, and short: is the field that would report it. */
+    if (g_stray_ink && painted && color != VGC_BG_COLOR) {
+        for (int y = STRAY_Y0; y < STRAY_Y1; y++)
+            for (int x = STRAY_X0; x < STRAY_X1; x++)
+                s_fb[(size_t)y * VGC_W + (size_t)x] = color;
     }
 }
 
@@ -433,6 +482,43 @@ int main(void)
         if (strcmp(c->id, "path/two-disjoint-bars") == 0)
             CHECK_CASE(strstr(r.detail, "runs=2,expect=2,fill=2560") != NULL,
                        c->id, "two bands and the exact analytic area");
+
+        /* ★★ THE ANALYTIC-VS-MODEL CROSS-CHECK, which is what makes the
+         * coverage tolerances in the file under test defensible rather than
+         * asserted. Every case with a coverage expectation must report
+         * cover=ok against a CORRECT rasteriser -- and for the axis-aligned
+         * cases the model's fill IS the analytic area, exactly, so this is a
+         * genuine agreement between two independently derived numbers rather
+         * than a tolerance absorbing a disagreement. Measured here: rect
+         * 6400/6400, four bars 5120/5120, two bars 2560/2560, nested rings
+         * 5760/5760, both rings 5376/5376, evenodd's NON_ZERO pass 6400/6400,
+         * the pentagram 2792 against an analytic 2792.30. The triangle is the
+         * one case where they legitimately differ (1770 vs 1800) -- it has a
+         * diagonal, which is precisely why it is in the +/-5% class.
+         *
+         * path/degenerate-zero-area is the only exemption, and it is a real
+         * one: a zero-area path has no correct area, so it reports n/a. */
+        if (strcmp(c->id, "path/degenerate-zero-area") == 0)
+            CHECK_CASE(strstr(r.detail, "cover=n/a") != NULL, c->id,
+                       "no analytic area, so coverage is n/a");
+        else
+            CHECK_CASE(strstr(r.detail, "cover=ok") != NULL, c->id,
+                       "coverage agrees with the analytic area");
+
+        /* The three fills the cases only started REPORTING with the coverage
+         * check. Pinned for the same reason the rect's 6400 is: they are the
+         * numbers the tolerances are derived from, and a reference rasteriser
+         * that drifted would silently move every judgement built on them. */
+        if (strcmp(c->id, "path/two-contour-ring-nonzero") == 0 ||
+            strcmp(c->id, "path/two-draws-ring") == 0)
+            CHECK_CASE(strstr(r.detail, "fill=5376,") != NULL, c->id,
+                       "the ring's exact analytic area (6400-1024)");
+        if (strcmp(c->id, "path/evenodd-vs-nonzero") == 0)
+            CHECK_CASE(strstr(r.detail, "fill=6400,") != NULL, c->id,
+                       "NON_ZERO over same-winding nests fills solid");
+        if (strcmp(c->id, "path/self-intersecting") == 0)
+            CHECK_CASE(strstr(r.detail, "fill=2792,") != NULL, c->id,
+                       "the pentagram's NON_ZERO area, model == analytic");
     }
     CHECK(g_parse_error == 0);
 
@@ -521,6 +607,52 @@ int main(void)
                               : "goes BROKEN when nothing is drawn");
     }
     g_draw_nothing = 0;
+    CHECK(g_parse_error == 0);
+
+    /* ---- ARM 4: a GPU that draws the right SHAPE plus STRAY INK. ---------
+     * ★★ WITHOUT THIS ARM THE COVERAGE CHECK'S FAILING BRANCH IS NEVER RUN.
+     * Arms 1-3 exercise cover=ok (arm 1) and cover=n/a (arms 2 and 3, where
+     * the structural predicate fails first and coverage is not consulted).
+     * Nothing reaches cover=stray:/cover=short: -- so the whole check could be
+     * hard-wired to pass and all three arms would stay green. That is the
+     * positive-only-suite hazard this file's own header names, one level down.
+     *
+     * The model: the correct rasteriser, PLUS a 16x16 block of the draw colour
+     * at x 0..16, y 108..124 -- 256 px, more than every tolerance in the file
+     * under test (the largest is the pentagram's 139). It is deliberately
+     * clear of every structural sample point (10,10), (20,20), (32,64),
+     * (60,60), (64,40), (64,64) and of column 64, which vgc_count_runs_col
+     * reads -- so NO structural predicate can see it. That is the point: this
+     * is the shape of the real defect, a picture whose structure is right and
+     * whose ink is wrong, and before the coverage check every one of these
+     * cases reported pixel=ok against it.
+     *
+     * Fourteen of fifteen must go BROKEN, and BY THE COVERAGE FIELD -- the
+     * detail must carry cover=stray:, not merely a red verdict, since a
+     * verdict alone cannot distinguish "coverage caught it" from "something
+     * else went wrong". path/degenerate-zero-area is exempt because it inks
+     * nothing and so is never given the block (see vgc_draw_path). */
+    printf("-- arm 4: stray-ink rasteriser (right shape, %d px that are not in the path)\n",
+           STRAY_PX);
+    g_stray_ink = 1;
+    g_parse_error = 0;
+
+    for (size_t i = 0; i < vgc_path_case_count; i++) {
+        const vgc_case_t *c = &vgc_path_cases[i];
+        case_result_t r;
+        run_one(c, &r);
+        const int degenerate = strcmp(c->id, "path/degenerate-zero-area") == 0;
+        printf("   %-34s %-6s %s\n", c->id,
+               r.verdict == VGC_OK ? "ok" : r.verdict == VGC_BROKEN ? "BROKEN" : "skip",
+               r.detail);
+        CHECK_CASE(r.verdict == (degenerate ? VGC_OK : VGC_BROKEN), c->id,
+                   degenerate ? "inks nothing, so it never gets stray ink"
+                              : "goes BROKEN on ink that is not in the path");
+        if (!degenerate)
+            CHECK_CASE(strstr(r.detail, "cover=stray:") != NULL, c->id,
+                       "and goes broken BY THE COVERAGE FIELD");
+    }
+    g_stray_ink = 0;
     CHECK(g_parse_error == 0);
 
     printf("--\n");
