@@ -103,6 +103,8 @@ cell says *Prediction refuted*, the pre-registered expectation was wrong and
 | single-contour filled path | **OK** — `fill=6400`, exactly the analytic area | the only path shape to rely on | `path/single-contour-rect` |
 | four DISJOINT contours in ONE path, ordinary CLOSE | **BROKEN** — `runs=1` of 4, `fill=1393` (one bar plus antialiasing) | **one contour per path, one `vg_lite_draw` per contour** | `path/multi-contour-disjoint` |
 | the same, with CLOSE slots padded `0x01010101` | **OK** — `runs=4`, `fill=5120`. **The encoding is the only variable.** | see [the discriminator](#the-discriminator-a-padded-close-slot) below | `path/multi-contour-close-padded` |
+| two DISJOINT contours in one path, ordinary CLOSE | **BROKEN** — `runs=1` of 2. Two fail exactly as four do | **one contour per path**, or pad the CLOSE slot | `path/two-disjoint-bars` |
+| four NESTED contours in one path, ordinary CLOSE | **OK structurally** — `runs=4`, all four honoured — but **NOT DETERMINISTIC** (`repeat` read `same` on one boot, `differs` on the next) | do **not** rely on it: correct-but-nondeterministic is unsafe for delta rendering | `path/four-nested-rings` |
 | hole cut by a reversed inner contour (non-zero) | **OK** — `rim=1 centre=0`, the hole IS cut. **Prediction refuted.** | the plate + inset-plate construction still works and is what ships; this row no longer forces it | `path/two-contour-ring-nonzero`, control `path/two-draws-ring` |
 | `VG_LITE_FILL_EVEN_ODD` vs `NON_ZERO` across nested contours | **OK** — `eo_centre=0 nz_centre=1`, both rules honoured. **Prediction refuted.** BUT `repeat=differs` | the only case in the matrix whose two identical renders differ — see the nondeterminism note | `path/evenodd-vs-nonzero` |
 | fill rules on ONE self-intersecting contour | **OK** — pentagram centre empty under EVEN_ODD, filled under NON_ZERO | both rules honoured — this is the fill-rule usage that works | `path/self-intersecting` |
@@ -214,15 +216,54 @@ encoding rendered **both** contours correctly — the non-zero ring cut its hole
 four bars and explains **neither** of these, because both carry the same
 CLOSE-then-MOVE boundary.
 
-**Open.** What distinguishes them. The matrix does not separate:
+**ANSWERED, 2026-09-01, two boots — DISJOINTNESS is the variable.**
 
-| candidate | what would settle it |
-|---|---|
-| DISJOINT vs NESTED contours | a case with **two disjoint** bars |
-| FOUR contours vs TWO | a case with **four nested** rings |
-| the winding relationship | both of the above, compared |
+|  | 2 contours | 4 contours |
+|---|---|---|
+| **disjoint** | **BROKEN** (`runs=1`) | **BROKEN** (`runs=1`) |
+| **nested** | **OK** | **OK** (`runs=4`) |
 
-Two cases, one further boot. That is the obvious Phase 1b.
+Two disjoint contours fail exactly as four do; four nested contours work
+exactly as two do. The rule is neither *"only the first contour renders"* nor
+*"more than two contours breaks"* — it is **DISJOINT contours in one path,
+under the ordinary zero-padded CLOSE encoding**. Padding the slot to
+`0x01010101` fixes the disjoint case.
+
+### ★★ But the second boot changed the conclusion
+
+`path/four-nested-rings` read `repeat=same` (fill 6931) on boot 1 and
+**`repeat=differs`** (fill 6875) on boot 2. **One boot would have recorded that
+nested contours render cleanly.** They render *correctly* — `runs=4` every time
+— but **not deterministically**, and the nondeterminism is itself intermittent.
+Two of the three nested cases in this matrix now show it (`evenodd-vs-nonzero`
+has `repeat=differs` on all four boots on record).
+
+**So this result does NOT license nested multi-contour paths.** A structurally
+correct but nondeterministic path is unsafe for a delta-rendering compositor —
+which is exactly how NEW-20's winding-2 track defect presented. Both
+compositors keep one-contour-per-path, now for two independent reasons.
+
+`expected_silicon.txt` records that cell's repeat as **`unstable`**, a third
+state the checker accepts only on `repeat` (never on a pixel verdict), only
+with a written reason, and always while *printing which way the run landed* —
+so nothing is hidden. Pinning `same` would red half the future runs and
+pinning `differs` the other half; either teaches a reader to ignore the
+checker.
+
+### Still open
+
+The **mechanism**. "Disjoint" describes the geometry; it does not explain why
+the tessellator drops it. One concrete clue: bar 0 renders **1393 px inside
+the four-bar path but 1322 px inside the two-bar path** — the same 80×16 bar,
+71 px apart. The two paths differ only in their bounding box, from which the
+driver derives its tessellation window, so the tile grid and its edge
+antialiasing differ. Plausible; not established.
+
+Both cells were **pre-registered before the boot** (`two-disjoint-bars = broken`,
+`four-nested-rings = ok`) and both verdicts held. Only the `repeat` prediction
+was wrong, and that is the finding above. They were deliberately NOT a `pair:`:
+all four combinations were coherent, and a pair admitting every combination of
+its members would have made any result green and the experiment worthless.
 
 **What to do meanwhile.** Keep following one-contour-per-path in
 `synthui_rotary_knob_gpu.cpp` and `synthui_fader_gpu.cpp`. It is the

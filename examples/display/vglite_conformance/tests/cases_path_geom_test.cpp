@@ -8,12 +8,19 @@
  *
  * It IS an exercise of vgc_cases_path.cpp's own geometry, sample points,
  * tolerances and predicates -- the REAL run()/check()/sum() functions, linked
- * and called -- against two MODELS of a GPU:
+ * and called -- against THREE MODELS of a GPU:
  *   - a correct one (a scanline reference rasteriser honouring every contour
- *     and both fill rules), under which all thirteen cases must report ok; and
+ *     and both fill rules), under which all fifteen cases must report ok;
  *   - this GC355's KNOWN defect (the same rasteriser dropping every contour
- *     after the first), under which the four cases aimed at that defect must
- *     report broken BY NAME and every control must stay ok.
+ *     after the first), under which the six cases aimed at that defect must
+ *     report broken BY NAME and every control must stay ok; and
+ *   - one that draws NOTHING, under which fourteen of fifteen must go broken
+ *     (degenerate-zero-area legitimately stays ok -- "nothing drawn" is an
+ *     accepted outcome there).
+ * ★ THE LAST ARM IS NOT REDUNDANT. Measured: a case hard-wired to VGC_OK
+ * leaves arm 1 GREEN and arm 2 green for every control, and is caught ONLY by
+ * arm 3. A positive-only suite is equally consistent with a matrix that cannot
+ * detect anything.
  *
  * It is NOT a statement about what the real silicon does. Not one line here
  * touches a GPU. The silicon's answers live in the example's
@@ -34,7 +41,7 @@
  *
  * ★ THE NEGATIVE ARM IS THE HALF THAT MATTERS. A suite that only ran the
  * correct-GPU model would pass against a case table that cannot detect
- * anything at all -- thirteen predicates hard-wired to VGC_OK included. The
+ * anything at all -- fifteen predicates hard-wired to VGC_OK included. The
  * first-contour-only arm is what says a `broken` on the bench is a GC355
  * finding rather than a harness artefact, and it is asserted here rather than
  * printed for the same reason every other guard in this tree is: an
@@ -68,7 +75,7 @@ static int checks = 0;
     } while (0)
 
 /* Per-case variant: the failure message has to name the CASE, since the same
- * source line runs for all thirteen and `#cond` alone would not say which one
+ * source line runs for all fifteen and `#cond` alone would not say which one
  * went red. */
 #define CHECK_CASE(cond, id, what)                                       \
     do {                                                                 \
@@ -323,8 +330,17 @@ static void run_one(const vgc_case_t *c, case_result_t *r)
     r->repeat_same = (sum1 == sum2);
 }
 
-/* The four cases aimed at the contour-encoding question. Everything else in
- * the table is a control and must survive that model unchanged. */
+/* The SIX cases aimed at the contour-encoding question. Everything else in
+ * the table is a control and must survive that model unchanged.
+ *
+ * ★ THE PHASE 1b PAIR IS IN HERE FOR THE SAME REASON THE OTHERS ARE, AND FOR
+ * NO STRONGER ONE. path/two-disjoint-bars and path/four-nested-rings are both
+ * multi-contour paths, so a rasteriser that keeps only the first contour must
+ * fail their predicates -- two bars collapse to one run, four alternating
+ * rings collapse to the outer rect's one solid block. That is a statement
+ * about THIS MODEL. The pair exists to separate disjointness from contour
+ * COUNT on silicon, and this model cannot separate them: it drops contour two
+ * onward whatever they are. Nothing here predicts the bench. */
 static int is_multi_contour_probe(const char *id)
 {
     /* ★ path/multi-contour-close-padded IS IN THIS SET, and its membership is
@@ -337,6 +353,8 @@ static int is_multi_contour_probe(const char *id)
      * whole reason that case exists. */
     return strcmp(id, "path/multi-contour-disjoint")    == 0 ||
            strcmp(id, "path/multi-contour-close-padded") == 0 ||
+           strcmp(id, "path/two-disjoint-bars")          == 0 ||
+           strcmp(id, "path/four-nested-rings")          == 0 ||
            strcmp(id, "path/two-contour-ring-nonzero")  == 0 ||
            strcmp(id, "path/evenodd-vs-nonzero")        == 0;
 }
@@ -348,7 +366,7 @@ int main(void)
     /* The table's size is part of what the gate and expected_silicon.txt key
      * on, and both arms below iterate it -- so an accidental table edit must
      * not quietly shrink what this suite covers. */
-    CHECK(vgc_path_case_count == 13);
+    CHECK(vgc_path_case_count == 15);
 
     /* ---- ARM 1: a CORRECT GPU. Everything must be ok. ---------------------- */
     printf("-- arm 1: correct rasteriser (all contours, both fill rules)\n");
@@ -387,6 +405,34 @@ int main(void)
         if (strcmp(c->id, "path/single-contour-rect") == 0)
             CHECK_CASE(strstr(r.detail, "fill=6400,expect=6400") != NULL,
                        c->id, "fill is the exact analytic area");
+
+        /* ★ THE NESTED RINGS' FILL IS PINNED FOR THE SAME REASON, and it is
+         * the case in the table where a right VERDICT is cheapest to get for
+         * a wrong reason. Its predicate counts RUNS down one column, and four
+         * runs is a number several wrong pictures can produce -- a mis-nested
+         * set of rects, or an alternation that pairs the wrong rects. 5760 is
+         * the exact analytic area of the alternating nest,
+         * (96^2-72^2) + (48^2-24^2) = 4032 + 1728, with no antialiasing in
+         * this model and every edge integer-aligned, so it is arithmetic
+         * rather than a tolerance. Dropping the alternation makes it the
+         * solid 9216; a shifted rect moves it. Either shows up as a NUMBER
+         * instead of only a verdict.
+         *
+         * On the TARGET the same field is a reading, not a bound: hardware
+         * antialiasing moves it by a perimeter's worth, which is why
+         * check_four_nested judges on runs alone and prints expfill= beside
+         * it. Pinning it here costs nothing there. */
+        if (strcmp(c->id, "path/four-nested-rings") == 0)
+            CHECK_CASE(strstr(r.detail, "runs=4,expect=4,fill=5760") != NULL,
+                       c->id, "four bands and the exact analytic area");
+
+        /* Its partner is the baseline rect's arithmetic twice over
+         * (2 x 80x16 = 2560), and runs= is what the whole
+         * disjoint-vs-nested comparison is read from -- so pin both rather
+         * than inferring either from the verdict. */
+        if (strcmp(c->id, "path/two-disjoint-bars") == 0)
+            CHECK_CASE(strstr(r.detail, "runs=2,expect=2,fill=2560") != NULL,
+                       c->id, "two bands and the exact analytic area");
     }
     CHECK(g_parse_error == 0);
 
@@ -429,6 +475,14 @@ int main(void)
             if (strncmp(c->id, "path/multi-contour", 18) == 0)
                 CHECK_CASE(strstr(r.detail, "runs=1,") != NULL, c->id,
                            "reports one run, not four");
+            else if (strcmp(c->id, "path/two-disjoint-bars") == 0)
+                CHECK_CASE(strstr(r.detail, "runs=1,") != NULL, c->id,
+                           "reports one run, not two");
+            else if (strcmp(c->id, "path/four-nested-rings") == 0)
+                /* The outer rect alone under NON_ZERO is one solid block, so
+                 * the counter reads 1 -- the k=1 cell of its own table. */
+                CHECK_CASE(strstr(r.detail, "runs=1,") != NULL, c->id,
+                           "reports one run, not four");
             else if (strcmp(c->id, "path/two-contour-ring-nonzero") == 0)
                 CHECK_CASE(strstr(r.detail, "rim=1,centre=1") != NULL, c->id,
                            "reports the hole filled in");
@@ -442,10 +496,10 @@ int main(void)
 
     /* ---- ARM 3: a GPU that accepts everything and DRAWS NOTHING. ---------
      * ★ ARM 2 LEAVES A HOLE THIS CLOSES. Under the first-contour model nine of
-     * the thirteen cases are controls that must stay ok -- so nine predicates
+     * the fifteen cases are controls that must stay ok -- so nine predicates
      * hard-wired to `return VGC_OK` would survive both arms so far. A null GPU
-     * is the cheapest model that forces almost all of them to speak: twelve of
-     * thirteen must go broken. The exception is real rather than a
+     * is the cheapest model that forces almost all of them to speak: fourteen
+     * of fifteen must go broken. The exception is real rather than a
      * concession -- path/degenerate-zero-area accepts "nothing drawn" BY
      * DESIGN (a zero-area path legitimately rasterises to nothing), so it is
      * asserted ok here, which also pins that its `fill == 0` branch is live. */
