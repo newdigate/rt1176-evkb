@@ -92,12 +92,23 @@ Three ways out were considered:
   it would make results depend on table order.
 - **Identity case first, compile-time mapping downstream** — CHOSEN.
 
-`color/solid-word-order` fills pure red via `VGC_ABGR(0xFF,0,0)` and asserts
-**two** things:
+`color/solid-word-order` fills **opaque** pure red via `VGC_ABGR(0xFF,0,0)` and
+asserts **two** things:
 
-1. **exactly one channel is saturated and the rest are zero** — order-agnostic,
-   valid without knowing the answer; and
-2. **that channel is the one `VGC_ABGR` and every downstream predicate assume.**
+1. **exactly two channels saturated and two zero** — order-agnostic, valid
+   without knowing the answer; and
+2. **that the saturated colour channel is the one `VGC_ABGR` and every
+   downstream predicate assume**, and that the other saturated one is alpha.
+
+★ **Two, not one — this phrasing was wrong in an earlier draft and would have
+cost a bench cycle.** The fill is *opaque* pure red, so the memory word has red
+AND alpha saturated and green AND blue zero. A reader who took "exactly one
+saturated" literally would write `== 1`, and case 1 would report `broken` on
+correct silicon — the instrument inventing a defect, in the one case that gates
+the interpretation of every colour case below it. Note also that the counts
+alone are **necessary but not sufficient**: `sat==2 && zero==2` is equally
+satisfied by two saturated colour channels with zero alpha, so it is the named
+half (`vgc_ch(px, VGC_A) == 0xFF`) that closes the case.
 
 So a single case both *measures* the identity and *validates the assumption the
 rest of the phase rests on*, with no shared state: the guard lives inside the
@@ -105,8 +116,17 @@ case rather than in a global. If it breaks, every colour verdict below it is
 suspect — the role `path/single-contour-rect` plays for geometry, and stated in
 the same terms.
 
-Downstream predicates name channels normally, each citing `color/solid-word-order`
-in its comment as the case that justifies the mapping.
+Downstream predicates name channels normally.
+
+★ **The mapping is not merely assumed — `vglite_probe` already measured it.**
+That example cleared a `VG_LITE_BGRA8888` target (the same format as this
+scratch) with `0xFF204060` and read `0xFF604020` back: the driver took the
+argument as ABGR (B=0x20, G=0x40, R=0x60) and memory returned 0x60 in bits
+23:16. That *is* "red is byte 2 of a BGRA8888 memory word". So
+`color/solid-word-order` is a **re-confirmation on this scratch buffer in this
+boot**, not the origin of the claim — and each channel macro should cite
+`vglite_probe`'s measurement as its justification, with the case as the
+standing check.
 
 ## 5. The predicate layer
 
