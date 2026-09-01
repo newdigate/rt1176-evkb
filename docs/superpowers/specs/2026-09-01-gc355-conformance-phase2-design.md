@@ -60,9 +60,9 @@ paths mis-cover, so it is the one uncovered arm that would test it.
 Found while building the reference rasteriser, and it means cases 2–4 must **not**
 pre-judge the answer. From `~/Development/VGLite/inc/vg_lite.h`:
 
-- `:451` — "S and D represent source and destination **non-premultiplied** RGB color channels"
-- `:457` — section heading: "**Non-premultiplied** Blending modes"
-- `:460` — `VG_LITE_BLEND_SRC_OVER = 1` → `RGB: S + D*(1 - Sa)` — **no `*Sa`**, which is the *premultiplied* operator
+- `:452` — "S and D represent source and destination **non-premultiplied** RGB color channels"
+- `:458` — section heading: "**Non-premultiplied** Blending modes"
+- `:461` — `VG_LITE_BLEND_SRC_OVER = 1` → `RGB: S + D*(1 - Sa)` — **no `*Sa`**, which is the *premultiplied* operator
 - `:481` — `VG_LITE_BLEND_NORMAL_LVGL = 11` → `RGB: S*Sa + D*(1 - Sa)` — the *non*-premultiplied operator
 - `:137` — `#define VG_LITE_BLEND_PREMULTIPLY_SRC_OVER VG_LITE_BLEND_NORMAL_LVGL`
 
