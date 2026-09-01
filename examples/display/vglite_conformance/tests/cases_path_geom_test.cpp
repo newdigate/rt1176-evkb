@@ -253,8 +253,22 @@ int main(void)
             CHECK_CASE(strstr(r.detail, "fill=5376,") != NULL, c->id,
                        "the ring's exact analytic area (6400-1024)");
         if (strcmp(c->id, "path/evenodd-vs-nonzero") == 0)
-            CHECK_CASE(strstr(r.detail, "fill=6400,") != NULL, c->id,
+            CHECK_CASE(strstr(r.detail, "nzfill=6400,") != NULL, c->id,
                        "NON_ZERO over same-winding nests fills solid");
+        /* ★★ AND ITS EVEN_ODD PASS, WHICH THE `cover=ok` CHECK ABOVE CANNOT
+         * SPEAK FOR. That check is a substring test, and this case now prints
+         * TWO cover tokens -- so "eocover=n/a,...,nzcover=ok" satisfies it.
+         * Pass 1's coverage could be mis-gated into permanent n/a and arm 1
+         * would stay green; the failing branch would still be reachable via
+         * arm 4, but "was pass 1 judged at all" would not be asserted
+         * anywhere. This pins BOTH halves at once: 5376 is the ring's exact
+         * analytic area (6400-1024) with every edge integer-aligned and no
+         * antialiasing in this model, so it is arithmetic rather than a
+         * tolerance, and eocover=ok says the number was actually judged. */
+        if (strcmp(c->id, "path/evenodd-vs-nonzero") == 0)
+            CHECK_CASE(strstr(r.detail, "eofill=5376,eocover=ok") != NULL,
+                       c->id,
+                       "EVEN_ODD over the same nests cuts the hole, and is judged");
         if (strcmp(c->id, "path/self-intersecting") == 0)
             CHECK_CASE(strstr(r.detail, "fill=2792,") != NULL, c->id,
                        "the pentagram's NON_ZERO area, model == analytic");
@@ -312,7 +326,7 @@ int main(void)
                 CHECK_CASE(strstr(r.detail, "rim=1,centre=1") != NULL, c->id,
                            "reports the hole filled in");
             else
-                CHECK_CASE(strstr(r.detail, "eo_centre=1") != NULL, c->id,
+                CHECK_CASE(strstr(r.detail, "eoc=1") != NULL, c->id,
                            "reports EVEN_ODD failing to cut the hole");
         }
     }
