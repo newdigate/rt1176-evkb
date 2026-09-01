@@ -243,9 +243,34 @@ arm:
 
 | arm | models | must break |
 |---|---|---|
-| alpha-ignoring | writes `src` regardless of α | cases 2, 3, 4 — case 1 stays ok |
+| alpha-ignoring | writes `src` regardless of α | cases 2, 3, 4 **via the ALPHA channel** — case 1 and case 5 stay ok |
 | double-premultiply | applies α twice | case 2, at ≈64, its named failure mode |
 | channel-permuting | swaps R and B | **case 1 only** — asserted, not assumed (see §7) |
+
+★★ **The alpha-ignoring arm cannot break cases 2–4 on the COLOUR channel, and
+that is a contradiction this spec originally contained.** Measured while
+building the cases: with a *saturated white* source, reading B
+(`S + D*(1-Sa)`) is observationally identical to writing `S` raw — 255 over
+black, and 287→clamped-255 over grey. So admitting reading B as `ok` (§3) and
+detecting alpha-ignoring on the colour channel are **mutually exclusive**.
+
+The fix is to judge the **alpha channel** as well, and it is a better check than
+the one it replaces:
+
+- `inc/vg_lite.h:462` gives `SRC_OVER`'s alpha row as `A: Sa + Da*(1-Sa)`,
+  unambiguously — **no premultiply question attaches to it**. The backdrop is
+  opaque, so `Da=255` and the answer is `128 + 255×0.498 = 255` under **both**
+  readings. Nothing is pre-judged.
+- Alpha-ignoring leaves `a=128`. A 127-wide gap no rounding model closes.
+- It covers the operator's alpha row, which no case otherwise looks at.
+
+So cases 2, 3 and 4 additionally require `a ≈ 255`.
+
+★ **Case 5 must NOT gain that check.** `BLEND_NONE`'s alpha row is `A: Sa`
+(`:459-460`), so a raw write leaving `a=128` is *correct* there — judging alpha
+in case 5 would break it on conforming hardware, the opposite mistake. The
+asymmetry is deliberate and is stated in the case, because it otherwise reads
+as an oversight.
 
 **Circularity guard.** If the model implements the same formula the case
 expects, arm 1 proves only that the predicate reads what the model wrote. So
