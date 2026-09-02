@@ -436,9 +436,28 @@ structural rather than luck: it has no `abgr_a` at all. Every colour it draws
 goes through `abgr(hex)`, which forces `0xFF000000` — **always opaque**. At
 α=255, `S + D*(1-Sa)` reduces to `S`, which is correct under either reading.
 
-★ **The fix is one line in `abgr_a`** (premultiply RGB by `a/255` before
-packing). It **moves the fader's goldens** and belongs to Phase 4's guard layer,
-not to a probe. Recorded here, deliberately not acted on.
+★ **FIXED 2026-09-02** (SynthUI `d995e63`), one line in `abgr_a`: premultiply
+RGB by `a/255` before packing. Measured on silicon over **two boots × four
+render passes, all eight bit-identical** — `fd_crc` `0x141D0A41` →
+`0x814F4047`, `delta==fresh` `0xE929A5E4` → `0xE9A9A2B5`, `fd_delta_eq=PASS`
+on every pass. `fd_damage` and `mfps_med=30448` did not move: the cost is
+three multiplies per **draw call**, not per pixel.
+
+Two details worth carrying to any similar fix:
+
+* **Scope is provably three draws.** Eight of the ten `abgr_a` call sites pass
+  `a=255`, and `(v*a + 127)/255` is exact at both rails, so those are
+  bit-identical rather than merely close — checked exhaustively, not argued.
+* **It was fixed in the COLOUR, not by switching to blend mode 11.** Mode 1's
+  behaviour is MEASURED on this silicon; mode 11's is not, and this header's
+  blend naming is demonstrably unreliable. Do not "simplify" it to the
+  untested mode.
+
+★ **Nothing in this tree's gates can see this code**, which is why the fix
+ships with a host test (SynthUI `tests/fader_color_test.c`, 69017 checks,
+demonstrated RED against three mutants) rather than a gate: the QEMU gate runs
+the **software** engine, and the GPU goldens live only in a hand-pressed
+hardware transcript.
 
 ★ **A sensitivity limit worth knowing.** Under reading B a *saturated white*
 source clamps to 255 in cases 2–4, so their colour-channel tolerances are doing

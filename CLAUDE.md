@@ -213,11 +213,18 @@ diagnosed with the Phase C probes and filed as a separate platform issue),
 so the fader gained a GC355 compositor (`import_evkb_synthui(VGLITE)`,
 deferred pre-flip compose) which MET the criterion at `mfps_med=30448`
 against the `>= 30000` bound, with `fd_delta_eq=PASS` and goldens
-bit-identical across four SW4 boots (`fd_crc=0x141D0A41`,
+bit-identical across four SW4 boots (then `fd_crc=0x141D0A41`,
 `delta==fresh=0xE929A5E4`). QEMU still asserts `fd_engine=sw` and the sw
 goldens are unmoved; the GPU set is recorded only in
 `transcript_hw_evkb.txt` (two golden sets, never reconciled — same
 discipline as `vglite_lvgl_test` and `acid_box`).
+★ **THOSE TWO GPU GOLDENS MOVED ON 2026-09-02** — deliberately, by NEW-32
+Phase 4's premultiply fix: `fd_crc=0x814F4047`, `delta==fresh=0xE9A9A2B5`,
+measured over TWO boots × FOUR passes, all eight bit-identical, with
+`fd_delta_eq=PASS` throughout. `fd_damage max=3234` and `mfps_med=30448` are
+UNCHANGED — the cost is three multiplies per DRAW CALL, not per pixel, and
+the median is vsync-quantised anyway. The sw goldens and the QEMU gate did
+not move at all.
 
 NEW-32 Phase 1 added ONE — `display/vglite_conformance`, the GC355/VGLite
 conformance harness (spec 2026-08-30): a case table of `{id, run, check}`
@@ -1470,8 +1477,17 @@ not hung.
   highlight) and a variable `opa` (the tick runs). Under `S + D*(1-Sa)` the
   source contributes at FULL intensity whatever its alpha, so a white gloss at
   partial opacity SATURATES instead of reading as a sheen. **The fix is one line
-  in `abgr_a`** — premultiply RGB by `a/255` — but it MOVES THE FADER'S GOLDENS
-  and belongs to Phase 4's guard layer, not to a probe.
+  in `abgr_a`** — premultiply RGB by `a/255`. **DONE 2026-09-02** (SynthUI
+  `d995e63`): it moved the fader's two GPU goldens and nothing else, over two
+  boots × four passes. The eight `a=255` call sites are bit-identical because
+  `(v*a + 127)/255` is exact at both rails — checked exhaustively, not argued.
+  ★ **No gate in this tree can see that code**, so the fix ships with a HOST
+  test (SynthUI `tests/fader_color_test.c`, 69017 checks) rather than a gate:
+  the QEMU gate runs the SW engine and the GPU goldens live only in a
+  hand-pressed transcript. DEMONSTRATED RED against three mutants; the
+  load-bearing arm is the one asserting the packing DIFFERS from the unscaled
+  one, since without it every other check in the file is equally satisfied by
+  the defect.
   ★ **`synthui_rotary_knob_gpu.cpp` is NOT affected**, structurally rather than
   by luck: it has no `abgr_a`, and every colour it draws goes through
   `abgr(hex)` which forces `0xFF000000` — always opaque. At α=255
