@@ -8,21 +8,42 @@
  *
  * It IS an exercise of vgc_cases_color.cpp's own sample point, tolerances,
  * readings and predicates -- the REAL run()/check()/sum() functions, linked and
- * called -- against FIVE MODELS of a GPU:
+ * called -- against SEVEN MODELS of a GPU:
  *   1 a CORRECT one (the shared scanline rasteriser in model.h, blending
- *     SRC_OVER as reading A and honouring the measured ABGR->ARGB store), under
- *     which all five cases must report ok;
+ *     SRC_OVER as reading B -- the operator MEASURED on silicon 2026-09-02 --
+ *     and honouring the measured ABGR->ARGB store), under which all five cases
+ *     must report ok;
  *   2 one that draws NOTHING, under which all five must go broken;
  *   3 one that DOUBLE-PREMULTIPLIES, under which case 2 must go broken at its
  *     NAMED value v=64 and cases 1 and 5 -- both BLEND_NONE -- must stay ok;
  *   4 one that PERMUTES R AND B (the swizzle vglite_probe measured not
  *     happening), under which case 1 ALONE must go broken and cases 2-5 must
- *     stay ok; and
+ *     stay ok;
  *   5 one that IGNORES ALPHA -- writes the source raw whatever the mode says --
  *     under which cases 2, 3 and 4 must go broken VIA THE ALPHA FIELD, with
- *     cases 1 and 5 staying ok.
+ *     cases 1 and 5 staying ok;
+ *   6 one implementing READING A of SRC_OVER, `S*Sa + D*(1 - Sa)` -- the other
+ *     admissible reading of the header, and what this model itself implemented
+ *     before the boot -- under which cases 2 and 3 must go broken WITH
+ *     `model=A` on the line; and
+ *   7 one whose BLEND_NONE MODULATES by the source alpha, under which case 5
+ *     ALONE must go broken with `read=modulated` on the line.
  *
- * ★ THE FOUR NEGATIVE ARMS ARE THE POINT, and this is the Phase 1 lesson
+ * ★★ ARMS 6 AND 7 ARE WHAT MAKES THE MEASURED READING AN ASSERTION RATHER THAN
+ * A COMMENT, and they are the reason this file changed on 2026-09-02. Cases 2,
+ * 3 and 5 used to return ok under EITHER reading and merely report which in
+ * detail=. tools/vglite-conformance-check.sh compares only
+ * `<id> <pixel> <repeat>`, so such a case is INVISIBLE to it: an SDK re-vendor
+ * that flipped SRC_OVER from B to A, or BLEND_NONE from raw to modulated,
+ * would have left every verdict `ok` and the drift checker GREEN -- exactly
+ * the "quirk that silently disappears" expected_silicon.txt's header exists to
+ * catch. The cases now PIN the measured reading, and a pin nobody has
+ * demonstrated RED is decoration. Arms 6 and 7 are that demonstration, and
+ * they pin the SYMPTOM (`model=A`, `read=modulated`) and not merely the
+ * verdict, so a case that went red for an unrelated reason would not satisfy
+ * them.
+ *
+ * ★ THE SIX NEGATIVE ARMS ARE THE POINT, and this is the Phase 1 lesson
  * repeated rather than a new claim. Measured there: a case hard-wired to
  * `return VGC_OK` leaves the correct arm GREEN -- it would have reported ok
  * anyway -- and is caught ONLY by an arm that forces the case to speak. A
@@ -31,8 +52,8 @@
  * check_srcover_arith hard-wired to VGC_OK left arm 1 green and was caught by
  * arms 2, 3 and 5 by name.
  *
- * ★★ ARMS 3, 4 AND 5 EACH CLOSE A HOLE THE OTHERS LEAVE, which is why there
- * are three of them and not one:
+ * ★★ ARMS 3 TO 7 EACH CLOSE A HOLE THE OTHERS LEAVE, which is why there are
+ * five of them and not one:
  *   - Arm 2 (draws nothing) breaks everything, so it cannot say WHICH field of
  *     any case is doing the work.
  *   - Arm 5 is the only one that can reach cases 2-4's ALPHA check. It CANNOT
@@ -45,6 +66,16 @@
  *     case that reads a raw word rather than a channel-symmetric grey.
  *   - Arm 3 reaches case 2's named defect, the one value in the whole colour
  *     matrix that is called out by name in the case's own comment.
+ *   - Arm 6 is the only one that can move SRC_OVER to the OTHER ADMISSIBLE
+ *     reading rather than to a defect. Nothing else in the suite distinguishes
+ *     "the hardware changed its mind" from "the hardware broke", and the first
+ *     is the one the drift checker exists for.
+ *   - Arm 7 is the only one that can produce case 5's other admissible
+ *     reading. Note what it is NOT: an arm that made BLEND_NONE silently
+ *     COMPOSITE would not break case 5 at all, because under the measured
+ *     reading B that composite CLAMPS to 255 -- the same colour a raw store
+ *     writes. Measured: the case then reports `v=255,a=255,read=raw`, ok.
+ *     Modulation is the reachable half; see the note above arm 7.
  *
  * ★ AND ARM 4's GREEN HALF IS AN ASSERTION, NOT A BYSTANDER. The Phase 2
  * spec's section 7 claims cases 2-5 use greyscale so that a word-order fault
@@ -53,14 +84,14 @@
  * suite asserts they stay ok rather than merely printing that they did.
  *
  * It is NOT a statement about what the real silicon does. Not one line here
- * touches a GPU. Model.h implements reading A of SRC_OVER as a CHOICE it has
- * to make to rasterise anything -- THE HARDWARE MAY DO READING B, and nothing
- * here knows. The silicon's answers live in the example's
- * transcript_hw_evkb.txt and expected_silicon.txt, and nothing in this file
- * can confirm, contradict or substitute for them. A future reader who reports
- * "the colour cases pass" on the strength of this suite has said something
- * true and useless. Silicon wins; this is the instrument's calibration, taken
- * before the instrument is pointed at anything.
+ * touches a GPU. Model.h implements reading B BECAUSE the hardware was
+ * measured doing reading B -- two boots, 2026-09-02, recorded in the example's
+ * transcript_hw_evkb.txt -- so arm 1 is a model of THAT hardware and not an
+ * independent vote for it. Nothing in this file can confirm, contradict or
+ * substitute for the silicon's own answers. A future reader who reports "the
+ * colour cases pass" on the strength of this suite has said something true and
+ * useless. Silicon wins; this is the instrument's calibration, taken before
+ * the instrument is pointed at anything.
  *
  * ★ WHY IT EXISTS AT ALL: the QEMU gate cannot reach this code. QEMU has no
  * GC355, so the chip-ID probe reads 0 and every case reports pixel=skip --
@@ -74,7 +105,7 @@
 /* The model (rasteriser, blend, harness services, arm switches) is in model.h
  * and the case lifecycle is in harness_mirror.h -- both shared with
  * cases_path_geom_test.cpp, so the two suites cannot drift on either. What
- * stays HERE is everything that knows what a colour case is called: the five
+ * stays HERE is everything that knows what a colour case is called: the seven
  * arm drivers and their expectations. */
 #include "model.h"
 #include "harness_mirror.h"
@@ -181,6 +212,37 @@ static int expect_alpha_ignoring(const vgc_case_t *c)
     return !is_blend_none_case(c);
 }
 
+/* Arm 6: cases 2 and 3 ALONE -- the two that PIN a reading.
+ *
+ * ★★ CASE 4 STAYS GREEN HERE, AND THAT WAS MEASURED BEFORE IT WAS WRITTEN
+ * DOWN, not assumed from its comment. blend/srcover-double pins no absolute
+ * value: it predicts v2 from the MEASURED v1 with the reading-A form of
+ * SRC_OVER (srcover_predict), which is exact under reading A and saturates
+ * under reading B, so BOTH readings satisfy it. Under this arm its inputs move
+ * (v1 goes 255 -> 160, v2 255 -> 208) and the prediction moves with them:
+ * pred = (255*128 + 160*127 + 127)/255 = 208, which is what v2 is. Its alpha
+ * row is untouched by this arm, so a=255 still holds.
+ *
+ * ★ THAT IS THE CASE'S DESIGN WORKING, NOT A GAP IN THIS ARM. "Reading-agnostic
+ * by construction" is the claim vgc_cases_color.cpp makes about case 4 in
+ * capitals, and until this arm existed nothing in the tree could test it. A
+ * green case 4 beside a red case 2 and 3 IS the assertion: the operator moved,
+ * the two absolute cases said so, and the self-consistency case correctly
+ * declined to. If case 4 ever goes red here, either the prediction or the model
+ * has drifted -- and the arm1/arm6 value pins below say which. */
+static int expect_reading_a(const vgc_case_t *c)
+{
+    return is_id(c, ID_PREMUL) || is_id(c, ID_ARITH);
+}
+
+/* Arm 7: case 5 ALONE. The only case whose blend mode this arm touches with a
+ * non-opaque source -- color/solid-word-order is BLEND_NONE too but draws at
+ * a = 255, where modulating by alpha is the identity. */
+static int expect_none_modulates(const vgc_case_t *c)
+{
+    return is_id(c, ID_NONE);
+}
+
 /* ---- arm 1's numeric pins --------------------------------------------------
  * ★ A VERDICT ALONE IS NOT ENOUGH HERE, for the reason arm 1 of the path suite
  * pins fill=6400: `ok` is reachable from more than one picture. Case 2 admits
@@ -189,19 +251,43 @@ static int expect_alpha_ignoring(const vgc_case_t *c)
  * this model produces turns a drifting reference rasteriser into a visible
  * failure instead of a silently moved judgement.
  *
- * The numbers are the reading-A arithmetic, derived independently in
- * vgc_cases_color.cpp's own constants: 255*a = 128.0; 255*a + 64*(1-a) =
- * 159.87 -> 160; then 255*a + 160*(1-a) = 207.7 -> 208. */
+ * ★ THE NUMBERS ARE THE READING-B ARITHMETIC SINCE 2026-09-02, derived
+ * independently in vgc_cases_color.cpp's own constants and a third time by
+ * hand in expected_silicon.txt. a = 128/255 = 0.50196, 1 - a = 127/255:
+ *   case 2, over BLACK:        255 + 0*(1-a)     = 255
+ *   case 3, over GREY 0x40:    255 + 64*(1-a)    = 286.9, CLAMPED to 255
+ *   case 4, second composite:  255 + 255*(1-a)   = 382,   clamped to 255,
+ *                              against pred = (255*128 + 255*127 + 127)/255
+ *                                            = 255.49 -> 255
+ *   alpha row, all three:      128 + 255*(1-a)   = 255.0  (Sa + Da*(1 - Sa))
+ * The reading-A values these pins carried until that date (128 / 160 /
+ * v1=160,v2=208) have not been deleted: they are arm 6's pins now, which is
+ * the point of that arm.
+ *
+ * ★ CASE 3's CLAMP IS DOING REAL WORK IN THIS PIN, not decoration. Its
+ * unclamped 286.9 is what makes reading B's answer over a NON-BLACK backdrop
+ * indistinguishable from a raw store -- the very reason cases 2-4 have to
+ * judge the alpha row at all (see arm 5).
+ *
+ * ★★ AND SINCE THE MODEL MOVED TO READING B, ARM 1's FIVE DETAIL STRINGS ARE
+ * BYTE-IDENTICAL TO THE SILICON TRANSCRIPT'S -- checked by eye against
+ * examples/display/vglite_conformance/transcript_hw_evkb.txt, all five colour
+ * lines, 2026-09-02. That is a check the reading-A model could not have passed
+ * and it is worth re-running whenever either side moves. It is NOT a second
+ * measurement: the model was changed to match the boot, so the agreement is
+ * construction, not evidence. What it DOES prove is that the case functions
+ * read the two the same way -- the failure it would catch is a predicate that
+ * behaves differently on the target than on the host. */
 static void arm1_pins(const vgc_case_t *c, const case_result_t *r)
 {
     if (is_id(c, ID_PREMUL))
-        CHECK_CASE(strstr(r->detail, "v=128,a=255,model=A") != NULL, c->id,
-                   "reading A over black, alpha row composited to 255");
+        CHECK_CASE(strstr(r->detail, "v=255,a=255,model=B") != NULL, c->id,
+                   "reading B over black, alpha row composited to 255");
     if (is_id(c, ID_ARITH))
-        CHECK_CASE(strstr(r->detail, "v=160,a=255,model=A") != NULL, c->id,
-                   "reading A over grey 0x40, alpha row composited to 255");
+        CHECK_CASE(strstr(r->detail, "v=255,a=255,model=B") != NULL, c->id,
+                   "reading B over grey 0x40 (clamped), alpha row 255");
     if (is_id(c, ID_DOUBLE))
-        CHECK_CASE(strstr(r->detail, "v1=160,v2=208,a=255,pred=208") != NULL,
+        CHECK_CASE(strstr(r->detail, "v1=255,v2=255,a=255,pred=255") != NULL,
                    c->id, "the second composite lands on its own prediction");
     /* ★ CASE 5's GREEN IS THE LOAD-BEARING ONE IN THIS ARM, not a formality.
      * BLEND_NONE's alpha row is `A: Sa` (inc/vg_lite.h:459-460), so a raw store
@@ -287,6 +373,68 @@ static void arm5_pins(const vgc_case_t *c, const case_result_t *r)
                    "BLEND_NONE's own alpha row makes a=128 correct here");
 }
 
+/* ---- arm 6's named symptom -------------------------------------------------
+ * ★★ `model=A` IS THE ASSERTION, NOT THE RED VERDICT. The whole reason cases 2
+ * and 3 were pinned is that a reading flip used to be SILENT; the value of
+ * pinning it is that the transcript now says WHICH WAY it moved. A check on
+ * the verdict alone would be satisfied by a case that broke for any reason at
+ * all -- including one that had stopped measuring the blend -- and would leave
+ * the drift checker's diagnosis exactly as blind as it was before. Both halves
+ * are pinned: the reading-A value on v=, and the label beside it. */
+static void arm6_pins(const vgc_case_t *c, const case_result_t *r)
+{
+    if (is_id(c, ID_PREMUL))
+        CHECK_CASE(strstr(r->detail, "v=128,a=255,model=A") != NULL, c->id,
+                   "breaks at reading A's value 255*a = 128, and SAYS model=A");
+    if (is_id(c, ID_ARITH))
+        CHECK_CASE(strstr(r->detail, "v=160,a=255,model=A") != NULL, c->id,
+                   "breaks at 255*a + 64*(1-a) = 160, and SAYS model=A");
+    /* ★ AND THE GREEN CASE IS PINNED TOO -- see expect_reading_a. Case 4 must
+     * stay ok, and it must do so having MOVED: v1 160 and v2 208, not the
+     * arm-1 pair. A pin on the verdict alone could not tell "reading-agnostic
+     * by construction" from "not connected to the blend at all". */
+    if (is_id(c, ID_DOUBLE))
+        CHECK_CASE(strstr(r->detail, "v1=160,v2=208,a=255,pred=208") != NULL,
+                   c->id, "inputs moved to reading A; the prediction moved too");
+    /* The alpha row is not what this arm touches, so all three SRC_OVER cases
+     * must still read 255 -- which is what says case 2 and 3's red came from
+     * the COLOUR field and not from a collaterally broken alpha check. */
+    if (!is_blend_none_case(c))
+        CHECK_CASE(strstr(r->detail, "a=255,") != NULL, c->id,
+                   "the alpha row is the same under both readings (:462)");
+}
+
+/* ---- arm 7's named symptom -------------------------------------------------
+ * ★ `read=modulated` is case 5's other admissible reading MADE TO HAPPEN, and
+ * this is the only thing in the tree that can produce it. C5_MEASURED pins
+ * `raw`; without this arm that constant is a pin no test has ever seen fire.
+ *
+ * ★★ AND NOTE WHICH DEFECT IS *NOT* MODELLED, because the choice was measured
+ * rather than preferred. vgc_cases_color.cpp names ~160 -- BLEND_NONE silently
+ * COMPOSITING -- as case 5's must-be-broken value. Under the MEASURED reading B
+ * that composite is 255 + 64*(1 - a) = 286.9 CLAMPED TO 255 -- the same colour
+ * a raw store writes. MEASURED, by routing BLEND_NONE through the reading-B
+ * SRC_OVER path in model.h: the case reports `v=255,a=255,read=raw` and stays
+ * OK. Only its alpha moves (128 -> 255), and that field is recorded, not
+ * judged. An arm modelling that defect would therefore assert nothing.
+ * The ~160 band is reachable only from a GPU that is ALSO doing reading A, and
+ * that combination is two independent drifts at once. Modulation is the half
+ * that is reachable from one, so modulation is the arm. */
+static void arm7_pins(const vgc_case_t *c, const case_result_t *r)
+{
+    if (is_id(c, ID_NONE))
+        CHECK_CASE(strstr(r->detail, "v=128,a=128,read=modulated") != NULL,
+                   c->id, "breaks at 255*a = 128, and SAYS read=modulated");
+    /* ★ CASE 1 STAYING GREEN IS AN ASSERTION ABOUT THE ARM'S SHARPNESS. It is
+     * the OTHER BLEND_NONE case, so this arm does reach it -- but it draws an
+     * OPAQUE colour, and modulating by a = 255 is the identity. Pinning the
+     * unchanged word is what says so, rather than leaving a reader to assume
+     * the arm skipped it. */
+    if (is_id(c, ID_WORD))
+        CHECK_CASE(strstr(r->detail, "px=0xFFFF0000,") != NULL, c->id,
+                   "opaque source: modulating by a=255 is the identity");
+}
+
 int main(void)
 {
     memset(&vgc_scratch, 0, sizeof(vgc_scratch));
@@ -322,9 +470,10 @@ int main(void)
 
     /* ---- ARM 1: a CORRECT GPU. Everything must be ok. ---------------------- */
     g_permute_rb = g_draw_nothing = g_double_premul = g_alpha_ignoring = 0;
+    g_reading_a = g_none_modulates = 0;
     g_parse_error = 0;
     g_close_fixup_fired = 0;
-    arm_verdicts("arm 1: correct rasteriser (reading A, measured word order)",
+    arm_verdicts("arm 1: correct rasteriser (reading B, measured word order)",
                  expect_none, "verdict ok", "(unreachable)", arm1_pins);
 
     /* The lifecycle columns the harness prints, exercised on the colour table
@@ -392,6 +541,36 @@ int main(void)
                  "BLEND_NONE's own alpha row is A: Sa, so this is conforming",
                  "goes BROKEN on the alpha row", arm5_pins);
     g_alpha_ignoring = 0;
+    CHECK(g_parse_error == 0);
+
+    /* ---- ARM 6: READING A of SRC_OVER. Cases 2 and 3, WITH model=A. --------
+     * ★★ THE ARM THE 2026-09-02 PIN EXISTS FOR. Before that pin, cases 2, 3
+     * and 5 reported ok under either reading, so this arm would have been
+     * ENTIRELY GREEN -- and the drift checker, which reads only the verdict,
+     * would have been green with it while the operator had changed underneath.
+     * The arm is the demonstration that a flip is now caught, and it pins the
+     * DIRECTION (`model=A`) so the transcript still says which way it went. */
+    g_reading_a = 1;
+    g_parse_error = 0;
+    arm_verdicts("arm 6: reading-A rasteriser (S*Sa + D*(1 - Sa), the other reading)",
+                 expect_reading_a,
+                 "reading-agnostic by construction, or BLEND_NONE",
+                 "goes BROKEN because the measured reading is pinned", arm6_pins);
+    g_reading_a = 0;
+    CHECK(g_parse_error == 0);
+
+    /* ---- ARM 7: BLEND_NONE MODULATES. Case 5 ALONE. ------------------------
+     * The same argument as arm 6, for the other pinned constant: C5_MEASURED
+     * says `raw`, and this is the only thing in the tree that can make a case
+     * say `modulated`. */
+    g_none_modulates = 1;
+    g_parse_error = 0;
+    arm_verdicts("arm 7: BLEND_NONE-modulating rasteriser (dst := S*Sa)",
+                 expect_none_modulates,
+                 "opaque source or SRC_OVER, so untouched",
+                 "goes BROKEN because BLEND_NONE's raw store is pinned",
+                 arm7_pins);
+    g_none_modulates = 0;
     CHECK(g_parse_error == 0);
 
     printf("--\n");

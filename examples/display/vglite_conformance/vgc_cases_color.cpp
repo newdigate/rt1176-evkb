@@ -35,11 +35,16 @@
  *   reading A   S*Sa + D*(1 - Sa)     case 2 -> 128    case 3 -> 160
  *   reading B   S + D*(1 - Sa)        case 2 -> 255    case 3 -> 255 (clamped)
  *
- * tests/model.h implements reading A. That is a CHOICE it makes so the host
- * arms have something to rasterise, not a finding, and nothing here inherits
- * it: cases 2 and 3 ADMIT BOTH and report which they saw (model=A / model=B /
- * model=none), case 4 is reading-agnostic by construction, and only a THIRD
- * value is broken.
+ * ★★ THAT AMBIGUITY IS SETTLED BY MEASUREMENT AS OF 2026-09-02, AND THE CASES
+ * NO LONGER ADMIT BOTH. Silicon, two boots byte-identical: SRC_OVER is
+ * READING B (`v=255,a=255,model=B` in cases 2 and 3) and BLEND_NONE stores the
+ * source RAW (`v=255,a=128,read=raw`). The reading each case saw is still
+ * REPORTED in detail=, so a flip says which way it went; what changed is that
+ * it is now also JUDGED -- see the C2_MEASURED block below for why leaving it
+ * un-judged made the finding invisible to the drift checker. tests/model.h
+ * implements reading B for the same reason, and carries reading A as a
+ * NEGATIVE ARM (arm 6) that the two cases must report broken. Case 4 remains
+ * reading-agnostic by construction and pins nothing absolute.
  *
  * ★ WHAT CASES 2-4 *DO* ASSERT WITHOUT AMBIGUITY IS THE ALPHA ROW, and it is
  * not decoration -- it is the only thing in those cases that can see a GPU
@@ -68,6 +73,7 @@
 #include "vgc_color.h"
 #include "vgc_predicates.h"      /* vgc_fnv, for case 4's sum hook */
 #include <stdio.h>
+#include <string.h>
 
 /* ---- the one geometry every case here draws --------------------------------
  * 80x80 at (24,24), sampled at (64,64). Deliberately the SAME rect
@@ -216,6 +222,34 @@ static vg_lite_error_t draw_rect(uint32_t color, vg_lite_blend_t blend)
  * leading n -- a coupling between a verdict and a label that a later rename
  * would break SILENTLY, in the direction that turns a broken case green. The
  * caller spells "none" itself, where it is visibly a label. */
+/* ---- ★★ WHICH READING WAS MEASURED, AND WHY IT IS NOW PINNED --------------
+ * Cases 2-5 were built to ADMIT both readings and REPORT which, because before
+ * the boot the driver's own header supported either (see the file header).
+ * That was right pre-measurement and WRONG to leave standing afterwards:
+ *
+ *   tools/vglite-conformance-check.sh compares only <id> <pixel> <repeat>.
+ *   A case that returns ok under EITHER reading is therefore INVISIBLE to the
+ *   drift checker -- an SDK re-vendor that flipped SRC_OVER from B to A, or
+ *   BLEND_NONE from raw to modulated, would leave every verdict `ok` and the
+ *   checker GREEN. That is exactly the "quirk that silently disappears" the
+ *   expectation file's own header exists to catch.
+ *
+ * MEASURED 2026-09-02, two boots: SRC_OVER is reading B (v=255, a=255) and
+ * BLEND_NONE writes the source RAW (v=255, a=128). So the reading is pinned
+ * here, and a flip now reports `pixel=broken` and reddens the checker.
+ *
+ * ★ THE DETAIL STILL REPORTS WHAT WAS SEEN. A flip does not merely go broken:
+ * it goes broken WITH `model=A` (or `read=modulated`) on the line, so the
+ * transcript says which way it moved. Pinning removes the silence, not the
+ * information.
+ *
+ * ★ THIS IS THE SAME ACT AS NARROWING A TOLERANCE AFTER MEASURING IT, and it
+ * carries the same obligation: changing these constants back must be an
+ * explained decision, never a way to make a red go away. */
+#define C2_MEASURED "B"          /* SRC_OVER: S + D*(1-Sa), the premultiplied operator */
+#define C3_MEASURED "B"
+#define C5_MEASURED "raw"        /* BLEND_NONE: dst = src, alpha row A: Sa */
+
 static const char *reading_of(int v, int expect_a, int expect_b,
                               const char *name_a, const char *name_b)
 {
@@ -291,10 +325,12 @@ static vg_lite_error_t run_word_order(void)
  * term: with D = 0 the destination term vanishes, so whatever comes back is
  * the source contribution alone.
  *
- * ok at ~128 (reading A) or ~255 (reading B) ON THE COLOUR CHANNEL, AND alpha
- * at 255 (:462, the same row under both readings); broken otherwise. ~64 is the
- * NAMED failure mode -- alpha applied TWICE, i.e. 255*a*a = 64.3 -- and it
- * must read broken, which it does: 64 is 60 outside the nearest band.
+ * ok at ~255 ON THE COLOUR CHANNEL -- reading B, the MEASURED one (C2_MEASURED)
+ * -- AND alpha at 255 (:462, the same row under both readings); broken
+ * otherwise. Two distinct values must read broken and both do: ~128, reading A,
+ * which is reported as `model=A` so the transcript names the drift; and ~64,
+ * the NAMED failure mode -- alpha applied TWICE, 255*a*a = 64.3 -- which
+ * matches no band at all and reports `model=none`.
  *
  * ★ THIS CASE ALONE CANNOT SETTLE SRC_OVER, which is why case 3 exists rather
  * than being redundant with it. Over black, a correct blend and one that
@@ -315,8 +351,10 @@ static vgc_verdict_t check_premul_srcover(char *d, size_t n)
     const char *const model = reading_of(v, C_EXP2_A, C_EXP2_B, "A", "B");
     const vgc_cover_t cv = vgc_cover_na();
 
+    const int pinned = (model && strcmp(model, C2_MEASURED) == 0);
+
     snprintf(d, n, "v=%d,a=%d,model=%s,%s", v, a, model ? model : "none", cv.s);
-    return (model && a_ok) ? VGC_OK : VGC_BROKEN;
+    return (pinned && a_ok) ? VGC_OK : VGC_BROKEN;
 }
 
 static vg_lite_error_t run_premul_srcover(void)
@@ -332,10 +370,11 @@ static vg_lite_error_t run_premul_srcover(void)
  * reading is the result; disagreement between them is a larger finding than
  * either value.
  *
- * ok at ~160 (A) or ~255 (B, clamped from 286.9) on the colour channel, AND
- * alpha at 255; broken otherwise. In
+ * ok at ~255 on the colour channel -- reading B, clamped from 286.9, the
+ * MEASURED one (C3_MEASURED) -- AND alpha at 255; broken otherwise. ~160 is
+ * reading A and reads broken WITH `model=A`. In
  * particular ~128 -- the case-2 answer -- would mean the destination term was
- * dropped, and reads broken here. */
+ * dropped, and reads broken here with `model=none`. */
 
 static vgc_verdict_t check_srcover_arith(char *d, size_t n)
 {
@@ -348,9 +387,10 @@ static vgc_verdict_t check_srcover_arith(char *d, size_t n)
     const int      a_ok = vgc_near(a, C_EXP_ALPHA, C_TOL);
     const char *const model = reading_of(v, C_EXP3_A, C_EXP3_B, "A", "B");
     const vgc_cover_t cv = vgc_cover_na();
+    const int pinned = (model && strcmp(model, C3_MEASURED) == 0);
 
     snprintf(d, n, "v=%d,a=%d,model=%s,%s", v, a, model ? model : "none", cv.s);
-    return (model && a_ok) ? VGC_OK : VGC_BROKEN;
+    return (pinned && a_ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* Clear to grey, then one draw. The clear is not a second SUB-RENDER in the
@@ -457,25 +497,44 @@ static vgc_verdict_t check_srcover_double(char *d, size_t n)
 /* ---- 5. blend/none-honours-alpha -------------------------------------------
  * White at alpha 0x80 over grey, with BLEND_NONE.
  *
- * ★ RECORDED, NOT JUDGED -- the path/degenerate-zero-area pattern. It earns
- * its place because ALL FIFTEEN Phase 1 cases use BLEND_NONE with an OPAQUE
- * colour: if this mode silently honours alpha, we have never once been in a
- * position to see it, and the moment anyone passes a non-opaque colour through
- * it every Phase 1 result would need re-reading.
+ * ★ THE ALPHA FIELD IS RECORDED, NOT JUDGED -- the path/degenerate-zero-area
+ * pattern, and it is the ONLY field here that keeps it (see check_none_alpha's
+ * note: BLEND_NONE's alpha row is `A: Sa`, so a=128 is CORRECT). The colour
+ * field was recorded-not-judged too until the 2026-09-02 boot pinned it. The
+ * case earns its place because ALL FIFTEEN Phase 1 cases use BLEND_NONE with
+ * an OPAQUE colour: if this mode silently honours alpha, we have never once
+ * been in a position to see it, and the moment anyone passes a non-opaque
+ * colour through it every Phase 1 result would need re-reading.
  *
- * Two defensible readings, BOTH ok:
- *   255  "no blend" means dst := src, written raw. The conventional reading,
- *        the header's own (":459  RGB: S, No blend"), and what every Phase 1
- *        case implicitly relied on.
+ * Two readings were defensible before the boot; ONE was measured, and only it
+ * is ok now (C5_MEASURED):
+ *   255  MEASURED. "no blend" means dst := src, written raw. The conventional
+ *        reading, the header's own (":459  RGB: S, No blend"), and what every
+ *        Phase 1 case implicitly relied on.
  *   ~128 the rasteriser always modulates by alpha and BLEND_NONE only drops
- *        the DESTINATION term.
+ *        the DESTINATION term. Reported as `read=modulated` and BROKEN.
  *
- * ★ AND ~160 MUST READ BROKEN, which is what stops "records rather than
- * judges" collapsing into "asserts nothing". 160 is SRC_OVER's answer over
- * this backdrop, so it would mean BLEND_NONE is silently BLENDING -- a
- * finding, not a defensible reading. With C_TOL = 4 the two admissible bands
- * are [124,132] and [251,259]; 160 sits outside both, 24 clear of the nearer
- * edge. */
+ * ★ ~160 MUST READ BROKEN TOO, and it does: with C_TOL = 4 the two reading
+ * bands are [124,132] and [251,259], so 160 matches NEITHER and reports
+ * `read=none`.
+ *
+ * ★★ BUT 160 IS NO LONGER SRC_OVER'S ANSWER OVER THIS BACKDROP, and the
+ * earlier version of this note said it was. Under the MEASURED reading B a
+ * silently-compositing BLEND_NONE produces 255 + 64*(1 - a) = 286.9, CLAMPED
+ * TO 255 -- the same value as the raw store. 160 is that defect's answer only
+ * if the hardware is ALSO doing reading A, i.e. two independent drifts at
+ * once.
+ *
+ * ★ SO WHAT THIS CASE WOULD ACTUALLY DO AGAINST THAT DEFECT WAS MEASURED, not
+ * argued. With BLEND_NONE routed through the reading-B SRC_OVER path in
+ * tests/model.h, this case reports `v=255,a=255,read=raw` -- verdict ok. The
+ * colour field is blind to it exactly as predicted; the ALPHA field moves
+ * (128 -> 255) and is the only trace, and that field is RECORDED, NOT JUDGED
+ * here for the reason check_none_alpha gives. A boot would therefore PRINT the
+ * evidence and not flag it. Said plainly rather than left as a claim that ~160
+ * covers the case, which it does not. (tests/cases_color_test.cpp's arm 7
+ * models the reachable half instead -- a BLEND_NONE that MODULATES, which
+ * lands on ~128 and IS caught.) */
 
 static vgc_verdict_t check_none_alpha(char *d, size_t n)
 {
@@ -503,8 +562,10 @@ static vgc_verdict_t check_none_alpha(char *d, size_t n)
                                         "modulated", "raw");
     const vgc_cover_t cv = vgc_cover_na();
 
+    const int pinned = (read && strcmp(read, C5_MEASURED) == 0);
+
     snprintf(d, n, "v=%d,a=%d,read=%s,%s", v, a, read ? read : "none", cv.s);
-    return read ? VGC_OK : VGC_BROKEN;
+    return pinned ? VGC_OK : VGC_BROKEN;
 }
 
 static vg_lite_error_t run_none_alpha(void)

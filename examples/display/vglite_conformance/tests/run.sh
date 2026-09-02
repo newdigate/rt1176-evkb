@@ -2,7 +2,7 @@
 # Host unit tests for the conformance probe's instrument code. Runs on the
 # development machine's own cc/c++ -- no toolchain, no board, no QEMU.
 #
-# Four suites, all PASS:/FAIL:-per-check with a count at the end (the
+# Five suites, all PASS:/FAIL:-per-check with a count at the end (the
 # convention CLAUDE.md treats as authoritative: `grep -c "^PASS:"` on a live
 # run is the case count):
 #   predicates_test       the pure pixel predicates      (C -- vgc_predicates.h is pure C)
@@ -13,20 +13,24 @@
 #                         correct GPU AND a model of this GC355's known
 #                         one-contour-per-path defect (C++)
 #   cases_color_test      the five colour/blend cases' sample point, tolerances,
-#                         reading bands and alpha checks, against FIVE models:
+#                         reading bands and alpha checks, against SEVEN models:
 #                         correct / draws-nothing / double-premultiplying /
-#                         R-B-permuting / alpha-ignoring (C++)
+#                         R-B-permuting / alpha-ignoring / reading-A /
+#                         BLEND_NONE-modulating (C++)
 #
 # ★ WHAT A GREEN RUN HERE DOES NOT SAY: nothing about the real silicon. No GPU
 # is involved. cases_path_geom_test calibrates the instrument against FOUR
 # MODELS (correct / first-contour-only / draws-nothing / stray-ink) and
-# cases_color_test against FIVE; the silicon's answers live in the example's
+# cases_color_test against SEVEN; the silicon's answers live in the example's
 # transcript_hw_evkb.txt and expected_silicon.txt. Those files' headers say so
 # at length, and it is worth repeating at the entry point.
 #
-# ★ cases_color_test's models are models of a BLEND, and model.h picks reading
-# A of SRC_OVER because it has to rasterise something. THE HARDWARE MAY DO
-# READING B. A green colour suite is not a vote for either.
+# ★ cases_color_test's models are models of a BLEND, and model.h implements
+# reading B of SRC_OVER BECAUSE THE HARDWARE WAS MEASURED DOING READING B (two
+# boots, 2026-09-02, in the example's transcript_hw_evkb.txt). So arm 1 is a
+# model of that measurement, never a second vote for it -- and arms 6 and 7 are
+# models of the OTHER admissible readings, which the colour cases must now
+# report BROKEN. A green colour suite still says nothing about any GPU.
 #
 # ★ WHY THIS SUITE EXISTS AT ALL: the QEMU gate cannot reach the pixel logic.
 # QEMU has no GC355, so every case there reports pixel=skip -- a green gate

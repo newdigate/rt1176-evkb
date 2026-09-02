@@ -121,10 +121,10 @@ uint32_t vgc_scratch_sum(void) { return vgc_fnv(s_fb, sizeof(s_fb)); }
  * ★ INVISIBLE TO PHASE 1, WHICH IS WHY THIS SAT UNDECIDED UNTIL NOW. Every
  * path case draws VGC_FILL_COLOR (0xFFFFFFFF) over VGC_BG_COLOR (0xFF000000);
  * both are FIXED POINTS of a byte-0/byte-2 swap, so no path arm can tell the
- * two orders apart and all 199 of their checks are unmoved by this function
+ * two orders apart and all 200 of their checks are unmoved by this function
  * existing. If one of them ever moves, the swizzle is in the wrong place. */
-/* ---- COLOUR ARM SWITCH 1 of 3: R/B PERMUTING ------------------------------
- * Set by the colour suite's arm 5. Models a target whose memory word is NOT
+/* ---- COLOUR ARM SWITCH 1 of 5: R/B PERMUTING ------------------------------
+ * Set by the colour suite's arm 4. Models a target whose memory word is NOT
  * the order vglite_probe measured -- red left in byte 0, blue moved to byte 2,
  * i.e. the swizzle above not happening. Every predicate that reads a NAMED
  * channel (vgc_ch(px, VGC_R) is byte 2) then reads the wrong byte.
@@ -137,12 +137,16 @@ uint32_t vgc_scratch_sum(void) { return vgc_fnv(s_fb, sizeof(s_fb)); }
  *
  * It is OFF by default and touched by no path arm: every path case draws
  * VGC_FILL_COLOR (0xFFFFFFFF) over VGC_BG_COLOR (0xFF000000) and both are
- * fixed points of any byte permutation, so the 199 path checks cannot see this
+ * fixed points of any byte permutation, so the 200 path checks cannot see this
  * switch in either position.
  * ★ MEASURED BOTH WAYS RATHER THAN ARGUED FROM THE FIXED POINTS: with
  * g_permute_rb forced to 1 for the whole of cases_path_geom_test's main, that
- * suite still reports OK (199 checks) -- the same count and the same checks as
- * with it 0. */
+ * suite still reports OK (200 checks) -- the same count and the same checks as
+ * with it 0.
+ * ★ RE-MEASURED 2026-09-02. This note and the two above it said 199; the path
+ * suite has since grown to 200 and the number had gone stale where it stood.
+ * The CLAIM was re-run rather than the figure patched -- forced permutation,
+ * 200 checks, green -- because a pass count is a claim like any other. */
 static int g_permute_rb;
 
 static uint32_t mem_word(uint32_t abgr)
@@ -306,9 +310,9 @@ static int g_stray_ink;
 #define STRAY_PX ((STRAY_X1 - STRAY_X0) * (STRAY_Y1 - STRAY_Y0))   /* 400 */
 
 /* ---- the reference blend --------------------------------------------------
- * SRC_OVER as `src*a + dst*(1 - a)` on the three colour bytes, with `a` the
- * source colour's alpha byte scaled 1/255, and `Sa + Da*(1 - Sa)` on the alpha
- * byte.
+ * SRC_OVER as `src + dst*(1 - a)` on the three colour bytes, clamped to 255,
+ * with `a` the source colour's alpha byte scaled 1/255, and `Sa + Da*(1 - Sa)`
+ * on the alpha byte.
  *
  * ★ THIS IS ONE OF TWO INDEPENDENT DERIVATIONS, DELIBERATELY. If the model
  * implemented the same formula the case expects and nothing else, arm 1 would
@@ -316,6 +320,14 @@ static int g_stray_ink;
  * expected value in vgc_cases_color.cpp is ALSO derived by hand in
  * expected_silicon.txt, and the two must agree. That is the discipline that
  * validated the pentagram in Phase 1b (analytic 2792.30 vs model 2792).
+ * ★ THE 2026-09-02 MOVE TO READING B CHANGED WHICH OPERATOR ALL THREE DERIVE
+ * FROM, NOT THE DISCIPLINE -- and it did narrow what arm 1 can claim, which is
+ * worth being blunt about. Now that the cases PIN the reading this model
+ * implements, arm 1 says "the case functions read this model correctly" and no
+ * longer carries even the weak independence of admitting two answers. Its
+ * remaining non-circular content is that the model computes from the formula
+ * while the case's C_EXP* constants are hand-derived and expected_silicon.txt
+ * derives them a third time, so a slip in any one of the three is visible.
  *
  * ★★ THE DRIVER'S OWN HEADER SUPPORTS TWO READINGS OF THIS MODE, AND THEY
  * DISAGREE. This model implements ONE OF THEM. Read verbatim from
@@ -349,20 +361,32 @@ static int g_stray_ink;
  *     reading A   S*Sa + D*(1 - Sa)   white @ 0x80 over black -> 128
  *     reading B   S + D*(1 - Sa)      header-literal          -> 255
  *
- * ★ THIS MODEL IMPLEMENTS READING A, AND THAT IS A CHOICE, NOT A FINDING. A
- * rasteriser that produced 255 could not tell reading B from a hardware defect,
- * and 128 is the value the rest of Phase 2 is derived against. THE HARDWARE MAY
- * DO READING B. Nothing here knows, and nothing here may be quoted as if it
- * did.
+ * ★★ THIS MODEL IMPLEMENTS READING B, BECAUSE THE HARDWARE WAS MEASURED AND
+ * DOES READING B. Silicon, 2026-09-02, TWO BOOTS BYTE-IDENTICAL:
+ * color/premultiplied-srcover read `v=255,a=255,model=B` and
+ * blend/srcover-arithmetic read `v=255,a=255,model=B`
+ * (examples/display/vglite_conformance/transcript_hw_evkb.txt). Until that
+ * boot this file implemented reading A as an ADMITTED CHOICE, and said so; the
+ * choice is now a finding and the model follows it.
  *
- * ★ SO THE CASES MUST NOT INHERIT THIS CHOICE, and they do not.
- * color/premultiplied-srcover and blend/srcover-arithmetic ADMIT BOTH readings
- * and report which they saw (`model=A` / `model=B` in detail=); only a third
- * value is broken -- ~64 in case 2 being the double-premultiply defect.
- * blend/srcover-double sidesteps the question altogether by predicting its
- * second composite from its MEASURED first. A case that accepted only this
- * model's answer would be the instrument presupposing its own result, and a
- * green arm 1 would be evidence of nothing but its own construction.
+ * ★★ THE MODEL MUST MODEL THE TARGET -- this is the identical argument that
+ * put the ABGR->ARGB swizzle in mem_word above. A model that implements an
+ * operator the hardware does not makes the REAL case functions, compiled
+ * against it, agree with a fiction: arm 1 would be green on cases whose
+ * verdicts on silicon are red, which is worse than no arm at all. Reading A
+ * did not become wrong when it was measured against -- it became a MODEL OF A
+ * DIFFERENT GPU, which is what the reading-A arm below now is.
+ *
+ * ★ THE CASES NOW PIN THE MEASURED READING RATHER THAN ADMITTING BOTH
+ * (C2_MEASURED / C3_MEASURED / C5_MEASURED in vgc_cases_color.cpp), because
+ * tools/vglite-conformance-check.sh compares only `<id> <pixel> <repeat>` and
+ * a case that returns ok under either reading is INVISIBLE to it. The detail
+ * still reports what was seen, so a flip goes broken WITH `model=A` on the
+ * line -- and the reading-A arm below is what proves that path is reachable.
+ * blend/srcover-double is the one case that pins nothing absolute: it predicts
+ * its second composite from its MEASURED first, and stays green under either
+ * reading BY CONSTRUCTION (verified, not assumed -- see the arm 6 note in
+ * cases_color_test.cpp).
  *
  * ★ THE ALPHA BYTE IS BLENDED BY ITS OWN ROW, `Sa + Da*(1 - Sa)` (:462), not
  * by the colour formula -- `Sa*Sa + Da*(1 - Sa)` is not any convention's
@@ -376,8 +400,8 @@ static int g_stray_ink;
  * scales by /255 or /256, is unknown -- which is exactly what the deliberately
  * generous tolerances in vgc_cases_color.cpp exist to absorb. Do NOT treat
  * this model as correct to within 1 LSB. */
-/* ---- COLOUR ARM SWITCH 2 of 3: ALPHA-IGNORING -----------------------------
- * Set by the colour suite's arm 4. Models a GPU that writes the source raw
+/* ---- COLOUR ARM SWITCH 2 of 5: ALPHA-IGNORING -----------------------------
+ * Set by the colour suite's arm 5. Models a GPU that writes the source raw
  * whatever the blend mode says -- the ONE defect a saturated-white source
  * cannot show on the colour channel, because reading B's `S + D*(1 - Sa)` is
  * observationally identical to a raw store when S is 255 (255 over black; 287
@@ -391,29 +415,115 @@ static int g_stray_ink;
  * which check was doing the work. */
 static int g_alpha_ignoring;
 
-/* ---- COLOUR ARM SWITCH 3 of 3: DOUBLE-PREMULTIPLY -------------------------
- * Set by the colour suite's arm 3. Models a GPU that premultiplies a source
- * that was already premultiplied, so alpha lands on the colour channels TWICE:
- * 255*a*a = 64.3. That is color/premultiplied-srcover's NAMED failure mode,
- * and this is the only thing in the tree that can make it happen.
+/* ---- COLOUR ARM SWITCH 3 of 5: DOUBLE-PREMULTIPLY -------------------------
+ * Set by the colour suite's arm 3. Models a GPU that applies the source alpha
+ * to the colour channels TWICE before the measured operator's `S + D*(1 - Sa)`
+ * sees them: 255*a*a = 64.3. That is color/premultiplied-srcover's NAMED
+ * failure mode, and this is the only thing in the tree that can make it happen.
+ *
+ * ★ TWICE, NOT ONCE, AND THE DISTINCTION IS THE MEASUREMENT. While the model
+ * implemented reading A the base formula supplied one `*Sa` of its own, so a
+ * single extra multiply landed on 64. Against the measured reading B the base
+ * formula supplies NONE, so ONE extra multiply is reading A (128 -- which is
+ * arm 6's whole subject) and TWO is the defect. The observable is unchanged
+ * (v=64 over black, v=96 over grey 0x40, v1=96/v2=112/pred=176 in case 4, all
+ * pinned in the suite); what changed is that the two defects are now properly
+ * separated instead of sharing a switch.
  *
  * The ALPHA byte is untouched (i != 3): doubling it would be a different
  * defect, and the point of this arm is that case 2 goes broken on `v=` while
- * its alpha row stays conforming -- the exact complement of arm 4. */
+ * its alpha row stays conforming -- the exact complement of arm 5. */
 static int g_double_premul;
+
+/* ---- COLOUR ARM SWITCH 4 of 5: READING A ----------------------------------
+ * Set by the colour suite's arm 6. Models a GPU implementing the OTHER
+ * admissible reading of SRC_OVER -- `S*Sa + D*(1 - Sa)`, one premultiply the
+ * measured hardware does not do.
+ *
+ * ★★ THIS ARM IS THE PIN'S PROOF, AND IT IS THE REASON THE MODEL COULD NOT
+ * SIMPLY BE LEFT AT READING A. Until 2026-09-02 cases 2, 3 and 5 returned ok
+ * under EITHER reading and merely reported which in detail=; since
+ * tools/vglite-conformance-check.sh compares only `<id> <pixel> <repeat>`, an
+ * SDK re-vendor that flipped the operator would have left every verdict `ok`
+ * and the drift checker GREEN -- the "quirk that silently disappears" that
+ * file's header exists to catch. The cases now pin reading B. A pin nobody has
+ * demonstrated RED is decoration, so this arm exists to demonstrate it: under
+ * it cases 2 and 3 must go BROKEN with `model=A` on the line.
+ *
+ * ★ IT IS A MODEL OF A DIFFERENT GPU, NOT A MODEL OF A BUG. Reading A is what
+ * inc/vg_lite.h:452's own non-premultiplied convention makes SRC_OVER mean, and
+ * it is what this file implemented before the boot. That is precisely what
+ * makes it the right shape for a drift arm: a future driver could plausibly
+ * BE this, and the matrix must say so out loud rather than stay green.
+ *
+ * Colour channels only (i != 3): SRC_OVER's alpha row is `Sa + Da*(1 - Sa)`
+ * (:462) under BOTH readings, so an arm that moved it would be testing a
+ * different claim and would break case 4 for the wrong reason. */
+static int g_reading_a;
+
+/* ---- COLOUR ARM SWITCH 5 of 5: BLEND_NONE MODULATES -----------------------
+ * Set by the colour suite's arm 7. Models a GPU whose rasteriser ALWAYS
+ * modulates the source by its own alpha and whose BLEND_NONE therefore drops
+ * only the DESTINATION term: `dst := S*Sa`, 255*a = 128 here.
+ *
+ * ★ IT IS TO CASE 5 WHAT ARM 6 IS TO CASES 2 AND 3 -- the other admissible
+ * reading, made to happen. blend/none-honours-alpha admitted `raw` (255) and
+ * `modulated` (128) until the same 2026-09-02 boot pinned it to `raw`, and
+ * this is the only thing in the tree that can produce the other one. Without
+ * it C5_MEASURED is a constant no test has ever seen fire.
+ *
+ * ★ IT BREAKS CASE 5 ALONE, and that sharpness is the point -- the same
+ * property arm 4 has for case 1. The other BLEND_NONE case,
+ * color/solid-word-order, draws an OPAQUE colour (a = 255), and modulating by
+ * 255 is the identity, so it is untouched. The three SRC_OVER cases never
+ * reach this branch.
+ *
+ * The ALPHA byte is left as `Sa` (i != 3): BLEND_NONE's alpha row IS `A: Sa`
+ * (:459-460), and this arm models a defect in the COLOUR row only. Case 5
+ * records alpha and judges only v=, so the pin reads `v=128,a=128,
+ * read=modulated`. */
+static int g_none_modulates;
+
+/* Round-to-nearest x*a/255, the one scaling this file does. Named because the
+ * blend below applies it up to three times per channel and a second spelling
+ * of it is a second chance to get the rounding different. */
+static int mul255(int x, int a) { return (x * a + 127) / 255; }
 
 static uint32_t model_blend(uint32_t src, uint32_t dst, vg_lite_blend_t mode)
 {
-    if (mode == VG_LITE_BLEND_NONE || g_alpha_ignoring) return src;
-    /* SRC_OVER */
     const int a = (int)((src >> 24) & 0xFFu);
+
+    if (mode == VG_LITE_BLEND_NONE) {
+        if (!g_none_modulates) return src;      /* ":459  RGB: S, No blend" */
+        uint32_t out = src & 0xFF000000u;       /* ":460  A: Sa", untouched */
+        for (int i = 0; i < 3; i++)
+            out |= ((uint32_t)mul255((int)((src >> (i * 8)) & 0xFFu), a)) << (i * 8);
+        return out;
+    }
+    if (g_alpha_ignoring) return src;
+
+    /* SRC_OVER, reading B -- `RGB: S + D*(1 - Sa)`, `A: Sa + Da*(1 - Sa)`. */
     uint32_t out = 0;
     for (int i = 0; i < 4; i++) {
         const int s = (int)((src >> (i * 8)) & 0xFFu);
         const int d = (int)((dst >> (i * 8)) & 0xFFu);
-        const int sp = (g_double_premul && i != 3) ? ((s * a + 127) / 255) : s;
-        const int v = (i == 3) ? (a + (d * (255 - a) + 127) / 255)
-                               : ((sp * a + d * (255 - a) + 127) / 255);
+        int sp = s;
+        if (i != 3) {
+            /* Mutually exclusive by construction: the suite sets at most one
+             * arm switch at a time, and `else if` says so rather than leaving
+             * a silent triple-premultiply reachable from a future edit. */
+            if (g_double_premul)  sp = mul255(mul255(sp, a), a);
+            else if (g_reading_a) sp = mul255(sp, a);
+        }
+        int v = (i == 3) ? (a + mul255(d, 255 - a))
+                         : (sp + mul255(d, 255 - a));
+        /* ★ THE CLAMP IS LOAD-BEARING ON THE COLOUR ROW AND INERT ON ALPHA.
+         * Reading B has no `*Sa` on the source, so a saturated source over a
+         * non-black backdrop OVERFLOWS -- 255 + 64*(1 - a) = 286.9 in case 3,
+         * which is exactly the value that case expects clamped. The alpha row
+         * cannot exceed 255 -- exhaustively checked over all 65536 (a, d)
+         * pairs, max 255 -- so the clamp there is defensive only. */
+        if (v > 255) v = 255;
         out |= ((uint32_t)v) << (i * 8);
     }
     return out;
@@ -433,8 +543,13 @@ void vgc_draw_path_blend(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
      * MEASURED RATHER THAN ARGUED. model_blend is per-channel and takes its `a`
      * from BYTE 3, which mem_word leaves alone, so the swizzle COMMUTES with
      * the blend: mem_word(model_blend(s, d, m)) == model_blend(mem_word(s),
-     * mem_word(d), m). Checked over 800000 random (s, d) pairs across both
-     * modes -- 0 mismatches. That is why it belongs at the edge where the
+     * mem_word(d), m).
+     * ★ RE-MEASURED 2026-09-02 AGAINST THE READING-B BLEND AND ITS TWO NEW ARM
+     * SWITCHES, not carried over: 4800000 random (s, d) pairs -- both modes x
+     * all six arm configurations (none, and each of the five switches alone) --
+     * 0 mismatches. The earlier 800000-pair figure was taken against the
+     * reading-A formula and would have been a stale number for a function that
+     * had changed. That is why the conversion belongs at the edge where the
      * color argument enters and not inside the arithmetic. */
     const uint32_t src = mem_word(color);
     parse_path(p);
