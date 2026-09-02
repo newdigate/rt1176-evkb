@@ -1,3 +1,12 @@
+=== Guard-layer retrofit re-verified 2026-09-02 (SynthUI 44a1c58) ===
+Every value below is UNCHANGED after routing this compositor's path
+construction through VGLite/port/vglite_guard.h's checked init_path and
+its GPU_TRY through VGLITE_GUARD_TRY. That is the acceptance test: a
+guard that alters a rendered pixel has changed behaviour rather than
+constrained it. rk_gpu_err=0 and irqs=64 held too, so the guard validated
+every path this file builds -- the keyhole ring and the rewritten track
+included -- and refused none.
+
 synthui_knob_test -- HARDWARE (MIMXRT1170-EVKB + RK055), synthui_rotary_knob
 ================================================================================
 2026-08-28 LATE (TEAR-FREE PIPELINE, LVGL f3e264c + SynthUI 48062a0): a 60 fps

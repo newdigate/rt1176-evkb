@@ -559,26 +559,69 @@ exist to settle it.
 
 ## Guard layer — Phase 4
 
-### ⚠ NOT YET BUILT.
+### ✅ BUILT 2026-09-02 — `VGLite/port/vglite_guard.h` (VGLite `4b75168`).
 
-`VGLite/port/vglite_guard.h` — **our port code, never the vendored driver**.
+**Our port code, never the vendored driver.** It came last on purpose: writing
+it first would have encoded the beliefs the probe existed to test, and three of
+those beliefs did not survive the boot.
 
-It comes **last** on purpose: it enforces only what the probe **CONFIRMED**.
-Writing it first would be encoding the beliefs this whole exercise exists to
-test — and the discriminator above is a live example of a belief that might not
-survive the boot.
+**What it enforces, and the case that licenses each rule:**
 
-Planned content (design spec **§8**):
+| Rule | Established by |
+|---|---|
+| exactly one `VLC_OP_MOVE` per path | `path/multi-contour-disjoint`, `path/two-disjoint-bars` (dropped); `path/four-nested-rings`, `path/evenodd-vs-nonzero` (nondeterministic); `path/two-contour-ring-nonzero` (mis-covers by 769 px) |
+| the prescribed construction is exact | `path/two-draws-ring` — `fill=5376` exactly, beside a single-path ring 769 px short |
+| a trailing `VLC_OP_END` is required | Phase 1: unterminated data hangs the front end while every call returns `VG_LITE_SUCCESS` |
 
-* a path builder enforcing **one contour per path** (asserts a single
-  `VLC_OP_MOVE`, refuses a truncated path, requires the `VLC_OP_END`);
-* a checked `init_path` wrapper;
-* gradient helpers that enforce the EXT ordering, or refuse the API outright if
-  the probe confirms it unusable for moving geometry;
-* a shared `VGLITE_GUARD_TRY` error-counting macro replacing the copy-pasted
-  `GPU_TRY` in both compositors.
+Statuses: `ok`, `empty-path`, `no-contour`, `multi-contour`, `truncated`,
+`no-end`, `trailing-data`, `bad-opcode`. **Structural faults are reported
+before the contour count**, deliberately — a walk that has lost the opcode
+boundary cannot be trusted to have counted `MOVE`s, and a confident wrong
+answer is worse than a vague right one.
 
-Both existing compositors (`synthui_rotary_knob_gpu.cpp`,
-`synthui_fader_gpu.cpp`) are then retrofitted onto it, and **their goldens must
-not move** — two widgets, both engines, QEMU and silicon. That is the
-acceptance test, and it is a strong one.
+★ **The pure/driver split is the point, not tidiness.** The validator needs
+only `<stdint.h>`, because **no gate in this tree can see GPU code** — every
+QEMU gate runs the software engine, and the GPU goldens live only in
+hand-pressed hardware transcripts. Host suite `VGLite/tests/run.sh`, **58
+checks**, an arm per status, DEMONSTRATED RED against four mutants (stop
+refusing multi-contour; accept unterminated paths; wrong `CUBIC` operand
+count; hard-wire the validator to `OK`).
+
+★ **DELIBERATELY NOT BUILT: gradient helpers.** The design spec conditioned
+them on *"if the probe confirms it unusable for moving geometry"* — and **the
+probe never tested gradients**. Phase 2 was redirected to colour and blend once
+scoping found the matrix had never exercised the blend mode production uses.
+The gradient rows in this document come from **reading NXP's source**, not from
+a boot. Building helpers on them would put an unmeasured belief into the one
+layer whose ordering exists to prevent exactly that. A recorded gap, not an
+omission: if a later phase probes gradients, the helpers belong here and not
+before.
+
+★ **No colour helper either.** The `SRC_OVER` premultiply lives in SynthUI's
+`src/synthui_fader_color.h`, host-testable with no driver dependency (69017
+checks). Moving it here would make that test depend on VGLite; duplicating it
+would create two copies of a measured constant.
+
+### Acceptance — nothing moved (SynthUI `44a1c58`)
+
+Both compositors were retrofitted, and **a guard that alters a rendered pixel
+has changed behaviour rather than constrained it**, so the acceptance test is
+that every golden holds:
+
+| | measured |
+|---|---|
+| fader, GPU, silicon | `fd_crc=0x814F4047`, `delta==fresh=0xE9A9A2B5`, `fd_delta_eq=PASS`, `fd_gpu_err=0` |
+| knob, GPU, silicon | all six `KNOB_SUM_*`, `KNOB_DELTA_SEQ=FULL=0x7C9EC8DB`, `EQ=PASS`, `MAXAREA=3050`, `rk_gpu_err=0`, `irqs=64` |
+| fader / knob, sw, QEMU | `fd_crc=0xAB66DE0D`, `KNOB_GRID_SUM_SW=0x579E5810` |
+
+Six consumer gates green (`synthui_fader_test`, `synthui_knob_test`,
+`acid_box`, `vglite_lvgl_test`, `rotary_knob_bench`, `synthui_step_test`).
+
+★ **`gpu_err=0` on both widgets is the reading that earns the layer.** The
+guard validated every path either compositor builds and refused none — so it
+constrains without changing, which is only interesting because it *could* have
+refused something and did not. Neither compositor can currently trip it: every
+path both build is single-contour by construction. That is the point. It exists
+so a future edit reintroducing a second `VLC_OP_MOVE` fails loudly rather than
+silently losing geometry on glass, which is exactly how that defect presented
+the first time.

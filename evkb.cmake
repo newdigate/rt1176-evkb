@@ -405,7 +405,11 @@ macro(import_evkb_vglite)
              "${_evkb_vglite_dir}/inc"
              "${_evkb_vglite_dir}/VGLite"
              "${_evkb_vglite_dir}/VGLiteKernel"
-             "${_evkb_vglite_dir}/port/baremetal")
+             "${_evkb_vglite_dir}/port/baremetal"
+             # port/ itself carries vglite_guard.h -- our guard layer, which is
+             # OS-independent (pure path validation + a TRY macro), so it sits
+             # beside baremetal/ rather than inside it.
+             "${_evkb_vglite_dir}/port")
         # ★ HEADER_VERSION 7 selects the SILICON's capabilities at COMPILE time
         # from Series/<chip>/<rev>/vg_lite_options.h, dispatched through
         # VG_LITE_OPTIONS. The vendored VGLite/vg_lite_options.h is only a
