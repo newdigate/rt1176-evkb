@@ -595,6 +595,20 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-09-02 (NEW-32 Phase 4 guard layer): 124 gates discovered,
+**123 passed, 1 failed, 0 SKIP**. `LICENSE-AUDIT: PASS`. The one red is
+`m2_hci_probe[hci]`, the standing bench-config class.
+★ **The raw sweep read 2 failed, and the SECOND red was MY fault, not the
+tree's** — `m2_rx_demo[irq]` failed under load and PASSES idle, because the
+licence audit was run CONCURRENTLY with the sweep. That is the exact condition
+this file already warns about ("one sweep at a time, output captured, or it did
+not happen"); the audit is cheap enough to feel harmless and is not. Run it
+before or after, never during.
+★ Guard-layer acceptance is separate from the sweep and stronger: six consumer
+gates green with goldens VERIFIED UNMOVED (`fd_crc=0xAB66DE0D`,
+`KNOB_GRID_SUM_SW=0x579E5810`), plus both widgets re-measured on SILICON
+bit-identical to their pre-guard transcripts.
+
 ✅ **Measured 2026-09-02 (later the same day): 124 gates discovered,
 **123 passed, 1 failed, 0 SKIP**, on the NEW-32 **Phase 4** close-out — the
 fader's `SRC_OVER` premultiply fix (SynthUI `d995e63`, pin bumped).
@@ -1537,6 +1551,27 @@ not hung.
   in-boot difference between two identical draw sequences — the class that hid
   NEW-20's winding-2 track defect, and the reason both compositors keep a
   per-boot delta-equality check.
+  ★★ **THE GUARD LAYER IS BUILT (2026-09-02)** — `VGLite/port/vglite_guard.h`
+  (VGLite `4b75168`), and both compositors are retrofitted onto it (SynthUI
+  `44a1c58`). It refuses, BEFORE the driver sees them, any path with more than
+  one `VLC_OP_MOVE` (the measured defect) or without a trailing `VLC_OP_END`
+  (the Phase 1 hang, which no return-code check can see). `GPU_TRY` in both
+  files is now the shared `VGLITE_GUARD_TRY`.
+  ★ **The acceptance test is that NOTHING MOVED** — a guard that alters a
+  rendered pixel has changed behaviour rather than constrained it. Verified on
+  silicon for BOTH widgets: fader `fd_crc=0x814F4047` /
+  `delta==fresh=0xE9A9A2B5`, knob all six `KNOB_SUM_*` plus
+  `KNOB_DELTA_SEQ=FULL=0x7C9EC8DB` and `irqs=64`, every value bit-identical to
+  its pre-guard transcript, with **`gpu_err=0` on both** — the guard validated
+  every path either compositor builds and refused none.
+  ★ **The validator is PURE and host-tested** (`VGLite/tests/run.sh`, 58
+  checks, an arm per status, RED against four mutants) because **no gate in
+  this tree can see GPU code**: every QEMU gate runs the software engine. That
+  split is the whole reason the layer has automated coverage at all.
+  ★ **Gradient helpers were DELIBERATELY NOT BUILT.** The spec conditioned them
+  on the probe confirming the API unusable, and **the probe never tested
+  gradients** — Phase 2 was redirected to colour and blend. Those claims come
+  from reading NXP's source, not a boot. A recorded gap, not an omission.
   ★ `docs/gc355-vglite-quirks.md` is the reference for all of this — one row
   per feature (verdict · safe usage · evidence), every row citing the
   `display/vglite_conformance` case id that establishes it, so a claim without
