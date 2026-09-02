@@ -799,6 +799,8 @@ void Avdtp::service() {
 
 - [ ] **Step 6: Commit (M2Radio)** — `git add bt/Sdp.h bt/Sdp.cpp bt/Avdtp.h bt/Avdtp.cpp bt/test/avdtp_test.cpp && git commit -m "bt: Sdp client + Avdtp initiator (DISCOVER..START, media channel), host-tested byte for byte"`
 
+> **★ Hardened after code review (a second commit on top).** The `Avdtp` initiator's sketch had two silent-hang bugs — the "no crash, no error, just stuck" class BT-1 warns about — now fixed: `send()` returns `L2cap::send()`'s bool and every state transition commits **only on a successful send** (a full 8-slot TXQ during bring-up otherwise advanced the state while the command never left the wire → permanent stall), and `MEDIA_CONNECTING` now reaches `FAILED` when `connect()` returns null or the media channel goes `CLOSED` (it could otherwise wait forever). Also added: **transaction-label correlation** on receive (a stray/late/duplicate signalling PDU whose tl ≠ ours is dropped, not consumed as the current response — AVDTP correlates responses to commands by tl alone), a larger `m_rsp[172]` with an `m_truncated` flag (a GET_CAPABILITIES with extra categories overran the old 64), short-PDU handling so a 1-byte reject reaches `FAILED` instead of being dropped, a full `begin()` reset, and a wrap guard in `parseSbcCaps`. `m_tl` is held stable until a send succeeds so a retry doesn't churn the label. The "peer accepts the media channel but never drives it to OPEN" case stays bounded by the **caller's** outer timeout (`Avdtp` has no clock of its own).
+
 ### Task 8: `hci_peer.py` grows an AVDTP acceptor (phase `avdtp`)
 
 **Files:**
@@ -930,6 +932,14 @@ End-of-phase for `avdtp`: replace the generic `LAST_OPCODE in peer.cmds` test wi
     CONSOLE.print("secure="); CONSOLE.print(BtLink::resultName(r)); CONSOLE.print(" paired_by="); CONSOLE.println(link.pairedBy());
     if (r != BtLink::OK) return;
     l2.begin(link.handle(), s_aclNum /* from Read_Buffer_Size */); l2.acceptIncoming(true);
+    // ★ REVERSE CHANNEL (silicon-proven in BT-2, resurfaced in Task 7 review): some sinks open
+    // their OWN L2CAP channel back at us on contact -- the OneOdio opens an SDP channel (PSM
+    // 0x0001) and queries our DeviceID; others may open AVDTP (0x0019).  acceptIncoming(true) +
+    // L2cap's peer-accept path handle the accept/config; route its data in l2.onData by ch.psm.
+    // MAX_CHANNELS=3 (SDP + AVDTP sig + AVDTP media) has NO 4th slot, so a peer reverse channel
+    // arriving while all three of ours are open is refused ("no resources") -- in BT-2 that did
+    // NOT break the handshake (we still read the SEPs), so it is acceptable for the source role;
+    // if a bench peer proves otherwise, bump MAX_CHANNELS rather than dropping a channel of ours.
     // B6: SDP
     L2cap::Channel *sdp = l2.connect(Sdp::PSM, 0x0040); uint32_t t0 = millis();
     while (sdp->state != L2cap::OPEN && millis() - t0 < 5000) { l2.service(); delay(10); }
