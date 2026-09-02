@@ -1433,14 +1433,18 @@ not hung.
   cases admit BOTH readings and report which, rather than pre-judging.
   ★★★ **MEASURED: THIS SILICON IMPLEMENTS READING B — `SRC_OVER` IS THE
   PREMULTIPLIED OPERATOR** (`v=255 a=255 model=B` in both colour cases, and they
-  AGREE). And **both compositors feed it NON-premultiplied colour**:
+  AGREE). And **the FADER feeds it NON-premultiplied colour**:
   `synthui_fader_gpu.cpp`'s `abgr_a()` packs unscaled RGB with a separate alpha
   and passes it to `SRC_OVER` at alpha 115 (a shadow), `pal->gloss_opa` (a
   highlight) and a variable `opa` (the tick runs). Under `S + D*(1-Sa)` the
   source contributes at FULL intensity whatever its alpha, so a white gloss at
   partial opacity SATURATES instead of reading as a sheen. **The fix is one line
-  in `abgr_a`** — premultiply RGB by `a/255` — but it MOVES BOTH COMPOSITORS'
-  GOLDENS and belongs to Phase 4's guard layer, not to a probe.
+  in `abgr_a`** — premultiply RGB by `a/255` — but it MOVES THE FADER'S GOLDENS
+  and belongs to Phase 4's guard layer, not to a probe.
+  ★ **`synthui_rotary_knob_gpu.cpp` is NOT affected**, structurally rather than
+  by luck: it has no `abgr_a`, and every colour it draws goes through
+  `abgr(hex)` which forces `0xFF000000` — always opaque. At α=255
+  `S + D*(1-Sa)` reduces to `S`, correct under either reading.
   ★ **Sensitivity limit:** under reading B a saturated white source clamps to
   255 in cases 2-4, so their colour tolerances do nothing and the ALPHA ROW is
   what discriminates. A non-saturated source is the obvious next case.

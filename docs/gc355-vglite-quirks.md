@@ -395,15 +395,16 @@ sites. The matrix had never tested the blend mode production uses.
 | `SRC_OVER` self-consistency across two composites | **OK** — `v1=255 v2=255 pred=255` | the operator is self-consistent | `blend/srcover-double` |
 | `BLEND_NONE` with a non-opaque source | **OK** — `v=255 a=128`, source written **raw**, alpha row `A: Sa` | behaves exactly as documented; all fifteen Phase 1 cases are unaffected | `blend/none-honours-alpha` |
 
-### ★★★ `SRC_OVER` is the PREMULTIPLIED operator here — and both compositors feed it non-premultiplied colour
+### ★★★ `SRC_OVER` is the PREMULTIPLIED operator here — and the FADER feeds it non-premultiplied colour
 
 Both cases report **reading B** and **they agree**, which was the consistency
 requirement. So the hardware implements `S + D*(1-Sa)` — exactly what
 `inc/vg_lite.h:461` literally says, despite `:458` filing mode 1 under
 *"Non-premultiplied Blending modes"*. `a=255` rules out alpha-ignoring.
 
-**This is actionable, not academic.** `synthui_fader_gpu.cpp`'s `abgr_a()` packs
-an unscaled RGB with a separate alpha and hands it straight to `SRC_OVER`:
+**This is actionable, not academic — for ONE of the two compositors.**
+`synthui_fader_gpu.cpp`'s `abgr_a()` packs an unscaled RGB with a separate alpha
+and hands it straight to `SRC_OVER`:
 
 ```
 abgr_a(0x1B1F22u, 115u)           // a shadow
@@ -415,9 +416,14 @@ Under `S + D*(1-Sa)` the source contributes at **full** intensity whatever its
 alpha, so those draws do not produce the intended blend — a white gloss at
 partial opacity saturates rather than reading as a sheen.
 
+★ **`synthui_rotary_knob_gpu.cpp` is NOT affected**, and the difference is
+structural rather than luck: it has no `abgr_a` at all. Every colour it draws
+goes through `abgr(hex)`, which forces `0xFF000000` — **always opaque**. At
+α=255, `S + D*(1-Sa)` reduces to `S`, which is correct under either reading.
+
 ★ **The fix is one line in `abgr_a`** (premultiply RGB by `a/255` before
-packing). It **moves both compositors' goldens** and belongs to Phase 4's guard
-layer, not to a probe. Recorded here, deliberately not acted on.
+packing). It **moves the fader's goldens** and belongs to Phase 4's guard layer,
+not to a probe. Recorded here, deliberately not acted on.
 
 ★ **A sensitivity limit worth knowing.** Under reading B a *saturated white*
 source clamps to 255 in cases 2–4, so their colour-channel tolerances are doing

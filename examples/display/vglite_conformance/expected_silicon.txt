@@ -317,7 +317,9 @@ blend/none-honours-alpha            ok       same    # ★ RECORDED, NOT JUDGED 
 #    Phase 1b could not tell them apart; closing the pass-1 coverage gap did.
 #
 # 2. SRC_OVER IS THE PREMULTIPLIED OPERATOR ON THIS SILICON (reading B), and
-#    BOTH SHIPPING COMPOSITORS FEED IT NON-PREMULTIPLIED COLOUR.
+#    THE FADER FEEDS IT NON-PREMULTIPLIED COLOUR (the rotary does NOT -- it has
+#    no abgr_a and forces 0xFF000000, so every colour it draws is opaque and
+#    S + D*(1-Sa) reduces to S, correct under either reading).
 #    synthui_fader_gpu.cpp's abgr_a() packs an unscaled RGB with a separate
 #    alpha and hands it to SRC_OVER at alpha 115 (a shadow), pal->gloss_opa (a
 #    highlight) and a variable opa (the tick runs). Under S + D*(1-Sa) the
@@ -325,8 +327,8 @@ blend/none-honours-alpha            ok       same    # ★ RECORDED, NOT JUDGED 
 #    not produce the intended blend -- a white gloss at partial opacity
 #    saturates instead of reading as a sheen.
 #    ★ THE FIX IS ONE LINE IN abgr_a (premultiply RGB by a/255 before packing),
-#    but it MOVES BOTH COMPOSITORS' GOLDENS and belongs to Phase 4's guard
-#    layer, not to a probe. Recorded here, deliberately not acted on.
+#    but it MOVES THE FADER'S GOLDENS and belongs to Phase 4's guard layer, not
+#    to a probe. Recorded here, deliberately not acted on.
 #
 # ★ A SENSITIVITY LIMIT WORTH KNOWING BEFORE TRUSTING CASES 2-4 TOO FAR: under
 # reading B a SATURATED WHITE source clamps to 255 in all three, so their
