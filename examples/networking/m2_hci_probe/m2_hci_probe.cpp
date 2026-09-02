@@ -373,8 +373,8 @@ static volatile bool     s_sdpDone  = false;
 static volatile uint16_t s_avdtpVer = 0;
 
 static void onL2capData(void *, L2cap::Channel &ch, const uint8_t *payload, uint16_t len) {
-    if (ch.psm == Avdtp::PSM) {
-        avdtp.onSignalling(payload, len);
+    if (ch.psm == Avdtp::PSM && ch.localCid == 0x0041) {   // signalling channel only -- the media
+        avdtp.onSignalling(payload, len);                  // channel (0x0042) shares this PSM
     } else if (ch.psm == Sdp::PSM) {
         s_avdtpVer = Sdp::parseAvdtpVersion(payload, len);
         s_sdpDone  = true;
