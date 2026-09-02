@@ -430,6 +430,38 @@ grad/ramp-word-order                ok       same    # Both stops pure red, so e
 blit/basic                          ok       same    # 16x16 red/blue checker, BGRA8888, natural 64-B stride, translated to (24,24), point filter. The rotary bench has blitted BGRA on this board; predicted ok.
 blit/stride-64                      ok       same    # The same image in a 32-px-wide buffer, stride 128 B, width 16 -- THE ROTARY BENCH'S LAYOUT. A GPU walking rows by width*bpp would shear it; the bench's rotors render, so predicted ok.
 blit/stride-unaligned               ok       same    # ★ ok MEANS REFUSED. 20-px-wide buffer, stride 80 B. The driver's _check_source_aligned must return INVALID_ARGUMENT (rc=1) and nothing may be drawn -- the outcome is DEFINED, as path/degenerate-zero-area's is. api=success with paint, or a refusal that painted, is broken. Nothing reaches the GPU, which is why this is safe in the default build.
-blit/formats                        ok       same    # RGB565 source, stride 32 B. The checker must land with 5-bit channels expanding to >= 248 (shift) or 255 (replication). REPORTS order=: pre-registered `low` -- red in bits 4:0, by analogy with the measured BGRA8888 memory word (first-named component lowest). The case admits either order BEFORE the boot and reports which; the measured order is PINNED in code afterwards, as Phase 2 pinned its blend reading, because a case green under either is invisible to this checker.
+blit/formats                        ok       same    # RGB565 source, stride 32 B. The checker must land with 5-bit channels expanding to >= 248 (shift) or 255 (replication). REPORTS order=: pre-registered `low` -- red in bits 4:0, by analogy with the measured BGRA8888 memory word (first-named component lowest). The case admits either order BEFORE the boot and reports which; the measured order is PINNED in code afterwards, as Phase 2 pinned its blend reading, because a case green under either is invisible to this checker. ★ MEASURED 2026-09-02, THREE BOOTS IDENTICAL: order=low, and the 5-bit channels expand by REPLICATION (0x1F -> 255), not shift (248). The order is now PINNED in vgc_cases_blit.cpp (B_ORDER_MEASURED) and the host model expands by replication; tests arm 7 demonstrates the pin RED with order=high on the line.
 scissor/basic                       ok       same    # 120x120 rect under set_scissor(40,40,88,88) into the 128x128 scratch under the 64x64 tess buffer -- the SHIPPING multi-tile regime. Left/top clip through the tess-window origin, right/bottom through 0x0A13. All four edges must clip and the interior paint.
 scissor/tess-fullscreen             broken   same    # ★ PREDICTED BROKEN WITH L=0,T=0,R=1,B=1, NOT MERELY BROKEN. The same draw into a 64x64 target under the 64x64 tess buffer -- the FULLSCREEN regime -- under set_scissor(20,20,44,44). Left and top are painted past the scissor because the tess-window clamp that implements them is inside `if (ts_is_fullscreen == 0)`; right and bottom still clip because 0x0A13 is programmed regardless. This is the fader header's warning ("vg_lite_init with the panel's own size defeats per-fader scissoring") measured, and sharpened to the pair of edges it actually costs.
+
+# ---------------------------------------------------------------------------
+# ★★★ PHASE 3 MEASURED 2026-09-02, THREE BOOTS (three resets landed in one
+# capture). Every one of the six lines byte-identical across all three;
+# checker PASS on each; cases=32 ok=24 broken=8, vgc_timeouts=0. ALL SIX
+# PREDICTIONS HELD, including the sharp one:
+#
+#   scissor/tess-fullscreen   BROKEN  L=0,T=0,R=1,B=1  -- left and top painted
+#       past the scissor, right and bottom clipped. Exactly the two-mechanism
+#       reading of the driver: 0x0A13 clips right/bottom in every regime; the
+#       tess-window clamp that is the ONLY thing implementing left/top is
+#       skipped when ts_is_fullscreen. The fader header's warning is measured
+#       and sharpened to the pair of edges it actually costs.
+#   scissor/basic             ok      L=1,T=1,R=1,B=1  -- the shipping regime
+#       clips all four.
+#   blit/stride-unaligned     ok      rc=1, nothing drawn -- the driver's
+#       _check_source_aligned refuses an 80-B stride with INVALID_ARGUMENT
+#       before any command exists. The rotary bench's padding is REQUIRED,
+#       and it is the driver that requires it.
+#   blit/stride-64            ok      -- the padded layout blits unsheared.
+#   blit/basic, blit/formats  ok      -- formats: order=low, replication.
+#
+# The 26 prior verdicts unmoved; two-disjoint-bars read differs/differs/same
+# across the three boots (already `unstable`).
+#
+# WHAT THIS LICENSES: blit sources must carry a 64-B-aligned stride (the
+# driver refuses otherwise); per-widget scissoring needs the MULTI-TILE
+# regime, i.e. a tess buffer SMALLER than the target -- vg_lite_init() with
+# the panel's own size silently loses the left and top scissor edges while
+# keeping right and bottom, which is the most misleading possible failure
+# because half the clip still works.
+# ---------------------------------------------------------------------------

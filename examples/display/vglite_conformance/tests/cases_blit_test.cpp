@@ -84,6 +84,7 @@ static int expect_scf_ok_only(const vgc_case_t *c) { (void)c; return 0; }   /* a
  * stays at its pre-registered broken under both. */
 static int expect_s64(const vgc_case_t *c)      { return is_id(c, ID_S64) || is_id(c, ID_SCF); }
 static int expect_unal(const vgc_case_t *c)     { return is_id(c, ID_UNAL) || is_id(c, ID_SCF); }
+static int expect_fmt(const vgc_case_t *c)      { return is_id(c, ID_FMT) || is_id(c, ID_SCF); }
 
 /* ★ ARM 1 IS NOT ALL-OK: scissor/tess-fullscreen is pre-registered BROKEN
  * (L=0,T=0,R=1,B=1), and the correct model reproduces it. */
@@ -95,8 +96,8 @@ static void arm1_pins(const vgc_case_t *c, const case_result_t *r)
         CHECK_CASE(strstr(r->detail, "c00=255.0.0,c10=0.0.255,c01=0.0.255,c11=255.0.0,out=0.0.0") != NULL,
                    c->id, "the checker lands, the outside stays black");
     if (is_id(c, ID_FMT))
-        CHECK_CASE(strstr(r->detail, "c00=248.0.0,c10=0.0.248,c01=0.0.248,c11=248.0.0,out=0.0.0,order=low") != NULL,
-                   c->id, "5-bit channels expand by shift to 248; red read from the LOW bits");
+        CHECK_CASE(strstr(r->detail, "c00=255.0.0,c10=0.0.255,c01=0.0.255,c11=255.0.0,out=0.0.0,order=low") != NULL,
+                   c->id, "5-bit channels expand by replication to 255 (as measured); red read from the LOW bits");
     if (is_id(c, ID_UNAL))
         CHECK_CASE(strstr(r->detail, "rc=1,refused=1,untouched=1") != NULL,
                    c->id, "refused with INVALID_ARGUMENT (1), nothing drawn");
@@ -158,6 +159,13 @@ static void arm6_pins(const vgc_case_t *c, const case_result_t *r)
                    "with no check the misaligned blit DRAWS -- and that is the broken outcome");
 }
 
+static void arm7_pins(const vgc_case_t *c, const case_result_t *r)
+{
+    if (is_id(c, ID_FMT))
+        CHECK_CASE(strstr(r->detail, "c00=0.0.255,c10=255.0.0,c01=255.0.0,c11=0.0.255,out=0.0.0,order=high") != NULL,
+                   c->id, "the checker lands REVERSED and the case SAYS order=high");
+}
+
 int main(void)
 {
     memset(&vgc_scratch, 0, sizeof(vgc_scratch));
@@ -166,7 +174,7 @@ int main(void)
     g_permute_rb = g_draw_nothing = g_double_premul = g_alpha_ignoring = 0;
     g_reading_a = g_none_modulates = 0;
     g_draw_black = g_paint_follows_path = g_solid_first_stop = g_ramp_permute_rb = 0;
-    g_ignore_scissor = g_fullscreen_clips_all = g_width_as_pitch = g_no_align_check = 0;
+    g_ignore_scissor = g_fullscreen_clips_all = g_width_as_pitch = g_no_align_check = g_565_red_high = 0;
     g_parse_error = 0; g_close_fixup_fired = 0;
 
     arm_verdicts("arm 1: correct GPU under the driver as read", expect_correct,
@@ -208,6 +216,17 @@ int main(void)
     arm_verdicts("arm 6: the driver's stride check absent", expect_unal,
                  "aligned anyway", "goes BROKEN: the misaligned blit was not refused", arm6_pins);
     g_no_align_check = 0;
+
+    /* ---- ARM 7: RGB565 read with red in the HIGH bits. ---------------------
+     * ★ THE PIN'S PROOF. blit/formats admitted either order until the boot
+     * measured `low`; now it pins `low`, and a pin nobody has demonstrated RED
+     * is decoration. Under this arm the checker still LANDS (the other order
+     * is a perfectly good picture) and the case must go broken purely on
+     * order=high -- pinning the symptom, not just the verdict. */
+    g_565_red_high = 1;
+    arm_verdicts("arm 7: RGB565 sampler with red in bits 15:11 (the other convention)", expect_fmt,
+                 "not a 16-bit source", "goes BROKEN: the measured order is pinned", arm7_pins);
+    g_565_red_high = 0;
 
     printf("--\n");
     if (failed) { printf("cases_blit_test: FAILED (%d of %d checks)\n", failed, checks); return 1; }

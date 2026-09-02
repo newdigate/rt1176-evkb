@@ -1580,6 +1580,23 @@ not hung.
   checks, an arm per status, RED against four mutants) because **no gate in
   this tree can see GPU code**: every QEMU gate runs the software engine. That
   split is the whole reason the layer has automated coverage at all.
+  ★★★ **PHASE 3 WAS PROBED (2026-09-02, six blit/scissor cases, THREE boots,
+  every line byte-identical; matrix 32, host suites seven).** All six
+  predictions held. **The scissor is TWO mechanisms**: right/bottom go to
+  register `0x0A13` in `set_render_target` in every regime; left/top exist
+  ONLY as the tess-window clamp inside `vg_lite_draw`, which is skipped in the
+  fullscreen regime. `scissor/tess-fullscreen` (a second 64×64 target under
+  the 64×64 tess buffer) read **`L=0,T=0,R=1,B=1`** — the fader header's
+  warning measured and sharpened: `vg_lite_init()` with the panel's own size
+  loses the LEFT and TOP scissor edges and keeps the other two, which is half
+  a clip. `scissor/basic` in the shipping multi-tile regime clips all four.
+  **The 64-B blit stride rule is a DRIVER check** (`_check_source_aligned`,
+  `vg_lite.c:1383`): an 80-B stride is refused with `INVALID_ARGUMENT` before
+  any command is built (`blit/stride-unaligned`, `rc=1`, nothing drawn), the
+  rotary bench's padded layout blits unsheared (`blit/stride-64`), and RGB565
+  reads red from the LOW five bits with 5-bit channels expanded by
+  replication (`blit/formats`, `order=low`, pinned in code with an arm that
+  proves the pin). A8/L8 and `scissor_rects` deliberately unprobed.
   ★★★ **THE GRADIENTS WERE PROBED (2026-09-02, six linear cases, two boots,
   every line byte-identical).** Matrix 20 → 26; host suites 631 checks over
   six. The driver fact that decides it, read then confirmed in pixels:

@@ -556,34 +556,45 @@ boots of `short:308`. A misparse's determinism depends on the bytes that follow
 the path in memory, and these boots ran a different image. See the correction
 in the path section above.
 
-## Images, blits & scissor — Phase 3
+## Images, blits & scissor — Phase 3, MEASURED
 
-### ⚠ NOT YET PROBED. Nothing in this section has a case.
+### ✅ PROBED 2026-09-02 — six cases, three boots, every line byte-identical across them. All six predictions held.
 
-Spec case ids awaiting implementation (design spec §4, "Images/blits &
-scissor"): `blit/basic`, `blit/stride-64`, `blit/stride-unaligned`,
-`blit/formats`, `scissor/basic`, `scissor/tess-fullscreen`.
+Spec: `docs/superpowers/specs/2026-09-02-gc355-conformance-phase3-design.md`.
+Cases in `vgc_cases_blit.cpp`; host suite `tests/cases_blit_test.cpp` (seven
+arms).
 
-Two things about the harness that Phase 3 depends on and that Phase 1 already
-fixed deliberately:
+**The scissor is two mechanisms, and only one survives the fullscreen regime.**
+`vg_lite_set_scissor` writes only context state (`vg_lite_image.c:263`). Right
+and bottom then go to hardware — register `0x0A13` in `set_render_target`
+(`vg_lite.c:3626`), every regime. Left and top exist *only* as a clamp on the
+tessellation window inside `vg_lite_draw` (`vg_lite_path.c:1217`), and that
+block is skipped when the target fits the tess buffer.
 
-* **Phase 1 runs in the multi-tile regime on purpose.** The tessellation buffer
-  is **64×64 against a 128×128 target** (`vgc_harness.h:28-37`), i.e. *smaller*
-  than the target — the same regime both shipping compositors run in (256×256
-  tess against a 720×1280 panel). A tess buffer ≥ the target puts the driver
-  into `ts_is_fullscreen == 1`, which is a **different code path**, so a Phase 1
-  matrix measured there would not describe the shipping configuration.
-* **`scissor/tess-fullscreen` probes the other regime** — the one where the
-  driver **skips left/top scissor clamping** because `ts_is_fullscreen != 0`.
-  That is why calling `vg_lite_init()` with the panel's own dimensions defeats
-  per-widget scissoring; stated in `SynthUI/src/vglite/synthui_fader_gpu.h:27-33`
-  and expected BROKEN, pinning the precondition rather than inferring it.
+| Feature | Verdict | Safe usage | Evidence |
+|---|---|---|---|
+| **Scissor, multi-tile regime** (tess buffer smaller than the target — what both compositors run in) | **ok** | `vg_lite_set_scissor(x, y, right, bottom)`, right/bottom exclusive; all four edges clip. Disable with `(-1,-1,-1,-1)` after use. | `scissor/basic` — `L=1,T=1,R=1,B=1,in=1` |
+| **Scissor, fullscreen regime** (tess buffer ≥ target) | **broken — left and top only** | **Never call `vg_lite_init()` with the panel's own size** if you scissor. Right and bottom still clip, left and top do not — half a clip, which is the most misleading failure available. | `scissor/tess-fullscreen` — `L=0,T=0,R=1,B=1`, three boots |
+| **Blit, BGRA8888, 64-B stride** | ok | Natural layout. | `blit/basic` |
+| **Blit with a padded stride** (data 64 B + 64 B pad per row) | ok | The rotary bench's rotor layout, unsheared. | `blit/stride-64` |
+| **Blit with a stride not a multiple of 64 B** | **refused by the driver** | The 64-byte rule is `_check_source_aligned` (`vg_lite.c:1383`, on under `gcFEATURE_VG_16PIXELS_ALIGNED`): 64 for 32-bpp, 32 for 16-bpp, 16 for 8-bpp. Returns `VG_LITE_INVALID_ARGUMENT` before any command is built; nothing reaches the GPU. Pad the stride. | `blit/stride-unaligned` — `rc=1`, nothing drawn |
+| **RGB565 source** | ok | Red in the **low** five bits (`0x001F`); 5-bit channels expand by **replication** (`0x1F` → 255). Pinned in code. | `blit/formats` — `order=low`, 255 |
 
-The 64-byte **source-stride** rule for blits is stated in the rotary's comments
-and has never been tested here — `blit/stride-64` and `blit/stride-unaligned`
-exist to settle it.
+★ **The stride rule is a driver check, not a hardware behaviour.** The address
+checks (`srcbuf_align_check`) are compiled out on this chip; the *stride* check
+is in. So "the GC355 refuses an unaligned source" is precisely true, and it is
+the driver doing the refusing — which is why the case is safe in the default
+build.
 
----
+★ **Left out, deliberately:** A8/L8 sources (no consumer; their blend path
+takes the `color` argument down a special branch) and `vg_lite_scissor_rects`
+(the mask-layer scissor, unused here).
+
+★ **The fullscreen prediction was sharpened before the boot** from the design
+spec's "expect BROKEN" to "left and top lost, right and bottom kept", by
+reading the two mechanisms — and measured exactly so. Arm 4 of the host suite
+(a GPU that clips all four in fullscreen) is what proves the case could have
+said otherwise.
 
 ## Guard layer — Phase 4
 

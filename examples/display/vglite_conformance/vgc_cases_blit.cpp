@@ -288,7 +288,24 @@ static vg_lite_error_t run_unaligned(void)
  * the measured BGRA8888 word). After the boot the measured order is PINNED
  * here, as Phase 2 pinned its blend reading -- a case that stays green under
  * either order is invisible to the drift checker. */
-static vgc_verdict_t check_formats(char *d, size_t n) { return check_checker(d, n, 1); }
+/* ★ PINNED 2026-09-02, THREE BOOTS IDENTICAL: order=low, and the 5-bit
+ * channels expand by REPLICATION (0x1F -> 255), not by shift (248). The case
+ * still REPORTS order= (a flip says which way it went) but no longer accepts
+ * `high`: a case green under either order is invisible to the drift checker,
+ * exactly the hole Phase 2 closed for its blend reading. tests/cases_blit_test
+ * arm 7 models a red-in-the-high-bits sampler and this case must go broken
+ * WITH order=high on the line. */
+#define B_ORDER_MEASURED "low"
+static vgc_verdict_t check_formats(char *d, size_t n)
+{
+    blit_profile_t p;
+    blit_profile(&p, 1);
+    const vgc_cover_t cv = vgc_cover_na();
+    int off = profile_str(&p, d, n);
+    if (off < 0) off = 0;
+    snprintf(d + off, n - (size_t)off, ",order=%s,%s", p.order, cv.s);
+    return (p.checker && strcmp(p.order, B_ORDER_MEASURED) == 0) ? VGC_OK : VGC_BROKEN;
+}
 static vg_lite_error_t run_formats(void)
 {
     fill_checker16(s_src565, 16);

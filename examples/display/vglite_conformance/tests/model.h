@@ -1203,6 +1203,7 @@ static int g_ignore_scissor;      /* the scissor is dead: nothing clips */
 static int g_fullscreen_clips_all;/* the fader's warning false: all four clip in every regime */
 static int g_width_as_pitch;      /* the GPU walks source rows by width*bpp, not stride */
 static int g_no_align_check;      /* the driver's stride check absent: a misaligned blit draws */
+static int g_565_red_high;        /* a sampler reading RGB565's red from bits 15:11 (the OTHER convention) */
 
 /* Does the scissor keep pixel (x,y) out? Per regime, as the driver does. */
 static int scissored_out(const fb_desc_t *d, int x, int y)
@@ -1281,8 +1282,14 @@ static uint32_t src_pixel_word(const vg_lite_buffer_t *s, int x, int y)
     }
     if (bpp == 2) {
         uint16_t v; memcpy(&v, row + x * 2, 2);
-        const int r5 = v & 0x1F, g6 = (v >> 5) & 0x3F, b5 = (v >> 11) & 0x1F;
-        const int r = r5 << 3, g = g6 << 2, b = b5 << 3;
+        /* ★ RED IN THE LOW FIVE BITS, MEASURED (three boots, 2026-09-02:
+         * blit/formats order=low), and expanded by REPLICATION -- silicon read
+         * 255 where a shift gives 248 -- so the model models the target. The
+         * arm switch reads the other convention. */
+        int r5 = v & 0x1F, b5 = (v >> 11) & 0x1F;
+        const int g6 = (v >> 5) & 0x3F;
+        if (g_565_red_high) { const int t = r5; r5 = b5; b5 = t; }
+        const int r = (r5 << 3) | (r5 >> 2), g = (g6 << 2) | (g6 >> 4), b = (b5 << 3) | (b5 >> 2);
         return 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
     }
     const uint8_t a = row[x];
