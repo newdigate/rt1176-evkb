@@ -211,6 +211,42 @@ if(NOT M2_BT_TARGET_NAME STREQUAL "")
     add_definitions(-DM2_BT_TARGET_NAME="${M2_BT_TARGET_NAME}")
 endif()
 
+# Bench knob: the AuthRequirements byte in our IO_Capability_Request_Reply
+# (default 0x04 = general bonding, MITM not required; 0x00 = no bonding).
+set(M2_BT_AUTH_REQ "" CACHE STRING "SSP AuthRequirements byte, e.g. 0x00 or 0x04")
+if(NOT M2_BT_AUTH_REQ STREQUAL "")
+    add_definitions(-DM2_BT_AUTH_REQ=${M2_BT_AUTH_REQ})
+endif()
+
+# Bench knob: do NOT send Authentication_Requested ourselves -- open the AVDTP
+# channel unauthenticated and let the PEER's service security policy initiate
+# SSP (the sink drives the pairing).  Pair with M2_BT_AVDTP_DISCOVER=ON.
+option(M2_BT_PEER_AUTH "Let the peer initiate authentication (skip our Authentication_Requested)" OFF)
+if(M2_BT_PEER_AUTH)
+    add_definitions(-DM2_BT_PEER_AUTH=1)
+endif()
+
+# Bench knob: enable Secure Connections HOST support (HCI 0x0C7A) before pairing.
+option(M2_BT_SC_HOST "Write_Secure_Connections_Host_Support=1 before pairing" OFF)
+if(M2_BT_SC_HOST)
+    add_definitions(-DM2_BT_SC_HOST=1)
+endif()
+
+# Bench knob: Create_Connection with Allow_Role_Switch=0 (stay master; refuse the
+# peer's switch at setup).  Bluedroid requests a role switch during connection
+# setup, which no headset did; a switch colliding with SSP is a pairing killer.
+option(M2_BT_NO_ROLE_SWITCH "Create_Connection: do not allow role switch" OFF)
+if(M2_BT_NO_ROLE_SWITCH)
+    add_definitions(-DM2_BT_NO_ROLE_SWITCH=1)
+endif()
+
+# Bench knob: disable Simple Pairing on our side so pairing falls back to
+# legacy PIN (we answer PIN_Code_Request with 1234; the ESP32 sink does too).
+option(M2_BT_LEGACY_PIN "Write_Simple_Pairing_Mode=0: legacy PIN pairing (1234)" OFF)
+if(M2_BT_LEGACY_PIN)
+    add_definitions(-DM2_BT_LEGACY_PIN=1)
+endif()
+
 teensy_add_executable(m2_hci_probe m2_hci_probe.cpp ${M2_FW_SRC} ${M2_BT_FW_SRC})
 teensy_target_link_libraries(m2_hci_probe cores M2Radio)
 target_include_directories(m2_hci_probe.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

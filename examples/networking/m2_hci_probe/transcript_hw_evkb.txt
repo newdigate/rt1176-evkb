@@ -2221,3 +2221,124 @@ proven on silicon against real headsets.  The ESP32-WROOM on order is NOT
 needed for BT-2; it remains the designated BT-3 sink (audible DAC).  Next:
 BT-3 -- AVDTP GET_CAPABILITIES -> SET_CONFIGURATION -> OPEN -> START, SBC, and
 an SDP server of our own.
+
+--------------------------------------------------------------------------------
+2026-09-02  BT-3 prep: the ESP32 A2DP SINK INSTRUMENT is built, calibrated,
+            and our stack drives it end to end -- plus an IW416<->ESP32 SSP
+            incompatibility found and bounded, and a real Hci-layer clock bug.
+--------------------------------------------------------------------------------
+
+WHY AN INSTRUMENT.  BT-3 makes the RT1176 an A2DP source.  A headset is a black
+box for that: a SET_CONFIGURATION it dislikes or a malformed SBC frame just
+produces silence, indistinguishable from a link that never carried a byte.
+tools/esp32-a2dp-sink/ is a SparkFun ESP32 Thing Plus (original, WROOM-32,
+CP2104) running Bluedroid AS A BLACK BOX (Apache-2.0, public API only -- our
+AVDTP/SBC stays built from the spec) that REPORTS what a sink sees: connection
+and audio-state transitions, the codec configuration the negotiation settled
+on, decoded-PCM packet/byte counts and rate, and plays the audio on the chip's
+DACs (GPIO25 = A1 left, GPIO26 = A0 right).  Fixed name EVKB-SINK, always
+discoverable, CoD AV/headphones (our probe's A/V filter finds it).
+
+Two Arduino-core traps cost a reflash each and are documented in the sketch:
+(1) the core hands ALL Bluetooth RAM to the heap at startup unless the sketch
+overrides the weak btInUse() hook -- esp_bt_controller_init() then fails,
+reading like a dead radio; (2) the prebuilt controller is dual-mode (BTDM), so
+esp_bt_controller_enable() must be asked for BTDM, not Classic-only
+(ESP_ERR_INVALID_ARG).  Also: pyserial asserts DTR+RTS on open and parks the
+CP2104 board in its ROM bootloader -- release both before open (esp_reader.py).
+
+CALIBRATION against a known-good source (an iPhone), before it judged anything:
+
+    gap_auth: status=0 peer=44:F2:1B:8D:03:94 name="Nicholas's iPhone"
+    a2dp_conn: state=connected
+    a2dp_audio_cfg: codec=SBC rate=44100 chan=joint blocks=16 subbands=8
+                    alloc=loudness bitpool=2..53 cie=21 15 02 35
+    hb ... play=1 pkts=1747 bytes=7155712 pcm_bytes_per_s=176594
+           (expect 176400 at 44100 Hz) dropped=0
+
+That audio_cfg line is the BT-3 oracle: exactly what our SET_CONFIGURATION must
+produce.  PCM rate within 0.1% of nominal, zero drops, DAC running.
+
+OUR STACK AGAINST THE INSTRUMENT (M2_BT_TARGET_NAME=EVKB-SINK pins the target
+when several headsets are discoverable):
+
+★ SSP (Secure Simple Pairing) FAILS between the IW416 and the ESP32 controller,
+and it is NOT ours.  Our side: Create_Connection ok, Link_Key_Request -> neg,
+IO_Capability_Request -> reply, peer's IO cap arrives, User_Confirmation_Request
+-> accept ... then nothing; the sink logs "E(25, 0) in user_cfm_req_reply" (or
+E(26,0)) then the link dies of LMP-response/supervision timeout, gap_auth
+status=9 (AUTH_FAILURE).  25 and 26 are LMP EXTENDED OPCODES -- LMP_IO_
+Capability_req / _res -- flagged by Bluedroid's controller inside its confirm
+handler: the two controllers disagree at the LMP IO-capability exchange, below
+anything a host does.  Seven host-side variables were eliminated ONE AT A TIME,
+each a single bench run with both sides logged:
+  1. sink busy streaming from the phone  -> reset to idle: same failure
+  2. sink IO cap NONE vs DisplayYesNo     -> same (io_cap=1 on the wire)
+  3. our AuthRequirements 0x04 vs 0x00    -> same
+  4. unanswered L2CAP Information Request -> answered (see below): same
+  5. Secure Connections                   -> not in play: IW416 sc_ctrl=0,
+     Bluedroid sc_host=0 (read via 0x0C79 / ext features pages 1-2 local and
+     0x041C remote); forcing our SC host support on (0x0C7A) changed nothing
+  6. role switch at connection setup      -> disallowed: same
+  7. peer-initiated pairing (no Authentication_Requested from us; open AVDTP
+     and let Bluedroid's service policy drive SSP) -> Bluedroid pends the
+     channel then disconnects us (0x16) without ever starting SSP
+Both commercial headsets pair via SSP with the IW416 first time, every time.
+
+★ WORKAROUND THAT WORKS: legacy PIN pairing (M2_BT_LEGACY_PIN: Write_Simple_
+Pairing_Mode=0, answer PIN_Code_Request with 1234; the sink replies 1234 to its
+own PIN request):
+
+    pin_code_req: bd=88:13:BF:58:86:9E -> 1234
+    link_key: type=0 ...  auth_complete: status=0x00
+    encryption_change: status=0x00 enabled=1   connect_secure=ok (B4)
+    l2cap_echo_rsp=ok (B5)
+    sdp_avdtp_version=0x0103 (B6)              <- Bluedroid's own SDP record
+    avdtp_channel=open rcid=0x0040
+    avdtp_seps n=1:  sep seid=1 in_use=0 media=audio type=SNK
+    sink: a2dp_conn: state=connecting peer=A0:CD:F3:C5:B9:F3
+
+The whole BT-2 chain plus AVDTP Discover, first attempt, against Bluedroid --
+and the instrument REGISTERED our AVDTP channel as an A2DP connection from us.
+Every BT-3 step from here (GET_CAPABILITIES, SET_CONFIGURATION, OPEN, START,
+media) will be reported by the sink instead of inferred from silence.  Bluedroid
+re-authenticates for the AVDTP service (a second PIN request), and SDP-queries
+us for our DeviceID record on its reverse channel (psm 0x0001) -- an SDP server
+of our own is BT-3+ work.
+
+TWO REAL DEFECTS IN OUR STACK, found along the way, both fixed:
+
+  * L2CAP Information Request was never answered.  It is a MANDATORY reply;
+    Bluedroid sends one the instant the ACL is up and gates channel setup on
+    it (it disconnected us when it went unanswered).  Neither headset ever
+    sent one, which is how the gap survived all of BT-2.  serviceSignalling()
+    now answers Information Requests (extended features: none; fixed channels:
+    signalling) and peer Echo Requests, from main context, and is polled in
+    every wait loop; onAcl() is registered the moment the ACL is up rather
+    than after pairing.
+
+  * M2Radio/hci Hci::service() timed out commands submitted from inside its
+    own drain.  It captured `now` at the top of the pass; a callback run by
+    the drain (onEvent) submit()s a command and dispatch() stamps m_sentAt
+    with a FRESH clock -- a few ms later once the callback has printed -- so
+    the post-drain check's unsigned (now - m_sentAt) underflowed and the
+    command "timed out" in the same pass.  Measured: SSP replies reported
+    no_response 3-4 ms after submit, their prompt acks then counted as late
+    (every B4/B5/B6 heartbeat carried timeouts=2..3 late=2..3 -- this).  The
+    commands were still sent, so it never changed the wire; it did pop the
+    queue early.  Same disease onFault()'s comment describes for m_lastByteAt,
+    one line down.  Fix: re-read the clock after the drain.  Host test 15
+    reproduces it with a per-byte ticking clock and an event callback that
+    submits; hci host tests PASS; both m2_hci_probe QEMU gates PASS on the
+    fixed library (run_qemu.sh, [hci] timeouts=0 late=0), measured before
+    this was committed.
+
+Bench knobs added to the probe this session, all default OFF (gates
+byte-identical): M2_BT_TARGET_NAME, M2_BT_AUTH_REQ, M2_BT_PEER_AUTH,
+M2_BT_SC_HOST, M2_BT_NO_ROLE_SWITCH, M2_BT_LEGACY_PIN.  The bench build for
+the instrument is: real blobs, ASSERT_CTS=ON, CONNECT=ON,
+TARGET_NAME=EVKB-SINK, LEGACY_PIN=ON, AVDTP_DISCOVER=ON.
+
+Next: BT-3 (NEW-9) -- GET_CAPABILITIES -> SET_CONFIGURATION (the calibration
+run's SBC config is the target) -> OPEN -> START -> media channel -> RTP+SBC,
+with the sink's audio_cfg / packet counters / DACs as the assertions.
