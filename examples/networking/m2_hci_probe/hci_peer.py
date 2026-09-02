@@ -27,6 +27,7 @@ DEVICES = [(bytes.fromhex("01EEDDCCBBAA"), 0x240404, b"FAKE-HEADSET-01"),   # pr
 
 OP_RESET, OP_READ_LOCAL_VER, OP_READ_BUFFER_SIZE, OP_READ_BD_ADDR = 0x0C03, 0x1001, 0x1005, 0x1009
 OP_INQUIRY, OP_REMOTE_NAME_REQ = 0x0401, 0x0419
+OP_VS_SET_BAUD = 0xFC09                  # NXP vendor: param = uint32 LE running baud
 
 # --- NXP V3 UART firmware download -----------------------------------------
 # The real M2-MAYA-W161 sends exactly these five bytes on power-up, three
@@ -59,7 +60,7 @@ def v3_data_req(length, offset, err=0):
     f = bytes([V3_DATA_REQ]) + struct.pack("<HIH", length, offset, err)
     return f + bytes([crc8(f)])
 LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP_REMOTE_NAME_REQ,
-               "starve": OP_RESET, "fwdnld": OP_READ_BD_ADDR}
+               "starve": OP_RESET, "fwdnld": OP_READ_BD_ADDR, "baud": OP_READ_BUFFER_SIZE}
 
 def connect(path):
     deadline = time.time() + 20
@@ -78,6 +79,7 @@ class Peer:
     def __init__(self, sock, phase):
         self.s, self.phase, self.buf, self.cmds, self.log = sock, phase, b"", [], []
         self.resets, self.pending = 0, []          # pending: (due, bytes)
+        self.baud_seen = []
         # --- V3 bootloader state (fwdnld phase only) ---
         # While `boot` is True every received byte belongs to the download, not
         # to HCI: the host is answering the bootloader, and H4 framing has not
@@ -135,6 +137,14 @@ class Peer:
                     self.send(event(0x07, b"\x00" + bd + d[2].ljust(248, b"\x00")), 0.1); break
             else:
                 self.send(event(0x07, b"\x04" + bd + b"\x00" * 248), 0.1)   # 0x04 = Page Timeout
+        elif opcode == OP_VS_SET_BAUD:
+            if len(params) != 4:
+                self.log.append("PEER-SETBAUD-BAD-LEN %d" % len(params))
+                self.send(cmd_complete(opcode, b"\x12")); return       # 0x12 = Invalid HCI Command Parameters
+            rate = struct.unpack("<I", params)[0]
+            self.baud_seen.append(rate)
+            self.log.append("PEER-SETBAUD rate=%d" % rate)
+            self.send(cmd_complete(opcode, b"\x00"))
         else:
             self.log.append("PEER-UNKNOWN-OPCODE 0x%04x" % opcode)
             self.send(cmd_complete(opcode, b"\x01"))                    # 0x01 = Unknown HCI Command
@@ -249,8 +259,9 @@ if __name__ == "__main__":
         print("PEER-BOOT ok=%d acks=%d chunks=%d err=%s"
               % (1 if peer.boot_ok else 0, peer.boot_acks, peer.boot_step,
                  peer.boot_err if peer.boot_err else "none"))
-    print("PEER-DONE phase=%s cmds=%d resets=%d opcodes=%s"
-          % (phase, len(peer.cmds), peer.resets, ",".join("%04x" % c for c in peer.cmds)))
+    print("PEER-DONE phase=%s cmds=%d resets=%d opcodes=%s baud=%s"
+          % (phase, len(peer.cmds), peer.resets, ",".join("%04x" % c for c in peer.cmds),
+             ",".join(str(b) for b in peer.baud_seen) or "none"))
     ok = LAST_OPCODE[phase] in peer.cmds
     if phase == "fwdnld":
         ok = ok and peer.boot_ok and peer.boot_err is None
