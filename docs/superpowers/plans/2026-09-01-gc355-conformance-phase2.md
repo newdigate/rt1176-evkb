@@ -912,3 +912,59 @@ Update `expected_silicon.txt` (with reasons, never by pasting the transcript), n
 **Case 5's admissible set is closed, not open.** Two values are `ok` (255 raw, ~128 alpha-modulated) and a third plausible one — ~160, which is `SRC_OVER`'s answer over this backdrop — is deliberately `broken`, because `BLEND_NONE` silently blending would be a finding rather than a defensible reading. The tolerances keep the 128 and 160 bands 28 apart.
 
 **Known gap:** case 5's two admissible outcomes are handled by the case returning `ok` for either, not by the expectation file's `pair:` mechanism — `pair:` is for joint outcomes ACROSS cases and does not apply to one case with two acceptable values. The expectation still pins ONE of them so a flip shows as drift.
+
+---
+
+## As-built — what changed mid-flight, and why
+
+The plan shipped over 16 commits. Five changes were made against the plan's own
+text, each because implementation or measurement showed the plan was wrong.
+
+**1. The promotion was narrowed (Task 1).** The plan promoted all four
+`vgc_cover_*` helpers out of `vgc_cases_path.cpp`. Every Phase 2 case is
+`cover=n/a`, so three of them would have been promoted for an undesigned Phase 3.
+Only `vgc_cover_t` and `vgc_cover_na()` moved, and the justification is killing a
+duplicated `cover=n/a` literal rather than reuse. `vgc_cover_na()` also became a
+`static inline` in the header — a `.cpp` definition would have forced Task 5's
+colour suite to link all fifteen path cases to reach one nine-character constant.
+
+**2. The spec contradicted itself, and measurement settled it (Task 4).** §3
+admitted reading B as `ok`; §8 required the alpha-ignoring arm to break cases 2–4.
+With a *saturated white* source those are mutually exclusive — `S + D*(1-Sa)` is
+observationally identical to writing `S` raw. Resolved by judging the **alpha
+row** as well (`inc/vg_lite.h:462`, unambiguous under both readings, 255 vs 128),
+which is a better check than the one it replaced and covers a part of the
+operator nothing else looked at. Case 5 is deliberately excluded — `BLEND_NONE`'s
+row is `A: Sa`, so 128 is correct there.
+
+**3. The model had to model the target twice over.** First the ABGR→ARGB swizzle
+(Task 3): the model stored `vg_lite_color_t` order where the target stores memory
+order, and Task 5's first case would have read the blue byte and reported a
+defect that is not there. Then, after the boot, the blend itself: the model
+implemented reading A and the silicon does **B**.
+
+**4. ★★ The measured reading is PINNED, and that was a real defect the plan
+missed.** `tools/vglite-conformance-check.sh` compares only
+`<id> <pixel> <repeat>`. Cases returning `ok` under *either* reading are
+**invisible** to it — an SDK re-vendor flipping `SRC_OVER` back would have left
+every verdict `ok` and the checker green, which is exactly the "quirk that
+silently disappears" the expectation file exists to catch. The plan's own
+self-review claimed "the expectation still pins ONE of them so a flip shows as
+drift"; it did not. Admitting both readings was right *before* the boot and wrong
+to leave standing after it. Two arms now prove the pin: a reading-A model reddens
+cases 2 and 3 by name with `model=A`, and a modulating-`BLEND_NONE` model reddens
+case 5.
+
+**5. `blend/srcover-double` declines to break under reading A, and that is
+correct.** It predicts `v2` from the *measured* `v1`, so it holds under either
+operator — its documented reading-agnostic design. Nothing in the tree could test
+that claim until the reading-A arm existed; the arm now pins the moved values
+(`v1=160,v2=208,pred=208`), which distinguishes "correctly declined" from "not
+connected to the blend at all".
+
+★ **One claim had to be narrowed after the fact.** The measurement write-up said
+*both* compositors feed non-premultiplied colour to `SRC_OVER`. Only the fader
+does — `synthui_rotary_knob_gpu.cpp` has no `abgr_a` and forces `0xFF000000`, so
+at α=255 `S + D*(1-Sa)` reduces to `S`, correct under either reading. Inferred
+from shared `SRC_OVER` usage without checking each compositor's colour
+constructor; checking the constructor is what settles it.

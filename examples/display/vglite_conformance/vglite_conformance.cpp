@@ -75,12 +75,17 @@ uint32_t vgc_scratch_sum(void)
     return vgc_fnv(vgc_fb(), (size_t)VGC_W * VGC_H * 4);
 }
 
-vg_lite_error_t vgc_clear(void)
+/* ONE clear implementation: vgc_clear() is vgc_clear_to(VGC_BG_COLOR). Two
+ * copies would be two chances to diverge on the finish, which is the half a
+ * caller cannot see. */
+vg_lite_error_t vgc_clear_to(uint32_t abgr)
 {
-    const vg_lite_error_t e = vg_lite_clear(&vgc_scratch, NULL, VGC_BG_COLOR);
+    const vg_lite_error_t e = vg_lite_clear(&vgc_scratch, NULL, abgr);
     if (e != VG_LITE_SUCCESS) return e;
     return vg_lite_finish();
 }
+
+vg_lite_error_t vgc_clear(void) { return vgc_clear_to(VGC_BG_COLOR); }
 
 /* ---- per-case helpers ------------------------------------------------------ */
 
@@ -91,12 +96,23 @@ vg_lite_matrix_t *vgc_ident(void)
     return &m;
 }
 
+void vgc_draw_path_blend(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
+                         vg_lite_blend_t blend, vg_lite_error_t *acc)
+{
+    const vg_lite_error_t e = vg_lite_draw(&vgc_scratch, p, rule, vgc_ident(),
+                                           blend, color);
+    if (e != VG_LITE_SUCCESS && *acc == VG_LITE_SUCCESS) *acc = e;
+}
+
+/* Signature UNCHANGED -- every path case draws through it and their answers
+ * are measured on silicon (a count would go stale as cases are added; the
+ * property that matters is that none of them had to change). It delegates so
+ * the status-accumulation contract the case tables are specified in terms of
+ * has ONE implementation. */
 void vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
                    vg_lite_error_t *acc)
 {
-    const vg_lite_error_t e = vg_lite_draw(&vgc_scratch, p, rule, vgc_ident(),
-                                           VG_LITE_BLEND_NONE, color);
-    if (e != VG_LITE_SUCCESS && *acc == VG_LITE_SUCCESS) *acc = e;
+    vgc_draw_path_blend(p, rule, color, VG_LITE_BLEND_NONE, acc);
 }
 
 void vgc_finish_into(vg_lite_error_t *acc)
@@ -333,6 +349,7 @@ void setup()
     }
 
     for (size_t i = 0; i < vgc_path_case_count; i++)      run_case(&vgc_path_cases[i]);
+    for (size_t i = 0; i < vgc_color_case_count; i++)     run_case(&vgc_color_cases[i]);
     for (size_t i = 0; i < vgc_dangerous_case_count; i++) run_case(&vgc_dangerous_cases[i]);
 
     /* The spec's summary line, with repeat_differs appended (the spec's field

@@ -225,7 +225,7 @@ triples rendering one at a time into a 128×128 BGRA8888 EXTMEM scratch, each
 case printing TWO INDEPENDENT VERDICTS — `api=` (what the driver said) and
 `pixel=` (what a structural CPU-side predicate found) — because every GC355
 defect this tree has hit reported success while producing the wrong picture.
-Phase 1 is thirteen paths/contours/winding cases; Phase 1b (2026-09-01) added two more and answered the mechanism question, taking the matrix to FIFTEEN. Its gate asserts the HONEST
+Phase 1 is thirteen paths/contours/winding cases; Phase 1b (2026-09-01) added two more and answered the mechanism question, and Phase 2 (2026-09-01) added FIVE COLOUR/BLEND cases, taking the matrix to TWENTY. Its gate asserts the HONEST
 NEGATIVE (`vgc_engine=absent`, all thirteen `pixel=skip`) with three tripwires
 — no case may report `pixel=ok`, none may report `pixel=broken`, and no
 `api=`/`api2=` may say `success` with no GPU — plus a case-line COUNT check and
@@ -244,11 +244,14 @@ machine from the one the shipping compositors run on (720×1280 target, 256×256
 tess). Phase 3's `scissor/tess-fullscreen` case probes the other regime on
 purpose.
 ★ **QEMU cannot reach one line of the pixel logic** (every case reports
-`pixel=skip`), so the example carries THREE HOST SUITES run by
-`examples/display/vglite_conformance/tests/run.sh` — 209 checks over the pure
-predicates, the path arena, and the case geometry itself. The geometry suite
-compiles the REAL case functions against three model rasterisers: a correct
-GPU (all fifteen must report `ok`), a first-contour-only GPU modelling this
+`pixel=skip`), so the example carries FIVE HOST SUITES run by
+`examples/display/vglite_conformance/tests/run.sh` — **440 checks** over the pure
+predicates, the colour predicates, the path arena, the path case geometry and
+the colour case geometry. The geometry suite
+compiles the REAL case functions against model rasterisers — the path suite
+against four (correct / first-contour-only / draws-nothing / stray-ink) and the
+colour suite against seven, including one per admissible blend reading. A
+correct GPU (all fifteen path cases `ok`), a first-contour-only GPU modelling this
 GC355's known defect (the probe cases must go BROKEN **by name**, every control
 must stay `ok`), and a GPU that draws nothing. **The negative arms are the
 point** — a positive-only suite is equally consistent with a matrix that cannot
@@ -584,6 +587,34 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-09-02: 124 gates discovered, 122 passed, 2 failed, 0 SKIP**,
+on the NEW-32 Phase 2 close-out (colour & blend; matrix 15 → 20,
+`display/vglite_conformance` green in 10 s). `LICENSE-AUDIT: PASS`, vacuity
+29/29, host suites **440 checks over five suites** (39 predicates + 25 colour
+predicates + 42 arena + 200 path geometry + 134 colour geometry).
+Both reds dispositioned WITH EVIDENCE, neither a regression:
+  * `m2_hci_probe[hci]` — the SAME bench-configured-build-dir class as
+    2026-08-27/29/30, unchanged all session.
+  * `m2_uap_lwip[uap]` — failed at 3 s under sweep load and **PASSES idle**
+    (re-run: "configure -> BSS_START -> netif -> socket -> DHCP, in order,
+    health clean"). This is the documented load-sensitivity class landing on a
+    gate NOT previously suspect — the THIRD time that has happened
+    (`cm4_wire_int_slave_test` 2026-08-06, `m2_rx_demo[txaggr]` 2026-08-27).
+    ★ **So the susceptible set is not a fixed list**, and the branch cannot be
+    the cause: its only touch under `examples/networking/` or `tools/` is one
+    message string in `gate-vacuity.test.sh`, which that gate never reads.
+★ **Phase 2 exists because of a gap found while scoping it**: all fifteen
+Phase 1 cases render with `VG_LITE_BLEND_NONE`, while BOTH shipping compositors
+use `VG_LITE_BLEND_SRC_OVER` exclusively (twelve call sites). The matrix had
+never tested the blend mode production uses.
+★ **The colour cases were PINNED to the measured reading after the boot**, and
+that closed a real hole rather than a cosmetic one: the drift checker compares
+only `<id> <pixel> <repeat>`, so a case returning `ok` under either of two
+readings is INVISIBLE to it. Admitting both was right before the boot and wrong
+to leave standing after. Two host-suite arms now prove the pin — a reading-A
+model reddens the two SRC_OVER cases by name, a modulating-`BLEND_NONE` model
+reddens the fifth.
 
 ✅ **Measured 2026-08-30: 124 gates discovered, 123 passed, 1 failed, 0 SKIP**,
 on the NEW-32 Phase 1 close-out (`display/vglite_conformance`, the GC355/VGLite
@@ -1362,13 +1393,21 @@ not hung.
   NOT identified.** Two NESTED-contour paths using the ORDINARY encoding
   rendered BOTH contours correctly — the non-zero ring cut its hole
   (`rim=1 centre=0`) and the same-winding nest honoured both fill rules
-  (`eo_centre=0 nz_centre=1`). A truncate-at-the-first-CLOSE story explains the
+  (`eoc=0 nzc=1`). A truncate-at-the-first-CLOSE story explains the
   four bars and explains NEITHER of those, which carry the same CLOSE-then-MOVE
   boundary. Three Phase-1 predictions were wrong in exactly this direction
   (predicted `broken`, measured `ok`); each is recorded with its reason in
   `expected_silicon.txt` rather than re-goldened away. What the matrix does not
   separate is DISJOINT-vs-NESTED from FOUR-contours-vs-TWO. **Phase 1b
-  (2026-09-01, two boots) ANSWERED IT: DISJOINTNESS is the variable.** Two
+  (2026-09-01, two boots) ANSWERED IT: DISJOINTNESS is the variable.**
+  ★★★ **AND PHASE 2 (2026-09-02) WENT FURTHER: HOLE CUTTING is the variable,
+  not nesting.** Closing the `evenodd` pass-1 coverage gap — that pass IS an
+  EVEN_ODD hole and had never been checked — gave `eocover=short:308`,
+  identical on both boots, while pass 2 (same winding, NO hole) is exact. Every
+  hole-cutting render in the matrix mis-covers (ring `short:769`, evenodd pass 1
+  `short:308`, four-nested-rings `stray:1171`); the one that cuts no hole does
+  not. The two boots even disagree on `nzfill` while agreeing EXACTLY on
+  `eofill` — the nondeterminism lives in the no-hole pass. Two
   disjoint contours fail exactly as four do (`path/two-disjoint-bars`,
   `runs=1` of 2, byte-identical on both boots); four nested contours work
   exactly as two do (`path/four-nested-rings`, `runs=4`). So the rule is
@@ -1411,12 +1450,54 @@ not hung.
   `broken`, not `ok`. Tolerance is `k*perimeter`, NEVER a percentage of area —
   a 5% band would have false-`broken`ed `self-intersecting`, a CONTROL, since a
   pentagram carries 474 px of all-diagonal boundary on 2792 px of area.
+  ★★ **PHASE 2 (2026-09-01) FOUND THAT THE MATRIX HAD NEVER TESTED THE BLEND
+  MODE PRODUCTION USES.** All fifteen Phase 1 cases render with
+  `VG_LITE_BLEND_NONE`; both shipping compositors use `VG_LITE_BLEND_SRC_OVER`
+  exclusively, twelve call sites. Five colour/blend cases MEASURED 2026-09-02, two boots,
+  every verdict identical (matrix 15 → 20, sweep unchanged at 124; host suites
+  305 → 410 checks). `cases=20 ok=15 broken=5 repeat_differs=2`, timeouts 0.
+  ★ **The driver's own header is internally inconsistent about whether
+  `SRC_OVER` is premultiplied** — `inc/vg_lite.h:452`/`:458` file mode 1 as
+  non-premultiplied while `:461` gives it `S + D*(1-Sa)`, the PREmultiplied
+  operator, and `:481` gives mode 11 the non-premultiplied `S*Sa + D*(1-Sa)`
+  which `:137` aliases `PREMULTIPLY_SRC_OVER`. Names and formulas inverted. The
+  cases admit BOTH readings and report which, rather than pre-judging.
+  ★★★ **MEASURED: THIS SILICON IMPLEMENTS READING B — `SRC_OVER` IS THE
+  PREMULTIPLIED OPERATOR** (`v=255 a=255 model=B` in both colour cases, and they
+  AGREE). And **the FADER feeds it NON-premultiplied colour**:
+  `synthui_fader_gpu.cpp`'s `abgr_a()` packs unscaled RGB with a separate alpha
+  and passes it to `SRC_OVER` at alpha 115 (a shadow), `pal->gloss_opa` (a
+  highlight) and a variable `opa` (the tick runs). Under `S + D*(1-Sa)` the
+  source contributes at FULL intensity whatever its alpha, so a white gloss at
+  partial opacity SATURATES instead of reading as a sheen. **The fix is one line
+  in `abgr_a`** — premultiply RGB by `a/255` — but it MOVES THE FADER'S GOLDENS
+  and belongs to Phase 4's guard layer, not to a probe.
+  ★ **`synthui_rotary_knob_gpu.cpp` is NOT affected**, structurally rather than
+  by luck: it has no `abgr_a`, and every colour it draws goes through
+  `abgr(hex)` which forces `0xFF000000` — always opaque. At α=255
+  `S + D*(1-Sa)` reduces to `S`, correct under either reading.
+  ★ **Sensitivity limit:** under reading B a saturated white source clamps to
+  255 in cases 2-4, so their colour tolerances do nothing and the ALPHA ROW is
+  what discriminates. A non-saturated source is the obvious next case.
+  ★ `BLEND_NONE` measured `v=255 a=128 read=raw` — source written raw, alpha row
+  `A: Sa`, exactly as documented. All fifteen Phase 1 cases used it with an
+  opaque colour and are unaffected.
+  ★ **The alpha row is the one unambiguous part and it is what catches a GPU
+  that discards alpha**: `:462` gives `A: Sa + Da*(1-Sa)` = 255 over an opaque
+  backdrop under BOTH readings, while alpha-ignoring leaves 128. Without it,
+  a saturated white source makes reading B observationally identical to writing
+  the source raw. `blend/none-honours-alpha` deliberately does NOT judge alpha
+  — `BLEND_NONE`'s row is `A: Sa`, so 128 is correct there.
+  ★ **The "SRC_OVER of AA paths is not idempotent" quirk is RETIRED, not
+  confirmed**: that drift is correct alpha compositing, true of every
+  conforming implementation. `blend/srcover-double` instead asserts the second
+  composite lands where the formula predicts FROM THE MEASURED FIRST.
   ★ **KEEP FOLLOWING ONE-CONTOUR-PER-PATH** — now for two independent reasons.
   The mechanism is still unidentified: "disjoint" describes the geometry, not
   why the tessellator drops it. One clue: bar 0 renders 1393 px inside the
   four-bar path and 1322 px inside the two-bar path — same bar, different
   bounding box, and the driver derives its tessellation window from that box.
-  ★ `path/evenodd-vs-nonzero` is the matrix's only `repeat=differs`: its two
+  ★ `path/evenodd-vs-nonzero` is one of TWO cases reporting `repeat=differs` (with `path/four-nested-rings`): its two
   IDENTICAL back-to-back renders produce different pixels, REPRODUCIBLY
   (byte-identical on both boots). Not boot-to-boot noise but a repeatable
   in-boot difference between two identical draw sequences — the class that hid

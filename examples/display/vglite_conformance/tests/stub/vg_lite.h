@@ -20,6 +20,11 @@
  *     width, so the identities have to be the real ones.
  *   - vg_lite_path_t carries the four fields the arena writes through
  *     vg_lite_init_path, with bounding_box FIRST as in the real struct.
+ *   - vg_lite_fill_t is the real 0x1900/0x1901 pair (inc/vg_lite.h:514-518).
+ *     Nothing here compares a fill rule to a literal -- the model rasteriser
+ *     only tests it against the enumerator -- so the wrong values would never
+ *     have failed. That is exactly the argument for fixing them: a stub is
+ *     only useful while every value in it is the driver's.
  *   - VG_LITE_SUCCESS is 0 and VG_LITE_OUT_OF_RESOURCES is non-zero, which is
  *     what makes the overflow assertions mean anything.
  * It is NOT a general vg_lite mock and must not grow into one: anything the
@@ -42,8 +47,26 @@
 typedef enum { VG_LITE_SUCCESS = 0, VG_LITE_OUT_OF_RESOURCES = 5 } vg_lite_error_t;
 typedef enum { VG_LITE_S8 = 0, VG_LITE_S16 = 1, VG_LITE_S32 = 2,
                VG_LITE_FP32 = 3 } vg_lite_format_t;
-typedef enum { VG_LITE_LOW = 0, VG_LITE_MEDIUM = 1, VG_LITE_HIGH = 2 } vg_lite_quality_t;
-typedef enum { VG_LITE_FILL_NON_ZERO = 0, VG_LITE_FILL_EVEN_ODD = 1 } vg_lite_fill_t;
+/* Real order and real values (inc/vg_lite.h:253-259) -- HIGH is 0 and LOW is
+ * 3, i.e. the REVERSE of the intuitive reading, and VG_LITE_UPPER exists
+ * between them. arena_test asserts on VG_LITE_HIGH, so a convenient ordering
+ * here would be a stub vouching for a value the driver does not use. */
+typedef enum { VG_LITE_HIGH = 0, VG_LITE_UPPER = 1, VG_LITE_MEDIUM = 2,
+               VG_LITE_LOW = 3 } vg_lite_quality_t;
+/* Real values (inc/vg_lite.h:514-518) -- EVEN_ODD is 0x1900 and NON_ZERO is
+ * 0x1901, NOT 0 and 1. They were 0/1 here until Phase 2, which was this stub
+ * vouching for values the driver does not use: nothing compares a fill rule to
+ * a literal, so it was latent, but "latent" is how the quality_t ordering got
+ * in too and it was corrected for the same reason earlier in this phase. A
+ * stub is a claim about the real header; a claim that costs nothing to make
+ * true has no excuse for being false. */
+typedef enum { VG_LITE_FILL_EVEN_ODD = 0x1900,
+               VG_LITE_FILL_NON_ZERO = 0x1901 } vg_lite_fill_t;
+/* Only the two modes the harness names, at their real values
+ * (inc/vg_lite.h:459-461). No suite renders through a blend mode -- each
+ * supplies its own vgc_draw_path -- so this exists purely so
+ * vgc_harness.h's vgc_draw_path_blend declaration parses on the host. */
+typedef enum { VG_LITE_BLEND_NONE = 0, VG_LITE_BLEND_SRC_OVER = 1 } vg_lite_blend_t;
 
 typedef struct { float m[3][3]; }            vg_lite_matrix_t;
 typedef struct { void *memory; uint32_t address; int32_t width, height, stride; } vg_lite_buffer_t;

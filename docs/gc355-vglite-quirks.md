@@ -12,39 +12,54 @@ safe usage · evidence**.
 > distinguishes a working feature from a broken one, so the only currency here
 > is a probe case that looked at pixels.
 
-## ✅ SILICON STATUS: **MEASURED 2026-08-30**
+## ✅ SILICON STATUS: **MEASURED 2026-09-02** (Phase 2 boot; supersedes 2026-08-30)
 
-Transcript: `examples/display/vglite_conformance/transcript_hw_evkb.txt`.
+Transcripts: `examples/display/vglite_conformance/transcript_hw_evkb.txt` is
+**boot 2**, the one `expected_silicon.txt` is checked against;
+`transcript_hw_evkb-boot1.txt` is the first boot, committed so the
+two-boot claims below can be checked rather than taken on trust.
 VGLite pin **`2e17773`** (`evkb.cmake`), Series `gc355/0x0_1216`,
 `vgc_chip_id=0x00000355`, target 128×128 BGRA8888, tessellation 64×64,
-`vgc_timeouts=0 vgc_irqs=75`.
+`vgc_timeouts=0 vgc_irqs=111`.
 
 ★ **The pin is recorded because the checker's whole drift rationale is "the
 driver moved under us".** Attributing a future red to an SDK re-vendor or a
 pin bump should not need git archaeology.
-Result: `cases=13 ok=12 broken=1 repeat_differs=1`.
 
-**TWO BOOTS, BYTE-IDENTICAL** — every verdict and every detail number. That
-matters: this tree has seen a GC355 defect hide behind exactly one boot
-(NEW-20's winding-2 track, ten boots and ten checksums), so a single-boot GPU
-result is not trusted here.
+Result: **`cases=20 ok=15 broken=5 repeat_differs=2`**.
+
+**TWO BOOTS, EVERY VERDICT IDENTICAL.** Three *detail* numbers move between
+them, all in cases already known to vary — `two-disjoint-bars` fill 1322/1316
+(a BROKEN case whose stray pixels are the misparse), `four-nested-rings`
+6875/6931 and `evenodd` `nzfill` 6421/6423 (both `repeat=differs`). Notably
+`eofill` agrees **exactly**: the nondeterminism lives in the no-hole pass.
+That distinction matters because this tree has seen a GC355 defect hide behind
+exactly one boot (NEW-20's winding-2 track, ten boots and ten checksums), so a
+single-boot GPU result is not trusted here.
 
 Verify a fresh transcript against the pre-registered expectation with
-`tools/vglite-conformance-check.sh`; it fails on drift in **either**
-direction.
+`tools/vglite-conformance-check.sh`; it fails on drift in **either** direction.
+
+★★ **BUT KNOW WHAT THE CHECKER CANNOT SEE.** It compares only
+`<id> <pixel> <repeat>`. A case that returns `ok` under more than one
+behaviour is invisible to it. Phase 2's colour cases were built that way
+deliberately — before the boot, the driver's header supported two readings of
+`SRC_OVER` — and were **pinned to the measured reading afterwards** precisely
+so a flip reddens the checker instead of passing silently. If you ever widen a
+case to admit two answers, it stops being drift-protected the moment you do.
 
 **Three Phase 1 predictions were WRONG**: two VERDICT predictions
 (`path/two-contour-ring-nonzero` and `path/evenodd-vs-nonzero`, both predicted
 `broken`, measured `ok`) and one REPEAT prediction (`path/evenodd-vs-nonzero`,
-predicted `same`, measured `differs`). Two verdict lines changed in
-`expected_silicon.txt`; `path/multi-contour-close-padded` was never a
-prediction — it was pre-registered as a `pair:` with both outcomes admissible. They are recorded as measured, with the
-reason for each change written into `expected_silicon.txt`, and they are the
-reason [the mechanism note](#what-is-and-is-not-established) below exists.
+predicted `same`, measured `differs`).
+★ **`path/evenodd-vs-nonzero` has since moved AGAIN** — Phase 2 gave its
+EVEN_ODD pass a coverage check for the first time and it is now `broken`
+(`eocover=short:308`). Its Phase 1 `ok` was on the strength of the other pass
+alone.
 
-Phases 2, 3 and 4 have no cases built at all; their sections are marked
-accordingly and their rows are claims carried over from working code, not
-probe results.
+**Phase 2 is built and measured** (five colour/blend cases, §"Colour & blend").
+Phases 3 and 4 have no cases; their sections are marked accordingly and their
+rows are claims carried over from working code, not probe results.
 
 ## Re-running it
 
@@ -72,7 +87,7 @@ be describing the machine. The fix for a red is never `cp transcript expected`
 
 | Piece | Path |
 |---|---|
-| The probe (13 path cases + 1 opt-in dangerous) | `examples/display/vglite_conformance/` |
+| The probe (20 cases — 15 path, 5 colour/blend — plus 1 opt-in dangerous) | `examples/display/vglite_conformance/` |
 | Design spec | `docs/superpowers/specs/2026-08-30-gc355-conformance-design.md` |
 | Pre-registered expectation | `examples/display/vglite_conformance/expected_silicon.txt` |
 | Drift checker | `tools/vglite-conformance-check.sh` |
@@ -94,7 +109,7 @@ verdict; it says nothing about the GC355.
 
 ## Paths, contours & winding — Phase 1
 
-**Verdicts below are MEASURED** (2026-08-30, two boots byte-identical). Where a
+**Verdicts below are MEASURED** (2026-09-02, two boots, every verdict identical). Where a
 cell says *Prediction refuted*, the pre-registered expectation was wrong and
 `expected_silicon.txt` carries the reason for the change.
 
@@ -106,7 +121,7 @@ cell says *Prediction refuted*, the pre-registered expectation was wrong and
 | two DISJOINT contours in one path, ordinary CLOSE | **BROKEN** — `runs=1` of 2. Two fail exactly as four do | **one contour per path**, or pad the CLOSE slot | `path/two-disjoint-bars` |
 | four NESTED contours in one path, ordinary CLOSE | **BROKEN** — structure right (`runs=4`, all four honoured) but **~1150 STRAY PIXELS** (6931/6875 vs an analytic 5760), varying between boots | do **not** use it | `path/four-nested-rings` |
 | hole cut by a reversed inner contour (non-zero) | **BROKEN** — sample points say the hole is right (`rim=1 centre=0`) but `fill=4607` vs an analytic 5376: **`cover=short:769`, 14 % of the ring missing** | don't; draw a filled plate then an inset plate in the backdrop colour — its control measures EXACT | `path/two-contour-ring-nonzero`, control `path/two-draws-ring` |
-| `VG_LITE_FILL_EVEN_ODD` vs `NON_ZERO` across nested contours | **OK** — `eo_centre=0 nz_centre=1`, both rules honoured. **Prediction refuted.** BUT `repeat=differs` | the only case in the matrix whose two identical renders differ — see the nondeterminism note | `path/evenodd-vs-nonzero` |
+| `VG_LITE_FILL_EVEN_ODD` vs `NON_ZERO` across nested contours | **BROKEN** — both rules honoured (`eoc=0 nzc=1`) but the EVEN_ODD pass, which **cuts a hole**, is `eocover=short:308`. `repeat=differs` | do not cut holes in one path — see the hole-cutting note | `path/evenodd-vs-nonzero` |
 | fill rules on ONE self-intersecting contour | **OK** — pentagram centre empty under EVEN_ODD, filled under NON_ZERO | both rules honoured — this is the fill-rule usage that works | `path/self-intersecting` |
 | path coordinate formats S8 / S16 / S32 / FP32 | **OK** — all four `fill=1830`, and `same_px=1`: the four renders are BIT-IDENTICAL, not merely equal in area | all four usable; **the opcode is one BYTE at the base of a format-width slot**, not a value of the format's type, so each format needs its own typed array | `path/format-s8`, `path/format-s16`, `path/format-s32`, `path/format-fp32`, agreement: `path/format-agreement` |
 | degenerate (zero-area) geometry | **OK** — `fill=0`, nothing drawn | safe to emit; nothing, or a hairline on the degenerate row — do not rely on which | `path/degenerate-zero-area` |
@@ -212,7 +227,7 @@ Four disjoint bars in one path render as one contour with the ordinary
 stated**, is wrong. Two nested-contour paths using the **ordinary** CLOSE
 encoding rendered **both** contours correctly — the non-zero ring cut its hole
 (`rim=1 centre=0`) and the same-winding nest honoured both fill rules
-(`eo_centre=0 nz_centre=1`). A truncate-at-the-first-CLOSE story explains the
+(`eoc=0 nzc=1`). A truncate-at-the-first-CLOSE story explains the
 four bars and explains **neither** of these, because both carry the same
 CLOSE-then-MOVE boundary.
 
@@ -221,7 +236,7 @@ CLOSE-then-MOVE boundary.
 |  | 2 contours | 4 contours |
 |---|---|---|
 | **disjoint** | **BROKEN** (structure, `runs=1`) | **BROKEN** (structure, `runs=1`) |
-| **nested** | **BROKEN** (`cover=short:769`) | **BROKEN** (`cover=stray:1115`) |
+| **nested** | **BROKEN** (`cover=short:769`) | **BROKEN** (`cover=stray:1171`) |
 
 Two disjoint contours fail exactly as four do; four nested contours work
 exactly as two do. The rule is neither *"only the first contour renders"* nor
@@ -258,7 +273,7 @@ right*, and that changed the Phase 1b conclusion:
 |  | 2 contours | 4 contours |
 |---|---|---|
 | **disjoint** | **BROKEN** (structure, `runs=1`) | **BROKEN** (structure, `runs=1`) |
-| **nested** | **BROKEN** (`cover=short:769`) | **BROKEN** (`cover=stray:1115`) |
+| **nested** | **BROKEN** (`cover=short:769`) | **BROKEN** (`cover=stray:1171`) |
 
 *"Nested is OK"* was an artefact of checking only structure. Two of the three
 nested cases pass their sample-point predicates while drawing the wrong number
@@ -272,13 +287,22 @@ that is 769 px short. So one-contour-per-path is no longer a conservative guess
 that happened to work: it is **directly measured against its own counterexample**,
 and it is what both compositors already do.
 
-★ **A refined hypothesis, not yet a rule.** Both nested cases that fail on
-coverage involve **opposite windings** (hole cutting) — the ring is outer CW +
-inner CCW, `four-nested-rings` alternates. The nested case that passes coverage
-(`evenodd-vs-nonzero` pass 2) is same-winding with no hole cut, and is
-nondeterministic anyway. So the variable may be **hole cutting** rather than
-nesting. The gap that would test it: `evenodd`'s pass 1 *is* an EVEN_ODD hole
-and is not coverage-checked.
+★★★ **CONFIRMED 2026-09-02: HOLE CUTTING is the variable, not nesting.**
+Phase 2 closed the gap that could test it — `evenodd`'s pass 1 *is* an EVEN_ODD
+hole and had never been coverage-checked. It came back `eocover=short:308`,
+**identical on both boots**, while pass 2 (same winding, no hole) is exact.
+
+| render | cuts a hole? | coverage |
+|---|---|---|
+| `two-contour-ring-nonzero` (opposite winding) | yes | `short:769` |
+| `evenodd` pass 1 (EVEN_ODD) | yes | **`short:308`** |
+| `four-nested-rings` (alternating) | yes | `stray:1171` |
+| `evenodd` pass 2 (same winding) | **no** | `ok` |
+
+**Every hole-cutting render mis-covers; the one that does not is exact.** Note
+also that the two boots disagree on `nzfill` (6421 vs 6423) and agree **exactly**
+on `eofill` — the nondeterminism lives in the no-hole pass, not the
+hole-cutting one.
 
 ### ★★ Stray coverage — what the fill numbers say, and why `pixel=ok` got stricter
 
@@ -369,14 +393,112 @@ is exactly what the Case column is for.
 
 ---
 
-## Gradients & colour — Phase 2
+## Colour & blend — Phase 2
+
+### ✅ MEASURED 2026-09-02, two boots — every verdict identical
+
+**Why this phase, and not the gradients the original spec listed:** every one of
+the fifteen Phase 1 cases renders with `VG_LITE_BLEND_NONE`, while **both
+shipping compositors use `VG_LITE_BLEND_SRC_OVER` exclusively** — twelve call
+sites. The matrix had never tested the blend mode production uses.
+
+| Feature | Verdict | Safe usage | Case |
+|---|---|---|---|
+| memory word order of a `BGRA8888` target | **OK** — `px=0xFFFF0000`, red is byte 2 | ARGB in memory; `vg_lite_color_t` is ABGR. Confuse them and the colour is wrong while every status says success | `color/solid-word-order` |
+| `SRC_OVER` source term over black | **OK — reading B**, `v=255 a=255` | see below: it is the **premultiplied** operator | `color/premultiplied-srcover` |
+| `SRC_OVER` over a non-zero backdrop | **OK — reading B**, and it **agrees with the case above** | pass a **premultiplied** source | `blend/srcover-arithmetic` |
+| `SRC_OVER` self-consistency across two composites | **OK** — `v1=255 v2=255 pred=255` | the operator is self-consistent | `blend/srcover-double` |
+| `BLEND_NONE` with a non-opaque source | **OK** — `v=255 a=128`, source written **raw**, alpha row `A: Sa` | behaves exactly as documented; all fifteen Phase 1 cases are unaffected | `blend/none-honours-alpha` |
+
+### ★★★ `SRC_OVER` is the PREMULTIPLIED operator here — and the FADER feeds it non-premultiplied colour
+
+Both cases report **reading B** and **they agree**, which was the consistency
+requirement. So the hardware implements `S + D*(1-Sa)` — exactly what
+`inc/vg_lite.h:461` literally says, despite `:458` filing mode 1 under
+*"Non-premultiplied Blending modes"*. `a=255` rules out alpha-ignoring.
+
+**This is actionable, not academic — for ONE of the two compositors.**
+`synthui_fader_gpu.cpp`'s `abgr_a()` packs an unscaled RGB with a separate alpha
+and hands it straight to `SRC_OVER`:
+
+```
+abgr_a(0x1B1F22u, 115u)           // a shadow
+abgr_a(0xFFFFFFu, pal->gloss_opa) // a gloss highlight
+abgr_a(color, opa)                // the tick runs
+```
+
+Under `S + D*(1-Sa)` the source contributes at **full** intensity whatever its
+alpha, so those draws do not produce the intended blend — a white gloss at
+partial opacity saturates rather than reading as a sheen.
+
+★ **`synthui_rotary_knob_gpu.cpp` is NOT affected**, and the difference is
+structural rather than luck: it has no `abgr_a` at all. Every colour it draws
+goes through `abgr(hex)`, which forces `0xFF000000` — **always opaque**. At
+α=255, `S + D*(1-Sa)` reduces to `S`, which is correct under either reading.
+
+★ **The fix is one line in `abgr_a`** (premultiply RGB by `a/255` before
+packing). It **moves the fader's goldens** and belongs to Phase 4's guard layer,
+not to a probe. Recorded here, deliberately not acted on.
+
+★ **A sensitivity limit worth knowing.** Under reading B a *saturated white*
+source clamps to 255 in cases 2–4, so their colour-channel tolerances are doing
+nothing and cannot separate reading B from other behaviours that also saturate.
+**The alpha row carries the discrimination** (`a=255` vs `128`). A non-saturated
+source would make the colour channel informative again — the obvious next case,
+not a defect in these.
+
+### ★★ The driver's own header is inconsistent about whether `SRC_OVER` is premultiplied
+
+Found while building the reference rasteriser. From `~/Development/VGLite/inc/vg_lite.h`:
+
+- `:452` — "S and D represent source and destination **non-premultiplied** RGB color channels"
+- `:458` — section heading "**Non-premultiplied** Blending modes"
+- `:461` — `VG_LITE_BLEND_SRC_OVER = 1` → `RGB: S + D*(1 - Sa)` — **no `*Sa`**, the *premultiplied* operator
+- `:481` — `VG_LITE_BLEND_NORMAL_LVGL = 11` → `RGB: S*Sa + D*(1 - Sa)` — the *non*-premultiplied operator
+- `:137` — `#define VG_LITE_BLEND_PREMULTIPLY_SRC_OVER VG_LITE_BLEND_NORMAL_LVGL`
+
+**Names and formulas are inverted against each other.** So two readings of mode 1
+are both defensible, and the cases report which rather than pre-judging:
+
+| | reading **A** = `S*Sa + D*(1-Sa)` | reading **B** = `S + D*(1-Sa)` |
+|---|---|---|
+| over black | 128 | 255 |
+| over grey 0x40 | 160 | 287 → clamps to 255 |
+
+★ **Cases 2 and 3 must agree on which.** A disagreement means the hardware
+implements neither formula consistently — a bigger finding than which it is.
+
+★ **The alpha row is the one part with no ambiguity**, and it is what catches a
+GPU that discards alpha: `:462` gives `A: Sa + Da*(1-Sa)`, which over an opaque
+backdrop is 255 under **both** readings, while alpha-ignoring leaves 128. With a
+saturated white source, reading B is otherwise *observationally identical* to
+writing the source raw — so without the alpha check those cases could not tell
+a conforming GPU from one that ignores alpha at all. `blend/none-honours-alpha`
+deliberately does **not** judge alpha: `BLEND_NONE`'s row is `A: Sa`
+(`:459-460`), so a raw write leaving 128 is correct there.
+
+### The one entry this phase retires rather than confirms
+
+The Phase 1 quirk table lists *"SRC_OVER of AA paths is not idempotent —
+double-composited edges drift"*. **That is arithmetically correct compositing**
+— a 50 %-coverage edge composited twice gives `0.75s + 0.25d` — and true of
+every conforming implementation. A case confirming "twice ≠ once" would confirm
+nothing about this GPU. `blend/srcover-double` instead asserts the second
+composite lands where the same formula predicts **from the measured first**,
+which holds under either reading.
+
+## Gradients — deferred
 
 ### ⚠ NOT YET PROBED. Nothing in this section has a case.
 
-Spec case ids awaiting implementation: `grad/legacy-linear`,
-`grad/ext-linear-static`, `grad/ext-linear-moved`, `grad/ramp-word-order`,
-`color/solid-word-order`, `color/premultiplied-srcover`, `blend/modes`
-(design spec §4, "Gradients & colour").
+Deferred by the Phase 2 design (2026-09-01), which went to colour and blend
+instead — the surface both compositors actually use, and which no case had ever
+touched. Still unbuilt: `grad/legacy-linear`, `grad/ext-linear-static`,
+`grad/ext-linear-moved`, `grad/ramp-word-order`.
+
+★ Two entries that used to sit here are now **built** and appear in the Colour
+& blend section above: the ABGR/ARGB word order (`color/solid-word-order`) and
+premultiplied src-over (`color/premultiplied-srcover`).
 
 What the shipping compositors currently assert **without a probe case** —
 each a claim awaiting evidence:
@@ -385,21 +507,7 @@ each a claim awaiting evidence:
 |---|---|---|
 | Legacy `vg_lite_draw_grad` is **GC255-only**. On our GC355 it rendered **solid black** and produced a **per-boot-varying checksum** on silicon, while every `vg_lite_*` call returned `VG_LITE_SUCCESS`. NXP's own `vglite_layer.c` calls it only when `chip_id == 0x255`. | `SynthUI/src/vglite/synthui_fader_gpu.cpp:79-82` | `grad/legacy-linear` — **not built** |
 | The EXT ramp is **placement-dependent**. `vg_lite_update_linear_grad()` transforms the gradient line by `grad->matrix`, derives a screen-space length from it, then **overwrites both** `grad->matrix` and `grad->linear_grad` and allocates a new ramp surface **without freeing the previous one**. So a moving widget cannot cache a ramp — it must rebuild (and leaks if it does not clear). | `SynthUI/src/vglite/synthui_fader_gpu.cpp:83-99` | `grad/ext-linear-static`, `grad/ext-linear-moved` — **not built** |
-| `vg_lite_color_t` is **ABGR** (red in the low byte), while ramp image words are **ARGB**. | `synthui_rotary_knob_gpu.cpp:219`, `synthui_fader_gpu.cpp:233` — measured by `vglite_probe` | `grad/ramp-word-order`, `color/solid-word-order` — **not built** |
 | `vg_lite_set_grad()` returns success with `count=0` and **silently substitutes** a black→white ramp. | design spec §4 | `grad/legacy-linear` — **not built** |
-
-Also unverified here and worth a case when Phase 2 lands: whether src-over is
-applied **premultiplied** (50 % white over black should read ≈128, not 64 or
-255) — `color/premultiplied-srcover`.
-
-**Until then, the safe usage is what the fader ships:** solid interpolated
-strips built from the same `emit_rect` / `finish_path` / `vg_lite_draw`
-machinery as every other shape, which is proven on this silicon and
-deterministic by construction (no ramp memory to sample). Note that **LVGL is
-not a safe reference for the EXT API** — it contains the same two mistakes and
-ships `LV_VG_LITE_DISABLE_LINEAR_GRADIENT_EXT` to route around the path.
-
----
 
 ## Images, blits & scissor — Phase 3
 

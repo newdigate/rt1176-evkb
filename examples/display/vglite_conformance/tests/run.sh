@@ -2,22 +2,35 @@
 # Host unit tests for the conformance probe's instrument code. Runs on the
 # development machine's own cc/c++ -- no toolchain, no board, no QEMU.
 #
-# Three suites, all PASS:/FAIL:-per-check with a count at the end (the
+# Five suites, all PASS:/FAIL:-per-check with a count at the end (the
 # convention CLAUDE.md treats as authoritative: `grep -c "^PASS:"` on a live
 # run is the case count):
 #   predicates_test       the pure pixel predicates      (C -- vgc_predicates.h is pure C)
+#   color_test            the pure colour predicates     (C -- vgc_color.h is pure C)
 #   arena_test            the shared path arena          (C++ -- see its header)
 #   cases_path_geom_test  the fifteen path cases' geometry, sample points,
 #                         tolerances and predicates, against a model of a
 #                         correct GPU AND a model of this GC355's known
 #                         one-contour-per-path defect (C++)
+#   cases_color_test      the five colour/blend cases' sample point, tolerances,
+#                         reading bands and alpha checks, against SEVEN models:
+#                         correct / draws-nothing / double-premultiplying /
+#                         R-B-permuting / alpha-ignoring / reading-A /
+#                         BLEND_NONE-modulating (C++)
 #
 # ★ WHAT A GREEN RUN HERE DOES NOT SAY: nothing about the real silicon. No GPU
-# is involved. cases_path_geom_test in particular calibrates the instrument
-# against FOUR MODELS (correct / first-contour-only / draws-nothing /
-# stray-ink); the silicon's answers live in the example's
-# transcript_hw_evkb.txt and expected_silicon.txt. That file's header says so
+# is involved. cases_path_geom_test calibrates the instrument against FOUR
+# MODELS (correct / first-contour-only / draws-nothing / stray-ink) and
+# cases_color_test against SEVEN; the silicon's answers live in the example's
+# transcript_hw_evkb.txt and expected_silicon.txt. Those files' headers say so
 # at length, and it is worth repeating at the entry point.
+#
+# ★ cases_color_test's models are models of a BLEND, and model.h implements
+# reading B of SRC_OVER BECAUSE THE HARDWARE WAS MEASURED DOING READING B (two
+# boots, 2026-09-02, in the example's transcript_hw_evkb.txt). So arm 1 is a
+# model of that measurement, never a second vote for it -- and arms 6 and 7 are
+# models of the OTHER admissible readings, which the colour cases must now
+# report BROKEN. A green colour suite still says nothing about any GPU.
 #
 # ★ WHY THIS SUITE EXISTS AT ALL: the QEMU gate cannot reach the pixel logic.
 # QEMU has no GC355, so every case there reports pixel=skip -- a green gate
@@ -63,6 +76,21 @@ else
 fi
 
 suite
+# --- color_test -------------------------------------------------------------
+# Pure C over vgc_color.h alone, exactly as predicates_test is pure over
+# vgc_predicates.h -- deliberately NOT linked against vgc_harness.h, which
+# pulls in vg_lite.h and would force this suite to C++ plus the stub. The
+# VGC_ABGR_A/VGC_ABGR identity that lives in the harness will be pinned by the
+# colour case-geometry suite instead, which includes the harness anyway.
+if cc -std=c11 -Wall -Wextra -Werror -O1 \
+      -o "$OUT/color_test" "$DIR/color_test.c"; then
+    "$OUT/color_test" || note_fail color_test
+else
+    echo "BUILD-FAILED: color_test"
+    note_fail color_test
+fi
+
+suite
 # --- arena_test -------------------------------------------------------------
 if c++ -std=c++14 -Wall -Wextra -Werror -O1 -I "$DIR/stub" \
        -o "$OUT/arena_test" "$DIR/arena_test.cpp" "$DIR/../vgc_arena.cpp"; then
@@ -85,6 +113,21 @@ if c++ -std=c++14 -Wall -Wextra -Werror -O1 -I "$DIR/stub" -I "$DIR/.." \
 else
     echo "BUILD-FAILED: cases_path_geom_test"
     note_fail cases_path_geom_test
+fi
+
+suite
+# --- cases_color_test -------------------------------------------------------
+# Same shape as cases_path_geom_test one suite up: the REAL colour case table
+# (vgc_cases_color.cpp) and the REAL arena, linked against the shared model and
+# the shared case-lifecycle mirror.
+if c++ -std=c++14 -Wall -Wextra -Werror -O1 -I "$DIR/stub" -I "$DIR/.." \
+       -o "$OUT/cases_color_test" \
+       "$DIR/cases_color_test.cpp" \
+       "$DIR/../vgc_cases_color.cpp" "$DIR/../vgc_arena.cpp"; then
+    "$OUT/cases_color_test" || note_fail cases_color_test
+else
+    echo "BUILD-FAILED: cases_color_test"
+    note_fail cases_color_test
 fi
 
 # --- trailer ----------------------------------------------------------------

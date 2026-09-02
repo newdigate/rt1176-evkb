@@ -8,15 +8,15 @@ vgc case=path/multi-contour-disjoint api=success api2=same pixel=broken detail=r
 vgc case_begin=path/multi-contour-close-padded
 vgc case=path/multi-contour-close-padded api=success api2=same pixel=ok detail=runs=4,expect=4,fill=5120,y0=16,y1=115,cover=ok repeat=same
 vgc case_begin=path/two-disjoint-bars
-vgc case=path/two-disjoint-bars api=success api2=same pixel=broken detail=runs=1,expect=2,fill=1316,cover=n/a repeat=same
+vgc case=path/two-disjoint-bars api=success api2=same pixel=broken detail=runs=1,expect=2,fill=1322,cover=n/a repeat=same
 vgc case_begin=path/four-nested-rings
-vgc case=path/four-nested-rings api=success api2=same pixel=broken detail=runs=4,expect=4,fill=6931,expfill=5760,cover=stray:1171 repeat=differs
+vgc case=path/four-nested-rings api=success api2=same pixel=broken detail=runs=4,expect=4,fill=6875,expfill=5760,cover=stray:1115 repeat=differs
 vgc case_begin=path/two-contour-ring-nonzero
 vgc case=path/two-contour-ring-nonzero api=success api2=same pixel=broken detail=rim=1,centre=0,expect=rim1centre0,fill=4607,cover=short:769 repeat=same
 vgc case_begin=path/two-draws-ring
 vgc case=path/two-draws-ring api=success api2=same pixel=ok detail=rim=1,centre=0,expect=rim1centre0,fill=5376,cover=ok repeat=same
 vgc case_begin=path/evenodd-vs-nonzero
-vgc case=path/evenodd-vs-nonzero api=success api2=same pixel=broken detail=eor=1,eoc=0,nzr=1,nzc=1,eofill=5068,eocover=short:308,nzfill=6423,nzcover=ok repeat=differs
+vgc case=path/evenodd-vs-nonzero api=success api2=same pixel=broken detail=eor=1,eoc=0,nzr=1,nzc=1,eofill=5068,eocover=short:308,nzfill=6421,nzcover=ok repeat=differs
 vgc case_begin=path/self-intersecting
 vgc case=path/self-intersecting api=success api2=same pixel=ok detail=eo_centre=0,eo_tip=1,nz_centre=1,nz_tip=1,fill=2805,cover=ok repeat=same
 vgc case_begin=path/format-s8

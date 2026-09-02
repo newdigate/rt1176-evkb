@@ -64,8 +64,21 @@
  * ★ CHECK(), NOT assert(), AND IT KEEPS GOING -- the tree's convention:
  * PASS:/FAIL: per check, a count at the end, and a red run still tells you
  * which parts of the matrix are trustworthy. */
+/* THE MODEL LIVES IN model.h AND IS SHARED. The reference rasteriser, the
+ * blend, the harness services (vgc_fb/vgc_px/vgc_clear/vgc_draw_path/...) and
+ * the arm switches (g_one_contour_only, g_draw_nothing, g_stray_ink) are all
+ * there, so the Phase 2 colour case-geometry suite gets exactly the same ones
+ * rather than a second copy that agrees today. THE CASE LIFECYCLE (run_one,
+ * case_result_t) LIVES IN harness_mirror.h for the same reason -- it mirrors
+ * run_case() in vglite_conformance.cpp, and a second copy that lost a step
+ * would go on reporting a check it had stopped performing. What stays HERE is
+ * everything that knows what a case is called: the four arm drivers and their
+ * expectations. model.h pulls in vgc_harness.h and vgc_predicates.h; the
+ * harness include below is kept because this file names vgc_case_t,
+ * vgc_path_cases and VGC_OK directly. */
+#include "model.h"
+#include "harness_mirror.h"
 #include "../vgc_harness.h"
-#include "../vgc_predicates.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -98,286 +111,12 @@ static int checks = 0;
         }                                                                \
     } while (0)
 
-/* ---- the scratch buffer and the harness services the TARGET provides -------
- * On the board these live in vglite_conformance.cpp. Re-implemented here
- * exactly as documented in vgc_harness.h -- one access path (vgc_fb), vgc_px
- * counting out-of-range rather than answering, vgc_scratch_sum hashing the
- * flat packed byte count -- because the cases under test are specified against
- * those contracts and a convenient deviation here would test something else. */
-static uint32_t s_fb[VGC_W * VGC_H];
-
-/* Declared extern by the harness. The cases never read it (that is the whole
- * point of vgc_fb being the one access path), but the symbol must exist. */
-vg_lite_buffer_t vgc_scratch;
-
-const uint32_t *vgc_fb(void) { return s_fb; }
-
-static uint32_t s_oob;
-uint32_t vgc_px_oob(void)       { return s_oob; }
-void     vgc_px_oob_reset(void) { s_oob = 0; }
-
-uint32_t vgc_px(int x, int y)
-{
-    if (x < 0 || x >= VGC_W || y < 0 || y >= VGC_H) { s_oob++; return 0u; }
-    return s_fb[(size_t)y * VGC_W + (size_t)x];
-}
-
-uint32_t vgc_scratch_sum(void) { return vgc_fnv(s_fb, sizeof(s_fb)); }
-
-vg_lite_error_t vgc_clear(void)
-{
-    for (size_t i = 0; i < (size_t)VGC_W * VGC_H; i++) s_fb[i] = VGC_BG_COLOR;
-    return VG_LITE_SUCCESS;
-}
-
-static vg_lite_matrix_t s_ident;
-vg_lite_matrix_t *vgc_ident(void) { return &s_ident; }
-
-/* The reference rasteriser is synchronous, so there is nothing to wait for and
- * nothing that can fail. */
-void vgc_finish_into(vg_lite_error_t *acc) { (void)acc; }
-
-/* ---- the stubbed driver entry point ---------------------------------------
- * ★ WHAT THIS MODELS AND WHAT IT DOES NOT. It models the three things the
- * cases depend on: it memsets the path, it records format/length/data, and it
- * stores the bounding box. It does NOT model the real function's
- * CLOSE->END fixup (vg_lite_path.c:200-231) -- it only DETECTS whether that
- * fixup would have fired, and counts it. Performing it is not an option: the
- * real S8 branch reads byte num-1 and writes at 4*(num-1), 29 bytes past the
- * end of an 11-byte array, and reproducing an out-of-bounds write in a host
- * test would corrupt the test rather than measure anything. The COUNT is the
- * assertion (see the close_fixup check in main): every path in the file under
- * test is supposed to end on an explicit VLC_OP_END so the branch never fires,
- * and this is the only place in the tree that can prove it does not. */
-static int data_size_of(vg_lite_format_t f)
-{
-    return f == VG_LITE_S8 ? 1 : f == VG_LITE_S16 ? 2 : 4;
-}
-
-static int g_close_fixup_fired;
-
-vg_lite_error_t vg_lite_init_path(vg_lite_path_t *path, vg_lite_format_t format,
-                                  vg_lite_quality_t quality, uint32_t length,
-                                  void *data, float min_x, float min_y,
-                                  float max_x, float max_y)
-{
-    memset(path, 0, sizeof(*path));
-    path->format         = format;
-    path->quality        = quality;
-    path->path_length    = length;
-    path->path           = data;
-    path->bounding_box[0] = min_x;
-    path->bounding_box[1] = min_y;
-    path->bounding_box[2] = max_x;
-    path->bounding_box[3] = max_y;
-
-    if (data && length) {
-        const size_t ds  = (size_t)data_size_of(format);
-        const size_t num = (size_t)length / ds;
-        if (num && ((const unsigned char *)data)[(num - 1) * ds] == VLC_OP_CLOSE)
-            g_close_fixup_fired++;
-    }
-    return VG_LITE_SUCCESS;
-}
-
-/* ---- the reference rasteriser ---------------------------------------------
- * A model of a CORRECT GPU: it parses the path exactly as the driver lays one
- * out, collects every contour, and fills by winding number (NON_ZERO) or
- * crossing parity (EVEN_ODD) sampled at pixel centres. No antialiasing --
- * deliberately, because the predicates under test threshold at ~50% coverage
- * and a hard-edged reference is the cleanest thing to hold them to. The one
- * cost is that pixel-centre sampling under-counts a diagonal edge, which is
- * why the triangle reads 1770 against its analytic 1800; the +/-8% tolerance
- * in the case under test has to hold that, and this is where that is checked.
- *
- * ★ PATH LAYOUT, taken from the driver rather than guessed (vg_lite_path.c
- * ~line 573: `*(pathc + offset) = cmd[i]; offset++;` then
- * `offset = CDALIGN(offset, data_size);`): an opcode is ONE BYTE at the base
- * of a slot, the cursor then re-aligns to the format's element width, and
- * coordinates follow at that width. That is why (float)VLC_OP_MOVE is not a
- * MOVE -- its first byte is 0x00, VLC_OP_END. */
-#define GEOM_MAXPT  256
-#define GEOM_MAXCON 32
-
-static float g_ptx[GEOM_MAXPT], g_pty[GEOM_MAXPT];
-static int   g_cstart[GEOM_MAXCON], g_clen[GEOM_MAXCON], g_ncon;
-static int   g_parse_error;
-
-/* Set by the negative arm: drop every contour after the first, which is
- * exactly what this GC355 does to a multi-contour path. */
-static int g_one_contour_only;
-
-static float read_coord(const unsigned char *b, size_t off, vg_lite_format_t f)
-{
-    if (f == VG_LITE_S8)  { int8_t  v; memcpy(&v, b + off, sizeof(v)); return (float)v; }
-    if (f == VG_LITE_S16) { int16_t v; memcpy(&v, b + off, sizeof(v)); return (float)v; }
-    if (f == VG_LITE_S32) { int32_t v; memcpy(&v, b + off, sizeof(v)); return (float)v; }
-    { float v; memcpy(&v, b + off, sizeof(v)); return v; }
-}
-
-static void parse_path(const vg_lite_path_t *p)
-{
-    const unsigned char *b = (const unsigned char *)p->path;
-    const size_t ds = (size_t)data_size_of(p->format);
-    size_t off = 0;
-    int npt = 0;
-
-    g_ncon = 0;
-    if (!b) { g_parse_error++; return; }
-
-    while (off < (size_t)p->path_length) {
-        const unsigned char op = b[off];
-        off += 1;
-        off = (off + ds - 1) / ds * ds;                 /* CDALIGN(offset, ds) */
-        if (op == VLC_OP_END)   break;
-        if (op == VLC_OP_CLOSE) continue;               /* contours are implicitly closed */
-        if (op == VLC_OP_MOVE) {
-            if (g_ncon >= GEOM_MAXCON) { g_parse_error++; return; }
-            g_cstart[g_ncon] = npt;
-            g_clen[g_ncon]   = 0;
-            g_ncon++;
-        } else if (op != VLC_OP_LINE) {
-            g_parse_error++;                            /* the cases emit only these */
-            return;
-        }
-        if (g_ncon == 0 || npt >= GEOM_MAXPT || off + 2 * ds > (size_t)p->path_length) {
-            g_parse_error++;
-            return;
-        }
-        g_ptx[npt] = read_coord(b, off, p->format); off += ds;
-        g_pty[npt] = read_coord(b, off, p->format); off += ds;
-        g_clen[g_ncon - 1]++;
-        npt++;
-    }
-}
-
-/* Set by arm 3: model a GPU that accepts everything and draws NOTHING. */
-static int g_draw_nothing;
-
-/* Set by arm 4: model a GPU that draws the right shape AND some ink that is
- * not in the path. See the arm's comment for the block's placement. */
-static int g_stray_ink;
-
-#define STRAY_X0 0
-#define STRAY_X1 20
-#define STRAY_Y0 104
-#define STRAY_Y1 124
-#define STRAY_PX ((STRAY_X1 - STRAY_X0) * (STRAY_Y1 - STRAY_Y0))   /* 400 */
-
-void vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
-                   vg_lite_error_t *acc)
-{
-    (void)acc;
-    parse_path(p);
-    if (g_one_contour_only && g_ncon > 1) g_ncon = 1;
-    if (g_draw_nothing) g_ncon = 0;
-    int painted = 0;
-
-    /* ★ THE BOUNDING BOX IS ENFORCED, because on hardware it IS enforced and
-     * getting it wrong is silent. The driver derives its tessellation window
-     * from path->bounding_box; a box that under-covers the geometry clips the
-     * render while every vg_lite_* call returns SUCCESS -- the exact failure
-     * class this whole example exists to catch. Every box in the file under
-     * test is correct today, but nothing CHECKED that, and Phase 2 and 3
-     * authors will write new ones. Honouring it here turns a bbox typo into a
-     * host-visible failure instead of a bench cycle. Four lines. */
-    const float bx0 = p->bounding_box[0], by0 = p->bounding_box[1];
-    const float bx1 = p->bounding_box[2], by1 = p->bounding_box[3];
-
-    for (int y = 0; y < VGC_H; y++) {
-        const float sy = (float)y + 0.5f;
-        if (sy < by0 || sy > by1) continue;
-        for (int x = 0; x < VGC_W; x++) {
-            const float sx = (float)x + 0.5f;
-            if (sx < bx0 || sx > bx1) continue;
-            int wind = 0, cross = 0;
-            for (int c = 0; c < g_ncon; c++) {
-                const int s = g_cstart[c], len = g_clen[c];
-                for (int i = 0; i < len; i++) {
-                    const float ax = g_ptx[s + i], ay = g_pty[s + i];
-                    const float bx = g_ptx[s + (i + 1) % len];
-                    const float by = g_pty[s + (i + 1) % len];
-                    if ((ay <= sy) == (by <= sy)) continue;   /* no crossing */
-                    const float t = (sy - ay) / (by - ay);
-                    if (ax + t * (bx - ax) <= sx) continue;   /* ray runs to +x */
-                    cross++;
-                    wind += (by > ay) ? 1 : -1;
-                }
-            }
-            const int in = (rule == VG_LITE_FILL_EVEN_ODD) ? (cross & 1) : (wind != 0);
-            if (in) { s_fb[(size_t)y * VGC_W + (size_t)x] = color; painted++; }
-        }
-    }
-
-    /* ★ THE STRAY BLOCK IS PAINTED ONLY IF THE DRAW ACTUALLY INKED SOMETHING,
-     * which is what keeps path/degenerate-zero-area out of arm 4. That case
-     * rasterises to nothing BY DESIGN and its check accepts it; giving it
-     * invented geometry would make it go broken for a STRUCTURAL reason
-     * (ymin/ymax outside row 64 +/-1) and blur the one thing arm 4 is trying
-     * to isolate. Every other case inks something, so every other case gets
-     * the block.
-     *
-     * It is painted OUTSIDE the bounding-box loop on purpose: stray geometry
-     * that stayed inside the path's own box would be a weaker model of the
-     * real defect, which produced 1171 px of excess on a 5760 px shape.
-     *
-     * ★ AND NOT FOR A BACKGROUND-COLOURED DRAW, which is a fix for a bug in
-     * this model rather than a concession. path/two-draws-ring composes its
-     * hole by drawing an inset plate in VGC_BG_COLOR over the plate, so the
-     * unconditional version painted a WHITE block on draw 1 and then a BLACK
-     * one over the same pixels on draw 2 -- the stray ink erased itself, the
-     * case reported cover=ok, and arm 4 failed it for a reason that had
-     * nothing to do with the case. Measured, before this line existed:
-     *   path/two-draws-ring  ok  rim=1,centre=0,...,fill=5376,cover=ok
-     * "Stray INK" means ink; a defect that spuriously erased would be a
-     * different model, and short: is the field that would report it. */
-    if (g_stray_ink && painted && color != VGC_BG_COLOR) {
-        for (int y = STRAY_Y0; y < STRAY_Y1; y++)
-            for (int x = STRAY_X0; x < STRAY_X1; x++)
-                s_fb[(size_t)y * VGC_W + (size_t)x] = color;
-    }
-}
-
 /* ---- running one case, exactly as the harness does ------------------------
- * The sequence mirrors run_case() in vglite_conformance.cpp: reset the arena
- * and the oob counter, clear, run, sum, check -- then clear and run AGAIN and
- * sum, which is what makes the repeat= comparison meaningful. Deviating here
- * would test the cases under a lifecycle they never see. */
-typedef struct {
-    vgc_verdict_t   verdict;
-    vg_lite_error_t api;
-    vg_lite_error_t api2;      /* the SECOND run's status -- the harness prints it */
-    uint32_t        oob;
-    int             repeat_same;
-    int             hook_distinct;  /* a sum() hook must not be the live buffer */
-    char            detail[VGC_DETAIL_MAX];
-} case_result_t;
-
-static void run_one(const vgc_case_t *c, case_result_t *r)
-{
-    memset(r, 0, sizeof(*r));
-    vgc_arena_reset();
-    vgc_px_oob_reset();
-    vgc_clear();
-    r->api = c->run();
-    const uint32_t live1 = vgc_scratch_sum();
-    const uint32_t sum1  = c->sum ? c->sum() : live1;
-    /* ★ A HOOK THAT RETURNS THE LIVE BUFFER IS A HOOK THAT DOES NOTHING, and
-     * the failure is invisible: repeat= keeps comparing something, just not
-     * every sub-render. vgc_harness.h names a multi-render case without a
-     * working hook as its top risk, and this is the only place that can see
-     * it. Cases WITHOUT a hook are exempt by construction -- for them sum1 IS
-     * live1. */
-    r->hook_distinct = c->sum ? (sum1 != live1) : 1;
-    r->verdict = c->check(r->detail, sizeof(r->detail));
-    r->oob = vgc_px_oob();
-
-    vgc_arena_reset();
-    vgc_clear();
-    r->api2 = c->run();
-    const uint32_t sum2 = c->sum ? c->sum() : vgc_scratch_sum();
-    r->repeat_same = (sum1 == sum2);
-}
+ * PROMOTED TO tests/harness_mirror.h in Phase 2, where the colour suite gets
+ * the SAME sequence rather than a second copy of it. The reasoning is in that
+ * file's header; the short version is that a copy which lost the arena reset
+ * between the two runs would keep printing "repeat identical" while having
+ * stopped comparing anything. */
 
 /* The SIX cases aimed at the contour-encoding question. Everything else in
  * the table is a control and must survive that model unchanged.
@@ -514,8 +253,22 @@ int main(void)
             CHECK_CASE(strstr(r.detail, "fill=5376,") != NULL, c->id,
                        "the ring's exact analytic area (6400-1024)");
         if (strcmp(c->id, "path/evenodd-vs-nonzero") == 0)
-            CHECK_CASE(strstr(r.detail, "fill=6400,") != NULL, c->id,
+            CHECK_CASE(strstr(r.detail, "nzfill=6400,") != NULL, c->id,
                        "NON_ZERO over same-winding nests fills solid");
+        /* ★★ AND ITS EVEN_ODD PASS, WHICH THE `cover=ok` CHECK ABOVE CANNOT
+         * SPEAK FOR. That check is a substring test, and this case now prints
+         * TWO cover tokens -- so "eocover=n/a,...,nzcover=ok" satisfies it.
+         * Pass 1's coverage could be mis-gated into permanent n/a and arm 1
+         * would stay green; the failing branch would still be reachable via
+         * arm 4, but "was pass 1 judged at all" would not be asserted
+         * anywhere. This pins BOTH halves at once: 5376 is the ring's exact
+         * analytic area (6400-1024) with every edge integer-aligned and no
+         * antialiasing in this model, so it is arithmetic rather than a
+         * tolerance, and eocover=ok says the number was actually judged. */
+        if (strcmp(c->id, "path/evenodd-vs-nonzero") == 0)
+            CHECK_CASE(strstr(r.detail, "eofill=5376,eocover=ok") != NULL,
+                       c->id,
+                       "EVEN_ODD over the same nests cuts the hole, and is judged");
         if (strcmp(c->id, "path/self-intersecting") == 0)
             CHECK_CASE(strstr(r.detail, "fill=2792,") != NULL, c->id,
                        "the pentagram's NON_ZERO area, model == analytic");
@@ -573,7 +326,7 @@ int main(void)
                 CHECK_CASE(strstr(r.detail, "rim=1,centre=1") != NULL, c->id,
                            "reports the hole filled in");
             else
-                CHECK_CASE(strstr(r.detail, "eo_centre=1") != NULL, c->id,
+                CHECK_CASE(strstr(r.detail, "eoc=1") != NULL, c->id,
                            "reports EVEN_ODD failing to cut the hole");
         }
     }

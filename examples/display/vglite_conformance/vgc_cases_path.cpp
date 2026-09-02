@@ -50,7 +50,7 @@
  * ★ AND THE NEGATIVE ARM, which is the half that matters for an instrument:
  * with the same rasteriser re-broken to drop every contour after the first --
  * this GC355's actual defect -- the probe cases went BROKEN by name
- * (runs=1 fill=1280; rim=1 centre=1; eo_centre=1) while ALL SIX controls and
+ * (runs=1 fill=1280; rim=1 centre=1; eoc=1) while ALL SIX controls and
  * the whole format set stayed ok. A matrix that cannot go red on the defect it
  * is aimed at would be decoration. */
 #include "vgc_harness.h"
@@ -163,21 +163,10 @@
  * silently; written as a rule, the moment two-disjoint-bars reports runs=2 its
  * 2560 px expectation starts being checked. */
 
-typedef struct {
-    int  ok;
-    char s[24];     /* "cover=stray:" (12) + an int (11) + NUL */
-} vgc_cover_t;
-
-/* Not applicable: the structural predicate failed, so there is no correct
- * area to compare against. Never fails a case on its own. */
-static vgc_cover_t vgc_cover_na(void)
-{
-    vgc_cover_t c;
-    c.ok = 1;
-    snprintf(c.s, sizeof(c.s), "cover=n/a");
-    return c;
-}
-
+/* vgc_cover_t and vgc_cover_na() live in vgc_harness.h so a second case file
+ * can reach them (Phase 2's colour cases are all cover=n/a, and spelling that
+ * literal twice would put the field name in two files). The tolerance helpers
+ * below stay static: nothing outside this file needs them. */
 static vgc_cover_t vgc_cover_within(int fill, int expect, int tol)
 {
     vgc_cover_t c;
@@ -633,7 +622,7 @@ static vg_lite_error_t run_ring_two_draws(void)
  * harness's clear happens once, before run() is entered) and supplies
  * sum_evenodd_nonzero() accumulating over BOTH sub-renders. See vgc_harness.h. */
 
-static int      s_eo_rim, s_eo_centre;
+static int      s_eo_rim, s_eo_centre, s_eo_fill;
 static uint32_t s_eo_sum;
 
 static void emit_nested(void)
@@ -654,6 +643,10 @@ static vg_lite_error_t run_evenodd_nonzero(void)
     vgc_finish_into(&acc);
     s_eo_rim    = vgc_is_filled(vgc_px(32, 64));
     s_eo_centre = vgc_is_filled(vgc_px(64, 64));
+    /* ★ THE PASS-1 AREA HAS TO BE TAKEN HERE OR NOT AT ALL: the clear below
+     * destroys this sub-render, and check() runs after it. Same reason the
+     * two sample points are stashed rather than read live. */
+    s_eo_fill   = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
     s_eo_sum    = vgc_scratch_sum();
 
     /* pass 2: NON_ZERO, left in the scratch for check() to read live */
@@ -681,27 +674,58 @@ static vgc_verdict_t check_evenodd_nonzero(char *d, size_t n)
 {
     const int nz_rim    = vgc_is_filled(vgc_px(32, 64));
     const int nz_centre = vgc_is_filled(vgc_px(64, 64));
-    const int structural = s_eo_rim && !s_eo_centre && nz_rim && nz_centre;
-    /* ★ WHICH SUB-RENDER THIS MEASURES: PASS 2, the NON_ZERO one, because
-     * that is the only render still in the buffer when the harness calls
-     * check() (pass 1 was sampled into the s_eo_* statics and then CLEARED
-     * away by run() itself). Under NON_ZERO two SAME-winding nested rects both
-     * contribute +1, so the hole is not cut and the correct picture is the
-     * outer 80x80 SOLID: 6400, not the ring. The tolerance is nevertheless
-     * built from BOTH emitted contours (RING_PERIM = 448 -> 56), since the
-     * inner contour is drawn and can leave a tessellation seam even where it
-     * cuts nothing.
+    /* The two sub-renders' structural predicates, kept APART so each pass's
+     * coverage can be gated on its own picture being the right picture --
+     * the file's coverage rule (see vgc_cover_within above) applied per
+     * sub-render rather than to their conjunction. Gating both on the
+     * conjunction would print cover=n/a for a pass whose structure was
+     * perfectly good, purely because the OTHER pass failed. */
+    const int eo_structural = s_eo_rim && !s_eo_centre;   /* the hole IS cut */
+    const int nz_structural = nz_rim && nz_centre;        /* it is NOT */
+    const int structural = eo_structural && nz_structural;
+    /* ★ BOTH SUB-RENDERS ARE NOW COVERAGE-CHECKED, and they have DIFFERENT
+     * analytic areas -- which is the whole content of this case:
+     *   pass 1, EVEN_ODD: the two nested rects alternate, so the hole IS cut
+     *     and the correct picture is the RING, RING_AREA = 6400-1024 = 5376.
+     *   pass 2, NON_ZERO: two SAME-winding nested rects both contribute +1,
+     *     so no hole is cut and the correct picture is the outer 80x80
+     *     SOLID, R_AREA = 6400.
+     * Pass 1 must be read from the s_eo_* statics because run() CLEARED it
+     * away before returning; pass 2 is the render still in the buffer when
+     * the harness calls check(). Both take the same tolerance, built from
+     * BOTH emitted contours (RING_PERIM = 2*(80+80) + 2*(32+32) = 448 -> 56),
+     * since the inner contour is drawn in either case and can leave a
+     * tessellation seam even where it cuts nothing.
      *
-     * ★ NOTE WHAT IS NOT COVERED: pass 1's EVEN_ODD area (which should be the
-     * 5376 ring). Measuring it would mean stashing a fifth number in a file
-     * static, and this case's job is the fill-RULE difference, which the four
-     * sample points already answer. The gap is named rather than hidden. */
+     * ★ WHY PASS 1 IS WORTH THE TWO EXTRA FIELDS. Every nested case in the
+     * Phase 1 matrix that FAILED coverage on silicon cuts a hole with
+     * opposite windings (two-contour-ring-nonzero short:769,
+     * four-nested-rings stray:1115), and the one that passed -- this case's
+     * pass 2 -- cuts none. Pass 1 is the one arm of that comparison nobody
+     * was measuring: it is nested, it cuts a hole, and it costs no extra
+     * bench boot. Whether HOLE CUTTING or NESTING is the variable is exactly
+     * what it separates. */
     const int fill = vgc_count_filled(vgc_fb(), VGC_W, VGC_H, VGC_W);
-    const vgc_cover_t cv = structural
+    const vgc_cover_t eocv = eo_structural
+        ? vgc_cover_axis(s_eo_fill, RING_AREA, RING_PERIM) : vgc_cover_na();
+    const vgc_cover_t nzcv = nz_structural
         ? vgc_cover_axis(fill, R_AREA, RING_PERIM) : vgc_cover_na();
-    snprintf(d, n, "eo_rim=%d,eo_centre=%d,nz_rim=%d,nz_centre=%d,fill=%d,%s",
-             s_eo_rim, s_eo_centre, nz_rim, nz_centre, fill, cv.s);
-    return (structural && cv.ok) ? VGC_OK : VGC_BROKEN;
+    /* 89 bytes worst case against VGC_DETAIL_MAX's 96, counted rather than
+     * hoped: four 0/1 flags (6 each with their commas = 24), two fills each
+     * bounded by the 16384-pixel target (5 digits: "eofill=16384," 13 and
+     * "nzfill=16384," 13) and two prefixed cover tokens whose longest form is
+     * "eocover=stray:16384" (19, +1 for the comma) and "nzcover=stray:16384"
+     * (19). That is what forced eo_rim/eo_centre/nz_rim/nz_centre down to
+     * eor/eoc/nzr/nzc: the long names cost 103 and a truncated detail loses a
+     * field silently. VGC_DETAIL_MAX is not the thing to move.
+     *
+     * ★ THE COVER TOKENS ARE PREFIXED, not repeated bare, so a transcript
+     * grep can tell the two sub-renders apart -- "cover=ok,...,cover=ok" would
+     * be two indistinguishable fields for the reference doc to quote. */
+    snprintf(d, n, "eor=%d,eoc=%d,nzr=%d,nzc=%d,eofill=%d,eo%s,nzfill=%d,nz%s",
+             s_eo_rim, s_eo_centre, nz_rim, nz_centre,
+             s_eo_fill, eocv.s, fill, nzcv.s);
+    return (structural && eocv.ok && nzcv.ok) ? VGC_OK : VGC_BROKEN;
 }
 
 /* ---- 7. path/self-intersecting ---------------------------------------------

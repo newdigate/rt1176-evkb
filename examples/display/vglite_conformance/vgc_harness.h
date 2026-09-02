@@ -41,8 +41,23 @@ extern "C" {
 /* vg_lite_color_t is ABGR (0xAABBGGRR) -- red in the LOW byte. Measured in
  * vglite_probe; getting it backwards does not fail, it renders the wrong
  * colour while every status says success. */
-#define VGC_ABGR(r, g, b) (0xFF000000u | ((uint32_t)(b) << 16) | \
-                           ((uint32_t)(g) << 8) | (uint32_t)(r))
+/* The general form, and the ONLY place the byte layout is spelled: alpha in
+ * the HIGH byte, red in the LOW one. Phase 2's blend cases need a non-opaque
+ * source (every Phase 1 case was opaque, which is why blend/none-honours-alpha
+ * exists), and VGC_ABGR is this with alpha 0xFF -- one expression, so the ★
+ * above cannot come true in one macro and not the other.
+ *
+ * Each component is MASKED. That was needless while every caller passed a
+ * literal; an alpha that is COMPUTED is exactly what this macro is for, and an
+ * out-of-range one would silently corrupt the blue channel beside it -- the
+ * instrument fabricating a colour, in a case whose whole question is what
+ * colour came out. */
+#define VGC_ABGR_A(a, r, g, b) ((((uint32_t)(a) & 0xFFu) << 24) | \
+                                (((uint32_t)(b) & 0xFFu) << 16) | \
+                                (((uint32_t)(g) & 0xFFu) <<  8) | \
+                                 ((uint32_t)(r) & 0xFFu))
+#define VGC_ABGR(r, g, b) VGC_ABGR_A(0xFFu, (r), (g), (b))
+
 #define VGC_BG_COLOR   VGC_ABGR(0x00, 0x00, 0x00)   /* opaque black */
 #define VGC_FILL_COLOR VGC_ABGR(0xFF, 0xFF, 0xFF)   /* opaque white */
 
@@ -64,6 +79,21 @@ extern vg_lite_buffer_t vgc_scratch;
  * vgc_case_t::sum hook, since only its LAST sub-render survives in the
  * buffer. */
 vg_lite_error_t vgc_clear(void);
+
+/* Clear the scratch to an arbitrary colour and finish. vgc_clear() is this
+ * with VGC_BG_COLOR; the blend cases need a NON-ZERO backdrop, because
+ * SRC_OVER over black is degenerate (dst*(1-a) vanishes) and cannot
+ * distinguish a correct blend from one that ignores the destination.
+ *
+ * ★ THIS IS THE ONE CALL THAT CAN BREAK vgc_is_filled's PRECONDITION, so the
+ * warning belongs here rather than only at the predicate. That predicate
+ * thresholds green at the midpoint and is sound ONLY under the black-
+ * background / white-fill convention every Phase 1 case keeps. Clear to a
+ * mid-grey and it reports EVERY pixel filled -- the instrument announcing a
+ * full-coverage render of a buffer nothing drew into. A case that clears to a
+ * non-black colour must use a predicate that does not assume the convention;
+ * see the ★ on vgc_is_filled in vgc_predicates.h. */
+vg_lite_error_t vgc_clear_to(uint32_t abgr);
 
 /* ---- scratch access ------------------------------------------------------
  * ★ ONE ACCESS PATH, AND IT IS NOT vgc_scratch.memory. Everything that reads
@@ -121,6 +151,13 @@ vg_lite_matrix_t *vgc_ident(void);
  * never clears an earlier failure. */
 void vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
                    vg_lite_error_t *acc);
+
+/* Draw with an explicit blend mode. vgc_draw_path() is this with
+ * VG_LITE_BLEND_NONE -- which is what all fifteen Phase 1 cases use, and what
+ * NO shipping code uses: both compositors use SRC_OVER exclusively. That gap
+ * is why Phase 2 exists. */
+void vgc_draw_path_blend(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
+                         vg_lite_blend_t blend, vg_lite_error_t *acc);
 
 /* vg_lite_finish(), accumulating the first non-success into *acc. */
 void vgc_finish_into(vg_lite_error_t *acc);
@@ -191,6 +228,43 @@ void vgc_emit_rect_cw(int32_t x, int32_t y, int32_t w, int32_t h);
 /* The same rect wound the other way (CCW), for non-zero hole cutting. */
 void vgc_emit_rect_ccw(int32_t x, int32_t y, int32_t w, int32_t h);
 
+/* ---- coverage verdict -----------------------------------------------------
+ * A case's pixel= verdict is `structural predicate AND fill within tolerance
+ * of the analytic area`, so pixel=ok means THE PICTURE IS RIGHT rather than
+ * merely that the structure is. The comparison rides in detail= as
+ * cover=ok / cover=stray:N / cover=short:N / cover=n/a.
+ *
+ * Tolerance is k*PERIMETER, never a percentage of area, and coverage is
+ * judged ONLY where the structural predicate passed. Both rules, their
+ * derivation and the measurements behind k live with the tolerance helpers in
+ * vgc_cases_path.cpp -- not restated here, because a precis in a header is
+ * what someone retuning k there would not think to update. */
+typedef struct {
+    int  ok;
+    char s[24];     /* "cover=stray:" (12) + an int (11) + NUL */
+} vgc_cover_t;
+
+/* Not applicable: the case has no analytic area to compare against -- every
+ * Phase 2 colour case, and any path case whose structural predicate failed.
+ * Never fails a case on its own. (The tolerance helpers are static in
+ * vgc_cases_path.cpp; see there for why.)
+ *
+ * static inline for the same reason every vgc_predicates.h helper is: no TU
+ * owns it, so no link line has to know about it -- each host suite links
+ * whichever case file it tests and gets this for free. */
+static inline vgc_cover_t vgc_cover_na(void)
+{
+    /* An aggregate initialiser rather than snprintf: it ZERO-FILLS the tail.
+     * `vgc_cover_t c;` plus a printf leaves s[10..23] indeterminate in a
+     * struct RETURNED BY VALUE -- nothing reads past the NUL today, so it is
+     * latent, but an instrument whose thesis is that it cannot fabricate must
+     * not hand back stack bytes. It also keeps <stdio.h> out of a header four
+     * host suites include, and makes a too-long literal a COMPILE ERROR
+     * instead of a silent truncation. */
+    vgc_cover_t c = { 1, "cover=n/a" };
+    return c;
+}
+
 /* ---- the case table ------------------------------------------------------ */
 typedef enum { VGC_SKIP = 0, VGC_OK = 1, VGC_BROKEN = 2 } vgc_verdict_t;
 
@@ -224,6 +298,11 @@ typedef struct {
 /* Defined in vgc_cases_path.cpp */
 extern const vgc_case_t vgc_path_cases[];
 extern const size_t     vgc_path_case_count;
+
+/* Defined in vgc_cases_color.cpp. Runs AFTER the path cases: if basic filling
+ * is broken, no colour verdict below it means anything. */
+extern const vgc_case_t vgc_color_cases[];
+extern const size_t     vgc_color_case_count;
 
 /* Defined in vgc_dangerous.cpp. Empty unless built -DVGC_DANGEROUS=1. */
 extern const vgc_case_t vgc_dangerous_cases[];

@@ -50,10 +50,51 @@ paths mis-cover, so it is the one uncovered arm that would test it.
 | # | id | setup | what it settles |
 |---|---|---|---|
 | 1 | `color/solid-word-order` | pure red, opaque, `BLEND_NONE` | **The bootstrap control.** Exactly one channel saturated and the rest zero — *and* that it is the channel every downstream predicate assumes |
-| 2 | `color/premultiplied-srcover` | white @ α=0x80 over **black**, `SRC_OVER` | ≈128 correct · ≈64 double-premultiply · 255 alpha ignored. Exercises the `src*a` term alone |
-| 3 | `blend/srcover-arithmetic` | white @ α=0x80 over **grey 0x40**, `SRC_OVER` | ≈160. Non-zero backdrop, so it exercises **both** terms of `src*a + dst*(1-a)` |
-| 4 | `blend/srcover-double` | case 3's draw, twice | ≈207, **derived from the same formula**. Retires the idempotence entry as arithmetic rather than a quirk |
+| 2 | `color/premultiplied-srcover` | white @ α=0x80 over **black**, `SRC_OVER` | ≈128 **or** 255 — the two readings below, reported. ≈64 is a double-premultiply defect |
+| 3 | `blend/srcover-arithmetic` | white @ α=0x80 over **grey 0x40**, `SRC_OVER` | ≈160 **or** 255. Non-zero backdrop, so it exercises the destination term too |
+| 4 | `blend/srcover-double` | case 3's draw, twice | **Reading-agnostic**: the second composite must land where the formula predicts *from the measured first*. Retires the idempotence entry as arithmetic rather than a quirk |
 | 5 | `blend/none-honours-alpha` | white @ α=0x80 over grey, `BLEND_NONE` | Recorded, not judged — either answer is defensible |
+
+### ★★ The driver's own header is inconsistent about whether `SRC_OVER` is premultiplied
+
+Found while building the reference rasteriser, and it means cases 2–4 must **not**
+pre-judge the answer. From `~/Development/VGLite/inc/vg_lite.h`:
+
+- `:452` — "S and D represent source and destination **non-premultiplied** RGB color channels"
+- `:458` — section heading: "**Non-premultiplied** Blending modes"
+- `:461` — `VG_LITE_BLEND_SRC_OVER = 1` → `RGB: S + D*(1 - Sa)` — **no `*Sa`**, which is the *premultiplied* operator
+- `:481` — `VG_LITE_BLEND_NORMAL_LVGL = 11` → `RGB: S*Sa + D*(1 - Sa)` — the *non*-premultiplied operator
+- `:137` — `#define VG_LITE_BLEND_PREMULTIPLY_SRC_OVER VG_LITE_BLEND_NORMAL_LVGL`
+
+So the names and the formulas are **inverted against each other**: the mode filed
+under "non-premultiplied" carries the premultiplied formula, and the one aliased
+"PREMULTIPLY" carries the non-premultiplied one. Two readings are therefore both
+defensible for mode 1, which is what the compositors pass:
+
+| | reading **A** (`S*Sa + D*(1-Sa)`) | reading **B** (`S + D*(1-Sa)`, header-literal) |
+|---|---|---|
+| case 2, over black | **128** | **255** |
+| case 3, over grey 64 | **160** | 255 + 32 → clamps to **255** |
+
+**Cases 2 and 3 admit both and report which**, as `model=A` / `model=B` in
+`detail=`. A third value is `broken` — ≈64 in case 2 is the double-premultiply
+defect, and anything else means neither reading holds.
+
+★ **The two cases must agree.** If case 2 reports A and case 3 reports B, the
+hardware is not implementing either formula consistently, and that is a bigger
+finding than which formula it is. They are separate cases rather than one, so
+the transcript shows both readings side by side and a human can see the
+disagreement; nothing enforces it mechanically, because doing so would need
+cross-case state the harness forbids.
+
+★ **Case 4 sidesteps the question entirely, and that is why it is worth having.**
+Rather than pinning an absolute value it renders once, **measures** the result,
+renders again, and asserts the second lands where the same formula predicts
+*from the measured first*. That holds under either reading — under A, 160 → 207;
+under B, 255 → 255 — so it tests the *operator's self-consistency* without
+depending on which operator it is. It is also exactly what the design said case 4
+was for: "the double-composite becomes a DERIVED prediction from the same
+formula".
 
 Cases 2 and 3 are complementary, not redundant: `SRC_OVER` over black is
 degenerate because `dst*(1-a)` vanishes, so case 2 alone cannot distinguish a
@@ -92,12 +133,23 @@ Three ways out were considered:
   it would make results depend on table order.
 - **Identity case first, compile-time mapping downstream** — CHOSEN.
 
-`color/solid-word-order` fills pure red via `VGC_ABGR(0xFF,0,0)` and asserts
-**two** things:
+`color/solid-word-order` fills **opaque** pure red via `VGC_ABGR(0xFF,0,0)` and
+asserts **two** things:
 
-1. **exactly one channel is saturated and the rest are zero** — order-agnostic,
-   valid without knowing the answer; and
-2. **that channel is the one `VGC_ABGR` and every downstream predicate assume.**
+1. **exactly two channels saturated and two zero** — order-agnostic, valid
+   without knowing the answer; and
+2. **that the saturated colour channel is the one `VGC_ABGR` and every
+   downstream predicate assume**, and that the other saturated one is alpha.
+
+★ **Two, not one — this phrasing was wrong in an earlier draft and would have
+cost a bench cycle.** The fill is *opaque* pure red, so the memory word has red
+AND alpha saturated and green AND blue zero. A reader who took "exactly one
+saturated" literally would write `== 1`, and case 1 would report `broken` on
+correct silicon — the instrument inventing a defect, in the one case that gates
+the interpretation of every colour case below it. Note also that the counts
+alone are **necessary but not sufficient**: `sat==2 && zero==2` is equally
+satisfied by two saturated colour channels with zero alpha, so it is the named
+half (`vgc_ch(px, VGC_A) == 0xFF`) that closes the case.
 
 So a single case both *measures* the identity and *validates the assumption the
 rest of the phase rests on*, with no shared state: the guard lives inside the
@@ -105,8 +157,17 @@ case rather than in a global. If it breaks, every colour verdict below it is
 suspect — the role `path/single-contour-rect` plays for geometry, and stated in
 the same terms.
 
-Downstream predicates name channels normally, each citing `color/solid-word-order`
-in its comment as the case that justifies the mapping.
+Downstream predicates name channels normally.
+
+★ **The mapping is not merely assumed — `vglite_probe` already measured it.**
+That example cleared a `VG_LITE_BGRA8888` target (the same format as this
+scratch) with `0xFF204060` and read `0xFF604020` back: the driver took the
+argument as ABGR (B=0x20, G=0x40, R=0x60) and memory returned 0x60 in bits
+23:16. That *is* "red is byte 2 of a BGRA8888 memory word". So
+`color/solid-word-order` is a **re-confirmation on this scratch buffer in this
+boot**, not the origin of the claim — and each channel macro should cite
+`vglite_probe`'s measurement as its justification, with the case as the
+standing check.
 
 ## 5. The predicate layer
 
@@ -182,9 +243,34 @@ arm:
 
 | arm | models | must break |
 |---|---|---|
-| alpha-ignoring | writes `src` regardless of α | cases 2, 3, 4 — case 1 stays ok |
+| alpha-ignoring | writes `src` regardless of α | cases 2, 3, 4 **via the ALPHA channel** — case 1 and case 5 stay ok |
 | double-premultiply | applies α twice | case 2, at ≈64, its named failure mode |
 | channel-permuting | swaps R and B | **case 1 only** — asserted, not assumed (see §7) |
+
+★★ **The alpha-ignoring arm cannot break cases 2–4 on the COLOUR channel, and
+that is a contradiction this spec originally contained.** Measured while
+building the cases: with a *saturated white* source, reading B
+(`S + D*(1-Sa)`) is observationally identical to writing `S` raw — 255 over
+black, and 287→clamped-255 over grey. So admitting reading B as `ok` (§3) and
+detecting alpha-ignoring on the colour channel are **mutually exclusive**.
+
+The fix is to judge the **alpha channel** as well, and it is a better check than
+the one it replaces:
+
+- `inc/vg_lite.h:462` gives `SRC_OVER`'s alpha row as `A: Sa + Da*(1-Sa)`,
+  unambiguously — **no premultiply question attaches to it**. The backdrop is
+  opaque, so `Da=255` and the answer is `128 + 255×0.498 = 255` under **both**
+  readings. Nothing is pre-judged.
+- Alpha-ignoring leaves `a=128`. A 127-wide gap no rounding model closes.
+- It covers the operator's alpha row, which no case otherwise looks at.
+
+So cases 2, 3 and 4 additionally require `a ≈ 255`.
+
+★ **Case 5 must NOT gain that check.** `BLEND_NONE`'s alpha row is `A: Sa`
+(`:459-460`), so a raw write leaving `a=128` is *correct* there — judging alpha
+in case 5 would break it on conforming hardware, the opposite mistake. The
+asymmetry is deliberate and is stated in the case, because it otherwise reads
+as an oversight.
 
 **Circularity guard.** If the model implements the same formula the case
 expects, arm 1 proves only that the predicate reads what the model wrote. So
