@@ -247,6 +247,16 @@ if(M2_BT_LEGACY_PIN)
     add_definitions(-DM2_BT_LEGACY_PIN=1)
 endif()
 
+# Phase 0 (BT-3): after identity at the download rate, switch the controller
+# to M2_BT_FAST_BAUD_RATE with the NXP vendor set-baud command (0xFC09, uint32
+# LE), re-baud LPUART2 and re-validate.  Default OFF: the gates run at 115200
+# (a chardev has no baud) except [baud], which asserts the SEQUENCE.
+option(M2_BT_FAST_BAUD "Switch HCI to M2_BT_FAST_BAUD_RATE after identity" OFF)
+set(M2_BT_FAST_BAUD_RATE "921600" CACHE STRING "Rate for M2_BT_FAST_BAUD")
+if(M2_BT_FAST_BAUD)
+    add_definitions(-DM2_BT_FAST_BAUD=${M2_BT_FAST_BAUD_RATE})
+endif()
+
 teensy_add_executable(m2_hci_probe m2_hci_probe.cpp ${M2_FW_SRC} ${M2_BT_FW_SRC})
 teensy_target_link_libraries(m2_hci_probe cores M2Radio)
 target_include_directories(m2_hci_probe.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

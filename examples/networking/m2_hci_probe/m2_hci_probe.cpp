@@ -930,6 +930,27 @@ static void probeIdentity() {
     } else printFail("hci_buffer", e, r, "short_reply");
 }
 
+#if defined(M2_BT_FAST_BAUD)
+static const uint16_t OP_VS_SET_BAUD = 0xFC09;
+// Phase 0: vendor set-baud (uint32 LE), then re-baud the port and re-validate
+// with a fresh Reset + identity.  Every exit is named.
+static void probeFastBaud() {
+    uint32_t rate = M2_BT_FAST_BAUD;
+    uint8_t p[4] = { (uint8_t)rate, (uint8_t)(rate >> 8), (uint8_t)(rate >> 16), (uint8_t)(rate >> 24) };
+    Hci::Reply r;
+    Hci::Error e = hci.run(OP_VS_SET_BAUD, p, 4, &r, 1000, idleMs);
+    if (e != Hci::OK) { printFail("bt_baud_switch", e, r, "vendor 0xFC09 refused"); return; }
+    delay(20);                                            // let the controller's reply drain and switch
+    hciIo.rebaud(rate);
+    hciCountersFold(); hci.begin();
+    e = hci.run(OP_RESET, nullptr, 0, &r, 1000, idleMs);
+    if (e != Hci::OK) { CONSOLE.print("bt_baud_switch=fail rate="); CONSOLE.print(rate);
+                        CONSOLE.print(" reason="); CONSOLE.println(Hci::errorName(e)); return; }
+    CONSOLE.print("bt_baud_switch=ok rate="); CONSOLE.println(rate);
+    probeIdentity();                                      // identity again, at the new rate
+}
+#endif
+
 // --- B2: who is in the room -------------------------------------------------------
 static void probeInquiry() {
     hci.onEvent(onEvent, nullptr);
@@ -1603,6 +1624,9 @@ void setup() {
         CONSOLE.print("hci_reset=ok attempts="); CONSOLE.print(attempts);
         printCounters(); CONSOLE.println();
         probeIdentity();
+#if defined(M2_BT_FAST_BAUD)
+        probeFastBaud();
+#endif
         probeInquiry();
 #if defined(M2_BT_CONNECT)
         probeConnect();

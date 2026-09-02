@@ -262,6 +262,34 @@ else
 
     rm -f "$EVKB/$hci_rel"/build/hci_*.uart "$EVKB/$hci_rel"/build/hci_*.peer \
           "$EVKB/$hci_rel"/build/hci_*.dbg "$EVKB/$hci_rel"/build/serial.uart "$EVKB/$hci_rel"/build/serial.dbg
+
+    # [baud] (BT-3 phase 0) asserts the vendor set-baud SEQUENCE against a peer
+    # that answers; it must be just as blind to the card-absent fallback as
+    # [hci] is -- same ELF question, same shared-transport risk.  "[baud] no
+    # first Reset" is what the fallback capture produces
+    # (hci_reset=timeout, never hci_reset=ok), which is what the gate's own
+    # first assertion after run_phase checks for.
+    #
+    # run_qemu_baud.sh owns a separate build directory (build-baud/) with its
+    # own knob, so it needs GATE_VACUITY=1 to skip the (re)build here -- the
+    # vacuity harness has no guarantee of a toolchain, and the ELF this test
+    # exercises was already built once by hand.
+    baud_rel="$hci_rel"
+    baud_elf="$EVKB/$baud_rel/build-baud/m2_hci_probe.elf"
+    if [ ! -x "$baud_elf" ]; then
+        echo "SKIP: absent_capture_fails_baud_gate (no build-baud/m2_hci_probe.elf -- build it first)"
+    else
+        export GATE_VACUITY=1
+        run_gate "$baud_rel" "run_qemu_baud.sh" "$hci_absent"; rc=$?
+        unset GATE_VACUITY
+        result=0
+        [ "$rc" -ne 0 ] || result=1                                      # must not pass
+        echo "$OUT_TEXT" | grep -q "\[baud\] no first Reset" || result=1  # and name it
+        report "absent_capture_fails_baud_gate" $result
+
+        rm -f "$EVKB/$baud_rel"/build-baud/baud_*.uart "$EVKB/$baud_rel"/build-baud/baud_*.peer \
+              "$EVKB/$baud_rel"/build-baud/baud_*.dbg
+    fi
 fi
 
 # --- 7. rotary_knob_bench: green fixture passes; tamper and bad-golden fail --
