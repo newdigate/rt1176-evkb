@@ -776,7 +776,7 @@ void Avdtp::onSignalling(const uint8_t *p, uint16_t len) {
 }
 void Avdtp::service() {
     if (m_peerDiscover) { m_peerDiscover = false; uint8_t b[4]; send(b, buildDiscoverAcceptOneSource(b, m_peerHdr)); }
-    if (m_state == MEDIA_CONNECTING) { if (m_media && m_media->state == L2cap::OPEN) { m_state = STARTING; m_rspSeen = false; uint8_t b[4]; send(b, buildStart(b, ++m_tl)); }
+    if (m_state == MEDIA_CONNECTING) { if (m_media && m_media->state == L2cap::OPEN) { m_state = STARTING; m_rspSeen = false; uint8_t b[4]; send(b, buildStart(b, ++m_tl, m_acp)); }   // ★ buildStart needs the ACP SEID (fixed from the first sketch, which passed none -> START addressed SEID 0)
                                        return; }
     if (!m_rspSeen) return; m_rspSeen = false;
     if (responseType(m_rsp[0]) != ACCEPT) { m_err = rejectError(m_rsp, m_rspLen); m_state = FAILED; return; }
