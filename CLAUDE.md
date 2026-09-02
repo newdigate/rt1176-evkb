@@ -595,6 +595,15 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-09-02 (NEW-32 Phase 3, blits & scissor): 124 gates
+discovered, **123 passed, 1 failed, 0 SKIP**, `display/vglite_conformance`
+green in 11 s with its matrix at **32**. `LICENSE-AUDIT: PASS` (after the
+sweep; 133 dep paths). Host suites seven, 800 checks. The one red is
+`m2_hci_probe[hci]`, the standing bench-config class. Silicon: THREE boots
+in one capture, six Phase 3 lines byte-identical, checker PASS on each,
+every prediction held. **Every section of the NEW-32 design is now
+measured.**
+
 ✅ **Measured 2026-09-02 (NEW-32 gradients): 124 gates discovered,
 **123 passed, 1 failed, 0 SKIP**, `display/vglite_conformance` green in 10 s
 with its matrix at 26. `LICENSE-AUDIT: PASS` (run AFTER the sweep, never
