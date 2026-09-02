@@ -655,22 +655,26 @@ static void probeConnect() {
     l2.onData(onL2capData, nullptr);
     hci.onAcl(onAclThunk, nullptr);
 
-    // B6: SDP -> AVDTP version
+    // B6: SDP -> AVDTP version (informational -- a failure here must not abort B7)
     L2cap::Channel *sdp = l2.connect(Sdp::PSM, 0x0040);
     uint32_t t0 = millis();
-    while (sdp->state != L2cap::OPEN && millis() - t0 < 5000) { l2.service(); delay(10); }
-    uint8_t q[18];
-    l2.send(sdp->remoteCid, q, Sdp::buildAudioSinkPdlRequest(q, 1));
-    s_sdpDone = false;
-    t0 = millis();
-    while (!s_sdpDone && millis() - t0 < 5000) { l2.service(); delay(10); }
+    if (sdp) while (sdp->state != L2cap::OPEN && millis() - t0 < 5000) { l2.service(); delay(10); }
+    if (sdp && sdp->state == L2cap::OPEN) {
+        uint8_t q[18];
+        l2.send(sdp->remoteCid, q, Sdp::buildAudioSinkPdlRequest(q, 1));
+        s_sdpDone = false;
+        t0 = millis();
+        while (!s_sdpDone && millis() - t0 < 5000) { l2.service(); delay(10); }
+    }
     CONSOLE.print("sdp_avdtp_version=0x"); printHex16(s_avdtpVer);
     CONSOLE.println(s_avdtpVer ? " (B6 DONE)" : " (no response)");
 
     // B7: AVDTP DISCOVER..START
     L2cap::Channel *sig = l2.connect(Avdtp::PSM, 0x0041);
+    if (!sig) { CONSOLE.println("avdtp=fail (no L2CAP channel)"); return; }
     t0 = millis();
     while (sig->state != L2cap::OPEN && millis() - t0 < 5000) { l2.service(); delay(10); }
+    if (sig->state != L2cap::OPEN) { CONSOLE.println("avdtp=fail (signalling channel not open)"); return; }
     avdtp.begin(l2, 0x0041, 0x0042);
     Avdtp::SbcConfig want = { 44100, Avdtp::JOINT_STEREO, 16, 8, Avdtp::LOUDNESS, 2, 53 };
     avdtp.start(want);
