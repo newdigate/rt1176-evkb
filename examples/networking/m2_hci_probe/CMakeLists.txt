@@ -17,7 +17,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 if(EVKB_BOARD STREQUAL "rt1062")
     import_evkb_library(M2Radio hci)
 else()
-    import_evkb_library(M2Radio sdio iw416 hci)
+    import_evkb_library(M2Radio sdio iw416 hci bt)
 endif()
 
 # --- IW416 firmware blob (NOT vendored) -------------------------------------
@@ -186,58 +186,11 @@ if(M2_BT_CONNECT)
     add_definitions(-DM2_BT_CONNECT=1)
 endif()
 
-# Experiment: run the B6 SDP query on the UNENCRYPTED link, right after
-# Create_Connection and BEFORE authentication -- some devices only serve SDP
-# pre-bond.  Isolates the pre-pairing SDP path and stops there.  Requires
-# M2_BT_CONNECT; default OFF so the gates are byte-identical.
-option(M2_BT_SDP_BEFORE_PAIRING "B6 experiment: query SDP before pairing/encryption (unencrypted link)" OFF)
-if(M2_BT_SDP_BEFORE_PAIRING)
-    add_definitions(-DM2_BT_SDP_BEFORE_PAIRING=1)
-endif()
-
-# B6-alt: after the encrypted link, open an L2CAP CO channel to the AVDTP PSM
-# (0x0019) and send an AVDTP Discover -- an A2DP sink MUST answer with its Stream
-# End Points.  Replaces the SDP query (probeSdp) with probeAvdtp.  Requires
-# M2_BT_CONNECT; default OFF so the gates are byte-identical.
-option(M2_BT_AVDTP_DISCOVER "B6-alt: AVDTP Discover on the encrypted link (reads the sink's stream endpoints)" OFF)
-if(M2_BT_AVDTP_DISCOVER)
-    add_definitions(-DM2_BT_AVDTP_DISCOVER=1)
-endif()
-
 # Bench knob: with several headsets discoverable at once, prefer the inquiry hit
 # whose resolved name contains this substring (else first Audio/Video hit).
 set(M2_BT_TARGET_NAME "" CACHE STRING "Prefer the A/V inquiry hit whose name contains this substring")
 if(NOT M2_BT_TARGET_NAME STREQUAL "")
     add_definitions(-DM2_BT_TARGET_NAME="${M2_BT_TARGET_NAME}")
-endif()
-
-# Bench knob: the AuthRequirements byte in our IO_Capability_Request_Reply
-# (default 0x04 = general bonding, MITM not required; 0x00 = no bonding).
-set(M2_BT_AUTH_REQ "" CACHE STRING "SSP AuthRequirements byte, e.g. 0x00 or 0x04")
-if(NOT M2_BT_AUTH_REQ STREQUAL "")
-    add_definitions(-DM2_BT_AUTH_REQ=${M2_BT_AUTH_REQ})
-endif()
-
-# Bench knob: do NOT send Authentication_Requested ourselves -- open the AVDTP
-# channel unauthenticated and let the PEER's service security policy initiate
-# SSP (the sink drives the pairing).  Pair with M2_BT_AVDTP_DISCOVER=ON.
-option(M2_BT_PEER_AUTH "Let the peer initiate authentication (skip our Authentication_Requested)" OFF)
-if(M2_BT_PEER_AUTH)
-    add_definitions(-DM2_BT_PEER_AUTH=1)
-endif()
-
-# Bench knob: enable Secure Connections HOST support (HCI 0x0C7A) before pairing.
-option(M2_BT_SC_HOST "Write_Secure_Connections_Host_Support=1 before pairing" OFF)
-if(M2_BT_SC_HOST)
-    add_definitions(-DM2_BT_SC_HOST=1)
-endif()
-
-# Bench knob: Create_Connection with Allow_Role_Switch=0 (stay master; refuse the
-# peer's switch at setup).  Bluedroid requests a role switch during connection
-# setup, which no headset did; a switch colliding with SSP is a pairing killer.
-option(M2_BT_NO_ROLE_SWITCH "Create_Connection: do not allow role switch" OFF)
-if(M2_BT_NO_ROLE_SWITCH)
-    add_definitions(-DM2_BT_NO_ROLE_SWITCH=1)
 endif()
 
 # Bench knob: disable Simple Pairing on our side so pairing falls back to
