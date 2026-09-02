@@ -272,13 +272,22 @@ that is 769 px short. So one-contour-per-path is no longer a conservative guess
 that happened to work: it is **directly measured against its own counterexample**,
 and it is what both compositors already do.
 
-★ **A refined hypothesis, not yet a rule.** Both nested cases that fail on
-coverage involve **opposite windings** (hole cutting) — the ring is outer CW +
-inner CCW, `four-nested-rings` alternates. The nested case that passes coverage
-(`evenodd-vs-nonzero` pass 2) is same-winding with no hole cut, and is
-nondeterministic anyway. So the variable may be **hole cutting** rather than
-nesting. The gap that would test it: `evenodd`'s pass 1 *is* an EVEN_ODD hole
-and is not coverage-checked.
+★★★ **CONFIRMED 2026-09-02: HOLE CUTTING is the variable, not nesting.**
+Phase 2 closed the gap that could test it — `evenodd`'s pass 1 *is* an EVEN_ODD
+hole and had never been coverage-checked. It came back `eocover=short:308`,
+**identical on both boots**, while pass 2 (same winding, no hole) is exact.
+
+| render | cuts a hole? | coverage |
+|---|---|---|
+| `two-contour-ring-nonzero` (opposite winding) | yes | `short:769` |
+| `evenodd` pass 1 (EVEN_ODD) | yes | **`short:308`** |
+| `four-nested-rings` (alternating) | yes | `stray:1115` |
+| `evenodd` pass 2 (same winding) | **no** | `ok` |
+
+**Every hole-cutting render mis-covers; the one that does not is exact.** Note
+also that the two boots disagree on `nzfill` (6421 vs 6423) and agree **exactly**
+on `eofill` — the nondeterminism lives in the no-hole pass, not the
+hole-cutting one.
 
 ### ★★ Stray coverage — what the fill numbers say, and why `pixel=ok` got stricter
 
@@ -371,22 +380,51 @@ is exactly what the Case column is for.
 
 ## Colour & blend — Phase 2
 
-### ⚠ BUILT, NOT YET MEASURED. Five cases awaiting one bench boot.
+### ✅ MEASURED 2026-09-02, two boots — every verdict identical
 
 **Why this phase, and not the gradients the original spec listed:** every one of
 the fifteen Phase 1 cases renders with `VG_LITE_BLEND_NONE`, while **both
 shipping compositors use `VG_LITE_BLEND_SRC_OVER` exclusively** — twelve call
-sites. The matrix had never tested the blend mode production uses, while the
-gradient APIs it *would* have tested are already routed around by solid strips
-in both widgets.
+sites. The matrix had never tested the blend mode production uses.
 
 | Feature | Verdict | Safe usage | Case |
 |---|---|---|---|
-| memory word order (ARGB) of a `BGRA8888` target | **PENDING** — already measured in `vglite_probe`; this re-confirms per boot | red is byte 2; `vg_lite_color_t` is the other order (ABGR) | `color/solid-word-order` |
-| `SRC_OVER` source term over black | **PENDING** — two readings both admissible, see below | — | `color/premultiplied-srcover` |
-| `SRC_OVER` over a non-zero backdrop | **PENDING** | — | `blend/srcover-arithmetic` |
-| `SRC_OVER` self-consistency across two composites | **PENDING** — reading-agnostic | — | `blend/srcover-double` |
-| `BLEND_NONE` with a non-opaque source | **PENDING** — recorded, not judged | every Phase 1 case used an opaque colour; nothing is known about this | `blend/none-honours-alpha` |
+| memory word order of a `BGRA8888` target | **OK** — `px=0xFFFF0000`, red is byte 2 | ARGB in memory; `vg_lite_color_t` is ABGR. Confuse them and the colour is wrong while every status says success | `color/solid-word-order` |
+| `SRC_OVER` source term over black | **OK — reading B**, `v=255 a=255` | see below: it is the **premultiplied** operator | `color/premultiplied-srcover` |
+| `SRC_OVER` over a non-zero backdrop | **OK — reading B**, and it **agrees with the case above** | pass a **premultiplied** source | `blend/srcover-arithmetic` |
+| `SRC_OVER` self-consistency across two composites | **OK** — `v1=255 v2=255 pred=255` | the operator is self-consistent | `blend/srcover-double` |
+| `BLEND_NONE` with a non-opaque source | **OK** — `v=255 a=128`, source written **raw**, alpha row `A: Sa` | behaves exactly as documented; all fifteen Phase 1 cases are unaffected | `blend/none-honours-alpha` |
+
+### ★★★ `SRC_OVER` is the PREMULTIPLIED operator here — and both compositors feed it non-premultiplied colour
+
+Both cases report **reading B** and **they agree**, which was the consistency
+requirement. So the hardware implements `S + D*(1-Sa)` — exactly what
+`inc/vg_lite.h:461` literally says, despite `:458` filing mode 1 under
+*"Non-premultiplied Blending modes"*. `a=255` rules out alpha-ignoring.
+
+**This is actionable, not academic.** `synthui_fader_gpu.cpp`'s `abgr_a()` packs
+an unscaled RGB with a separate alpha and hands it straight to `SRC_OVER`:
+
+```
+abgr_a(0x1B1F22u, 115u)           // a shadow
+abgr_a(0xFFFFFFu, pal->gloss_opa) // a gloss highlight
+abgr_a(color, opa)                // the tick runs
+```
+
+Under `S + D*(1-Sa)` the source contributes at **full** intensity whatever its
+alpha, so those draws do not produce the intended blend — a white gloss at
+partial opacity saturates rather than reading as a sheen.
+
+★ **The fix is one line in `abgr_a`** (premultiply RGB by `a/255` before
+packing). It **moves both compositors' goldens** and belongs to Phase 4's guard
+layer, not to a probe. Recorded here, deliberately not acted on.
+
+★ **A sensitivity limit worth knowing.** Under reading B a *saturated white*
+source clamps to 255 in cases 2–4, so their colour-channel tolerances are doing
+nothing and cannot separate reading B from other behaviours that also saturate.
+**The alpha row carries the discrimination** (`a=255` vs `128`). A non-saturated
+source would make the colour channel informative again — the obvious next case,
+not a defect in these.
 
 ### ★★ The driver's own header is inconsistent about whether `SRC_OVER` is premultiplied
 

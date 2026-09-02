@@ -1368,7 +1368,15 @@ not hung.
   (predicted `broken`, measured `ok`); each is recorded with its reason in
   `expected_silicon.txt` rather than re-goldened away. What the matrix does not
   separate is DISJOINT-vs-NESTED from FOUR-contours-vs-TWO. **Phase 1b
-  (2026-09-01, two boots) ANSWERED IT: DISJOINTNESS is the variable.** Two
+  (2026-09-01, two boots) ANSWERED IT: DISJOINTNESS is the variable.**
+  ★★★ **AND PHASE 2 (2026-09-02) WENT FURTHER: HOLE CUTTING is the variable,
+  not nesting.** Closing the `evenodd` pass-1 coverage gap — that pass IS an
+  EVEN_ODD hole and had never been checked — gave `eocover=short:308`,
+  identical on both boots, while pass 2 (same winding, NO hole) is exact. Every
+  hole-cutting render in the matrix mis-covers (ring `short:769`, evenodd pass 1
+  `short:308`, four-nested-rings `stray:1115`); the one that cuts no hole does
+  not. The two boots even disagree on `nzfill` while agreeing EXACTLY on
+  `eofill` — the nondeterminism lives in the no-hole pass. Two
   disjoint contours fail exactly as four do (`path/two-disjoint-bars`,
   `runs=1` of 2, byte-identical on both boots); four nested contours work
   exactly as two do (`path/four-nested-rings`, `runs=4`). So the rule is
@@ -1414,14 +1422,31 @@ not hung.
   ★★ **PHASE 2 (2026-09-01) FOUND THAT THE MATRIX HAD NEVER TESTED THE BLEND
   MODE PRODUCTION USES.** All fifteen Phase 1 cases render with
   `VG_LITE_BLEND_NONE`; both shipping compositors use `VG_LITE_BLEND_SRC_OVER`
-  exclusively, twelve call sites. Five colour/blend cases are BUILT AND AWAIT A
-  BOOT (matrix 15 → 20, sweep unchanged at 124; host suites 305 → 410 checks).
+  exclusively, twelve call sites. Five colour/blend cases MEASURED 2026-09-02, two boots,
+  every verdict identical (matrix 15 → 20, sweep unchanged at 124; host suites
+  305 → 410 checks). `cases=20 ok=15 broken=5 repeat_differs=2`, timeouts 0.
   ★ **The driver's own header is internally inconsistent about whether
   `SRC_OVER` is premultiplied** — `inc/vg_lite.h:452`/`:458` file mode 1 as
   non-premultiplied while `:461` gives it `S + D*(1-Sa)`, the PREmultiplied
   operator, and `:481` gives mode 11 the non-premultiplied `S*Sa + D*(1-Sa)`
   which `:137` aliases `PREMULTIPLY_SRC_OVER`. Names and formulas inverted. The
   cases admit BOTH readings and report which, rather than pre-judging.
+  ★★★ **MEASURED: THIS SILICON IMPLEMENTS READING B — `SRC_OVER` IS THE
+  PREMULTIPLIED OPERATOR** (`v=255 a=255 model=B` in both colour cases, and they
+  AGREE). And **both compositors feed it NON-premultiplied colour**:
+  `synthui_fader_gpu.cpp`'s `abgr_a()` packs unscaled RGB with a separate alpha
+  and passes it to `SRC_OVER` at alpha 115 (a shadow), `pal->gloss_opa` (a
+  highlight) and a variable `opa` (the tick runs). Under `S + D*(1-Sa)` the
+  source contributes at FULL intensity whatever its alpha, so a white gloss at
+  partial opacity SATURATES instead of reading as a sheen. **The fix is one line
+  in `abgr_a`** — premultiply RGB by `a/255` — but it MOVES BOTH COMPOSITORS'
+  GOLDENS and belongs to Phase 4's guard layer, not to a probe.
+  ★ **Sensitivity limit:** under reading B a saturated white source clamps to
+  255 in cases 2-4, so their colour tolerances do nothing and the ALPHA ROW is
+  what discriminates. A non-saturated source is the obvious next case.
+  ★ `BLEND_NONE` measured `v=255 a=128 read=raw` — source written raw, alpha row
+  `A: Sa`, exactly as documented. All fifteen Phase 1 cases used it with an
+  opaque colour and are unaffected.
   ★ **The alpha row is the one unambiguous part and it is what catches a GPU
   that discards alpha**: `:462` gives `A: Sa + Da*(1-Sa)` = 255 over an opaque
   backdrop under BOTH readings, while alpha-ignoring leaves 128. Without it,
