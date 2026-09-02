@@ -374,11 +374,13 @@ CXX=${CXX:-c++}
 for t in l2cap_test avdtp_test sbc_test; do
     [ -f "$DIR/$t.cpp" ] || continue
     # bt/ units (BtLink, Sdp, Avdtp) call into Hci, so link the host-compilable
-    # hci sources too (as hci/test/run.sh does).  Added in Task 6 when BtLink
-    # became the first bt/ unit to use Hci::run/submit; H4Parser.cpp + Hci.cpp
-    # is the minimal set (HciEvents/BtFwLoader are not referenced).
+    # hci sources too (as hci/test/run.sh does).  H4Parser+Hci added in Task 6
+    # when BtLink became the first bt/ unit to use Hci::run/submit; HciEvents
+    # added when BtLink was hardened to REUSE the tested inquiry/name parsers
+    # (hciInquiryResultCount/hciParseInquiryResult/hciParseRemoteNameComplete/
+    # hciFormatBd) rather than reimplement them.  BtFwLoader is not referenced.
     $CXX -std=c++11 -Wall -Wextra -Werror -I"$DIR/.." -I"$DIR/../../hci" "$DIR/$t.cpp" "$DIR"/../*.cpp \
-        "$DIR/../../hci/H4Parser.cpp" "$DIR/../../hci/Hci.cpp" -o "$OUT/$t"
+        "$DIR/../../hci/H4Parser.cpp" "$DIR/../../hci/Hci.cpp" "$DIR/../../hci/HciEvents.cpp" -o "$OUT/$t"
     "$OUT/$t"
 done
 echo "BT-HOST-TESTS: PASS"
@@ -603,6 +605,8 @@ private:
 - [ ] **Step 3: Build check** — `BtLink.cpp` must host-compile (it is pulled into every `bt/test` build by the `*.cpp` glob). Run `~/Development/M2Radio/bt/test/run.sh` → still `24 checks, 0 failures` / `PASS` (the count is unchanged — `BtLink` has no host test; this only proves it compiles clean under `-Wall -Wextra -Werror` on the host). If it does not compile host-side, the seam injection is wrong — fix `BtLink`, do NOT change `run.sh`.
 
 - [ ] **Step 4: Commit (M2Radio)** — `git add bt/BtLink.h bt/BtLink.cpp && git commit -m "bt: BtLink -- inquiry by name, connect, SSP with PIN fallback, encryption (ported from the probe)"`
+
+> **★ Hardened after code review (a second commit on top).** The committed `BtLink` additionally: **reuses the tested `HciEvents` parsers** (`hciInquiryResultCount`/`hciParseInquiryResult`/`hciParseRemoteNameComplete`/`hciFormatBd`) instead of the inline copies the first cut carried — so `#include "HciEvents.h"` is added and `bt/test/run.sh` links `HciEvents.cpp` (the "port from the probe verbatim" note above is superseded for these four parsers only); **fails fast** in `pairAndEncrypt()` — the three `run()` calls (both `Authentication_Requested`, `Set_Connection_Encryption`) now check `e != Hci::OK || !r.statusEvent` and return `PAIRING_FAILED`/`ENCRYPTION_FAILED` immediately, so an HCI-level rejection isn't a 25-50 s hang (this fixes a defect inherited from the probe, tolerable there because a human watches the console); **fixes a name-request race** — the single `m_nameDone` flag is replaced by a per-hit `volatile Hit::named`, so a late `Remote_Name` response for one hit can't end another hit's wait and drop a legitimate target; plus BD de-dup in the inquiry handler, a `-Wswitch`-clean `resultName()`, and a 320-byte log buffer. Anyone re-deriving `BtLink` from the plan carries these.
 
 ### Task 7: `Sdp` client and `Avdtp` initiator
 
