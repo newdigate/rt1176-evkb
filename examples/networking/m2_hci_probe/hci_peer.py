@@ -75,7 +75,7 @@ def phase_done(phase, peer):
     # avdtp's real end is signalling over ACL (an accepted START), not a
     # command opcode -- 0x0413 (Set_Connection_Encryption) is only the last
     # HCI COMMAND before L2CAP/SDP/AVDTP take over.
-    if phase == "avdtp": return peer.avdtp["started"]
+    if phase == "avdtp": return peer.avdtp["started"] and not peer.avdtp["error"]
     return peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
 
 def connect(path):
@@ -104,9 +104,12 @@ class Peer:
         self.baud_seen = []
         self.peer_bd = None
         # --- avdtp phase: L2CAP acceptor + SDP responder + AVDTP acceptor state ---
-        self.chans = {}                            # peer_scid -> (our_cid, psm)
+        # key: the CID the far end (the firmware) assigned ITSELF and sent us as
+        # SCID in its Connection Request (host-owned, not ours) -> value: (the
+        # CID we assigned for our side of the channel, psm)
+        self.chans = {}
         self.next_cid = 0x0340
-        self.avdtp = {"config": None, "opened": False, "started": False, "order": []}
+        self.avdtp = {"config": None, "opened": False, "started": False, "order": [], "error": False}
         # --- V3 bootloader state (fwdnld phase only) ---
         # While `boot` is True every received byte belongs to the download, not
         # to HCI: the host is answering the bootloader, and H4 framing has not
@@ -270,56 +273,73 @@ class Peer:
     # --- avdtp phase: L2CAP acceptor + SDP responder + AVDTP acceptor ----------
     def sig(self, handle, cmd): self.send(acl(handle, 0x0001, cmd), 0.02)
     def handle_acl(self, handle, d):
-        if len(d) < 4: return
-        l2len, cid = struct.unpack("<HH", d[:4]); pl = d[4:4 + l2len]
-        if cid == 0x0001:                                                    # signalling
-            code, ident = pl[0], pl[1]; body = pl[4:]
-            if code == 0x02:                                                 # Connection Request: psm, scid
-                psm, scid = struct.unpack("<HH", body[:4]); ours = self.next_cid; self.next_cid += 0x40
-                self.chans[scid] = (ours, psm)
-                self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0001, 0x0000))   # pending first, like the Shokz
-                self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0000, 0x0000))
-                self.sig(handle, bytes([0x04, ident + 1, 8, 0]) + struct.pack("<HH", scid, 0) + bytes([0x01, 0x02, 0xA0, 0x02]))  # our Config Request: MTU 672
-            elif code == 0x04:                                               # Config Request for one of OUR endpoints: accept, echo options
-                dcid = struct.unpack("<H", body[:2])[0]
-                peer = [p for p, (o, _) in self.chans.items() if o == dcid]
-                if not peer: self.log.append("PEER-L2CAP-CFG-UNKNOWN-DCID 0x%04x" % dcid); return
-                opts = body[4:]
-                self.sig(handle, bytes([0x05, ident, 6 + len(opts), 0]) + struct.pack("<HHH", peer[0], 0, 0) + opts)   # SCID = the host's CID
-            elif code == 0x05:                                               # Config Response to ours: check the receiver-side SCID rule
-                scid, flags, result = struct.unpack("<HHH", body[:6])
-                if scid not in [o for (o, _) in self.chans.values()]: self.log.append("PEER-L2CAP-CFGRSP-BAD-SCID 0x%04x" % scid)
-            elif code == 0x0A:                                               # Information Request: extended features none / fixed channels
-                itype = struct.unpack("<H", body[:2])[0]
-                data = b"\x00\x00\x00\x00" if itype == 2 else (b"\x02" + b"\x00" * 7 if itype == 3 else b"")
-                self.sig(handle, bytes([0x0B, ident, 4 + len(data), 0]) + struct.pack("<HH", itype, 0 if data else 1) + data)
-            elif code == 0x08: self.sig(handle, bytes([0x09, ident, 0, 0]))  # Echo
-            return
-        # data on one of our channels
-        for peer_cid, (ours, psm) in self.chans.items():
-            if ours == cid:
-                if psm == 0x0001: self.handle_sdp(handle, peer_cid, pl)
-                elif psm == 0x0019: self.handle_avdtp(handle, peer_cid, pl)
+        # Any malformed frame from a buggy Task-10 driver must fail the phase
+        # CLEANLY -- a PEER-EXCEPTION line, not a raw Python traceback that
+        # reads as "the fake peer is broken" instead of "the firmware sent a
+        # bad frame".  The happy-path parses below stay unguarded on purpose:
+        # this try/except is the safety net, not a substitute for them.
+        try:
+            if len(d) < 4: return
+            l2len, cid = struct.unpack("<HH", d[:4]); pl = d[4:4 + l2len]
+            if cid == 0x0001:                                                    # signalling
+                code, ident = pl[0], pl[1]; body = pl[4:]
+                if code == 0x02:                                                 # Connection Request: psm, scid
+                    psm, scid = struct.unpack("<HH", body[:4]); ours = self.next_cid; self.next_cid += 0x40
+                    self.chans[scid] = (ours, psm)
+                    self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0001, 0x0000))   # pending first, like the Shokz
+                    self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0000, 0x0000))
+                    self.sig(handle, bytes([0x04, ident + 1, 8, 0]) + struct.pack("<HH", scid, 0) + bytes([0x01, 0x02, 0xA0, 0x02]))  # our Config Request: MTU 672
+                elif code == 0x04:                                               # Config Request for one of OUR endpoints: accept, echo options
+                    dcid = struct.unpack("<H", body[:2])[0]
+                    peer = [p for p, (o, _) in self.chans.items() if o == dcid]
+                    if not peer: self.log.append("PEER-L2CAP-CFG-UNKNOWN-DCID 0x%04x" % dcid); return
+                    opts = body[4:]
+                    self.sig(handle, bytes([0x05, ident, 6 + len(opts), 0]) + struct.pack("<HHH", peer[0], 0, 0) + opts)   # SCID = the host's CID
+                elif code == 0x05:                                               # Config Response to ours: check the receiver-side SCID rule
+                    scid, flags, result = struct.unpack("<HHH", body[:6])
+                    if scid not in [o for (o, _) in self.chans.values()]: self.log.append("PEER-L2CAP-CFGRSP-BAD-SCID 0x%04x" % scid)
+                elif code == 0x0A:                                               # Information Request: extended features none / fixed channels
+                    itype = struct.unpack("<H", body[:2])[0]
+                    data = b"\x00\x00\x00\x00" if itype == 2 else (b"\x02" + b"\x00" * 7 if itype == 3 else b"")
+                    self.sig(handle, bytes([0x0B, ident, 4 + len(data), 0]) + struct.pack("<HH", itype, 0 if data else 1) + data)
+                elif code == 0x08: self.sig(handle, bytes([0x09, ident, 0, 0]))  # Echo
                 return
-        self.log.append("PEER-ACL-UNKNOWN-CID 0x%04x" % cid)
+            # data on one of our channels
+            for peer_cid, (ours, psm) in self.chans.items():
+                if ours == cid:
+                    if psm == 0x0001: self.handle_sdp(handle, peer_cid, pl)
+                    elif psm == 0x0019: self.handle_avdtp(handle, peer_cid, pl)
+                    return
+            self.log.append("PEER-ACL-UNKNOWN-CID 0x%04x" % cid)
+        except Exception as e:
+            self.log.append("PEER-EXCEPTION handle_acl: %r" % e)
+            self.avdtp["error"] = True
     def handle_sdp(self, handle, peer_cid, pl):
-        if pl[0] != 0x06: return
-        txn = pl[1:3]
-        rsp = bytes.fromhex("07") + txn + bytes.fromhex("001E001B36001836001509000435103506190100090019350619001909010300")  # the PDL seen on the wire: AVDTP 1.3
-        self.send(acl(handle, peer_cid, rsp), 0.02); self.log.append("PEER-SDP-ANSWERED")
+        try:
+            if pl[0] != 0x06: return
+            txn = pl[1:3]
+            rsp = bytes.fromhex("07") + txn + bytes.fromhex("001E001B36001836001509000435103506190100090019350619001909010300")  # the PDL seen on the wire: AVDTP 1.3
+            self.send(acl(handle, peer_cid, rsp), 0.02); self.log.append("PEER-SDP-ANSWERED")
+        except Exception as e:
+            self.log.append("PEER-EXCEPTION handle_sdp: %r" % e)
+            self.avdtp["error"] = True
     def handle_avdtp(self, handle, peer_cid, pl):
-        hdr, sig = pl[0], pl[1]; tl = hdr & 0xF0; acc = bytes([tl | 0x02]); self.avdtp["order"].append(sig)
-        if sig == 0x01:   self.send(acl(handle, peer_cid, acc + b"\x01" + bytes([1 << 2, 0x08])), 0.02)                         # DISCOVER: SEID 1, audio, SNK
-        elif sig == 0x02: self.send(acl(handle, peer_cid, acc + b"\x02" + b"\x01\x00" + b"\x07\x06\x00\x00\xFF\xFF\x02\x35"), 0.02)  # caps: all, bitpool 2..53
-        elif sig == 0x03:                                                                                                       # SET_CONFIGURATION: record the CIE
-            self.avdtp["config"] = pl[10:14] if len(pl) >= 14 else b""
-            self.log.append("PEER-SET-CONFIG cie=%s" % self.avdtp["config"].hex())
-            self.send(acl(handle, peer_cid, acc + b"\x03"), 0.02)
-        elif sig == 0x06: self.avdtp["opened"] = True; self.send(acl(handle, peer_cid, acc + b"\x06"), 0.02)                    # OPEN
-        elif sig == 0x07:                                                                                                       # START: only legal after OPEN
-            if not self.avdtp["opened"]: self.log.append("PEER-AVDTP-START-BEFORE-OPEN"); self.send(acl(handle, peer_cid, bytes([tl | 0x03, 0x07, 1 << 2, 0x31])), 0.02); return  # 0x31 = bad state
-            self.avdtp["started"] = True; self.log.append("PEER-AVDTP-STARTED"); self.send(acl(handle, peer_cid, acc + b"\x07"), 0.02)
-        else: self.send(acl(handle, peer_cid, bytes([tl | 0x03, sig, 0x19])), 0.02)                                             # unsupported command
+        try:
+            hdr, sig = pl[0], pl[1]; tl = hdr & 0xF0; acc = bytes([tl | 0x02]); self.avdtp["order"].append(sig)
+            if sig == 0x01:   self.send(acl(handle, peer_cid, acc + b"\x01" + bytes([1 << 2, 0x08])), 0.02)                         # DISCOVER: SEID 1, audio, SNK
+            elif sig == 0x02: self.send(acl(handle, peer_cid, acc + b"\x02" + b"\x01\x00" + b"\x07\x06\x00\x00\xFF\xFF\x02\x35"), 0.02)  # caps: all, bitpool 2..53
+            elif sig == 0x03:                                                                                                       # SET_CONFIGURATION: record the CIE
+                self.avdtp["config"] = pl[10:14] if len(pl) >= 14 else b""
+                self.log.append("PEER-SET-CONFIG cie=%s" % self.avdtp["config"].hex())
+                self.send(acl(handle, peer_cid, acc + b"\x03"), 0.02)
+            elif sig == 0x06: self.avdtp["opened"] = True; self.send(acl(handle, peer_cid, acc + b"\x06"), 0.02)                    # OPEN
+            elif sig == 0x07:                                                                                                       # START: only legal after OPEN
+                if not self.avdtp["opened"]: self.log.append("PEER-AVDTP-START-BEFORE-OPEN"); self.send(acl(handle, peer_cid, bytes([tl | 0x03, 0x07, 1 << 2, 0x31])), 0.02); return  # 0x31 = bad state
+                self.avdtp["started"] = True; self.log.append("PEER-AVDTP-STARTED"); self.send(acl(handle, peer_cid, acc + b"\x07"), 0.02)
+            else: self.send(acl(handle, peer_cid, bytes([tl | 0x03, sig, 0x19])), 0.02)                                             # unsupported command
+        except Exception as e:
+            self.log.append("PEER-EXCEPTION handle_avdtp: %r" % e)
+            self.avdtp["error"] = True
 
 if __name__ == "__main__":
     phase, path = sys.argv[1], sys.argv[2]
