@@ -121,6 +121,32 @@ void vgc_finish_into(vg_lite_error_t *acc)
     if (e != VG_LITE_SUCCESS && *acc == VG_LITE_SUCCESS) *acc = e;
 }
 
+/* ---- gradient draws ---------------------------------------------------------
+ * paint_color is 0, as in NXP's own linear-gradient example. The driver
+ * swizzles it and pushes it to paint register 0x0A26 (vg_lite_path.c, the
+ * draw_linear_grad body) whatever the paint type; if it MODULATED a linear
+ * paint, NXP's demo would render black, so 0 is the documented-by-usage value
+ * rather than a guess. VG_LITE_FILTER_LINEAR is what vg_lite_draw_grad
+ * hard-codes for the legacy path (vg_lite_path.c:5739), used here for both so
+ * the two APIs differ in nothing but the API. */
+void vgc_draw_linear_grad(vg_lite_path_t *p, vg_lite_ext_linear_gradient_t *g,
+                          vg_lite_matrix_t *path_matrix, vg_lite_error_t *acc)
+{
+    const vg_lite_error_t e = vg_lite_draw_linear_grad(&vgc_scratch, p,
+                                  VG_LITE_FILL_NON_ZERO, path_matrix, g, 0,
+                                  VG_LITE_BLEND_NONE, VG_LITE_FILTER_LINEAR);
+    if (e != VG_LITE_SUCCESS && *acc == VG_LITE_SUCCESS) *acc = e;
+}
+
+void vgc_draw_grad(vg_lite_path_t *p, vg_lite_linear_gradient_t *g,
+                   vg_lite_matrix_t *path_matrix, vg_lite_error_t *acc)
+{
+    const vg_lite_error_t e = vg_lite_draw_grad(&vgc_scratch, p,
+                                  VG_LITE_FILL_NON_ZERO, path_matrix, g,
+                                  VG_LITE_BLEND_NONE);
+    if (e != VG_LITE_SUCCESS && *acc == VG_LITE_SUCCESS) *acc = e;
+}
+
 /* The path arena lives in vgc_arena.cpp -- its own TU so the host test
  * (tests/arena_test.cpp) can compile it against a stubbed vg_lite_init_path.
  * See that file's header for why it is the piece most worth testing. */
@@ -350,6 +376,7 @@ void setup()
 
     for (size_t i = 0; i < vgc_path_case_count; i++)      run_case(&vgc_path_cases[i]);
     for (size_t i = 0; i < vgc_color_case_count; i++)     run_case(&vgc_color_cases[i]);
+    for (size_t i = 0; i < vgc_grad_case_count; i++)      run_case(&vgc_grad_cases[i]);
     for (size_t i = 0; i < vgc_dangerous_case_count; i++) run_case(&vgc_dangerous_cases[i]);
 
     /* The spec's summary line, with repeat_differs appended (the spec's field

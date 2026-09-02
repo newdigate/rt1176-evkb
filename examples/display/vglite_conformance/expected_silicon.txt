@@ -346,3 +346,31 @@ blend/none-honours-alpha            ok       same    # ★ RECORDED, NOT JUDGED 
 # colour channel informative again -- the obvious next case, not a defect in
 # these.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# GRADIENTS (linear). Pre-registered 2026-09-02, BEFORE THE BOOT.
+# Spec: docs/superpowers/specs/2026-09-02-gc355-conformance-gradients-design.md
+#
+# ★ THE PREDICTIONS COME FROM READING THE DRIVER, NOT FROM THE CLAIM TABLE.
+# vg_lite_draw_linear_grad derives the per-pixel parameter from grad->matrix
+# ALONE and applies path_matrix only to the geometry; vg_lite_update_linear_grad
+# transforms the line into SCREEN space and OVERWRITES both grad->matrix and
+# grad->linear_grad (vg_lite.c:7690-7710). So the EXT gradient does not follow
+# a moved path, and a second update is IDEMPOTENT (it re-derives the same
+# screen line from the matrix it wrote). One prediction below therefore differs
+# from the approved verbal design, which called reupdate "double transform";
+# the derivation is on the line and it was changed before the press.
+#
+# ★ THE RIGHT-HAND COLUMN CAN LOSE. moved=ok would mean the hardware composes
+# the matrices where the driver's code path does not -- a bigger finding than
+# the prediction. reupdate=ok beside moved=broken would mean a second update is
+# NOT idempotent on this hardware. legacy=ok retires the GC255-only row and
+# points the earlier black at the caller's matrix. Any of those gets a written
+# reason here, never a pasted transcript.
+# ---------------------------------------------------------------------------
+grad/legacy-linear                  broken   unstable # The pre-EXT API through vg_lite_draw_pattern. ONE prior sighting on this silicon: solid black with a per-BOOT-varying checksum, while every call returned SUCCESS. That sighting is the only basis, so `broken` is the honest prediction and `unstable` the honest repeat: per-boot variation was seen and in-boot behaviour never measured. This case sets grad->matrix CORRECTLY (translate then scale 80/1024), which the earlier attempt may not have; a black here is therefore the hardware. The count=0 sub-experiment rides in detail= (c0=0,c0n=2,c0k=FF000000,c0w=FFFFFFFF) and is driver software, deterministic.
+grad/ext-linear-static              ok       same    # THE BOOTSTRAP CONTROL for the three cells below. EXT ramp red->blue from the rect's left edge to its right, identity path matrix. gcFEATURE_VG_LINEAR_GRADIENT_EXT=1 on this chip rev, and LVGL's VG_LITE backend has drawn through this path on this board. If this is broken, the placement cells say nothing about placement.
+grad/ext-linear-moved               broken   same    # Same build, path_matrix=translate(16,0), NO update. The ramp is in SCREEN space (24..104) and the rect is now at 40..120, so the left sample reads ~20% into the ramp (~R=190) and `left_red` fails. This is "the ramp is placement-dependent" in its precise form: the driver never composes path_matrix into the paint.
+grad/ext-linear-reupdate            broken   same    # moved, plus a SECOND update_linear_grad on the same object. Predicted broken WITH THE SAME PROFILE AS moved: the second update transforms (0,0,width,0) by the matrix the first one wrote and gets the SAME screen endpoints back -- idempotent -- and leaks one ramp image (leak=1). NOT the "double transform" the verbal design said; changed here before the boot, with this algebra as the reason.
+grad/ext-linear-rebuilt             ok       same    # moved done RIGHT: clear, set the line at the NEW screen position (40..120), update, draw at translate(16,0). The prescribed usage beside its counterexample -- the two-draws-ring of the gradient matrix. What a moving widget must do: re-specify the gradient line in screen space per placement.
+grad/ramp-word-order                ok       same    # Both stops pure red, so every sample must be EXACTLY opaque red. update_linear_grad packs the ramp bytes A,B,G,R and tags the image ABGR8888; this asks whether the sampler reads them back in that order. Predicted ok because LVGL's backend renders gradients in the right colours on this board. It is the one case that can NAME a word-order fault; the four red->blue cases would merely reverse.

@@ -41,7 +41,19 @@ vgc case_begin=blend/srcover-double
 vgc case=blend/srcover-double api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
 vgc case_begin=blend/none-honours-alpha
 vgc case=blend/none-honours-alpha api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
-vgc_summary engine=absent cases=20 ok=0 broken=0 skip=20 dangerous=off repeat_differs=0
+vgc case_begin=grad/legacy-linear
+vgc case=grad/legacy-linear api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=grad/ext-linear-static
+vgc case=grad/ext-linear-static api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=grad/ext-linear-moved
+vgc case=grad/ext-linear-moved api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=grad/ext-linear-reupdate
+vgc case=grad/ext-linear-reupdate api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=grad/ext-linear-rebuilt
+vgc case=grad/ext-linear-rebuilt api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=grad/ramp-word-order
+vgc case=grad/ramp-word-order api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc_summary engine=absent cases=26 ok=0 broken=0 skip=26 dangerous=off repeat_differs=0
 vgc_timeouts=0 vgc_irqs=0
 VGC_DONE
 vgc_hb t=5000

@@ -136,9 +136,14 @@ Arms, each a switch in `model.h`:
    (both stops identical — pinned, because it says that case is blind to this
    defect *by design*, not by accident).
 6. **R/B-permuting ramp store** — the A,B,G,R packing written A,R,G,B:
-   `ramp-word-order` alone goes broken, the others' *verdicts* survive (their
-   predicate is direction-agnostic under a red↔blue swap) — pinned, so the
-   word-order fault surfaces in exactly one cell, as in Phase 2.
+   `ramp-word-order` goes broken reading **blue**, and the four red→blue EXT
+   cases go broken too, because their gradient **reverses** — and a reversed
+   gradient *is* wrong, so that is the correct verdict rather than collateral.
+   `legacy-linear` stays ok (its ramp is CPU-packed ARGB words through a
+   different function). What the word-order case adds is that it can *name*
+   the fault in exact bytes where the others can only reverse. (An earlier
+   draft of this bullet claimed the others' verdicts survive; the suite showed
+   otherwise, and the suite is right — the predicate checks direction.)
 
 Demonstrate RED before trusting: a case hard-wired to `VGC_OK` must be caught
 by arms 2 and 3.

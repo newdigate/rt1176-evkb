@@ -373,7 +373,7 @@ if [ -d "$EVKB/$VGC" ] && [ -f "$EVKB/$VGC/transcript_qemu.txt" ]; then
     run_gate "$VGC" "run_qemu.sh" "$WORK/vgc_short.txt"; rc=$?
     result=0
     [ "$rc" -ne 0 ] || result=1
-    echo "$OUT_TEXT" | grep -q "expected 20 case lines, got 19" || result=1
+    echo "$OUT_TEXT" | grep -q "expected 26 case lines, got 25" || result=1
     report "vgc_truncated_matrix_fails" $result
 else
     echo "SKIP: vglite_conformance vacuity (example or fixture missing)"
