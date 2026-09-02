@@ -47,6 +47,13 @@ static uint8_t vgc_scratch_mem[VGC_W * VGC_H * 4];
 
 vg_lite_buffer_t vgc_scratch;
 
+/* The second, smaller target (vgc_harness.h explains the regime it exists
+ * for). Same memory class and alignment as the scratch, for the same reasons. */
+EXTMEM __attribute__((aligned(64)))
+static uint8_t vgc_small_mem[VGC_SMALL_W * VGC_SMALL_H * 4];
+
+vg_lite_buffer_t vgc_small;
+
 static bool s_gpu = false;
 
 /* ---- scratch access ------------------------------------------------------- */
@@ -86,6 +93,37 @@ vg_lite_error_t vgc_clear_to(uint32_t abgr)
 }
 
 vg_lite_error_t vgc_clear(void) { return vgc_clear_to(VGC_BG_COLOR); }
+
+/* ---- the small target ------------------------------------------------------ */
+
+uint32_t vgc_px_small(int x, int y)
+{
+    if (x < 0 || x >= VGC_SMALL_W || y < 0 || y >= VGC_SMALL_H) { s_px_oob++; return 0u; }
+    return ((const uint32_t *)(const void *)vgc_small_mem)[(size_t)y * VGC_SMALL_W + (size_t)x];
+}
+
+vg_lite_error_t vgc_clear_small(void)
+{
+    const vg_lite_error_t e = vg_lite_clear(&vgc_small, NULL, VGC_BG_COLOR);
+    if (e != VG_LITE_SUCCESS) return e;
+    return vg_lite_finish();
+}
+
+void vgc_draw_path_to(vg_lite_buffer_t *target, vg_lite_path_t *p,
+                      vg_lite_fill_t rule, uint32_t color, vg_lite_error_t *acc)
+{
+    const vg_lite_error_t e = vg_lite_draw(target, p, rule, vgc_ident(),
+                                           VG_LITE_BLEND_NONE, color);
+    if (e != VG_LITE_SUCCESS && *acc == VG_LITE_SUCCESS) *acc = e;
+}
+
+void vgc_blit(vg_lite_buffer_t *source, vg_lite_matrix_t *matrix,
+              vg_lite_filter_t filter, vg_lite_error_t *acc)
+{
+    const vg_lite_error_t e = vg_lite_blit(&vgc_scratch, source, matrix,
+                                           VG_LITE_BLEND_NONE, 0, filter);
+    if (e != VG_LITE_SUCCESS && *acc == VG_LITE_SUCCESS) *acc = e;
+}
 
 /* ---- per-case helpers ------------------------------------------------------ */
 
@@ -361,7 +399,27 @@ void setup()
                 Serial1.printf("vgc_map_err=%d\n", (int)merr);
                 absent_reason = "map_failed";
             } else {
-                s_gpu = true;
+                /* The small target, mapped the same way. A failure here is
+                 * reported as an ABSENT engine rather than a per-case skip:
+                 * it cannot realistically fail where the main map succeeded,
+                 * and a half-mapped harness is not one to draw conclusions
+                 * from. */
+                memset(&vgc_small, 0, sizeof(vgc_small));
+                vgc_small.width   = VGC_SMALL_W;
+                vgc_small.height  = VGC_SMALL_H;
+                vgc_small.stride  = VGC_SMALL_W * 4;
+                vgc_small.tiled   = VG_LITE_LINEAR;
+                vgc_small.format  = VG_LITE_BGRA8888;
+                vgc_small.memory  = (void *)vgc_small_mem;
+                vgc_small.address = (uint32_t)(uintptr_t)vgc_small_mem;
+                const vg_lite_error_t serr =
+                    vg_lite_map(&vgc_small, VG_LITE_MAP_USER_MEMORY, 0);
+                if (serr != VG_LITE_SUCCESS) {
+                    Serial1.printf("vgc_small_map_err=%d\n", (int)serr);
+                    absent_reason = "small_map_failed";
+                } else {
+                    s_gpu = true;
+                }
             }
         }
     }
@@ -377,6 +435,7 @@ void setup()
     for (size_t i = 0; i < vgc_path_case_count; i++)      run_case(&vgc_path_cases[i]);
     for (size_t i = 0; i < vgc_color_case_count; i++)     run_case(&vgc_color_cases[i]);
     for (size_t i = 0; i < vgc_grad_case_count; i++)      run_case(&vgc_grad_cases[i]);
+    for (size_t i = 0; i < vgc_blit_case_count; i++)      run_case(&vgc_blit_cases[i]);
     for (size_t i = 0; i < vgc_dangerous_case_count; i++) run_case(&vgc_dangerous_cases[i]);
 
     /* The spec's summary line, with repeat_differs appended (the spec's field

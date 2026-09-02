@@ -33,6 +33,7 @@ teensy_add_executable(vglite_conformance
     vgc_cases_path.cpp
     vgc_cases_color.cpp
     vgc_cases_grad.cpp
+    vgc_cases_blit.cpp
     vgc_dangerous.cpp)
 teensy_target_link_libraries(vglite_conformance cores)
 

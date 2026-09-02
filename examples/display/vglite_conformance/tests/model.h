@@ -1134,4 +1134,194 @@ void vgc_draw_grad(vg_lite_path_t *p, vg_lite_linear_gradient_t *g,
     raster_paint(p, VG_LITE_FILL_NON_ZERO, VG_LITE_BLEND_NONE, path_matrix, paint_legacy, g);
 }
 
+/* =========================================================================
+ * PHASE 3: IMAGES, BLITS & SCISSOR
+ *
+ * ★★ WHAT THIS HALF MODELS. Two pieces of DRIVER bookkeeping, from source:
+ * the scissor state vg_lite_set_scissor keeps (vg_lite_image.c:263) and the
+ * source-stride check vg_lite_blit runs before any command exists
+ * (vg_lite.c:1383, _check_source_aligned, on under
+ * gcFEATURE_VG_16PIXELS_ALIGNED). And one piece of HARDWARE behaviour as the
+ * driver programs it: a scissored draw clips RIGHT and BOTTOM through
+ * register 0x0A13 in every regime, and LEFT and TOP only through the
+ * tessellation-window clamp that vg_lite_draw skips when the target fits the
+ * tess buffer (vg_lite_path.c:1208-1260). The correct model therefore clips
+ * all four edges into vgc_scratch and only right/bottom into vgc_small. The
+ * arms are the other GPUs. It says nothing about the silicon.
+ * ========================================================================= */
+
+/* ---- the second target ------------------------------------------------------ */
+static uint32_t s_fb_small[VGC_SMALL_W * VGC_SMALL_H];
+vg_lite_buffer_t vgc_small;
+
+uint32_t vgc_px_small(int x, int y)
+{
+    if (x < 0 || x >= VGC_SMALL_W || y < 0 || y >= VGC_SMALL_H) { s_oob++; return 0u; }
+    return s_fb_small[(size_t)y * VGC_SMALL_W + (size_t)x];
+}
+
+vg_lite_error_t vgc_clear_small(void)
+{
+    const uint32_t w = mem_word(VGC_BG_COLOR);
+    for (size_t i = 0; i < (size_t)VGC_SMALL_W * VGC_SMALL_H; i++) s_fb_small[i] = w;
+    return VG_LITE_SUCCESS;
+}
+
+/* Which fb a target pointer names, with its dimensions and REGIME. Anything
+ * that is not vgc_small is the scratch -- the target's vgc_scratch is never
+ * populated on the host (its .memory is NULL), and the cases only ever pass
+ * one of the two harness targets. */
+typedef struct { uint32_t *fb; int w, h, fullscreen; } fb_desc_t;
+static fb_desc_t fb_of(const vg_lite_buffer_t *t)
+{
+    fb_desc_t d;
+    if (t == &vgc_small) { d.fb = s_fb_small; d.w = VGC_SMALL_W; d.h = VGC_SMALL_H; d.fullscreen = 1; }
+    else                 { d.fb = s_fb;       d.w = VGC_W;       d.h = VGC_H;       d.fullscreen = 0; }
+    return d;
+}
+
+/* ---- scissor state, as the driver keeps it --------------------------------- */
+static int g_sc_set;
+static int g_sc[4];   /* x, y, right, bottom -- right/bottom EXCLUSIVE */
+
+vg_lite_error_t vg_lite_set_scissor(int32_t x, int32_t y, int32_t right, int32_t bottom)
+{
+    g_sc[0] = x; g_sc[1] = y; g_sc[2] = right; g_sc[3] = bottom;
+    g_sc_set = !(x == -1 && y == -1 && right == -1 && bottom == -1);
+    return VG_LITE_SUCCESS;
+}
+
+vg_lite_error_t vg_lite_map(vg_lite_buffer_t *b, vg_lite_map_flag_t f, int32_t fd)
+{
+    (void)f; (void)fd;
+    b->address = 1u;       /* non-zero, as a mapped buffer would carry */
+    return VG_LITE_SUCCESS;
+}
+
+/* ---- BLIT/SCISSOR ARM SWITCHES ------------------------------------------------ */
+static int g_ignore_scissor;      /* the scissor is dead: nothing clips */
+static int g_fullscreen_clips_all;/* the fader's warning false: all four clip in every regime */
+static int g_width_as_pitch;      /* the GPU walks source rows by width*bpp, not stride */
+static int g_no_align_check;      /* the driver's stride check absent: a misaligned blit draws */
+
+/* Does the scissor keep pixel (x,y) out? Per regime, as the driver does. */
+static int scissored_out(const fb_desc_t *d, int x, int y)
+{
+    if (!g_sc_set || g_ignore_scissor) return 0;
+    const int rb = (x >= g_sc[2] || y >= g_sc[3]);                 /* 0x0A13, every regime */
+    const int lt = (x <  g_sc[0] || y <  g_sc[1]);                 /* tess window only */
+    if (!d->fullscreen || g_fullscreen_clips_all) return rb || lt;
+    return rb;
+}
+
+void vgc_draw_path_to(vg_lite_buffer_t *target, vg_lite_path_t *p,
+                      vg_lite_fill_t rule, uint32_t color, vg_lite_error_t *acc)
+{
+    (void)acc;
+    const fb_desc_t d = fb_of(target);
+    const uint32_t src = mem_word(color);
+    parse_path(p);
+    if (g_draw_nothing) g_ncon = 0;
+    const float bx0 = p->bounding_box[0], by0 = p->bounding_box[1];
+    const float bx1 = p->bounding_box[2], by1 = p->bounding_box[3];
+    for (int y = 0; y < d.h; y++) {
+        const float sy = (float)y + 0.5f;
+        if (sy < by0 || sy > by1) continue;
+        for (int x = 0; x < d.w; x++) {
+            const float sx = (float)x + 0.5f;
+            if (sx < bx0 || sx > bx1) continue;
+            if (scissored_out(&d, x, y)) continue;
+            int wind = 0, cross = 0;
+            for (int c = 0; c < g_ncon; c++) {
+                const int s = g_cstart[c], len = g_clen[c];
+                for (int i = 0; i < len; i++) {
+                    const float ax = g_ptx[s + i], ay = g_pty[s + i];
+                    const float bx = g_ptx[s + (i + 1) % len];
+                    const float by = g_pty[s + (i + 1) % len];
+                    if ((ay <= sy) == (by <= sy)) continue;
+                    const float t = (sy - ay) / (by - ay);
+                    if (ax + t * (bx - ax) <= sx) continue;
+                    cross++;
+                    wind += (by > ay) ? 1 : -1;
+                }
+            }
+            const int in = (rule == VG_LITE_FILL_EVEN_ODD) ? (cross & 1) : (wind != 0);
+            if (in) d.fb[(size_t)y * d.w + (size_t)x] = model_blend(src, d.fb[(size_t)y * d.w + (size_t)x], VG_LITE_BLEND_NONE);
+        }
+    }
+}
+
+/* ---- the blit ------------------------------------------------------------------
+ * The driver's stride rule (vg_lite.c:1383): 64 for the 32-bpp formats, 32 for
+ * 16-bpp, 16 for 8-bpp; FORMAT_ALIGNMENT returns VG_LITE_INVALID_ARGUMENT.
+ * Then, per target pixel inside the transformed source bounds, one source
+ * pixel through inverse(matrix), point filter, converted to the model's
+ * memory word and stored raw (BLEND_NONE). RGB565 is expanded by SHIFT with
+ * red in the LOW five bits -- the pre-registered convention; the case
+ * reports which way the hardware went and pins it afterwards. */
+static int stride_rule(vg_lite_buffer_format_t f)
+{
+    switch (f) {
+    case VG_LITE_RGBA8888: case VG_LITE_BGRA8888: case VG_LITE_ABGR8888: return 64;
+    case VG_LITE_RGB565:   case VG_LITE_BGR565:                          return 32;
+    case VG_LITE_A8:                                                     return 16;
+    default:                                                             return 64;
+    }
+}
+
+static uint32_t src_pixel_word(const vg_lite_buffer_t *s, int x, int y)
+{
+    const int bpp = (s->format == VG_LITE_RGB565 || s->format == VG_LITE_BGR565) ? 2 :
+                    (s->format == VG_LITE_A8) ? 1 : 4;
+    const int pitch = g_width_as_pitch ? s->width * bpp : s->stride;
+    const uint8_t *row = (const uint8_t *)s->memory + (size_t)y * (size_t)pitch;
+    if (bpp == 4) {
+        uint32_t w; memcpy(&w, row + x * 4, 4);
+        return w;                                    /* already a memory word */
+    }
+    if (bpp == 2) {
+        uint16_t v; memcpy(&v, row + x * 2, 2);
+        const int r5 = v & 0x1F, g6 = (v >> 5) & 0x3F, b5 = (v >> 11) & 0x1F;
+        const int r = r5 << 3, g = g6 << 2, b = b5 << 3;
+        return 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+    }
+    const uint8_t a = row[x];
+    return ((uint32_t)a << 24);
+}
+
+void vgc_blit(vg_lite_buffer_t *source, vg_lite_matrix_t *matrix,
+              vg_lite_filter_t filter, vg_lite_error_t *acc)
+{
+    (void)filter;
+    if (!g_no_align_check && (source->stride % stride_rule(source->format)) != 0) {
+        if (*acc == VG_LITE_SUCCESS) *acc = VG_LITE_INVALID_ARGUMENT;
+        return;
+    }
+    if (g_draw_nothing) return;
+    vg_lite_matrix_t inv;
+    if (!inv_affine(matrix, &inv)) { if (*acc == VG_LITE_SUCCESS) *acc = VG_LITE_INVALID_ARGUMENT; return; }
+    /* transformed source bounds, clamped to the target */
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+    const float cx[4] = { 0, (float)source->width, (float)source->width, 0 };
+    const float cy[4] = { 0, 0, (float)source->height, (float)source->height };
+    for (int i = 0; i < 4; i++) {
+        float tx, ty; xform(matrix, cx[i], cy[i], &tx, &ty);
+        if (tx < x0) x0 = tx; if (tx > x1) x1 = tx; if (ty < y0) y0 = ty; if (ty > y1) y1 = ty;
+    }
+    const fb_desc_t d = fb_of(&vgc_scratch);
+    for (int y = 0; y < d.h; y++) {
+        const float sy = (float)y + 0.5f;
+        if (sy < y0 || sy > y1) continue;
+        for (int x = 0; x < d.w; x++) {
+            const float sx = (float)x + 0.5f;
+            if (sx < x0 || sx > x1) continue;
+            float u, v; xform(&inv, sx, sy, &u, &v);
+            const int ix = (int)floorf(u), iy = (int)floorf(v);
+            if (ix < 0 || ix >= source->width || iy < 0 || iy >= source->height) continue;
+            if (scissored_out(&d, x, y)) continue;
+            d.fb[(size_t)y * d.w + (size_t)x] = src_pixel_word(source, ix, iy);
+        }
+    }
+}
+
 #endif /* VGC_TEST_MODEL_H */

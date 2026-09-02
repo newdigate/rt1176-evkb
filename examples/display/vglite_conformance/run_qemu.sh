@@ -103,7 +103,7 @@ grep -aqE "api2?=success"  "$OUT" && { echo "FAIL: TRIPWIRE an API call succeede
 # lines but 13 case lines (a case did not finish)".
 CASES=$(grep -a -c "^vgc case=" "$OUT" || true)
 BEGINS=$(grep -a -c "^vgc case_begin=" "$OUT" || true)
-[ "$CASES" -eq 26 ] || { echo "FAIL: expected 26 case lines, got $CASES"; exit 1; }
+[ "$CASES" -eq 32 ] || { echo "FAIL: expected 32 case lines, got $CASES"; exit 1; }
 [ "$BEGINS" -eq "$CASES" ] || \
     { echo "FAIL: $BEGINS case_begin lines but $CASES case lines (a case did not finish)"; exit 1; }
 
@@ -130,7 +130,9 @@ for id in path/single-contour-rect path/multi-contour-disjoint \
           blend/none-honours-alpha \
           grad/legacy-linear grad/ext-linear-static grad/ext-linear-moved \
           grad/ext-linear-reupdate grad/ext-linear-rebuilt \
-          grad/ramp-word-order; do
+          grad/ramp-word-order \
+          blit/basic blit/stride-64 blit/stride-unaligned blit/formats \
+          scissor/basic scissor/tess-fullscreen; do
     grep -aqE "^vgc case=$id api=skip api2=skip pixel=skip detail=[^ ]+ repeat=skip\r?$" "$OUT" || \
         { echo "FAIL: missing/wrong case line for $id"; exit 1; }
 done
@@ -141,7 +143,7 @@ done
 # real defect class, and only comparing the two can see it.
 # Demonstrated RED 2026-08-30: skip=13 edited to skip=12 in a real capture ->
 # "FAIL: summary line missing or disagrees with the case lines".
-grep -aqE "^vgc_summary engine=absent cases=26 ok=0 broken=0 skip=26 dangerous=off repeat_differs=0\r?$" "$OUT" || \
+grep -aqE "^vgc_summary engine=absent cases=32 ok=0 broken=0 skip=32 dangerous=off repeat_differs=0\r?$" "$OUT" || \
     { echo "FAIL: summary line missing or disagrees with the case lines"; exit 1; }
 
 # A bounded wait that gave up means the completion path is wrong even when the

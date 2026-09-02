@@ -53,7 +53,19 @@ vgc case_begin=grad/ext-linear-rebuilt
 vgc case=grad/ext-linear-rebuilt api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
 vgc case_begin=grad/ramp-word-order
 vgc case=grad/ramp-word-order api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
-vgc_summary engine=absent cases=26 ok=0 broken=0 skip=26 dangerous=off repeat_differs=0
+vgc case_begin=blit/basic
+vgc case=blit/basic api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=blit/stride-64
+vgc case=blit/stride-64 api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=blit/stride-unaligned
+vgc case=blit/stride-unaligned api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=blit/formats
+vgc case=blit/formats api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=scissor/basic
+vgc case=scissor/basic api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc case_begin=scissor/tess-fullscreen
+vgc case=scissor/tess-fullscreen api=skip api2=skip pixel=skip detail=engine=absent repeat=skip
+vgc_summary engine=absent cases=32 ok=0 broken=0 skip=32 dangerous=off repeat_differs=0
 vgc_timeouts=0 vgc_irqs=0
 VGC_DONE
 vgc_hb t=5000

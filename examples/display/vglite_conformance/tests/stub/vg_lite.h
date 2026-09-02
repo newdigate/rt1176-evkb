@@ -69,7 +69,27 @@ typedef enum { VG_LITE_FILL_EVEN_ODD = 0x1900,
 typedef enum { VG_LITE_BLEND_NONE = 0, VG_LITE_BLEND_SRC_OVER = 1 } vg_lite_blend_t;
 
 typedef struct { float m[3][3]; }            vg_lite_matrix_t;
-typedef struct { void *memory; uint32_t address; int32_t width, height, stride; } vg_lite_buffer_t;
+/* Phase 3 gave the buffer its format, layout and image-mode fields: a blit
+ * SOURCE is a vg_lite_buffer_t the case fills on the CPU, and the model reads
+ * it back by format and stride exactly as the hardware would. Real values:
+ * VG_LITE_LINEAR is 0 (inc/vg_lite.h, vg_lite_buffer_layout enum), the
+ * format enumerators are :353/:356/:383, image modes :437/:440. */
+typedef enum { VG_LITE_LINEAR = 0, VG_LITE_TILED = 1 } vg_lite_buffer_layout_t;
+typedef enum { VG_LITE_MAP_USER_MEMORY = 0, VG_LITE_MAP_DMABUF = 1 } vg_lite_map_flag_t;
+/* Real enumerators (inc/vg_lite.h:352-384). Declared HERE, ahead of the
+ * buffer struct, because a blit source's format is a field of it. */
+typedef enum { VG_LITE_RGBA8888 = 0 | (1 << 10), VG_LITE_BGRA8888 = 1 | (1 << 10),
+               VG_LITE_RGB565 = 4 | (1 << 10), VG_LITE_BGR565 = 5 | (1 << 10),
+               VG_LITE_A8 = 10 | (1 << 10), VG_LITE_ABGR8888 = 31 | (1 << 10)
+             } vg_lite_buffer_format_t;
+typedef struct {
+    void *memory; uint32_t address; int32_t width, height, stride;
+    vg_lite_buffer_format_t format;
+    vg_lite_buffer_layout_t tiled;
+    int image_mode;
+    void *handle;
+} vg_lite_buffer_t;
+typedef struct vg_lite_rectangle { int32_t x, y, width, height; } vg_lite_rectangle_t;
 
 typedef struct vg_lite_path {
     float             bounding_box[4];
@@ -113,8 +133,6 @@ typedef uint32_t     vg_lite_color_t;
  * target build rejects a uint32_t* where the driver wants this. The case file
  * declares its set_grad arrays with this name for exactly that reason. */
 typedef unsigned int vg_lite_uint32_t;
-typedef enum { VG_LITE_BGRA8888 = 1 | (1 << 10),
-               VG_LITE_ABGR8888 = 31 | (1 << 10) } vg_lite_buffer_format_t;
 typedef enum { VG_LITE_NORMAL_IMAGE_MODE = 0x1F00,
                VG_LITE_NONE_IMAGE_MODE   = 0x1F03 } vg_lite_image_mode_t;
 typedef enum { VG_LITE_FILTER_POINT = 0, VG_LITE_FILTER_LINEAR = 0x1000 } vg_lite_filter_t;
@@ -161,6 +179,13 @@ typedef struct vg_lite_ext_linear_gradient {
     vg_lite_gradient_spreadmode_t spread_mode;
 } vg_lite_ext_linear_gradient_t;
 #define vg_lite_linear_gradient_ext_t vg_lite_ext_linear_gradient_t
+
+/* ---- Phase 3: blits and scissor -------------------------------------------- */
+vg_lite_error_t vg_lite_blit(vg_lite_buffer_t *target, vg_lite_buffer_t *source,
+                             vg_lite_matrix_t *matrix, vg_lite_blend_t blend,
+                             vg_lite_color_t color, vg_lite_filter_t filter);
+vg_lite_error_t vg_lite_set_scissor(int32_t x, int32_t y, int32_t right, int32_t bottom);
+vg_lite_error_t vg_lite_map(vg_lite_buffer_t *buffer, vg_lite_map_flag_t flag, int32_t fd);
 
 vg_lite_error_t vg_lite_identity(vg_lite_matrix_t *m);
 vg_lite_error_t vg_lite_translate(vg_lite_float_t x, vg_lite_float_t y, vg_lite_matrix_t *m);

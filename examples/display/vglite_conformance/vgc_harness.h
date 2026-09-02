@@ -330,4 +330,45 @@ void vgc_draw_linear_grad(vg_lite_path_t *p, vg_lite_ext_linear_gradient_t *g,
 void vgc_draw_grad(vg_lite_path_t *p, vg_lite_linear_gradient_t *g,
                    vg_lite_matrix_t *path_matrix, vg_lite_error_t *acc);
 
+/* ---- Phase 3: images, blits & scissor ----------------------------------------
+ * Defined in vgc_cases_blit.cpp. Runs after the gradient table. */
+extern const vgc_case_t vgc_blit_cases[];
+extern const size_t     vgc_blit_case_count;
+
+/* ★ A SECOND, SMALLER RENDER TARGET, and the reason is a REGIME. The driver
+ * decides per draw whether it is "fullscreen" -- dst_align_width <= tess_w
+ * && target->height <= tess_h (vg_lite_path.c:1208) -- and in that regime it
+ * never consults the scissor for the tessellation window (the whole clamp
+ * block is under `if (ts_is_fullscreen == 0)`, :1217). The tess buffer is
+ * fixed at vg_lite_init and every other case depends on the 64x64-against-
+ * 128x128 MULTI-TILE regime it was chosen for, so the only way to probe the
+ * other regime without moving everything else is a 64x64 target under the
+ * same 64x64 tess buffer. That is vgc_small. Same format, same memory class,
+ * mapped beside vgc_scratch; read through vgc_px_small, which counts
+ * out-of-range like vgc_px does. */
+#define VGC_SMALL_W 64
+#define VGC_SMALL_H 64
+extern vg_lite_buffer_t vgc_small;
+uint32_t vgc_px_small(int x, int y);
+/* Clear vgc_small to VGC_BG_COLOR and finish. The harness clears ONLY
+ * vgc_scratch before a case, so a case drawing into vgc_small clears it
+ * itself -- and checks the status, as run_case does for the main clear. */
+vg_lite_error_t vgc_clear_small(void);
+
+/* vgc_draw_path_blend with an EXPLICIT target and the identity matrix,
+ * BLEND_NONE. vgc_draw_path_blend itself is untouched: 334 path and colour
+ * checks pin its behaviour, and the scissor cases need only this. */
+void vgc_draw_path_to(vg_lite_buffer_t *target, vg_lite_path_t *p,
+                      vg_lite_fill_t rule, uint32_t color, vg_lite_error_t *acc);
+
+/* Blit `source` into vgc_scratch under `matrix`, BLEND_NONE, colour 0 (no
+ * colour mixing), the given filter. The status contract is the usual one --
+ * and here it CARRIES INFORMATION rather than merely guarding: the driver
+ * refuses a misaligned source stride with VG_LITE_INVALID_ARGUMENT before
+ * any command is built (vg_lite.c:1383, _check_source_aligned, under
+ * gcFEATURE_VG_16PIXELS_ALIGNED), and blit/stride-unaligned's verdict is
+ * that this refusal HAPPENS. */
+void vgc_blit(vg_lite_buffer_t *source, vg_lite_matrix_t *matrix,
+              vg_lite_filter_t filter, vg_lite_error_t *acc);
+
 #endif /* VGC_HARNESS_H */

@@ -146,6 +146,21 @@ else
     note_fail cases_grad_test
 fi
 
+suite
+# --- cases_blit_test --------------------------------------------------------
+# The REAL Phase 3 case table against the shared model, which for this suite
+# models the driver's scissor bookkeeping (two mechanisms, applied per regime)
+# and its blit source-stride check from source. Six arms.
+if c++ -std=c++14 -Wall -Wextra -Werror -O1 -I "$DIR/stub" -I "$DIR/.." \
+       -o "$OUT/cases_blit_test" \
+       "$DIR/cases_blit_test.cpp" \
+       "$DIR/../vgc_cases_blit.cpp" "$DIR/../vgc_arena.cpp"; then
+    "$OUT/cases_blit_test" || note_fail cases_blit_test
+else
+    echo "BUILD-FAILED: cases_blit_test"
+    note_fail cases_blit_test
+fi
+
 # --- trailer ----------------------------------------------------------------
 echo "=="
 if [ "$rc" -ne 0 ]; then

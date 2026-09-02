@@ -408,3 +408,28 @@ grad/ramp-word-order                ok       same    # Both stops pure red, so e
 # caching a ramp across placements. The guard layer's gradient helpers, refused
 # in Phase 4 for want of a probe, now have one.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# PHASE 3 -- IMAGES, BLITS & SCISSOR. Pre-registered 2026-09-02, BEFORE THE
+# BOOT. Spec: docs/superpowers/specs/2026-09-02-gc355-conformance-phase3-design.md
+#
+# ★ THE PREDICTIONS COME FROM THE DRIVER. The scissor is TWO mechanisms:
+# right/bottom go to register 0x0A13 in set_render_target (vg_lite.c:3626) in
+# every regime; left/top exist only as a tessellation-window clamp inside
+# vg_lite_draw (vg_lite_path.c:1217) that is SKIPPED when ts_is_fullscreen.
+# And the 64-byte blit stride rule is a driver CHECK (vg_lite.c:1383,
+# _check_source_aligned, on under gcFEATURE_VG_16PIXELS_ALIGNED) that returns
+# VG_LITE_INVALID_ARGUMENT before any command exists.
+#
+# ★ WHAT CAN LOSE. tess-fullscreen reading L=1,T=1 retires the fader's warning;
+# reading R=0,B=0 as well means the scissor is DEAD in that regime, a larger
+# finding. stride-unaligned returning success means the check is not what
+# gates this chip. formats reading order=high flips a convention nothing here
+# has ever measured. Each gets a written reason.
+# ---------------------------------------------------------------------------
+blit/basic                          ok       same    # 16x16 red/blue checker, BGRA8888, natural 64-B stride, translated to (24,24), point filter. The rotary bench has blitted BGRA on this board; predicted ok.
+blit/stride-64                      ok       same    # The same image in a 32-px-wide buffer, stride 128 B, width 16 -- THE ROTARY BENCH'S LAYOUT. A GPU walking rows by width*bpp would shear it; the bench's rotors render, so predicted ok.
+blit/stride-unaligned               ok       same    # ★ ok MEANS REFUSED. 20-px-wide buffer, stride 80 B. The driver's _check_source_aligned must return INVALID_ARGUMENT (rc=1) and nothing may be drawn -- the outcome is DEFINED, as path/degenerate-zero-area's is. api=success with paint, or a refusal that painted, is broken. Nothing reaches the GPU, which is why this is safe in the default build.
+blit/formats                        ok       same    # RGB565 source, stride 32 B. The checker must land with 5-bit channels expanding to >= 248 (shift) or 255 (replication). REPORTS order=: pre-registered `low` -- red in bits 4:0, by analogy with the measured BGRA8888 memory word (first-named component lowest). The case admits either order BEFORE the boot and reports which; the measured order is PINNED in code afterwards, as Phase 2 pinned its blend reading, because a case green under either is invisible to this checker.
+scissor/basic                       ok       same    # 120x120 rect under set_scissor(40,40,88,88) into the 128x128 scratch under the 64x64 tess buffer -- the SHIPPING multi-tile regime. Left/top clip through the tess-window origin, right/bottom through 0x0A13. All four edges must clip and the interior paint.
+scissor/tess-fullscreen             broken   same    # ★ PREDICTED BROKEN WITH L=0,T=0,R=1,B=1, NOT MERELY BROKEN. The same draw into a 64x64 target under the 64x64 tess buffer -- the FULLSCREEN regime -- under set_scissor(20,20,44,44). Left and top are painted past the scissor because the tess-window clamp that implements them is inside `if (ts_is_fullscreen == 0)`; right and bottom still clip because 0x0A13 is programmed regardless. This is the fader header's warning ("vg_lite_init with the panel's own size defeats per-fader scissoring") measured, and sharpened to the pair of edges it actually costs.
