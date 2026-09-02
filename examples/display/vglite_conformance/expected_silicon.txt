@@ -77,7 +77,7 @@ path/two-disjoint-bars              broken   same    # PHASE 1b, MEASURED 2026-0
 path/four-nested-rings              broken   unstable # ★ VERDICT FLIPPED ok -> broken BY A PREDICATE CHANGE, NOT BY THE BOARD. Structure is right (runs=4, all four nested contours honoured, both boots) but COVERAGE IS NOT: measured fill 6931 and 6875 against an analytic 5760, i.e. ~1150 STRAY PIXELS, ~20%, varying between boots. That is not antialiasing -- single-contour-rect (6400) and multi-contour-close-padded (5120) measure EXACTLY on the same pipeline, so axis-aligned integer rects cost zero AA here. `pixel=ok` now means the picture is RIGHT, not merely that the run structure is; see the coverage note below. PREDICTED broken with cover=stray:~1115 (tol 120 = perimeter/8). NOT YET MEASURED under the new predicate -- one boot confirms it.
 path/two-contour-ring-nonzero       broken   same    # ★★ THE BLIND SPOT, AND IT WAS HIDING A DEFECT. MEASURED 2026-09-01, two boots: rim=1 centre=0 -- the structural predicate PASSES -- but fill=4607 against an analytic 5376, i.e. cover=short:769, FOURTEEN PER CENT OF THE RING MISSING. This case reported `ok` on every boot from Phase 1 onward on the strength of two sample points and no fill check at all. PREDICTED `ok` and the prediction was WRONG -- the only one of the four first-ever coverage measurements to fail. Note the DIRECTION: `short`, not `stray`. Four nested contours draw ~1150 px TOO MANY; two nested contours with opposite winding draw 769 TOO FEW. Nested multi-contour paths are wrong in BOTH directions. Its control path/two-draws-ring -- the SAME ring geometry built from two single-contour draws -- measures 5376 EXACTLY on both boots.
 path/two-draws-ring                 ok       same    # THE SAFE-USAGE CONTROL for the line above: same ring as plate + inset plate, two single-contour draws. This is what both shipping compositors do, so a broken here would mean the ground under SynthUI moved. ★ COVERAGE FIRST MEASUREMENT, and this is the STRONGEST of the four predictions: the ring is built from TWO SINGLE-CONTOUR DRAWS, the construction both shipping compositors use, so if anything is exact it is this. Analytic 5376, tol 56. Predicted ok -- and a stray reading here would be the most alarming result in the matrix, because it would mean single-contour paths are not immune either. ★ MEASURED 2026-09-01, two boots: fill=5376 EXACTLY, cover=ok. This is the load-bearing control of the whole matrix: the SAME ring as two-contour-ring-nonzero, built the way both shipping compositors build it -- two single-contour paths, two draws -- and it is exact while the single-path version is 769 px short. Direct evidence that one-contour-per-path is SUFFICIENT here, not merely untested.
-path/evenodd-vs-nonzero             broken   differs # ★★ NOW BROKEN, AND IT CONFIRMS THE HOLE-CUTTING HYPOTHESIS. MEASURED 2026-09-02, two boots: pass 1 (the EVEN_ODD ring, which CUTS A HOLE) reads eofill=5068 against an analytic 5376 -- eocover=short:308 -- IDENTICAL on both boots. Pass 2 (same-winding nest, cuts NO hole) is nzcover=ok. PREDICTED ok; the prediction was wrong, and the case was only able to be wrong because Phase 2 closed the pass-1 coverage gap. Before that this cell reported ok on the strength of pass 2 alone. ★ THE PATTERN IS NOW COMPLETE: every hole-cutting render in the matrix mis-covers -- two-contour-ring-nonzero short:769, this pass 1 short:308, four-nested-rings stray:1115 -- and the ONE nested render that cuts no hole (this pass 2) is exact. So the Phase 1b variable is HOLE CUTTING, not nesting. ★ Note the two boots differ on nzfill (6421 vs 6423) but agree EXACTLY on eofill -- the nondeterminism lives in the no-hole pass, not the hole-cutting one.
+path/evenodd-vs-nonzero             broken   differs # ★★ NOW BROKEN, AND IT CONFIRMS THE HOLE-CUTTING HYPOTHESIS. MEASURED 2026-09-02, two boots: pass 1 (the EVEN_ODD ring, which CUTS A HOLE) reads eofill=5068 against an analytic 5376 -- eocover=short:308 -- IDENTICAL on both boots. Pass 2 (same-winding nest, cuts NO hole) is nzcover=ok. PREDICTED ok; the prediction was wrong, and the case was only able to be wrong because Phase 2 closed the pass-1 coverage gap. Before that this cell reported ok on the strength of pass 2 alone. ★ THE PATTERN IS NOW COMPLETE: every hole-cutting render in the matrix mis-covers -- two-contour-ring-nonzero short:769, this pass 1 short:308, four-nested-rings stray:1171 (boot 2; boot 1 read stray:1115) -- and the ONE nested render that cuts no hole (this pass 2) is exact. So the Phase 1b variable is HOLE CUTTING, not nesting. ★ Note the two boots differ on nzfill (6421 vs 6423) but agree EXACTLY on eofill -- the nondeterminism lives in the no-hole pass, not the hole-cutting one.
 path/self-intersecting              ok       same    # A pentagram: ONE contour, so first-contour-only does not bite. Both fill rules must be honoured (EVEN_ODD empty centre, NON_ZERO filled) -- this is case 6's control as well as its own probe. ★ COVERAGE FIRST MEASUREMENT. All-diagonal boundary, so the AA-class tolerance applies: analytic NON_ZERO star = |shoelace| - inner pentagon = 3655 - 862.70 = 2792 (derived from the ROUNDED INTEGER vertices actually emitted, and independently confirmed by the host model at 2792). Perimeter 474, tol 237; predicted excess ~168 at the measured 0.354 px/px diagonal AA rate, so ~69 px of margin. Predicted ok. ★ COVERAGE MEASURED 2026-09-01: fill=2805 vs analytic 2792, i.e. +13 against a tolerance of 237. THE TOLERANCE IS FAR MORE GENEROUS THAN IT NEEDS TO BE: +168 was extrapolated from the triangle's +30 at 0.354 px per unit of diagonal, and 5.6x the diagonal boundary produced +13, not +168. So the triangle's +30 is NOT explained by boundary antialiasing either, and k=1/2 is not yet justified by data -- it is merely safe.
 path/format-s8                      ok       same
 path/format-s16                     ok       same
@@ -261,7 +261,7 @@ pair contour-encoding path/multi-contour-disjoint=broken,path/multi-contour-clos
 #
 #                  2 contours                    4 contours
 #   disjoint       BROKEN (structure, runs=1)    BROKEN (structure, runs=1)
-#   nested         BROKEN (cover=short:769)      BROKEN (cover=stray:1115)
+#   nested         BROKEN (cover=short:769)      BROKEN (cover=stray:1171 (boot 2; boot 1 read stray:1115))
 #
 # ALL FOUR CELLS OF THE 2x2 ARE BROKEN. "Nested is OK" was an artefact of
 # checking only STRUCTURE: two of the three nested cases pass their sample-point
@@ -278,19 +278,27 @@ pair contour-encoding path/multi-contour-disjoint=broken,path/multi-contour-clos
 # + inner CCW, four-nested-rings alternates. The nested case that passes
 # coverage (evenodd-vs-nonzero pass 2) is SAME-winding with no hole cut -- and
 # it is nondeterministic anyway. So the variable may be HOLE CUTTING rather
-# than nesting. The obvious gap: evenodd's pass 1 IS an EVEN_ODD hole and is
-# not coverage-checked. Closing that needs one more file static and one boot.
+# than nesting. That gap is CLOSED (Phase 2): pass 1 reads
+# eocover=short:308 on both boots, confirming the hypothesis.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# PHASE 2 -- COLOUR & BLEND. PRE-REGISTERED 2026-09-01, NOT YET MEASURED.
+# PHASE 2 -- COLOUR & BLEND. Pre-registered 2026-09-01, MEASURED 2026-09-02
+# (two boots, every verdict identical). Each row below carries its measurement.
 #
 # ★ WHY THIS PHASE EXISTS: all fifteen cases above render with
 # VG_LITE_BLEND_NONE, while BOTH shipping compositors use SRC_OVER exclusively
 # (twelve call sites). The matrix had never tested the blend mode production
 # uses.
 #
-# ★ TOLERANCES ARE DELIBERATELY GENEROUS AND WILL NARROW AFTER THE BOOT. We
+# ★ THE TOLERANCES WERE GENEROUS-FIRST AND HAVE NOT BEEN NARROWED, AND THAT IS
+# A DECISION RATHER THAN AN OVERSIGHT: under the measured reading B a saturated
+# white source CLAMPS to 255 in cases 2-4, so the colour-channel tolerance is
+# not what those cases turn on -- the ALPHA ROW is. Narrowing a band that is
+# not load-bearing would be theatre. What WAS discharged instead is stronger:
+# the measured READING is now pinned in vgc_cases_color.cpp, so a flip reports
+# pixel=broken rather than passing silently. The original policy note follows.
+# We
 # have no measurement of how this GPU rounds a blend: +/-4 covers /255 vs /256
 # scaling and either rounding direction. Narrowing them afterwards is a
 # MEASUREMENT with a number behind it, not a re-golden -- but it must be

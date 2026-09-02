@@ -244,11 +244,14 @@ machine from the one the shipping compositors run on (720×1280 target, 256×256
 tess). Phase 3's `scissor/tess-fullscreen` case probes the other regime on
 purpose.
 ★ **QEMU cannot reach one line of the pixel logic** (every case reports
-`pixel=skip`), so the example carries THREE HOST SUITES run by
-`examples/display/vglite_conformance/tests/run.sh` — 209 checks over the pure
-predicates, the path arena, and the case geometry itself. The geometry suite
-compiles the REAL case functions against three model rasterisers: a correct
-GPU (all twenty must report `ok`), a first-contour-only GPU modelling this
+`pixel=skip`), so the example carries FIVE HOST SUITES run by
+`examples/display/vglite_conformance/tests/run.sh` — **440 checks** over the pure
+predicates, the colour predicates, the path arena, the path case geometry and
+the colour case geometry. The geometry suite
+compiles the REAL case functions against model rasterisers — the path suite
+against four (correct / first-contour-only / draws-nothing / stray-ink) and the
+colour suite against seven, including one per admissible blend reading. A
+correct GPU (all fifteen path cases `ok`), a first-contour-only GPU modelling this
 GC355's known defect (the probe cases must go BROKEN **by name**, every control
 must stay `ok`), and a GPU that draws nothing. **The negative arms are the
 point** — a positive-only suite is equally consistent with a matrix that cannot
@@ -584,6 +587,34 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-09-02: 124 gates discovered, 122 passed, 2 failed, 0 SKIP**,
+on the NEW-32 Phase 2 close-out (colour & blend; matrix 15 → 20,
+`display/vglite_conformance` green in 10 s). `LICENSE-AUDIT: PASS`, vacuity
+29/29, host suites **440 checks over five suites** (39 predicates + 25 colour
+predicates + 42 arena + 200 path geometry + 134 colour geometry).
+Both reds dispositioned WITH EVIDENCE, neither a regression:
+  * `m2_hci_probe[hci]` — the SAME bench-configured-build-dir class as
+    2026-08-27/29/30, unchanged all session.
+  * `m2_uap_lwip[uap]` — failed at 3 s under sweep load and **PASSES idle**
+    (re-run: "configure -> BSS_START -> netif -> socket -> DHCP, in order,
+    health clean"). This is the documented load-sensitivity class landing on a
+    gate NOT previously suspect — the THIRD time that has happened
+    (`cm4_wire_int_slave_test` 2026-08-06, `m2_rx_demo[txaggr]` 2026-08-27).
+    ★ **So the susceptible set is not a fixed list**, and the branch cannot be
+    the cause: its only touch under `examples/networking/` or `tools/` is one
+    message string in `gate-vacuity.test.sh`, which that gate never reads.
+★ **Phase 2 exists because of a gap found while scoping it**: all fifteen
+Phase 1 cases render with `VG_LITE_BLEND_NONE`, while BOTH shipping compositors
+use `VG_LITE_BLEND_SRC_OVER` exclusively (twelve call sites). The matrix had
+never tested the blend mode production uses.
+★ **The colour cases were PINNED to the measured reading after the boot**, and
+that closed a real hole rather than a cosmetic one: the drift checker compares
+only `<id> <pixel> <repeat>`, so a case returning `ok` under either of two
+readings is INVISIBLE to it. Admitting both was right before the boot and wrong
+to leave standing after. Two host-suite arms now prove the pin — a reading-A
+model reddens the two SRC_OVER cases by name, a modulating-`BLEND_NONE` model
+reddens the fifth.
 
 ✅ **Measured 2026-08-30: 124 gates discovered, 123 passed, 1 failed, 0 SKIP**,
 on the NEW-32 Phase 1 close-out (`display/vglite_conformance`, the GC355/VGLite
@@ -1374,7 +1405,7 @@ not hung.
   EVEN_ODD hole and had never been checked — gave `eocover=short:308`,
   identical on both boots, while pass 2 (same winding, NO hole) is exact. Every
   hole-cutting render in the matrix mis-covers (ring `short:769`, evenodd pass 1
-  `short:308`, four-nested-rings `stray:1115`); the one that cuts no hole does
+  `short:308`, four-nested-rings `stray:1171`); the one that cuts no hole does
   not. The two boots even disagree on `nzfill` while agreeing EXACTLY on
   `eofill` — the nondeterminism lives in the no-hole pass. Two
   disjoint contours fail exactly as four do (`path/two-disjoint-bars`,
@@ -1466,7 +1497,7 @@ not hung.
   why the tessellator drops it. One clue: bar 0 renders 1393 px inside the
   four-bar path and 1322 px inside the two-bar path — same bar, different
   bounding box, and the driver derives its tessellation window from that box.
-  ★ `path/evenodd-vs-nonzero` is the matrix's only `repeat=differs`: its two
+  ★ `path/evenodd-vs-nonzero` is one of TWO cases reporting `repeat=differs` (with `path/four-nested-rings`): its two
   IDENTICAL back-to-back renders produce different pixels, REPRODUCIBLY
   (byte-identical on both boots). Not boot-to-boot noise but a repeatable
   in-boot difference between two identical draw sequences — the class that hid

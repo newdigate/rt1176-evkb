@@ -12,39 +12,54 @@ safe usage · evidence**.
 > distinguishes a working feature from a broken one, so the only currency here
 > is a probe case that looked at pixels.
 
-## ✅ SILICON STATUS: **MEASURED 2026-08-30**
+## ✅ SILICON STATUS: **MEASURED 2026-09-02** (Phase 2 boot; supersedes 2026-08-30)
 
-Transcript: `examples/display/vglite_conformance/transcript_hw_evkb.txt`.
+Transcripts: `examples/display/vglite_conformance/transcript_hw_evkb.txt` is
+**boot 2**, the one `expected_silicon.txt` is checked against;
+`transcript_hw_evkb-boot1.txt` is the first boot, committed so the
+two-boot claims below can be checked rather than taken on trust.
 VGLite pin **`2e17773`** (`evkb.cmake`), Series `gc355/0x0_1216`,
 `vgc_chip_id=0x00000355`, target 128×128 BGRA8888, tessellation 64×64,
-`vgc_timeouts=0 vgc_irqs=75`.
+`vgc_timeouts=0 vgc_irqs=111`.
 
 ★ **The pin is recorded because the checker's whole drift rationale is "the
 driver moved under us".** Attributing a future red to an SDK re-vendor or a
 pin bump should not need git archaeology.
-Result: `cases=13 ok=12 broken=1 repeat_differs=1`.
 
-**TWO BOOTS, BYTE-IDENTICAL** — every verdict and every detail number. That
-matters: this tree has seen a GC355 defect hide behind exactly one boot
-(NEW-20's winding-2 track, ten boots and ten checksums), so a single-boot GPU
-result is not trusted here.
+Result: **`cases=20 ok=15 broken=5 repeat_differs=2`**.
+
+**TWO BOOTS, EVERY VERDICT IDENTICAL.** Three *detail* numbers move between
+them, all in cases already known to vary — `two-disjoint-bars` fill 1322/1316
+(a BROKEN case whose stray pixels are the misparse), `four-nested-rings`
+6875/6931 and `evenodd` `nzfill` 6421/6423 (both `repeat=differs`). Notably
+`eofill` agrees **exactly**: the nondeterminism lives in the no-hole pass.
+That distinction matters because this tree has seen a GC355 defect hide behind
+exactly one boot (NEW-20's winding-2 track, ten boots and ten checksums), so a
+single-boot GPU result is not trusted here.
 
 Verify a fresh transcript against the pre-registered expectation with
-`tools/vglite-conformance-check.sh`; it fails on drift in **either**
-direction.
+`tools/vglite-conformance-check.sh`; it fails on drift in **either** direction.
+
+★★ **BUT KNOW WHAT THE CHECKER CANNOT SEE.** It compares only
+`<id> <pixel> <repeat>`. A case that returns `ok` under more than one
+behaviour is invisible to it. Phase 2's colour cases were built that way
+deliberately — before the boot, the driver's header supported two readings of
+`SRC_OVER` — and were **pinned to the measured reading afterwards** precisely
+so a flip reddens the checker instead of passing silently. If you ever widen a
+case to admit two answers, it stops being drift-protected the moment you do.
 
 **Three Phase 1 predictions were WRONG**: two VERDICT predictions
 (`path/two-contour-ring-nonzero` and `path/evenodd-vs-nonzero`, both predicted
 `broken`, measured `ok`) and one REPEAT prediction (`path/evenodd-vs-nonzero`,
-predicted `same`, measured `differs`). Two verdict lines changed in
-`expected_silicon.txt`; `path/multi-contour-close-padded` was never a
-prediction — it was pre-registered as a `pair:` with both outcomes admissible. They are recorded as measured, with the
-reason for each change written into `expected_silicon.txt`, and they are the
-reason [the mechanism note](#what-is-and-is-not-established) below exists.
+predicted `same`, measured `differs`).
+★ **`path/evenodd-vs-nonzero` has since moved AGAIN** — Phase 2 gave its
+EVEN_ODD pass a coverage check for the first time and it is now `broken`
+(`eocover=short:308`). Its Phase 1 `ok` was on the strength of the other pass
+alone.
 
-Phases 2, 3 and 4 have no cases built at all; their sections are marked
-accordingly and their rows are claims carried over from working code, not
-probe results.
+**Phase 2 is built and measured** (five colour/blend cases, §"Colour & blend").
+Phases 3 and 4 have no cases; their sections are marked accordingly and their
+rows are claims carried over from working code, not probe results.
 
 ## Re-running it
 
@@ -72,7 +87,7 @@ be describing the machine. The fix for a red is never `cp transcript expected`
 
 | Piece | Path |
 |---|---|
-| The probe (13 path cases + 1 opt-in dangerous) | `examples/display/vglite_conformance/` |
+| The probe (20 cases — 15 path, 5 colour/blend — plus 1 opt-in dangerous) | `examples/display/vglite_conformance/` |
 | Design spec | `docs/superpowers/specs/2026-08-30-gc355-conformance-design.md` |
 | Pre-registered expectation | `examples/display/vglite_conformance/expected_silicon.txt` |
 | Drift checker | `tools/vglite-conformance-check.sh` |
@@ -94,7 +109,7 @@ verdict; it says nothing about the GC355.
 
 ## Paths, contours & winding — Phase 1
 
-**Verdicts below are MEASURED** (2026-08-30, two boots byte-identical). Where a
+**Verdicts below are MEASURED** (2026-09-02, two boots, every verdict identical). Where a
 cell says *Prediction refuted*, the pre-registered expectation was wrong and
 `expected_silicon.txt` carries the reason for the change.
 
@@ -106,7 +121,7 @@ cell says *Prediction refuted*, the pre-registered expectation was wrong and
 | two DISJOINT contours in one path, ordinary CLOSE | **BROKEN** — `runs=1` of 2. Two fail exactly as four do | **one contour per path**, or pad the CLOSE slot | `path/two-disjoint-bars` |
 | four NESTED contours in one path, ordinary CLOSE | **BROKEN** — structure right (`runs=4`, all four honoured) but **~1150 STRAY PIXELS** (6931/6875 vs an analytic 5760), varying between boots | do **not** use it | `path/four-nested-rings` |
 | hole cut by a reversed inner contour (non-zero) | **BROKEN** — sample points say the hole is right (`rim=1 centre=0`) but `fill=4607` vs an analytic 5376: **`cover=short:769`, 14 % of the ring missing** | don't; draw a filled plate then an inset plate in the backdrop colour — its control measures EXACT | `path/two-contour-ring-nonzero`, control `path/two-draws-ring` |
-| `VG_LITE_FILL_EVEN_ODD` vs `NON_ZERO` across nested contours | **OK** — `eoc=0 nzc=1`, both rules honoured. **Prediction refuted.** BUT `repeat=differs` | the only case in the matrix whose two identical renders differ — see the nondeterminism note | `path/evenodd-vs-nonzero` |
+| `VG_LITE_FILL_EVEN_ODD` vs `NON_ZERO` across nested contours | **BROKEN** — both rules honoured (`eoc=0 nzc=1`) but the EVEN_ODD pass, which **cuts a hole**, is `eocover=short:308`. `repeat=differs` | do not cut holes in one path — see the hole-cutting note | `path/evenodd-vs-nonzero` |
 | fill rules on ONE self-intersecting contour | **OK** — pentagram centre empty under EVEN_ODD, filled under NON_ZERO | both rules honoured — this is the fill-rule usage that works | `path/self-intersecting` |
 | path coordinate formats S8 / S16 / S32 / FP32 | **OK** — all four `fill=1830`, and `same_px=1`: the four renders are BIT-IDENTICAL, not merely equal in area | all four usable; **the opcode is one BYTE at the base of a format-width slot**, not a value of the format's type, so each format needs its own typed array | `path/format-s8`, `path/format-s16`, `path/format-s32`, `path/format-fp32`, agreement: `path/format-agreement` |
 | degenerate (zero-area) geometry | **OK** — `fill=0`, nothing drawn | safe to emit; nothing, or a hairline on the degenerate row — do not rely on which | `path/degenerate-zero-area` |
@@ -221,7 +236,7 @@ CLOSE-then-MOVE boundary.
 |  | 2 contours | 4 contours |
 |---|---|---|
 | **disjoint** | **BROKEN** (structure, `runs=1`) | **BROKEN** (structure, `runs=1`) |
-| **nested** | **BROKEN** (`cover=short:769`) | **BROKEN** (`cover=stray:1115`) |
+| **nested** | **BROKEN** (`cover=short:769`) | **BROKEN** (`cover=stray:1171`) |
 
 Two disjoint contours fail exactly as four do; four nested contours work
 exactly as two do. The rule is neither *"only the first contour renders"* nor
@@ -258,7 +273,7 @@ right*, and that changed the Phase 1b conclusion:
 |  | 2 contours | 4 contours |
 |---|---|---|
 | **disjoint** | **BROKEN** (structure, `runs=1`) | **BROKEN** (structure, `runs=1`) |
-| **nested** | **BROKEN** (`cover=short:769`) | **BROKEN** (`cover=stray:1115`) |
+| **nested** | **BROKEN** (`cover=short:769`) | **BROKEN** (`cover=stray:1171`) |
 
 *"Nested is OK"* was an artefact of checking only structure. Two of the three
 nested cases pass their sample-point predicates while drawing the wrong number
@@ -281,7 +296,7 @@ hole and had never been coverage-checked. It came back `eocover=short:308`,
 |---|---|---|
 | `two-contour-ring-nonzero` (opposite winding) | yes | `short:769` |
 | `evenodd` pass 1 (EVEN_ODD) | yes | **`short:308`** |
-| `four-nested-rings` (alternating) | yes | `stray:1115` |
+| `four-nested-rings` (alternating) | yes | `stray:1171` |
 | `evenodd` pass 2 (same winding) | **no** | `ok` |
 
 **Every hole-cutting render mis-covers; the one that does not is exact.** Note
