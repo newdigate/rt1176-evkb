@@ -23,7 +23,7 @@
 # example built, because the gates check for their ELF.
 #
 # Usage: sh tools/gate-vacuity.test.sh   (PASS:/FAIL: per case; exit 1 on any FAIL)
-# Runtime ~40s: the dead-QEMU cases necessarily burn each gate's full poll
+# Runtime ~70s (was ~40s; the [baud] fixture added ~30s): the dead-QEMU cases necessarily burn each gate's full poll
 # ceiling, because "nothing ever arrives" is exactly what they are testing.
 set -u
 EVKB=$(cd "$(dirname "$0")/.." && pwd)

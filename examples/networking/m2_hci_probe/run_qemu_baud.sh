@@ -29,6 +29,16 @@
 #       (opcodes read ...,1005,0c03,fc09,1001,... -- the second Reset landed
 #       BEFORE the vendor command instead of after it)
 #   Confirmed green again after each revert.
+#
+# WHY THIS GATE BUILDS ITS OWN ELF
+#   This is the tree's only self-building gate, deliberately.  The knob-ON
+#   image must track the SOURCE, not a pre-built artifact somebody happened to
+#   leave in build-baud/ -- a stale one would silently test old code, which is
+#   exactly the "a green sweep is not evidence that a build dir can configure"
+#   trap CLAUDE.md warns about for every other example's build directory.  The
+#   sweep runner's own SKIP check (tools/run-all-qemu-gates.sh) only looks at
+#   build/, never build-baud/, so it cannot protect this one -- the named FAIL
+#   below is what a missing/broken toolchain produces here instead of a SKIP.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
@@ -46,15 +56,24 @@ gate_init
 # examples pre-built).
 BUILD_DIR="$DIR/build-baud"
 ELF="$BUILD_DIR/m2_hci_probe.elf"
+
+fail() { echo "FAIL: $*"; exit 1; }
+
 if [ "${GATE_VACUITY:-}" = "1" ] && [ -x "$ELF" ]; then
     :
 else
+    mkdir -p "$BUILD_DIR"
+    CONFIGURE_RC=0
     cmake -S "$DIR" -B "$BUILD_DIR" -DCMAKE_TOOLCHAIN_FILE="$EVKB/toolchain/rt1170-evkb.toolchain.cmake" \
-          -DM2_BT_FAST_BAUD=ON >/dev/null
-    cmake --build "$BUILD_DIR" >/dev/null
+          -DM2_BT_FAST_BAUD=ON >"$BUILD_DIR/configure.log" 2>&1 || CONFIGURE_RC=$?
+    BUILD_RC=0
+    if [ "$CONFIGURE_RC" -eq 0 ]; then
+        cmake --build "$BUILD_DIR" >"$BUILD_DIR/build.log" 2>&1 || BUILD_RC=$?
+    fi
+    if [ "$CONFIGURE_RC" -ne 0 ] || [ "$BUILD_RC" -ne 0 ]; then
+        fail "build-baud/ did not build -- see build-baud/configure.log / build.log"
+    fi
 fi
-
-fail() { echo "FAIL: $*"; exit 1; }
 
 run_phase() {   # run_phase PHASE WAIT_REGEX -> $OUT $RES $PEER_RC
     PHASE=$1; WAIT=$2

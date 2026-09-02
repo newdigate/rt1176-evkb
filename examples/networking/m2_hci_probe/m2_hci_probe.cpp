@@ -939,13 +939,30 @@ static void probeFastBaud() {
     uint8_t p[4] = { (uint8_t)rate, (uint8_t)(rate >> 8), (uint8_t)(rate >> 16), (uint8_t)(rate >> 24) };
     Hci::Reply r;
     Hci::Error e = hci.run(OP_VS_SET_BAUD, p, 4, &r, 1000, idleMs);
-    if (e != Hci::OK) { printFail("bt_baud_switch", e, r, "vendor 0xFC09 refused"); return; }
-    delay(20);                                            // let the controller's reply drain and switch
+    // alt is unreachable here (printFail only prints it when e == OK, and
+    // this branch is guarded on e != OK) -- nullptr, not a string that can
+    // never print.
+    if (e != Hci::OK) { printFail("bt_baud_switch", e, r, nullptr); return; }
+    // Real wait, not padding: the controller switches its OWN UART only after
+    // its Command Complete has left the wire, so re-baud()ing the host side
+    // before that reply has actually drained would race the controller's own
+    // switch.
+    delay(20);
     hciIo.rebaud(rate);
     hciCountersFold(); hci.begin();
+    delay(20);                                            // let the receiver settle at the new rate
     e = hci.run(OP_RESET, nullptr, 0, &r, 1000, idleMs);
-    if (e != Hci::OK) { CONSOLE.print("bt_baud_switch=fail rate="); CONSOLE.print(rate);
-                        CONSOLE.print(" reason="); CONSOLE.println(Hci::errorName(e)); return; }
+    if (e != Hci::OK) {
+        CONSOLE.print("bt_baud_switch=fail rate="); CONSOLE.print(rate);
+        CONSOLE.print(" reason="); CONSOLE.println(Hci::errorName(e));
+        // Leave the port as we found it (mirrors btBaudSweep()'s fallback):
+        // the unconditional probeInquiry()/probeConnect() that follow must
+        // not run at a rate the controller never actually switched to.
+        hciIo.rebaud(115200);
+        hciCountersFold(); hci.begin();
+        CONSOLE.println("bt_baud_switch=reverted rate=115200");
+        return;
+    }
     CONSOLE.print("bt_baud_switch=ok rate="); CONSOLE.println(rate);
     probeIdentity();                                      // identity again, at the new rate
 }
