@@ -540,6 +540,8 @@ Note for the implementer: `send()` from the **RX** callbacks is fine — it only
 
 - [ ] **Step 5: Commit (M2Radio)** — `git add bt/L2cap.h bt/L2cap.cpp bt/test/run.sh bt/test/l2cap_test.cpp && git commit -m "bt: L2cap -- basic-mode signalling, CO channels, ACL demux, credits (host-tested; SCID rule pinned)"`
 
+> **★ Hardened after code review (a second commit on top).** The code blocks above are the first cut; the committed `L2cap` additionally fixes a remotely-triggerable Config-Request option over-read (the `(uint16_t)(12+optLen) > len` bound truncates and is defeated by a lying `cmdLen` — replaced with a no-addition `avail = len-12` clamp; the leaked bytes were echoed back to the peer, so this was a disclosure, not just a fault), recycles `CLOSED` channel slots (the 3-slot table otherwise leaks a slot per failed connect / peer disconnect), starts the peer-accept CID allocator at `0x0080` above the caller range `0x0040-0x0042` (was colliding), clamps NCP-restored credits to the controller's true buffer count (not 255), and retries mandatory signalling replies instead of dropping them when the TX queue is briefly full. Anyone re-deriving this file from the plan must carry those forward.
+
 ### Task 6: `BtLink` — inquiry-by-name, connect, pair (SSP → PIN), encrypt
 
 **Files:**
