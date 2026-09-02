@@ -373,7 +373,12 @@ DIR=$(cd "$(dirname "$0")" && pwd); OUT=$(mktemp -d); trap 'rm -rf "$OUT"' EXIT
 CXX=${CXX:-c++}
 for t in l2cap_test avdtp_test sbc_test; do
     [ -f "$DIR/$t.cpp" ] || continue
-    $CXX -std=c++11 -Wall -Wextra -Werror -I"$DIR/.." -I"$DIR/../../hci" "$DIR/$t.cpp" "$DIR"/../*.cpp -o "$OUT/$t"
+    # bt/ units (BtLink, Sdp, Avdtp) call into Hci, so link the host-compilable
+    # hci sources too (as hci/test/run.sh does).  Added in Task 6 when BtLink
+    # became the first bt/ unit to use Hci::run/submit; H4Parser.cpp + Hci.cpp
+    # is the minimal set (HciEvents/BtFwLoader are not referenced).
+    $CXX -std=c++11 -Wall -Wextra -Werror -I"$DIR/.." -I"$DIR/../../hci" "$DIR/$t.cpp" "$DIR"/../*.cpp \
+        "$DIR/../../hci/H4Parser.cpp" "$DIR/../../hci/Hci.cpp" -o "$OUT/$t"
     "$OUT/$t"
 done
 echo "BT-HOST-TESTS: PASS"
