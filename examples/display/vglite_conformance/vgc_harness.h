@@ -308,4 +308,26 @@ extern const size_t     vgc_color_case_count;
 extern const vgc_case_t vgc_dangerous_cases[];
 extern const size_t     vgc_dangerous_case_count;
 
+/* ---- gradients ------------------------------------------------------------
+ * Defined in vgc_cases_grad.cpp. Runs AFTER the colour cases: every verdict
+ * here reads named channels, so color/solid-word-order gates it exactly as it
+ * gates the colour table. */
+extern const vgc_case_t vgc_grad_cases[];
+extern const size_t     vgc_grad_case_count;
+
+/* The two gradient DRAWS, wrapped for the same reason vgc_draw_path is: the
+ * status-accumulation contract has one implementation, and the host model
+ * supplies the same two symbols over its own rasteriser. Everything ELSE a
+ * gradient case does -- set/update/clear on the gradient object -- it does by
+ * calling the driver DIRECTLY, because those calls are what is under test.
+ *
+ * Both draw with VG_LITE_FILL_NON_ZERO and VG_LITE_BLEND_NONE: the gradient is
+ * the variable, and Phase 2 already settled what the blend does. `path_matrix`
+ * is explicit (never vgc_ident()) because the moved cases depend on it -- the
+ * whole question is whether the paint follows it. */
+void vgc_draw_linear_grad(vg_lite_path_t *p, vg_lite_ext_linear_gradient_t *g,
+                          vg_lite_matrix_t *path_matrix, vg_lite_error_t *acc);
+void vgc_draw_grad(vg_lite_path_t *p, vg_lite_linear_gradient_t *g,
+                   vg_lite_matrix_t *path_matrix, vg_lite_error_t *acc);
+
 #endif /* VGC_HARNESS_H */

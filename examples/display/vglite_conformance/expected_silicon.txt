@@ -73,11 +73,11 @@
 path/single-contour-rect            ok       same    # THE BASELINE. A broken control invalidates every row below it -- this is the rect both shipping compositors draw thousands of times a second.
 path/multi-contour-disjoint         pair:contour-encoding  same    # Four bars, one path, ordinary CLOSE encoding. Predicted broken (runs=1, not 4) by the tree's recorded one-contour rule -- but see the pair block: the joint answer with close-padded is the finding, not this cell alone.
 path/multi-contour-close-padded     pair:contour-encoding  same    # THE DISCRIMINATOR. Identical geometry to the line above; the ONLY variable is that its contour-boundary CLOSE slots are padded 0x01010101 (NXP's own CHIPID==0x355 workaround, vg_lite_path.c:556-570) instead of 0x00000001. Both outcomes are admissible and each means something -- see the pair block.
-path/two-disjoint-bars              broken   same    # PHASE 1b, MEASURED 2026-09-01, TWO BOOTS BYTE-IDENTICAL: runs=1 expect=2 fill=1322. The pre-registered `broken` HELD. This is multi-contour-disjoint with two bars deleted, so the only variable is contour count -- and TWO disjoint contours fail exactly as FOUR do. With four-nested-rings ok, the 2x2 is complete and DISJOINTNESS IS THE VARIABLE: contour count is irrelevant. See the Phase 1b note below.
+path/two-disjoint-bars              broken   unstable # PHASE 1b, MEASURED 2026-09-01, TWO BOOTS BYTE-IDENTICAL: runs=1 expect=2 fill=1322. The pre-registered `broken` HELD. This is multi-contour-disjoint with two bars deleted, so the only variable is contour count -- and TWO disjoint contours fail exactly as FOUR do. With four-nested-rings ok, the 2x2 is complete and DISJOINTNESS IS THE VARIABLE: contour count is irrelevant. See the Phase 1b note below. ★ REPEAT MOVED TO `unstable` 2026-09-02: five boots on record read repeat=same (fill 1316/1322/1322/1322/1315), the sixth -- the gradients boot 2 -- read repeat=differs with fill=1315. The VERDICT is unchanged and was never in doubt; what moved is whether two identical in-boot renders of a MISPARSED path agree. That is consistent with the recorded mechanism -- a desynchronised parse reads whatever follows the path in memory -- and this boot ran a different image (six new cases, new statics), so the bytes after the path differed. A misparse's determinism is a property of the image around it, not of the GPU; `unstable` records that honestly where `same` would have turned the next build into a red.
 path/four-nested-rings              broken   unstable # ★ VERDICT FLIPPED ok -> broken BY A PREDICATE CHANGE, NOT BY THE BOARD. Structure is right (runs=4, all four nested contours honoured, both boots) but COVERAGE IS NOT: measured fill 6931 and 6875 against an analytic 5760, i.e. ~1150 STRAY PIXELS, ~20%, varying between boots. That is not antialiasing -- single-contour-rect (6400) and multi-contour-close-padded (5120) measure EXACTLY on the same pipeline, so axis-aligned integer rects cost zero AA here. `pixel=ok` now means the picture is RIGHT, not merely that the run structure is; see the coverage note below. PREDICTED broken with cover=stray:~1115 (tol 120 = perimeter/8). NOT YET MEASURED under the new predicate -- one boot confirms it.
 path/two-contour-ring-nonzero       broken   same    # ★★ THE BLIND SPOT, AND IT WAS HIDING A DEFECT. MEASURED 2026-09-01, two boots: rim=1 centre=0 -- the structural predicate PASSES -- but fill=4607 against an analytic 5376, i.e. cover=short:769, FOURTEEN PER CENT OF THE RING MISSING. This case reported `ok` on every boot from Phase 1 onward on the strength of two sample points and no fill check at all. PREDICTED `ok` and the prediction was WRONG -- the only one of the four first-ever coverage measurements to fail. Note the DIRECTION: `short`, not `stray`. Four nested contours draw ~1150 px TOO MANY; two nested contours with opposite winding draw 769 TOO FEW. Nested multi-contour paths are wrong in BOTH directions. Its control path/two-draws-ring -- the SAME ring geometry built from two single-contour draws -- measures 5376 EXACTLY on both boots.
 path/two-draws-ring                 ok       same    # THE SAFE-USAGE CONTROL for the line above: same ring as plate + inset plate, two single-contour draws. This is what both shipping compositors do, so a broken here would mean the ground under SynthUI moved. ★ COVERAGE FIRST MEASUREMENT, and this is the STRONGEST of the four predictions: the ring is built from TWO SINGLE-CONTOUR DRAWS, the construction both shipping compositors use, so if anything is exact it is this. Analytic 5376, tol 56. Predicted ok -- and a stray reading here would be the most alarming result in the matrix, because it would mean single-contour paths are not immune either. ★ MEASURED 2026-09-01, two boots: fill=5376 EXACTLY, cover=ok. This is the load-bearing control of the whole matrix: the SAME ring as two-contour-ring-nonzero, built the way both shipping compositors build it -- two single-contour paths, two draws -- and it is exact while the single-path version is 769 px short. Direct evidence that one-contour-per-path is SUFFICIENT here, not merely untested.
-path/evenodd-vs-nonzero             broken   differs # ★★ NOW BROKEN, AND IT CONFIRMS THE HOLE-CUTTING HYPOTHESIS. MEASURED 2026-09-02, two boots: pass 1 (the EVEN_ODD ring, which CUTS A HOLE) reads eofill=5068 against an analytic 5376 -- eocover=short:308 -- IDENTICAL on both boots. Pass 2 (same-winding nest, cuts NO hole) is nzcover=ok. PREDICTED ok; the prediction was wrong, and the case was only able to be wrong because Phase 2 closed the pass-1 coverage gap. Before that this cell reported ok on the strength of pass 2 alone. ★ THE PATTERN IS NOW COMPLETE: every hole-cutting render in the matrix mis-covers -- two-contour-ring-nonzero short:769, this pass 1 short:308, four-nested-rings stray:1171 (boot 2; boot 1 read stray:1115) -- and the ONE nested render that cuts no hole (this pass 2) is exact. So the Phase 1b variable is HOLE CUTTING, not nesting. ★ Note the two boots differ on nzfill (6421 vs 6423) but agree EXACTLY on eofill -- the nondeterminism lives in the no-hole pass, not the hole-cutting one.
+path/evenodd-vs-nonzero             broken   differs # ★★ NOW BROKEN, AND IT CONFIRMS THE HOLE-CUTTING HYPOTHESIS. MEASURED 2026-09-02, two boots: pass 1 (the EVEN_ODD ring, which CUTS A HOLE) reads eofill=5068 against an analytic 5376 -- eocover=short:308 -- IDENTICAL on both boots. ★ AND NOT ON THE FOURTH: the 2026-09-02 gradients boot 2 read eofill=4917, eocover=short:459 (boots 1-3: 5068/308). So the hole-cutting pass is NOT boot-to-boot deterministic either; the earlier sentence 'the nondeterminism lives in the no-hole pass' was true of three boots and is retracted as a general claim. Both passes vary; the hole-cutting one had merely not varied yet. Pass 2 (same-winding nest, cuts NO hole) is nzcover=ok. PREDICTED ok; the prediction was wrong, and the case was only able to be wrong because Phase 2 closed the pass-1 coverage gap. Before that this cell reported ok on the strength of pass 2 alone. ★ THE PATTERN IS NOW COMPLETE: every hole-cutting render in the matrix mis-covers -- two-contour-ring-nonzero short:769, this pass 1 short:308, four-nested-rings stray:1171 (boot 2; boot 1 read stray:1115) -- and the ONE nested render that cuts no hole (this pass 2) is exact. So the Phase 1b variable is HOLE CUTTING, not nesting. ★ Note the two boots differ on nzfill (6421 vs 6423) but agree EXACTLY on eofill -- the nondeterminism lives in the no-hole pass, not the hole-cutting one.
 path/self-intersecting              ok       same    # A pentagram: ONE contour, so first-contour-only does not bite. Both fill rules must be honoured (EVEN_ODD empty centre, NON_ZERO filled) -- this is case 6's control as well as its own probe. ★ COVERAGE FIRST MEASUREMENT. All-diagonal boundary, so the AA-class tolerance applies: analytic NON_ZERO star = |shoelace| - inner pentagon = 3655 - 862.70 = 2792 (derived from the ROUNDED INTEGER vertices actually emitted, and independently confirmed by the host model at 2792). Perimeter 474, tol 237; predicted excess ~168 at the measured 0.354 px/px diagonal AA rate, so ~69 px of margin. Predicted ok. ★ COVERAGE MEASURED 2026-09-01: fill=2805 vs analytic 2792, i.e. +13 against a tolerance of 237. THE TOLERANCE IS FAR MORE GENEROUS THAN IT NEEDS TO BE: +168 was extrapolated from the triangle's +30 at 0.354 px per unit of diagonal, and 5.6x the diagonal boundary produced +13, not +168. So the triangle's +30 is NOT explained by boundary antialiasing either, and k=1/2 is not yet justified by data -- it is merely safe.
 path/format-s8                      ok       same
 path/format-s16                     ok       same
@@ -345,4 +345,66 @@ blend/none-honours-alpha            ok       same    # ★ RECORDED, NOT JUDGED 
 # what carries the discrimination. A NON-saturated source colour would make the
 # colour channel informative again -- the obvious next case, not a defect in
 # these.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# GRADIENTS (linear). Pre-registered 2026-09-02, BEFORE THE BOOT.
+# Spec: docs/superpowers/specs/2026-09-02-gc355-conformance-gradients-design.md
+#
+# ★ THE PREDICTIONS COME FROM READING THE DRIVER, NOT FROM THE CLAIM TABLE.
+# vg_lite_draw_linear_grad derives the per-pixel parameter from grad->matrix
+# ALONE and applies path_matrix only to the geometry; vg_lite_update_linear_grad
+# transforms the line into SCREEN space and OVERWRITES both grad->matrix and
+# grad->linear_grad (vg_lite.c:7690-7710). So the EXT gradient does not follow
+# a moved path, and a second update is IDEMPOTENT (it re-derives the same
+# screen line from the matrix it wrote). One prediction below therefore differs
+# from the approved verbal design, which called reupdate "double transform";
+# the derivation is on the line and it was changed before the press.
+#
+# ★ THE RIGHT-HAND COLUMN CAN LOSE. moved=ok would mean the hardware composes
+# the matrices where the driver's code path does not -- a bigger finding than
+# the prediction. reupdate=ok beside moved=broken would mean a second update is
+# NOT idempotent on this hardware. legacy=ok retires the GC255-only row and
+# points the earlier black at the caller's matrix. Any of those gets a written
+# reason here, never a pasted transcript.
+# ---------------------------------------------------------------------------
+grad/legacy-linear                  ok       same    # ★★ PREDICTION REFUTED, 2026-09-02, TWO BOOTS BYTE-IDENTICAL: l=241.0.14,m=126.0.129,r=11.0.244,mono=1 -- a textbook ramp, within one unit of the host model, repeat=same on both boots. The pre-registered `broken`/`unstable` rested on ONE sighting during the fader work (solid black, per-boot-varying checksum). With grad->matrix set CORRECTLY -- translate(24,24) then scale(80/1024), so the 1024-px ramp spans the 80-px rect -- this GC355 renders the legacy API correctly and deterministically. So the earlier black was the CALLER (an identity matrix samples ~6% of the ramp), not the hardware, and the quirks-doc row 'GC255-only, renders black' is RETIRED. NXP's vglite_layer.c gates the call on chip_id==0x255 for its own reasons; this silicon does not need the gate. The count=0 sub-experiment read c0=0,c0n=2,c0k=FF000000,c0w=FFFFFFFF exactly as derived from vg_lite.c:8131/8167.
+grad/ext-linear-static              ok       same    # THE BOOTSTRAP CONTROL for the three cells below. EXT ramp red->blue from the rect's left edge to its right, identity path matrix. gcFEATURE_VG_LINEAR_GRADIENT_EXT=1 on this chip rev, and LVGL's VG_LITE backend has drawn through this path on this board. If this is broken, the placement cells say nothing about placement.
+grad/ext-linear-moved               broken   same    # Same build, path_matrix=translate(16,0), NO update. The ramp is in SCREEN space (24..104) and the rect is now at 40..120, so the left sample reads ~20% into the ramp (~R=190) and `left_red` fails. This is "the ramp is placement-dependent" in its precise form: the driver never composes path_matrix into the paint.
+grad/ext-linear-reupdate            broken   same    # moved, plus a SECOND update_linear_grad on the same object. Predicted broken WITH THE SAME PROFILE AS moved: the second update transforms (0,0,width,0) by the matrix the first one wrote and gets the SAME screen endpoints back -- idempotent -- and leaks one ramp image (leak=1). NOT the "double transform" the verbal design said; changed here before the boot, with this algebra as the reason.
+grad/ext-linear-rebuilt             ok       same    # moved done RIGHT: clear, set the line at the NEW screen position (40..120), update, draw at translate(16,0). The prescribed usage beside its counterexample -- the two-draws-ring of the gradient matrix. What a moving widget must do: re-specify the gradient line in screen space per placement.
+grad/ramp-word-order                ok       same    # Both stops pure red, so every sample must be EXACTLY opaque red. update_linear_grad packs the ramp bytes A,B,G,R and tags the image ABGR8888; this asks whether the sampler reads them back in that order. Predicted ok because LVGL's backend renders gradients in the right colours on this board. It is the one case that can NAME a word-order fault; the four red->blue cases would merely reverse.
+
+# ---------------------------------------------------------------------------
+# ★★★ GRADIENTS MEASURED 2026-09-02, TWO BOOTS. All six gradient lines
+# BYTE-IDENTICAL across the boots (verdict, detail, repeat). cases=26 ok=19
+# broken=7, vgc_timeouts=0. The twenty prior verdicts unchanged.
+#
+# FIVE OF SIX PREDICTIONS HELD, three of them to within one unit of the host
+# model's number (static l=240 vs 241; moved l=189 vs 190; word-order exact):
+#
+#   ext-linear-moved     BROKEN  l=189  -- the EXT gradient lives in SCREEN
+#                                         space and does not follow path_matrix
+#   ext-linear-reupdate  BROKEN  l=189  -- IDENTICAL to moved: a second update
+#                                         is idempotent (the prediction that was
+#                                         CHANGED before the boot, and it held)
+#   ext-linear-rebuilt   ok      l=240  -- re-specify the line per placement:
+#                                         that is what a moving widget must do
+#   ramp-word-order      ok             -- the ABGR8888 sampler reads the ramp
+#                                         in the byte order the driver wrote it
+#
+# ONE WAS REFUTED, and it is the phase's headline: grad/legacy-linear is OK.
+# The "GC255-only, renders black" row is retired; see its line.
+#
+# TWO PRIOR CELLS MOVED ON THE REPEAT AXIS ONLY, both already-broken misparse
+# cases: two-disjoint-bars (now `unstable`) and evenodd-vs-nonzero's
+# hole-cutting pass (short:308 -> short:459 on this boot). See their lines. A
+# misparse's determinism depends on the bytes around the path, and this boot
+# ran a different image.
+#
+# WHAT THIS LICENSES: linear gradients are USABLE on this GC355 through EITHER
+# API, provided the gradient line (EXT) or the pattern matrix (legacy) is
+# re-specified in screen space whenever the path moves. Nothing here licenses
+# caching a ramp across placements. The guard layer's gradient helpers, refused
+# in Phase 4 for want of a probe, now have one.
 # ---------------------------------------------------------------------------

@@ -130,6 +130,22 @@ else
     note_fail cases_color_test
 fi
 
+suite
+# --- cases_grad_test --------------------------------------------------------
+# The REAL gradient case table against the shared model, which for this suite
+# also models the DRIVER's gradient entry points from their source -- see the
+# GRADIENTS half of model.h. Six arms: correct / draws-nothing / draws-black /
+# paint-follows-path / solid-first-stop / R-B-permuting-ramp-store.
+if c++ -std=c++14 -Wall -Wextra -Werror -O1 -I "$DIR/stub" -I "$DIR/.." \
+       -o "$OUT/cases_grad_test" \
+       "$DIR/cases_grad_test.cpp" \
+       "$DIR/../vgc_cases_grad.cpp" "$DIR/../vgc_arena.cpp"; then
+    "$OUT/cases_grad_test" || note_fail cases_grad_test
+else
+    echo "BUILD-FAILED: cases_grad_test"
+    note_fail cases_grad_test
+fi
+
 # --- trailer ----------------------------------------------------------------
 echo "=="
 if [ "$rc" -ne 0 ]; then

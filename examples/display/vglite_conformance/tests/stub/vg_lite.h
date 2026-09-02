@@ -87,4 +87,99 @@ vg_lite_error_t vg_lite_init_path(vg_lite_path_t *path,
                                   float min_x, float min_y,
                                   float max_x, float max_y);
 
+/* ---- gradients (NEW-32 gradients phase) ------------------------------------
+ * The surface vgc_cases_grad.cpp calls DIRECTLY -- the driver's own gradient
+ * entry points are what is under test, so the cases name them rather than a
+ * harness wrapper, and tests/model.h defines them FROM THE DRIVER'S SOURCE
+ * (vg_lite.c:7690-7710 for update_linear_grad, :8121/:8167 for the legacy
+ * pair). Same rule as everything above: every value is the real one.
+ *   - VG_LITE_INVALID_ARGUMENT is 1 (inc/vg_lite.h's vg_lite_error enum);
+ *     vg_lite_set_linear_grad returns it for a zero-length line and the
+ *     legacy set_grad(count=0) case pins that it does NOT.
+ *   - VLC_MAX_COLOR_RAMP_STOPS is the real 256 (inc/vg_lite.h:99) even though
+ *     only two stops are ever used here: the struct is ~10 KB and the cases
+ *     therefore keep their gradient objects STATIC on the target, and a stub
+ *     that shrank it would hide exactly that sizing decision.
+ *   - The two image formats carry their real enumerators (:353, :383): the
+ *     EXT ramp is ABGR8888 and the legacy one BGRA8888, and the word-order case
+ *     is about whether the sampler honours that tag. */
+#ifndef VG_LITE_INVALID_ARGUMENT
+#define VG_LITE_INVALID_ARGUMENT ((vg_lite_error_t)1)
+#endif
+typedef float        vg_lite_float_t;
+typedef uint32_t     vg_lite_color_t;
+/* `unsigned int`, as the driver typedefs it -- NOT uint32_t, which on the ARM
+ * toolchain is `long unsigned int`: same width, different type, and the
+ * target build rejects a uint32_t* where the driver wants this. The case file
+ * declares its set_grad arrays with this name for exactly that reason. */
+typedef unsigned int vg_lite_uint32_t;
+typedef enum { VG_LITE_BGRA8888 = 1 | (1 << 10),
+               VG_LITE_ABGR8888 = 31 | (1 << 10) } vg_lite_buffer_format_t;
+typedef enum { VG_LITE_NORMAL_IMAGE_MODE = 0x1F00,
+               VG_LITE_NONE_IMAGE_MODE   = 0x1F03 } vg_lite_image_mode_t;
+typedef enum { VG_LITE_FILTER_POINT = 0, VG_LITE_FILTER_LINEAR = 0x1000 } vg_lite_filter_t;
+typedef enum { VG_LITE_GRADIENT_SPREAD_FILL = 0, VG_LITE_GRADIENT_SPREAD_PAD = 0x1C00,
+               VG_LITE_GRADIENT_SPREAD_REPEAT = 0x1C01,
+               VG_LITE_GRADIENT_SPREAD_REFLECT = 0x1C02 } vg_lite_gradient_spreadmode_t;
+
+#define VLC_MAX_GRADIENT_STOPS      16
+#define VLC_GRADIENT_BUFFER_WIDTH   1024
+#define VLC_MAX_COLOR_RAMP_STOPS    256
+
+/* vg_lite_buffer_t above lacks the fields a gradient image carries; the
+ * gradient structs embed their OWN image with those fields. */
+typedef struct {
+    int32_t width, height, stride;
+    vg_lite_buffer_format_t format;
+    void *handle;
+    void *memory;
+    uint32_t address;
+    vg_lite_image_mode_t image_mode;
+} vg_lite_grad_image_t;
+
+typedef struct { vg_lite_float_t stop, red, green, blue, alpha; } vg_lite_color_ramp_t;
+typedef struct { vg_lite_float_t X0, Y0, X1, Y1; } vg_lite_linear_gradient_parameter_t;
+
+typedef struct vg_lite_linear_gradient {
+    uint32_t colors[VLC_MAX_GRADIENT_STOPS];
+    uint32_t count;
+    uint32_t stops[VLC_MAX_GRADIENT_STOPS];
+    vg_lite_matrix_t matrix;
+    vg_lite_grad_image_t image;
+} vg_lite_linear_gradient_t;
+
+typedef struct vg_lite_ext_linear_gradient {
+    uint32_t count;
+    vg_lite_matrix_t matrix;
+    vg_lite_grad_image_t image;
+    vg_lite_linear_gradient_parameter_t linear_grad;
+    uint32_t ramp_length;
+    vg_lite_color_ramp_t color_ramp[VLC_MAX_COLOR_RAMP_STOPS];
+    uint32_t converted_length;
+    vg_lite_color_ramp_t converted_ramp[VLC_MAX_COLOR_RAMP_STOPS + 2];
+    uint8_t pre_multiplied;
+    vg_lite_gradient_spreadmode_t spread_mode;
+} vg_lite_ext_linear_gradient_t;
+#define vg_lite_linear_gradient_ext_t vg_lite_ext_linear_gradient_t
+
+vg_lite_error_t vg_lite_identity(vg_lite_matrix_t *m);
+vg_lite_error_t vg_lite_translate(vg_lite_float_t x, vg_lite_float_t y, vg_lite_matrix_t *m);
+vg_lite_error_t vg_lite_scale(vg_lite_float_t sx, vg_lite_float_t sy, vg_lite_matrix_t *m);
+
+vg_lite_error_t vg_lite_init_grad(vg_lite_linear_gradient_t *grad);
+vg_lite_error_t vg_lite_clear_grad(vg_lite_linear_gradient_t *grad);
+vg_lite_error_t vg_lite_set_grad(vg_lite_linear_gradient_t *grad, uint32_t count,
+                                 uint32_t *colors, uint32_t *stops);
+vg_lite_error_t vg_lite_update_grad(vg_lite_linear_gradient_t *grad);
+vg_lite_matrix_t *vg_lite_get_grad_matrix(vg_lite_linear_gradient_t *grad);
+
+vg_lite_error_t vg_lite_set_linear_grad(vg_lite_ext_linear_gradient_t *grad, uint32_t count,
+                                        vg_lite_color_ramp_t *ramp,
+                                        vg_lite_linear_gradient_parameter_t param,
+                                        vg_lite_gradient_spreadmode_t spread,
+                                        uint8_t pre_multiplied);
+vg_lite_error_t vg_lite_update_linear_grad(vg_lite_ext_linear_gradient_t *grad);
+vg_lite_error_t vg_lite_clear_linear_grad(vg_lite_ext_linear_gradient_t *grad);
+vg_lite_matrix_t *vg_lite_get_linear_grad_matrix(vg_lite_ext_linear_gradient_t *grad);
+
 #endif /* VGC_TEST_STUB_VG_LITE_H */

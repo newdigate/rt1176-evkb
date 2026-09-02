@@ -32,7 +32,7 @@ Result: **`cases=20 ok=15 broken=5 repeat_differs=2`**.
 them, all in cases already known to vary — `two-disjoint-bars` fill 1322/1316
 (a BROKEN case whose stray pixels are the misparse), `four-nested-rings`
 6875/6931 and `evenodd` `nzfill` 6421/6423 (both `repeat=differs`). Notably
-`eofill` agrees **exactly**: the nondeterminism lives in the no-hole pass.
+`eofill` agrees **exactly**: the nondeterminism lives in the no-hole pass (★ RETRACTED as a general claim 2026-09-02: a fourth boot read the hole-cutting pass at `short:459` after three boots at `short:308` — BOTH passes vary boot to boot; the hole-cutting one had merely not varied yet).
 That distinction matters because this tree has seen a GC355 defect hide behind
 exactly one boot (NEW-20's winding-2 track, ten boots and ten checksums), so a
 single-boot GPU result is not trusted here.
@@ -301,7 +301,7 @@ hole and had never been coverage-checked. It came back `eocover=short:308`,
 
 **Every hole-cutting render mis-covers; the one that does not is exact.** Note
 also that the two boots disagree on `nzfill` (6421 vs 6423) and agree **exactly**
-on `eofill` — the nondeterminism lives in the no-hole pass, not the
+on `eofill` — the nondeterminism lives in the no-hole pass (★ RETRACTED as a general claim 2026-09-02: a fourth boot read the hole-cutting pass at `short:459` after three boots at `short:308` — BOTH passes vary boot to boot; the hole-cutting one had merely not varied yet), not the
 hole-cutting one.
 
 ### ★★ Stray coverage — what the fill numbers say, and why `pixel=ok` got stricter
@@ -506,27 +506,55 @@ nothing about this GPU. `blend/srcover-double` instead asserts the second
 composite lands where the same formula predicts **from the measured first**,
 which holds under either reading.
 
-## Gradients — deferred
+## Gradients — linear, MEASURED
 
-### ⚠ NOT YET PROBED. Nothing in this section has a case.
+### ✅ PROBED 2026-09-02 — six cases, two boots, every line byte-identical across them.
 
-Deferred by the Phase 2 design (2026-09-01), which went to colour and blend
-instead — the surface both compositors actually use, and which no case had ever
-touched. Still unbuilt: `grad/legacy-linear`, `grad/ext-linear-static`,
-`grad/ext-linear-moved`, `grad/ramp-word-order`.
+Spec: `docs/superpowers/specs/2026-09-02-gc355-conformance-gradients-design.md`.
+Cases in `vgc_cases_grad.cpp`; host suite `tests/cases_grad_test.cpp` (191
+checks, six arms). Radial was deliberately left out: no consumer needs it.
 
-★ Two entries that used to sit here are now **built** and appear in the Colour
-& blend section above: the ABGR/ARGB word order (`color/solid-word-order`) and
-premultiplied src-over (`color/premultiplied-srcover`).
+**The central fact, read from the driver and then confirmed in pixels:**
+`vg_lite_draw_linear_grad` computes the gradient's per-pixel parameter from
+`grad->matrix` **alone** and applies `path_matrix` **only to the geometry** —
+the two are never composed. `vg_lite_update_linear_grad` (`vg_lite.c:7690-7710`)
+transforms the line into **screen space** and overwrites both `grad->matrix`
+and `grad->linear_grad`. So an EXT gradient does not follow a moved path.
 
-What the shipping compositors currently assert **without a probe case** —
-each a claim awaiting evidence:
+| Feature | Verdict | Safe usage | Evidence |
+|---|---|---|---|
+| **EXT linear gradient, static** | **ok** | Set the line in screen coordinates, `update`, draw. | `grad/ext-linear-static` — `l=240 m=126 r=11`, within one unit of the model |
+| **EXT gradient under a moved path** | **broken** | *Never* move a gradient by `path_matrix` alone: the ramp stays at its old screen position (left sample reads 189 where red is ≥200). | `grad/ext-linear-moved` |
+| **Re-calling `update` after a move** | **broken — and idempotent** | Does *not* fix the move (profile identical to the cell above) and **leaks one ramp image** per call: the driver never frees the previous one. Do not "just update again". | `grad/ext-linear-reupdate`, `leak=1`; the prediction changed from "double transform" to "idempotent" *before* the boot, by algebra, and held |
+| **Clear + set at the new position + update** | **ok** | **The prescribed usage**: re-specify the gradient line in screen space per placement. What a moving widget must do. | `grad/ext-linear-rebuilt` — identical to static |
+| **Ramp byte order** | **ok** | The driver packs A,B,G,R into an `ABGR8888` image and the sampler reads it back in that order. | `grad/ramp-word-order` — exact opaque red at every sample |
+| **Legacy `vg_lite_draw_grad`** | **ok** ★ | **Works, deterministically, with a correct matrix**: `identity; translate(x,y); scale(w/1024)` (the driver's helpers post-multiply). Colours are the driver's own `0xAARRGGBB` — **not** `vg_lite_color_t` ABGR (`vg_lite_context.h:95-99`). | `grad/legacy-linear` — a textbook ramp, `repeat=same`, two boots identical |
+| `vg_lite_set_grad(count=0)` | as documented | Returns `SUCCESS` with count 0; `update_grad` then substitutes black@0 → white@255, count 2. | `grad/legacy-linear` detail `c0=0,c0n=2,c0k=FF000000,c0w=FFFFFFFF` |
 
-| Claim (no case yet) | Basis | Case |
-|---|---|---|
-| Legacy `vg_lite_draw_grad` is **GC255-only**. On our GC355 it rendered **solid black** and produced a **per-boot-varying checksum** on silicon, while every `vg_lite_*` call returned `VG_LITE_SUCCESS`. NXP's own `vglite_layer.c` calls it only when `chip_id == 0x255`. | `SynthUI/src/vglite/synthui_fader_gpu.cpp:79-82` | `grad/legacy-linear` — **not built** |
-| The EXT ramp is **placement-dependent**. `vg_lite_update_linear_grad()` transforms the gradient line by `grad->matrix`, derives a screen-space length from it, then **overwrites both** `grad->matrix` and `grad->linear_grad` and allocates a new ramp surface **without freeing the previous one**. So a moving widget cannot cache a ramp — it must rebuild (and leaks if it does not clear). | `SynthUI/src/vglite/synthui_fader_gpu.cpp:83-99` | `grad/ext-linear-static`, `grad/ext-linear-moved` — **not built** |
-| `vg_lite_set_grad()` returns success with `count=0` and **silently substitutes** a black→white ramp. | design spec §4 | `grad/legacy-linear` — **not built** |
+★ **The legacy row is a REFUTED prediction, and the retraction is the phase's
+headline.** This document carried *"Legacy `vg_lite_draw_grad` is GC255-only —
+on our GC355 it rendered solid black with a per-boot-varying checksum"* on the
+strength of one sighting during the fader work. Pre-registered `broken`,
+measured **ok** on two boots. The earlier black was that caller's matrix: an
+identity maps the 1024-px ramp across an 80-px rect and samples ~6 % of it. NXP
+gates the call on `chip_id == 0x255` in `vglite_layer.c` for their own reasons;
+this silicon does not need the gate. The claim is retired, not softened.
+
+★ **What this licenses.** Linear gradients are usable on this GC355 through
+*either* API, provided the line (EXT) or the pattern matrix (legacy) is
+re-specified in screen space whenever the path moves. Nothing here licenses
+caching a ramp across placements — which is exactly the shape the
+"placement-dependent" claim had, now with a mechanism and a measurement. The
+guard layer's gradient helpers, refused in Phase 4 for want of a probe, now
+have one.
+
+★ **Two prior cells moved on the repeat axis during these boots**, both
+already-broken misparse cases: `path/two-disjoint-bars` read `repeat=differs`
+for the first time in six boots (now `unstable`, with the reason on its line),
+and `path/evenodd-vs-nonzero`'s hole-cutting pass read `short:459` after three
+boots of `short:308`. A misparse's determinism depends on the bytes that follow
+the path in memory, and these boots ran a different image. See the correction
+in the path section above.
 
 ## Images, blits & scissor — Phase 3
 

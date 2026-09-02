@@ -174,8 +174,22 @@ vg_lite_error_t vgc_clear_to(uint32_t abgr)
 
 vg_lite_error_t vgc_clear(void) { return vgc_clear_to(VGC_BG_COLOR); }
 
+/* ★ RE-IDENTITY'D ON EVERY CALL, as vgc_harness.h specifies and the target
+ * does. Until the gradient phase this was a bare static -- all zeros -- and
+ * nothing noticed, because vgc_draw_path_blend never reads the matrix. The
+ * paint rasteriser DOES, and the three gradient cases that draw through
+ * vgc_ident() collapsed every vertex to (0,0) and painted nothing: a latent
+ * model defect that surfaced the moment a consumer honoured the contract.
+ * Measured before the fix: legacy-linear, ext-linear-static and
+ * ramp-word-order all read l=0.0.0 under arm 1 while the shifted() cases,
+ * which build their own matrix, matched their derivations to the digit. */
 static vg_lite_matrix_t s_ident;
-vg_lite_matrix_t *vgc_ident(void) { return &s_ident; }
+vg_lite_matrix_t *vgc_ident(void)
+{
+    memset(&s_ident, 0, sizeof(s_ident));
+    s_ident.m[0][0] = s_ident.m[1][1] = s_ident.m[2][2] = 1.0f;
+    return &s_ident;
+}
 
 /* The reference rasteriser is synchronous, so there is nothing to wait for and
  * nothing that can fail. */
@@ -640,6 +654,484 @@ void vgc_draw_path(vg_lite_path_t *p, vg_lite_fill_t rule, uint32_t color,
                    vg_lite_error_t *acc)
 {
     vgc_draw_path_blend(p, rule, color, VG_LITE_BLEND_NONE, acc);
+}
+
+/* =========================================================================
+ * GRADIENTS (NEW-32 gradients phase)
+ *
+ * ★★ WHAT THIS HALF MODELS, AND FROM WHERE. The gradient cases call the
+ * driver's gradient entry points DIRECTLY -- set/update/clear on the object
+ * are what is under test -- so this file defines those entry points and it
+ * defines them FROM THE DRIVER'S SOURCE, line-cited, exactly as
+ * vg_lite_init_path above models the real one's bookkeeping. That is a model
+ * of DRIVER SOFTWARE, which is deterministic and readable, and it is what
+ * makes the moved/reupdate/rebuilt predictions derivable rather than guessed:
+ * the screen-space line, the matrix overwrite, the leak, and the A,B,G,R ramp
+ * packing are all reproduced here as the driver does them.
+ *
+ * What it then models of the HARDWARE is one thing: a correct sampler that
+ * reads the ramp back in the byte order it was written, and computes the
+ * per-pixel parameter from grad->matrix ALONE with path_matrix applied to the
+ * geometry only -- which is what vg_lite_draw_linear_grad programs
+ * (lg_step_x/y_lin, lg_constant_lin from inverse(grad->matrix); the path
+ * matrix goes to the 0x0A40-45 registers). The arms below are the other GPUs.
+ *
+ * ★ IT SAYS NOTHING ABOUT THE SILICON, as the rest of this file says of itself.
+ * In particular arm 1 reports grad/legacy-linear OK, because a correct GPU
+ * would; the claim that this GC355 renders it black is what the boot is for.
+ * ========================================================================= */
+
+#include <stdlib.h>
+#include <math.h>
+
+/* ---- matrices, as the driver does them ------------------------------------
+ * POST-multiplication: translate/scale build the elementary matrix and call
+ * multiply(matrix, &t), i.e. matrix = matrix * t (vg_lite.c, multiply()). So
+ * `identity; translate(a,b); scale(s,1)` is T*S -- scale first, then
+ * translate, when applied to a point. The legacy case depends on this order to
+ * map the 1024-wide ramp onto an 80-px rect. */
+static void mat_mul(vg_lite_matrix_t *m, const vg_lite_matrix_t *r)
+{
+    vg_lite_matrix_t t;
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++)
+            t.m[i][j] = m->m[i][0] * r->m[0][j] + m->m[i][1] * r->m[1][j]
+                      + m->m[i][2] * r->m[2][j];
+    *m = t;
+}
+
+vg_lite_error_t vg_lite_identity(vg_lite_matrix_t *m)
+{
+    memset(m, 0, sizeof(*m));
+    m->m[0][0] = m->m[1][1] = m->m[2][2] = 1.0f;
+    return VG_LITE_SUCCESS;
+}
+
+vg_lite_error_t vg_lite_translate(vg_lite_float_t x, vg_lite_float_t y, vg_lite_matrix_t *m)
+{
+    vg_lite_matrix_t t; vg_lite_identity(&t);
+    t.m[0][2] = x; t.m[1][2] = y;
+    mat_mul(m, &t);
+    return VG_LITE_SUCCESS;
+}
+
+vg_lite_error_t vg_lite_scale(vg_lite_float_t sx, vg_lite_float_t sy, vg_lite_matrix_t *m)
+{
+    vg_lite_matrix_t s; vg_lite_identity(&s);
+    s.m[0][0] = sx; s.m[1][1] = sy;
+    mat_mul(m, &s);
+    return VG_LITE_SUCCESS;
+}
+
+static void xform(const vg_lite_matrix_t *m, float x, float y, float *ox, float *oy)
+{
+    *ox = m->m[0][0] * x + m->m[0][1] * y + m->m[0][2];
+    *oy = m->m[1][0] * x + m->m[1][1] * y + m->m[1][2];
+}
+
+/* Affine inverse (the bottom row is 0 0 1 for every matrix here). Returns 0 on
+ * a singular matrix, as the driver's inverse() does. */
+static int inv_affine(const vg_lite_matrix_t *m, vg_lite_matrix_t *o)
+{
+    const float a = m->m[0][0], b = m->m[0][1], c = m->m[0][2];
+    const float d = m->m[1][0], e = m->m[1][1], f = m->m[1][2];
+    const float det = a * e - b * d;
+    if (det == 0.0f) return 0;
+    vg_lite_identity(o);
+    o->m[0][0] =  e / det; o->m[0][1] = -b / det; o->m[0][2] = (b * f - c * e) / det;
+    o->m[1][0] = -d / det; o->m[1][1] =  a / det; o->m[1][2] = (c * d - a * f) / det;
+    return 1;
+}
+
+/* ---- the pool, and the leak counter ---------------------------------------
+ * ★ ALLOCATE FREES NOTHING, exactly like the driver: update_linear_grad does
+ * memset(&grad->image, 0, ...) then vg_lite_allocate, and the previous image is
+ * simply forgotten. g_ramp_live is allocations minus frees, so a case that
+ * leaks is COUNTABLE here where on the target it is merely a smaller pool. */
+static int g_ramp_live;
+
+vg_lite_error_t vg_lite_allocate(vg_lite_buffer_t *b)
+{
+    (void)b;
+    return VG_LITE_SUCCESS;   /* the target's vgc_scratch is never allocated here */
+}
+vg_lite_error_t vg_lite_free(vg_lite_buffer_t *b) { (void)b; return VG_LITE_SUCCESS; }
+
+static void grad_image_alloc(vg_lite_grad_image_t *im)
+{
+    im->stride = im->width * 4;
+    im->memory = calloc((size_t)im->stride * (size_t)(im->height ? im->height : 1), 1);
+    im->handle = im->memory;
+    im->address = 0;
+    g_ramp_live++;
+}
+
+static void grad_image_free(vg_lite_grad_image_t *im)
+{
+    if (im->handle) { free(im->memory); im->memory = NULL; im->handle = NULL; g_ramp_live--; }
+}
+
+/* ---- ARM SWITCHES for the gradient suite ------------------------------------
+ * Each models a DIFFERENT GPU, not a bug in this file. They are read only
+ * inside the sampling functions below. */
+static int g_draw_black;          /* every gradient draw paints opaque black -- the legacy claim */
+static int g_paint_follows_path;  /* the paint is in PATH space: path_matrix composed into it */
+static int g_solid_first_stop;    /* no interpolation: every sample is the ramp's first entry */
+static int g_ramp_permute_rb;     /* update_linear_grad packs A,R,G,B instead of A,B,G,R */
+
+/* PackColorComponent (vg_lite.c:676): a float in [0,1] to a byte, rounded. */
+static uint8_t pack_component(float v)
+{
+    if (v <= 0.0f) return 0u;
+    if (v >= 1.0f) return 255u;
+    return (uint8_t)(v * 255.0f + 0.5f);
+}
+
+/* ---- EXT API, from vg_lite.c ------------------------------------------------ */
+
+vg_lite_matrix_t *vg_lite_get_linear_grad_matrix(vg_lite_ext_linear_gradient_t *g)
+{
+    return &g->matrix;
+}
+
+/* vg_lite_set_linear_grad: rejects a zero-length line; stores the line, the
+ * flags and the stops. The driver's ramp CONVERSION (clamping, adding implicit
+ * 0/1 endpoints, dropping out-of-order stops) is modelled for the clean input
+ * every case here supplies -- stops at exactly 0 and 1, in order -- where it
+ * is the identity. A default black->white ramp stands in for count==0, as the
+ * driver's default_ramp[] does. */
+vg_lite_error_t vg_lite_set_linear_grad(vg_lite_ext_linear_gradient_t *g, uint32_t count,
+                                        vg_lite_color_ramp_t *ramp,
+                                        vg_lite_linear_gradient_parameter_t param,
+                                        vg_lite_gradient_spreadmode_t spread,
+                                        uint8_t pre)
+{
+    static vg_lite_color_ramp_t dflt[2] = { {0,0,0,0,1}, {1,1,1,1,1} };
+    if (param.X0 == param.X1 && param.Y0 == param.Y1) return VG_LITE_INVALID_ARGUMENT;
+    g->linear_grad = param;
+    g->pre_multiplied = pre;
+    g->spread_mode = spread;
+    if (!count || count > VLC_MAX_COLOR_RAMP_STOPS || !ramp) { ramp = dflt; count = 2; }
+    for (uint32_t i = 0; i < count; i++) g->color_ramp[i] = ramp[i];
+    g->ramp_length = count;
+    for (uint32_t i = 0; i < count; i++) g->converted_ramp[i] = ramp[i];
+    g->converted_length = count;
+    g->count = count;
+    return VG_LITE_SUCCESS;
+}
+
+/* vg_lite_update_linear_grad (vg_lite.c:7690-7710 and the fill loop after):
+ * the screen-space line, the OVERWRITE of matrix and linear_grad, the
+ * never-freed allocation, and the A,B,G,R byte packing -- verbatim in effect. */
+vg_lite_error_t vg_lite_update_linear_grad(vg_lite_ext_linear_gradient_t *g)
+{
+    const uint32_t ramp_length = g->converted_length;
+    const vg_lite_color_ramp_t *ramp = g->converted_ramp;
+    float x0, y0, x1, y1;
+    xform(&g->matrix, g->linear_grad.X0, g->linear_grad.Y0, &x0, &y0);
+    xform(&g->matrix, g->linear_grad.X1, g->linear_grad.Y1, &x1, &y1);
+    const float dx = x1 - x0, dy = y1 - y0;
+    const float length = sqrtf(dx * dx + dy * dy);
+    const uint32_t width = ramp_length * 128u;
+    if (length <= 0.0f) return VG_LITE_INVALID_ARGUMENT;
+
+    /* Compute transform matrix from ramp surface to grad -- the overwrite. */
+    vg_lite_identity(&g->matrix);
+    vg_lite_translate(x0, y0, &g->matrix);
+    {
+        /* rotate by atan2(dy,dx): the driver spells it with acosf and a
+         * quadrant fix-up, which is the same angle. */
+        const float ang = atan2f(dy, dx);
+        vg_lite_matrix_t r; vg_lite_identity(&r);
+        r.m[0][0] = cosf(ang); r.m[0][1] = -sinf(ang);
+        r.m[1][0] = sinf(ang); r.m[1][1] =  cosf(ang);
+        mat_mul(&g->matrix, &r);
+    }
+    vg_lite_scale(length / (float)width, 1.0f, &g->matrix);
+    g->linear_grad.X0 = 0.0f; g->linear_grad.Y0 = 0.0f;
+    g->linear_grad.X1 = (float)width; g->linear_grad.Y1 = 0.0f;
+
+    /* Allocate the ramp surface. The previous one is NOT freed. */
+    memset(&g->image, 0, sizeof(g->image));
+    g->image.width = (int32_t)width;
+    g->image.height = 1;
+    g->image.image_mode = VG_LITE_NONE_IMAGE_MODE;
+    g->image.format = VG_LITE_ABGR8888;
+    grad_image_alloc(&g->image);
+    uint8_t *bits = (uint8_t *)g->image.memory;
+
+    uint32_t stop = 0;
+    for (uint32_t i = 0; i < width; i++) {
+        const float t = (float)i / (float)(width - 1);
+        float c[4], c1[4], c2[4], w;
+        while (t > ramp[stop].stop) stop++;
+        if (t == ramp[stop].stop) {
+            w = 1.0f;
+            c1[3] = ramp[stop].alpha; c1[2] = ramp[stop].blue;
+            c1[1] = ramp[stop].green; c1[0] = ramp[stop].red;
+            c2[0] = c2[1] = c2[2] = c2[3] = 0.0f;
+        } else {
+            if (stop == 0) return VG_LITE_INVALID_ARGUMENT;
+            w = (ramp[stop].stop - t) / (ramp[stop].stop - ramp[stop - 1].stop);
+            c1[3] = ramp[stop - 1].alpha; c1[2] = ramp[stop - 1].blue;
+            c1[1] = ramp[stop - 1].green; c1[0] = ramp[stop - 1].red;
+            c2[3] = ramp[stop].alpha; c2[2] = ramp[stop].blue;
+            c2[1] = ramp[stop].green; c2[0] = ramp[stop].red;
+        }
+        if (g->pre_multiplied) {
+            for (int k = 0; k < 3; k++) { c1[k] *= c1[3]; c2[k] *= c2[3]; }
+        }
+        /* LERP(a, b, w) = a*w + b*(1-w), the driver's macro. */
+        for (int k = 0; k < 4; k++) c[k] = c1[k] * w + c2[k] * (1.0f - w);
+
+        /* Pack the final color: A, B, G, R in memory order. */
+        if (g_ramp_permute_rb) {
+            *bits++ = pack_component(c[3]); *bits++ = pack_component(c[0]);
+            *bits++ = pack_component(c[1]); *bits++ = pack_component(c[2]);
+        } else {
+            *bits++ = pack_component(c[3]); *bits++ = pack_component(c[2]);
+            *bits++ = pack_component(c[1]); *bits++ = pack_component(c[0]);
+        }
+    }
+    return VG_LITE_SUCCESS;
+}
+
+vg_lite_error_t vg_lite_clear_linear_grad(vg_lite_ext_linear_gradient_t *g)
+{
+    g->count = 0;
+    grad_image_free(&g->image);
+    return VG_LITE_SUCCESS;
+}
+
+/* ---- legacy API, from vg_lite.c:8121 (set) and :8167 (update) --------------- */
+
+vg_lite_matrix_t *vg_lite_get_grad_matrix(vg_lite_linear_gradient_t *g) { return &g->matrix; }
+
+vg_lite_error_t vg_lite_init_grad(vg_lite_linear_gradient_t *g)
+{
+    g->count = 0;
+    g->image.width = VLC_GRADIENT_BUFFER_WIDTH;
+    g->image.height = 1;
+    g->image.format = VG_LITE_BGRA8888;
+    grad_image_alloc(&g->image);
+    return VG_LITE_SUCCESS;
+}
+
+vg_lite_error_t vg_lite_clear_grad(vg_lite_linear_gradient_t *g)
+{
+    g->count = 0;
+    grad_image_free(&g->image);
+    return VG_LITE_SUCCESS;
+}
+
+vg_lite_error_t vg_lite_set_grad(vg_lite_linear_gradient_t *g, uint32_t count,
+                                 uint32_t *colors, uint32_t *stops)
+{
+    g->count = 0;    /* Opaque B&W gradient */
+    if (!count || count > VLC_MAX_GRADIENT_STOPS || colors == NULL || stops == NULL)
+        return VG_LITE_SUCCESS;
+    for (uint32_t i = 0; i < count; i++) {
+        if (stops[i] < VLC_GRADIENT_BUFFER_WIDTH) {
+            if (!g->count || stops[i] > g->stops[g->count - 1]) {
+                g->stops[g->count] = stops[i];
+                g->colors[g->count] = colors[i];
+                g->count++;
+            } else if (stops[i] == g->stops[g->count - 1]) {
+                g->colors[g->count - 1] = colors[i];
+            }
+        }
+    }
+    return VG_LITE_SUCCESS;
+}
+
+/* The driver's A()/R()/G()/B()/ARGB() (vg_lite_context.h:95-99): 0xAARRGGBB. */
+#define LG_A(c) ((c) >> 24)
+#define LG_R(c) (((c) & 0x00ff0000u) >> 16)
+#define LG_G(c) (((c) & 0x0000ff00u) >> 8)
+#define LG_B(c) ((c) & 0xffu)
+#define LG_ARGB(a, r, g, b) (((uint32_t)(a) << 24) | ((uint32_t)(r) << 16) | ((uint32_t)(g) << 8) | (uint32_t)(b))
+
+vg_lite_error_t vg_lite_update_grad(vg_lite_linear_gradient_t *g)
+{
+    uint32_t *buffer = (uint32_t *)g->image.memory;
+    if (g->count == 0) {
+        g->stops[0] = 0;   g->colors[0] = 0xFF000000u;
+        g->stops[1] = 255; g->colors[1] = 0xFFFFFFFFu;
+        g->count = 2;
+    } else if (g->stops[0] != 0) {
+        for (uint32_t i = 0; i < g->stops[0]; i++) buffer[i] = g->colors[0];
+    }
+    int32_t a0 = (int32_t)LG_A(g->colors[0]), r0 = (int32_t)LG_R(g->colors[0]);
+    int32_t g0 = (int32_t)LG_G(g->colors[0]), b0 = (int32_t)LG_B(g->colors[0]);
+    for (uint32_t i = 0; i < g->count - 1; i++) {
+        buffer[g->stops[i]] = g->colors[i];
+        const int32_t ds = (int32_t)(g->stops[i + 1] - g->stops[i]);
+        const int32_t a1 = (int32_t)LG_A(g->colors[i + 1]), r1 = (int32_t)LG_R(g->colors[i + 1]);
+        const int32_t g1 = (int32_t)LG_G(g->colors[i + 1]), b1 = (int32_t)LG_B(g->colors[i + 1]);
+        for (int32_t j = 1; j < ds; j++) {
+            const int32_t la = a0 + (a1 - a0) * j / ds, lr = r0 + (r1 - r0) * j / ds;
+            const int32_t lg = g0 + (g1 - g0) * j / ds, lb = b0 + (b1 - b0) * j / ds;
+            buffer[g->stops[i] + (uint32_t)j] = LG_ARGB(la, lr, lg, lb);
+        }
+        a0 = a1; r0 = r1; g0 = g1; b0 = b1;
+    }
+    for (uint32_t i = g->stops[g->count - 1]; i < VLC_GRADIENT_BUFFER_WIDTH; i++)
+        buffer[i] = g->colors[g->count - 1];
+    return VG_LITE_SUCCESS;
+}
+
+/* ---- the paint samplers ------------------------------------------------------
+ * Both return a vg_lite_color_t (ABGR), the same currency every other colour
+ * enters the rasteriser in, so the store converts through mem_word exactly
+ * once. Both apply PAD spread and a linear filter between adjacent ramp
+ * entries -- generous predicates make the exact filter footprint irrelevant to
+ * verdicts, and the arm-1 pins record whatever THIS model produces. */
+
+static uint32_t ramp_abgr_ext(const vg_lite_ext_linear_gradient_t *g, float u)
+{
+    const int w = g->image.width;
+    if (u < 0.0f) u = 0.0f;
+    if (u > (float)(w - 1)) u = (float)(w - 1);
+    const int i0 = (int)floorf(u), i1 = (i0 + 1 < w) ? i0 + 1 : i0;
+    const float f = u - (float)i0;
+    const uint8_t *b0 = (const uint8_t *)g->image.memory + i0 * 4;
+    const uint8_t *b1 = (const uint8_t *)g->image.memory + i1 * 4;
+    /* memory order A, B, G, R -- the sampler honours the ABGR8888 tag */
+    const int a = (int)(b0[0] * (1 - f) + b1[0] * f + 0.5f);
+    const int bl = (int)(b0[1] * (1 - f) + b1[1] * f + 0.5f);
+    const int gr = (int)(b0[2] * (1 - f) + b1[2] * f + 0.5f);
+    const int r = (int)(b0[3] * (1 - f) + b1[3] * f + 0.5f);
+    return VGC_ABGR_A(a, r, gr, bl);
+}
+
+static uint32_t sample_ext(const vg_lite_ext_linear_gradient_t *g,
+                           const vg_lite_matrix_t *path_matrix, float sx, float sy)
+{
+    if (g_draw_black) return VGC_ABGR(0, 0, 0);
+    if (g_paint_follows_path) {
+        vg_lite_matrix_t pinv;
+        if (inv_affine(path_matrix, &pinv)) xform(&pinv, sx, sy, &sx, &sy);
+    }
+    vg_lite_matrix_t inv;
+    if (!inv_affine(&g->matrix, &inv)) return VGC_ABGR(0, 0, 0);
+    float px, py;
+    xform(&inv, sx, sy, &px, &py);
+    const float dx = g->linear_grad.X1 - g->linear_grad.X0;
+    const float dy = g->linear_grad.Y1 - g->linear_grad.Y0;
+    const float t = ((px - g->linear_grad.X0) * dx + (py - g->linear_grad.Y0) * dy)
+                  / (dx * dx + dy * dy);
+    if (g_solid_first_stop) return ramp_abgr_ext(g, 0.0f);
+    return ramp_abgr_ext(g, t * (float)g->image.width - 0.5f);
+}
+
+static uint32_t sample_legacy(const vg_lite_linear_gradient_t *g,
+                              const vg_lite_matrix_t *path_matrix, float sx, float sy)
+{
+    if (g_draw_black) return VGC_ABGR(0, 0, 0);
+    if (g_paint_follows_path) {
+        vg_lite_matrix_t pinv;
+        if (inv_affine(path_matrix, &pinv)) xform(&pinv, sx, sy, &sx, &sy);
+    }
+    vg_lite_matrix_t inv;
+    if (!inv_affine(&g->matrix, &inv)) return VGC_ABGR(0, 0, 0);
+    float u, v;
+    xform(&inv, sx, sy, &u, &v);
+    if (g_solid_first_stop) u = 0.0f;
+    u -= 0.5f;
+    const int w = VLC_GRADIENT_BUFFER_WIDTH;
+    if (u < 0.0f) u = 0.0f;
+    if (u > (float)(w - 1)) u = (float)(w - 1);
+    const int i0 = (int)floorf(u), i1 = (i0 + 1 < w) ? i0 + 1 : i0;
+    const float f = u - (float)i0;
+    const uint32_t *buf = (const uint32_t *)g->image.memory;
+    const uint32_t w0 = buf[i0], w1 = buf[i1];
+    /* 0xAARRGGBB words (ARGB(), vg_lite_context.h:99) into an image tagged
+     * BGRA8888 -- which is precisely this target's own memory order, so the
+     * sampler yields (a,r,g,b) straight from the word. */
+    const int a = (int)(LG_A(w0) * (1 - f) + LG_A(w1) * f + 0.5f);
+    const int r = (int)(LG_R(w0) * (1 - f) + LG_R(w1) * f + 0.5f);
+    const int gg = (int)(LG_G(w0) * (1 - f) + LG_G(w1) * f + 0.5f);
+    const int b = (int)(LG_B(w0) * (1 - f) + LG_B(w1) * f + 0.5f);
+    return VGC_ABGR_A(a, r, gg, b);
+}
+
+/* ---- the paint rasteriser ------------------------------------------------------
+ * The scanline loop above, with the path transformed by path_matrix and the
+ * colour supplied per pixel. A SEPARATE loop rather than a refactor of
+ * vgc_draw_path_blend: that loop's exact behaviour is pinned by 334 path and
+ * colour checks, and a paint callback threaded through it would be a change
+ * to code those checks exist to hold still. Honours g_draw_nothing (arm 2 of
+ * every suite) and the bounding box, transformed. */
+typedef uint32_t (*paint_fn)(const void *g, const vg_lite_matrix_t *pm, float x, float y);
+
+static void raster_paint(vg_lite_path_t *p, vg_lite_fill_t rule, vg_lite_blend_t blend,
+                         const vg_lite_matrix_t *pm, paint_fn paint, const void *g)
+{
+    parse_path(p);
+    if (g_draw_nothing) g_ncon = 0;
+    for (int c = 0; c < g_ncon; c++)
+        for (int i = 0; i < g_clen[c]; i++) {
+            const int k = g_cstart[c] + i;
+            xform(pm, g_ptx[k], g_pty[k], &g_ptx[k], &g_pty[k]);
+        }
+    float bx0 = 1e9f, by0 = 1e9f, bx1 = -1e9f, by1 = -1e9f;
+    for (int cx = 0; cx < 2; cx++)
+        for (int cy = 0; cy < 2; cy++) {
+            float tx, ty;
+            xform(pm, p->bounding_box[cx * 2], p->bounding_box[cy * 2 + 1], &tx, &ty);
+            if (tx < bx0) bx0 = tx; if (tx > bx1) bx1 = tx;
+            if (ty < by0) by0 = ty; if (ty > by1) by1 = ty;
+        }
+    for (int y = 0; y < VGC_H; y++) {
+        const float sy = (float)y + 0.5f;
+        if (sy < by0 || sy > by1) continue;
+        for (int x = 0; x < VGC_W; x++) {
+            const float sx = (float)x + 0.5f;
+            if (sx < bx0 || sx > bx1) continue;
+            int wind = 0, cross = 0;
+            for (int c = 0; c < g_ncon; c++) {
+                const int s = g_cstart[c], len = g_clen[c];
+                for (int i = 0; i < len; i++) {
+                    const float ax = g_ptx[s + i], ay = g_pty[s + i];
+                    const float bx = g_ptx[s + (i + 1) % len];
+                    const float by = g_pty[s + (i + 1) % len];
+                    if ((ay <= sy) == (by <= sy)) continue;
+                    const float t = (sy - ay) / (by - ay);
+                    if (ax + t * (bx - ax) <= sx) continue;
+                    cross++;
+                    wind += (by > ay) ? 1 : -1;
+                }
+            }
+            const int in = (rule == VG_LITE_FILL_EVEN_ODD) ? (cross & 1) : (wind != 0);
+            if (in) {
+                const size_t o = (size_t)y * VGC_W + (size_t)x;
+                s_fb[o] = model_blend(mem_word(paint(g, pm, sx, sy)), s_fb[o], blend);
+            }
+        }
+    }
+}
+
+static uint32_t paint_ext(const void *g, const vg_lite_matrix_t *pm, float x, float y)
+{
+    return sample_ext((const vg_lite_ext_linear_gradient_t *)g, pm, x, y);
+}
+static uint32_t paint_legacy(const void *g, const vg_lite_matrix_t *pm, float x, float y)
+{
+    return sample_legacy((const vg_lite_linear_gradient_t *)g, pm, x, y);
+}
+
+void vgc_draw_linear_grad(vg_lite_path_t *p, vg_lite_ext_linear_gradient_t *g,
+                          vg_lite_matrix_t *path_matrix, vg_lite_error_t *acc)
+{
+    (void)acc;
+    raster_paint(p, VG_LITE_FILL_NON_ZERO, VG_LITE_BLEND_NONE, path_matrix, paint_ext, g);
+}
+
+void vgc_draw_grad(vg_lite_path_t *p, vg_lite_linear_gradient_t *g,
+                   vg_lite_matrix_t *path_matrix, vg_lite_error_t *acc)
+{
+    (void)acc;
+    raster_paint(p, VG_LITE_FILL_NON_ZERO, VG_LITE_BLEND_NONE, path_matrix, paint_legacy, g);
 }
 
 #endif /* VGC_TEST_MODEL_H */

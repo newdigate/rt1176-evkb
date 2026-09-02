@@ -595,6 +595,15 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-09-02 (NEW-32 gradients): 124 gates discovered,
+**123 passed, 1 failed, 0 SKIP**, `display/vglite_conformance` green in 10 s
+with its matrix at 26. `LICENSE-AUDIT: PASS` (run AFTER the sweep, never
+during), `vglite_conformance` manifest at 132 dep paths. Host suites 631
+checks over six. The one red is `m2_hci_probe[hci]`, the standing bench-config
+class. Silicon: two boots, six gradient lines byte-identical, checker PASS on
+both committed transcripts — and one pre-registered prediction REFUTED (the
+legacy gradient API works; see the VGLite note in Architecture).
+
 ✅ **Measured 2026-09-02 (NEW-32 Phase 4 guard layer): 124 gates discovered,
 **123 passed, 1 failed, 0 SKIP**. `LICENSE-AUDIT: PASS`. The one red is
 `m2_hci_probe[hci]`, the standing bench-config class.
@@ -1445,8 +1454,11 @@ not hung.
   identical on both boots, while pass 2 (same winding, NO hole) is exact. Every
   hole-cutting render in the matrix mis-covers (ring `short:769`, evenodd pass 1
   `short:308`, four-nested-rings `stray:1171`); the one that cuts no hole does
-  not. The two boots even disagree on `nzfill` while agreeing EXACTLY on
-  `eofill` — the nondeterminism lives in the no-hole pass. Two
+  not. The two boots even disagreed on `nzfill` while agreeing EXACTLY on
+  `eofill` — which read as "the nondeterminism lives in the no-hole pass"
+  until a FOURTH boot (2026-09-02, the gradients run) read `eocover=short:459`
+  after three boots of `short:308`. RETRACTED as a general claim: both passes
+  vary boot to boot; the hole-cutting one had merely not varied yet. Two
   disjoint contours fail exactly as four do (`path/two-disjoint-bars`,
   `runs=1` of 2, byte-identical on both boots); four nested contours work
   exactly as two do (`path/four-nested-rings`, `runs=4`). So the rule is
@@ -1568,6 +1580,36 @@ not hung.
   checks, an arm per status, RED against four mutants) because **no gate in
   this tree can see GPU code**: every QEMU gate runs the software engine. That
   split is the whole reason the layer has automated coverage at all.
+  ★★★ **THE GRADIENTS WERE PROBED (2026-09-02, six linear cases, two boots,
+  every line byte-identical).** Matrix 20 → 26; host suites 631 checks over
+  six. The driver fact that decides it, read then confirmed in pixels:
+  `vg_lite_draw_linear_grad` takes the paint parameter from `grad->matrix`
+  ALONE and applies `path_matrix` only to the geometry — an EXT gradient lives
+  in SCREEN space. `ext-linear-moved` BROKEN (`l=189`), `ext-linear-reupdate`
+  BROKEN with the IDENTICAL profile — a second update is idempotent and leaks
+  one ramp (that prediction was changed from "double transform" BEFORE the
+  boot, by algebra, and held) — `ext-linear-rebuilt` ok. **Re-specify the
+  gradient line in screen space per placement; never cache a ramp across
+  moves.** `ramp-word-order` ok: the ABGR8888 sampler reads the ramp as the
+  driver packed it (A,B,G,R).
+  ★★ **THE "GC255-ONLY, RENDERS BLACK" LEGACY CLAIM IS REFUTED AND RETIRED.**
+  `grad/legacy-linear` was pre-registered `broken`/`unstable` on the strength
+  of one sighting and measured **ok, `repeat=same`, two boots identical** — a
+  textbook ramp within one unit of the host model. With a CORRECT matrix
+  (`identity; translate(x,y); scale(w/1024)` — the helpers post-multiply) the
+  legacy API works and is deterministic; the earlier black was that caller's
+  identity matrix sampling ~6% of a 1024-px ramp. Its colours are the driver's
+  own `0xAARRGGBB` (`vg_lite_context.h:95-99`), NOT `vg_lite_color_t` ABGR.
+  ★ The host model reproduces the driver's gradient entry points FROM SOURCE
+  (`tests/model.h`), so the predictions were executable before the press; the
+  arm that earns the suite is "paint FOLLOWS the path", which inverts the
+  moved/reupdate/rebuilt row by name. Building it exposed a latent model
+  defect — `vgc_ident()` returned an all-zero matrix, invisible to 334 checks
+  because the flat rasteriser never read it.
+  ★ **Two prior cells moved on the repeat axis**: `path/two-disjoint-bars` is
+  now `unstable` (first `differs` in six boots) and `evenodd`'s hole-cutting
+  pass varied for the first time. A misparse's determinism depends on the
+  bytes after the path, and these boots ran a different image.
   ★ **Gradient helpers were DELIBERATELY NOT BUILT.** The spec conditioned them
   on the probe confirming the API unusable, and **the probe never tested
   gradients** — Phase 2 was redirected to colour and blend. Those claims come
