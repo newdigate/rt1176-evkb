@@ -205,9 +205,10 @@ grep -q "^hci_reset=ok attempts=" "$OUT"                          || fail "[baud
 grep -q "^bt_baud_switch=ok rate=921600[[:space:]]*$" "$OUT"       || fail "[baud] the switch did not report ok at 921600"
 [ "$(grep -c '^hci_version: hci_ver=11 hci_rev=0xBEEF' "$OUT")" -eq 2 ] || fail "[baud] identity must be read TWICE: before and after the switch"
 grep -q "^PEER-SETBAUD rate=921600[[:space:]]*$" "$RES"            || fail "[baud] the peer did not receive 0xFC09 with 921600 LE"
-grep -q "^PEER-DONE phase=baud cmds=9 resets=2 " "$RES"            || fail "[baud] expected Reset, 3 identity, 0xFC09, Reset, 3 identity = 9 commands, 2 resets"
-# The set-baud must come AFTER the first identity and BEFORE the second Reset.
-grep "^PEER-DONE" "$RES" | grep -q "opcodes=0c03,1001,1009,1005,fc09,0c03,1001,1009,1005" || fail "[baud] wrong order: $(grep '^PEER-DONE' "$RES")"
+grep -q "^PEER-DONE phase=baud cmds=12 resets=2 " "$RES"           || fail "[baud] expected Reset, 3 identity, 0xFC09, Reset, 3 identity, Inquiry, 2 names = 12 commands, 2 resets"
+# The set-baud must come AFTER the first identity and BEFORE the second Reset.  (Measured on the
+# first run: the probe's unconditional probeInquiry() follows the switch, hence 12, not 9.)
+grep "^PEER-DONE" "$RES" | grep -q "opcodes=0c03,1001,1009,1005,fc09,0c03,1001,1009,1005,0401,0419,0419" || fail "[baud] wrong order: $(grep '^PEER-DONE' "$RES")"
 [ "$PEER_RC" -eq 0 ] || fail "[baud] peer exited $PEER_RC"
 echo "PASS: the vendor set-baud sequence is right (0xFC09 uint32 LE after identity, reply awaited, Reset + identity re-run); the RATE itself is silicon-only"
 ```
