@@ -208,6 +208,12 @@ static vg_lite_matrix_t *shifted(void)
  * in it is GC255-specific. The "GC255-only" claim rests on NXP's vglite_layer.c
  * gating it by chip id, and on ONE sighting of solid black.
  *
+ * ★★ MEASURED 2026-09-02, TWO BOOTS BYTE-IDENTICAL: pixel=ok, repeat=same,
+ * l=241.0.14,m=126.0.129,r=11.0.244 -- within one unit of the host model. The
+ * pre-registered `broken` was REFUTED. The legacy API works on this GC355,
+ * deterministically, and the "GC255-only, renders black" row is retired: the
+ * alternative explanation below was the right one.
+ *
  * ★ THE CALLER OWNS THE MATRIX, AND THAT IS THE ALTERNATIVE EXPLANATION FOR
  * THE BLACK. The ramp is 1024 px wide; a caller leaving grad->matrix at
  * identity maps 1024 ramp px across a 64 px rect and samples ~6% of it. This
