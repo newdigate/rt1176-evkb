@@ -595,6 +595,24 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-09-02 (later the same day): 124 gates discovered,
+**123 passed, 1 failed, 0 SKIP**, on the NEW-32 **Phase 4** close-out — the
+fader's `SRC_OVER` premultiply fix (SynthUI `d995e63`, pin bumped).
+`LICENSE-AUDIT: PASS`. The ONE red is `m2_hci_probe[hci]`, the standing
+bench-configured-build-dir class, dispositioned by reading its
+`CMakeCache.txt` directly rather than assuming: it still carries
+`M2RADIO_IW416_BT_FW`, `M2_BT_UART_DNLD=ON` and `M2_BT_ASSERT_CTS=ON`, dated
+Aug 29, and nothing in this work touches that example.
+★ **`m2_uap_lwip[uap]` PASSED in this sweep**, having been the load-sensitive
+red in the Phase 2 sweep hours earlier. That is corroboration for the
+load-sensitivity diagnosis rather than a fix: same tree, same gate, different
+machine load.
+★ The fader gate PASSES with its SOFTWARE goldens UNMOVED (`fd_crc=0xAB66DE0D`)
+even though the GPU goldens moved — which is the whole point of the two-golden-
+set discipline, and also why that gate could not have caught the defect the
+Phase 4 fix corrects. `synthui_knob_test` and `acid_box` were run as controls
+and are unaffected.
+
 ✅ **Measured 2026-09-02: 124 gates discovered, 122 passed, 2 failed, 0 SKIP**,
 on the NEW-32 Phase 2 close-out (colour & blend; matrix 15 → 20,
 `display/vglite_conformance` green in 10 s). `LICENSE-AUDIT: PASS`, vacuity
