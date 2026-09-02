@@ -15,6 +15,7 @@ Phases (argv[1]):
   fwdnld      play the NXP V3 UART BOOTLOADER first: send the start indication
               the real card sends, serve chunk requests, verify the bytes the
               host returns, and only then answer HCI
+  baud        vendor set-baud (0xFC09) then identity again at the new rate
 Exit 0 when the phase's last expected opcode was seen.  Prints PEER-* lines.
 """
 import socket, struct, sys, time
@@ -61,6 +62,7 @@ def v3_data_req(length, offset, err=0):
     return f + bytes([crc8(f)])
 LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP_REMOTE_NAME_REQ,
                "starve": OP_RESET, "fwdnld": OP_READ_BD_ADDR, "baud": OP_READ_BUFFER_SIZE}
+LAST_OPCODE_COUNT = {"baud": 2}   # phases whose terminal opcode must be seen N times (default 1)
 
 def connect(path):
     deadline = time.time() + 20
@@ -252,7 +254,7 @@ if __name__ == "__main__":
                 peer.boot_started = True
                 peer.boot_step = 1
                 peer.send(v3_data_req(*peer.boot_plan[0]))
-        if LAST_OPCODE[phase] in peer.cmds and not peer.pending and time.time() - last_rx > 3.0:
+        if peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1) and not peer.pending and time.time() - last_rx > 3.0:
             break
     for l in peer.log: print(l)
     if phase == "fwdnld":
@@ -262,7 +264,7 @@ if __name__ == "__main__":
     print("PEER-DONE phase=%s cmds=%d resets=%d opcodes=%s baud=%s"
           % (phase, len(peer.cmds), peer.resets, ",".join("%04x" % c for c in peer.cmds),
              ",".join(str(b) for b in peer.baud_seen) or "none"))
-    ok = LAST_OPCODE[phase] in peer.cmds
+    ok = peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
     if phase == "fwdnld":
         ok = ok and peer.boot_ok and peer.boot_err is None
     sys.exit(0 if ok else 1)
