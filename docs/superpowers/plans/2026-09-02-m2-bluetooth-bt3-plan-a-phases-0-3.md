@@ -549,11 +549,14 @@ Note for the implementer: `send()` from the **RX** callbacks is fine — it only
 
 This is `probeConnect()`'s HCI half moved into a class; it is exercised on silicon (Task 9) and by the `[avdtp]` gate (the peer accepts pairing), so it has no separate host test. Interface first, the body ports the probe's code line for line (the probe is the reference — copy its constants and event handling; they are proven on three peers).
 
+**★ Design refined (2026-09-02, before implementation): the clock and the console are INJECTED.** `bt/` is Arduino-free and host-compiled by `bt/test/run.sh` (which globs `bt/*.cpp`), so `BtLink.cpp` may not call `millis()`/`delay()`/`CONSOLE`. And the `[avdtp]` gate (Task 10) asserts `inq_name:` lines that the app cannot reconstruct from only a `Result`. Both are solved by injection: the wait loops take `now()` (a ms clock) and `idle()` (pump-and-yield), and per-stage transcript lines go through an optional `LogFn` the app adapts to `CONSOLE`. `BtLink` still fully owns inquiry→connect→pair→encrypt; it just emits and waits through injected seams. It uses only `<stdint.h>`, `<cstdio>`/`<cstdarg>` (`vsnprintf`), `<cstring>`, and `Hci.h` — all host-compilable.
+
 - [ ] **Step 1: Header**
 ```cpp
 // BtLink -- one BR/EDR ACL link: inquiry by name, Create_Connection, SSP
 // pairing with legacy-PIN fallback, encryption.  Blocking helpers for setup();
 // the SSP/PIN events are answered by onEvent() (submit only, no run()).
+// Arduino-free: the clock (now/idle) and the console (LogFn) are injected.
 #pragma once
 #include <stdint.h>
 #include "Hci.h"
@@ -561,24 +564,38 @@ class BtLink {
 public:
     enum Result : uint8_t { OK = 0, NO_INQUIRY_HIT, CONNECT_STATUS, PAIRING_FAILED, PIN_FAILED, ENCRYPTION_FAILED, TIMEOUT };
     static const char *resultName(Result r);
+    typedef void (*LogFn)(void *ctx, const char *line);
     explicit BtLink(Hci &hci) : m_hci(hci) {}
+    void setLog(LogFn fn, void *ctx) { m_log = fn; m_logCtx = ctx; }
     void setPin(const char *pin4) { for (int i = 0; i < 4; i++) m_pin[i] = pin4[i]; }
-    Result connect(const char *nameSubstr, void (*idle)());     // inquiry (10 s) -> connect -> pair -> encrypt
-    Result pairAndEncrypt(void (*idle)());                       // SSP first; on failure Write_Simple_Pairing_Mode=0 and retry with PIN
+    // now() = a millisecond clock; idle() = pump the HCI + yield (the app passes millis and its idleMs).
+    Result connect(const char *nameSubstr, uint32_t (*now)(), void (*idle)());   // inquiry (~10 s) -> Create_Connection
+    Result pairAndEncrypt(uint32_t (*now)(), void (*idle)());                     // SSP first; on failure Write_Simple_Pairing_Mode=0 and retry with PIN
     void onEvent(uint8_t code, const uint8_t *p, uint8_t len);   // forward from the app's Hci::EventFn
     uint16_t handle() const { return m_handle; } const uint8_t *peer() const { return m_bd; }
     bool encrypted() const { return m_encrypted; } const char *pairedBy() const { return m_pairedBy; }
 private:
-    Hci &m_hci; uint16_t m_handle = 0; uint8_t m_bd[6] = {0}; uint8_t m_psrm = 0; uint16_t m_clk = 0;
+    void logf(const char *fmt, ...);                            // vsnprintf into m_lb; emit via m_log if set
+    Hci &m_hci; LogFn m_log = nullptr; void *m_logCtx = nullptr; char m_lb[160];
+    uint16_t m_handle = 0; uint8_t m_bd[6] = {0}; uint8_t m_psrm = 0; uint16_t m_clk = 0;
     char m_pin[4] = {'1','2','3','4'}; const char *m_pairedBy = "none";
-    volatile bool m_connDone = false, m_authDone = false, m_encDone = false, m_found = false, m_named = false;
-    volatile uint8_t m_connStatus = 0xFF, m_authStatus = 0xFF, m_encStatus = 0xFF; volatile bool m_encrypted = false;
-    char m_name[249] = {0}; char m_want[32] = {0};
+    volatile bool m_connDone = false, m_authDone = false, m_pairDone = false, m_encDone = false;
+    volatile uint8_t m_connStatus = 0xFF, m_authStatus = 0xFF, m_pairStatus = 0xFF, m_encStatus = 0xFF;
+    volatile bool m_encrypted = false; volatile bool m_haveLinkKey = false;
+    volatile bool m_inqComplete = false; volatile bool m_nameDone = false;
+    // A/V inquiry hits (major device class 0x04), enough for the bench.
+    struct Hit { uint8_t bd[6]; uint32_t cod; uint8_t psrm; uint16_t clk; bool named; uint8_t nameStatus; char name[249]; };
+    static const uint8_t MAX_HITS = 8; Hit m_hits[MAX_HITS]; uint8_t m_nHits = 0; int m_target = -1;
 };
 ```
-- [ ] **Step 2: Body** — port from the probe: `connect()` = `OP_INQUIRY` (LAP 0x9E8B33, 10 × 1.28 s, unlimited) collecting Inquiry Result events (field-major parse as `probeInquiry()` does) and `Remote_Name_Request` per A/V hit, choosing the first whose name contains `nameSubstr`; then `Set_Event_Mask` all-ones, `Write_Simple_Pairing_Mode=1`, `Create_Connection` (pkt 0xCC18, allow role switch 1), wait `Connection_Complete`. `pairAndEncrypt()` = `Authentication_Requested` → wait `Auth_Complete` (25 s); on failure: `Write_Simple_Pairing_Mode=0`, `Authentication_Requested` again, answer `PIN_Code_Request` with `m_pin` (reply opcode 0x040D: bd(6) len(1)=4 pin(16) zero-padded); on `Auth_Complete` ok → `Set_Connection_Encryption` on → wait `Encryption_Change` enabled=1. `onEvent()` handles 0x03, 0x06, 0x08, 0x16, 0x17 (link key req → negative reply 0x040C), 0x18, 0x31 (IO cap reply 0x042B: NoInputNoOutput, OOB 0, auth 0x04), 0x33 (User Confirmation reply 0x042C accept), 0x36, 0x02/0x01/0x07 (inquiry). All replies via `m_hci.submit(...)`. Print one `key=value` line per stage through a `Print`-free callback? No — `bt/` has no Arduino: expose the outcome and let the app print. `resultName()` returns the spec's names (`no_inquiry_hit`, `connect_status`, `pairing_ssp_failed→pin_fallback` is reported via `pairedBy()` = "ssp" | "pin").
+- [ ] **Step 2: Body** (`BtLink.cpp`) — port the probe's PROVEN logic (`m2_hci_probe.cpp`: `probeInquiry()`, `probeConnect()`, and `onEvent()`'s SSP/inquiry handlers — correct on three real peers) into the class, changing only the seams:
+  - `logf(fmt, ...)`: `va_list`, `vsnprintf(m_lb, sizeof m_lb, fmt, ap)`, `if (m_log) m_log(m_logCtx, m_lb);`. Every console line the probe printed becomes a `logf(...)` with the SAME grammar (`inq: bd=%s cod=0x%06lX psrm=%u clk=0x%04X`, `inq_name: bd=%s status=0x%02X name=\"%s\"`, `io_cap_req: bd=%s -> NoInputNoOutput auth_req=0x%02X`, `user_conf_req: bd=%s numeric=%lu -> accept (Just Works)`, `pairing=%s auth=%s link_key=%s`). A small `bdstr(bd, char[18])` helper formats the address MSB-first.
+  - `connect(nameSubstr, now, idle)`: `OP_INQUIRY` (LAP 0x9E8B33, length 0x0A ≈ 12.8 s, unlimited responses), collect Inquiry Result events into `m_hits` filtering major class 0x04 (field-major parse, as `probeInquiry()`), `Remote_Name_Request` each hit and `logf` an `inq_name:` line; wait on `m_inqComplete`/`m_nameDone` using `while (!flag && now() - t0 < T) idle();`. Choose `m_target` = first hit whose name contains `nameSubstr` (or, if `nameSubstr` is null/empty, the first hit). If none: return `NO_INQUIRY_HIT`. Then `Set_Event_Mask` all-ones, `Write_Simple_Pairing_Mode=1`, `Create_Connection` (pkt_type 0xCC18, page-scan-repetition from the hit, clock offset with bit15 valid, allow role switch 1); wait `Connection_Complete`; non-zero status → `CONNECT_STATUS`.
+  - `pairAndEncrypt(now, idle)`: `Authentication_Requested`, wait `m_authDone` (25 s). If auth failed: `Write_Simple_Pairing_Mode=0`, `Authentication_Requested` again (the `PIN_Code_Request` path); `m_pairedBy` is set to `"ssp"` or `"pin"` by which path completed. On `Auth_Complete` ok → `Set_Connection_Encryption` enable → wait `Encryption_Change` enabled=1 (`ENCRYPTION_FAILED` otherwise). Return `OK`.
+  - `onEvent(code, p, len)` handles, replying only via `m_hci.submit(...)` (never `run()` — this is called from the app's `Hci::EventFn`): 0x02 Inquiry Result (field-major, append A/V hits), 0x01 Inquiry Complete (`m_inqComplete=true`), 0x07 Remote Name Complete (fill the hit's name, `m_nameDone=true`), 0x03 Connection Complete (`m_handle`, `m_connStatus`, `m_connDone`), 0x17 Link_Key_Request → `Link_Key_Request_Negative_Reply` 0x040C, 0x31 IO_Capability_Request → 0x042B (NoInputNoOutput, OOB 0, auth 0x04), 0x33 User_Confirmation_Request → 0x042C accept (`logf` the numeric), 0x16 PIN_Code_Request → 0x040D (bd(6) len=4 pin(16) zero-padded; sets `m_pairedBy="pin"`), 0x18 Link_Key_Notification (`m_haveLinkKey=true`), 0x36 Simple_Pairing_Complete (sets `m_pairedBy="ssp"`, `m_pairDone`), 0x06 Authentication_Complete (`m_authStatus`, `m_authDone`), 0x08 Encryption_Change (`m_encStatus`, `m_encrypted`, `m_encDone`). Copy the exact opcode constants and byte layouts from the probe.
+  - `resultName()` returns `ok`/`no_inquiry_hit`/`connect_status`/`pairing_failed`/`pin_failed`/`encryption_failed`/`timeout`.
 
-- [ ] **Step 3: Build check** — the bt tests compile `bt/*.cpp`; `BtLink.cpp` includes only `Hci.h` (host-compilable). Run `~/Development/M2Radio/bt/test/run.sh` → still `PASS`.
+- [ ] **Step 3: Build check** — `BtLink.cpp` must host-compile (it is pulled into every `bt/test` build by the `*.cpp` glob). Run `~/Development/M2Radio/bt/test/run.sh` → still `24 checks, 0 failures` / `PASS` (the count is unchanged — `BtLink` has no host test; this only proves it compiles clean under `-Wall -Wextra -Werror` on the host). If it does not compile host-side, the seam injection is wrong — fix `BtLink`, do NOT change `run.sh`.
 
 - [ ] **Step 4: Commit (M2Radio)** — `git add bt/BtLink.h bt/BtLink.cpp && git commit -m "bt: BtLink -- inquiry by name, connect, SSP with PIN fallback, encryption (ported from the probe)"`
 
