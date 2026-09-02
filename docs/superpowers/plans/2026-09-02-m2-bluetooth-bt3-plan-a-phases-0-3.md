@@ -920,15 +920,24 @@ End-of-phase for `avdtp`: replace the generic `LAST_OPCODE in peer.cmds` test wi
 **Files:**
 - Modify: `examples/networking/m2_hci_probe/m2_hci_probe.cpp`, `CMakeLists.txt`, `evkb.cmake`
 
-- [ ] **Step 1: Push and pin M2Radio** — `cd ~/Development/M2Radio && git push origin master`; in `evkb.cmake` replace the M2Radio SHA with `git rev-parse HEAD` and append to its comment: `BT-3 phase 1 adds bt/ (L2cap, BtLink, Sdp, Avdtp; Sbc in phase 3).`
+- [ ] **Step 1: Push and pin M2Radio** — `origin/master` is currently `f33acab` (the rebaud pin, already fresh-user-verified) and HEAD is `d4a8710`, exactly **10** `bt/` commits ahead (`a404b5d..d4a8710`: L2cap ×3, BtLink ×4, Sdp+Avdtp ×3 — confirm with `git log --oneline origin/master..HEAD` that ALL ten touch only `bt/`, no foreign commit from the concurrent acid_box session). Then `cd ~/Development/M2Radio && git push origin master` (a fast-forward). In `evkb.cmake` replace the M2Radio SHA `f33acab440be311d933a1d86cd08522140536fc6` with `d4a8710…` (the pushed `git rev-parse HEAD`) and append to its comment: `BT-3 phase 1 adds bt/ (L2cap, BtLink, Sdp, Avdtp; Sbc in phase 3) -- first example to link it is this one; will not CONFIGURE against anything older (import_evkb_library(M2Radio ... bt) FATAL_ERRORs on the missing subdir).`
+  ★ **Fresh-user verify the pin** (same discipline as Task 3): once the bench build is green, prove the fetched-from-GitHub source builds too — `cmake -B build-fresh -DEVKB_FORCE_FETCH=ON -DM2_BT_CONNECT=ON -DM2_BT_TARGET_NAME=FAKE-HEADSET-01 -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake && cmake --build build-fresh` must produce `m2_hci_probe.elf` (it links `bt/` from the pinned fetch). Delete `build-fresh/` afterward. If it fails on a missing `bt/` symbol, the push did not land — do not commit the pin.
 
 - [ ] **Step 2: Import** — `CMakeLists.txt`: `import_evkb_library(M2Radio sdio iw416 hci bt)`. Configure the bench build; expect `teensy_add_library(M2Radio ...bt/L2cap.cpp;...bt/Avdtp.cpp...)` in the output.
 
 - [ ] **Step 3: Replace the prototype under `M2_BT_CONNECT`** — delete the probe's `sendL2cap`, `onAcl`, `serviceSignalling`, `serviceReverse`, `probeSdp`, `probeAvdtp` and their state; keep the prints. New objects: `static L2cap l2(hciIo); static BtLink link(hci); static Avdtp avdtp;`. The app's `onEvent` forwards `link.onEvent(code,p,len); l2.onEvent(code,p,len);` and prints as before; `hci.onAcl` → a thunk calling `l2.onAcl(handle, d, len)`; `l2.onData` → `if (ch.psm == Avdtp::PSM && ch.localCid == 0x0041) avdtp.onSignalling(payload, len); else if (ch.psm == Sdp::PSM) { s_sdpVer = Sdp::parseAvdtpVersion(payload, len); s_sdpDone = true; }`. `probeConnect()` becomes:
 ```cpp
-    BtLink::Result r = link.connect(M2_BT_TARGET_NAME_OR_NULL, idleMs);      // prints per stage
+    // BtLink is Arduino-free: inject the clock (nowMs = millis) and the console
+    // (btLog -> CONSOLE) it needs.  idleMs already exists in the probe.
+    //   static uint32_t nowMs() { return millis(); }
+    //   static void btLog(void *, const char *s) { CONSOLE.println(s); }
+    // Target by name (M2_BT_TARGET_NAME) or the first A/V hit (nullptr):
+    //   #if defined(M2_BT_TARGET_NAME)   const char *target = M2_BT_TARGET_NAME;
+    //   #else                            const char *target = nullptr;   #endif
+    link.setLog(btLog, nullptr); link.setPin("1234");
+    BtLink::Result r = link.connect(target, nowMs, idleMs);                  // logs inq/inq_name per hit via btLog
     CONSOLE.print("link="); CONSOLE.println(BtLink::resultName(r)); if (r != BtLink::OK) return;
-    r = link.pairAndEncrypt(idleMs);
+    r = link.pairAndEncrypt(nowMs, idleMs);                                  // SSP first, auto PIN fallback (paired_by reports which)
     CONSOLE.print("secure="); CONSOLE.print(BtLink::resultName(r)); CONSOLE.print(" paired_by="); CONSOLE.println(link.pairedBy());
     if (r != BtLink::OK) return;
     l2.begin(link.handle(), s_aclNum /* from Read_Buffer_Size */); l2.acceptIncoming(true);
@@ -962,9 +971,16 @@ End-of-phase for `avdtp`: replace the generic `LAST_OPCODE in peer.cmds` test wi
         CONSOLE.print("avdtp_start=ok media_mtu="); CONSOLE.println(avdtp.mediaMtu()); CONSOLE.println("B7 DONE"); }
     else { CONSOLE.print("avdtp=fail state="); CONSOLE.print((int)avdtp.state()); CONSOLE.print(" error=0x"); printHex8(avdtp.error()); CONSOLE.println(); }
 ```
-Keep `M2_BT_TARGET_NAME`, `M2_BT_LEGACY_PIN` (→ `link.setPin("1234")` + SSP skipped), `M2_BT_FAST_BAUD`, `M2_BT_LOOPBACK`; drop `M2_BT_SDP_BEFORE_PAIRING`, `M2_BT_AVDTP_DISCOVER`, `M2_BT_PEER_AUTH`, `M2_BT_SC_HOST`, `M2_BT_NO_ROLE_SWITCH`, `M2_BT_AUTH_REQ` (their questions are answered; the transcript keeps the answers).
+Keep `M2_BT_TARGET_NAME`, `M2_BT_LEGACY_PIN`, `M2_BT_FAST_BAUD`, `M2_BT_LOOPBACK`; drop `M2_BT_SDP_BEFORE_PAIRING`, `M2_BT_AVDTP_DISCOVER`, `M2_BT_PEER_AUTH`, `M2_BT_SC_HOST`, `M2_BT_NO_ROLE_SWITCH`, `M2_BT_AUTH_REQ` (their questions are answered; the transcript keeps the answers).
+★ `M2_BT_LEGACY_PIN` maps to `link.setPin("1234")` only. BtLink already does SSP
+first with an AUTOMATIC PIN fallback, and the `[avdtp]` gate's fake peer completes
+SSP (so `paired_by=ssp`), so nothing more is needed here. The "force legacy PIN and
+skip the SSP attempt" mode is deferred to **Task 11**: it is needed ONLY for the
+ESP32 sink, whose SSP attempt DISCONNECTS the link (IW416↔ESP32 LMP IO-cap
+incompatibility) so the fallback has no link left to retry on — the two headsets
+and the fake peer all pair by SSP. Do NOT add a BtLink SSP-skip mode in this task.
 
-- [ ] **Step 4: Regression baseline** — gate build (`-UM2RADIO_IW416_FW -UM2RADIO_IW416_BT_FW`, every knob OFF): `./run_qemu.sh`, `./run_qemu_hci.sh`, `./run_qemu_baud.sh` all `PASS`; `./tools/run-all-qemu-gates.sh -l | tail -1` → `(125 gate(s))`.
+- [ ] **Step 4: Regression baseline** — ★ FIRST reconfigure `build/` GATE-CLEAN: Task 4 left it in bench config (`M2_BT_LOOPBACK=ON` + real `M2RADIO_IW416_*_FW` blobs), and `run_qemu.sh`/`run_qemu_hci.sh` run `build/m2_hci_probe.elf`. `rm -rf build && cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake && cmake --build build` (synthetic blobs, every `M2_BT_*` knob OFF — this is the default). Then the gate build must compile `bt/` for ARM for the FIRST time (the card-absent build links the library even though `M2_BT_CONNECT` is off), so a `bt/*.cpp` that only host-compiled will surface here. `./run_qemu.sh`, `./run_qemu_hci.sh`, `./run_qemu_baud.sh` all `PASS` (regression: the refactor changed only the `M2_BT_CONNECT` path, which none of these three build). `./tools/run-all-qemu-gates.sh -l | tail -1` → `(125 gate(s))` (unchanged — Task 9 adds no gate; Task 10 adds the +1).
 
 - [ ] **Step 5: Commit** — `git add examples/networking/m2_hci_probe evkb.cmake && git commit -m "m2_hci_probe: BT-2/B7 on M2Radio/bt (L2cap, BtLink, Sdp, Avdtp); prototype knobs retired; pin bumped"`
 
