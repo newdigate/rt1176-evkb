@@ -399,6 +399,13 @@ static uint8_t       s_encEnabled = 0;
 static uint8_t       s_linkKey[16];        static volatile bool s_haveLinkKey = false;
 #endif
 
+#if defined(M2_BT_LOOPBACK)
+// Phase 0 loopback (BT-3): its own connection bookkeeping -- s_connDone /
+// s_connHandle above are compiled only under M2_BT_CONNECT, which this build
+// leaves OFF (loopback runs standalone, right after the baud switch).
+static volatile bool s_lbConnDone = false; static volatile uint16_t s_lbConnHandle = 0;
+#endif
+
 // Completion printer for the SSP replies we submit from onEvent -- a refused
 // reply (non-zero status) is invisible otherwise and reads as a silent peer.
 static void sspDone(void *ctx, Hci::Error e, const Hci::Reply *r) {
@@ -517,6 +524,18 @@ static void onEvent(void *, uint8_t code, const uint8_t *p, uint8_t len) {
         CONSOLE.print(" handle=0x"); printHex16((uint16_t)(p[1] | (p[2] << 8)));
         CONSOLE.print(" enabled="); CONSOLE.println(p[3]);
         s_encDone = true;
+    }
+#endif
+#if defined(M2_BT_LOOPBACK)
+    else if (code == 0x03 && len >= 11) {        // Connection_Complete (Core 5.2 Vol 4 Part E 7.7.3):
+        // status(1) handle(2) bd(6) link_type(1) encryption_mode(1) -- the
+        // controller reports its LOCAL LOOPBACK ACL handle this way (link_type
+        // ACL), the only way the host learns which handle to write on.
+        s_lbConnHandle = (uint16_t)(p[1] | (p[2] << 8));
+        CONSOLE.print("lb_conn_complete: status=0x"); printHex8(p[0]);
+        CONSOLE.print(" handle=0x"); printHex16(s_lbConnHandle);
+        CONSOLE.print(" link_type="); CONSOLE.println(p[9]);
+        s_lbConnDone = true;
     }
 #endif
     else {
@@ -965,6 +984,52 @@ static void probeFastBaud() {
     }
     CONSOLE.print("bt_baud_switch=ok rate="); CONSOLE.println(rate);
     probeIdentity();                                      // identity again, at the new rate
+}
+#endif
+
+#if defined(M2_BT_LOOPBACK)
+static uint16_t s_lbHandle = 0; static uint32_t s_lbEchoed = 0, s_lbBytes = 0;
+// Loopback ACL packets come back on the loopback handle (Vol 4 Part E 7.6.2):
+// count them and their bytes from onAcl -- no TX here, this is record-only.
+static void lbOnAcl(void *, uint16_t handle, const uint8_t *, uint16_t len) {
+    if (handle == s_lbHandle) { s_lbEchoed++; s_lbBytes += len; }
+}
+// Phase 0 (BT-3): put the controller in LOCAL LOOPBACK and count N ACL
+// packets echoed back -- the loss/throughput measurement this board's
+// one-sided flow control (M2_BT_ASSERT_CTS) demands.  Runs right after the
+// baud switch, before probeInquiry() -- so it registers onEvent() itself
+// rather than relying on probeInquiry() to have done it.
+static void probeLoopback() {
+    hci.onEvent(onEvent, nullptr);
+    Hci::Reply r; uint8_t mode = 0x01;                      // 0x01 = local loopback
+    s_lbConnDone = false;
+    Hci::Error e = hci.run(0x1802, &mode, 1, &r, 1000, idleMs);
+    if (e != Hci::OK) { CONSOLE.print("loopback=fail (Write_Loopback_Mode) reason="); CONSOLE.print(Hci::errorName(e)); CONSOLE.print(" status=0x"); printHex8(r.status); CONSOLE.println(); return; }
+    uint32_t t0 = millis();                                 // the controller reports its loopback ACL handle
+    while (!s_lbConnDone && millis() - t0 < 3000) delay(10);  // via Connection_Complete (link_type ACL)
+    if (!s_lbConnDone) { CONSOLE.println("loopback=fail (no loopback Connection_Complete)"); return; }
+    s_lbHandle = s_lbConnHandle; s_lbEchoed = 0; s_lbBytes = 0;
+    hci.onAcl(lbOnAcl, nullptr);
+    const uint32_t N = 200; const uint16_t LEN = 600;       // ~ the media packet size
+    static uint8_t pkt[9 + 600];
+    uint16_t hf = (uint16_t)((s_lbHandle & 0x0FFF) | (0x02u << 12));
+    pkt[0] = 0x02; pkt[1] = (uint8_t)hf; pkt[2] = (uint8_t)(hf >> 8);
+    pkt[3] = (uint8_t)(LEN + 4); pkt[4] = (uint8_t)((LEN + 4) >> 8);
+    pkt[5] = (uint8_t)LEN; pkt[6] = (uint8_t)(LEN >> 8); pkt[7] = 0x40; pkt[8] = 0x00;
+    for (uint16_t i = 0; i < LEN; i++) pkt[9 + i] = (uint8_t)i;
+    uint32_t sent = 0, tStart = millis();                   // pace on the echo count: never more than ACL_NUM outstanding
+    const uint32_t ACL_NUM = 7;                             // acl_num from Read_Buffer_Size
+    while (sent < N && millis() - tStart < 20000) {
+        if (sent - s_lbEchoed < ACL_NUM) { hciIo.write(pkt, sizeof pkt); sent++; }
+        delay(1);
+    }
+    t0 = millis(); while (s_lbEchoed < sent && millis() - t0 < 3000) delay(10);
+    uint32_t ms = millis() - tStart;
+    CONSOLE.print("loopback_sent="); CONSOLE.print(sent); CONSOLE.print(" echoed="); CONSOLE.print(s_lbEchoed);
+    CONSOLE.print(" bytes="); CONSOLE.print(s_lbBytes); CONSOLE.print(" ms="); CONSOLE.print(ms);
+    CONSOLE.print(" kbps="); CONSOLE.println(ms ? (s_lbBytes * 8) / ms : 0);
+    mode = 0x00; hci.run(0x1802, &mode, 1, &r, 1000, idleMs);
+    hci.onAcl(nullptr, nullptr);
 }
 #endif
 
@@ -1643,6 +1708,9 @@ void setup() {
         probeIdentity();
 #if defined(M2_BT_FAST_BAUD)
         probeFastBaud();
+#endif
+#if defined(M2_BT_LOOPBACK)
+        probeLoopback();
 #endif
         probeInquiry();
 #if defined(M2_BT_CONNECT)

@@ -257,6 +257,14 @@ if(M2_BT_FAST_BAUD)
     add_definitions(-DM2_BT_FAST_BAUD=${M2_BT_FAST_BAUD_RATE})
 endif()
 
+# Phase 0 (BT-3): after the baud switch, put the controller in LOCAL LOOPBACK
+# (Write_Loopback_Mode 0x1802) and count N ACL packets echoed back -- the
+# loss measurement this board's one-sided flow control demands.  Silicon-only.
+option(M2_BT_LOOPBACK "After the baud switch: local loopback, N ACL packets echoed" OFF)
+if(M2_BT_LOOPBACK)
+    add_definitions(-DM2_BT_LOOPBACK=1)
+endif()
+
 teensy_add_executable(m2_hci_probe m2_hci_probe.cpp ${M2_FW_SRC} ${M2_BT_FW_SRC})
 teensy_target_link_libraries(m2_hci_probe cores M2Radio)
 target_include_directories(m2_hci_probe.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

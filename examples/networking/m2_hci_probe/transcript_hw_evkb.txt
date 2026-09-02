@@ -2342,3 +2342,129 @@ TARGET_NAME=EVKB-SINK, LEGACY_PIN=ON, AVDTP_DISCOVER=ON.
 Next: BT-3 (NEW-9) -- GET_CAPABILITIES -> SET_CONFIGURATION (the calibration
 run's SBC config is the target) -> OPEN -> START -> media channel -> RTP+SBC,
 with the sink's audio_cfg / packet counters / DACs as the assertions.
+
+--------------------------------------------------------------------------------
+2026-09-02  BT-3 plan A phase 0 -- the baud switch does NOT answer on this
+            IW416, and asking costs the rest of the session; loopback echo is
+            0/7 even at 115200.  Two silicon findings, no throughput number.
+--------------------------------------------------------------------------------
+
+Bench build: real blobs (bt_fw_source=nxp), ASSERT_CTS=ON, CONNECT=OFF (phase 0
+measures the transport only), FAST_BAUD=ON at each rate below in turn.
+
+    hci_reset=ok attempts=1 timeouts=0 framing=0 starved=0 qfull=0 late=0
+    hci_version: hci_ver=15 hci_rev=0x8300 lmp_ver=15 manufacturer=0x0048 lmp_subver=0x109B
+    bd_addr=A0:CD:F3:C5:B9:F3
+    hci_buffer: acl_len=1021 acl_num=7 sco_len=120 sco_num=6
+    bt_baud_switch=fail rate=921600 reason=no_response
+    bt_baud_switch=reverted rate=115200
+
+FAST_BAUD_RATE=3000000 (the exact-division rate the 24 MHz LPUART root gives
+at OSR 8, per CLAUDE.md) gets the IDENTICAL outcome, byte for byte except the
+rate field:
+
+    bt_baud_switch=fail rate=3000000 reason=no_response
+    bt_baud_switch=reverted rate=115200
+
+★ BOTH RATES FAIL THE SAME WAY, and "reason=no_response" here means the vendor
+0xFC09 command itself got a clean Command_Complete at 115200 (that branch's
+printFail would show a *different* line, with no "rate=" field at all -- see
+probeFastBaud() in m2_hci_probe.cpp). The failure is specifically the
+POST-REBAUD Reset: the host switches its own LPUART2 to the new rate and gets
+nothing back within 1000 ms, one attempt (not the ten-attempt loop the initial
+Reset gets). 3 Mbaud dividing exactly and failing identically as 921600 argues
+against a clock-precision explanation and toward the controller not actually
+switching to the rate our 0xFC09 payload requested -- or switching to
+something else entirely.
+
+★★ THE WORSE FINDING: a failed switch attempt breaks the REST OF THAT BOOT,
+even after "reverted rate=115200".  Both runs above show the same second
+symptom, appended right after the revert line:
+
+    inquiry=fail reason=no_response status=0xFF timeouts=2 framing=0 starved=0 qfull=0 late=0
+
+Identity (Reset, Read_Local_Version, Read_BD_ADDR, Read_Buffer_Size) had just
+worked perfectly on the SAME boot, at the SAME 115200, moments earlier -- so
+this is not a card that never woke up. A control build (M2_BT_FAST_BAUD=OFF,
+nothing else changed, same boot flow) on the same card immediately afterward
+ran inquiry cleanly: 8 hits of EVKB-SINK, "inquiry_complete: status=0x00 n=8",
+timeouts=0 throughout. So the bench, the card, and 115200 itself are all
+healthy; what breaks is specifically whatever state the 0xFC09 attempt (or the
+host's own rebaud()/revert) leaves the link in. host-side revert to 115200
+does not undo it -- consistent with the controller having actually left
+115200 (per its own clock, not ours) even though our post-switch Reset never
+saw a reply there either. Root cause not chased further; this is a phase-0
+transport measurement, not a driver fix -- flagged for the next session.
+
+LOOPBACK (M2_BT_LOOPBACK, new this phase). Since neither elevated rate
+answers, there is no "whichever rate answered" to run it at -- tested instead
+at the one rate that demonstrably works, 115200 (FAST_BAUD=OFF), to prove the
+new code path and get a baseline reading:
+
+    [t=18986] ev=0x03
+    lb_conn_complete: status=0x00 handle=0x0001 link_type=1
+    [t=18991] ev=0x03
+    lb_conn_complete: status=0x00 handle=0x0008 link_type=0
+    hci_event: code=0x13 len=5      (x7 -- Number_Of_Completed_Packets)
+    loopback_sent=7 echoed=0 bytes=0 ms=23000 kbps=0
+
+Write_Loopback_Mode (0x1802) succeeded, and the controller sent TWO
+Connection_Complete events exactly as Core 5.2 Vol 4 Part E 7.6.2 describes for
+local loopback (one ACL, one SCO, both against an implied loopback address):
+handle=0x0001 link_type=1 (ACL) first, handle=0x0008 link_type=0 (SCO) five
+ticks later. probeLoopback() takes the first Connection_Complete, which is the
+ACL one -- correct per spec, and confirmed by the field layout probeConnect()
+already validated on silicon in BT-2 (same p[9] offset). It then wrote 7 ACL
+packets (600 B payload each) on handle 0x0001, paced to ACL_NUM=7 outstanding
+(from Read_Buffer_Size's acl_num above) -- and got 7 Number_Of_Completed_Packets
+events back, so the controller's RX side accepted and credited every packet.
+Not one came back on onAcl(): echoed=0 for the full 20 s send window plus the
+3 s echo-drain.  ★ This is a genuine controller-behaviour finding, not a gap in
+the pacing or handle logic: Write_Loopback_Mode was accepted, the loopback ACL
+handle was identified and used correctly per spec, and the controller
+acknowledged receipt of every packet -- it simply never echoed any of them
+back on that handle within the window. Per this task's own instruction for a
+refused/no-Connection_Complete loopback ("that is a FINDING, not a failure...
+record and stop"), the same applies here: recorded, not chased further.
+Following the plan's own escalation ("if echoed < sent, repeat at 3000000")
+is moot -- 3000000 does not even complete the baud switch (see above), so
+there is no path to loopback-at-speed on this firmware/controller combination
+without first understanding the 0xFC09 failure.
+
+SUMMARY: no throughput number for phase 0.  Two findings for the next session:
+(1) 0xFC09 (vendor set-baud) does not bring up HCI at either 921600 or
+3000000 on this IW416/firmware, and the attempt corrupts the rest of that
+boot's HCI transport even after a host-side revert to 115200; (2) local
+loopback mode is enterable and reports a spec-correct ACL handle, but echoes
+zero of seven ACL packets back within 20 s at 115200, despite the controller
+crediting every one via Number_Of_Completed_Packets. Phase 4's sink counters
+remain the fallback loss/throughput instrument for BT-3 until one of these is
+understood.
+
+Files: m2_hci_probe.cpp (s_lbConnDone/s_lbConnHandle, lbOnAcl(), probeLoopback(),
+the Connection_Complete branch in onEvent() under M2_BT_LOOPBACK, and the
+setup() call site right after probeFastBaud()); CMakeLists.txt (M2_BT_LOOPBACK
+option, default OFF -- QEMU gates unaffected). Captures: /tmp/phase0_switch.txt
+(921600), /tmp/phase0_switch_3M.txt (3000000), /tmp/phase0_control_nofastbaud.txt
+(control, FAST_BAUD=OFF), /tmp/phase0_loopback_115200.txt (loopback @ 115200).
+
+★ QEMU-GATE VERIFICATION FOUND A BUILD-DIR HAZARD, worth recording alongside
+the CLAUDE.md build-dir notes: run_qemu.sh and run_qemu_hci.sh both run
+whatever ELF is already in the plain `build/` directory (`$(gate_build_dir)`)
+-- neither reconfigures or rebuilds it. Only run_qemu_baud.sh owns a private
+directory (`build-baud/`). So bench-configuring `build/` with
+M2_BT_LOOPBACK=ON directly broke run_qemu_hci.sh[full] (the peer saw an extra,
+unrecognised 0x1802 in its opcode trace: "PEER-UNKNOWN-OPCODE 0x1802"), and
+separately, leaving the REAL firmware blobs cached broke the same gate's
+`sent=0/1024` assertion (it got `sent=0/131840` -- the real image's size, not
+the 1 KB synthetic one gates are written against). Neither is a code defect;
+both are demonstrated bench-vs-gate cache collisions. Fix: reconfigure `build/`
+with `-DM2RADIO_IW416_FW= -DM2RADIO_IW416_BT_FW= -DM2_BT_FAST_BAUD=OFF
+-DM2_BT_LOOPBACK=OFF` (synthetic firmware, both new knobs OFF) before trusting
+a sweep through this directory -- confirmed clean that way: run_qemu.sh PASS,
+run_qemu_hci.sh PASS (all four peer phases), run_qemu_baud.sh PASS (own dir,
+unaffected throughout). `build/` was then reconfigured BACK to the bench state
+(real blobs, ASSERT_CTS=ON, CONNECT=OFF, FAST_BAUD=OFF, LOOPBACK=ON) to match
+this session's last silicon capture -- so it is bench, not gate-clean, on
+hand-off; reconfigure it per the line above before a `run-all-qemu-gates.sh`
+sweep.
