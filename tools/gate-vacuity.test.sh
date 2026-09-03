@@ -433,4 +433,46 @@ else
     echo "SKIP: vglite_conformance vacuity (example or fixture missing)"
 fi
 
+# --- 10. bt_tone_test[media] (BT-3 phase 4 task 6) --------------------------
+# run_qemu_media.sh asserts AudioOutputBluetooth actually reaches STREAMING
+# and RTP/SBC-frames real audio onto the AVDTP media channel. It shares its
+# ELF-building machinery with run_qemu.sh (the card-absent fallback) via a
+# separate build-media/ directory, same convention as [baud]/[avdtp] above --
+# the fallback capture must be just as unable to satisfy it, or the gate is
+# worthless (its bring-up assertions would pass on an image that never even
+# reached A2DP). No committed transcript_qemu.txt exists for this example (it
+# is new in this task), so the fixture is built here from exactly what
+# run_qemu.sh's own card-absent gate captures: banner, timeout-by-name Reset,
+# a2dp=connect_failed, and two vacuous heartbeats -- never streaming.
+bt_rel="examples/audio/bt_tone_test"
+bt_media_elf="$EVKB/$bt_rel/build-media/bt_tone_test.elf"
+if [ ! -x "$bt_media_elf" ]; then
+    echo "SKIP: absent_capture_fails_media_gate (no build-media/bt_tone_test.elf -- build it first)"
+else
+    cat > "$WORK/bt_tone_absent.txt" <<'ABSENT'
+RT1176 BT tone test up
+serial2=up_115200
+m2_wifi_reset=released
+bt_wake=pulsed_10ms_low (GPIO_DISP_B2_13, mux returned to LPUART2_RTS_B)
+bt_cts=undriven
+bt_fw_source=synthetic
+bt_fw_download=no_start_indication chip_id=0x0000 start_inds=0 sent=0/1024
+hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0
+inquiry=fail reason=no_response status=0xFF
+a2dp=connect_failed
+hb streaming=0 blocks=0 packets=0 drops=0 hw=0 n=0
+hb streaming=0 blocks=0 packets=0 drops=0 hw=0 n=1
+ABSENT
+    export GATE_VACUITY=1
+    run_gate "$bt_rel" "run_qemu_media.sh" "$WORK/bt_tone_absent.txt"; rc=$?
+    unset GATE_VACUITY
+    result=0
+    [ "$rc" -ne 0 ] || result=1                                                    # must not pass
+    echo "$OUT_TEXT" | grep -q "\[media\] bring-up did not reach AVDTP START" || result=1  # and name it
+    report "absent_capture_fails_media_gate" $result
+
+    rm -f "$EVKB/$bt_rel"/build-media/media.uart "$EVKB/$bt_rel"/build-media/media.peer \
+          "$EVKB/$bt_rel"/build-media/media.dbg
+fi
+
 exit $FAILED

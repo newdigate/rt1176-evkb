@@ -20,8 +20,15 @@ Phases (argv[1]):
               then act as an L2CAP acceptor, an SDP responder (AudioSink PDL,
               AVDTP 1.3) and an AVDTP acceptor (DISCOVER/GET_CAPABILITIES/
               SET_CONFIGURATION/OPEN/START) over ACL -- ends on an accepted START
+  media       runs the SAME avdtp acceptor to an accepted START, then RECEIVES
+              on the second (media transport) L2CAP channel opened for AVDTP's
+              PSM 0x0019 and validates each frame as an RTP v2 / A2DP SBC media
+              packet (V/PT, sequence continuity, per-frame sync byte + length) --
+              ends once at least one packet has been received with no framing
+              fault or sequence gap
 Exit 0 when the phase's last expected opcode was seen (avdtp: when the peer
-recorded an accepted START).  Prints PEER-* lines.
+recorded an accepted START; media: when the media validation above holds).
+Prints PEER-* lines.
 """
 import socket, struct, sys, time
 
@@ -67,8 +74,9 @@ def v3_data_req(length, offset, err=0):
     return f + bytes([crc8(f)])
 LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP_REMOTE_NAME_REQ,
                "starve": OP_RESET, "fwdnld": OP_READ_BD_ADDR, "baud": OP_READ_BUFFER_SIZE,
-               "avdtp": 0x0413}   # Set_Connection_Encryption -- last COMMAND before signalling; the
-                                  # phase's real end is peer.avdtp["started"], checked separately
+               "avdtp": 0x0413, "media": 0x0413}   # Set_Connection_Encryption -- last COMMAND before
+                                  # signalling; the real end of both avdtp and media is checked
+                                  # separately (peer.avdtp["started"] / peer.media, below)
 LAST_OPCODE_COUNT = {"baud": 2}   # phases whose terminal opcode must be seen N times (default 1)
 
 def phase_done(phase, peer):
@@ -76,6 +84,12 @@ def phase_done(phase, peer):
     # command opcode -- 0x0413 (Set_Connection_Encryption) is only the last
     # HCI COMMAND before L2CAP/SDP/AVDTP take over.
     if phase == "avdtp": return peer.avdtp["started"] and not peer.avdtp["error"]
+    # media's real end is receiving at least one well-formed RTP/SBC media
+    # packet with no sequence gap and no framing fault -- avdtp START is a
+    # precondition (handle_media never runs before it), not the terminal check.
+    if phase == "media":
+        m = peer.media
+        return m["pkts"] > 0 and m["seqgaps"] == 0 and m["badsbc"] == 0 and m["badrtp"] == 0
     return peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
 
 def connect(path):
@@ -109,7 +123,11 @@ class Peer:
         # CID we assigned for our side of the channel, psm)
         self.chans = {}
         self.next_cid = 0x0340
-        self.avdtp = {"config": None, "opened": False, "started": False, "order": [], "error": False}
+        self.avdtp = {"config": None, "opened": False, "started": False, "order": [], "error": False,
+                      "sig_cid": None}    # our (peer-assigned) CID for the FIRST psm=0x0019 channel --
+                                          # AVDTP signalling; any OTHER psm=0x0019 channel is media
+        # --- media phase: RTP/SBC validation on the media transport channel ---
+        self.media = {"pkts": 0, "frames": 0, "lastseq": None, "seqgaps": 0, "badrtp": 0, "badsbc": 0}
         # --- V3 bootloader state (fwdnld phase only) ---
         # While `boot` is True every received byte belongs to the download, not
         # to HCI: the host is answering the bootloader, and H4 framing has not
@@ -286,6 +304,11 @@ class Peer:
                 if code == 0x02:                                                 # Connection Request: psm, scid
                     psm, scid = struct.unpack("<HH", body[:4]); ours = self.next_cid; self.next_cid += 0x40
                     self.chans[scid] = (ours, psm)
+                    if psm == 0x0019 and self.avdtp["sig_cid"] is None:
+                        self.avdtp["sig_cid"] = ours    # the FIRST 0x0019 channel is signalling; a
+                                                        # later one (opened in AVDTP's OPENING state,
+                                                        # Avdtp.cpp's second m_l2->connect(PSM, ...))
+                                                        # is the media transport channel
                     self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0001, 0x0000))   # pending first, like the Shokz
                     self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0000, 0x0000))
                     self.sig(handle, bytes([0x04, ident + 1, 8, 0]) + struct.pack("<HH", scid, 0) + bytes([0x01, 0x02, 0xA0, 0x02]))  # our Config Request: MTU 672
@@ -308,7 +331,8 @@ class Peer:
             for peer_cid, (ours, psm) in self.chans.items():
                 if ours == cid:
                     if psm == 0x0001: self.handle_sdp(handle, peer_cid, pl)
-                    elif psm == 0x0019: self.handle_avdtp(handle, peer_cid, pl)
+                    elif psm == 0x0019 and ours == self.avdtp["sig_cid"]: self.handle_avdtp(handle, peer_cid, pl)
+                    elif psm == 0x0019: self.handle_media(pl)              # the OTHER 0x0019 channel: media transport
                     return
             self.log.append("PEER-ACL-UNKNOWN-CID 0x%04x" % cid)
         except Exception as e:
@@ -339,6 +363,35 @@ class Peer:
             else: self.send(acl(handle, peer_cid, bytes([tl | 0x03, sig, 0x19])), 0.02)                                             # unsupported command
         except Exception as e:
             self.log.append("PEER-EXCEPTION handle_avdtp: %r" % e)
+            self.avdtp["error"] = True
+    def handle_media(self, pl):
+        # RTP v2 (RFC 3550) + A2DP v1.3 sec 4.3.4 SBC media payload, validated
+        # against values this firmware cannot invent: V=2/PT=96, a strictly
+        # incrementing sequence number, and -- for each of the frameCount SBC
+        # frames the payload header names -- the frame's own sync byte and the
+        # fixed length the negotiated bitpool-53 config produces.
+        try:
+            m = self.media
+            if len(pl) < 13 or pl[0] != 0x80 or pl[1] != 96:
+                m["badrtp"] += 1
+                return
+            seq = (pl[2] << 8) | pl[3]
+            if m["lastseq"] is not None and seq != (m["lastseq"] + 1) & 0xFFFF:
+                m["seqgaps"] += 1
+            m["lastseq"] = seq
+            frame_count = pl[12] & 0x0F
+            off = 13
+            for _ in range(frame_count):
+                if off + 119 > len(pl) or pl[off] != 0x9C:
+                    m["badsbc"] += 1
+                off += 119
+            m["pkts"] += 1
+            m["frames"] += frame_count
+            if m["pkts"] % 20 == 0:
+                self.log.append("PEER-MEDIA pkts=%d frames=%d seqgaps=%d badsbc=%d badrtp=%d"
+                                % (m["pkts"], m["frames"], m["seqgaps"], m["badsbc"], m["badrtp"]))
+        except Exception as e:
+            self.log.append("PEER-EXCEPTION handle_media: %r" % e)
             self.avdtp["error"] = True
 
 if __name__ == "__main__":
@@ -393,6 +446,10 @@ if __name__ == "__main__":
         print("PEER-AVDTP order=%s config=%s"
               % (",".join(str(x) for x in peer.avdtp["order"]),
                  peer.avdtp["config"].hex() if peer.avdtp["config"] else "none"))
+    if phase == "media":
+        m = peer.media
+        print("PEER-MEDIA pkts=%d frames=%d seqgaps=%d badsbc=%d badrtp=%d"
+              % (m["pkts"], m["frames"], m["seqgaps"], m["badsbc"], m["badrtp"]))
     print("PEER-DONE phase=%s cmds=%d resets=%d opcodes=%s baud=%s"
           % (phase, len(peer.cmds), peer.resets, ",".join("%04x" % c for c in peer.cmds),
              ",".join(str(b) for b in peer.baud_seen) or "none"))
