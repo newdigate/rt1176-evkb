@@ -253,6 +253,16 @@ static AudioConnection pc1(toneGen, 0, btout, 1);      // same tone to L and R
 
 static uint32_t nowMs() { return millis(); }
 static void btLog(void *, const char *s) { CONSOLE.println(s); }
+#if defined(M2_BT_ACL_TRACE)
+static void aclTrace(void *, bool out, uint16_t handle, const uint8_t *pdu, uint16_t len) {
+    CONSOLE.print("acl_trace dir="); CONSOLE.print(out ? "out" : "in");
+    CONSOLE.print(" h=0x"); printHex16(handle);
+    CONSOLE.print(" t="); CONSOLE.print(micros());
+    CONSOLE.print(" hex=");
+    for (uint16_t i = 0; i < len; i++) { printHex8(pdu[i]); if (i + 1 < len) CONSOLE.print(' '); }
+    CONSOLE.println();
+}
+#endif
 static void onEvt(void *, uint8_t c, const uint8_t *p, uint8_t l) { src.onEvent(c, p, l); }
 static void onAclThunk(void *, uint16_t h, const uint8_t *d, uint16_t l) { src.onAcl(h, d, l); }
 
@@ -320,6 +330,9 @@ void setup() {
     hci.onEvent(onEvt, nullptr);
     hci.onAcl(onAclThunk, nullptr);                    // A2dpSource does NOT seize this
     src.setLog(btLog, nullptr); src.setPin("1234");
+#if defined(M2_BT_ACL_TRACE)
+    src.l2().onAclTrace(aclTrace, nullptr);
+#endif
 #if defined(M2_BT_LEGACY_PIN)
     src.setLegacyPin(true);
 #endif

@@ -129,6 +129,13 @@ if(M2_BT_CONNECT_RETRY)
     add_definitions(-DM2_BT_CONNECT_RETRY=1)
 endif()
 
+# Bench diagnostic: dump every in/out ACL packet on the link as hex over the VCOM
+# (feed tools/acl-trace-to-btsnoop.py). OFF by default; gates/default build unchanged.
+option(M2_BT_ACL_TRACE "Trace every ACL packet (L2cap::onAclTrace) over the console" OFF)
+if(M2_BT_ACL_TRACE)
+    add_definitions(-DM2_BT_ACL_TRACE=1)
+endif()
+
 # Phase 0 (BT-3): after identity at the download rate, switch the controller
 # to M2_BT_FAST_BAUD_RATE with the NXP vendor set-baud command (0xFC09, uint32
 # LE), re-baud LPUART2 and re-validate.  Default OFF, same as m2_hci_probe.
