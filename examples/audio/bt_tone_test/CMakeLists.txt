@@ -119,6 +119,16 @@ if(M2_BT_LEGACY_PIN)
     add_definitions(-DM2_BT_LEGACY_PIN=1)
 endif()
 
+# Bench knob: A2dpSource::connect() is one-shot, and the BR/EDR remote-name step
+# races on some peers (a headset intermittently returns no_name_event).  With
+# this ON, setup() defers the connect and loop() retries it every 5 s until it
+# succeeds -- no manual reset dance.  OFF by default so the gates and the default
+# build keep the byte-identical setup()-time one-shot connect.
+option(M2_BT_CONNECT_RETRY "Bench: retry A2dpSource::connect() from loop() until it succeeds" OFF)
+if(M2_BT_CONNECT_RETRY)
+    add_definitions(-DM2_BT_CONNECT_RETRY=1)
+endif()
+
 # Phase 0 (BT-3): after identity at the download rate, switch the controller
 # to M2_BT_FAST_BAUD_RATE with the NXP vendor set-baud command (0xFC09, uint32
 # LE), re-baud LPUART2 and re-validate.  Default OFF, same as m2_hci_probe.

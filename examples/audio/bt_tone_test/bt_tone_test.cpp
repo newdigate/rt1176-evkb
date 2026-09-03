@@ -323,6 +323,7 @@ void setup() {
 #if defined(M2_BT_LEGACY_PIN)
     src.setLegacyPin(true);
 #endif
+#if !defined(M2_BT_CONNECT_RETRY)
 #if defined(M2_BT_TARGET_NAME)
     A2dpSource::Result r2 = src.connect(M2_BT_TARGET_NAME, s_aclNum, nowMs, idleMs);
 #else
@@ -334,6 +335,9 @@ void setup() {
         CONSOLE.print("streaming frames_per_pkt="); CONSOLE.print(btout.framesPerPacket());
         CONSOLE.print(" media_mtu="); CONSOLE.println(src.mediaMtu());
     }
+#else
+    CONSOLE.println("a2dp=deferred (M2_BT_CONNECT_RETRY: loop() retries connect)");
+#endif
 }
 
 // Every pass, no delay: btout.poll() has to run far more often than once a
@@ -350,6 +354,28 @@ void loop() {
     // at 43 while blocks/drops climbed). yield() is non-blocking.
     yield();
     src.l2().service(); src.avdtp().service(); btout.poll();
+#if defined(M2_BT_CONNECT_RETRY)
+    // Bench: retry the one-shot connect until it succeeds (a headset's remote-name
+    // step races; the ESP32 sink can hold a stale link across an EVKB reboot).
+    {
+        static bool     begun   = false;
+        static uint32_t lastTry = 0;
+        if (!begun && (lastTry == 0 || millis() - lastTry >= 5000)) {
+            lastTry = millis();
+#if defined(M2_BT_TARGET_NAME)
+            A2dpSource::Result rr = src.connect(M2_BT_TARGET_NAME, s_aclNum, nowMs, idleMs);
+#else
+            A2dpSource::Result rr = src.connect(nullptr, s_aclNum, nowMs, idleMs);
+#endif
+            CONSOLE.print("a2dp_try="); CONSOLE.println(A2dpSource::resultName(rr));
+            if (rr == A2dpSource::OK) {
+                btout.begin(src); begun = true;
+                CONSOLE.print("streaming frames_per_pkt="); CONSOLE.print(btout.framesPerPacket());
+                CONSOLE.print(" media_mtu="); CONSOLE.println(src.mediaMtu());
+            }
+        }
+    }
+#endif
     static uint32_t last = 0;
     if (millis() - last >= 1000) {
         last = millis();

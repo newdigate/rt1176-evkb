@@ -4,6 +4,14 @@
 bool AudioOutputBluetooth::s_setupDone = false;
 
 void AudioOutputBluetooth::begin(L2cap &l2, uint16_t cid, uint16_t mtu, const Sbc::Params &p) {
+    // ★ L2cap::send() DROPS any payload larger than its Tx buffer
+    // (L2cap::MAX_PAYLOAD): basic mode does one ACL packet per SDU, no
+    // fragmentation.  The AVDTP-negotiated media MTU (src.mediaMtu()) can exceed
+    // that, so an oversize media packet would be silently dropped and media would
+    // stall (measured on silicon 2026-09-03 against MAX_PAYLOAD=700: packets froze
+    // at ~17, cred idle, NCP frozen -- NOT a flow-control problem).  Cap the
+    // packetiser at the L2CAP send limit so it batches only frames that fit.
+    if (mtu > L2cap::MAX_PAYLOAD) mtu = L2cap::MAX_PAYLOAD;
     m_l2 = &l2; m_cid = cid; m_sbc.begin(p); m_pk.begin(mtu); m_blocks = 0;
     // begin() is only reached after a2dp=ok (bt_tone_test.cpp gates it on
     // A2dpSource::connect() succeeding), so the card-absent path never calls
