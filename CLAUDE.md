@@ -106,9 +106,10 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **126 gates** — the merge of
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **128 gates** — the merge of
 THREE independent lines, plus the first two Bluetooth gates, NEW-20's one new
-gate, NEW-23's one, NEW-32's one, and BT-3's TWO more Bluetooth gates
+gate, NEW-23's one, NEW-32's one, BT-3 phase 4's TWO (`audio/bt_tone_test`
+card-absent + `[media]` — the A2DP media path), and BT-3's TWO more Bluetooth gates
 (`networking/m2_hci_probe[baud]` and `[avdtp]`, taking that example from two
 gates to four). The Arduino WiFi facade added THREE
 (`networking/wifi_client_test` and its `[wifi]` variant — enumeration plus a
@@ -123,7 +124,7 @@ its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
 `networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
 more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
 That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
-126.
+128.
 
 NEW-20 added ONE — `display/rotary_knob_bench`, the RotaryKnob render-strategy
 bench: 12 cells ({vector,bitmap,strip} × {sw,gpu} × {notch,facet}) in ONE ELF,
@@ -568,8 +569,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **126 passed, 0 failed, 0 SKIP**, or
-**125 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
+`usb/usb_descriptor_survey`). The target is **128 passed, 0 failed, 0 SKIP**, or
+**127 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
 (`cm4_audio_test`) is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
@@ -597,6 +598,34 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-09-03: 128 gates discovered, 128 passed, 0 failed, 0 SKIP**
+(`gates: 128 passed`, exit 0; `-l` reports 128), on the **BT-3 phase 4** close-out
+(`AudioOutputBluetooth` — first sound over A2DP). Two new gates on the new
+`audio/bt_tone_test` (M2Radio pin `ea52aac`, fresh-user verified): `run_qemu.sh`
+is the card-ABSENT fallback (streaming stays vacuous with no peer — the self-clock
+only starts after `a2dp=ok`); **`[media]`** builds `-DM2_BT_TARGET_NAME=FAKE-HEADSET-01`,
+runs the whole `A2dpSource` bring-up to STREAMING, then the tone graph
+(`AudioSynthWaveformSine → AudioOutputBluetooth`) really encodes SBC + RTP-frames
+it onto the AVDTP media channel, and the fake acceptor's new `media` phase
+validates every packet (RTP V2/PT96, strict sequence continuity, each frame's
+`0x9C` sync + 119-byte length). DEMONSTRATED RED twice (seq-freeze in
+`MediaPacketizer::drain`; `frameCount=0` in `Rtp::header`).
+★ **`[media]` asserts blocks>0 + valid framing, NOT drops=0.** Even after two real
+bugs were fixed (the graph had no audio clock — `AudioOutputBluetooth` now
+self-clocks via an IntervalTimer, its I2S-equivalent role; and `loop()` drained
+once/sec), QEMU sustains ~53% drops — a timing artifact (qemu2's LPUART has no baud
+pacing; the ACL-credit round-trip is throttled by host-wall-clock scheduling, no
+`-icount`). A `drops=0` grep passed only VACUOUSLY (the pre-stream `n=0` heartbeat)
+and printed a false claim, so it was replaced: QEMU cannot model the link's flow
+control, and the drop / flow-control-at-rate measurement is a SILICON claim (the
+deferred Task 8, ESP32 sink). `LICENSE-AUDIT: PASS`; host suites include the new
+`rtp_test` + `mediapacketizer_test` (credit-starvation + drop-oldest). Phase 4's
+silicon acceptance (audible tone, `drops=0` at some bitpool) is bench-only.
+★ **The `[media]` peer/socket attach is timing-sensitive** (like `[hci]`/`[avdtp]`):
+reliable in the sequential sweep and in isolation, but rapid back-to-back manual
+runs can race the `-serial unix:…,server` bind — re-run idle if it flakes, it is
+not a firmware regression.
 
 ✅ **Measured 2026-09-03: 126 gates discovered, 126 passed, 0 failed, 0 SKIP**
 (`gates: 126 passed`, exit 0; `-l` reports 126), on the **BT-3** (A2DP source)
