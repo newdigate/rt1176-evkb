@@ -106,9 +106,11 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **124 gates** — the merge of
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **126 gates** — the merge of
 THREE independent lines, plus the first two Bluetooth gates, NEW-20's one new
-gate, NEW-23's one and NEW-32's one. The Arduino WiFi facade added THREE
+gate, NEW-23's one, NEW-32's one, and BT-3's TWO more Bluetooth gates
+(`networking/m2_hci_probe[baud]` and `[avdtp]`, taking that example from two
+gates to four). The Arduino WiFi facade added THREE
 (`networking/wifi_client_test` and its `[wifi]` variant — enumeration plus a
 REAL 802.11 scan against the model's deliberate zero-BSS reply, asserting an
 honest WL_NO_SSID_AVAIL — and `networking/wifi_server_test`); the uAP line added
@@ -121,7 +123,7 @@ its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
 `networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
 more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
 That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
-124.
+126.
 
 NEW-20 added ONE — `display/rotary_knob_bench`, the RotaryKnob render-strategy
 bench: 12 cells ({vector,bitmap,strip} × {sw,gpu} × {notch,facet}) in ONE ELF,
@@ -566,8 +568,9 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **123 passed, 0 failed, 0 SKIP**, or
-**122 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate is red.
+`usb/usb_descriptor_survey`). The target is **126 passed, 0 failed, 0 SKIP**, or
+**125 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
+(`cm4_audio_test`) is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
 fresh-clone-red set: its injected gestures come from the `touch-script`
@@ -594,6 +597,34 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-09-03: 126 gates discovered, 126 passed, 0 failed, 0 SKIP**
+(`gates: 126 passed`, exit 0; `-l` reports 126), on the **BT-3** (A2DP source)
+software close-out. Two new gates on `networking/m2_hci_probe`, taking it from
+two to four: **`[baud]`** asserts the vendor set-baud SEQUENCE (0xFC09 uint32 LE
+after identity, reply awaited, Reset + identity re-run) — the RATE itself is
+silicon-only (0xFC09 does not answer at 921600/3000000 on the real IW416, a Task
+4 finding, so phase 0 is deferred to the bench); **`[avdtp]`** runs the A2DP
+initiator on `M2Radio/bt` (L2cap/BtLink/Sdp/Avdtp) against the Python fake
+acceptor to STREAMING and asserts the calibration SBC config
+(`cie=21150235`), the signalling ORDER (DISCOVER/GET_CAP/SET_CONFIG/OPEN/START),
+the two negative tripwires (START-before-OPEN, wrong-CID Config Response) and the
+L2CAP SCID rule — DEMONSTRATED RED twice before trusted.
+★ **This close-out CLEARED the long-standing `m2_hci_probe[hci]` red** — that
+gate had been the one standing failure since 2026-08-27 because its `build/`
+carried a BENCH config (real `M2RADIO_IW416_*_FW` blobs + `M2_BT_UART_DNLD` +
+`M2_BT_ASSERT_CTS`, dated Aug 29); the probe-on-library refactor reconfigured
+`build/` gate-clean, so `[hci]` now passes and `cm4_audio_test` did not hit its
+nondeterministic red this run — hence a fully clean 126/0/0, the first since the
+`[hci]` class appeared. `LICENSE-AUDIT: PASS`. Host suites: `M2Radio/bt/test`
+adds the clean-room **SBC ENCODER** (A2DP v1.3 §12; 228 checks) with an ffmpeg
+SNR oracle — unity round-trip **63.9 dB, 0 railed** (a +6 dB analysis-scaling
+gain that clipped −6 dBFS input was found by the SNR tool and fixed; the
+structural host tests could not see it). The SBC encoder is HOST-tested only and
+adds NO QEMU gate — it is not linked by any firmware example yet (phase 4's
+`AudioOutputBluetooth` will), so the pin bump to `M2Radio` 8920b8d changes no
+built ELF. Phases 0 (silicon baud) and 2 (silicon SET_CONFIG/START against the
+ESP32 sink + both headsets) remain for a bench session.
 
 ✅ **Measured 2026-09-02 (NEW-32 Phase 3, blits & scissor): 124 gates
 discovered, **123 passed, 1 failed, 0 SKIP**, `display/vglite_conformance`
