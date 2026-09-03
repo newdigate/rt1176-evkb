@@ -371,6 +371,13 @@ static void btLog(void *, const char *s) { CONSOLE.println(s); }
 // happens from probeConnect()'s main-context loop, never from here).
 static volatile bool     s_sdpDone  = false;
 static volatile uint16_t s_avdtpVer = 0;
+// Phase-2 outcome, latched by probeConnect() and echoed in every loop() heartbeat
+// so the result is readable from ANY capture -- the one-shot setup() output is
+// easily missed across a reset (the VCOM reconnect gap), and this makes the bench
+// run deterministic regardless of when the reader attaches.
+static const char *s_p2link = "n/a", *s_p2sec = "n/a", *s_p2pair = "-";
+static int         s_p2avdtp = -1;
+static uint16_t    s_p2mtu   = 0;
 
 static void onL2capData(void *, L2cap::Channel &ch, const uint8_t *payload, uint16_t len) {
     if (ch.psm == Avdtp::PSM && ch.localCid == 0x0041) {   // signalling channel only -- the media
@@ -643,11 +650,19 @@ static void probeConnect() {
 #endif
     link.setLog(btLog, nullptr);
     link.setPin("1234");
+#if defined(M2_BT_LEGACY_PIN)
+    // Force legacy PIN (SSP disabled from the start): the IW416<->ESP32 sink SSP
+    // stalls ~25 s at LMP IO-cap and poisons the SSP->PIN fallback -- silicon
+    // 2026-09-03.  Headsets pair by SSP, so this stays a bench knob (default OFF).
+    link.setLegacyPin(true);
+#endif
     BtLink::Result r = link.connect(target, nowMs, idleMs);
+    s_p2link = BtLink::resultName(r);
     CONSOLE.print("link="); CONSOLE.println(BtLink::resultName(r));
     if (r != BtLink::OK) return;
 
     r = link.pairAndEncrypt(nowMs, idleMs);
+    s_p2sec = BtLink::resultName(r); s_p2pair = link.pairedBy();
     CONSOLE.print("secure="); CONSOLE.print(BtLink::resultName(r));
     CONSOLE.print(" paired_by="); CONSOLE.println(link.pairedBy());
     if (r != BtLink::OK) return;
@@ -686,6 +701,7 @@ static void probeConnect() {
         l2.service(); avdtp.service(); delay(10);
         if (avdtp.state() != last) { last = avdtp.state(); CONSOLE.print("avdtp_state="); CONSOLE.println((int)last); }
     }
+    s_p2avdtp = (int)avdtp.state(); s_p2mtu = avdtp.mediaMtu();
     if (avdtp.state() == Avdtp::STREAMING) {
         CONSOLE.print("avdtp_caps: rates=0x"); printHex8(avdtp.caps().rates);
         CONSOLE.print(" modes=0x"); printHex8(avdtp.caps().modes);
@@ -1204,6 +1220,12 @@ void loop() {
     CONSOLE.print(" hci="); CONSOLE.print(s_hciSt == Hci::OK ? "ok" : Hci::errorName(s_hciSt));
     CONSOLE.print(" n="); CONSOLE.print(n++);
     CONSOLE.print(" pump="); CONSOLE.print(pump.passes());
+#if defined(M2_BT_CONNECT)
+    // Phase-2 outcome, echoed every heartbeat so any capture shows it.
+    CONSOLE.print(" conn="); CONSOLE.print(s_p2link);
+    CONSOLE.print(" sec="); CONSOLE.print(s_p2sec); CONSOLE.print("/"); CONSOLE.print(s_p2pair);
+    CONSOLE.print(" avdtp="); CONSOLE.print(s_p2avdtp); CONSOLE.print(" mtu="); CONSOLE.print(s_p2mtu);
+#endif
     printCounters(); CONSOLE.println();
     delay(1000);
 }

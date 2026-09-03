@@ -2504,3 +2504,50 @@ Note the one framing=1 fault: a single garbled byte at the baud transition, not
 recurring -- identity (twice) and the full inquiry run clean at 3 Mbaud.  The
 download-time type-5 UART-config path (Experiment B, BtFwLoader::enableUartConfig
 with fast divisors) is therefore NOT needed for the HCI link rate.
+
+================================================================================
+BT-3 PHASE 2 -- A2DP source to START against the ESP32 sink, ON SILICON (2026-09-03)
+================================================================================
+Build: build-phase2/ (real blobs; M2_BT_UART_DNLD=ON, M2_BT_ASSERT_CTS=ON,
+M2_BT_FAST_BAUD=ON @3000000, M2_BT_CONNECT=ON, M2_BT_TARGET_NAME=EVKB-SINK,
+M2_BT_LEGACY_PIN=ON).  Peer: the tools/esp32-a2dp-sink instrument ("EVKB-SINK",
+bd 88:13:BF:58:86:9E), read on its own USB-serial.
+
+★ Two bench lessons that cost several cycles, both instrument-side not firmware:
+  1. Opening the ESP32's USB-serial with DTR/RTS asserted TRIGGERS its
+     auto-reset-into-bootloader -- so the reader itself was bricking the sink
+     (undiscoverable + garbage) every time.  Fix: open with dtr=False, rts=False.
+  2. The probe's connect/pair/AVDTP result is printed ONCE in setup(), which the
+     VCOM reader easily misses across a reset.  Fix: loop()'s heartbeat now
+     echoes conn=/sec=/avdtp=/mtu= so any capture shows the outcome.
+
+★ The IW416<->ESP32 SSP incompatibility, reproduced then fixed:
+  With SSP (default), pairing STALLED ~25 s at the LMP IO-cap exchange then
+  auth_complete=0x0C, and the SSP-fail->PIN fallback also failed (secure=
+  pairing_failed).  BtLink::setLegacyPin(true) (SSP off from connect) fixes it.
+
+EVKB (source) console:
+  ssp_mode: st=ok status=0x00 mode=0
+  connect=ok handle=0x0001  link=ok
+  link_key_req: bd=88:13:BF:58:86:9E -> neg_reply (no stored key)
+  pin_code_req: bd=88:13:BF:58:86:9E -> 1234
+  auth_complete: status=0x00 handle=0x0001
+  encryption_change: status=0x00 handle=0x0001 enabled=1
+  connect_secure=ok encryption=on paired_by=pin   ->  secure=ok paired_by=pin
+  sdp_avdtp_version=0x0103 (B6 DONE)
+  avdtp_state 1..7 (DISCOVER/GET_CAP/SET_CONFIG/OPEN/MEDIA/START/STREAMING)
+  avdtp_caps: rates=0x03 modes=0x0F bitpool=2..250   (the sink's advertised range)
+  avdtp_start=ok media_mtu=1008  ->  B7 DONE
+  hb ... conn=ok sec=ok/pin avdtp=7 mtu=1008 ...
+
+ESP32 sink (independent oracle) -- the un-fakeable half:
+  gap_acl_conn: status=0 peer=A0:CD:F3:C5:B9:F3
+  gap_pin_req -> 1234
+  gap_auth: status=0 peer=A0:CD:F3:C5:B9:F3
+  a2dp_conn: state=connecting -> state=connected peer=A0:CD:F3:C5:B9:F3
+  a2dp_audio_cfg: codec=SBC rate=44100 chan=joint blocks=16 subbands=8 alloc=loudness bitpool=2..53 cie=21 15 02 35
+  a2dp_audio: state=stopped pkts=0 bytes=0    (no media yet -- phase 4/5 sends SBC)
+
+The sink echoes EXACTLY the config we sent (cie=21 15 02 35).  Phase 2 complete:
+connect -> legacy-PIN pair -> encrypt -> SDP -> AVDTP to START, sink-confirmed.
+Media streaming (audible audio) is phase 4/5 (AudioOutputBluetooth), plan B.
