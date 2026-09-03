@@ -90,7 +90,7 @@ echo "LPUART-RTS-HOST-TEST: PASS"
 Then make it executable and run it — it should PASS (the helper already exists):
 
 Run: `chmod +x ~/Development/teensy-cores/imxrt1176/extras/lpuart_rts_test/run.sh && ~/Development/teensy-cores/imxrt1176/extras/lpuart_rts_test/run.sh`
-Expected: `lpuart_rts_test: 15 checks, 0 failures` then `LPUART-RTS-HOST-TEST: PASS`
+Expected: `lpuart_rts_test: 14 checks, 0 failures` then `LPUART-RTS-HOST-TEST: PASS`
 
 - [ ] **Step 3: Demonstrate the test can fail (mutation check)**
 
