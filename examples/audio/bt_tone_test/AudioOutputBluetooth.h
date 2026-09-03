@@ -8,7 +8,6 @@
 #include "Sbc.h"
 #include "MediaPacketizer.h"
 #include "L2cap.h"
-#include <IntervalTimer.h>
 
 static_assert(AUDIO_BLOCK_SAMPLES == 128,
     "AudioOutputBluetooth assumes one Audio-library block == one SBC frame "
@@ -31,14 +30,18 @@ private:
     static bool sendThunk(void *ctx, const uint8_t *pkt, uint16_t len);
     // This graph has no I2S/DMA output to drive AudioStream::update_all() the
     // way every other Audio example relies on -- AudioOutputBluetooth IS the
-    // sink, so it has to be its own clock, the same role AudioOutputI2S's DMA
-    // ISR plays elsewhere. Started once, in begin(), at the audio block
-    // period; never stopped (matches the lifetime of every other node's
-    // implicit clock). IntervalTimer priority is fine for the QEMU gate as
-    // committed -- may want tuning against other ISRs on silicon.
-    static IntervalTimer s_timer;
-    static bool s_clockRunning;
-    static void audioClockISR();
+    // sink, so it must clock the graph itself. It does so from poll() (the main
+    // loop), paced by micros() at the audio block period. ★ It does NOT use
+    // IntervalTimer: on the imxrt1176 core the PIT period runs ~20x too fast
+    // (measured on silicon 2026-09-03 -- blocks arrived at ~6890/s vs the 344/s
+    // AUDIO_SAMPLE_RATE_EXACT/AUDIO_BLOCK_SAMPLES calls for), and an ISR-driven
+    // graph at that rate ALSO starves the main loop so L2cap never returns ACL
+    // credits and only one media packet ever ships. Main-loop pacing fixes both
+    // -- and update_all() still pends IRQ_SOFTWARE, so the actual graph walk
+    // runs at the right (software-ISR) priority, just triggered cooperatively.
+    static bool s_setupDone;                 // AudioStream::update_setup() once, globally
+    uint32_t m_usPerBlock = 0;               // audio block period in microseconds (~2902)
+    uint32_t m_nextUpdate = 0;               // micros() deadline for the next block
     audio_block_t *inputQueueArray[2];
     Sbc m_sbc; MediaPacketizer m_pk;
     L2cap *m_l2 = nullptr; uint16_t m_cid = 0;

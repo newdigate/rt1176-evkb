@@ -330,6 +330,13 @@ void setup() {
 // directly during BT-3 phase 4 task 6's diagnosis). The heartbeat is now
 // throttled by millis() instead of being the thing that paces the loop.
 void loop() {
+    // ★ Drive the HciPump every pass: it is attached to yield()'s EventResponder,
+    // and it is what parses incoming HCI -- including Number_Of_Completed_Packets,
+    // which RETURNS the ACL credits L2cap needs to keep sending. Without this the
+    // continuous-poll loop (no delay(), so no implicit yield()) starves the pump
+    // and media send stalls after the first credit pool (silicon: packets froze
+    // at 43 while blocks/drops climbed). yield() is non-blocking.
+    yield();
     src.l2().service(); src.avdtp().service(); btout.poll();
     static uint32_t last = 0;
     if (millis() - last >= 1000) {

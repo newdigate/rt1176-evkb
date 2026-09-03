@@ -1,29 +1,20 @@
 #include "AudioOutputBluetooth.h"
 #include "A2dpSource.h"
 
-IntervalTimer AudioOutputBluetooth::s_timer;
-bool AudioOutputBluetooth::s_clockRunning = false;
-
-// The block-rate tick a hardware output node's DMA ISR would otherwise
-// provide. update_all() just pends IRQ_SOFTWARE; software_isr() (attached by
-// AudioStream::update_setup(), called below) does the actual walk over every
-// active node, this one included.
-void AudioOutputBluetooth::audioClockISR() { AudioStream::update_all(); }
+bool AudioOutputBluetooth::s_setupDone = false;
 
 void AudioOutputBluetooth::begin(L2cap &l2, uint16_t cid, uint16_t mtu, const Sbc::Params &p) {
     m_l2 = &l2; m_cid = cid; m_sbc.begin(p); m_pk.begin(mtu); m_blocks = 0;
-    // Started once, on the first successful bring-up. ★ begin() is only ever
-    // reached after a2dp=ok (bt_tone_test.cpp gates it on A2dpSource::connect()
-    // succeeding), so the card-absent path never calls this: the graph stays
-    // idle and run_qemu.sh's vacuity assertions (streaming never claimed,
-    // blocks/packets/drops all 0) still hold with no card to answer.
-    if (!s_clockRunning) {
-        AudioStream::update_setup();     // attach + enable IRQ_SOFTWARE (never done otherwise --
-                                          // this graph has no I2S device to do it for us)
-        float usPerBlock = 1.0e6f * (float)AUDIO_BLOCK_SAMPLES / AUDIO_SAMPLE_RATE_EXACT;
-        s_timer.begin(audioClockISR, usPerBlock);   // ~2902 us at 44.1k/128
-        s_clockRunning = true;
-    }
+    // begin() is only reached after a2dp=ok (bt_tone_test.cpp gates it on
+    // A2dpSource::connect() succeeding), so the card-absent path never calls
+    // this: the graph stays idle and run_qemu.sh's vacuity assertions still hold.
+    // A BT sink is a SOFTWARE output -- no I2S/DMA drives the graph -- so poll()
+    // clocks it from the main loop via micros() (see the header for why NOT
+    // IntervalTimer). update_setup() attaches IRQ_SOFTWARE once; the actual graph
+    // walk runs there when poll() calls update_all().
+    if (!s_setupDone) { AudioStream::update_setup(); s_setupDone = true; }
+    m_usPerBlock = (uint32_t)(1.0e6f * (float)AUDIO_BLOCK_SAMPLES / AUDIO_SAMPLE_RATE_EXACT + 0.5f);  // ~2902
+    m_nextUpdate = micros();
 }
 void AudioOutputBluetooth::begin(A2dpSource &src) {
     begin(src.l2(), src.mediaCid(), src.mediaMtu(), src.sbcParams());
@@ -42,4 +33,18 @@ bool AudioOutputBluetooth::sendThunk(void *ctx, const uint8_t *pkt, uint16_t len
     AudioOutputBluetooth *o = (AudioOutputBluetooth *)ctx;
     return o->m_l2->send(o->m_cid, pkt, len);      // L2cap::send returns false when out of credit/txq
 }
-void AudioOutputBluetooth::poll() { if (m_l2) m_pk.drain(sendThunk, this); }
+void AudioOutputBluetooth::poll() {
+    if (!m_l2) return;
+    // Clock the graph at the audio block rate: at most one block per call (poll()
+    // runs far more often than 344 Hz).  update_all() pends IRQ_SOFTWARE, whose
+    // handler walks the graph -> our update() pushes one SBC frame.  If we fell
+    // more than a few blocks behind (a loop stall), resync to now rather than
+    // bursting and overflowing the ring.
+    uint32_t now = micros();
+    if ((int32_t)(now - m_nextUpdate) >= 0) {
+        m_nextUpdate += m_usPerBlock;
+        if ((int32_t)(now - m_nextUpdate) > (int32_t)(4 * m_usPerBlock)) m_nextUpdate = now + m_usPerBlock;
+        AudioStream::update_all();
+    }
+    m_pk.drain(sendThunk, this);
+}
