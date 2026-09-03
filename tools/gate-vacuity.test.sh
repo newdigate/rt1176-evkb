@@ -290,6 +290,32 @@ else
         rm -f "$EVKB/$baud_rel"/build-baud/baud_*.uart "$EVKB/$baud_rel"/build-baud/baud_*.peer \
               "$EVKB/$baud_rel"/build-baud/baud_*.dbg
     fi
+
+    # [avdtp] (BT-3 Task 10) asserts the A2DP INITIATOR reaches STREAMING
+    # against a fake acceptor; same shared-ELF question as [baud] above --
+    # the card-absent fallback must be just as unable to satisfy it. With no
+    # inquiry result on this capture the probe never even resolves the
+    # target's name, so "[avdtp] target not found by name" is the first
+    # assertion this gate can fail on, not a later AVDTP-specific one.
+    #
+    # run_qemu_avdtp.sh owns its own build directory (build-avdtp/), so it
+    # needs GATE_VACUITY=1 to skip the (re)build here, same as [baud].
+    avdtp_rel="$hci_rel"
+    avdtp_elf="$EVKB/$avdtp_rel/build-avdtp/m2_hci_probe.elf"
+    if [ ! -x "$avdtp_elf" ]; then
+        echo "SKIP: absent_capture_fails_avdtp_gate (no build-avdtp/m2_hci_probe.elf -- build it first)"
+    else
+        export GATE_VACUITY=1
+        run_gate "$avdtp_rel" "run_qemu_avdtp.sh" "$hci_absent"; rc=$?
+        unset GATE_VACUITY
+        result=0
+        [ "$rc" -ne 0 ] || result=1                                          # must not pass
+        echo "$OUT_TEXT" | grep -q "\[avdtp\] target not found by name" || result=1  # and name it
+        report "absent_capture_fails_avdtp_gate" $result
+
+        rm -f "$EVKB/$avdtp_rel"/build-avdtp/avdtp.uart "$EVKB/$avdtp_rel"/build-avdtp/avdtp.peer \
+              "$EVKB/$avdtp_rel"/build-avdtp/avdtp.dbg
+    fi
 fi
 
 # --- 7. rotary_knob_bench: green fixture passes; tamper and bad-golden fail --
