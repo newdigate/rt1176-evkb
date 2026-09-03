@@ -2468,3 +2468,39 @@ unaffected throughout). `build/` was then reconfigured BACK to the bench state
 this session's last silicon capture -- so it is bench, not gate-clean, on
 hand-off; reconfigure it per the line above before a `run-all-qemu-gates.sh`
 sweep.
+
+================================================================================
+BT-3 PHASE 0 -- vendor baud switch to 3 Mbaud, ON SILICON (2026-09-03)
+================================================================================
+Build: build-phase0/ (real blobs: sdIW416_wlan + uartIW416_bt; M2_BT_UART_DNLD=ON,
+M2_BT_ASSERT_CTS=ON, M2_BT_FAST_BAUD=ON, M2_BT_FAST_BAUD_RATE=3000000).
+
+Result: the switch WORKS.  Task 4 refuted the "CC leaves at the old rate, then
+the card switches" model (0xFC09 got no_response at 921600/3000000 and poisoned
+the boot).  Experiment A -- send 0xFC09 RAW, do NOT wait for the CC at 115200,
+let rebaud()'s end() drain the 8 bytes at the old rate, switch the host, and
+read the CC + identity at the new rate -- succeeds.  The IW416 returns the
+Command Complete AT THE NEW RATE, which is why the old run()-waits-at-115200
+timed out.
+
+Captured VCOM (LPUART1 @115200; the BT link is LPUART2, host<->card):
+
+  RT1176 M.2 HCI probe up
+  bt_fw_download=ok chip_id=0x7201 loader_ver=0 start_inds=3 chunks=142 sent=131856/131840
+  hci_reset=ok attempts=1 timeouts=0 framing=0 starved=0 qfull=0 late=0
+  hci_version: hci_ver=15 hci_rev=0x8300 lmp_ver=15 manufacturer=0x0048 lmp_subver=0x109B
+  bd_addr=A0:CD:F3:C5:B9:F3
+  hci_buffer: acl_len=1021 acl_num=7 sco_len=120 sco_num=6
+  bt_baud_switch=ok rate=3000000                       <-- Experiment A
+  hci_version: hci_ver=15 hci_rev=0x8300 lmp_ver=15 manufacturer=0x0048 lmp_subver=0x109B
+  bd_addr=A0:CD:F3:C5:B9:F3                             <-- identity byte-identical at 3 M
+  hci_buffer: acl_len=1021 acl_num=7 sco_len=120 sco_num=6
+  inquiry=started
+  inq: bd=88:13:BF:58:86:9E cod=0x240414 psrm=1 clk=0x237A        <-- ESP32 sink, at 3 M
+  inq_name: bd=88:13:BF:58:86:9E status=0x00 name="EVKB-SINK"
+  ... loop heartbeats: hb card=1 btfw=ok hci=ok ... framing=1 (one transient across the switch)
+
+Note the one framing=1 fault: a single garbled byte at the baud transition, not
+recurring -- identity (twice) and the full inquiry run clean at 3 Mbaud.  The
+download-time type-5 UART-config path (Experiment B, BtFwLoader::enableUartConfig
+with fast divisors) is therefore NOT needed for the HCI link rate.

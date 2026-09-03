@@ -513,21 +513,23 @@ static const uint16_t OP_VS_SET_BAUD = 0xFC09;
 static void probeFastBaud() {
     uint32_t rate = M2_BT_FAST_BAUD;
     uint8_t p[4] = { (uint8_t)rate, (uint8_t)(rate >> 8), (uint8_t)(rate >> 16), (uint8_t)(rate >> 24) };
+    (void)p;
+    // Task 4 (silicon) refuted the "CC leaves at the OLD rate, then the card
+    // switches" model: at 921600 and 3000000 the vendor set-baud got no_response
+    // and poisoned the boot.  The IW416 acts on 0xFC09 by switching its OWN UART
+    // and returning the Command Complete AT THE NEW RATE -- so a run() that waits
+    // for that CC at 115200 can never see it, times out, and we desync.
+    // Experiment A: send the command RAW (H4 01 09 FC 04 <rate LE>) without
+    // waiting; let rebaud()'s end() drain those 8 bytes at the old rate, switch
+    // the host, and read the CC + validate at the NEW rate.
+    uint8_t cmd[8] = { 0x01, (uint8_t)(OP_VS_SET_BAUD & 0xFF), (uint8_t)(OP_VS_SET_BAUD >> 8), 4,
+                       (uint8_t)rate, (uint8_t)(rate >> 8), (uint8_t)(rate >> 16), (uint8_t)(rate >> 24) };
+    hciIo.write(cmd, sizeof cmd);
+    hciIo.rebaud(rate);                                   // end() drains the 8 bytes at 115200, then rewrites BAUD
+    hciCountersFold(); hci.begin();                       // fresh HCI state at the new rate
+    delay(20);                                            // let the controller finish switching its own UART
     Hci::Reply r;
-    Hci::Error e = hci.run(OP_VS_SET_BAUD, p, 4, &r, 1000, idleMs);
-    // alt is unreachable here (printFail only prints it when e == OK, and
-    // this branch is guarded on e != OK) -- nullptr, not a string that can
-    // never print.
-    if (e != Hci::OK) { printFail("bt_baud_switch", e, r, nullptr); return; }
-    // Real wait, not padding: the controller switches its OWN UART only after
-    // its Command Complete has left the wire, so re-baud()ing the host side
-    // before that reply has actually drained would race the controller's own
-    // switch.
-    delay(20);
-    hciIo.rebaud(rate);
-    hciCountersFold(); hci.begin();
-    delay(20);                                            // let the receiver settle at the new rate
-    e = hci.run(OP_RESET, nullptr, 0, &r, 1000, idleMs);
+    Hci::Error e = hci.run(OP_RESET, nullptr, 0, &r, 1000, idleMs);
     if (e != Hci::OK) {
         CONSOLE.print("bt_baud_switch=fail rate="); CONSOLE.print(rate);
         CONSOLE.print(" reason="); CONSOLE.println(Hci::errorName(e));

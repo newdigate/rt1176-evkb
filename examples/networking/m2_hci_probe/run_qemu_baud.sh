@@ -2,8 +2,17 @@
 # run_qemu_baud.sh -- the [baud] gate (BT-3 phase 0): the vendor set-baud
 # SEQUENCE is right.  A chardev has no baud, so what the RATE does is
 # silicon-only (transcript_hw_evkb.txt); this proves the driver sends 0xFC09
-# with the right bytes, waits for its reply, re-baud()s, and re-validates
-# with a fresh Reset + identity -- against a peer that answers.
+# with the right bytes, then re-baud()s and re-validates with a fresh Reset +
+# identity -- against a peer that answers.
+# ★ 2026-09-03, ON SILICON: the switch to 3 Mbaud WORKS -- but only because the
+# host does NOT wait for the 0xFC09 Command Complete at the old rate.  The IW416
+# acts on 0xFC09 by switching its OWN UART and returning the CC AT THE NEW RATE,
+# so probeFastBaud() writes the command raw, lets rebaud()'s end() drain it at
+# 115200, switches the host, and reads the CC + identity at 3 M
+# (bt_baud_switch=ok rate=3000000, identity byte-identical either side).  The
+# QEMU sequence is identical whether or not the host waits (a chardev has no
+# baud), which is exactly why THIS gate could not catch the timing bug --
+# transcript_hw_evkb.txt did.
 #
 # ★ OWNS ITS OWN BUILD DIRECTORY, build-baud/, with M2_BT_FAST_BAUD=ON and no
 # firmware blobs (the gate build synthesises its BT image, same as every other
@@ -108,4 +117,4 @@ grep -q "^PEER-DONE phase=baud cmds=12 resets=2 " "$RES"           || fail "[bau
 # The set-baud must come AFTER the first identity and BEFORE the second Reset.
 grep "^PEER-DONE" "$RES" | grep -q "opcodes=0c03,1001,1009,1005,fc09,0c03,1001,1009,1005,0401,0419,0419" || fail "[baud] wrong order: $(grep '^PEER-DONE' "$RES")"
 [ "$PEER_RC" -eq 0 ] || fail "[baud] peer exited $PEER_RC"
-echo "PASS: the vendor set-baud sequence is right (0xFC09 uint32 LE after identity, reply awaited, Reset + identity re-run); the RATE itself is silicon-only"
+echo "PASS: the vendor set-baud sequence is right (0xFC09 uint32 LE after identity, Reset + identity re-run); the RATE itself is silicon-only (3 Mbaud verified on the bench 2026-09-03 -- host switches WITHOUT waiting at the old rate)"
