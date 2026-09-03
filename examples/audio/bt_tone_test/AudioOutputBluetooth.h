@@ -8,6 +8,7 @@
 #include "Sbc.h"
 #include "MediaPacketizer.h"
 #include "L2cap.h"
+#include <IntervalTimer.h>
 
 static_assert(AUDIO_BLOCK_SAMPLES == 128,
     "AudioOutputBluetooth assumes one Audio-library block == one SBC frame "
@@ -28,6 +29,16 @@ public:
     uint8_t  queueHighWater() const { return m_pk.queueHighWater(); }
 private:
     static bool sendThunk(void *ctx, const uint8_t *pkt, uint16_t len);
+    // This graph has no I2S/DMA output to drive AudioStream::update_all() the
+    // way every other Audio example relies on -- AudioOutputBluetooth IS the
+    // sink, so it has to be its own clock, the same role AudioOutputI2S's DMA
+    // ISR plays elsewhere. Started once, in begin(), at the audio block
+    // period; never stopped (matches the lifetime of every other node's
+    // implicit clock). IntervalTimer priority is fine for the QEMU gate as
+    // committed -- may want tuning against other ISRs on silicon.
+    static IntervalTimer s_timer;
+    static bool s_clockRunning;
+    static void audioClockISR();
     audio_block_t *inputQueueArray[2];
     Sbc m_sbc; MediaPacketizer m_pk;
     L2cap *m_l2 = nullptr; uint16_t m_cid = 0;

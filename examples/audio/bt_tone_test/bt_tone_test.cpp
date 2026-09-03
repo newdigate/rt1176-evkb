@@ -324,14 +324,22 @@ void setup() {
     if (r2 == A2dpSource::OK) { btout.begin(src); CONSOLE.println("streaming"); }
 }
 
+// Every pass, no delay: btout.poll() has to run far more often than once a
+// second to keep up with the audio ISR (a 64-frame/~190ms ring against a
+// 1000ms service interval drops the vast majority of frames -- measured
+// directly during BT-3 phase 4 task 6's diagnosis). The heartbeat is now
+// throttled by millis() instead of being the thing that paces the loop.
 void loop() {
     src.l2().service(); src.avdtp().service(); btout.poll();
-    static uint32_t n = 0;
-    CONSOLE.print("hb streaming="); CONSOLE.print(src.started() ? 1 : 0);
-    CONSOLE.print(" blocks="); CONSOLE.print(btout.blocks());
-    CONSOLE.print(" packets="); CONSOLE.print(btout.packets());
-    CONSOLE.print(" drops="); CONSOLE.print(btout.drops());
-    CONSOLE.print(" hw="); CONSOLE.print(btout.queueHighWater());
-    CONSOLE.print(" n="); CONSOLE.println(n++);
-    delay(1000);
+    static uint32_t last = 0;
+    if (millis() - last >= 1000) {
+        last = millis();
+        static uint32_t n = 0;
+        CONSOLE.print("hb streaming="); CONSOLE.print(src.started() ? 1 : 0);
+        CONSOLE.print(" blocks="); CONSOLE.print(btout.blocks());
+        CONSOLE.print(" packets="); CONSOLE.print(btout.packets());
+        CONSOLE.print(" drops="); CONSOLE.print(btout.drops());
+        CONSOLE.print(" hw="); CONSOLE.print(btout.queueHighWater());
+        CONSOLE.print(" n="); CONSOLE.println(n++);
+    }
 }
