@@ -26,6 +26,7 @@ public:
     uint32_t packets()        const { return m_pk.packets(); }
     uint32_t drops()          const { return m_pk.drops(); }
     uint8_t  queueHighWater() const { return m_pk.queueHighWater(); }
+    uint16_t framesPerPacket() const { return m_pk.framesPerPacket(); }
 private:
     static bool sendThunk(void *ctx, const uint8_t *pkt, uint16_t len);
     // This graph has no I2S/DMA output to drive AudioStream::update_all() the

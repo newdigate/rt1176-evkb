@@ -274,7 +274,15 @@ void setup() {
     CONSOLE.println("bt_wake=off");
 #endif
 
-#if defined(M2_BT_ASSERT_CTS)
+#if defined(M2_BT_RTS_FLOW)
+    // Hardware RXRTSE: the receiver deasserts LPUART2_RTS_B as the RX FIFO nears
+    // full, pausing the card before overrun (the fix for the phase-4 media stall).
+    // Idles asserted (clear to send) like the old static assert; the core re-applies
+    // it across the 3 Mbaud rebaud.  ★ Holds/toggles the ENET PHY reset (R1866).
+    bool rts = Serial2.attachRts((uint8_t)M2_BT_RTS_WATER);
+    CONSOLE.print("bt_flow=rxrtse rtswater="); CONSOLE.print((int)M2_BT_RTS_WATER);
+    CONSOLE.print(" attached="); CONSOLE.println(rts ? 1 : 0);
+#elif defined(M2_BT_ASSERT_CTS)
     m2AssertBtCts();
     CONSOLE.println("bt_cts=asserted_after_reset (PHY held in reset -- see m2_hci_probe.cpp)");
 #else
@@ -321,7 +329,11 @@ void setup() {
     A2dpSource::Result r2 = src.connect(nullptr, s_aclNum, nowMs, idleMs);
 #endif
     CONSOLE.print("a2dp="); CONSOLE.println(A2dpSource::resultName(r2));
-    if (r2 == A2dpSource::OK) { btout.begin(src); CONSOLE.println("streaming"); }
+    if (r2 == A2dpSource::OK) {
+        btout.begin(src);
+        CONSOLE.print("streaming frames_per_pkt="); CONSOLE.print(btout.framesPerPacket());
+        CONSOLE.print(" media_mtu="); CONSOLE.println(src.mediaMtu());
+    }
 }
 
 // Every pass, no delay: btout.poll() has to run far more often than once a

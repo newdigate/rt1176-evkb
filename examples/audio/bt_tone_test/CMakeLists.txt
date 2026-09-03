@@ -96,6 +96,15 @@ if(M2_BT_ASSERT_CTS)
     add_definitions(-DM2_BT_ASSERT_CTS=1)
 endif()
 
+# Hardware RXRTSE flow control on LPUART2 (preferred over the static M2_BT_ASSERT_CTS
+# GPIO hack for A2DP media rates -- see docs/superpowers/specs/2026-09-03-bt3-rxrtse-*).
+# Also holds/toggles the 1G ENET PHY reset (R1866); BT-only builds only.
+option(M2_BT_RTS_FLOW "Enable hardware RXRTSE flow control on LPUART2 (Serial2.attachRts)" OFF)
+set(M2_BT_RTS_WATER "1" CACHE STRING "MODIR RTSWATER watermark for M2_BT_RTS_FLOW (0..3)")
+if(M2_BT_RTS_FLOW)
+    add_definitions(-DM2_BT_RTS_FLOW=1 -DM2_BT_RTS_WATER=${M2_BT_RTS_WATER})
+endif()
+
 # Bench knob: with several sinks discoverable at once, prefer the inquiry hit
 # whose resolved name contains this substring (else first hit).
 set(M2_BT_TARGET_NAME "" CACHE STRING "Prefer the A2DP sink whose inquiry name contains this substring")
