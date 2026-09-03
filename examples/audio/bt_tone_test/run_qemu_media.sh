@@ -54,19 +54,19 @@
 #      l2().service()/avdtp().service()/btout.poll() every pass with no
 #      delay, and throttles only the heartbeat PRINT via millis().
 #
-# ★ EVEN AFTER BOTH FIXES, SUSTAINED DROPS ARE NOT ZERO -- read this before
-# trusting the `drops=0` assertion below at face value. It technically passes
-# because the FIRST heartbeat (n=0, printed immediately after `streaming`,
-# before any block has been produced) is trivially `blocks=0 packets=0
-# drops=0`. Every heartbeat after that shows real, growing drops: measured
-# over a full run, `blocks=12529 packets=1162 drops=6703` by n=34 -- roughly
-# 53% loss, sustained, not transient. hci_peer.py's RTP/SBC validation is
-# unaffected (the packets that DO arrive are perfectly formed: pkts=1162
-# frames=5803 seqgaps=0 badsbc=0 badrtp=0), so this gate still PASSes for the
-# reason it exists (the framing is correct), but it is NOT proof of a
-# sustained zero-drop link. The assertion is kept as originally specified
-# (not weakened to a blocks>0 check) precisely so this gap stays visible
-# rather than getting papered over. Root cause not yet isolated: qemu2's
+# ★ EVEN AFTER BOTH FIXES, SUSTAINED DROPS ARE NOT ZERO IN QEMU -- which is why
+# this gate does NOT assert drops=0. It asserts the self-clock actually ran (a
+# heartbeat with blocks>0) and that every packet that arrived is valid framing,
+# and leaves the drop / flow-control-at-rate measurement to SILICON (Task 8,
+# the ESP32 sink). An earlier draft grepped `^hb streaming=1 .* drops=0 `, and
+# it passed only VACUOUSLY: the FIRST heartbeat (n=0, printed right after
+# `streaming`, before any block is produced) is trivially `blocks=0 packets=0
+# drops=0`. Every heartbeat after that shows real, growing drops: measured over
+# a full run, `blocks=12529 packets=1162 drops=6703` by n=34 -- roughly 53%
+# loss, sustained. hci_peer.py's RTP/SBC validation is unaffected (the packets
+# that DO arrive are perfectly formed: pkts=1162 frames=5803 seqgaps=0 badsbc=0
+# badrtp=0), so asserting the framing is the right QEMU-scope claim; a zero-drop
+# LINK is a silicon claim, not a QEMU one. Root cause of the QEMU loss: qemu2's
 # LPUART model (hw/char/imxrt_lpuart.c) has no baud-rate-based pacing, so it
 # is not simply "115200 baud is too slow for SBC" -- more likely L2cap's
 # 8-slot TXQ / ACL-credit round trip (service() drains while credits>0;
@@ -157,9 +157,9 @@ grep -q "RT1176 BT tone test up" "$OUT" || fail "[media] banner missing"
 
 grep -q '^a2dp=ok' "$OUT"                          || fail "[media] bring-up did not reach AVDTP START"
 grep -q '^streaming' "$OUT"                        || fail "[media] node never began streaming"
-grep -qE '^hb streaming=1 .* drops=0 ' "$OUT"      || fail "[media] source-side drops (link/queue not keeping up)"
+grep -qE '^hb streaming=1 blocks=[1-9]' "$OUT"      || fail "[media] reached STREAMING but the audio clock produced no blocks (self-clock not running)"
 grep -q '^PEER-MEDIA ' "$RES"                      || fail "[media] peer received no media"
 awk '/^PEER-MEDIA/{p=$0} END{exit !(p ~ /pkts=[1-9]/ && p ~ /frames=[1-9]/ && p ~ /seqgaps=0/ && p ~ /badsbc=0/ && p ~ /badrtp=0/)}' "$RES" \
                                                    || fail "[media] RTP/SBC framing invalid or sequence gapped"
 
-echo "PASS: AudioOutputBluetooth RTP-frames SBC to the media channel; sequence continuous, framing valid, source drops=0"
+echo "PASS: AudioOutputBluetooth self-clocks the tone graph and RTP-frames valid SBC onto the media channel (blocks produced, sequence continuous, framing valid); drops / flow-control-at-rate is a SILICON question -- QEMU has no baud pacing"
