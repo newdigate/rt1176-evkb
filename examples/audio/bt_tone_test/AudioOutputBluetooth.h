@@ -21,6 +21,12 @@ public:
     void begin(A2dpSource &src);                 // sugar: pulls l2/cid/mtu/params from src
     virtual void update(void);                   // audio ISR: encode -> pk.push
     void poll();                                 // main loop: pk.drain -> l2.send
+    // Self-clock (default): poll() calls AudioStream::update_all() to drive the graph,
+    // for a graph with no hardware audio clock (bt_tone_test).  Set false when another
+    // sink (e.g. AudioOutputI2S) already clocks the graph from its DMA ISR -- then poll()
+    // ONLY drains, and update() still encodes because the shared ISR walks this node.
+    // Call before begin().
+    void setSelfClock(bool on) { m_selfClock = on; }
     bool     connected()      const { return m_l2 != nullptr && m_cid != 0; }
     uint32_t blocks()         const { return m_blocks; }
     uint32_t packets()        const { return m_pk.packets(); }
@@ -45,6 +51,7 @@ private:
     uint32_t m_nextUpdate = 0;               // micros() deadline for the next block
     uint32_t m_flushUs = 0;                  // drain-flush deadline: bound the batching latency
     uint32_t m_lastDrainUs = 0;              // micros() of the last drain, for the flush timeout
+    bool m_selfClock = true;                 // false = an external ISR clocks the graph; poll() drains only
     audio_block_t *inputQueueArray[2];
     Sbc m_sbc; MediaPacketizer m_pk;
     L2cap *m_l2 = nullptr; uint16_t m_cid = 0;

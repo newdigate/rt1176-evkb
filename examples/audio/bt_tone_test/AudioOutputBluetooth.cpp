@@ -56,11 +56,16 @@ void AudioOutputBluetooth::poll() {
     // more than a few blocks behind (a loop stall), resync to now rather than
     // bursting and overflowing the ring.
     uint32_t now = micros();
-    if ((int32_t)(now - m_nextUpdate) >= 0) {
-        m_nextUpdate += m_usPerBlock;
-        if ((int32_t)(now - m_nextUpdate) > (int32_t)(4 * m_usPerBlock)) m_nextUpdate = now + m_usPerBlock;
-        AudioStream::update_all();
+    if (m_selfClock) {
+        // No hardware audio clock (bt_tone_test): drive the graph here, paced by micros().
+        if ((int32_t)(now - m_nextUpdate) >= 0) {
+            m_nextUpdate += m_usPerBlock;
+            if ((int32_t)(now - m_nextUpdate) > (int32_t)(4 * m_usPerBlock)) m_nextUpdate = now + m_usPerBlock;
+            AudioStream::update_all();
+        }
     }
+    // else: an external sink's ISR (AudioOutputI2S) already called update_all() this period,
+    // so our update() has run and pushed a frame; poll() only drains it below.
     // Drain when a full packet's worth of frames is ready (so packets are fuller and use
     // fewer ACL credits), or when the flush deadline passes (bounds latency and empties a
     // backlog).  drain() itself still batches up to framesPerPacket and, once triggered,
