@@ -1062,6 +1062,7 @@ void loop()
             CONSOLE.print("bt_hb blocks="); CONSOLE.print(btout.blocks());
             CONSOLE.print(" packets="); CONSOLE.print(btout.packets());
             CONSOLE.print(" drops="); CONSOLE.print(btout.drops());
+            CONSOLE.print(" pcmdrops="); CONSOLE.print(btout.pcmDrops());  // PCM-ring overflow = loop too slow to encode
             CONSOLE.print(" hw="); CONSOLE.print(btout.queueHighWater());
             CONSOLE.print(" audiomax="); CONSOLE.println(AudioMemoryUsageMax());
         }
