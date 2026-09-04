@@ -599,6 +599,38 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-09-04: 128 gates discovered, 128 passed, 0 failed, 0 SKIP**
+(`gates: 128 passed`, exit 0; `-l` reports 128), on the **BT-3/NEW-9 headset
+AVDTP DISCOVER fix** close-out. No new gate — the `[avdtp]` fake peer
+(`hci_peer.py`) was TIGHTENED to model the Shokz OpenMove (from a Mac→Shokz
+Apple PacketLogger reference): it SDP-queries our AudioSource record and answers
+DISCOVER only after that completes, lists its MPEG SEP BEFORE its SBC one, sends
+GET_ALL_CAPABILITIES with delay reporting, and holds the OPEN accept until we
+accept its DelayReport — so the gate now asserts `order=1,12,12,3,6,7`,
+`sdp_served=1 delay_report=2000`, the SET_CONFIG SEID + delay-reporting bytes,
+and a Config-Request-MTU tripwire. **DEMONSTRATED RED five ways** (SDP server
+silent = the bench symptom; option-less CONFIG_REQ; wrong-SEP config; 0x02 vs
+0x0C; DelayReport ignored). `[media]` carries the same tripwires. `LICENSE-AUDIT:
+PASS`. The five M2Radio fixes (L2CAP MTU option + 5 channels; Avdtp
+GetAllCapabilities + SEP-walk + delay reporting + DelayReport-accept; Sdp server;
+BtLink page-timeout/cancel-a-silent-page/credit-reclaim + disconnect) are
+**VERIFIED ON SILICON**: a real Shokz OpenMove reaches AVDTP STREAMING with
+**drops=0** (blocks==packets, hw=1, 3713 packets / ~2.4 min — clean tone), every
+fix decoded from the `M2_BT_ACL_TRACE` capture, and the ESP32 sink shows
+no-regression (reaches STREAMING through the same new negotiation; its ~96% drops
+are its own throughput ceiling, unchanged). Host suites gained `bt/test/sdp_test`
+(37) and `bt/test/btlink_test` (23); l2cap 45 / avdtp 55.
+★ **Bench note added to the flash lessons**: on this session the `LinkServer run`
+CONNECT hung repeatedly while `flash load`/`verify`/`gdbserver` connected fine —
+a full board POWER-CYCLE (not a debug-USB replug) cleared it, since the replug
+only resets the MCU-Link probe, not the RT1176 target. The wire-level "Wire not
+connected" wedge returned after killing crt_emu mid-connect; a power-cycle cleared
+that too. Working recipe once connect is healthy: `flash load` → `flash verify`
+(both quick, VECTRESET-based) → detach all debuggers → **SW4 to free-run** the
+flashed image (a `gdb continue` in batch mode vKills-and-halts the core on exit).
+Do NOT run the 64 MB full-chip `flash erase` — `run`/`load` erase only the
+image's sectors.
+
 ✅ **Measured 2026-09-03: 128 gates discovered, 128 passed, 0 failed, 0 SKIP**
 (`gates: 128 passed`, exit 0; `-l` reports 128), on the **BT-3 phase 4** close-out
 (`AudioOutputBluetooth` — first sound over A2DP). Two new gates on the new
