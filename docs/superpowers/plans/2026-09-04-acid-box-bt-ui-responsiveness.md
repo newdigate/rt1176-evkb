@@ -1021,6 +1021,33 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+### Task 6b (added after the baseline): non-blocking BT bring-up via `idleUi()`
+
+Decided at the Task 5 checkpoint (user-approved, 2026-09-04). The baseline met the steady-state bound before any fix; what the instrument found instead was a 16.8 s first loop iteration (`max_us=16834971`) — the blocking `A2dpSource::connect()` — plus setup()'s ~12 s blocking firmware download, with the UI dead through both, and the same freeze on every 5 s connect retry with no headset in range.
+
+**Files:**
+- Modify: `examples/display/acid_box/acid_box.cpp` — replace the `idleMs()` (`delay(1)`) callback with a forward-declared `idleUi()` at every BT wait (`btLoader.run`, `hci.run` × N, `src.connect`), and define it after `audio_probe_poll()`:
+
+```cpp
+#if defined(M2_BT_OUT)
+static void idleUi()
+{
+    yield();                       /* the yield-attached HciPump: parses HCI events for the waiting caller */
+    lvgl_rt1176_loop();            /* render + touch + the ui_poll timer: the panel stays live */
+    audio_probe_poll();            /* bar/RMS bookkeeping keeps its cadence */
+#if defined(ACIDBOX_LOOPSTAT)
+    ls_summary();                  /* loopstat/framestat/touchstat keep printing through the wait */
+#endif
+}
+#endif
+```
+
+Every caller is a top-level blocking wait reached from `setup()` or `loop()`, never from inside `lv_timer_handler()`, so LVGL is not re-entered. RX during a ≤ 47 ms UI frame is covered by the 1 KB RX extension plus hardware RTS flow control (`M2_BT_RTS_FLOW=ON`).
+
+- [ ] Build `build-bench`; the default build is untouched (`M2_BT_OUT` off compiles none of it).
+- [ ] Task 7's protocol gains a connect-phase check: tap ▶ and drag a knob BEFORE `bt_streaming` appears; `framestat frames>0` and `touchstat` lines must print during the bring-up, and the first `loopstat` after `bt_streaming` must no longer carry a 16 s `max_us`.
+- [ ] Commit with Task 6 Step 7.
+
 ### Task 7: Re-measure B with fix 1 (silicon)
 
 **Files:**

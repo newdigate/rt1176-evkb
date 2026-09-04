@@ -70,3 +70,181 @@ because the gates run the SW path and acid_box's gate has no BT):
 
 ESP32 sink ("EVKB-SINK") no-regression: reaches STREAMING through the same path
 (also discovered as an audio device in the inquiry above, bd=88:13:BF:58:86:9E).
+
+================================================================================
+NEW-33 BASELINE A/B, 2026-09-04 -- ACIDBOX_LOOPSTAT before any fix
+================================================================================
+Spec: docs/superpowers/specs/2026-09-04-acid-box-bt-ui-responsiveness-design.md
+Instrument: -DACIDBOX_LOOPSTAT=ON (opt-in; the default build's loadable image is
+byte-identical -- objcopy -O binary diffed, 295936 B -- and its gate passes with
+the golden unchanged).  The same instrument in both builds:
+  A = build-loopstat: default (BT off) + LOOPSTAT
+  B = build-bench:    the bench config above + LOOPSTAT (Shokz, SSP, 3 Mbaud, RTS flow)
+Protocol per build: SW4 -> (B: wait for bt_streaming) -> tap PLAY -> tap the
+"ACID BOX" title (wiggle=1: a 15 ms timer sweeps all eight knobs by set_angle,
+no VALUE_CHANGED, synth untouched) ~20 s -> tap again (wiggle=0) -> drag CUTOFF
+~15 s -> (B) stream 2+ min.  Boot lines (both): ACIDBOX_ENGINE=gpu
+ACIDBOX_UI_SUM=0x1479CEE8 ACIDBOX_DONE; B: bt_baud_switch=ok rate=3000000,
+bt_streaming frames_per_pkt=5 media_mtu=895.
+
+--- A: wiggle window (framestat, all 21 lines at 30 frames/s; 10 shown) ---
+framestat frames=20 med_us=33580 max_us=131927 flips=+20 wait_us=+7914
+framestat frames=30 med_us=32375 max_us=46423 flips=+30 wait_us=+14508
+framestat frames=30 med_us=32596 max_us=40808 flips=+30 wait_us=+23371
+framestat frames=30 med_us=32261 max_us=41804 flips=+30 wait_us=+40554
+framestat frames=30 med_us=32256 max_us=47236 flips=+30 wait_us=+14301
+framestat frames=30 med_us=32746 max_us=39831 flips=+30 wait_us=+31897
+framestat frames=30 med_us=32807 max_us=39941 flips=+30 wait_us=+25846
+framestat frames=30 med_us=32487 max_us=39629 flips=+30 wait_us=+18193
+framestat frames=30 med_us=32244 max_us=48259 flips=+30 wait_us=+22911
+framestat frames=30 med_us=32591 max_us=40352 flips=+30 wait_us=+20647
+--- A: loopstat, wiggle=1 (last 4) ---
+loopstat loops=20558 max_us=33815 yield=0 svc=0 poll=0 enc=0 drain=0 txb=0 print=95286 lvgl=892127 probe=4084 wiggle=1
+loopstat loops=20149 max_us=28662 yield=0 svc=0 poll=0 enc=0 drain=0 txb=0 print=94641 lvgl=883855 probe=13030 wiggle=1
+loopstat loops=21205 max_us=33550 yield=0 svc=0 poll=0 enc=0 drain=0 txb=0 print=97979 lvgl=889479 probe=3976 wiggle=1
+loopstat loops=20630 max_us=28577 yield=0 svc=0 poll=0 enc=0 drain=0 txb=0 print=95477 lvgl=882980 probe=13118 wiggle=1
+--- A: loopstat, idle wiggle=0 (last 2) ---
+loopstat loops=74235 max_us=10626 yield=0 svc=0 poll=0 enc=0 drain=0 txb=0 print=341662 lvgl=614909 probe=13337 wiggle=0
+loopstat loops=72724 max_us=17901 yield=0 svc=0 poll=0 enc=0 drain=0 txb=0 print=335493 lvgl=611859 probe=23189 wiggle=0
+--- A: touchstat, last of the CUTOFF drag ---
+touchstat n=1427 p50_us=29519 p95_us=46452 max_us=130649
+
+--- B: wiggle window (framestat, all 33 lines at 30 frames/s; 10 shown) ---
+framestat frames=28 med_us=34313 max_us=134922 flips=+28 wait_us=+45700
+framestat frames=30 med_us=32582 max_us=43257 flips=+30 wait_us=+20707
+framestat frames=30 med_us=32533 max_us=42809 flips=+30 wait_us=+31124
+framestat frames=30 med_us=31980 max_us=43730 flips=+30 wait_us=+14099
+framestat frames=30 med_us=32175 max_us=40783 flips=+30 wait_us=+10221
+framestat frames=30 med_us=32146 max_us=42389 flips=+30 wait_us=+9115
+framestat frames=30 med_us=32748 max_us=42933 flips=+30 wait_us=+12133
+framestat frames=30 med_us=32349 max_us=40899 flips=+30 wait_us=+21104
+framestat frames=30 med_us=32849 max_us=42629 flips=+30 wait_us=+22888
+framestat frames=30 med_us=32506 max_us=43650 flips=+30 wait_us=+16443
+--- B: loopstat, wiggle=1 streaming (last 4) ---
+loopstat loops=562 max_us=43845 yield=2201 svc=155233 poll=57751 enc=48885 drain=8112 txb=43683 print=39543 lvgl=735150 probe=124 wiggle=1
+loopstat loops=1110 max_us=42370 yield=3997 svc=162938 poll=59035 enc=50180 drain=7215 txb=43573 print=61129 lvgl=671722 probe=9901 wiggle=1
+loopstat loops=859 max_us=43918 yield=3010 svc=159675 poll=58518 enc=50009 drain=7346 txb=43573 print=50222 lvgl=704629 probe=201 wiggle=1
+loopstat loops=1016 max_us=41208 yield=4488 svc=160681 poll=58786 enc=50191 drain=7216 txb=43172 print=59061 lvgl=670272 probe=9875 wiggle=1
+--- B: loopstat, idle streaming wiggle=0 (last 2) ---
+loopstat loops=7095 max_us=11630 yield=25707 svc=296752 poll=74720 enc=57705 drain=6879 txb=42573 print=247981 lvgl=66215 probe=1415 wiggle=0
+loopstat loops=7110 max_us=13495 yield=25083 svc=296475 poll=74882 enc=57965 drain=6940 txb=42573 print=247236 lvgl=66742 probe=1409 wiggle=0
+--- B: touchstat, last of the CUTOFF drag ---
+touchstat n=1929 p50_us=28695 p95_us=38170 max_us=130931
+--- B: the connect phase, seen by the instrument (first two loopstat lines after bt_streaming) ---
+loopstat loops=0 max_us=0 yield=44 svc=22 poll=0 enc=0 drain=0 txb=0 print=16549514 lvgl=0 probe=0 wiggle=0
+loopstat loops=4881 max_us=16834971 yield=17359 svc=216661 poll=57945 enc=45348 drain=5575 txb=33719 print=189629 lvgl=317886 probe=834 wiggle=0
+--- B: bt_hb timeline (every 5th line; markers inline) ---
+   >> PLAYING=0
+   >> bt_streaming frames_per_pkt=5 media_mtu=895
+1: bt_hb blocks=0 packets=0 drops=0 pcmdrops=0 hw=0 audiomax=1
+6: bt_hb blocks=1654 packets=332 drops=0 pcmdrops=69 hw=31 audiomax=1
+11: bt_hb blocks=3377 packets=677 drops=0 pcmdrops=69 hw=31 audiomax=1
+16: bt_hb blocks=5099 packets=1022 drops=0 pcmdrops=69 hw=31 audiomax=1
+21: bt_hb blocks=6822 packets=1367 drops=0 pcmdrops=69 hw=31 audiomax=1
+   >> PLAYING=1
+26: bt_hb blocks=8545 packets=1720 drops=0 pcmdrops=69 hw=31 audiomax=1
+31: bt_hb blocks=10268 packets=2079 drops=0 pcmdrops=69 hw=31 audiomax=1
+36: bt_hb blocks=11993 packets=2445 drops=0 pcmdrops=69 hw=31 audiomax=1
+41: bt_hb blocks=13716 packets=2806 drops=0 pcmdrops=69 hw=31 audiomax=1
+   >> wiggle=1
+46: bt_hb blocks=15469 packets=3211 drops=0 pcmdrops=69 hw=31 audiomax=1
+51: bt_hb blocks=17217 packets=3618 drops=0 pcmdrops=69 hw=31 audiomax=1
+56: bt_hb blocks=18968 packets=4014 drops=19 pcmdrops=69 hw=64 audiomax=1
+61: bt_hb blocks=20716 packets=4422 drops=19 pcmdrops=69 hw=64 audiomax=1
+   >> wiggle=0
+66: bt_hb blocks=22445 packets=4794 drops=19 pcmdrops=69 hw=64 audiomax=1
+71: bt_hb blocks=24170 packets=5153 drops=19 pcmdrops=69 hw=64 audiomax=1
+76: bt_hb blocks=25892 packets=5520 drops=19 pcmdrops=69 hw=64 audiomax=1
+81: bt_hb blocks=27623 packets=5884 drops=19 pcmdrops=69 hw=64 audiomax=1
+86: bt_hb blocks=29347 packets=6243 drops=19 pcmdrops=69 hw=64 audiomax=1
+91: bt_hb blocks=31071 packets=6610 drops=19 pcmdrops=69 hw=64 audiomax=1
+96: bt_hb blocks=32795 packets=6974 drops=19 pcmdrops=69 hw=64 audiomax=1
+   >> wiggle=1
+   >> wiggle=0
+101: bt_hb blocks=34538 packets=7360 drops=19 pcmdrops=69 hw=64 audiomax=1
+   >> wiggle=1
+106: bt_hb blocks=36277 packets=7759 drops=19 pcmdrops=69 hw=64 audiomax=1
+   >> wiggle=0
+111: bt_hb blocks=38021 packets=8169 drops=19 pcmdrops=69 hw=64 audiomax=1
+116: bt_hb blocks=39747 packets=8526 drops=19 pcmdrops=69 hw=64 audiomax=1
+121: bt_hb blocks=41472 packets=8885 drops=19 pcmdrops=69 hw=64 audiomax=1
+126: bt_hb blocks=43194 packets=9242 drops=19 pcmdrops=69 hw=64 audiomax=1
+131: bt_hb blocks=44918 packets=9602 drops=19 pcmdrops=69 hw=64 audiomax=1
+136: bt_hb blocks=46641 packets=9887 drops=303 pcmdrops=69 hw=64 audiomax=1
+141: bt_hb blocks=48366 packets=10250 drops=303 pcmdrops=69 hw=64 audiomax=1
+146: bt_hb blocks=50089 packets=10610 drops=303 pcmdrops=69 hw=64 audiomax=1
+151: bt_hb blocks=51811 packets=10975 drops=303 pcmdrops=69 hw=64 audiomax=1
+156: bt_hb blocks=53534 packets=11339 drops=303 pcmdrops=69 hw=64 audiomax=1
+161: bt_hb blocks=55258 packets=11706 drops=303 pcmdrops=69 hw=64 audiomax=1
+166: bt_hb blocks=56982 packets=12080 drops=303 pcmdrops=69 hw=64 audiomax=1
+171: bt_hb blocks=58708 packets=12445 drops=303 pcmdrops=69 hw=64 audiomax=1
+176: bt_hb blocks=60431 packets=12812 drops=303 pcmdrops=69 hw=64 audiomax=1
+181: bt_hb blocks=62155 packets=13176 drops=303 pcmdrops=69 hw=64 audiomax=1
+186: bt_hb blocks=63878 packets=13538 drops=303 pcmdrops=69 hw=64 audiomax=1
+   >> PLAYING=0
+191: bt_hb blocks=65600 packets=13895 drops=303 pcmdrops=69 hw=64 audiomax=1
+196: bt_hb blocks=67324 packets=14244 drops=303 pcmdrops=69 hw=64 audiomax=1
+   >> PLAYING=1
+   >> PLAYING=0
+201: bt_hb blocks=69046 packets=14599 drops=303 pcmdrops=69 hw=64 audiomax=1
+206: bt_hb blocks=70769 packets=14944 drops=303 pcmdrops=69 hw=64 audiomax=1
+
+--- READINGS (the spec §2 table) ---
+  number                                   A (BT off)      B (streaming)   bound        verdict
+  frames/s under wiggle (median of window)   30              30            >= 25.5      pass
+  median frame interval under wiggle         32596 us        32573 us      <= 37485 us  pass
+  worst frame per second, med / p90          42777/47236 us  43215/47140   --           equal
+  touch-to-frame p95 (n=1427 / 1929)         46452 us        38170 us      <= 53420 us  pass
+  loop max_us under wiggle, med              33099 us        42370 us      --           +9 ms = the BT burst
+  pcmdrops / drops over the run              --              69 / 303      0 / 0        FAIL (link stalls, below)
+
+ATTRIBUTION (B, streaming under wiggle, per second of wall time):
+  svc   ~155-163 ms  = the L2cap ACL write SPINNING in Serial2's 64-byte TX ring.
+                       Wire time: txb (~43.5 KB/s) x 3.333 us/B = ~145 ms, minus 64 B
+                       of ring per packet (~14 ms) = ~130 ms; the ~25-35 ms remainder
+                       is ~30-40 us per iteration of flash-resident service code
+                       (SdpServer/L2cap/Avdtp::service).  WIRE-BOUND, as predicted --
+                       the spec's rule for fix 1 fires.
+  poll  ~58 ms       = enc ~50 ms (345 blocks x ~145 us: the ITCM SBC encode is 3x
+                       cheaper than the 0.5 ms estimate) + drain ~7.5 ms.
+  yield ~2-4 ms      (HciPump; ~25 ms/s when idle at 7100 iterations/s).
+  lvgl  ~700 ms      = render + vsync fence for the same 30 frames as A (A's 885 ms
+                       includes ~170 ms of idle lv_timer_handler() spins at 20k it/s).
+  print ~50 ms       (instrument + bt_hb; see the instrument note).
+  => Bluetooth costs ~30% of the loop's wall time and the 8-knob scene has the
+     slack to absorb it: frames/s, frame interval, worst frame and touch latency
+     are all UNCHANGED (touch p95 reads better in B -- human variance, not a gain).
+
+THE RESPONSIVENESS DEFECT IS THE BRING-UP, NOT THE STREAMING.  The first loop()
+iteration after boot ran the blocking A2dpSource::connect() for 16.8 s
+(max_us=16834971 above; charged to `print` because the connect sits in that lap):
+the panel was up, the sequencer ready, and the UI completely dead until
+bt_streaming -- and setup()'s ~12 s BT firmware download blocks the same way just
+before it.  With no headset in range the 5 s connect retry blocks for the inquiry
+timeout every time.  That is the "noticeably less responsive" of NEW-33; the
+steady-state numbers never showed it.  Fix: idleUi() -- every blocking BT wait
+in this tree takes an idle callback, and acid_box now passes one that runs the
+UI half of loop() (next section).
+
+DROPS.  Two link stalls, neither UI-caused: the loop never stalled beyond 47 ms
+in either window (loopstat max_us), yet
+  * hb 51->56 (during the first wiggle): drops 0->19, hw 31->64 -- the 64-frame
+    packetiser ring FILLED (>= 186 ms without an ACL credit) and 19 frames spilled;
+  * hb 131->136 (steady streaming, wiggle=0, after the drag): drops 19->303 --
+    284 frames, ~0.82 s of audio, AUDIBLE on the Shokz (confirmed by ear).
+That second event lands at ~136 s of streaming, the same ~130 s mark NEW-9 logged
+before its batching fix.  Credit starvation on the link, not the loop -- NEW-34's
+domain (reconnect + resilience), recorded there with this capture.  ★ It also
+retires the "drops=0 ongoing" claim of the 2026-09-04 dual-output section above:
+that window was ~20 s; over 3.5 min the link stalls.
+
+INSTRUMENT NOTES.  (1) The CM7 runs with NO instruction cache -- the imxrt1176
+core's startup never writes SCB_CCR -- so flash-resident code executes from
+FlexSPI at raw QSPI speed: the LOOPSTAT summary's early return costs 4.6 us per
+idle iteration in A (print=~340 ms/s at 74k it/s) and ~32 us in B, where the
+per-iteration M2Radio service chain also runs from flash and evicts it from the
+FlexSPI AHB buffer.  Same instrument in both builds, so the A/B is fair; the
+frame/touch numbers are untouched (a 4.6 us jitter against 33 ms frames).  It is
+also why the flash-resident SBC encode measured 2-3 ms/block in NEW-9 and why
+Sbc.cpp had to move to ITCM.  Enabling the I-cache is a core change with its own
+issue.  (2) The loopstat line is two printf calls: Print::printf clamps at 128 B.
