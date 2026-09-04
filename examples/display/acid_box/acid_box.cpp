@@ -149,7 +149,17 @@ static void printFail(const char *what, Hci::Error e, const Hci::Reply &r, const
     CONSOLE.print(" status=0x"); printHex8(r.status);
     printCounters(); CONSOLE.println();
 }
-static void idleMs() { delay(1); }   // yield() inside delay() services the HciPump-attached EventResponder
+// The idle callback every blocking BT wait takes (BtFwLoader::run, Hci::run,
+// BtLink/A2dpSource::connect).  bt_tone_test passes delay(1); acid_box passes
+// idleUi() -- defined after audio_probe_poll() below -- which runs ONE pass of
+// the main loop's UI half (a yield for the HciPump, the LVGL loop, the audio
+// probe) so the panel stays live and touchable through the ~12 s firmware
+// download and the ~17 s connect.  Measured before this existed (NEW-33
+// baseline, 2026-09-04): the first loop iteration after boot was 16.8 s long
+// with the UI dead for all of it, and every 5 s connect retry blocks the same
+// way whenever no headset answers -- the "noticeably less responsive" of the
+// issue, which the steady-state numbers never showed.
+static void idleUi();
 
 // L2cap::begin()'s aclCredits argument -- the Total_Num_ACL_Data_Packets field
 // from Read_Buffer_Size, captured below in probeIdentity().
@@ -158,7 +168,7 @@ static uint8_t s_aclNum = 0;
 // --- identity ---------------------------------------------------------------
 static void probeIdentity() {
     Hci::Reply r;
-    Hci::Error e = hci.run(OP_READ_LOCAL_VER, nullptr, 0, &r, 1000, idleMs);
+    Hci::Error e = hci.run(OP_READ_LOCAL_VER, nullptr, 0, &r, 1000, idleUi);
     if (e == Hci::OK && r.len >= 8) {
         CONSOLE.print("hci_version: hci_ver="); CONSOLE.print(r.params[0]);
         CONSOLE.print(" hci_rev=0x");     printHex16((uint16_t)(r.params[1] | (r.params[2] << 8)));
@@ -168,11 +178,11 @@ static void probeIdentity() {
         CONSOLE.println();
     } else printFail("hci_version", e, r, "short_reply");
 
-    e = hci.run(OP_READ_BD_ADDR, nullptr, 0, &r, 1000, idleMs);
+    e = hci.run(OP_READ_BD_ADDR, nullptr, 0, &r, 1000, idleUi);
     if (e == Hci::OK && r.len >= 6) { CONSOLE.print("bd_addr="); printBd(r.params); CONSOLE.println(); }
     else printFail("bd_addr", e, r, "short_reply");
 
-    e = hci.run(OP_READ_BUFFER_SIZE, nullptr, 0, &r, 1000, idleMs);
+    e = hci.run(OP_READ_BUFFER_SIZE, nullptr, 0, &r, 1000, idleUi);
     if (e == Hci::OK && r.len >= 7) {
         uint16_t aclLen = (uint16_t)(r.params[0] | (r.params[1] << 8));
         uint16_t aclNum = (uint16_t)(r.params[3] | (r.params[4] << 8));
@@ -198,7 +208,7 @@ static void probeFastBaud() {
     hciCountersFold(); hci.begin();                        // fresh HCI state at the new rate
     delay(20);                                             // let the controller finish switching its own UART
     Hci::Reply r;
-    Hci::Error e = hci.run(OP_RESET, nullptr, 0, &r, 1000, idleMs);
+    Hci::Error e = hci.run(OP_RESET, nullptr, 0, &r, 1000, idleUi);
     if (e != Hci::OK) {
         CONSOLE.print("bt_baud_switch=fail rate="); CONSOLE.print(rate);
         CONSOLE.print(" reason="); CONSOLE.println(Hci::errorName(e));
@@ -273,7 +283,7 @@ static void btFirmwareDownload() {
 #else
 #if defined(HAVE_IW416_BT_FW)
     btLoader.setImage(iw416_bt_fw, iw416_bt_fw_len);
-    s_btFwSt = btLoader.run(3000, 500, 30000, idleMs);
+    s_btFwSt = btLoader.run(3000, 500, 30000, idleUi);
 #if defined(BT_FW_IS_SYNTHETIC)
     CONSOLE.println("bt_fw_source=synthetic");
 #else
@@ -336,6 +346,12 @@ static void btLog(void *, const char *s) { CONSOLE.println(s); }
 static void onEvt(void *, uint8_t c, const uint8_t *p, uint8_t l) { src.onEvent(c, p, l); }
 static void onAclThunk(void *, uint16_t h, const uint8_t *d, uint16_t l) { src.onAcl(h, d, l); }
 static bool s_btBegun = false;
+// NEW-33 fix 1: the transport's TX ring must cover the IW416's 7-credit ACL
+// window (hci_buffer acl_num=7) so L2cap::service()'s write never spins on the
+// core's 64-byte Serial2 ring.  64 is the core's built-in ring (HardwareSerial2.cpp
+// tx_buffer2[64]); the hci_txring line at connect reads the real total instead.
+static_assert(HciTransport::TX_EXTRA + 64u >= 7u * (9u + L2cap::MAX_PAYLOAD),
+              "HciTransport::TX_EXTRA must cover 7 x (9 + L2cap::MAX_PAYLOAD) (NEW-33)");
 #endif
 
 #if defined(ACIDBOX_LOOPSTAT)
@@ -759,6 +775,22 @@ static void audio_probe_poll(void)
         lastSeenStep = s;
     }
 }
+
+#if defined(M2_BT_OUT)
+/* One pass of the UI half of loop() -- see the forward declaration in the BT
+ * preamble.  Not re-entrant with LVGL by construction: every caller is a
+ * top-level blocking wait reached from setup() or loop(), never from inside
+ * lv_timer_handler(). */
+static void idleUi()
+{
+    yield();                       /* the yield-attached HciPump: parses HCI events for the waiting caller */
+    lvgl_rt1176_loop();            /* render + touch + the ui_poll timer: the panel stays live */
+    audio_probe_poll();            /* bar/RMS bookkeeping keeps its cadence */
+#if defined(ACIDBOX_LOOPSTAT)
+    ls_summary();                  /* loopstat/framestat/touchstat keep printing through the wait */
+#endif
+}
+#endif
 
 /* --- UI ------------------------------------------------------------------- *
  *
@@ -1239,7 +1271,7 @@ void setup()
     hci.begin();
     btPump.attach(hci);
     Hci::Reply r;
-    for (uint8_t a = 1; a <= 10; a++) { s_hciSt = hci.run(OP_RESET, nullptr, 0, &r, 500, idleMs); if (s_hciSt == Hci::OK) break; }
+    for (uint8_t a = 1; a <= 10; a++) { s_hciSt = hci.run(OP_RESET, nullptr, 0, &r, 500, idleUi); if (s_hciSt == Hci::OK) break; }
     if (s_hciSt == Hci::OK) {
         CONSOLE.println("bt_hci_reset=ok");
         probeIdentity();
@@ -1276,9 +1308,9 @@ void loop()
         if (!s_btBegun && (lastTry == 0 || millis() - lastTry >= 5000)) {
             lastTry = millis();
 #if defined(M2_BT_TARGET_NAME)
-            A2dpSource::Result rr = src.connect(M2_BT_TARGET_NAME, s_aclNum, nowMs, idleMs);
+            A2dpSource::Result rr = src.connect(M2_BT_TARGET_NAME, s_aclNum, nowMs, idleUi);
 #else
-            A2dpSource::Result rr = src.connect(nullptr, s_aclNum, nowMs, idleMs);
+            A2dpSource::Result rr = src.connect(nullptr, s_aclNum, nowMs, idleUi);
 #endif
             CONSOLE.print("a2dp_try="); CONSOLE.println(A2dpSource::resultName(rr));
             if (rr == A2dpSource::OK) {
@@ -1287,6 +1319,12 @@ void loop()
                 s_btBegun = true;
                 CONSOLE.print("bt_streaming frames_per_pkt="); CONSOLE.print(btout.framesPerPacket());
                 CONSOLE.print(" media_mtu="); CONSOLE.println(src.mediaMtu());
+                {
+                    const uint32_t ring = (uint32_t)Serial2.availableForWrite() + 1u;   // idle ring == total capacity
+                    const uint32_t need = (uint32_t)s_aclNum * (9u + L2cap::MAX_PAYLOAD);
+                    CONSOLE.printf("hci_txring=%lu need=%lu%s\n", (unsigned long)ring, (unsigned long)need,
+                                   need > ring ? " WARN" : "");
+                }
             }
         }
     }
