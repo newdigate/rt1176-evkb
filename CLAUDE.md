@@ -599,6 +599,45 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-09-04 (later the same day): 128 gates discovered, 128 passed,
+0 failed, 0 SKIP** (`gates: 128 passed`, exit 0; `-l` reports 128), on the
+**acid_box Bluetooth dual-output capstone** close-out (`display/acid_box
+-DM2_BT_OUT=ON` -- the acid synth streamed to a real Shokz OpenMove A2DP headset
+WHILE the SynthUI renders). **No new gate**: `M2_BT_OUT` is a BENCH build (the
+`display/acid_box` gate builds the default, BT-OFF image -- byte-identical, its
+golden unchanged), and the `bt_tone_test` decouple + the M2Radio `BtLink` change
+add none. `LICENSE-AUDIT: PASS`. All four `m2_hci_probe` gates and both
+`bt_tone_test` gates green against the changed M2Radio.
+★ **The acceptance is SILICON-ONLY and un-fakeable** -- a clean acid-bass line
+audible on the Shokz (by ear) WHILE the panel renders (`ACIDBOX_VSYNC timeouts=0`),
+the encoder at real time (`blocks` +345/s == 44100/128), ongoing `pcmdrops=0`,
+media `drops=0`. THREE silicon-only fixes, none visible to any QEMU gate (the gates
+run the SW audio path, and acid_box's gate has no BT):
+  1. **update() must skip all work until begin()** -- acid_box clocks the graph
+     from the SAI DMA ISR, so an eager `AudioOutputBluetooth::update()` encoded SBC
+     from power-on and starved `setup()` (black screen; SWD: `m_blocks`=77k,
+     `m_l2`=null).
+  2. **DECOUPLE the SBC encode out of the audio ISR** -- `update()` now only copies
+     PCM into a 32-slot SPSC ring; `poll()` (main loop) encodes + drains. A
+     flash-resident encode IN the SAI ISR overran the 2.9 ms block period and
+     LIVELOCKED the loop (ring full, ~99% dropped, loop frozen right after
+     `begin()` -- `s_btBegun` never set). `bt_tone_test` is behaviourally unchanged
+     (its self-clocked `poll()` fills then drains one block per call); both its
+     gates pass, media framing byte-valid.
+  3. **Keep the SBC encode in ITCM** -- route ONLY `Sbc.cpp` (the one
+     per-audio-block-hot object, 344/s) to ITCM; evict the example's own `setup()`
+     (2564 B, runs once) to flash for the ~1.6 KB of room. THE dominant lever: a
+     flash-resident encode is ~2-3 ms/block vs ~0.5 ms in ITCM, and at 344/s that
+     alone saturates the CM7 before the GC355 compositor runs (`pcmdrops` 1739 -> 0
+     ongoing). The M2Radio `BtLink` Number_Of_Completed_Packets(0x13)-flood
+     suppression was MEASURED SECONDARY -- removing it alone changed the encode
+     ratio not at all.
+★ **The plan's stated fallback was WRONG and is recorded so**: "drop the local I2S
+(BT-only) if the CM7 can't keep up" does not help -- muting the WM8962 does not
+reduce the SBC encode, which is the actual cost. The levers were encode PLACEMENT
+(ITCM) and DECOUPLING it from the ISR. M2Radio `a7cbe03` / evkb (decouple, acid_box
+perf, pin) pushed, fresh-user `-DEVKB_FORCE_FETCH=ON` verified.
+
 ✅ **Measured 2026-09-04: 128 gates discovered, 128 passed, 0 failed, 0 SKIP**
 (`gates: 128 passed`, exit 0; `-l` reports 128), on the **BT-3/NEW-9 headset
 AVDTP DISCOVER fix** close-out. No new gate — the `[avdtp]` fake peer
