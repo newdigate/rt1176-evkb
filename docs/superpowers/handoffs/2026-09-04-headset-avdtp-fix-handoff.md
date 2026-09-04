@@ -1,5 +1,15 @@
 # Handoff — Headset AVDTP DISCOVER fix (BT-3 / NEW-9), software DONE, silicon BLOCKED on bench access
 
+> **RESOLVED 2026-09-04 (same day).** The silicon block was cleared by a full
+> board POWER-CYCLE (not a debug-USB replug). The fix is VERIFIED: a real Shokz
+> OpenMove reaches AVDTP STREAMING with **drops=0** (clean tone), every gap
+> decoded from the ACL trace; ESP32 no-regression. PUSHED + PINNED (M2Radio
+> `eb1c8b5`, evkb `5366f18`), sweep 128/0/0, LICENSE-AUDIT PASS, fresh-user
+> verified. Evidence: `examples/audio/bt_tone_test/transcript_hw_evkb.txt`.
+> The "BLOCKED" text below is kept as the historical mid-work state.
+
+
+
 **Date:** 2026-09-04. **Resumes:** `2026-09-03-headset-avdtp-discover-handoff.md`.
 **Status:** the three diagnosed AVDTP gaps + the two driver/bench blockers are
 IMPLEMENTED, host-tested (each shown RED first), and every affected QEMU gate is
