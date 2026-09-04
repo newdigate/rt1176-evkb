@@ -217,11 +217,11 @@ static inline uint32_t loopstat_pct_sorted(const uint32_t *sorted, uint32_t n, u
 ```bash
 examples/display/acid_box/tests/run.sh
 ```
-Expected: 24 `PASS:` lines, `loopstat_pct_test: 24 passed, 0 failed`, `ACIDBOX-HOST-TESTS: PASS`.
+Expected: 22 `PASS:` lines, `loopstat_pct_test: 22 passed, 0 failed`, `ACIDBOX-HOST-TESTS: PASS`. (The plan first said 24; a run says 22 -- the run is the count.)
 
 - [ ] **Step 5: Demonstrate RED, then restore**
 
-Edit `loopstat_pct_sorted` to floor: `uint32_t rank = (p * n) / 100u;` → run → expected `FAIL: n=10 p95 got 9 want 10` (and `n=4 p50 got 1`). Restore the `+ 99u`. Run again → all PASS. Record the demonstrated-RED line in `run.sh`'s header (already written above).
+Edit `loopstat_pct_sorted` to floor: `uint32_t rank = (p * n) / 100u;` → run → expected `FAIL: n=4 p95 got 3 want 4` and `FAIL: n=10 p95 got 9 want 10` (measured). Restore the `+ 99u`. Run again → all PASS. Record the demonstrated-RED line in `run.sh`'s header (already written above).
 
 - [ ] **Step 6: Commit**
 
@@ -231,8 +231,8 @@ git commit -m "feat(acid_box): loopstat_pct.h -- ring + nearest-rank percentile,
 
 The ACIDBOX_LOOPSTAT instrument's one pure piece: the frame-interval and
 touch-to-frame latency distributions need p50/p95/max over a ring, and a
-percentile index is where an off-by-one hides. 24 checks; demonstrated RED
-by flooring the rank (n=10 p95 fails by name).
+percentile index is where an off-by-one hides. 22 checks; demonstrated RED
+by flooring the rank (n=4 p95 and n=10 p95 fail by name).
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
