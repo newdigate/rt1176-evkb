@@ -614,11 +614,23 @@ silent = the bench symptom; option-less CONFIG_REQ; wrong-SEP config; 0x02 vs
 PASS`. The five M2Radio fixes (L2CAP MTU option + 5 channels; Avdtp
 GetAllCapabilities + SEP-walk + delay reporting + DelayReport-accept; Sdp server;
 BtLink page-timeout/cancel-a-silent-page/credit-reclaim + disconnect) are
-**VERIFIED ON SILICON**: a real Shokz OpenMove reaches AVDTP STREAMING with
-**drops=0** (blocks==packets, hw=1, 3713 packets / ~2.4 min — clean tone), every
-fix decoded from the `M2_BT_ACL_TRACE` capture, and the ESP32 sink shows
-no-regression (reaches STREAMING through the same new negotiation; its ~96% drops
-are its own throughput ceiling, unchanged). Host suites gained `bt/test/sdp_test`
+**VERIFIED ON SILICON**: a real Shokz OpenMove reaches AVDTP STREAMING and plays a
+**clean, audible 1 kHz tone** at the real-time rate (344 SBC frames/s = 44100/128),
+every fix decoded from the `M2_BT_ACL_TRACE` capture, and the ESP32 sink shows
+no-regression (reaches STREAMING through the same new negotiation; its throughput
+ceiling is its own, unchanged).
+★★ **THE FIRST BENCH RUN CRACKLED, AND IT WAS THE TRACE, NOT THE STACK — an
+observer effect worth keeping.** With `M2_BT_ACL_TRACE=ON`, every 132-byte media
+packet became a ~439-char console line; at 115200 baud that print takes ~38 ms
+and `CONSOLE.print` BLOCKS when its TX buffer fills, INSIDE L2cap's send loop —
+pacing media to `11520/439 = ~26 packets/s`, a ~13× underrun → a ~26 Hz crackle.
+The measured media cadence was **38.95 ms**, an exact match to the print time,
+and the SBC content was always a clean 1 kHz sine (ffmpeg-decoded from the trace).
+The `drops=0`/`hw=1`/26-fps figures first recorded here were that THROTTLED run —
+`drops=0` only means the packetiser did not drop, NOT that the audio was clean.
+Fix: the trace now SKIPS RTP media (payload `0x80 0x60`); the default build never
+traced. Trace-free: 344 fps, drops=0 for the first ~130 s (minor bursts after),
+audible clean tone. **Never per-packet-console-trace a high-rate BT stream.** Host suites gained `bt/test/sdp_test`
 (37) and `bt/test/btlink_test` (23); l2cap 45 / avdtp 55.
 ★ **Bench note added to the flash lessons**: on this session the `LinkServer run`
 CONNECT hung repeatedly while `flash load`/`verify`/`gdbserver` connected fine —
