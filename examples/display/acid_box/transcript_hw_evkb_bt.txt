@@ -1,0 +1,72 @@
+acid_box -- M2_BT_OUT dual-output bench (MIMXRT1170-EVKB + IW416 M.2), 2026-09-04
+================================================================================
+Build (bench, NOT a gate -- the gate builds acid_box WITHOUT M2_BT_OUT):
+  cmake -B build-bench -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake \
+    -DM2_BT_OUT=ON -DM2_BT_TARGET_NAME=Shokz -DM2_BT_RTS_FLOW=ON \
+    -DM2_BT_FAST_BAUD=ON -DM2_BT_FAST_BAUD_RATE=3000000 -DM2_BT_LEGACY_PIN=OFF \
+    -DM2RADIO_IW416_BT_FW=<mcuxsdk>/components/conn_fwloader/fw_bin/inc/IW416/uartIW416_bt.bin.inc
+
+Peer: a real "OpenMove by Shokz" headset (SSP / Just Works), factory-reset, in
+pairing mode, Mac Bluetooth off.
+
+ACCEPTANCE (un-fakeable): a clean acid-bass line plays on the Shokz WHILE the
+SynthUI renders on the panel -- confirmed by ear + eye on 2026-09-04.
+
+Boot + bring-up (panel renders the GPU golden, BT firmware up, baud 3 Mbaud):
+  ACIDBOX_ENGINE=gpu
+  ACIDBOX_UI_SUM=0x1479CEE8
+  ACIDBOX_GPU_ERR=0
+  ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
+  ACIDBOX_DONE
+  bt_fw_download=ok chip_id=0x7201 start_inds=3 sent=131856/131840
+  bt_hci_reset=ok
+  bt_baud_switch=ok rate=3000000
+  inq_name: bd=C0:86:B3:31:29:2F status=0x00 name="OpenMove by Shokz"
+  connect=ok handle=0x0001 attempt=1
+  pairing=ok auth=ok link_key=stored
+  connect_secure=ok encryption=on paired_by=ssp
+  a2dp_try=ok
+  bt_streaming frames_per_pkt=5 media_mtu=895
+
+Streaming heartbeat -- blocks encoded at REAL TIME (~345/s), ongoing pcmdrops 0
+(a one-time 64-block connect transient), media drops 0, and the synth/UI run:
+  bt_hb blocks=2003 packets=402 drops=0 pcmdrops=64 hw=31 audiomax=1
+  bt_hb blocks=3382 packets=678 drops=0 pcmdrops=64 hw=31 audiomax=1
+  bt_hb blocks=4760 packets=953 drops=0 pcmdrops=64 hw=31 audiomax=1
+  bt_hb blocks=6138 packets=1230 drops=0 pcmdrops=64 hw=31 audiomax=1
+  PLAYING=1
+  ACIDBOX_BAR=1 RMS=[0.1669,0.4685,0.0002,0.4638,...,0.3838]   (the acid pattern)
+  ACIDBOX_VSYNC flips=57 isrs=57 timeouts=0                     (UI still rendering)
+  bt_hb blocks=7172 packets=1447 drops=0 pcmdrops=64 hw=31 audiomax=1
+
+  blocks +345/s == AUDIO_SAMPLE_RATE_EXACT/128 (real-time encode); packets +69/s
+  == blocks/5 (5 SBC frames per ACL packet); pcmdrops frozen == the main loop
+  keeps up with the encode; drops=0 == the media ring never overflows.
+
+WHY THIS TOOK THREE FIXES (all silicon-only -- no QEMU gate can see any of them,
+because the gates run the SW path and acid_box's gate has no BT):
+
+  1. Black screen / frozen setup.  acid_box clocks the graph from the SAI DMA
+     ISR, so AudioOutputBluetooth::update() ran from power-on and encoded SBC on
+     every block before begin() -- starving setup() (SWD: m_blocks=77k, m_l2=null,
+     no panel/console).  Fix: skip all work in update() until the media channel
+     exists.
+
+  2. Livelock at stream start (media never flowed, loop frozen after begin()).
+     update() encoded SBC IN the SAI ISR; flash-resident, it overran the 2.9 ms
+     block period, so the ISR never yielded and poll() never ran -- ring full,
+     ~99% dropped, s_btBegun never set.  Fix: DECOUPLE -- update() only copies PCM
+     into a ring; poll() (main loop) does the encode + drain.
+
+  3. Choppy (pcmdrops climbing, loop at a few Hz).  Two causes:
+     (a) BtLink logged every Number_Of_Completed_Packets event; at media rate the
+         console flood blocked the loop (M2Radio fix -- suppress 0x13).  [Measured
+         to be secondary.]
+     (b) The SBC encode was flash-resident (~2-3 ms/block vs ~0.5 ms in ITCM);
+         at 344/s it nearly saturated the CM7 before the compositor ran.  Fix:
+         route only Sbc.cpp to ITCM (the one per-block-hot object), evict the
+         example's setup() (2564 B, runs once) to flash for the room.  THIS closed
+         the budget: pcmdrops 1739 -> 0 ongoing.
+
+ESP32 sink ("EVKB-SINK") no-regression: reaches STREAMING through the same path
+(also discovered as an audio device in the inquiry above, bd=88:13:BF:58:86:9E).
