@@ -43,6 +43,8 @@ private:
     static bool s_setupDone;                 // AudioStream::update_setup() once, globally
     uint32_t m_usPerBlock = 0;               // audio block period in microseconds (~2902)
     uint32_t m_nextUpdate = 0;               // micros() deadline for the next block
+    uint32_t m_flushUs = 0;                  // drain-flush deadline: bound the batching latency
+    uint32_t m_lastDrainUs = 0;              // micros() of the last drain, for the flush timeout
     audio_block_t *inputQueueArray[2];
     Sbc m_sbc; MediaPacketizer m_pk;
     L2cap *m_l2 = nullptr; uint16_t m_cid = 0;

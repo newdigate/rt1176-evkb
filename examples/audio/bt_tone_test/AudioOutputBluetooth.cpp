@@ -23,6 +23,13 @@ void AudioOutputBluetooth::begin(L2cap &l2, uint16_t cid, uint16_t mtu, const Sb
     if (!s_setupDone) { AudioStream::update_setup(); s_setupDone = true; }
     m_usPerBlock = (uint32_t)(1.0e6f * (float)AUDIO_BLOCK_SAMPLES / AUDIO_SAMPLE_RATE_EXACT + 0.5f);  // ~2902
     m_nextUpdate = micros();
+    // Batch to full packets: hold frames until framesPerPacket() are ready, so each ACL
+    // packet carries several SBC frames and uses ONE credit -- ~perPkt-fold less credit
+    // churn than one-frame packets, which on silicon ran the 7-credit pool down to 0 and
+    // made brief link stalls drop (2026-09-04).  The flush deadline bounds the added
+    // latency to the time it takes to produce a full packet (~perPkt block periods).
+    m_flushUs = (uint32_t)m_pk.framesPerPacket() * m_usPerBlock;
+    m_lastDrainUs = micros();
 }
 void AudioOutputBluetooth::begin(A2dpSource &src) {
     begin(src.l2(), src.mediaCid(), src.mediaMtu(), src.sbcParams());
@@ -54,5 +61,12 @@ void AudioOutputBluetooth::poll() {
         if ((int32_t)(now - m_nextUpdate) > (int32_t)(4 * m_usPerBlock)) m_nextUpdate = now + m_usPerBlock;
         AudioStream::update_all();
     }
-    m_pk.drain(sendThunk, this);
+    // Drain when a full packet's worth of frames is ready (so packets are fuller and use
+    // fewer ACL credits), or when the flush deadline passes (bounds latency and empties a
+    // backlog).  drain() itself still batches up to framesPerPacket and, once triggered,
+    // sends every full packet it can -- so a credit-stall backlog drains fast on recovery.
+    if (m_pk.pending() >= m_pk.framesPerPacket() || (int32_t)(now - (m_lastDrainUs + m_flushUs)) >= 0) {
+        m_pk.drain(sendThunk, this);
+        m_lastDrainUs = now;
+    }
 }
