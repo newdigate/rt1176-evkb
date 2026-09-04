@@ -68,7 +68,9 @@ void AudioOutputBluetooth::update(void) {
 }
 bool AudioOutputBluetooth::sendThunk(void *ctx, const uint8_t *pkt, uint16_t len) {
     AudioOutputBluetooth *o = (AudioOutputBluetooth *)ctx;
-    return o->m_l2->send(o->m_cid, pkt, len);      // L2cap::send returns false when out of credit/txq
+    const bool ok = o->m_l2->send(o->m_cid, pkt, len);   // L2cap::send returns false when out of credit/txq
+    if (ok) o->m_txBytes += 9u + len;                    // + the ACL header L2cap::service() prepends
+    return ok;
 }
 void AudioOutputBluetooth::poll() {
     if (!m_l2) return;
@@ -93,20 +95,26 @@ void AudioOutputBluetooth::poll() {
     // 2026-09-04, acid_box).  A snapshot of head bounds the loop so it cannot spin against
     // a producer that keeps filling the ring during a long encode.
     uint16_t head = m_pcmHead;
-    while (m_pcmTail != head) {
-        uint16_t tail = m_pcmTail;
-        uint8_t frame[128];
-        uint16_t n = m_sbc.encode(m_pcm[tail].l, m_pcm[tail].r, frame);
-        m_pk.push(frame, n); m_blocks++;
-        uint16_t next = tail + 1; if (next >= PCM_RING) next = 0;
-        m_pcmTail = next;                              // release the slot AFTER the encode (SPSC)
+    if (m_pcmTail != head) {
+        const uint32_t t0 = micros();
+        while (m_pcmTail != head) {
+            uint16_t tail = m_pcmTail;
+            uint8_t frame[128];
+            uint16_t n = m_sbc.encode(m_pcm[tail].l, m_pcm[tail].r, frame);
+            m_pk.push(frame, n); m_blocks++;
+            uint16_t next = tail + 1; if (next >= PCM_RING) next = 0;
+            m_pcmTail = next;                              // release the slot AFTER the encode (SPSC)
+        }
+        m_encodeUs += micros() - t0;
     }
     // Drain when a full packet's worth of frames is ready (so packets are fuller and use
     // fewer ACL credits), or when the flush deadline passes (bounds latency and empties a
     // backlog).  drain() itself still batches up to framesPerPacket and, once triggered,
     // sends every full packet it can -- so a credit-stall backlog drains fast on recovery.
     if (m_pk.pending() >= m_pk.framesPerPacket() || (int32_t)(now - (m_lastDrainUs + m_flushUs)) >= 0) {
+        const uint32_t t0 = micros();
         m_pk.drain(sendThunk, this);
+        m_drainUs += micros() - t0;
         m_lastDrainUs = now;
     }
 }

@@ -37,6 +37,13 @@ public:
     uint32_t packets()        const { return m_pk.packets(); }
     uint32_t drops()          const { return m_pk.drops(); }
     uint32_t pcmDrops()       const { return m_pcmDrops; }   // PCM-ring overflow: loop too slow to encode
+    // NEW-33 attribution: cumulative us spent in poll()'s SBC encode loop and in
+    // its drain, and bytes handed to L2cap::send (each + the 9-byte ACL header the
+    // transport prepends).  Deltas per second let a consumer split the BT cost by
+    // stage and test "is the send wire-bound" (bytes x 3.33 us at 3 Mbaud).
+    uint32_t encodeUs() const { return m_encodeUs; }
+    uint32_t drainUs()  const { return m_drainUs; }
+    uint32_t txBytes()  const { return m_txBytes; }
     uint8_t  queueHighWater() const { return m_pk.queueHighWater(); }
     uint16_t framesPerPacket() const { return m_pk.framesPerPacket(); }
 private:
@@ -74,4 +81,5 @@ private:
     volatile uint16_t m_pcmHead = 0;         // producer (update)
     volatile uint16_t m_pcmTail = 0;         // consumer (poll)
     uint32_t m_pcmDrops = 0;                  // PCM-ring overflow count
+    uint32_t m_encodeUs = 0, m_drainUs = 0, m_txBytes = 0;   // NEW-33 attribution
 };
