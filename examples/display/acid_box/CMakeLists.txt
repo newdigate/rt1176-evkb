@@ -129,6 +129,32 @@ teensy_target_link_libraries(acid_box
 if(M2_BT_OUT)
     teensy_target_link_libraries(acid_box M2Radio)
     target_include_directories(acid_box.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
+    # ITCM relief.  acid_box's ITCM sits at ~254K of the 256K window in the default
+    # build (libLVGL alone is ~198K); the M.2 BT stack adds ~14K of .text and
+    # overflows ITCM.  Derive a linker script from the core imxrt1176.ld that routes
+    # libM2Radio's .text to FLASH (XIP) -- the SAME mechanism the core already uses
+    # for libLVGL_flash.a in VGLite mode -- and point ONLY this target at it.  The BT
+    # stack runs in setup()/loop(), not a tight audio/display ISR, so flash residency
+    # is cheap (I-cache-covered).  Derived at configure time from the current core
+    # script, so it never drifts; scoped to this M2_BT_OUT build -- no core change,
+    # no effect on any other example that links M2Radio.
+    get_target_property(_acidbt_lf acid_box.elf LINK_FLAGS)
+    string(REGEX MATCH "-T([^ ]*imxrt1176[.]ld)" _acidbt_ignore "${_acidbt_lf}")
+    set(_acidbt_coreld "${CMAKE_MATCH_1}")
+    if(_acidbt_coreld AND EXISTS "${_acidbt_coreld}")
+        file(READ "${_acidbt_coreld}" _acidbt_ld)
+        string(REPLACE "*libLVGL_flash.a:(.text*)"
+                       "*libLVGL_flash.a:(.text*)
+		*libM2Radio*.a:(.text* .fastrun)"
+                       _acidbt_ld "${_acidbt_ld}")
+        file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/acid_box_bt.ld" "${_acidbt_ld}")
+        string(REPLACE "${_acidbt_coreld}"
+                       "${CMAKE_CURRENT_BINARY_DIR}/acid_box_bt.ld" _acidbt_lf "${_acidbt_lf}")
+        set_target_properties(acid_box.elf PROPERTIES LINK_FLAGS "${_acidbt_lf}")
+    else()
+        message(WARNING "M2_BT_OUT: could not find the core imxrt1176.ld in LINK_FLAGS to derive the BT linker script; ITCM may overflow")
+    endif()
 endif()
 
 # SynthUI, LVGL and CMSIS-DSP are plain CMake static-lib targets (no `.o`

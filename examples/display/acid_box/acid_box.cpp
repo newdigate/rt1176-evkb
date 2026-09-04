@@ -28,6 +28,16 @@
 // in its include list and control_wm8962.h is not, so the WM8962 header must be
 // named explicitly, exactly as acid_bass_test and audiooutput_i2s_test do.
 #include "control_wm8962.h"
+#if defined(M2_BT_OUT)
+#include <HardwareSerial.h>
+#include <Hci.h>
+#include <HciEvents.h>
+#include <HciTransport.h>
+#include <HciPump.h>
+#include <BtFwLoader.h>
+#include <A2dpSource.h>
+#include "AudioOutputBluetooth.h"
+#endif
 #include <Wire.h>                 // Wire2 = LPI2C5: codec AND touch controller
 #include "Display.h"
 #include "gt911.h"
@@ -45,6 +55,240 @@ extern "C" {
 
 // rt1176-only example: LPUART1 console, which the imxrt1176 core names Serial1.
 #define CONSOLE Serial1
+
+#if defined(M2_BT_OUT)
+// =============================================================================
+// Bluetooth A2DP output (M2_BT_OUT) -- preamble.
+//
+// Board power-up, BT UART firmware download, HCI Reset and identity are COPIED
+// VERBATIM from examples/audio/bt_tone_test/bt_tone_test.cpp (itself copied
+// from m2_hci_probe.cpp) -- that sequence is proven on silicon; see BT-3 phase
+// 4 in the M.2 Bluetooth programme notes.  Keep the two files in step for this
+// shared portion.
+//
+// ★ ONE RENAME FROM THE SOURCE: bt_tone_test.cpp names its HciPump object
+// `pump`, which collides with acid_box's own `IntervalTimer pump` (the
+// note-event pump declared after the audio graph below) -- so the HciPump
+// object here is `btPump` instead.  Every other identifier is unchanged.
+// =============================================================================
+
+// --- the Bluetooth transport: same objects as m2_hci_probe -----------------
+static HciTransport hciIo(Serial2);
+static Hci hci(hciIo);
+static HciPump btPump;
+static BtFwLoader btLoader(hciIo);
+static BtFwLoader::Error s_btFwSt = BtFwLoader::NO_IMAGE;
+static Hci::Error s_hciSt = Hci::TIMEOUT;     // outcome of the Reset step
+
+#if defined(HAVE_IW416_BT_FW)
+extern const uint8_t  iw416_bt_fw[];
+extern const uint32_t iw416_bt_fw_len;
+#endif
+
+// --- board preamble -- copied from m2_hci_probe.cpp (and m2_uap_probe / WiFi.cpp);
+// keep in step.  Release SDIO_RST (GPIO_AD_16 = GPIO9.15) then WL_RST/PDn
+// (GPIO_AD_31 = GPIO9.30, reaching PDn via the hand-bridged R404), with the 1 s
+// ROM-boot wait PDn requires.  Without it the card stays in power-down.  This
+// step powers up BOTH radios on the module; the BT core is then brought up
+// independently over the UART (btFirmwareDownload() below) -- no SDIO/Wi-Fi
+// work is needed for Bluetooth, so this example does not link SdioHost/Iw416.
+#define M2_SDIO_RST_MUX (*(volatile uint32_t *)0x400E814Cu)   // GPIO_AD_16
+#define M2_WL_RST_MUX   (*(volatile uint32_t *)0x400E8188u)   // GPIO_AD_31
+#define M2_SDIO_RST_BIT 15
+#define M2_WL_RST_BIT   30
+#define M2_RST_GDIR     GPIO9_GDIR
+#define M2_RST_SET      GPIO9_DR_SET
+#define M2_RST_CLEAR    GPIO9_DR_CLEAR
+#define M2_RST_PSR      GPIO9_PSR
+#define M2_RST_ALT      0xAu
+
+static void m2ReleaseWifiReset() {
+    M2_SDIO_RST_MUX = 0x10u | M2_RST_ALT;           // SION | GPIO alternate
+    M2_WL_RST_MUX   = 0x10u | M2_RST_ALT;
+    M2_RST_GDIR |= (1u << M2_SDIO_RST_BIT) | (1u << M2_WL_RST_BIT);
+    M2_RST_CLEAR = (1u << M2_SDIO_RST_BIT) | (1u << M2_WL_RST_BIT);
+    delay(10);
+    M2_RST_SET = (1u << M2_SDIO_RST_BIT);           // SDIO_RST high
+    delay(100);
+    M2_RST_SET = (1u << M2_WL_RST_BIT);             // then WL_RST / PDn high
+    delay(1000);                                    // PDn exit needs ROM boot time
+}
+
+// --- HCI opcodes (Core 5.2 Vol 4 Part E 7.x) --------------------------------
+static const uint16_t OP_RESET            = 0x0C03;
+static const uint16_t OP_READ_LOCAL_VER   = 0x1001;
+static const uint16_t OP_READ_BUFFER_SIZE = 0x1005;
+static const uint16_t OP_READ_BD_ADDR     = 0x1009;
+
+static void printHex8(uint8_t v)   { if (v < 0x10) CONSOLE.print('0'); CONSOLE.print(v, HEX); }
+static void printHex16(uint16_t v) { printHex8((uint8_t)(v >> 8)); printHex8((uint8_t)v); }
+static void printBd(const uint8_t *bd) { char s[18]; hciFormatBd(bd, s); CONSOLE.print(s); }
+
+// Counters are cumulative across begin() -- see m2_hci_probe.cpp for why.
+static uint32_t s_toBase = 0, s_frBase = 0, s_stBase = 0, s_qfBase = 0, s_lateBase = 0;
+static void hciCountersFold() {
+    s_toBase   += hci.timeouts();
+    s_frBase   += hci.framing();
+    s_stBase   += hci.starved();
+    s_qfBase   += hci.queueFull();
+    s_lateBase += hci.late();
+}
+static void printCounters() {
+    CONSOLE.print(" timeouts="); CONSOLE.print(s_toBase   + hci.timeouts());
+    CONSOLE.print(" framing=");  CONSOLE.print(s_frBase   + hci.framing());
+    CONSOLE.print(" starved=");  CONSOLE.print(s_stBase   + hci.starved());
+    CONSOLE.print(" qfull=");    CONSOLE.print(s_qfBase   + hci.queueFull());
+    CONSOLE.print(" late=");     CONSOLE.print(s_lateBase + hci.late());
+}
+static void printFail(const char *what, Hci::Error e, const Hci::Reply &r, const char *alt) {
+    CONSOLE.print(what); CONSOLE.print("=fail reason=");
+    CONSOLE.print(e == Hci::OK ? alt : Hci::errorName(e));
+    CONSOLE.print(" status=0x"); printHex8(r.status);
+    printCounters(); CONSOLE.println();
+}
+static void idleMs() { delay(1); }   // yield() inside delay() services the HciPump-attached EventResponder
+
+// L2cap::begin()'s aclCredits argument -- the Total_Num_ACL_Data_Packets field
+// from Read_Buffer_Size, captured below in probeIdentity().
+static uint8_t s_aclNum = 0;
+
+// --- identity ---------------------------------------------------------------
+static void probeIdentity() {
+    Hci::Reply r;
+    Hci::Error e = hci.run(OP_READ_LOCAL_VER, nullptr, 0, &r, 1000, idleMs);
+    if (e == Hci::OK && r.len >= 8) {
+        CONSOLE.print("hci_version: hci_ver="); CONSOLE.print(r.params[0]);
+        CONSOLE.print(" hci_rev=0x");     printHex16((uint16_t)(r.params[1] | (r.params[2] << 8)));
+        CONSOLE.print(" lmp_ver=");       CONSOLE.print(r.params[3]);
+        CONSOLE.print(" manufacturer=0x"); printHex16((uint16_t)(r.params[4] | (r.params[5] << 8)));
+        CONSOLE.print(" lmp_subver=0x");  printHex16((uint16_t)(r.params[6] | (r.params[7] << 8)));
+        CONSOLE.println();
+    } else printFail("hci_version", e, r, "short_reply");
+
+    e = hci.run(OP_READ_BD_ADDR, nullptr, 0, &r, 1000, idleMs);
+    if (e == Hci::OK && r.len >= 6) { CONSOLE.print("bd_addr="); printBd(r.params); CONSOLE.println(); }
+    else printFail("bd_addr", e, r, "short_reply");
+
+    e = hci.run(OP_READ_BUFFER_SIZE, nullptr, 0, &r, 1000, idleMs);
+    if (e == Hci::OK && r.len >= 7) {
+        uint16_t aclLen = (uint16_t)(r.params[0] | (r.params[1] << 8));
+        uint16_t aclNum = (uint16_t)(r.params[3] | (r.params[4] << 8));
+        CONSOLE.print("hci_buffer: acl_len="); CONSOLE.print(aclLen);
+        CONSOLE.print(" acl_num="); CONSOLE.print(aclNum);
+        CONSOLE.print(" sco_len="); CONSOLE.print(r.params[2]);
+        CONSOLE.print(" sco_num="); CONSOLE.println(r.params[5] | (r.params[6] << 8));
+        hci.setAclMax(aclLen);
+        s_aclNum = (uint8_t)(aclNum > 255 ? 255 : aclNum);
+    } else printFail("hci_buffer", e, r, "short_reply");
+}
+
+#if defined(M2_BT_FAST_BAUD)
+static const uint16_t OP_VS_SET_BAUD = 0xFC09;
+// Phase 0: vendor set-baud (uint32 LE), then re-baud the port and re-validate
+// with a fresh Reset + identity.  Copied from m2_hci_probe.cpp's probeFastBaud().
+static void probeFastBaud() {
+    uint32_t rate = M2_BT_FAST_BAUD;
+    uint8_t cmd[8] = { 0x01, (uint8_t)(OP_VS_SET_BAUD & 0xFF), (uint8_t)(OP_VS_SET_BAUD >> 8), 4,
+                       (uint8_t)rate, (uint8_t)(rate >> 8), (uint8_t)(rate >> 16), (uint8_t)(rate >> 24) };
+    hciIo.write(cmd, sizeof cmd);
+    hciIo.rebaud(rate);                                   // end() drains the 8 bytes at 115200, then rewrites BAUD
+    hciCountersFold(); hci.begin();                        // fresh HCI state at the new rate
+    delay(20);                                             // let the controller finish switching its own UART
+    Hci::Reply r;
+    Hci::Error e = hci.run(OP_RESET, nullptr, 0, &r, 1000, idleMs);
+    if (e != Hci::OK) {
+        CONSOLE.print("bt_baud_switch=fail rate="); CONSOLE.print(rate);
+        CONSOLE.print(" reason="); CONSOLE.println(Hci::errorName(e));
+        hciIo.rebaud(115200);
+        hciCountersFold(); hci.begin();
+        CONSOLE.println("bt_baud_switch=reverted rate=115200");
+        return;
+    }
+    CONSOLE.print("bt_baud_switch=ok rate="); CONSOLE.println(rate);
+    probeIdentity();
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// Assert the card's CTS input, so it is permanently CLEAR TO SEND.  Copied
+// from m2_hci_probe.cpp -- see that file for the full rationale (required for
+// HCI to answer on the Murata 1XK / IW416; holds the 1G ENET PHY in reset).
+// GPIO_DISP_B2_13: mux 0x400E8248, pad 0x400E848C, ALT5 = GPIO5_IO14.
+#define M2_BT_CTS_MUX (*(volatile uint32_t *)0x400E8248u)
+#define M2_BT_CTS_PAD (*(volatile uint32_t *)0x400E848Cu)
+#define M2_BT_CTS_BIT 14
+#define M2_BT_CTS_GDIR   GPIO5_GDIR
+#define M2_BT_CTS_CLEAR  GPIO5_DR_CLEAR
+#define M2_BT_CTS_GPIO_ALT 0x5u
+
+// Wake the controller from BOOT SLEEP -- NXP's uart_fw_download() step, run
+// before the image goes across.  Copied from m2_hci_probe.cpp.  A 10 ms LOW
+// pulse on GPIO_DISP_B2_13, mux returned to LPUART2_RTS_B afterwards.
+static void m2WakeFromBootSleep() {
+    M2_BT_CTS_MUX = M2_BT_CTS_GPIO_ALT;         // the GPIO alternate (no SION)
+    M2_BT_CTS_PAD = 0x02u;                      // NXP's pad config for this pin
+    M2_BT_CTS_GDIR |= (1u << M2_BT_CTS_BIT);    // output
+    M2_BT_CTS_CLEAR = (1u << M2_BT_CTS_BIT);    // drive LOW
+    delay(10);                                  // NXP hold 10 ms
+    M2_BT_CTS_MUX = 0x3u;                       // revert: ALT3 = LPUART2_RTS_B
+    M2_BT_CTS_PAD = 0x02u;
+}
+
+static void m2AssertBtCts() {
+    M2_BT_CTS_MUX = 0x10u | M2_BT_CTS_GPIO_ALT; // SION | the GPIO alternate
+    M2_BT_CTS_PAD = 0x0Cu;                      // no pull; we drive it
+    M2_BT_CTS_GDIR |= (1u << M2_BT_CTS_BIT);    // output
+    M2_BT_CTS_CLEAR = (1u << M2_BT_CTS_BIT);    // LOW = asserted = clear to send
+}
+
+// Dump whatever Serial2 receives in the next `ms`, as HEX.  Copied from
+// m2_hci_probe.cpp -- used only on the combo-over-SDIO (M2_BT_NO_UART_DNLD) path.
+static void m2DumpSerial2(const char *label, uint32_t ms) {
+    uint8_t buf[64]; uint32_t n = 0; const uint32_t t0 = millis();
+    while (millis() - t0 < ms) {
+        while (Serial2.available()) { int c = Serial2.read(); if (n < sizeof buf) buf[n] = (uint8_t)c; n++; }
+        delay(1);
+    }
+    const uint32_t kept = n < sizeof buf ? n : (uint32_t)sizeof buf;
+    CONSOLE.print(label); CONSOLE.print(" n="); CONSOLE.print(n); CONSOLE.print(" hex=");
+    if (!kept) CONSOLE.print("none");
+    else for (uint32_t i = 0; i < kept; i++) printHex8(buf[i]);
+    CONSOLE.println();
+}
+
+// The BT-only UART firmware download.  Called immediately after the card is
+// powered up and BEFORE any HCI work.  Copied from m2_hci_probe.cpp's
+// btFirmwareDownload(), trimmed of the SDIO-combo diagnostic hex dumps that
+// example runs (bt_post_dnld/bt_raw_reset probes) -- not needed here since
+// this example never touches SDIO.
+static void btFirmwareDownload() {
+#if defined(M2_BT_NO_UART_DNLD)
+    CONSOLE.println("bt_fw_source=combo_over_sdio");
+    CONSOLE.println("bt_fw_download=skipped (combo-over-SDIO path)");
+    m2DumpSerial2("bt_uart_preboot:", 300);
+    s_btFwSt = BtFwLoader::NO_IMAGE;
+#else
+#if defined(HAVE_IW416_BT_FW)
+    btLoader.setImage(iw416_bt_fw, iw416_bt_fw_len);
+    s_btFwSt = btLoader.run(3000, 500, 30000, idleMs);
+#if defined(BT_FW_IS_SYNTHETIC)
+    CONSOLE.println("bt_fw_source=synthetic");
+#else
+    CONSOLE.println("bt_fw_source=nxp");
+#endif
+    CONSOLE.print("bt_fw_download=");
+    CONSOLE.print(BtFwLoader::errorName(s_btFwSt));
+    CONSOLE.print(" chip_id=0x");   printHex16(btLoader.chipId());
+    CONSOLE.print(" start_inds=");  CONSOLE.print(btLoader.startInds());
+    CONSOLE.print(" sent=");        CONSOLE.print(btLoader.bytesSent());
+    CONSOLE.print("/");             CONSOLE.println(iw416_bt_fw_len);
+#else
+    CONSOLE.println("bt_fw_source=none");
+    CONSOLE.println("bt_fw_download=skipped (no image compiled in)");
+#endif
+#endif
+}
+#endif // M2_BT_OUT
 
 /* GC355 working pool -- synthui_knob_test's siting and reasoning verbatim:
  * EXTMEM (SDRAM), not DMAMEM (a 2 MB pool overflows the 512K OCRAM at link
@@ -73,6 +317,23 @@ AudioControlWM8962  wm;
 AudioConnection     cRms(acid, 0, rms, 0);
 AudioConnection     cL(acid, 0, out, 0);
 AudioConnection     cR(acid, 0, out, 1);
+
+#if defined(M2_BT_OUT)
+// A second sink on the same voice: the local WM8962 path above and this one
+// both read `acid` every block, so the headset plays exactly what the
+// speaker/line-out plays.  AudioOutputBluetooth is externally clocked here
+// (setSelfClock(false) in setup()) -- the I2S SAI ISR already walks the graph
+// via AudioOutputI2S `out`'s DMA completion, so btout.poll() only drains.
+static A2dpSource        src(hci, hciIo);
+static AudioOutputBluetooth btout;
+static AudioConnection   cBtL(acid, 0, btout, 0);
+static AudioConnection   cBtR(acid, 0, btout, 1);   // mono acid duplicated to L+R
+static uint32_t nowMs() { return millis(); }
+static void btLog(void *, const char *s) { CONSOLE.println(s); }
+static void onEvt(void *, uint8_t c, const uint8_t *p, uint8_t l) { src.onEvent(c, p, l); }
+static void onAclThunk(void *, uint16_t h, const uint8_t *d, uint16_t l) { src.onAcl(h, d, l); }
+static bool s_btBegun = false;
+#endif
 
 /* --- the preset: a classic 16-step acid line (A minor-ish), documented so
  * the first frame and the audio windows are deterministic.  note 0 = rest. */
@@ -734,10 +995,78 @@ void setup()
                    (unsigned long)lvgl_mipi_panel_vsync_timeouts());
     diag_mark();               /* setup() COMPLETE */
     CONSOLE.println("ACIDBOX_DONE");
+
+#if defined(M2_BT_OUT)
+    // Bring up Bluetooth AFTER the panel/codec/touch are live: the local WM8962
+    // audio already plays and the SynthUI is on screen during the ~30 s connect.
+    hciIo.begin(115200);
+    m2ReleaseWifiReset();
+#if defined(M2_BT_WAKE_PULSE)
+    m2WakeFromBootSleep();
+#endif
+#if defined(M2_BT_RTS_FLOW)
+    Serial2.attachRts((uint8_t)M2_BT_RTS_WATER);
+#endif
+    btFirmwareDownload();
+    hci.begin();
+    btPump.attach(hci);
+    Hci::Reply r;
+    for (uint8_t a = 1; a <= 10; a++) { s_hciSt = hci.run(OP_RESET, nullptr, 0, &r, 500, idleMs); if (s_hciSt == Hci::OK) break; }
+    if (s_hciSt == Hci::OK) {
+        CONSOLE.println("bt_hci_reset=ok");
+        probeIdentity();
+#if defined(M2_BT_FAST_BAUD)
+        probeFastBaud();
+#endif
+    } else {
+        CONSOLE.println("bt_hci_reset=fail");
+    }
+    hci.onEvent(onEvt, nullptr);
+    hci.onAcl(onAclThunk, nullptr);
+    src.setLog(btLog, nullptr); src.setPin("1234");
+#if defined(M2_BT_LEGACY_PIN)
+    src.setLegacyPin(true);
+#endif
+#endif
 }
 
 void loop()
 {
+#if defined(M2_BT_OUT)
+    yield();                                   // drives the yield-attached HciPump (parses NCP/credits)
+    src.service();
+    if (s_btBegun) btout.poll();
+    {
+        static uint32_t lastTry = 0;
+        if (!s_btBegun && (lastTry == 0 || millis() - lastTry >= 5000)) {
+            lastTry = millis();
+#if defined(M2_BT_TARGET_NAME)
+            A2dpSource::Result rr = src.connect(M2_BT_TARGET_NAME, s_aclNum, nowMs, idleMs);
+#else
+            A2dpSource::Result rr = src.connect(nullptr, s_aclNum, nowMs, idleMs);
+#endif
+            CONSOLE.print("a2dp_try="); CONSOLE.println(A2dpSource::resultName(rr));
+            if (rr == A2dpSource::OK) {
+                btout.setSelfClock(false);     // the I2S SAI ISR clocks the graph; poll() only drains
+                btout.begin(src);
+                s_btBegun = true;
+                CONSOLE.print("bt_streaming frames_per_pkt="); CONSOLE.print(btout.framesPerPacket());
+                CONSOLE.print(" media_mtu="); CONSOLE.println(src.mediaMtu());
+            }
+        }
+    }
+    {
+        static uint32_t last = 0;
+        if (s_btBegun && millis() - last >= 1000) {
+            last = millis();
+            CONSOLE.print("bt_hb blocks="); CONSOLE.print(btout.blocks());
+            CONSOLE.print(" packets="); CONSOLE.print(btout.packets());
+            CONSOLE.print(" drops="); CONSOLE.print(btout.drops());
+            CONSOLE.print(" hw="); CONSOLE.print(btout.queueHighWater());
+            CONSOLE.print(" audiomax="); CONSOLE.println(AudioMemoryUsageMax());
+        }
+    }
+#endif
 #ifdef ACIDBOX_DIAG
     /* Synthetic play, diagnostic build only.  The shipped contract is BOOT
      * SILENT and this must not be allowed to soften that claim -- so it lives
