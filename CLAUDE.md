@@ -630,7 +630,17 @@ The `drops=0`/`hw=1`/26-fps figures first recorded here were that THROTTLED run 
 `drops=0` only means the packetiser did not drop, NOT that the audio was clean.
 Fix: the trace now SKIPS RTP media (payload `0x80 0x60`); the default build never
 traced. Trace-free: 344 fps, drops=0 for the first ~130 s (minor bursts after),
-audible clean tone. **Never per-packet-console-trace a high-rate BT stream.** Host suites gained `bt/test/sdp_test`
+audible clean tone. **Never per-packet-console-trace a high-rate BT stream.**
+★ **RESIDUAL-DROPS FIX (batch to full packets).** Trace-free, the tone held
+drops=0 for ~130 s then shed ~1.7%. A diagnostic build (per-second rates + min
+ACL credits) showed the cause: at ONE SBC frame per RTP packet we sent ~344
+packets/s against a 7-credit ACL pool, so `credmin` ran to 0 and a brief link
+stall (RF/sink backpressure) overflowed the ring. Fix (`AudioOutputBluetooth::poll`
++ `MediaPacketizer::pending()`): drain only once `framesPerPacket` frames are
+ready (or a short flush deadline), so packets carry ~5 frames and the rate falls
+to ~69 packets/s — 5× less credit churn. **Silicon: 344→69 packets/s, ring
+high-water 7→5 steady, drops=0 over 6+ minutes, clean tone (user-confirmed).**
+M2Radio `d982236`, evkb pin bumped. Host suites gained `bt/test/sdp_test`
 (37) and `bt/test/btlink_test` (23); l2cap 45 / avdtp 55.
 ★ **Bench note added to the flash lessons**: on this session the `LinkServer run`
 CONNECT hung repeatedly while `flash load`/`verify`/`gdbserver` connected fine —
