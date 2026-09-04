@@ -1,0 +1,94 @@
+bt_tone_test -- silicon transcript (MIMXRT1170-EVKB + IW416 M.2)
+===============================================================
+Two peers, one image family (BT-3 / NEW-9 headset AVDTP DISCOVER fix, 2026-09-04):
+  * ESP32 sink 'EVKB-SINK'  -- legacy PIN, no-regression control
+  * Shokz 'OpenMove by Shokz' -- SSP, the headset acceptance (clean audio)
+
+M2Radio commits 9e804d2..eb1c8b5 (L2CAP MTU option + 5 channels; Avdtp
+GetAllCapabilities + SEP-walk + delay reporting + DelayReport-accept; Sdp
+server; BtLink paging/credit-reclaim + disconnect).  build-trace flags:
+  -DM2_BT_UART_DNLD=ON -DM2_BT_WAKE_PULSE=ON -DM2_BT_RTS_FLOW=ON
+  -DM2_BT_FAST_BAUD=ON -DM2_BT_FAST_BAUD_RATE=3000000 -DM2_BT_LEGACY_PIN=OFF
+  -DM2_BT_TARGET_NAME=Shokz -DM2_BT_CONNECT_RETRY=ON -DM2_BT_ACL_TRACE=ON
+  -DM2RADIO_IW416_BT_FW=.../IW416/uartIW416_bt.bin.inc
+
+================================================================
+SHOKZ (OpenMove by Shokz, C0:86:B3:31:29:2F) -- AVDTP STREAMING, clean audio
+================================================================
+-- boot + bring-up --
+inquiry_complete: n=1
+inq_name: bd=88:13:BF:58:86:9E status=0x00 name="EVKB-SINK"
+connect=fail reason=no_inquiry_hit
+a2dp_try=connect_failed
+hb streaming=0 blocks=0 packets=0 drops=0 hw=0 n=0
+inquiry=started
+  ... (two retries while the Shokz was not yet discoverable) ...
+inq_name: bd=C0:86:B3:31:29:2F status=0x00 name="OpenMove by Shokz"
+connect: target=C0:86:B3:31:29:2F name="OpenMove by Shokz"
+connect=ok handle=0x0001 attempt=1
+link_key_req: bd=C0:86:B3:31:29:2F -> neg_reply (no stored key)
+io_cap_req: bd=C0:86:B3:31:29:2F -> NoInputNoOutput auth_req=0x04
+user_conf_req: bd=C0:86:B3:31:29:2F numeric=15130 -> accept (Just Works)
+auth_complete: status=0x00 handle=0x0001
+pairing=ok auth=ok link_key=stored
+encryption_change: status=0x00 handle=0x0001 enabled=1
+connect_secure=ok encryption=on paired_by=ssp
+a2dp_try=ok
+streaming frames_per_pkt=5 media_mtu=895
+inq_name: bd=C0:86:B3:31:29:2F status=0x00 name="OpenMove by Shokz"
+connect: target=C0:86:B3:31:29:2F name="OpenMove by Shokz"
+connect=ok handle=0x0001 attempt=1
+link_key_req: bd=C0:86:B3:31:29:2F -> neg_reply (no stored key)
+io_cap_req: bd=C0:86:B3:31:29:2F -> NoInputNoOutput auth_req=0x04
+user_conf_req: bd=C0:86:B3:31:29:2F numeric=780537 -> accept (Just Works)
+auth_complete: status=0x00 handle=0x0001
+pairing=ok auth=ok link_key=stored
+
+-- AVDTP signalling (decoded from M2_BT_ACL_TRACE; the three headset fixes) --
+  our SDP query of the Shokz AudioSink, then its reverse query of OUR AudioSource:
+    out 06 00 01 00 0D 35 03 19 11 0B 03 F0 35 ...   (SDP ServiceSearchAttr, AudioSink 0x110B)
+    in  06 00 01 00 0D ...                           (Shokz queries our AudioSource)
+    out 07 00 01 00 14 00 11 35 0F 35 0D 09 00 09 35 08 35 06 19 11 0D 09 01 03 00  (our SDP server answers)
+  L2CAP CONFIG_REQ carries the MTU option (the fix; Mac's value 1004):
+    out 04 13 08 00 C1 02 00 00 01 02 EC 03          (CONFIG_REQ, MTU 0x03EC=1004)
+    in  05 13 0E 00 41 00 00 00 00 00 01 02 EC 03 .. (Shokz CONFIG_RSP accepts)
+  DISCOVER, then GetAllCapabilities per SEP in the Shokz's list order (MPEG first):
+    out 10 01                                        (DISCOVER)
+    in  12 01 08 08 04 08                            (accept: SEID 2 then SEID 1, both audio SNK)
+    out 20 0C 08                                     (GET_ALL_CAPABILITIES SEID 2)
+    in  22 0C 01 00 07 06 00 01 3F 3F FF FE 04 02 .. (SEID 2 = MPEG-1,2 -- NOT SBC)
+    out 30 0C 04                                     (GET_ALL_CAPABILITIES SEID 1 -- walked on)
+    in  32 0C 01 00 07 06 00 00 FF FF 02 35 04 02 .. (SEID 1 = SBC, delay reporting 0x04)
+  SET_CONFIGURATION for SEID 1 with the SBC calibration CIE + Delay Reporting:
+    out 40 03 04 04 01 00 07 06 00 00 21 15 02 35 08 00   (CIE 21 15 02 35, category 08 = delay report)
+    in  42 03                                        (accept)
+  the Shokz sends its own DelayReport; we accept it (the fix), then OPEN/START:
+    in  10 0D 04 07 D0                               (DelayReport 0x07D0 = 200.0 ms)
+    out 12 0D                                        (our DelayReport ACCEPT)
+    out 50 06 04 / in 52 06                          (OPEN / accept)
+    out 60 07 04 / in 62 07                          (START / accept)
+
+-- streaming: blocks == packets, drops=0, ring never backs up (hw=1) --
+hb streaming=0 blocks=0 packets=0 drops=0 hw=0 n=0
+hb streaming=1 blocks=438 packets=438 drops=0 hw=1 n=17
+hb streaming=1 blocks=958 packets=958 drops=0 hw=1 n=37
+hb streaming=1 blocks=1477 packets=1477 drops=0 hw=1 n=57
+hb streaming=1 blocks=1997 packets=1997 drops=0 hw=1 n=77
+hb streaming=1 blocks=2517 packets=2517 drops=0 hw=1 n=97
+hb streaming=1 blocks=3037 packets=3037 drops=0 hw=1 n=117
+hb streaming=1 blocks=3557 packets=3557 drops=0 hw=1 n=137
+  LAST: hb streaming=1 blocks=3713 packets=3713 drops=0 hw=1 n=143
+  (contrast ESP32 sink below: ~96% drops, hw=64 -- throughput-limited, not a stack fault)
+
+================================================================
+ESP32 SINK (EVKB-SINK, 88:13:BF:58:86:9E) -- no-regression control (legacy PIN)
+================================================================
+page_timeout: st=ok status=0x00 slots=0x2000
+connect=ok handle=0x0001 attempt=1
+connect_secure=ok encryption=on paired_by=pin
+a2dp_try=ok
+streaming frames_per_pkt=5 media_mtu=1008
+  reaches STREAMING through the same new negotiation; media then throughput-limited:
+hb streaming=1 blocks=37905 packets=2966 drops=29601 hw=64 n=110
+hb streaming=1 blocks=38250 packets=2966 drops=29946 hw=64 n=111
+hb streaming=1 blocks=38595 packets=2966 drops=30291 hw=64 n=112
