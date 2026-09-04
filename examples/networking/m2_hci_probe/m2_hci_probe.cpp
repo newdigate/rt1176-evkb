@@ -51,6 +51,7 @@
 #if defined(M2_BT_CONNECT)
 #include <L2cap.h>
 #include <BtLink.h>
+#include <SdpServer.h>
 #include <Sdp.h>
 #include <Avdtp.h>
 #endif
@@ -363,6 +364,7 @@ static volatile bool s_nameDone = false;
 static L2cap  l2(hciIo);
 static BtLink link(hci);
 static Avdtp  avdtp;
+static SdpServer sdpServer;   // answers the peer's SDP queries of US (both headsets make one on AVDTP contact)
 
 static uint32_t nowMs() { return millis(); }
 static void btLog(void *, const char *s) { CONSOLE.println(s); }
@@ -380,6 +382,7 @@ static int         s_p2avdtp = -1;
 static uint16_t    s_p2mtu   = 0;
 
 static void onL2capData(void *, L2cap::Channel &ch, const uint8_t *payload, uint16_t len) {
+    if (sdpServer.onData(ch, payload, len)) return;        // the PEER's SDP query on its own channel: answered from the main loop
     if (ch.psm == Avdtp::PSM && ch.localCid == 0x0041) {   // signalling channel only -- the media
         avdtp.onSignalling(payload, len);                  // channel (0x0042) shares this PSM
     } else if (ch.psm == Sdp::PSM) {
@@ -675,13 +678,13 @@ static void probeConnect() {
     // B6: SDP -> AVDTP version (informational -- a failure here must not abort B7)
     L2cap::Channel *sdp = l2.connect(Sdp::PSM, 0x0040);
     uint32_t t0 = millis();
-    if (sdp) while (sdp->state != L2cap::OPEN && millis() - t0 < 5000) { l2.service(); delay(10); }
+    if (sdp) while (sdp->state != L2cap::OPEN && millis() - t0 < 5000) { sdpServer.service(l2); l2.service(); delay(10); }
     if (sdp && sdp->state == L2cap::OPEN) {
         uint8_t q[18];
         l2.send(sdp->remoteCid, q, Sdp::buildAudioSinkPdlRequest(q, 1));
         s_sdpDone = false;
         t0 = millis();
-        while (!s_sdpDone && millis() - t0 < 5000) { l2.service(); delay(10); }
+        while (!s_sdpDone && millis() - t0 < 5000) { sdpServer.service(l2); l2.service(); delay(10); }
     }
     CONSOLE.print("sdp_avdtp_version=0x"); printHex16(s_avdtpVer);
     CONSOLE.println(s_avdtpVer ? " (B6 DONE)" : " (no response)");
@@ -690,7 +693,7 @@ static void probeConnect() {
     L2cap::Channel *sig = l2.connect(Avdtp::PSM, 0x0041);
     if (!sig) { CONSOLE.println("avdtp=fail (no L2CAP channel)"); return; }
     t0 = millis();
-    while (sig->state != L2cap::OPEN && millis() - t0 < 5000) { l2.service(); delay(10); }
+    while (sig->state != L2cap::OPEN && millis() - t0 < 5000) { sdpServer.service(l2); l2.service(); delay(10); }
     if (sig->state != L2cap::OPEN) { CONSOLE.println("avdtp=fail (signalling channel not open)"); return; }
     avdtp.begin(l2, 0x0041, 0x0042);
     Avdtp::SbcConfig want = { 44100, Avdtp::JOINT_STEREO, 16, 8, Avdtp::LOUDNESS, 2, 53 };
@@ -698,7 +701,7 @@ static void probeConnect() {
     t0 = millis();
     Avdtp::State last = Avdtp::IDLE;
     while (avdtp.state() != Avdtp::STREAMING && avdtp.state() != Avdtp::FAILED && millis() - t0 < 15000) {
-        l2.service(); avdtp.service(); delay(10);
+        sdpServer.service(l2); l2.service(); avdtp.service(); delay(10);
         if (avdtp.state() != last) { last = avdtp.state(); CONSOLE.print("avdtp_state="); CONSOLE.println((int)last); }
     }
     s_p2avdtp = (int)avdtp.state(); s_p2mtu = avdtp.mediaMtu();
@@ -708,6 +711,8 @@ static void probeConnect() {
         CONSOLE.print(" bitpool="); CONSOLE.print(avdtp.caps().minBitpool);
         CONSOLE.print(".."); CONSOLE.println(avdtp.caps().maxBitpool);
         CONSOLE.print("avdtp_start=ok media_mtu="); CONSOLE.println(avdtp.mediaMtu());
+        CONSOLE.print("sdp_served="); CONSOLE.print(sdpServer.answered());        // the peer's queries of US, answered
+        CONSOLE.print(" delay_report="); CONSOLE.println(avdtp.peerDelayTenthMs());
         CONSOLE.println("B7 DONE");
     } else {
         CONSOLE.print("avdtp=fail state="); CONSOLE.print((int)avdtp.state());

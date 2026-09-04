@@ -124,8 +124,21 @@ class Peer:
         self.chans = {}
         self.next_cid = 0x0340
         self.avdtp = {"config": None, "opened": False, "started": False, "order": [], "error": False,
-                      "sig_cid": None}    # our (peer-assigned) CID for the FIRST psm=0x0019 channel --
+                      "sig_cid": None,    # our (peer-assigned) CID for the FIRST psm=0x0019 channel --
                                           # AVDTP signalling; any OTHER psm=0x0019 channel is media
+                      # --- the Shokz-shaped behaviours (Mac->Shokz PacketLogger reference, 2026-09-03) ---
+                      "discover_pending": None,   # (handle, cid, tl) of a DISCOVER we are HOLDING until the reverse SDP completes
+                      "delay_cfg": False,          # the host configured Delay Reporting (category 0x08) in SET_CONFIGURATION
+                      "delay_sent": False, "delay_acked": False,   # our DelayReport COMMAND after OPEN, and its ACCEPT
+                      "open_pending": None}        # the OPEN accept we hold until our DelayReport is accepted
+        # The Shokz SDP-queries the SOURCE (AudioSource 0x110A, attribute 0x0009 = its A2DP profile
+        # version) on a channel IT opens, and answers DISCOVER only after that query completes.
+        # This models it: on the host's DISCOVER we open PSM 0x0001 at the host, configure it (MTU 48,
+        # like the Shokz), send the Shokz's exact query, require the Mac's exact reply, disconnect,
+        # and only THEN answer the DISCOVER.  A source with no SDP server hangs at DISCOVERING here
+        # exactly as it did on the bench.
+        self.rev = {"state": "idle", "my_cid": 0x0E85, "their_cid": None, "cfg_req_seen": False, "cfg_rsp_seen": False,
+                    "query_sent": False, "answer": None, "done": False, "handle": None}
         # --- media phase: RTP/SBC validation on the media transport channel ---
         self.media = {"pkts": 0, "frames": 0, "lastseq": None, "seqgaps": 0, "badrtp": 0, "badsbc": 0}
         # --- V3 bootloader state (fwdnld phase only) ---
@@ -198,7 +211,16 @@ class Peer:
             self.send(cmd_complete(opcode, b"\x00"))
         elif opcode == 0x0405:                                              # Create_Connection -> Command Status, Connection Complete
             self.peer_bd = params[:6]
+            self.log.append("PEER-CREATE-CONN role_switch=%d" % params[12])
             self.send(cmd_status(opcode)); self.send(event(0x03, b"\x00" + struct.pack("<H", 0x0001) + params[:6] + b"\x01\x00"), 0.1)
+        elif opcode == 0x0C18:                                              # Write_Page_Timeout -> Command Complete
+            self.log.append("PEER-PAGE-TIMEOUT slots=0x%04x" % struct.unpack("<H", params[:2])[0])
+            self.send(cmd_complete(opcode, b"\x00"))
+        elif opcode == 0x0408:                                              # Create_Connection_Cancel -> CC(status, bd) + Connection Complete 0x02
+            self.send(cmd_complete(opcode, b"\x00" + params[:6]))
+            self.send(event(0x03, b"\x02" + struct.pack("<H", 0x0000) + params[:6] + b"\x01\x00"), 0.05)
+        elif opcode == 0x0406:                                              # Disconnect -> Command Status, Disconnection Complete
+            self.send(cmd_status(opcode)); self.send(event(0x05, b"\x00" + params[:2] + params[2:3]), 0.05)
         elif opcode == 0x0411:                                              # Authentication_Requested: SSP Just Works, all the way to Auth Complete
             self.send(cmd_status(opcode)); bd = self.peer_bd
             self.send(event(0x17, bd), 0.05)                                # Link_Key_Request
@@ -312,15 +334,36 @@ class Peer:
                     self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0001, 0x0000))   # pending first, like the Shokz
                     self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0000, 0x0000))
                     self.sig(handle, bytes([0x04, ident + 1, 8, 0]) + struct.pack("<HH", scid, 0) + bytes([0x01, 0x02, 0xA0, 0x02]))  # our Config Request: MTU 672
+                elif code == 0x03:                                               # Connection Response to OUR reverse Connection Request
+                    dcid, scid, result, status = struct.unpack("<HHHH", body[:8])
+                    if scid != self.rev["my_cid"]: self.log.append("PEER-L2CAP-CONNRSP-UNKNOWN-SCID 0x%04x" % scid); return
+                    if result == 0x0001: return                                  # pending: wait for the final one
+                    if result != 0: self.log.append("PEER-REV-CONN-REFUSED result=0x%04x" % result); self.rev["state"] = "failed"; return
+                    self.rev["their_cid"] = dcid; self.rev["state"] = "config"
+                    self.chans[dcid] = (self.rev["my_cid"], 0x0001)              # keyed by the HOST's cid, like every other channel
+                    self.sig(handle, bytes([0x04, 0x0A, 8, 0]) + struct.pack("<HH", dcid, 0) + bytes([0x01, 0x02, 0x30, 0x00]))   # our Config Request: MTU 48 (the Shokz's)
                 elif code == 0x04:                                               # Config Request for one of OUR endpoints: accept, echo options
                     dcid = struct.unpack("<H", body[:2])[0]
                     peer = [p for p, (o, _) in self.chans.items() if o == dcid]
                     if not peer: self.log.append("PEER-L2CAP-CFG-UNKNOWN-DCID 0x%04x" % dcid); return
                     opts = body[4:]
+                    # ★ Tripwire: the Mac's Config Request to the Shokz carries an MTU option (01 02 EC 03); ours was
+                    # option-less until 2026-09-04 and the Shokz never answered DISCOVER after that exchange.
+                    has_mtu, i = False, 0
+                    while i + 1 < len(opts):
+                        t, ln = opts[i] & 0x7F, opts[i + 1]
+                        if t == 0x01 and ln == 2: has_mtu = True
+                        i += 2 + ln
+                    if not has_mtu: self.log.append("PEER-L2CAP-CFGREQ-NO-MTU dcid=0x%04x" % dcid)
                     self.sig(handle, bytes([0x05, ident, 6 + len(opts), 0]) + struct.pack("<HHH", peer[0], 0, 0) + opts)   # SCID = the host's CID
+                    if dcid == self.rev["my_cid"]: self.rev["cfg_req_seen"] = True; self.rev_maybe_query(handle)
                 elif code == 0x05:                                               # Config Response to ours: check the receiver-side SCID rule
                     scid, flags, result = struct.unpack("<HHH", body[:6])
                     if scid not in [o for (o, _) in self.chans.values()]: self.log.append("PEER-L2CAP-CFGRSP-BAD-SCID 0x%04x" % scid)
+                    if scid == self.rev["my_cid"] and result == 0: self.rev["cfg_rsp_seen"] = True; self.rev_maybe_query(handle)
+                elif code == 0x06:                                               # Disconnection Request from the host: acknowledge
+                    self.sig(handle, bytes([0x07, ident, 4, 0]) + body[:4])
+                elif code == 0x07: pass                                          # Disconnection Response to ours (the reverse SDP channel)
                 elif code == 0x0A:                                               # Information Request: extended features none / fixed channels
                     itype = struct.unpack("<H", body[:2])[0]
                     data = b"\x00\x00\x00\x00" if itype == 2 else (b"\x02" + b"\x00" * 7 if itype == 3 else b"")
@@ -340,23 +383,81 @@ class Peer:
             self.avdtp["error"] = True
     def handle_sdp(self, handle, peer_cid, pl):
         try:
-            if pl[0] != 0x06: return
-            txn = pl[1:3]
-            rsp = bytes.fromhex("07") + txn + bytes.fromhex("001E001B36001836001509000435103506190100090019350619001909010300")  # the PDL seen on the wire: AVDTP 1.3
-            self.send(acl(handle, peer_cid, rsp), 0.02); self.log.append("PEER-SDP-ANSWERED")
+            if pl[0] == 0x06:                                                    # the host's query of OUR AudioSink record
+                txn = pl[1:3]
+                rsp = bytes.fromhex("07") + txn + bytes.fromhex("001E001B36001836001509000435103506190100090019350619001909010300")  # the PDL seen on the wire: AVDTP 1.3
+                self.send(acl(handle, peer_cid, rsp), 0.02); self.log.append("PEER-SDP-ANSWERED")
+            elif peer_cid == self.rev["their_cid"] and self.rev["query_sent"] and self.rev["answer"] is None:
+                # The host's answer to OUR query of ITS AudioSource record.  The Mac answers the Shokz's exact
+                # query with exactly these 25 bytes (one record, attribute 0x0009 = { { A2DP 0x110D, v1.3 } }).
+                self.rev["answer"] = pl
+                expect = bytes.fromhex("07000100140011350f350d0900093508350619110d09010300")
+                if pl == expect: self.log.append("PEER-SDP-SOURCE-RECORD ok")
+                else:            self.log.append("PEER-SDP-SOURCE-RECORD-BAD hex=%s" % pl.hex())
+                # like the Shokz: tear the channel down, THEN answer the DISCOVER we have been holding
+                self.sig(handle, bytes([0x06, 0x0B, 4, 0]) + struct.pack("<HH", peer_cid, self.rev["my_cid"]))
+                self.rev["done"] = True; self.rev["state"] = "done"
+                self.answer_discover()
         except Exception as e:
             self.log.append("PEER-EXCEPTION handle_sdp: %r" % e)
             self.avdtp["error"] = True
+    # --- the reverse SDP query (the Shokz's behaviour) ---
+    def rev_start(self, handle):
+        self.rev["state"] = "connecting"; self.rev["handle"] = handle
+        self.sig(handle, bytes([0x02, 0x0A, 4, 0]) + struct.pack("<HH", 0x0001, self.rev["my_cid"]))   # Connection Request: SDP, our SCID
+    def rev_maybe_query(self, handle):
+        if self.rev["query_sent"] or not (self.rev["cfg_req_seen"] and self.rev["cfg_rsp_seen"]): return
+        self.rev["query_sent"] = True
+        # frame 749 of the reference, verbatim: ServiceSearchAttributeRequest, txn 1, {AudioSource 0x110A}, max 32, {0x0009}
+        self.send(acl(handle, self.rev["their_cid"], bytes.fromhex("060001000d350319110a0020350309000900")), 0.02)
+    def answer_discover(self):
+        if not self.avdtp["discover_pending"]: return
+        h, cid, tl = self.avdtp["discover_pending"]; self.avdtp["discover_pending"] = None
+        # SEID 2 (audio SNK -- our MPEG-1,2 SEP) FIRST, then SEID 1 (audio SNK -- SBC): the Shokz's list order.
+        self.send(acl(h, cid, bytes([tl | 0x02, 0x01, 2 << 2, 0x08, 1 << 2, 0x08])), 0.02)
     def handle_avdtp(self, handle, peer_cid, pl):
         try:
-            hdr, sig = pl[0], pl[1]; tl = hdr & 0xF0; acc = bytes([tl | 0x02]); self.avdtp["order"].append(sig)
-            if sig == 0x01:   self.send(acl(handle, peer_cid, acc + b"\x01" + bytes([1 << 2, 0x08])), 0.02)                         # DISCOVER: SEID 1, audio, SNK
-            elif sig == 0x02: self.send(acl(handle, peer_cid, acc + b"\x02" + b"\x01\x00" + b"\x07\x06\x00\x00\xFF\xFF\x02\x35"), 0.02)  # caps: all, bitpool 2..53
-            elif sig == 0x03:                                                                                                       # SET_CONFIGURATION: record the CIE
+            hdr, sig = pl[0], pl[1]; tl = hdr & 0xF0; acc = bytes([tl | 0x02])
+            if hdr & 0x03:                                                                                                          # a RESPONSE to one of OUR commands
+                if sig == 0x0D and (hdr & 0x03) == 0x02:
+                    self.avdtp["delay_acked"] = True; self.log.append("PEER-AVDTP-DELAYREPORT-ACCEPTED")
+                    if self.avdtp["open_pending"]:                                                                                  # now the OPEN accept the Shokz held back
+                        h, c, a = self.avdtp["open_pending"]; self.avdtp["open_pending"] = None; self.send(acl(h, c, a + b"\x06"), 0.02)
+                elif sig == 0x0D: self.log.append("PEER-AVDTP-DELAYREPORT-REJECTED mt=%d" % (hdr & 0x03))
+                else:             self.log.append("PEER-AVDTP-UNEXPECTED-RSP sig=%d mt=%d" % (sig, hdr & 0x03))
+                return
+            self.avdtp["order"].append(sig)
+            if sig == 0x01:                                                                                                         # DISCOVER: held until our reverse SDP query completes
+                self.avdtp["discover_pending"] = (handle, peer_cid, tl)
+                if self.rev["done"]:             self.answer_discover()
+                elif self.rev["state"] == "idle": self.rev_start(handle)
+            elif sig in (0x02, 0x0C):                                                                                               # GET_CAPABILITIES / GET_ALL_CAPABILITIES for a SEID
+                seid = pl[2] >> 2
+                extra = b"\x04\x02\x02\x00\x08\x00" if sig == 0x0C else b""                                                         # content protection SCMS-T + DELAY REPORTING (0x0C only)
+                if seid == 2:   caps = b"\x01\x00" + b"\x07\x06\x00\x01\x3F\x3F\xFF\xFE" + extra                                  # MPEG-1,2 audio -- the Shokz's SEID 2, NOT SBC
+                elif seid == 1: caps = b"\x01\x00" + b"\x07\x06\x00\x00\xFF\xFF\x02\x35" + extra                                  # SBC: all, bitpool 2..53 -- the Shokz's SEID 1
+                else: self.send(acl(handle, peer_cid, bytes([tl | 0x03, sig, 0x12])), 0.02); return                                # BAD_ACP_SEID
+                self.send(acl(handle, peer_cid, acc + bytes([sig]) + caps), 0.02)
+            elif sig == 0x03:                                                                                                       # SET_CONFIGURATION: record the CIE, the SEID and the categories
+                acp = pl[2] >> 2
                 self.avdtp["config"] = pl[10:14] if len(pl) >= 14 else b""
-                self.log.append("PEER-SET-CONFIG cie=%s" % self.avdtp["config"].hex())
+                cats, i = [], 4
+                while i + 1 < len(pl): cats.append(pl[i]); i += 2 + pl[i + 1]
+                self.avdtp["delay_cfg"] = 0x08 in cats
+                self.log.append("PEER-SET-CONFIG cie=%s acp_seid=%d delay_reporting=%d" % (self.avdtp["config"].hex(), acp, 1 if self.avdtp["delay_cfg"] else 0))
+                if acp != 1:                                                                                                        # only SEID 1 is SBC: configuring SEID 2 with an SBC CIE is wrong
+                    self.log.append("PEER-AVDTP-SETCONFIG-WRONG-SEID %d" % acp)
+                    self.send(acl(handle, peer_cid, bytes([tl | 0x03, 0x03, 0x00, 0x12])), 0.02); return
                 self.send(acl(handle, peer_cid, acc + b"\x03"), 0.02)
-            elif sig == 0x06: self.avdtp["opened"] = True; self.send(acl(handle, peer_cid, acc + b"\x06"), 0.02)                    # OPEN
+            elif sig == 0x06:                                                                                                       # OPEN
+                self.avdtp["opened"] = True
+                if self.avdtp["delay_cfg"]:
+                    # like the Shokz (frames 816/818/827): send OUR DelayReport COMMAND (tl 1, 200.0 ms) first and hold
+                    # the OPEN accept until the host ACCEPTS it -- a host that ignores DelayReport hangs at OPENING.
+                    self.avdtp["open_pending"] = (handle, peer_cid, acc); self.avdtp["delay_sent"] = True
+                    self.send(acl(handle, peer_cid, bytes([0x10, 0x0D, 2 << 2, 0x07, 0xD0])), 0.02)
+                else:
+                    self.send(acl(handle, peer_cid, acc + b"\x06"), 0.02)
             elif sig == 0x07:                                                                                                       # START: only legal after OPEN
                 if not self.avdtp["opened"]: self.log.append("PEER-AVDTP-START-BEFORE-OPEN"); self.send(acl(handle, peer_cid, bytes([tl | 0x03, 0x07, 1 << 2, 0x31])), 0.02); return  # 0x31 = bad state
                 self.avdtp["started"] = True; self.log.append("PEER-AVDTP-STARTED"); self.send(acl(handle, peer_cid, acc + b"\x07"), 0.02)
@@ -442,6 +543,11 @@ if __name__ == "__main__":
         print("PEER-BOOT ok=%d acks=%d chunks=%d err=%s"
               % (1 if peer.boot_ok else 0, peer.boot_acks, peer.boot_step,
                  peer.boot_err if peer.boot_err else "none"))
+    if phase in ("avdtp", "media"):
+        # Name each held-back stage the Shokz model would leave the host stuck in, so a gate fails by cause.
+        if peer.rev["query_sent"] and peer.rev["answer"] is None:                print("PEER-SDP-QUERY-UNANSWERED")
+        if peer.avdtp["discover_pending"] and not peer.rev["done"]:              print("PEER-AVDTP-DISCOVER-HELD (reverse SDP never completed)")
+        if peer.avdtp["delay_sent"] and not peer.avdtp["delay_acked"]:           print("PEER-AVDTP-DELAYREPORT-UNANSWERED")
     if phase == "avdtp":
         print("PEER-AVDTP order=%s config=%s"
               % (",".join(str(x) for x in peer.avdtp["order"]),

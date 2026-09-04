@@ -366,7 +366,7 @@ void loop() {
     // and media send stalls after the first credit pool (silicon: packets froze
     // at 43 while blocks/drops climbed). yield() is non-blocking.
     yield();
-    src.l2().service(); src.avdtp().service(); btout.poll();
+    src.service(); btout.poll();      // SdpServer (the peer's SDP queries of us) + L2cap + Avdtp, every pass
 #if defined(M2_BT_CONNECT_RETRY)
     // Bench: retry the one-shot connect until it succeeds (a headset's remote-name
     // step races; the ESP32 sink can hold a stale link across an EVKB reboot).

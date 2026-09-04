@@ -52,6 +52,38 @@
 #       exchange silently swapped"), here on the L2CAP config path instead of
 #       the SDIO RX path.
 #   Confirmed green again after each revert; `git -C M2Radio status` clean.
+#
+# ★ 2026-09-04 -- THE FAKE PEER NOW MODELS THE SHOKZ OPENMOVE, from the Mac->Shokz
+# Apple PacketLogger reference decoded for the headset AVDTP DISCOVER fix
+# (docs/superpowers/handoffs/2026-09-03-headset-avdtp-discover-handoff.md):
+#   * it opens an SDP channel BACK at the host on DISCOVER, configures it (MTU
+#     48), asks the source's A2DP profile version with the Shokz's exact query,
+#     requires the Mac's exact 25-byte reply, disconnects, and only THEN answers
+#     DISCOVER -- a source with no SDP server hangs at DISCOVERING, as on the
+#     bench (PEER-SDP-QUERY-UNANSWERED / PEER-AVDTP-DISCOVER-HELD);
+#   * its DISCOVER reply lists the MPEG SEP (SEID 2) BEFORE the SBC one (SEID 1),
+#     so a host that configures the first audio sink is refused
+#     (PEER-AVDTP-SETCONFIG-WRONG-SEID) -- the host must read each SEP's
+#     GET_ALL_CAPABILITIES (0x0C, order=1,12,12,...) and pick the SBC one;
+#   * SEID 1 advertises Delay Reporting; once the host configures it the peer
+#     sends its own DelayReport COMMAND after OPEN and holds the OPEN accept
+#     until the host ACCEPTS it (PEER-AVDTP-DELAYREPORT-UNANSWERED);
+#   * the host's L2CAP Config Request must carry an MTU option, like the Mac's
+#     (PEER-L2CAP-CFGREQ-NO-MTU).
+# DEMONSTRATED RED 2026-09-04, five mutations of M2Radio/bt, each run against
+# this peer, each failing BY THE NAMED ASSERTION, each reverted (git checkout
+# HEAD -- bt/) and the gate confirmed GREEN again afterwards:
+#   (a) SdpServer never answers               -> "the peer's SDP query of our
+#       AudioSource record was never answered" -- the exact bench symptom
+#       (avdtp_state=1, no DISCOVER reply);
+#   (b) the pre-fix L2cap.cpp (51e982b)        -> "our L2CAP Config Request
+#       carries no MTU option";
+#   (c) Avdtp configures the first SEP without checking its codec ->
+#       "SET_CONFIGURATION targeted the MPEG SEP";
+#   (d) Avdtp asks GET_CAPABILITIES (0x02)     -> "signalling order must be
+#       DISCOVER, GET_ALL_CAPABILITIES ...";
+#   (e) Avdtp ignores the peer's DelayReport   -> "the peer's DelayReport
+#       command was never accepted".
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
@@ -124,6 +156,18 @@ grep -q "RT1176 M.2 HCI probe up" "$OUT" || fail "[avdtp] banner missing"
 # failed two stages later.
 if grep -q "PEER-AVDTP-START-BEFORE-OPEN" "$RES"; then fail "[avdtp] START was sent before OPEN was acknowledged"; fi
 if grep -q "PEER-L2CAP-CFGRSP-BAD-SCID" "$RES"; then fail "[avdtp] our Config Response names the wrong CID"; fi
+# The Shokz-model tripwires (2026-09-04), each naming the stage a real headset left us stuck in:
+if grep -q "PEER-L2CAP-CFGREQ-NO-MTU" "$RES";           then fail "[avdtp] our L2CAP Config Request carries no MTU option (the Mac's does)"; fi
+if grep -q "PEER-SDP-QUERY-UNANSWERED" "$RES";          then fail "[avdtp] the peer's SDP query of our AudioSource record was never answered"; fi
+if grep -q "PEER-SDP-SOURCE-RECORD-BAD" "$RES";         then fail "[avdtp] our AudioSource SDP record does not match the Mac's reply byte for byte"; fi
+if grep -q "PEER-AVDTP-DISCOVER-HELD" "$RES";           then fail "[avdtp] DISCOVER was never answered because the reverse SDP did not complete"; fi
+if grep -q "PEER-AVDTP-SETCONFIG-WRONG-SEID" "$RES";    then fail "[avdtp] SET_CONFIGURATION targeted the MPEG SEP -- the host did not walk the SEP list to the SBC one"; fi
+if grep -q "PEER-AVDTP-DELAYREPORT-UNANSWERED" "$RES";  then fail "[avdtp] the peer's DelayReport command was never accepted (OPEN held back, as the Shokz does)"; fi
+# The signalling ORDER next, before any positive UART check: a host that still asks GET_CAPABILITIES (0x02) is
+# answered (a compliant sink must), gets no delay-reporting category back, and so fails several later checks
+# too -- this one names the actual regression.
+if grep -q "^PEER-AVDTP order=" "$RES" && ! grep "^PEER-AVDTP order=" "$RES" | grep -q "order=1,12,12,3,6,7"; then
+    fail "[avdtp] signalling order must be DISCOVER, GET_ALL_CAPABILITIES (SEID 2, then SEID 1), SET_CONFIGURATION, OPEN, START -- got: $(grep '^PEER-AVDTP order=' "$RES")"; fi
 
 grep -q '^inq_name: bd=AA:BB:CC:DD:EE:01 status=0x00 name="FAKE-HEADSET-01"' "$OUT" || fail "[avdtp] target not found by name"
 grep -q "^secure=ok paired_by=ssp[[:space:]]*$" "$OUT"            || fail "[avdtp] SSP pairing + encryption did not complete"
@@ -132,9 +176,15 @@ grep -q "^avdtp_caps: rates=0x0F modes=0x0F bitpool=2..53" "$OUT" || fail "[avdt
 grep -q "^avdtp_start=ok media_mtu=672" "$OUT"                    || fail "[avdtp] START not accepted / media MTU not negotiated"
 grep -q "^B7 DONE" "$OUT"                                         || fail "[avdtp] probe did not reach B7 DONE"
 
-[ "$PEER_RC" -eq 0 ] || fail "[avdtp] peer exited $PEER_RC"
-grep -q "^PEER-SET-CONFIG cie=21150235" "$RES"                    || fail "[avdtp] our SET_CONFIGURATION bytes are not the calibration config"
-grep -q "^PEER-AVDTP-STARTED" "$RES"                              || fail "[avdtp] the peer never saw an accepted START"
-grep "^PEER-AVDTP" "$RES" | grep -q "order=1,2,3,6,7" || fail "[avdtp] signalling order must be DISCOVER, GET_CAPABILITIES, SET_CONFIGURATION, OPEN, START"
+grep -q "^sdp_served=1 delay_report=2000" "$OUT"                  || fail "[avdtp] the probe did not report serving the peer's SDP query and the 200.0 ms DelayReport"
 
-echo "PASS: AVDTP initiator negotiates the calibration SBC config and reaches START against the fake acceptor, in order, with the SCID rule honoured"
+[ "$PEER_RC" -eq 0 ] || fail "[avdtp] peer exited $PEER_RC"
+grep -q "^PEER-SET-CONFIG cie=21150235 acp_seid=1 delay_reporting=1" "$RES" || fail "[avdtp] our SET_CONFIGURATION must carry the calibration config for SEID 1 WITH delay reporting (the SEP advertised it)"
+grep -q "^PEER-SDP-SOURCE-RECORD ok" "$RES"                       || fail "[avdtp] the peer never read our AudioSource record"
+grep -q "^PEER-AVDTP-DELAYREPORT-ACCEPTED" "$RES"                 || fail "[avdtp] the peer's DelayReport was not accepted"
+grep -q "^PEER-PAGE-TIMEOUT slots=0x2000" "$RES"                  || fail "[avdtp] Write_Page_Timeout 0x2000 was not written before paging"
+grep -q "^PEER-CREATE-CONN role_switch=0" "$RES"                  || fail "[avdtp] Create_Connection must not allow a role switch (the Mac's parameters to this headset)"
+grep -q "^PEER-AVDTP-STARTED" "$RES"                              || fail "[avdtp] the peer never saw an accepted START"
+grep "^PEER-AVDTP" "$RES" | grep -q "order=1,12,12,3,6,7" || fail "[avdtp] signalling order must be DISCOVER, GET_ALL_CAPABILITIES (SEID 2, then SEID 1), SET_CONFIGURATION, OPEN, START"
+
+echo "PASS: AVDTP initiator answers the Shokz-shaped peer's SDP query, walks its SEP list to the SBC one with GET_ALL_CAPABILITIES, configures delay reporting, accepts its DelayReport, and reaches START in order with the SCID rule honoured"

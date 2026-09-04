@@ -156,6 +156,17 @@ echo "==== peer ===="; cat "$RES"
 grep -q "RT1176 BT tone test up" "$OUT" || fail "[media] banner missing"
 
 grep -q '^a2dp=ok' "$OUT"                          || fail "[media] bring-up did not reach AVDTP START"
+# The fake acceptor models the Shokz since 2026-09-04 (see run_qemu_avdtp.sh's header): it SDP-queries our
+# AudioSource record before answering DISCOVER, lists its MPEG SEP first, and sends a DelayReport after OPEN.
+# A2dpSource must get through all of it -- named here so a regression fails by cause, not as "no media".
+if grep -q "PEER-L2CAP-CFGREQ-NO-MTU" "$RES";           then fail "[media] our L2CAP Config Request carries no MTU option"; fi
+if grep -q "PEER-SDP-QUERY-UNANSWERED" "$RES";          then fail "[media] the peer's SDP query of our AudioSource record was never answered"; fi
+if grep -q "PEER-SDP-SOURCE-RECORD-BAD" "$RES";         then fail "[media] our AudioSource SDP record does not match the Mac's reply"; fi
+if grep -q "PEER-AVDTP-SETCONFIG-WRONG-SEID" "$RES";    then fail "[media] SET_CONFIGURATION targeted the MPEG SEP"; fi
+if grep -q "PEER-AVDTP-DELAYREPORT-UNANSWERED" "$RES";  then fail "[media] the peer's DelayReport command was never accepted"; fi
+grep -q "^PEER-SDP-SOURCE-RECORD ok" "$RES"        || fail "[media] the peer never read our AudioSource record"
+grep -q "^PEER-AVDTP-DELAYREPORT-ACCEPTED" "$RES"  || fail "[media] the peer's DelayReport was not accepted"
+grep -q "^PEER-SET-CONFIG cie=21150235 acp_seid=1 delay_reporting=1" "$RES" || fail "[media] SET_CONFIGURATION must pick SEID 1 with delay reporting"
 grep -q '^streaming' "$OUT"                        || fail "[media] node never began streaming"
 grep -qE '^hb streaming=1 blocks=[1-9]' "$OUT"      || fail "[media] reached STREAMING but the audio clock produced no blocks (self-clock not running)"
 grep -q '^PEER-MEDIA ' "$RES"                      || fail "[media] peer received no media"
