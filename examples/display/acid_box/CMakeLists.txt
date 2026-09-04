@@ -61,10 +61,9 @@ if(M2_BT_OUT)
     if(M2_BT_LEGACY_PIN)
         add_definitions(-DM2_BT_LEGACY_PIN=1)
     endif()
-    option(M2_BT_CONNECT_RETRY "Retry A2dpSource::connect() from loop() until it succeeds" ON)
-    if(M2_BT_CONNECT_RETRY)
-        add_definitions(-DM2_BT_CONNECT_RETRY=1)
-    endif()
+    # (No M2_BT_CONNECT_RETRY knob: acid_box's loop() ALWAYS defers + retries the
+    # connect -- a bench build has no reason to want a one-shot setup() connect --
+    # so the switch would be inert.  bt_tone_test keeps it because it gates that mode.)
     option(M2_BT_FAST_BAUD "Switch HCI to M2_BT_FAST_BAUD_RATE after identity" ON)
     set(M2_BT_FAST_BAUD_RATE "3000000" CACHE STRING "Rate for M2_BT_FAST_BAUD")
     if(M2_BT_FAST_BAUD)
@@ -139,6 +138,9 @@ if(M2_BT_OUT)
     # is cheap (I-cache-covered).  Derived at configure time from the current core
     # script, so it never drifts; scoped to this M2_BT_OUT build -- no core change,
     # no effect on any other example that links M2Radio.
+    # NB: the appended rule also captures *(.fastrun) from libM2Radio -- today M2Radio
+    # marks nothing FASTRUN, so this is inert; if a latency-sensitive M2Radio routine is
+    # ever marked FASTRUN for ITCM residency, drop `.fastrun` here so it is not sent to flash.
     get_target_property(_acidbt_lf acid_box.elf LINK_FLAGS)
     string(REGEX MATCH "-T([^ ]*imxrt1176[.]ld)" _acidbt_ignore "${_acidbt_lf}")
     set(_acidbt_coreld "${CMAKE_MATCH_1}")
