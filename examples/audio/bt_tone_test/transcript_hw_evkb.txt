@@ -35,26 +35,34 @@ connect_secure=ok encryption=on paired_by=ssp
 a2dp_try=ok
 streaming frames_per_pkt=5 media_mtu=895
 
--- streaming: blocks at 344/s (REAL-TIME, vs 26/s under the trace), drops=0 --
+-- streaming: blocks at 344/s (REAL-TIME); packets 69/s (5 SBC frames each after
+   the batching fix); ring high-water a steady 5; drops=0 sustained --
    (heartbeat n is ~1/s; blocks == SBC frames produced == real-time audio rate)
 hb streaming=1 blocks=0 packets=0 drops=0 hw=0 n=0
-hb streaming=1 blocks=5169 packets=4834 drops=0 hw=8 n=15
-hb streaming=1 blocks=10683 packets=10247 drops=0 hw=9 n=31
-hb streaming=1 blocks=16196 packets=15705 drops=0 hw=17 n=47
-hb streaming=1 blocks=21710 packets=21219 drops=0 hw=17 n=63
-hb streaming=1 blocks=27223 packets=26674 drops=0 hw=17 n=79
-hb streaming=1 blocks=32737 packets=32045 drops=0 hw=17 n=95
-hb streaming=1 blocks=38250 packets=37372 drops=0 hw=17 n=111
-hb streaming=1 blocks=43763 packets=42626 drops=0 hw=17 n=127
-hb streaming=1 blocks=49277 packets=47791 drops=180 hw=64 n=143
-hb streaming=1 blocks=54790 packets=52974 drops=180 hw=64 n=159
-hb streaming=1 blocks=60304 packets=58472 drops=180 hw=64 n=175
-hb streaming=1 blocks=65817 packets=63901 drops=180 hw=64 n=191
-hb streaming=1 blocks=71331 packets=69117 drops=436 hw=64 n=207
-hb streaming=1 blocks=76844 packets=73442 drops=1546 hw=64 n=223
-hb streaming=1 blocks=82357 packets=78955 drops=1546 hw=64 n=239
-hb streaming=1 blocks=87871 packets=84426 drops=1546 hw=64 n=255
-hb streaming=1 blocks=89594 packets=85326 drops=1546 hw=64 n=260
+hb streaming=1 blocks=13441 packets=2688 drops=0 hw=5 n=39
+hb streaming=1 blocks=27226 packets=5445 drops=0 hw=5 n=79
+hb streaming=1 blocks=41011 packets=8202 drops=0 hw=5 n=119
+hb streaming=1 blocks=54796 packets=10959 drops=0 hw=5 n=159
+hb streaming=1 blocks=68580 packets=13716 drops=0 hw=5 n=199
+hb streaming=1 blocks=82365 packets=16473 drops=0 hw=5 n=239
+hb streaming=1 blocks=96150 packets=19230 drops=0 hw=5 n=279
+hb streaming=1 blocks=109935 packets=21987 drops=0 hw=5 n=319
+hb streaming=1 blocks=123720 packets=24744 drops=0 hw=5 n=359
+hb streaming=1 blocks=137505 packets=27501 drops=0 hw=5 n=399
+hb streaming=1 blocks=139228 packets=27845 drops=0 hw=5 n=404
+
+★ RESIDUAL-DROPS FIX (2026-09-04).  The first clean-tone run held drops=0 for
+~130 s then shed minor bursts (1.7%).  A diagnostic build (per-second rates +
+min ACL credits) showed the cause: at ONE SBC frame per RTP packet we sent ~344
+packets/s against a 7-credit ACL pool, so `credmin` ran to 0 and a brief link
+stall (RF/sink backpressure) overflowed the ring.  Fix: `poll()` now batches --
+it drains only once a full packet's frames are ready (or a short flush deadline),
+so packets carry ~5 frames and the rate falls to ~69/s (5x less credit churn).
+Result above: packet rate 344->69/s, ring high-water 7->5 steady, **drops=0 over
+5+ minutes**, real-time throughout.  (A separate diagnostic run had also shown
+the un-batched build hold drops=0 for 5 min under good RF -- the earlier drops
+were a marginal-credit + RF transient, which batching removes the headroom
+problem for.)
 
 CLEAN TONE CONFIRMED AUDIBLE on the Shokz (bench, 2026-09-04).  blocks hold at
 344/s (44100/128) -- real-time -- with drops=0 for the first ~130 s (the >=60 s
