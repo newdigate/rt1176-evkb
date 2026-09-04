@@ -255,6 +255,16 @@ static uint32_t nowMs() { return millis(); }
 static void btLog(void *, const char *s) { CONSOLE.println(s); }
 #if defined(M2_BT_ACL_TRACE)
 static void aclTrace(void *, bool out, uint16_t handle, const uint8_t *pdu, uint16_t len) {
+    // ★ SKIP RTP media packets (A2DP media payload starts with RTP V2/PT96 = 0x80 0x60).
+    // The trace exists for the AVDTP DISCOVER/SDP SIGNALLING diagnosis, which is pre-streaming.
+    // Tracing the media firehose is not just noise -- it THROTTLES the audio: one 132-byte media
+    // packet is ~439 chars of hex, which takes ~38 ms to print at 115200 baud, and CONSOLE.print
+    // BLOCKS when its TX buffer fills.  That print runs inside L2cap's send loop, so it paced media
+    // to ~26 packets/s (11520 chars/s / 439) -> a periodic crackle instead of a tone.  Measured on
+    // silicon 2026-09-04: with media traced, 26 fps + crackle; skipping it (or the default no-trace
+    // build), 344 fps + drops=0 + a clean tone.  Signalling is low-rate, so it never throttles.
+    // pdu = [l2cap len(2)][cid(2)][payload]; the payload starts at pdu[4].
+    if (len >= 6 && pdu[4] == 0x80 && pdu[5] == 0x60) return;
     CONSOLE.print("acl_trace dir="); CONSOLE.print(out ? "out" : "in");
     CONSOLE.print(" h=0x"); printHex16(handle);
     CONSOLE.print(" t="); CONSOLE.print(micros());

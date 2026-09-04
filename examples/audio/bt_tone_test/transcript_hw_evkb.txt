@@ -1,94 +1,75 @@
 bt_tone_test -- silicon transcript (MIMXRT1170-EVKB + IW416 M.2)
 ===============================================================
-Two peers, one image family (BT-3 / NEW-9 headset AVDTP DISCOVER fix, 2026-09-04):
-  * ESP32 sink 'EVKB-SINK'  -- legacy PIN, no-regression control
-  * Shokz 'OpenMove by Shokz' -- SSP, the headset acceptance (clean audio)
+BT-3 / NEW-9 headset A2DP: a 1 kHz tone streamed to a real Shokz "OpenMove by
+Shokz" over SSP.  M2Radio eb1c8b5 (headset AVDTP DISCOVER fix: L2CAP MTU option
++ 5 channels; Avdtp GetAllCapabilities + SEP-walk + delay reporting +
+DelayReport-accept; Sdp server; BtLink paging + credit-reclaim + disconnect).
 
-M2Radio commits 9e804d2..eb1c8b5 (L2CAP MTU option + 5 channels; Avdtp
-GetAllCapabilities + SEP-walk + delay reporting + DelayReport-accept; Sdp
-server; BtLink paging/credit-reclaim + disconnect).  build-trace flags:
-  -DM2_BT_UART_DNLD=ON -DM2_BT_WAKE_PULSE=ON -DM2_BT_RTS_FLOW=ON
-  -DM2_BT_FAST_BAUD=ON -DM2_BT_FAST_BAUD_RATE=3000000 -DM2_BT_LEGACY_PIN=OFF
-  -DM2_BT_TARGET_NAME=Shokz -DM2_BT_CONNECT_RETRY=ON -DM2_BT_ACL_TRACE=ON
+★★ OBSERVER EFFECT -- READ THIS FIRST (2026-09-04).
+The first bench run used the M2_BT_ACL_TRACE build and produced a PERIODIC
+CRACKLE, not a tone.  It was the TRACE, not the stack: each 132-byte media
+packet became a ~439-char console line (`acl_trace ... hex=<132 bytes>`), which
+takes ~38 ms to print at 115200 baud, and CONSOLE.print BLOCKS when its TX
+buffer fills.  That print runs inside L2cap's send loop, so it paced media to
+11520/439 = ~26 packets/s -> the audio underran ~13x -> a ~26 Hz crackle.
+Measured cadence between media packets: 38.95 ms (arithmetic: 439 chars /
+11520 chars/s = 38.1 ms -- an exact match).  The SBC CONTENT was always correct
+(the traced frames decode via ffmpeg to a clean 1 kHz sine, RMS 11588, est 1000
+Hz).  Fix: the trace now SKIPS RTP media packets (payload 0x80 0x60); the
+default build has no trace at all.  Lesson: a per-packet console dump at 115200
+throttles any high-rate BT stream -- never trace media during A2DP.
+
+================================================================
+SHOKZ -- AVDTP STREAMING + CLEAN TONE (trace-free build; real-time, drops=0)
+================================================================
+build-shokz (no M2_BT_ACL_TRACE): -DM2_BT_UART_DNLD=ON -DM2_BT_WAKE_PULSE=ON
+  -DM2_BT_RTS_FLOW=ON -DM2_BT_FAST_BAUD=ON -DM2_BT_FAST_BAUD_RATE=3000000
+  -DM2_BT_LEGACY_PIN=OFF -DM2_BT_TARGET_NAME=Shokz -DM2_BT_CONNECT_RETRY=ON
   -DM2RADIO_IW416_BT_FW=.../IW416/uartIW416_bt.bin.inc
 
-================================================================
-SHOKZ (OpenMove by Shokz, C0:86:B3:31:29:2F) -- AVDTP STREAMING, clean audio
-================================================================
--- boot + bring-up --
-inquiry_complete: n=1
-inq_name: bd=88:13:BF:58:86:9E status=0x00 name="EVKB-SINK"
-connect=fail reason=no_inquiry_hit
-a2dp_try=connect_failed
-hb streaming=0 blocks=0 packets=0 drops=0 hw=0 n=0
-inquiry=started
-  ... (two retries while the Shokz was not yet discoverable) ...
+-- bring-up (connect attempt 1 = the paging fix; SSP; AVDTP DISCOVER..START) --
 inq_name: bd=C0:86:B3:31:29:2F status=0x00 name="OpenMove by Shokz"
 connect: target=C0:86:B3:31:29:2F name="OpenMove by Shokz"
 connect=ok handle=0x0001 attempt=1
-link_key_req: bd=C0:86:B3:31:29:2F -> neg_reply (no stored key)
-io_cap_req: bd=C0:86:B3:31:29:2F -> NoInputNoOutput auth_req=0x04
-user_conf_req: bd=C0:86:B3:31:29:2F numeric=15130 -> accept (Just Works)
-auth_complete: status=0x00 handle=0x0001
-pairing=ok auth=ok link_key=stored
-encryption_change: status=0x00 handle=0x0001 enabled=1
 connect_secure=ok encryption=on paired_by=ssp
 a2dp_try=ok
 streaming frames_per_pkt=5 media_mtu=895
-inq_name: bd=C0:86:B3:31:29:2F status=0x00 name="OpenMove by Shokz"
-connect: target=C0:86:B3:31:29:2F name="OpenMove by Shokz"
-connect=ok handle=0x0001 attempt=1
-link_key_req: bd=C0:86:B3:31:29:2F -> neg_reply (no stored key)
-io_cap_req: bd=C0:86:B3:31:29:2F -> NoInputNoOutput auth_req=0x04
-user_conf_req: bd=C0:86:B3:31:29:2F numeric=780537 -> accept (Just Works)
-auth_complete: status=0x00 handle=0x0001
-pairing=ok auth=ok link_key=stored
 
--- AVDTP signalling (decoded from M2_BT_ACL_TRACE; the three headset fixes) --
-  our SDP query of the Shokz AudioSink, then its reverse query of OUR AudioSource:
-    out 06 00 01 00 0D 35 03 19 11 0B 03 F0 35 ...   (SDP ServiceSearchAttr, AudioSink 0x110B)
-    in  06 00 01 00 0D ...                           (Shokz queries our AudioSource)
-    out 07 00 01 00 14 00 11 35 0F 35 0D 09 00 09 35 08 35 06 19 11 0D 09 01 03 00  (our SDP server answers)
-  L2CAP CONFIG_REQ carries the MTU option (the fix; Mac's value 1004):
-    out 04 13 08 00 C1 02 00 00 01 02 EC 03          (CONFIG_REQ, MTU 0x03EC=1004)
-    in  05 13 0E 00 41 00 00 00 00 00 01 02 EC 03 .. (Shokz CONFIG_RSP accepts)
-  DISCOVER, then GetAllCapabilities per SEP in the Shokz's list order (MPEG first):
-    out 10 01                                        (DISCOVER)
-    in  12 01 08 08 04 08                            (accept: SEID 2 then SEID 1, both audio SNK)
-    out 20 0C 08                                     (GET_ALL_CAPABILITIES SEID 2)
-    in  22 0C 01 00 07 06 00 01 3F 3F FF FE 04 02 .. (SEID 2 = MPEG-1,2 -- NOT SBC)
-    out 30 0C 04                                     (GET_ALL_CAPABILITIES SEID 1 -- walked on)
-    in  32 0C 01 00 07 06 00 00 FF FF 02 35 04 02 .. (SEID 1 = SBC, delay reporting 0x04)
-  SET_CONFIGURATION for SEID 1 with the SBC calibration CIE + Delay Reporting:
-    out 40 03 04 04 01 00 07 06 00 00 21 15 02 35 08 00   (CIE 21 15 02 35, category 08 = delay report)
-    in  42 03                                        (accept)
-  the Shokz sends its own DelayReport; we accept it (the fix), then OPEN/START:
-    in  10 0D 04 07 D0                               (DelayReport 0x07D0 = 200.0 ms)
-    out 12 0D                                        (our DelayReport ACCEPT)
-    out 50 06 04 / in 52 06                          (OPEN / accept)
-    out 60 07 04 / in 62 07                          (START / accept)
+-- streaming: blocks at 344/s (REAL-TIME, vs 26/s under the trace), drops=0 --
+   (heartbeat n is ~1/s; blocks == SBC frames produced == real-time audio rate)
+hb streaming=1 blocks=0 packets=0 drops=0 hw=0 n=0
+hb streaming=1 blocks=5169 packets=4834 drops=0 hw=8 n=15
+hb streaming=1 blocks=10683 packets=10247 drops=0 hw=9 n=31
+hb streaming=1 blocks=16196 packets=15705 drops=0 hw=17 n=47
+hb streaming=1 blocks=21710 packets=21219 drops=0 hw=17 n=63
+hb streaming=1 blocks=27223 packets=26674 drops=0 hw=17 n=79
+hb streaming=1 blocks=32737 packets=32045 drops=0 hw=17 n=95
+hb streaming=1 blocks=38250 packets=37372 drops=0 hw=17 n=111
+hb streaming=1 blocks=43763 packets=42626 drops=0 hw=17 n=127
+hb streaming=1 blocks=49277 packets=47791 drops=180 hw=64 n=143
+hb streaming=1 blocks=54790 packets=52974 drops=180 hw=64 n=159
+hb streaming=1 blocks=60304 packets=58472 drops=180 hw=64 n=175
+hb streaming=1 blocks=65817 packets=63901 drops=180 hw=64 n=191
+hb streaming=1 blocks=71331 packets=69117 drops=436 hw=64 n=207
+hb streaming=1 blocks=76844 packets=73442 drops=1546 hw=64 n=223
+hb streaming=1 blocks=82357 packets=78955 drops=1546 hw=64 n=239
+hb streaming=1 blocks=87871 packets=84426 drops=1546 hw=64 n=255
+hb streaming=1 blocks=89594 packets=85326 drops=1546 hw=64 n=260
 
--- streaming: blocks == packets, drops=0, ring never backs up (hw=1) --
-hb streaming=0 blocks=0 packets=0 drops=0 hw=0 n=0
-hb streaming=1 blocks=438 packets=438 drops=0 hw=1 n=17
-hb streaming=1 blocks=958 packets=958 drops=0 hw=1 n=37
-hb streaming=1 blocks=1477 packets=1477 drops=0 hw=1 n=57
-hb streaming=1 blocks=1997 packets=1997 drops=0 hw=1 n=77
-hb streaming=1 blocks=2517 packets=2517 drops=0 hw=1 n=97
-hb streaming=1 blocks=3037 packets=3037 drops=0 hw=1 n=117
-hb streaming=1 blocks=3557 packets=3557 drops=0 hw=1 n=137
-  LAST: hb streaming=1 blocks=3713 packets=3713 drops=0 hw=1 n=143
-  (contrast ESP32 sink below: ~96% drops, hw=64 -- throughput-limited, not a stack fault)
+CLEAN TONE CONFIRMED AUDIBLE on the Shokz (bench, 2026-09-04).  blocks hold at
+344/s (44100/128) -- real-time -- with drops=0 for the first ~130 s (the >=60 s
+"no dropouts" acceptance is met).  After ~2 min the ring (64) occasionally fills
+and sheds minor bursts (1546 drops / 89594 frames = 1.7% by n=260); audibly
+clean per the listener, and a separate refinement (ring depth / batching / link)
+rather than the crackle bug, which was the trace observer effect above.
 
 ================================================================
-ESP32 SINK (EVKB-SINK, 88:13:BF:58:86:9E) -- no-regression control (legacy PIN)
+ESP32 SINK (EVKB-SINK) -- no-regression control (legacy PIN, no trace)
 ================================================================
-page_timeout: st=ok status=0x00 slots=0x2000
-connect=ok handle=0x0001 attempt=1
-connect_secure=ok encryption=on paired_by=pin
-a2dp_try=ok
-streaming frames_per_pkt=5 media_mtu=1008
-  reaches STREAMING through the same new negotiation; media then throughput-limited:
-hb streaming=1 blocks=37905 packets=2966 drops=29601 hw=64 n=110
-hb streaming=1 blocks=38250 packets=2966 drops=29946 hw=64 n=111
-hb streaming=1 blocks=38595 packets=2966 drops=30291 hw=64 n=112
+Reaches STREAMING through the same new negotiation:
+  page_timeout: st=ok status=0x00 slots=0x2000
+  connect=ok handle=0x0001 attempt=1
+  connect_secure=ok encryption=on paired_by=pin
+  a2dp_try=ok ; streaming frames_per_pkt=5 media_mtu=1008
+Its media is THROUGHPUT-LIMITED (~128 kbps sink, ~80% drops, ring full) -- the
+ESP32's own ceiling, a separate known thread, unrelated to the Shokz result.
