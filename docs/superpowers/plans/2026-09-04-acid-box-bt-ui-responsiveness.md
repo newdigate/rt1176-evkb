@@ -369,6 +369,8 @@ After `#include "synthui_step.h"` add:
 
 - [ ] **Step 3: The instrument block**
 
+(As built: the `loopstat` line is printed in TWO `CONSOLE.printf` calls with no newline between them, because the core's `Print::printf` formats into a 128-byte stack buffer (`Print.cpp` `PRINTF_BUF_SIZE`) and clamps. The plan text below shows one call; the file shows two.)
+
 Insert immediately after the line `static bool s_btBegun = false;` and its closing `#endif` (i.e. after the `M2_BT_OUT` graph block):
 
 ```cpp

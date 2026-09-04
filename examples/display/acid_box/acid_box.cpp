@@ -47,6 +47,9 @@
 #include "synthui_rotary_knob.h"
 #include "synthui_rotary_knob_gpu.h"
 #include "synthui_step.h"
+#if defined(ACIDBOX_LOOPSTAT)
+#include "loopstat_pct.h"
+#endif
 
 extern "C" {
 #include "vg_lite.h"
@@ -334,6 +337,221 @@ static void onEvt(void *, uint8_t c, const uint8_t *p, uint8_t l) { src.onEvent(
 static void onAclThunk(void *, uint16_t h, const uint8_t *d, uint16_t l) { src.onAcl(h, d, l); }
 static bool s_btBegun = false;
 #endif
+
+#if defined(ACIDBOX_LOOPSTAT)
+/* --- ACIDBOX_LOOPSTAT: where does the main loop spend its time? ---------- *
+ * Bench instrument for NEW-33 (spec 2026-09-04-acid-box-bt-ui-responsiveness-
+ * design.md §1).  Never in the gated build: -DACIDBOX_LOOPSTAT=1 is a CMake
+ * option that defaults OFF, and OFF leaves the loadable image byte-identical.
+ *
+ * Three lines, once a second, beside bt_hb:
+ *   loopstat  loops= max_us= yield= svc= poll= enc= drain= txb= print= lvgl= probe= wiggle=
+ *   framestat frames= med_us= max_us= flips=+ wait_us=+
+ *   touchstat n= p50_us= p95_us= max_us=          (only when samples arrived)
+ *
+ * ★ EVERYTHING HERE LIVES IN FLASH.  The M2_BT_OUT bench build has ~1 KB of
+ * ITCM left (.text.itcm 0x3FBD0 of 0x40000), so every function below carries
+ * LOOPSTAT_FN: section .progmem.loopstat, collected by the core's *(.progmem*)
+ * rule into .text.progmem, which is XIP and already AX.  Only the micros()
+ * laps in loop() are inline.  A print that runs once a second does not need
+ * ITCM; a lap that runs per iteration is a handful of instructions.
+ *
+ * ★ The slots are laps, not nested timers: each LS_LAP charges the time since
+ * the previous lap to one slot, so the sum of the slots IS the iteration.  The
+ * summary's own print time lands in the NEXT window's `print` (the counters
+ * are reset inside the summary, before its lap) -- honest, one window late.
+ *
+ * ★ The loopstat line is printed in TWO printf calls: Print::printf formats
+ * into a 128-byte stack buffer (Print.cpp PRINTF_BUF_SIZE) and CLAMPS, and the
+ * whole line can exceed that.  Two calls, one line, no newline in between. */
+#define LOOPSTAT_FN __attribute__((section(".progmem.loopstat"), noinline))
+
+enum { LS_YIELD, LS_SVC, LS_POLL, LS_PRINT, LS_LVGL, LS_PROBE, LS_SLOTS };
+static uint32_t ls_slotUs[LS_SLOTS];        /* cumulative us per slot, this window */
+static uint32_t ls_loops = 0, ls_maxUs = 0;
+static uint32_t ls_windowMs = 0;            /* millis() at the last summary */
+static inline __attribute__((always_inline)) uint32_t ls_lap(int slot, uint32_t t0)
+{
+    const uint32_t t = micros();
+    ls_slotUs[slot] += t - t0;
+    return t;
+}
+#define LS_LAP(slot) (ls_t = ls_lap(slot, ls_t))
+
+/* frames: LVGL display events.  A frame counts at REFR_READY only if
+ * RENDER_READY fired since REFR_START (an empty refresh cycle is not a frame). */
+static uint32_t        ls_frameBuf[64];
+static loopstat_ring_t ls_frameRing;
+static uint32_t ls_frames = 0;              /* rendered frames this window */
+static uint32_t ls_lastFrameUs = 0;         /* REFR_READY of the previous rendered frame, 0 = none */
+static uint32_t ls_refrStartUs = 0;
+static bool     ls_rendered = false;
+static uint32_t ls_flips0 = 0, ls_wait0 = 0;
+
+/* touch: the age, at presentation, of the OLDEST input change a frame carries.
+ * The stamp is taken when LVGL's indev read returns a changed (state, x, y)
+ * and no stamp is pending; it closes at the first rendered REFR_READY whose
+ * REFR_START came AFTER the stamp (so the frame's render began after the
+ * input was processed and its invalidation queued).  Ring of the 256 most
+ * recent samples; the line reports over the ring, so the last touchstat of a
+ * drag is the drag's distribution. */
+static uint32_t        ls_touchBuf[256];
+static loopstat_ring_t ls_touchRing;
+static uint32_t ls_touchN = 0, ls_touchNew = 0;
+static uint32_t ls_touchStampUs = 0;
+static bool     ls_touchPending = false;
+static lv_indev_read_cb_t ls_origRead = nullptr;
+static lv_indev_state_t   ls_prevState = LV_INDEV_STATE_RELEASED;
+static lv_point_t         ls_prevPoint = {0, 0};
+
+LOOPSTAT_FN static void ls_refr_cb(lv_event_t *e)
+{
+    switch (lv_event_get_code(e)) {
+    case LV_EVENT_REFR_START:   ls_refrStartUs = micros(); ls_rendered = false; break;
+    case LV_EVENT_RENDER_READY: ls_rendered = true; break;
+    case LV_EVENT_REFR_READY: {
+        if (!ls_rendered) break;
+        const uint32_t now = micros();
+        ls_frames++;
+        if (ls_lastFrameUs) loopstat_ring_push(&ls_frameRing, now - ls_lastFrameUs);
+        ls_lastFrameUs = now;
+        if (ls_touchPending && (int32_t)(ls_refrStartUs - ls_touchStampUs) >= 0) {
+            loopstat_ring_push(&ls_touchRing, now - ls_touchStampUs);
+            ls_touchPending = false;
+            ls_touchN++; ls_touchNew++;
+        }
+        break;
+    }
+    default: break;
+    }
+}
+
+LOOPSTAT_FN static void ls_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    ls_origRead(indev, data);
+    if (data->state != ls_prevState ||
+        data->point.x != ls_prevPoint.x || data->point.y != ls_prevPoint.y) {
+        ls_prevState = data->state; ls_prevPoint = data->point;
+        if (!ls_touchPending) { ls_touchStampUs = micros(); ls_touchPending = true; }
+    }
+}
+
+/* wiggle: a 15 ms LVGL timer sweeping all eight sound knobs through a triangle
+ * over the full ±140° bounded range -- 100 steps per half-sweep (1.5 s), knob k
+ * offset by 12 steps so the rotors are never in phase.  set_angle ONLY: the
+ * widget sends VALUE_CHANGED from its input path (synthui_rotary_knob.cpp),
+ * never from set_angle, so the synth parameters do not move -- the panel
+ * animates flat-out while the sound is unchanged.  Boot/current angles are
+ * saved at wiggle-on and restored at wiggle-off so the picture matches the
+ * engine again afterwards. */
+static lv_obj_t   *ls_knob[8];
+static int         ls_nKnob = 0;
+static float       ls_saved[8];
+static lv_timer_t *ls_wiggleTimer = nullptr;
+static uint32_t    ls_wiggleStep = 0;
+static bool        ls_wiggle = false;
+#define LS_KNOB(x) (ls_knob[ls_nKnob++] = (x))
+
+LOOPSTAT_FN static float ls_tri(uint32_t step)
+{
+    const uint32_t s = step % 200u;
+    const float u = (s < 100u) ? (float)s / 100.0f : (float)(200u - s) / 100.0f;
+    return -140.0f + 280.0f * u;
+}
+LOOPSTAT_FN static void ls_wiggle_cb(lv_timer_t *t)
+{
+    (void)t;
+    ls_wiggleStep++;
+    for (int k = 0; k < ls_nKnob; k++)
+        synthui_rotary_knob_set_angle(ls_knob[k], ls_tri(ls_wiggleStep + 12u * (uint32_t)k));
+}
+LOOPSTAT_FN static void ls_title_cb(lv_event_t *e)
+{
+    (void)e;
+    if (!ls_wiggle) {
+        for (int k = 0; k < ls_nKnob; k++) ls_saved[k] = synthui_rotary_knob_get_angle(ls_knob[k]);
+        ls_wiggleTimer = lv_timer_create(ls_wiggle_cb, 15, NULL);
+        ls_wiggle = true;
+    } else {
+        lv_timer_delete(ls_wiggleTimer); ls_wiggleTimer = nullptr;
+        for (int k = 0; k < ls_nKnob; k++) synthui_rotary_knob_set_angle(ls_knob[k], ls_saved[k]);
+        ls_wiggle = false;
+    }
+    CONSOLE.printf("wiggle=%d\n", ls_wiggle ? 1 : 0);
+}
+LOOPSTAT_FN static void ls_attach_title(lv_obj_t *title)
+{
+    lv_obj_add_flag(title, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(title, 24);          /* a finger-sized target around the small label */
+    lv_obj_add_event_cb(title, ls_title_cb, LV_EVENT_CLICKED, NULL);
+}
+LOOPSTAT_FN static void ls_attach_display(lv_display_t *disp)
+{
+    loopstat_ring_init(&ls_frameRing, ls_frameBuf, 64);
+    loopstat_ring_init(&ls_touchRing, ls_touchBuf, 256);
+    lv_display_add_event_cb(disp, ls_refr_cb, LV_EVENT_REFR_START, NULL);
+    lv_display_add_event_cb(disp, ls_refr_cb, LV_EVENT_RENDER_READY, NULL);
+    lv_display_add_event_cb(disp, ls_refr_cb, LV_EVENT_REFR_READY, NULL);
+    ls_flips0 = lvgl_mipi_panel_flips();
+    ls_wait0  = lvgl_mipi_panel_wait_us();
+    ls_windowMs = millis();
+}
+LOOPSTAT_FN static void ls_attach_touch(lv_indev_t *indev)
+{
+    ls_origRead = lv_indev_get_read_cb(indev);
+    lv_indev_set_read_cb(indev, ls_read_cb);
+}
+
+LOOPSTAT_FN static void ls_summary(void)
+{
+    const uint32_t now = millis();
+    if (now - ls_windowMs < 1000u) return;
+    ls_windowMs = now;
+
+    uint32_t encUs = 0, drainUs = 0, txb = 0;
+#if defined(M2_BT_OUT)
+    static uint32_t enc0 = 0, drn0 = 0, txb0 = 0;
+    const uint32_t enc1 = btout.encodeUs(), drn1 = btout.drainUs(), txb1 = btout.txBytes();
+    encUs = enc1 - enc0; drainUs = drn1 - drn0; txb = txb1 - txb0;
+    enc0 = enc1; drn0 = drn1; txb0 = txb1;
+#endif
+    /* two calls, one line: Print::printf clamps at 128 bytes (see the header note) */
+    CONSOLE.printf("loopstat loops=%lu max_us=%lu yield=%lu svc=%lu poll=%lu enc=%lu",
+                   (unsigned long)ls_loops, (unsigned long)ls_maxUs,
+                   (unsigned long)ls_slotUs[LS_YIELD], (unsigned long)ls_slotUs[LS_SVC],
+                   (unsigned long)ls_slotUs[LS_POLL], (unsigned long)encUs);
+    CONSOLE.printf(" drain=%lu txb=%lu print=%lu lvgl=%lu probe=%lu wiggle=%d\n",
+                   (unsigned long)drainUs, (unsigned long)txb, (unsigned long)ls_slotUs[LS_PRINT],
+                   (unsigned long)ls_slotUs[LS_LVGL], (unsigned long)ls_slotUs[LS_PROBE],
+                   ls_wiggle ? 1 : 0);
+
+    uint32_t sorted[256];
+    uint32_t n = loopstat_ring_sorted(&ls_frameRing, sorted);
+    const uint32_t flips = lvgl_mipi_panel_flips(), wait = lvgl_mipi_panel_wait_us();
+    CONSOLE.printf("framestat frames=%lu med_us=%lu max_us=%lu flips=+%lu wait_us=+%lu\n",
+                   (unsigned long)ls_frames,
+                   (unsigned long)loopstat_pct_sorted(sorted, n, 50),
+                   (unsigned long)loopstat_pct_sorted(sorted, n, 100),
+                   (unsigned long)(flips - ls_flips0), (unsigned long)(wait - ls_wait0));
+    ls_flips0 = flips; ls_wait0 = wait;
+    ls_frames = 0; loopstat_ring_reset(&ls_frameRing);
+
+    if (ls_touchNew) {
+        n = loopstat_ring_sorted(&ls_touchRing, sorted);
+        CONSOLE.printf("touchstat n=%lu p50_us=%lu p95_us=%lu max_us=%lu\n",
+                       (unsigned long)ls_touchN,
+                       (unsigned long)loopstat_pct_sorted(sorted, n, 50),
+                       (unsigned long)loopstat_pct_sorted(sorted, n, 95),
+                       (unsigned long)loopstat_pct_sorted(sorted, n, 100));
+        ls_touchNew = 0;
+    }
+    memset(ls_slotUs, 0, sizeof ls_slotUs);
+    ls_loops = 0; ls_maxUs = 0;
+}
+#else
+#define LS_LAP(slot) ((void)0)
+#define LS_KNOB(x)   (x)
+#endif /* ACIDBOX_LOOPSTAT */
 
 /* --- the preset: a classic 16-step acid line (A minor-ish), documented so
  * the first frame and the audio windows are deterministic.  note 0 = rest. */
@@ -790,6 +1008,9 @@ static lv_obj_t *build_ui(void)
     lv_label_set_text(title, "ACID BOX");
     lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_pos(title, 15, 24);
+#if defined(ACIDBOX_LOOPSTAT)
+    ls_attach_title(title);        /* tap = synthetic knob wiggle on/off (bench) */
+#endif
     lv_obj_set_pos(mkbtn(scr, "-", cbTempoDn, NULL), 300, 16);
     bpmLabel = lv_label_create(scr);
     lv_obj_set_style_text_color(bpmLabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
@@ -806,14 +1027,14 @@ static lv_obj_t *build_ui(void)
      * default_patch()'s values, so the first frame shows the patch the engine
      * is actually holding -- a knob drawn at a position its parameter is not at
      * would make the very first drag jump. */
-    mkknob(scr, 0, 0, "CUTOFF",  logf(800.0f / 20.0f) / logf(12000.0f / 20.0f), cbCut);
-    mkknob(scr, 1, 0, "RESO",    0.55f, cbRes);
-    mkknob(scr, 2, 0, "ENV MOD", 0.60f, cbEnv);
-    mkknob(scr, 3, 0, "DECAY",   logf(0.28f / 0.03f) / logf(2.0f / 0.03f), cbDec);
-    mkknob(scr, 0, 1, "ACCENT",  0.70f, cbAcc);
-    mkknob(scr, 1, 1, "DIST",    0.15f, cbDst);
-    mkknob(scr, 2, 1, "SUB",     0.20f, cbSub);
-    mkknob(scr, 3, 1, "SLIDE T", logf(0.06f / 0.01f) / logf(0.3f / 0.01f), cbSld);
+    LS_KNOB(mkknob(scr, 0, 0, "CUTOFF",  logf(800.0f / 20.0f) / logf(12000.0f / 20.0f), cbCut));
+    LS_KNOB(mkknob(scr, 1, 0, "RESO",    0.55f, cbRes));
+    LS_KNOB(mkknob(scr, 2, 0, "ENV MOD", 0.60f, cbEnv));
+    LS_KNOB(mkknob(scr, 3, 0, "DECAY",   logf(0.28f / 0.03f) / logf(2.0f / 0.03f), cbDec));
+    LS_KNOB(mkknob(scr, 0, 1, "ACCENT",  0.70f, cbAcc));
+    LS_KNOB(mkknob(scr, 1, 1, "DIST",    0.15f, cbDst));
+    LS_KNOB(mkknob(scr, 2, 1, "SUB",     0.20f, cbSub));
+    LS_KNOB(mkknob(scr, 3, 1, "SLIDE T", logf(0.06f / 0.01f) / logf(0.3f / 0.01f), cbSld));
 
     /* editor strip: pitch detent knob + note name + ACC/SLD toggles + SAW/SQR */
     pitchKnob = synthui_rotary_knob_create(scr);
@@ -916,6 +1137,9 @@ void setup()
      * behavioural change is the fenced flip. */
     lv_display_t *disp = lvgl_mipi_panel_create_db(Display);
     diag_mark();               /* after lvgl_mipi_panel_create_db() */
+#if defined(ACIDBOX_LOOPSTAT)
+    ls_attach_display(disp);
+#endif
     if (vg_up && synthui_rotary_gpu_begin_deferred(
                      Display.width(), Display.height(),
                      Display.width() * PANEL_BYTES_PER_PIXEL)) {
@@ -971,7 +1195,11 @@ void setup()
         CONSOLE.println("I2C_OK");
         /* From here LVGL polls the part every 10 ms; in QEMU the model replays
          * a script, on the bench a finger drives it. */
-        lvgl_gt911_indev_create(disp, touch);
+        lv_indev_t *indev = lvgl_gt911_indev_create(disp, touch);
+        (void)indev;
+#if defined(ACIDBOX_LOOPSTAT)
+        ls_attach_touch(indev);
+#endif
     } else {
         /* Not fatal: the box keeps playing and drawing, it just cannot be
          * touched.  The gate's verdict is the ABSENCE of I2C_OK, so a silent
@@ -1032,10 +1260,17 @@ void setup()
 
 void loop()
 {
+#if defined(ACIDBOX_LOOPSTAT)
+    const uint32_t ls_iter0 = micros();
+    uint32_t ls_t = ls_iter0;
+#endif
 #if defined(M2_BT_OUT)
     yield();                                   // drives the yield-attached HciPump (parses NCP/credits)
-    src.service();
-    if (s_btBegun) btout.poll();
+    LS_LAP(LS_YIELD);
+    src.service();                             // SdpServer + L2cap::service() (the ACL UART write) + Avdtp
+    LS_LAP(LS_SVC);
+    if (s_btBegun) btout.poll();               // SBC encode of the buffered PCM + drain into L2cap's queue
+    LS_LAP(LS_POLL);
     {
         static uint32_t lastTry = 0;
         if (!s_btBegun && (lastTry == 0 || millis() - lastTry >= 5000)) {
@@ -1067,6 +1302,11 @@ void loop()
             CONSOLE.print(" audiomax="); CONSOLE.println(AudioMemoryUsageMax());
         }
     }
+    LS_LAP(LS_PRINT);                          // the connect attempt (once, ~30 s) and bt_hb land here
+#endif
+#if defined(ACIDBOX_LOOPSTAT)
+    ls_summary();
+    LS_LAP(LS_PRINT);
 #endif
 #ifdef ACIDBOX_DIAG
     /* Synthetic play, diagnostic build only.  The shipped contract is BOOT
@@ -1080,5 +1320,14 @@ void loop()
     }
 #endif
     lvgl_rt1176_loop();
+    LS_LAP(LS_LVGL);
     audio_probe_poll();
+    LS_LAP(LS_PROBE);
+#if defined(ACIDBOX_LOOPSTAT)
+    {
+        const uint32_t it = micros() - ls_iter0;
+        if (it > ls_maxUs) ls_maxUs = it;
+        ls_loops++;
+    }
+#endif
 }

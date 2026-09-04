@@ -28,6 +28,19 @@ import_evkb_library(MipiDisplay soc panels/rk055)
 import_evkb_library(PXP)              # Display::fillScreen() paints via the PXP
 import_evkb_library(TouchPanel gt911) # controller chosen by the importer
 
+# --- Loop / frame / touch instrumentation (opt-in, bench) ------------------
+# OFF by default: nothing compiles in and the loadable image is byte-identical
+# (Task 4 of the NEW-33 plan diffs the objcopy -O binary; the ELF's DWARF moves
+# with every edited line), so the gate, both goldens and the vacuity fixture
+# are untouched.  ON prints loopstat/framestat/touchstat once a second and makes
+# the "ACID BOX" title a tap-toggle for a synthetic knob wiggle -- see
+# docs/superpowers/specs/2026-09-04-acid-box-bt-ui-responsiveness-design.md §1.
+# Independent of M2_BT_OUT on purpose: the same instrument measures both builds.
+option(ACIDBOX_LOOPSTAT "Per-slot loop timing, frame and touch latency lines (bench)" OFF)
+if(ACIDBOX_LOOPSTAT)
+    add_definitions(-DACIDBOX_LOOPSTAT=1)
+endif()
+
 # --- Bluetooth A2DP audio output (opt-in) -----------------------------------
 # OFF by default: nothing below compiles in and the ELF is byte-identical, so
 # the golden run_qemu.sh gate is untouched.  ON links the M.2 BT stack and adds
