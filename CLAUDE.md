@@ -599,6 +599,49 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-09-05: 128 gates discovered, 128 passed, 0 failed, 0 SKIP**
+(`gates: 128 passed`, exit 0; `-l` reports 128), on the **NEW-33 acid_box
+BT-streaming UI-responsiveness** close-out. **No new gate**: `ACIDBOX_LOOPSTAT`
+is an opt-in CMake option (default OFF); with it off the default `display/acid_box`
+ELF's LOADABLE IMAGE is byte-identical (`objcopy -O binary` diffed, 295936 B --
+its gate + golden `0x25B30A96` unchanged), and fix 1 is additive in M2Radio.
+`LICENSE-AUDIT: PASS`.
+★ **The issue's premise was half right, and the instrument is what separated the
+halves.** `ACIDBOX_LOOPSTAT` (per-slot `micros()` laps in `loop()`, frames from
+the LVGL display events, p95 touch-sample-to-presented-frame from a wrapped
+indev read cb, all in flash `.progmem.loopstat` because the bench ELF had ~1 KB
+of ITCM left) measured A (BT off) vs B (streaming) on silicon. STEADY-STATE
+STREAMING DOES NOT DEGRADE THE UI at the 8-knob scene: 30 fps in both builds,
+median frame interval 32.6 ms, touch p95 40.5 ms (BT) vs 46.5 ms (default) --
+all within the ±15% acceptance, `pcmdrops=0`. The felt defect was the BRING-UP:
+the first `loop()` iteration ran the blocking `A2dpSource::connect()` for
+**16.8 s** with the UI dead (`max_us=16834971`), plus the ~12 s firmware download
+before it, and the same freeze on every 5 s retry with no headset in range.
+★ **Two fixes, both bench-verified.** (1) `idleUi()` -- every blocking BT wait in
+acid_box (`BtFwLoader::run`, `Hci::run`, `A2dpSource::connect`) now takes an idle
+callback that runs one pass of the loop's UI half (yield for the HciPump, the
+LVGL loop, the audio probe), so the panel renders and touch works through both
+bring-ups (proven: 64 loopstat + 26 touchstat lines + bars + climbing flips
+during the ~30 s connect). LVGL is never re-entered -- every caller is a
+top-level wait from `setup()`/`loop()`. (2) `HciTransport` TX extension (5 KB,
+credit-bounded): the ACL write was SPINNING in Serial2's 64-byte TX ring (`svc`
+tracked `txb × 3.33 µs` at ~130-160 ms/s while streaming). Sized past the ACL
+credit window (7 × 709 B = 4963 B; `hci_txring=5184 need=4963` printed at
+connect), so `L2cap::send`'s bytes provably never fill it. Result: loop rate
+7100 → 9200 it/s, `svc` under wiggle ~160 → ~65 ms/s, `pcmdrops` 69 → 0. M2Radio
+`7c91cca`, pin bumped, fresh-user `-DEVKB_FORCE_FETCH=ON` verified.
+★ **Three findings recorded, none a NEW-33 target.** (a) The CM7 runs with NO
+instruction cache -- the imxrt1176 core's startup never writes `SCB_CCR` -- so
+flash-resident code executes from FlexSPI at raw QSPI speed (5-30 µs per small
+call): it is why the flash-resident SBC encode measured 2-3 ms/block in NEW-9
+and why `Sbc.cpp` had to move to ITCM. A core change with its own issue. (b) The
+link drops climbed to ~14-24k frames over 8+ min with the loop NEVER stalled
+(`pcmdrops=0`, `max_us`~12 ms) -- credit starvation on the AIR link = NEW-34;
+it retires the 2026-09-04 "drops=0 ongoing" claim (that window was ~20 s). (c)
+The Shokz never announces "connected" and self-powers-off after ~1-2 min --
+likely a missing AVRCP/profile-complete signal after A2DP (this stack is
+A2DP-source only) -- filed to NEW-34.
+
 ✅ **Measured 2026-09-04 (later the same day): 128 gates discovered, 128 passed,
 0 failed, 0 SKIP** (`gates: 128 passed`, exit 0; `-l` reports 128), on the
 **acid_box Bluetooth dual-output capstone** close-out (`display/acid_box
