@@ -89,8 +89,8 @@ LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP
                                   # signalling; the real end of avdtp, media and reconnect is checked
                                   # separately (peer.avdtp["started"] / peer.media, below)
 LAST_OPCODE_COUNT = {"baud": 2}   # phases whose terminal opcode must be seen N times (default 1)
-DEADLINE = {"reconnect": 60}       # seconds from socket connect; default 45.  reconnect runs one inquiry + three links + three disconnects
-                                   # (~12-15 s wall measured from the [avdtp] capture's 1.7 s per link) and must not share [media]'s budget
+DEADLINE = {"reconnect": 50}       # seconds from socket connect; default 45.  reconnect runs one inquiry + three links + three disconnects
+                                   # (~12-15 s wall measured from the [avdtp] capture's 1.7 s per link) and must not share [media]'s budget; 50 keeps it BELOW tools/qrun's 60 s QRUN_TIMEOUT so the peer announces before QEMU is killed
 
 def phase_done(phase, peer):
     # avdtp's real end is signalling over ACL (an accepted START), not a
@@ -103,7 +103,7 @@ def phase_done(phase, peer):
     if phase == "media":
         m = peer.media
         return m["pkts"] > 0 and m["seqgaps"] == 0 and m["badsbc"] == 0 and m["badrtp"] == 0
-    if phase == "reconnect": return peer.rc["started_links"] >= 3 and not peer.avdtp["error"] and peer.rc["errors"] == 0
+    if phase == "reconnect": return peer.rc["started_links"] >= 3 and peer.rc["create_conns"] >= 3 and not peer.avdtp["error"] and peer.rc["errors"] == 0
     return peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
 
 def connect(path):
@@ -136,7 +136,7 @@ class Peer:
         self.rc = {"inquiries": 0, "create_conns": 0, "key_replies": 0, "key_ok": 0, "key_rejected": 0,
                    "neg_replies": 0, "iocap_dances": 0, "notified": 0, "started_links": 0,
                    "handle": 0x0001, "errors": 0,
-                   "reject_on_link": 3, "rejected": False, "keys": {}}   # keys: bd -> the key we last notified for it
+                   "reject_on_link": 3, "rejected": False, "rejected_key": None, "keys": {}}   # keys: bd -> the key we last notified for it
         # --- media phase: RTP/SBC validation on the media transport channel ---
         self.media = {"pkts": 0, "frames": 0, "lastseq": None, "seqgaps": 0, "badrtp": 0, "badsbc": 0}
         # --- V3 bootloader state (fwdnld phase only) ---
@@ -256,8 +256,13 @@ class Peer:
             self.send(cmd_complete(opcode, b"\x00" + params[:6]))
             self.send(event(0x03, b"\x02" + struct.pack("<H", 0x0000) + params[:6] + b"\x01\x00"), 0.05)
         elif opcode == 0x0406:                                              # Disconnect -> Command Status, Disconnection Complete
+            h = struct.unpack("<H", params[:2])[0]
+            if self.phase == "reconnect" and h != self.cur_handle():
+                self.log.append("PEER-DISCONNECT-BAD-HANDLE 0x%04x (current 0x%04x)" % (h, self.cur_handle()))
+                self.send(cmd_status(opcode, 0x02)); return                    # 0x02 = Unknown Connection Identifier: the live link is NOT torn down
             self.send(cmd_status(opcode)); self.send(event(0x05, b"\x00" + params[:2] + params[2:3]), 0.05)
-            if self.phase == "reconnect": self.reset_link()             # the link is gone: stale CIDs must land on PEER-ACL-UNKNOWN-CID, not be answered
+            if self.phase == "reconnect":
+                self.reset_link(); self.peer_bd = None                        # the link is gone: stale CIDs must land on PEER-ACL-UNKNOWN-CID, and an authentication without a new page on PEER-AUTH-NO-LINK
         elif opcode == 0x0411:                                              # Authentication_Requested: SSP Just Works, all the way to Auth Complete
             if self.peer_bd is None: self.log.append("PEER-AUTH-NO-LINK"); self.send(cmd_status(opcode, 0x02)); return   # 0x02 = Unknown Connection Identifier
             self.send(cmd_status(opcode)); bd = self.peer_bd
@@ -271,10 +276,10 @@ class Peer:
                 self.log.append("PEER-KEY-MISMATCH offered=%s known=%s" % (key.hex(), known.hex() if known else "none"))
                 self.send(event(0x06, b"\x05" + struct.pack("<H", self.cur_handle())), 0.05)          # Authentication Failure
             elif self.rc["create_conns"] == self.rc["reject_on_link"] and not self.rc["rejected"]:
-                self.rc["rejected"] = True; self.rc["key_rejected"] += 1
+                self.rc["rejected"] = True; self.rc["rejected_key"] = key; self.rc["key_rejected"] += 1
                 self.log.append("PEER-KEY-REJECTED link=%d" % self.rc["create_conns"])
                 self.send(event(0x06, b"\x06" + struct.pack("<H", self.cur_handle())), 0.05)          # PIN or Key Missing: the peer forgot us
-            elif self.rc["create_conns"] == self.rc["reject_on_link"]:
+            elif self.rc["rejected_key"] is not None and key == self.rc["rejected_key"]:
                 self.log.append("PEER-KEY-STALE-REPLAY link=%d" % self.rc["create_conns"])          # the host offered the rejected key AGAIN
                 self.send(event(0x06, b"\x06" + struct.pack("<H", self.cur_handle())), 0.05)
             else:
@@ -360,8 +365,9 @@ class Peer:
                 hf, alen = struct.unpack("<HH", self.buf[1:5])
                 if len(self.buf) < 5 + alen: return
                 data, self.buf = self.buf[5:5 + alen], self.buf[5 + alen:]
-                self.send(ncp(hf & 0x0FFF))                                   # every ACL packet frees a buffer
-                self.handle_acl(hf & 0x0FFF, data); continue
+                h = hf & 0x0FFF
+                if not (self.phase == "reconnect" and h != self.cur_handle()): self.send(ncp(h))   # no buffer credit for a handle the peer has said does not exist
+                self.handle_acl(h, data); continue
             if self.buf[0] != 0x01:                                     # only commands/ACL come from a host
                 self.log.append("PEER-BAD-TYPE 0x%02x" % self.buf[0]); self.buf = self.buf[1:]; continue
             if len(self.buf) < 4: return
@@ -520,8 +526,9 @@ class Peer:
                     self.send(acl(handle, peer_cid, bytes([0x10, 0x0D, 2 << 2, 0x07, 0xD0])), 0.02)
                 else:
                     self.send(acl(handle, peer_cid, acc + b"\x06"), 0.02)
-            elif sig == 0x07:                                                                                                       # START: only legal after OPEN
+            elif sig == 0x07:                                                                                                       # START: only legal after OPEN, and only once
                 if not self.avdtp["opened"]: self.log.append("PEER-AVDTP-START-BEFORE-OPEN"); self.send(acl(handle, peer_cid, bytes([tl | 0x03, 0x07, 1 << 2, 0x31])), 0.02); return  # 0x31 = bad state
+                if self.avdtp["started"]:  self.log.append("PEER-AVDTP-START-TWICE");       self.send(acl(handle, peer_cid, bytes([tl | 0x03, 0x07, 1 << 2, 0x31])), 0.02); return  # STREAMING already: BAD_STATE, and a second START must never count as a link
                 self.avdtp["started"] = True; self.rc["started_links"] += 1; self.log.append("PEER-AVDTP-STARTED"); self.send(acl(handle, peer_cid, acc + b"\x07"), 0.02)
             else: self.send(acl(handle, peer_cid, bytes([tl | 0x03, sig, 0x19])), 0.02)                                             # unsupported command
         except Exception as e:
@@ -578,7 +585,8 @@ if __name__ == "__main__":
     while time.time() < deadline:
         try:
             d = sock.recv(4096)
-            if not d: break
+            if not d:
+                print("PEER-EOF elapsed=%.1f phase=%s (the socket closed under us: QEMU exited or was killed)" % (time.time() - t_start, phase)); break
             peer.feed(d); last_rx = time.time()
         except socket.timeout:
             pass
