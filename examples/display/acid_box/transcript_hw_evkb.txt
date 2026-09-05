@@ -1,5 +1,50 @@
 acid_box -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
 ================================================================================
+2026-09-05, NEW-36 I-CACHE REGRESSION (teensy-cores 2304743: the CM7 L1
+INSTRUCTION cache is now enabled in ResetHandler; this image rebuilt against it,
+nm carries startup_ccr_at_reset).  Default build, flashed (load -> verify), TWO
+SW4 boots with a persistent reader, then PLAY + a CUTOFF drag:
+
+  ACIDBOX_ENGINE=gpu
+  ACIDBOX_UI_SUM=0x1479CEE8      <- both boots, BIT-IDENTICAL to the 2026-08-28 golden
+  ACIDBOX_GPU_ERR=0
+  ACIDBOX_VSYNC timeouts=0 on all 49 lines (5 read flips one ahead of isrs, a
+    print-time race between the flip request and its completion IRQ, not a
+    timeout; last: flips=1779 isrs=1779 timeouts=0)
+  PLAYING=1, 44 bars of ACIDBOX_BAR RMS following the gates and the CUTOFF drag
+
+A cache cannot change a picture; an identical checksum is the "nothing moved"
+witness for display + GC355 compositor + touch + SAI/DMA audio + SD + I2C.  The
+fps/loop numbers moving is the EXPECTED side (see transcript_hw_evkb_bt.txt,
+NEW-36 A/B).  Spec: docs/superpowers/specs/2026-09-05-cm7-icache-enable-design.md.
+
+  -- boot 1, lines 6-12 --
+  ACIDBOX_ENGINE=gpu
+  ACIDBOX_UI_SUM=0x1479CEE8
+  PLAYING=0
+  I2C_OK
+  ACIDBOX_GPU_ERR=0
+  ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
+  ACIDBOX_DONE
+
+  -- boot 2, lines 188-194 --
+  ACIDBOX_ENGINE=gpu
+  ACIDBOX_UI_SUM=0x1479CEE8
+  PLAYING=0
+  I2C_OK
+  ACIDBOX_GPU_ERR=0
+  ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
+  ACIDBOX_DONE
+
+  -- PLAY + CUTOFF drag, first two and last two of the 44 ACIDBOX_BAR lines --
+  ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3732,0.0001,0.3773,0.4102,0.3735,0.0002,0.3808,0.3704,0.4201,0.3924,0.0002,0.3916]
+  ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3536,0.3690,0.3099,0.0002,0.3466,0.3552,0.3617,0.4582,0.0002,0.4515]
+  ACIDBOX_BAR=43 RMS=[0.4905,0.4891,0.0006,0.4838,0.4885,0.0006,0.4893,0.4894,0.4866,0.0010,0.4838,0.4841,0.4912,0.4895,0.0007,0.4894]
+  ACIDBOX_BAR=44 RMS=[0.4913,0.4893,0.0010,0.4837,0.4880,0.0004,0.4892,0.4894,0.4893,0.0007,0.4845,0.4843,0.4908,0.4865,0.0004,0.4894]
+
+  -- last of 49 ACIDBOX_VSYNC lines --
+  ACIDBOX_VSYNC flips=1779 isrs=1779 timeouts=0
+================================================================================
 2026-08-28, TEAR-FREE PIPELINE + GPU KNOBS (import_evkb_synthui(VGLITE),
 lvgl_mipi_panel_create_db + the compositor's deferred mode via the pre-flip
 hook -- synthui_knob_test's exact wiring, applied to this consumer).  Flashed,

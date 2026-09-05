@@ -16,3 +16,93 @@ AUDIO_CM4_DET=PASS
 AUDIO_CM4=PASS
 HUMAN: listen for ~1 kHz on J101 (CM4-owned pipeline)
 CM4AUDIO-DONE
+================================================================================
+2026-09-05, NEW-36 I-CACHE REGRESSION -- THE HARDWARE VERDICT DID NOT REPRODUCE,
+ON EITHER CORE.  Filed as NEW-38; NOT a NEW-36 effect (measured, not argued).
+
+  build                       teensy-cores  boots  underruns   sai_isr_count        mic_peak_q15    verdict
+  POST (I-cache on)           2304743       7      0x3FF each  0x24000 (144/block)  0x6C4A..0x6C6B  AUDIO_CM4_DET=PASS, AUDIO_CM4=FAIL
+  PRE  (no I-cache, control)  672c577       2      0x3FF both  0x24000              0x6C51, 0x6C53  same
+  recorded PASS (2026-07-22)  --            1      0           0x20006 (128/block)  0x1BD           AUDIO_CM4=PASS
+
+The CM4 image (cm4_audio.cm4.bin) is BYTE-IDENTICAL between the PRE and POST
+builds; the CM7 side differs only in ResetHandler (0x182 -> 0x1d6) and the new
+startup_ccr_at_reset global, and the CM7 here only stages the CM4 and relays MU
+tokens from ITCM before parking in WFI.  The same pipeline that passed in July
+starves its output graph once per block today whichever CM7 core stages it.
+What differs from July: the mic is SATURATED (~0.85 FS vs 0.014 FS -- the loud
+1 kHz output couples into it; the 2026-07-22 rx-overflow FAIL also read
+mic_peak=0x6C85), and the SAI1 ISR fires 144 times per block instead of 128 --
+16 extra entries per block, one every 8 frames.  fef=0, rx_overflows=0, FFT bin
+6 / mag 0xFF2, codec_ack=1, pll_prearm=1: every deterministic token unchanged.
+
+BENCH TRAP: this image parks the CM7 in WFI ~4 s after reset, and a WFI-parked
+CM7 is INVISIBLE to LinkServer -- every `flash ... load` fails with
+`Ep(03). Invalid ID for processor` (CpuID 00000FFF behind a valid DpID 6BA02477),
+for the EVKB and CM7-only profiles, after a board power cycle and after a
+DEBUG-USB replug alike.  It is NOT the MCU-Link DAP wedge.  The PRE image was
+written by a retry loop of `flash ... load` while SW4 was pressed every ~3 s: the
+loop caught the awake window on attempt 47.  The roadmap's SDP-mode boot
+(SW1-3 OFF / SW1-4 ON) is the other way past it.
+
+--- POST (new core), boot 1 ---
+CM4AUDIO-GATE v1
+info pll_prearm=1 (CM7 fallback engaged)
+codec_ack=00000001
+sai_isr_count=00024000
+dispatch_count=00000400
+underruns=000003FF
+fef=00000000
+rx_overflows=00000000
+mic_peak_q15=00006C5C
+fft_peak_bin=00000006
+fft_peak_mag=00000FF2
+done=D0DE0005
+cm7_audio_isers=00000000
+AUDIO_CM4_DET=PASS
+AUDIO_CM4=FAIL
+HUMAN: listen for ~1 kHz on J101 (CM4-owned pipeline)
+CM4AUDIO-DONE
+--- POST (new core), boots 2-7 (underruns / mic_peak / verdict lines only) ---
+boot 2: underruns=000003FF  mic_peak_q15=00006C63  AUDIO_CM4=FAIL
+boot 3: underruns=000003FF  mic_peak_q15=00006C64  AUDIO_CM4=FAIL
+boot 4: underruns=000003FF  mic_peak_q15=00006C66  AUDIO_CM4=FAIL
+boot 5: underruns=000003FF  mic_peak_q15=00006C6B  AUDIO_CM4=FAIL
+boot 6: underruns=000003FF  mic_peak_q15=00006C4A  AUDIO_CM4=FAIL
+boot 7: underruns=000003FF  mic_peak_q15=00006C6A  AUDIO_CM4=FAIL
+--- PRE (old core, control), boot 1 ---
+CM4AUDIO-GATE v1
+info pll_prearm=1 (CM7 fallback engaged)
+codec_ack=00000001
+sai_isr_count=00024000
+dispatch_count=00000400
+underruns=000003FF
+fef=00000000
+rx_overflows=00000000
+mic_peak_q15=00006C51
+fft_peak_bin=00000006
+fft_peak_mag=00000FF2
+done=D0DE0005
+cm7_audio_isers=00000000
+AUDIO_CM4_DET=PASS
+AUDIO_CM4=FAIL
+HUMAN: listen for ~1 kHz on J101 (CM4-owned pipeline)
+CM4AUDIO-DONE
+--- PRE (old core, control), boot 2 ---
+CM4AUDIO-GATE v1
+info pll_prearm=1 (CM7 fallback engaged)
+codec_ack=00000001
+sai_isr_count=00024000
+dispatch_count=00000400
+underruns=000003FF
+fef=00000000
+rx_overflows=00000000
+mic_peak_q15=00006C53
+fft_peak_bin=00000006
+fft_peak_mag=00000FF2
+done=D0DE0005
+cm7_audio_isers=00000000
+AUDIO_CM4_DET=PASS
+AUDIO_CM4=FAIL
+HUMAN: listen for ~1 kHz on J101 (CM4-owned pipeline)
+CM4AUDIO-DONE
