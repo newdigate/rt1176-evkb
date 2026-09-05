@@ -32,6 +32,8 @@ if(NOT ICACHE_BENCH_SBC_ITCM)
     # imxrt1176.ld is read at configure time, the one input pattern is appended
     # beside the libLVGL_flash.a rule, and ONLY this target links the copy, so it
     # never drifts from the core script and touches no other example.
+    # `.fastrun` is captured on purpose (unlike acid_box's NB about it): the flash
+    # cell wants ALL of Sbc.cpp in FLASH, FASTRUN-marked routines included.
     get_target_property(_icb_lf icache_bench_hw.elf LINK_FLAGS)
     string(REGEX MATCH "-T([^ ]*imxrt1176[.]ld)" _icb_ignore "${_icb_lf}")
     set(_icb_coreld "${CMAKE_MATCH_1}")

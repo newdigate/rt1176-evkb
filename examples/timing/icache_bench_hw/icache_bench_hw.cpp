@@ -90,22 +90,28 @@ ICB_DEFINE_CRC(flash, ICB_FLASH)
 /* ---- wl=sbc: the real encoder, wherever the linker put Sbc.cpp.obj -------- */
 static Sbc      icb_sbc;
 static int16_t  icb_pcm_l[128], icb_pcm_r[128];
-static uint8_t  icb_sbc_out[128];        /* 119 B at bitpool 53 */
+static uint8_t  icb_sbc_out[ICB_N_SBC * 128];   /* one 128-B slot per frame: 119 B at bitpool 53 (Sbc::frameLength is
+                                                  * fixed by icb_sbc_params; a params edit that exceeds 128 B/frame must
+                                                  * grow the slot).  The unwritten tail of each slot is .bss zero, so the
+                                                  * witness below covers the CONCATENATED output of every frame in a rep. */
 static uint16_t icb_sbc_flen;
 static Sbc::Params icb_sbc_params = { Sbc::RATE_44100, Sbc::JOINT_STEREO, 16, 8, Sbc::LOUDNESS, 53 };
 ICB_NOIPA static uint32_t icb_sbc_rep(void)   /* ITCM wrapper; the cost under test is Sbc::encode */
 {
     uint16_t n = 0;
-    for (uint32_t f = 0; f < ICB_N_SBC; f++) n = icb_sbc.encode(icb_pcm_l, icb_pcm_r, icb_sbc_out);
+    for (uint32_t f = 0; f < ICB_N_SBC; f++) n = icb_sbc.encode(icb_pcm_l, icb_pcm_r, icb_sbc_out + f * 128u);
     icb_sbc_flen = n;
     return n;
 }
 static void icb_sbc_reset(void) { icb_sbc.begin(icb_sbc_params); }   /* fresh state per rep => identical frames */
-static uint32_t icb_sbc_witness(void) { return icb_itcm_crc32(0, icb_sbc_out, icb_sbc_flen); }
+static uint32_t icb_sbc_witness(void) { return icb_itcm_crc32(0, icb_sbc_out, sizeof icb_sbc_out); }
 static const void *icb_sbc_encode_addr(void)
 {
-    /* Non-virtual member: the Itanium ABI stores the plain code address in the
-     * first word of the pointer-to-member -- read it through a union. */
+    /* Non-virtual member: under the ARM C++ ABI (§3.2.1) the first word of a
+     * pointer-to-member-function holds the THUMB-TAGGED code address (bit 0 set)
+     * and the adjustment word carries the virtual flag -- so the `& ~1u` that
+     * icb_place()/icb_row() apply is load-bearing, not defensive.  Read it
+     * through a union. */
     union { uint16_t (Sbc::*mf)(const int16_t *, const int16_t *, uint8_t *); struct { const void *p; ptrdiff_t adj; } r; } u;
     u.mf = &Sbc::encode;
     return u.r.p;
@@ -145,8 +151,16 @@ static IcbHalf icb_half(uint32_t (*rep)(void), void (*reset)(void), uint32_t (*w
     IcbHalf h; uint32_t r[ICB_K];
     h.ic = icb_ic();                                           /* the state this half measures UNDER */
     h.cold = 0;
-    if (with_cold) { if (reset) reset(); h.cold = icb_time(rep); }
-    for (int k = 0; k < ICB_K; k++) { if (reset) reset(); r[k] = icb_time(rep); }
+    if (with_cold) {
+        if (reset) reset();
+        h.cold = icb_time(rep);
+        (void)micros();   /* outside the window: services cycles64()'s 4.3 s CYCCNT-wrap accumulator */
+    }
+    for (int k = 0; k < ICB_K; k++) {
+        if (reset) reset();
+        r[k] = icb_time(rep);
+        (void)micros();   /* outside the window: services cycles64()'s 4.3 s CYCCNT-wrap accumulator */
+    }
     h.wit = witness ? witness() : icb_sink;
     icb_sort(r, ICB_K);
     h.min = r[0];
@@ -168,8 +182,10 @@ static void icb_row(const char *wl, const void *fn, const IcbHalf &h, const char
     CONSOLE.printf("icache_bench wl=%s place=%s addr=0x%08lx icache=%s ",
                    wl, icb_place(fn), (unsigned long)((uintptr_t)fn & ~(uintptr_t)1u), h.ic ? "on" : "off");
     if (h.cold) CONSOLE.printf("cold_us/rep=%lu ", (unsigned long)icb_us(h.cold));
-    CONSOLE.printf("min_cyc/%s=%lu med_cyc/%s=%lu us/rep=%lu wit=0x%08lx\n",
-                   unit, (unsigned long)(h.min / units), unit, (unsigned long)(h.med / units),
+    uint32_t mt = (uint32_t)(((uint64_t)h.min * 10u) / units), dt = (uint32_t)(((uint64_t)h.med * 10u) / units);
+    CONSOLE.printf("min_cyc/%s=%lu.%lu med_cyc/%s=%lu.%lu us/rep=%lu wit=0x%08lx\n",
+                   unit, (unsigned long)(mt / 10u), (unsigned long)(mt % 10u),
+                   unit, (unsigned long)(dt / 10u), (unsigned long)(dt % 10u),
                    (unsigned long)icb_us(h.min), (unsigned long)h.wit);
 }
 static void icb_pair(const char *wl, const void *fn, const IcbCell &c, const char *unit, uint32_t units)
@@ -187,6 +203,7 @@ static void icb_header(void)
     SCB_ID_CSSELR = 1u;                                        /* InD=1: instruction cache, level 1 */
     __asm__ volatile("dsb" ::: "memory"); __asm__ volatile("isb" ::: "memory");
     uint32_t cc = SCB_ID_CCSIDR;
+    SCB_ID_CSSELR = 0u; __asm__ volatile("dsb" ::: "memory"); __asm__ volatile("isb" ::: "memory");   /* leave the selector as we found it */
     uint32_t line_b = 1u << ((cc & 7u) + 4u);                  /* LineSize = log2(words) - 2 */
     uint32_t ways = ((cc >> 3) & 0x3FFu) + 1u;
     uint32_t sets = ((cc >> 13) & 0x7FFFu) + 1u;
@@ -240,10 +257,11 @@ void setup()
     uint32_t us_off = icb_us(s.off.min) / ICB_N_SBC, us_on = icb_us(s.on.min) / ICB_N_SBC;
     CONSOLE.printf("icache_bench wl=sbc place=%s flen=%u us/frame_off=%lu us/frame_on=%lu ",
                    icb_place(enc), (unsigned)icb_sbc_flen, (unsigned long)us_off, (unsigned long)us_on);
+    int sbc_crc_match = (s.off.wit == s.on.wit) && (icb_sbc_flen != 0);
     CONSOLE.printf("realtime_x_off=%lu.%lu realtime_x_on=%lu.%lu sbc_crc=0x%08lx sbc_crc_match=%d\n",
                    (unsigned long)(icb_ratio10(2902u, us_off) / 10u), (unsigned long)(icb_ratio10(2902u, us_off) % 10u),
                    (unsigned long)(icb_ratio10(2902u, us_on) / 10u),  (unsigned long)(icb_ratio10(2902u, us_on) % 10u),
-                   (unsigned long)s.on.wit, s.off.wit == s.on.wit ? 1 : 0);
+                   (unsigned long)s.on.wit, sbc_crc_match);
 
     /* summary: flash off/on speedups, and how close cached flash gets to ITCM */
     CONSOLE.printf("icache_bench summary calls=%lu.%lux crc=%lu.%lux sbc=%lu.%lux ",
