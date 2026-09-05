@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake HCI controller for the m2_hci_probe [hci] gate.
+"""Fake HCI controller for the m2_hci_probe gates ([hci], [baud], [avdtp], [reconnect]) and bt_tone_test's [media].
 
 Speaks H4 over the UNIX socket qemu2 exposes as LPUART2
 (-serial unix:PATH,server -- slot 1 = LPUART2; QEMU waits for us before booting the guest).  Every value it returns
@@ -35,7 +35,8 @@ Phases (argv[1]):
               recorded -- the host's target-name filter must never send one.
               Ends when the third link's START is accepted.
 Exit 0 when the phase's last expected opcode was seen (avdtp: when the peer
-recorded an accepted START; media: when the media validation above holds).
+recorded an accepted START; media: when the media validation above holds; reconnect: when the third
+link's START is accepted with no exception and no deadline).
 Prints PEER-* lines.
 """
 import socket, struct, sys, time
@@ -85,9 +86,11 @@ def v3_data_req(length, offset, err=0):
 LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP_REMOTE_NAME_REQ,
                "starve": OP_RESET, "fwdnld": OP_READ_BD_ADDR, "baud": OP_READ_BUFFER_SIZE,
                "avdtp": 0x0413, "media": 0x0413, "reconnect": 0x0413}   # Set_Connection_Encryption -- last COMMAND before
-                                  # signalling; the real end of both avdtp and media is checked
+                                  # signalling; the real end of avdtp, media and reconnect is checked
                                   # separately (peer.avdtp["started"] / peer.media, below)
 LAST_OPCODE_COUNT = {"baud": 2}   # phases whose terminal opcode must be seen N times (default 1)
+DEADLINE = {"reconnect": 60}       # seconds from socket connect; default 45.  reconnect runs one inquiry + three links + three disconnects
+                                   # (~12-15 s wall measured from the [avdtp] capture's 1.7 s per link) and must not share [media]'s budget
 
 def phase_done(phase, peer):
     # avdtp's real end is signalling over ACL (an accepted START), not a
@@ -100,7 +103,7 @@ def phase_done(phase, peer):
     if phase == "media":
         m = peer.media
         return m["pkts"] > 0 and m["seqgaps"] == 0 and m["badsbc"] == 0 and m["badrtp"] == 0
-    if phase == "reconnect": return peer.rc["started_links"] >= 3 and not peer.avdtp["error"]
+    if phase == "reconnect": return peer.rc["started_links"] >= 3 and not peer.avdtp["error"] and peer.rc["errors"] == 0
     return peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
 
 def connect(path):
@@ -130,8 +133,9 @@ class Peer:
         self.peer_bd = None
         self.reset_link()
         # --- reconnect phase: the tally the gate asserts, and which link we are on ---
-        self.rc = {"links": 0, "inquiries": 0, "create_conns": 0, "key_replies": 0, "key_ok": 0, "key_rejected": 0,
+        self.rc = {"inquiries": 0, "create_conns": 0, "key_replies": 0, "key_ok": 0, "key_rejected": 0,
                    "neg_replies": 0, "iocap_dances": 0, "notified": 0, "started_links": 0,
+                   "handle": 0x0001, "errors": 0,
                    "reject_on_link": 3, "rejected": False, "keys": {}}   # keys: bd -> the key we last notified for it
         # --- media phase: RTP/SBC validation on the media transport channel ---
         self.media = {"pkts": 0, "frames": 0, "lastseq": None, "seqgaps": 0, "badrtp": 0, "badsbc": 0}
@@ -177,6 +181,8 @@ class Peer:
         # exactly as it did on the bench.
         self.rev = {"state": "idle", "my_cid": 0x0E85, "their_cid": None, "cfg_req_seen": False, "cfg_rsp_seen": False,
                     "query_sent": False, "answer": None, "done": False, "handle": None}
+    def cur_handle(self):
+        return self.rc["handle"]
     def flush(self):
         now = time.time(); keep = []
         for due, b in self.pending:
@@ -232,15 +238,17 @@ class Peer:
             if self.phase == "reconnect" and bd == DECOY_BD:
                 # The decoy bond's name never matches the target: a page here means the host's name
                 # filter is gone.  Modelled as a Page Timeout so the host moves on and the run still
-                # completes -- only the tripwire records it.
+                # completes -- only the tripwire records it.  The 100 ms is pacing, not a timing model
+                # of the real 5.12 s page timeout (Write_Page_Timeout is asserted separately).
                 self.log.append("PEER-DECOY-PAGED")
                 self.send(cmd_status(opcode)); self.send(event(0x03, b"\x04" + struct.pack("<H", 0x0000) + bd + b"\x01\x00"), 0.1)
                 return
             self.peer_bd = bd
             if self.phase == "reconnect":
-                self.rc["links"] += 1; self.rc["create_conns"] += 1; self.reset_link()
+                if self.rc["create_conns"]: self.rc["handle"] += 1        # 0x0001, 0x0002, 0x0003: a FRESH handle per link, so a host that cached link 1's is caught
+                self.rc["create_conns"] += 1; self.reset_link()
             self.log.append("PEER-CREATE-CONN role_switch=%d" % params[12])
-            self.send(cmd_status(opcode)); self.send(event(0x03, b"\x00" + struct.pack("<H", 0x0001) + params[:6] + b"\x01\x00"), 0.1)
+            self.send(cmd_status(opcode)); self.send(event(0x03, b"\x00" + struct.pack("<H", self.cur_handle()) + params[:6] + b"\x01\x00"), 0.1)
         elif opcode == 0x0C18:                                              # Write_Page_Timeout -> Command Complete
             self.log.append("PEER-PAGE-TIMEOUT slots=0x%04x" % struct.unpack("<H", params[:2])[0])
             self.send(cmd_complete(opcode, b"\x00"))
@@ -249,7 +257,9 @@ class Peer:
             self.send(event(0x03, b"\x02" + struct.pack("<H", 0x0000) + params[:6] + b"\x01\x00"), 0.05)
         elif opcode == 0x0406:                                              # Disconnect -> Command Status, Disconnection Complete
             self.send(cmd_status(opcode)); self.send(event(0x05, b"\x00" + params[:2] + params[2:3]), 0.05)
+            if self.phase == "reconnect": self.reset_link()             # the link is gone: stale CIDs must land on PEER-ACL-UNKNOWN-CID, not be answered
         elif opcode == 0x0411:                                              # Authentication_Requested: SSP Just Works, all the way to Auth Complete
+            if self.peer_bd is None: self.log.append("PEER-AUTH-NO-LINK"); self.send(cmd_status(opcode, 0x02)); return   # 0x02 = Unknown Connection Identifier
             self.send(cmd_status(opcode)); bd = self.peer_bd
             self.send(event(0x17, bd), 0.05)                                # Link_Key_Request
         elif opcode == 0x040B:                                              # Link_Key_Request_Reply: bd(6) key(16) -- the host offers a STORED key
@@ -259,17 +269,17 @@ class Peer:
             known = self.rc["keys"].get(bd)
             if known is None or key != known:
                 self.log.append("PEER-KEY-MISMATCH offered=%s known=%s" % (key.hex(), known.hex() if known else "none"))
-                self.send(event(0x06, b"\x05" + struct.pack("<H", 0x0001)), 0.05)          # Authentication Failure
-            elif self.rc["links"] == self.rc["reject_on_link"] and not self.rc["rejected"]:
+                self.send(event(0x06, b"\x05" + struct.pack("<H", self.cur_handle())), 0.05)          # Authentication Failure
+            elif self.rc["create_conns"] == self.rc["reject_on_link"] and not self.rc["rejected"]:
                 self.rc["rejected"] = True; self.rc["key_rejected"] += 1
-                self.log.append("PEER-KEY-REJECTED link=%d" % self.rc["links"])
-                self.send(event(0x06, b"\x06" + struct.pack("<H", 0x0001)), 0.05)          # PIN or Key Missing: the peer forgot us
-            elif self.rc["links"] == self.rc["reject_on_link"]:
-                self.log.append("PEER-KEY-STALE-REPLAY link=%d" % self.rc["links"])          # the host offered the rejected key AGAIN
-                self.send(event(0x06, b"\x06" + struct.pack("<H", 0x0001)), 0.05)
+                self.log.append("PEER-KEY-REJECTED link=%d" % self.rc["create_conns"])
+                self.send(event(0x06, b"\x06" + struct.pack("<H", self.cur_handle())), 0.05)          # PIN or Key Missing: the peer forgot us
+            elif self.rc["create_conns"] == self.rc["reject_on_link"]:
+                self.log.append("PEER-KEY-STALE-REPLAY link=%d" % self.rc["create_conns"])          # the host offered the rejected key AGAIN
+                self.send(event(0x06, b"\x06" + struct.pack("<H", self.cur_handle())), 0.05)
             else:
                 self.rc["key_ok"] += 1
-                self.send(event(0x06, b"\x00" + struct.pack("<H", 0x0001)), 0.05)          # authenticated, no pairing
+                self.send(event(0x06, b"\x00" + struct.pack("<H", self.cur_handle())), 0.05)          # authenticated, no pairing
         elif opcode == 0x040C:                                              # Link_Key_Request_Negative_Reply -> IO cap dance
             self.rc["neg_replies"] += 1
             self.send(cmd_complete(opcode, b"\x00" + params[:6])); self.send(event(0x31, params[:6]), 0.05)   # IO_Capability_Request
@@ -284,9 +294,9 @@ class Peer:
             self.rc["keys"][params[:6]] = key; self.rc["notified"] += 1
             self.send(event(0x36, b"\x00" + params[:6]), 0.05)              # Simple_Pairing_Complete
             self.send(event(0x18, params[:6] + key + b"\x04"), 0.1)         # Link_Key_Notification (unauthenticated combination)
-            self.send(event(0x06, b"\x00" + struct.pack("<H", 0x0001)), 0.15)      # Authentication_Complete
+            self.send(event(0x06, b"\x00" + struct.pack("<H", self.cur_handle())), 0.15)      # Authentication_Complete
         elif opcode == 0x0413:                                              # Set_Connection_Encryption -> Encryption_Change on
-            self.send(cmd_status(opcode)); self.send(event(0x08, b"\x00" + struct.pack("<H", 0x0001) + b"\x01"), 0.1)
+            self.send(cmd_status(opcode)); self.send(event(0x08, b"\x00" + struct.pack("<H", self.cur_handle()) + b"\x01"), 0.1)
         else:
             self.log.append("PEER-UNKNOWN-OPCODE 0x%04x" % opcode)
             self.send(cmd_complete(opcode, b"\x01"))                    # 0x01 = Unknown HCI Command
@@ -369,6 +379,8 @@ class Peer:
         # bad frame".  The happy-path parses below stay unguarded on purpose:
         # this try/except is the safety net, not a substitute for them.
         try:
+            if self.phase == "reconnect" and handle != self.cur_handle():
+                self.log.append("PEER-ACL-BAD-HANDLE 0x%04x (current 0x%04x)" % (handle, self.cur_handle())); return
             if len(d) < 4: return
             l2len, cid = struct.unpack("<HH", d[:4]); pl = d[4:4 + l2len]
             if cid == 0x0001:                                                    # signalling
@@ -430,7 +442,7 @@ class Peer:
             self.log.append("PEER-ACL-UNKNOWN-CID 0x%04x" % cid)
         except Exception as e:
             self.log.append("PEER-EXCEPTION handle_acl: %r" % e)
-            self.avdtp["error"] = True
+            self.avdtp["error"] = True; self.rc["errors"] += 1
     def handle_sdp(self, handle, peer_cid, pl):
         try:
             if pl[0] == 0x06:                                                    # the host's query of OUR AudioSink record
@@ -450,7 +462,7 @@ class Peer:
                 self.answer_discover()
         except Exception as e:
             self.log.append("PEER-EXCEPTION handle_sdp: %r" % e)
-            self.avdtp["error"] = True
+            self.avdtp["error"] = True; self.rc["errors"] += 1
     # --- the reverse SDP query (the Shokz's behaviour) ---
     def rev_start(self, handle):
         self.rev["state"] = "connecting"; self.rev["handle"] = handle
@@ -514,7 +526,7 @@ class Peer:
             else: self.send(acl(handle, peer_cid, bytes([tl | 0x03, sig, 0x19])), 0.02)                                             # unsupported command
         except Exception as e:
             self.log.append("PEER-EXCEPTION handle_avdtp: %r" % e)
-            self.avdtp["error"] = True
+            self.avdtp["error"] = True; self.rc["errors"] += 1
     def handle_media(self, pl):
         # RTP v2 (RFC 3550) + A2DP v1.3 sec 4.3.4 SBC media payload, validated
         # against values this firmware cannot invent: V=2/PT=96, a strictly
@@ -543,7 +555,7 @@ class Peer:
                                 % (m["pkts"], m["frames"], m["seqgaps"], m["badsbc"], m["badrtp"]))
         except Exception as e:
             self.log.append("PEER-EXCEPTION handle_media: %r" % e)
-            self.avdtp["error"] = True
+            self.avdtp["error"] = True; self.rc["errors"] += 1
 
 if __name__ == "__main__":
     phase, path = sys.argv[1], sys.argv[2]
@@ -562,7 +574,7 @@ if __name__ == "__main__":
         # faithful reproduction of a race a real host can also lose.
         peer.send(v3_start_ind())
         peer.boot_last_ind = time.time()
-    deadline, last_rx = time.time() + 45, time.time()
+    t_start = time.time(); deadline, last_rx = t_start + DEADLINE.get(phase, 45), t_start
     while time.time() < deadline:
         try:
             d = sock.recv(4096)
@@ -588,6 +600,8 @@ if __name__ == "__main__":
                 peer.send(v3_data_req(*peer.boot_plan[0]))
         if phase_done(phase, peer) and not peer.pending and time.time() - last_rx > 3.0:
             break
+    if time.time() >= deadline and not phase_done(phase, peer):
+        print("PEER-DEADLINE elapsed=%.1f phase=%s (the peer gave up; the firmware lost its controller here)" % (time.time() - t_start, phase))
     for l in peer.log: print(l)
     if phase == "fwdnld":
         print("PEER-BOOT ok=%d acks=%d chunks=%d err=%s"
