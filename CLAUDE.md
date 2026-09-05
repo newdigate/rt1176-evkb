@@ -599,6 +599,64 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-09-05 (evening): 128 gates discovered, 127 passed, 1 failed,
+0 SKIP** on the **NEW-36 CM7 L1 I-CACHE** close-out — the `imxrt1176` core now
+enables the instruction cache in `ResetHandler` (`teensy-cores` `2304743`, pin
+bumped, fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING `serial_test`'s
+gate on the fetched ELF). The one red, `audio/bt_tone_test[media]`, timed out at
+120 s and PASSES alone on an idle machine — the documented `-serial unix …,server`
+peer-attach flake, and QEMU cannot see a cache anyway. `LICENSE-AUDIT: PASS`;
+vacuity 32/32. **No new gate**: the new `timing/icache_bench_hw` is a
+silicon-only `_hw` example, because **qemu2 masks `CCR.IC` out of every write
+and NOPs `ICIALLU`** (`hw/intc/armv7m_nvic.c`) — every row reads `icache=off`
+there and the sweep is a boot-regression check of the new startup, nothing more.
+★ **Every gate image was REBUILT before the sweep and checked for freshness by
+symbol** (`nm … startup_ccr_at_reset`, 104 rt1176 images + `build-32`, 0 stale):
+gates do not build, and an ELF from the old core boots fine, so an unrebuilt
+sweep would have passed VACUOUSLY. 74 of those build dirs could not even
+reconfigure (the pre-2026-08-14 cached-toolchain-path trap above, surfacing
+because a core HEADER change forced their first reconfigure) and were configured
+fresh.
+★ **The ROM hands over with the I-cache OFF** — READ, not inferred:
+`ccr_reset=0x00040200` (BP and STKALIGN set; IC=0, DC=0) from
+`startup_ccr_at_reset`. `CCSIDR`: 32 KB, 2-way, 32-B lines. The bench (three
+boots within 0.05 %, min-of-8): flash-resident `calls` **192.3 → 8.3 cyc/call
+(23×, equal to ITCM)**, `crc` 1.0× (a 20-byte loop the FlexSPI AHB prefetch
+buffer already serves — `icache=off` is "AHB-buffered", not "unbuffered"), the
+real `Sbc` encoder **1106 → 187 µs/frame (5.9×; ITCM 125; `realtime_x` 15.5)**,
+every witness matched and `sbc_crc=0x6c24f764` identical across QEMU, the flash
+build and the ITCM build — the cache changed no result. It is a BEST CASE (the
+bench's ~3 KB of flash code fits the cache); the application number is the
+acid_box LOOPSTAT A/B (same instrument, core the only variable, nm witnesses
+both ways): steady streaming `svc` **24.5 → 0.46 µs/iter (53×)**, `print`
+11.4 → 1.14 (24.5 → 1.8 under the knob sweep), loop 10.3k → 63.7k it/s, `drain`
+18× less, `pcmdrops` 0/0, 30 fps and 32.4 ms frames in both (vsync-bound
+already), touch p95 78 → 43 ms (not claimed beyond "not worse"), connect
+~19 → ~16 s. **One prediction REFUTED**: `enc` 171 → 125 µs/block was predicted
+unchanged — the slot also wraps the flash-routed MediaPacketizer/Rtp push, and
+125 is exactly the bench's ITCM pure-encode figure. Follow-on trigger met
+(`realtime_x` ≥ 5) → **NEW-37** filed (revisit acid_box's `M2_BT_OUT` ITCM
+routing).
+★ **Nothing moved where a cache could have moved it**: acid_box default golden
+`0x1479CEE8` bit-identical over two boots, `ACIDBOX_VSYNC timeouts=0` on all 49
+lines, PLAY + CUTOFF drag with the RMS table following. **But the second witness
+did NOT reproduce, on EITHER core**: `dualcore/cm4_audio_test` reads
+`underruns=0x3FF` / `AUDIO_CM4=FAIL` on 7 boots of the new-core build AND on 2
+boots of a same-day old-core control (CM4 image byte-identical; CM7 differs
+only in `ResetHandler`) — a bench/example finding (saturated mic ~0.85 FS vs
+0.014 FS in the July PASS, 144 vs 128 SAI ISRs per block), filed as **NEW-38**,
+not a NEW-36 effect. A moved witness is measured against the old core, not
+argued away.
+★ **Bench trap found on the way: a WFI-parked CM7 is invisible to LinkServer.**
+`cm4_audio_test` parks the CM7 in WFI ~4 s after reset, and from then on every
+`flash … load` fails with `Ep(03). Invalid ID for processor` (`CpuID 00000FFF`
+behind a valid `DpID 6BA02477`) — EVKB and CM7-only profiles, after a board
+power cycle and after a DEBUG-USB replug alike. It is NOT the DAP wedge. A retry
+loop of `flash … load` while SW4 is pressed every ~3 s caught the awake window
+(attempt 47); the roadmap's SDP-mode boot (SW1-3 OFF / SW1-4 ON) is the other
+way past it. **D-cache and MPU remain out of scope** — a separate, riskier
+change with its own DMA-coherency review.
+
 ✅ **Measured 2026-09-05: 128 gates discovered, 128 passed, 0 failed, 0 SKIP**
 (`gates: 128 passed`, exit 0; `-l` reports 128), on the **NEW-33 acid_box
 BT-streaming UI-responsiveness** close-out. **No new gate**: `ACIDBOX_LOOPSTAT`
@@ -634,7 +692,9 @@ connect), so `L2cap::send`'s bytes provably never fill it. Result: loop rate
 instruction cache -- the imxrt1176 core's startup never writes `SCB_CCR` -- so
 flash-resident code executes from FlexSPI at raw QSPI speed (5-30 µs per small
 call): it is why the flash-resident SBC encode measured 2-3 ms/block in NEW-9
-and why `Sbc.cpp` had to move to ITCM. A core change with its own issue. (b) The
+and why `Sbc.cpp` had to move to ITCM. A core change with its own issue — **DONE as
+NEW-36 the same day** (block above): the I-cache is enabled, and the numbers
+are the bench's, not this estimate's. (b) The
 link drops climbed to ~14-24k frames over 8+ min with the loop NEVER stalled
 (`pcmdrops=0`, `max_us`~12 ms) -- credit starvation on the AIR link = NEW-34;
 it retires the 2026-09-04 "drops=0 ongoing" claim (that window was ~20 s). (c)
@@ -1580,8 +1640,13 @@ not hung.
 
   ★ **The two cores also differ on the D-cache, and DMA correctness depends on
   it.** `teensy4` enables it (`startup.c`, `SCB_CCR_IC | SCB_CCR_DC`);
-  `imxrt1176` never writes `SCB_CCR` at all, so OCRAM is coherent there
-  for free. On rt1062 it is not: a DMAMEM buffer is cached write-back unless the
+  `imxrt1176` sets ONLY `SCB_CCR_IC` (the L1 INSTRUCTION cache, NEW-36,
+  2026-09-05 — `arm_icache_invalidate_all()` + `arm_icache_enable()` in
+  `ResetHandler`, no MPU needed) and never `SCB_CCR_DC`, so OCRAM is coherent
+  there for free. Until NEW-36 it wrote `SCB_CCR` not at all, and every
+  flash-resident (XIP) function ran at raw QSPI speed — 5–30 µs per small call;
+  `timing/icache_bench_hw` has the before/after and the ROM's own `CCR`
+  reading (`0x00040200`: IC=0). On rt1062 it is not: a DMAMEM buffer is cached write-back unless the
   MPU says otherwise, so a CPU write can sit in cache while a bus master reads
   stale memory. That cost a full silicon debug session — the EHCI walked a
   periodic list of stale garbage and halted with **no error bit set**, because

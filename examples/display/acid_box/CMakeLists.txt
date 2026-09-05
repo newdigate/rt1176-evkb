@@ -148,7 +148,11 @@ if(M2_BT_OUT)
     # libM2Radio's .text to FLASH (XIP) -- the SAME mechanism the core already uses
     # for libLVGL_flash.a in VGLite mode -- and point ONLY this target at it.  The BT
     # stack runs in setup()/loop(), not a tight audio/display ISR, so flash residency
-    # is cheap (I-cache-covered).  Derived at configure time from the current core
+    # is cheap -- I-cache-covered SINCE NEW-36 (2026-09-05; the core had NO I-cache
+    # when this line was first written: the service chain measured 24.5 us/iter
+    # then and 0.46 us/iter after, transcript_hw_evkb_bt.txt "NEW-36 I-CACHE A/B";
+    # NEW-37 tracks whether this routing is still needed at all).  Derived at
+    # configure time from the current core
     # script, so it never drifts; scoped to this M2_BT_OUT build -- no core change,
     # no effect on any other example that links M2Radio.
     # NB: the appended rule also captures *(.fastrun) from libM2Radio -- today M2Radio

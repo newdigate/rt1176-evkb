@@ -22,6 +22,21 @@ because iso data does not move against QEMU's emulated usb-audio and the graph's
 clock IS packet flow. Do not "strengthen" any of them in QEMU.
 See the Phase 7 section below. History follows, newest first.
 
+★ **2026-09-05 — NEW-36 (CM7 L1 I-cache) used `cm4_audio_test` as a silicon
+witness and it DID NOT REPRODUCE its PASS, on EITHER core → NEW-38.** New-core
+build 7 boots and a same-day old-core control 2 boots all read `underruns=0x3FF`
+/ `AUDIO_CM4=FAIL` (CM4 image byte-identical between the builds; the CM7 differs
+only in `ResetHandler`); versus the 2026-07-22 PASS the mic is saturated
+(~0.85 FS vs 0.014 FS — the loud 1 kHz output couples into it) and the SAI1 ISR
+fires 144× per block instead of 128×. Not a cache effect; a bench/example
+finding to reproduce or explain. ★ **Bench trap:** this image parks the CM7 in
+WFI ~4 s after reset and a WFI-parked CM7 is invisible to LinkServer (`Ep(03).
+Invalid ID for processor`, `CpuID 00000FFF` behind a valid DpID) — EVKB and
+CM7-only profiles, power cycle and DEBUG-USB replug alike; NOT the DAP wedge.
+Past it: a retry loop of `flash … load` while SW4 is pressed every ~3 s (caught
+the awake window on attempt 47), or the SDP-mode boot above (SW1-3 OFF /
+SW1-4 ON). Leave the board on a non-parking image afterwards.
+
 ★ **QUEUED — Phase 8: the Wi-Fi stack (uAP + STA) on the CM4.**  Brief and
 measured constraints in
 `docs/superpowers/handoff/2026-08-22-w19-wifi-on-cm4.md`.  It is a BRAINSTORM
