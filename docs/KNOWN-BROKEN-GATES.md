@@ -493,6 +493,16 @@ the behaviour they assert.
 
 ## Current expected sweep result
 
+★ **2026-09-05 — `rt1176:audio/bt_tone_test[media]` joined the LOAD-SENSITIVE class, and its
+BUDGET is the mechanism.** In the two NEW-36 close-out sweeps (127/1, then 126/2, both with
+concurrent read-only review subagents on the machine) it timed out at the runner's 120 s cap both
+times, and it passes alone in **50 s** — 2.4× headroom idle, none under load. It is the FOURTH
+gate to show the class (`cm4_audio_test`, `cm4_wire_int_slave_test`, `m2_rx_demo[txaggr]`,
+`m2_uap_lwip[uap]` before it — `[uap]` also went red at 4 s in the second sweep and passed alone),
+and the first whose fix would be a budget rather than a re-run: nothing in it is broken. Same
+disposition as the others — re-run idle before believing a red; do not raise the cap to hide it.
+CLAUDE.md's 2026-09-05 (evening) block has the two sweeps and the reds by name.
+
 ★ **2026-08-22 — the count is 116, and the log below stopped being maintained at 72.**
 Everything from W9 to W18 (the M.2 Wi-Fi line, the display capstone line, and the uAP work) was
 added without an entry here. **`CLAUDE.md` is the maintained source for the count and the target**;

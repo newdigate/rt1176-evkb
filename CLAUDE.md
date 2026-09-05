@@ -599,13 +599,19 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
-✅ **Measured 2026-09-05 (evening): 128 gates discovered, 127 passed, 1 failed,
-0 SKIP** on the **NEW-36 CM7 L1 I-CACHE** close-out — the `imxrt1176` core now
+✅ **Measured 2026-09-05 (evening), TWICE: 128 gates discovered, 127 passed /
+1 failed, then 126 passed / 2 failed, 0 SKIP both times** on the **NEW-36 CM7 L1
+I-CACHE** close-out — the `imxrt1176` core now
 enables the instruction cache in `ResetHandler` (`teensy-cores` `2304743`, pin
 bumped, fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING `serial_test`'s
-gate on the fetched ELF). The one red, `audio/bt_tone_test[media]`, timed out at
-120 s and PASSES alone on an idle machine — the documented `-serial unix …,server`
-peer-attach flake, and QEMU cannot see a cache anyway. `LICENSE-AUDIT: PASS`;
+gate on the fetched ELF). The reds are the LOAD-SENSITIVITY class, not
+regressions: `audio/bt_tone_test[media]` timed out at its 120 s budget in BOTH
+sweeps and PASSES alone in 50 s (2.4× headroom idle, none under load — a
+FOURTH gate in that class, and the first whose budget is the problem), and
+`networking/m2_uap_lwip[uap]` (the documented 2026-09-02 member) failed at 4 s
+in the second sweep and passes alone. Both sweeps carried concurrent read-only
+review subagents plus the desktop app's ~45 % of a core; QEMU cannot see a
+cache anyway. `LICENSE-AUDIT: PASS`;
 vacuity 32/32. **No new gate**: the new `timing/icache_bench_hw` is a
 silicon-only `_hw` example, because **qemu2 masks `CCR.IC` out of every write
 and NOPs `ICIALLU`** (`hw/intc/armv7m_nvic.c`) — every row reads `icache=off`
