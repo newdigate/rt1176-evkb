@@ -245,24 +245,33 @@ back after the toggle and prints the state it *measured under*, never the
 one it asked for. The I-cache is left enabled at the end; `loop()`
 heartbeats once a second.
 
-**Output** (fixed tokens; `transcript_hw_evkb.txt` holds two SW4 boots):
+**Output** (fixed tokens; `transcript_hw_evkb.txt` holds two SW4 boots).
+*(Token names corrected 2026-09-05 to what the shipped bench prints — the
+first draft's illustrative block predated the source.)*
 
 ```
-icache_bench ccr_reset=0x… ccr_now=0x… clidr=0x… ccsidr_i=0x… isize_kb=32 ways=2 line_b=32
-icache_bench wl=calls place=itcm  icache=on  min_cyc/call=… med_cyc/call=… us/rep=…
-icache_bench wl=calls place=flash icache=off min_cyc/call=… med_cyc/call=… us/rep=…
-icache_bench wl=calls place=flash icache=on  cold_us/rep=… min_cyc/call=… med_cyc/call=… us/rep=…
-icache_bench wl=crc   … (per byte, same three rows)
-icache_bench wl=sbc   place=flash icache=off us/frame=… realtime_x=… sbc_crc=0x…
-icache_bench wl=sbc   place=flash icache=on  cold_us/frame=… us/frame=… realtime_x=… sbc_crc=0x…
-icache_bench sbc_crc_match=1
-icache_bench summary calls=…x crc=…x sbc=…x flash_on_vs_itcm=calls …x crc …x
+icache_bench ccr_reset=0x… ccr_now=0x… clidr=0x… ccsidr_i=0x… isize_kb=32 ways=2 line_b=32 hz=996000000
+icache_bench wl=calls place=itcm  addr=0x… icache=off min_cyc/call=… med_cyc/call=… us/rep=… wit=0x…
+icache_bench wl=calls place=itcm  addr=0x… icache=on  cold_us/rep=… min_cyc/call=… med_cyc/call=… us/rep=… wit=0x…
+icache_bench wl=calls place=itcm  wit_match=1 off/on=…x
+icache_bench wl=calls place=flash … (same three rows)
+icache_bench wl=crc   … (per byte; itcm then flash, three rows each)
+icache_bench wl=sbc   place=flash … (per frame, three rows)
+icache_bench wl=sbc   place=flash flen=119 us/frame_off=… us/frame_on=… realtime_x_off=… realtime_x_on=… sbc_crc=0x… sbc_crc_match=1
+icache_bench summary calls=…x crc=…x sbc=…x flash_on_vs_itcm: calls=…x crc=…x
 ```
 
-(`sbc place=itcm` appears from the `ICACHE_BENCH_SBC_ITCM` build only.)
-`isize_kb`/`ways`/`line_b` are decoded from `CCSIDR` with `CSSELR=1`
-(instruction cache, level 1) and are the sanity check that the core has
-the 32 KB I-cache the datasheet gives it.
+Every workload prints BOTH placements in both cache states — the ITCM twin's
+`off/on=1.0x` is the control that says TCM is never cached. `min_cyc/<unit>`
+is the integer min over K reps divided by units per rep; `us/rep` is derived
+from the min, not the median. `addr=` is the function's address and `place=`
+is derived from it. (`sbc place=itcm` appears from the `ICACHE_BENCH_SBC_ITCM`
+build only.) `isize_kb`/`ways`/`line_b` are decoded from `CCSIDR` with
+`CSSELR=1` (instruction cache, level 1) and are the sanity check that the core
+has the 32 KB I-cache the datasheet gives it. The flash section for the
+bench's own twins is `.progmem.icb_code`; the per-rep fence is the
+memory-clobbering IRQ mask plus the volatile `CYCCNT` reads and an opaque
+`noipa` call, which is what the first draft's `asm volatile` barrier was for.
 
 ### 5. acid_box LOOPSTAT A/B (core before vs after)
 
