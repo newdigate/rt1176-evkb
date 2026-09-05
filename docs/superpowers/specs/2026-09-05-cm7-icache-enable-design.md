@@ -263,8 +263,9 @@ icache_bench summary calls=…x crc=…x sbc=…x flash_on_vs_itcm: calls=…x c
 
 Every workload prints BOTH placements in both cache states — the ITCM twin's
 `off/on=1.0x` is the control that says TCM is never cached. `min_cyc/<unit>`
-is the integer min over K reps divided by units per rep; `us/rep` is derived
-from the min, not the median. `addr=` is the function's address and `place=`
+is the min over K reps divided by units per rep, printed to one decimal
+(the cached cells are ~5 cycles per unit); `us/rep` is derived from the min,
+not the median. `addr=` is the function's address and `place=`
 is derived from it. (`sbc place=itcm` appears from the `ICACHE_BENCH_SBC_ITCM`
 build only.) `isize_kb`/`ways`/`line_b` are decoded from `CCSIDR` with
 `CSSELR=1` (instruction cache, level 1) and are the sanity check that the core
