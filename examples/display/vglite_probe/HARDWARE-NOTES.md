@@ -105,7 +105,7 @@ Xilinx's `Xil_DCacheFlush()`, and still declares `int_queue` as a FreeRTOS
 
 ## Cache
 
-No maintenance needed. The `imxrt1176` core never writes `SCB_CCR`, so the
+No maintenance needed. The `imxrt1176` core never enables the D-cache (since NEW-36 it sets only `SCB_CCR_IC`, the instruction cache), so the
 D-cache is off and CPU/GPU views of memory agree; `vg_lite_hal_barrier()`
 needs only `__DSB()`. This is the opposite of the rt1062 situation — do not
 port that cache handling here.

@@ -5,7 +5,7 @@
  * wit_match / sbc_crc_match lines are a real check of the bench's own logic.
  *
  * What it measures, in ONE boot, with the DWT cycle counter and IRQs masked
- * around each timed rep (millis()/micros() are DWT-based in this core, so a
+ * around each timed rep (micros()/delay() are DWT-based in this core, so a
  * deferred SysTick costs nothing):
  *   wl=calls  64 three-instruction functions in an unrolled direct chain --
  *             fetch/branch-bound, the "5-30 us per small call" shape NEW-33

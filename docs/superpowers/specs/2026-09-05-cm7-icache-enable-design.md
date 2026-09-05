@@ -200,7 +200,7 @@ blob: compile `bt/Sbc.cpp` straight into the target.
 **Placement of code under test.**
 
 - The bench's own flash workloads carry
-  `__attribute__((section(".progmem.icb")))` — the core script already
+  `__attribute__((section(".progmem.icb_code")))` — the core script already
   routes `.progmem*` to `.text.progmem` in FLASH. Their ITCM twins are the
   same source instantiated by a macro without the attribute (default
   `.text*` → ITCM).
@@ -233,8 +233,9 @@ results into a `volatile` sink, `asm volatile("":::"memory")` between reps:
    bench gets for free.
 
 **Protocol**, in `setup()`, DWT `CYCCNT` deltas, IRQs masked around each
-timed rep (a rep is milliseconds, so at most one SysTick tick is deferred
-per rep and `micros()`'s 4.3 s wrap service is never at risk):
+timed rep (an uncached `sbc` rep is ~18 ms with IRQs masked; nothing the bench
+measures uses SysTick — `micros()`/`delay()` are DWT-based, and each rep calls
+`micros()` outside the window to service the 4.3 s wrap accumulator):
 
 for each workload × placement: `arm_icache_disable()` → K=8 reps, report
 **min** and **median** cycles; `arm_icache_enable()` (which invalidates
@@ -245,7 +246,7 @@ back after the toggle and prints the state it *measured under*, never the
 one it asked for. The I-cache is left enabled at the end; `loop()`
 heartbeats once a second.
 
-**Output** (fixed tokens; `transcript_hw_evkb.txt` holds two SW4 boots).
+**Output** (fixed tokens; `transcript_hw_evkb.txt` holds three SW4 boots of the default build and one of the ITCM build).
 *(Token names corrected 2026-09-05 to what the shipped bench prints — the
 first draft's illustrative block predated the source.)*
 
@@ -310,7 +311,9 @@ DEBUG USB; never `pkill -9` mid-program.
 
 ### 7. Close-out
 
-- QEMU sweep **128 passed, 0 failed, 0 SKIP** (`-l` still 128 — the bench
+- QEMU sweep **128 passed, 0 failed, 0 SKIP** *(measured 2026-09-05: 127/1 in two
+  sweeps, `bt_tone_test[media]` timing out at its 120 s budget under concurrent
+  load and passing alone — the load-sensitivity class; see CLAUDE.md)* (`-l` still 128 — the bench
   adds no gate), run alone, output captured; `LICENSE-AUDIT: PASS` before or
   after, never during; `gate-vacuity.test.sh` green.
 - `cores` committed and pushed; `evkb.cmake` pin bumped; a fresh-user
@@ -359,6 +362,9 @@ bench time) → bench → A/B → regression → push/pin/fresh-user → docs.
   (stale instruction lines somewhere code is written at runtime) — the
   bench's `sbc_crc_match` and the goldens are the tripwires, and the
   change does not ship until the cause is found. No such path is known.
+  *(2026-09-05: `cm4_audio_test` DID move — and the stop rule was discharged by
+  a same-day OLD-core control failing identically, which is stronger than
+  finding the cause: a bench/example finding, NEW-38.)*
 - **`M2Radio` archive pulls in a blob symbol.** Handled by the fallback in
   §4 (compile `Sbc.cpp` directly).
 - **Instruction timing moves only for flash-resident code.** `.text*`

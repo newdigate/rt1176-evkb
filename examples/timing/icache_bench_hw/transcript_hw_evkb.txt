@@ -129,3 +129,33 @@ icache_bench summary calls=23.3x crc=1.0x sbc=1.0x flash_on_vs_itcm: calls=1.0x 
 ICACHE-BENCH done
 hb n=1 icache=on
 hb n=2 icache=on
+
+--- QEMU smoke, default build (NOT a measurement: qemu2 masks CCR.IC and NOPs ICIALLU, so every
+    row reads icache=off and the cycle counts mean nothing -- this checks the bench's own logic:
+    every wit_match=1, sbc_crc_match=1, flen=119, and sbc_crc equal to the silicon value) ---
+ICACHE-BENCH v1
+icache_bench ccr_reset=0x00000200 ccr_now=0x00000200 clidr=0x00000000 ccsidr_i=0x00000000 isize_kb=0 ways=1 line_b=16 hz=996000000
+icache_bench wl=calls place=itcm addr=0x000002e0 icache=off min_cyc/call=57.6 med_cyc/call=57.8 us/rep=237 wit=0x938c7678
+icache_bench wl=calls place=itcm addr=0x000002e0 icache=off cold_us/rep=239 min_cyc/call=57.3 med_cyc/call=57.8 us/rep=236 wit=0x938c7678
+icache_bench wl=calls place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=calls place=flash addr=0x30002548 icache=off min_cyc/call=74.1 med_cyc/call=77.2 us/rep=305 wit=0x938c7678
+icache_bench wl=calls place=flash addr=0x30002548 icache=off cold_us/rep=306 min_cyc/call=73.9 med_cyc/call=87.5 us/rep=304 wit=0x938c7678
+icache_bench wl=calls place=flash wit_match=1 off/on=1.0x
+icache_bench wl=crc place=itcm addr=0x00000420 icache=off min_cyc/byte=5.9 med_cyc/byte=6.5 us/rep=777 wit=0xd8a4d735
+icache_bench wl=crc place=itcm addr=0x00000420 icache=off cold_us/rep=971 min_cyc/byte=6.0 med_cyc/byte=6.1 us/rep=799 wit=0xd8a4d735
+icache_bench wl=crc place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=crc place=flash addr=0x30002688 icache=off min_cyc/byte=5.9 med_cyc/byte=6.1 us/rep=779 wit=0xd8a4d735
+icache_bench wl=crc place=flash addr=0x30002688 icache=off cold_us/rep=799 min_cyc/byte=5.9 med_cyc/byte=6.2 us/rep=780 wit=0xd8a4d735
+icache_bench wl=crc place=flash wit_match=1 off/on=1.0x
+icache_bench wl=sbc place=flash addr=0x30002bb8 icache=off min_cyc/frame=210965.2 med_cyc/frame=235647.3 us/rep=3389 wit=0x6c24f764
+icache_bench wl=sbc place=flash addr=0x30002bb8 icache=off cold_us/rep=3347 min_cyc/frame=208164.0 med_cyc/frame=225967.5 us/rep=3344 wit=0x6c24f764
+icache_bench wl=sbc place=flash wit_match=1 off/on=1.0x
+icache_bench wl=sbc place=flash flen=119 us/frame_off=211 us/frame_on=209 realtime_x_off=13.8 realtime_x_on=13.9 sbc_crc=0x6c24f764 sbc_crc_match=1
+icache_bench summary calls=1.0x crc=1.0x sbc=1.0x flash_on_vs_itcm: calls=1.3x crc=1.0x
+ICACHE-BENCH done
+--- QEMU smoke, build-sbc-itcm (sbc rows + summary) ---
+icache_bench wl=sbc place=itcm addr=0x00002494 icache=off min_cyc/frame=288591.0 med_cyc/frame=318066.3 us/rep=4636 wit=0x6c24f764
+icache_bench wl=sbc place=itcm addr=0x00002494 icache=off cold_us/rep=4685 min_cyc/frame=297741.7 med_cyc/frame=319155.7 us/rep=4783 wit=0x6c24f764
+icache_bench wl=sbc place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=sbc place=itcm flen=119 us/frame_off=289 us/frame_on=298 realtime_x_off=10.0 realtime_x_on=9.7 sbc_crc=0x6c24f764 sbc_crc_match=1
+icache_bench summary calls=1.0x crc=1.0x sbc=1.0x flash_on_vs_itcm: calls=1.1x crc=1.0x

@@ -194,7 +194,7 @@ static void gpu_rotor_pass(void)
      * would race the hardware (vglite_probe).
      * ★ NO D-CACHE MAINTENANCE IS NEEDED between the GPU's writes and the CPU's
      * checksum, for the same reason lvgl_mipi_panel.cpp:64-78 gives for its
-     * flush: the imxrt1176 core never writes SCB_CCR, so SDRAM is uncached on
+     * flush: the imxrt1176 core never enables the D-cache (NEW-36 sets only SCB_CCR_IC), so SDRAM is uncached on
      * this part and arm_dcache_* are no-ops. (The teensy4 core DOES enable the
      * D-cache -- if this example is ever ported to rt1062, this line and the
      * panel's flush_cb become one change, not two.) */
