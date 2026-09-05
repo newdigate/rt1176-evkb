@@ -373,9 +373,12 @@ after a keyed success.
 
 **Bookkeeping.** `transcript_qemu_reconnect.txt` captured from a green run
 (`cp build-reconnect/reconnect.uart …`) as the vacuity fixture;
-`tools/gate-vacuity.test.sh` gains `green_still_passes_m2_hci_probe_reconnect`
-plus two negatives (a capture with `bonds_reload=` missing must fail by name; a
-capture with two `inquiry=started` lines must fail by name); the CLAUDE.md
+`tools/gate-vacuity.test.sh` gains THREE negatives, each failing by name -- the
+card-absent capture, the fixture with its `bonds_reload=` line stripped, the
+fixture with a second `inquiry=started` appended -- and NO green replay: the
+gate is peer-driven, and the fake QEMU cannot host the peer, so a green capture
+still fails at the peer tally (the same limit `[hci]`, `[baud]` and `[avdtp]`
+live with); the CLAUDE.md
 gate-count paragraph and a measured sweep line (129 expected); `LICENSE-AUDIT`
 run after (never during) the sweep — no new manifest entry is expected, since
 `build-avdtp/` needed none. Re-capture the fixture whenever the probe's output
