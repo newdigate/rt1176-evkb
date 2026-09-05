@@ -160,7 +160,8 @@ struct BondStoreEeprom {
     static const uint16_t OFFSET = 4000;                       // 4000 + 234 = 4234 <= 4284 (E2END 0x10BB)
     static bool load(BondTable &t);                            // eeprom_read_block -> t.load(); returns t.load()'s verdict
     static bool save(BondTable &t);                            // no-op unless t.dirty(); eeprom_write_block; clearDirty(); true if written
-    static void wipe(BondTable &t);                            // bench knob: zero the image in EEPROM, empty the table
+    static void wipe(BondTable &t);                            // bench knob: store the canonical EMPTY image (a later load() reads true, no bonds)
+    static const uint16_t END = OFFSET + IMAGE_SIZE;           // 4234: the reserved region is OFFSET..END-1; a second record goes BELOW 4000
 };
 ```
 
@@ -168,15 +169,27 @@ struct BondStoreEeprom {
 - `load` once after `Hci::begin()`; `save` after EVERY `connect()` return
   (success or failure — an erased stale bond must persist too). Both hosts call
   it at those two points only.
-- Cost: a save that changes nothing writes nothing (the emulation skips
-  unchanged bytes); a first pairing changes ~60 bytes; a move-to-front
-  reorders up to the whole table (≤ 224 changed bytes); sector erases are
-  thousands of saves away. Every write happens OUTSIDE streaming
-  (`connect()` returns before media starts), so the IRQ-masked programming
-  windows never land on a live stream. In acid_box the local WM8962 output is
-  already playing during BT bring-up, so a first pairing may produce one
-  sub-millisecond glitch on the LOCAL output; documented, not engineered
-  around.
+- Cost, CORRECTED in the Task 2 review (2026-09-05): the emulation maps EEPROM
+  address `a` to sector `(a>>2) % 63`, so the 234-byte image is spread over 59
+  of the 63 sectors, ~4 bytes each. A save that changes nothing writes nothing
+  (the emulation skips unchanged bytes); a first pairing on a virgin 0xFF part
+  changes every byte (~234 journal appends), on a zeroed/QEMU region ~60; a
+  move-to-front changes only the entries that moved. Each changed byte is a
+  2-byte journal program with IRQs MASKED (short, per byte), so a changing save
+  costs tens of milliseconds of intermittent masking in total. Those 59 journals
+  fill in near-lockstep, so their 4 KB sector ERASES (tens of ms each, IRQs
+  masked) arrive as a CLUSTER of up to 59, roughly once per ~512 changing saves
+  — a pairing or a peer switch is the only thing that changes the image, so
+  that is years of bench use, but when it lands it is seconds of masked time.
+  Callers therefore keep `load`/`save` in `setup()`/`loop()` context outside
+  media streaming (`connect()` returns before media starts) and accept that
+  acid_box's always-running SAI ISR can glitch the LOCAL output at a pairing
+  event; documented, not engineered around. The per-byte figures are estimates
+  from the core's code path, not measurements on this board.
+- A failed connect attempt that leaves the table clean costs nothing; BtLink
+  dirties the table only on a real change (a notification, a stored-key
+  success, an erase), never on a bare failure — otherwise the 5 s retry loop
+  would become a flash-write loop.
 - Format and offset live in the library, so a bond made in `bt_tone_test` is
   honoured by `acid_box` and vice versa.
 - The key is stored in PLAINTEXT in the NOR. Development board, Just Works
@@ -464,9 +477,11 @@ dispositioned by name.
   continues. No special handling.
 - **Stale `psrm`** (peer changed its page-scan mode) slows the page, does not
   break it.
-- **EEPROM writes mask IRQs** for tens of µs per changed byte. Only ever
-  outside streaming; a possible one-off sub-ms glitch on acid_box's LOCAL
-  output at first pairing. Not engineered around.
+- **EEPROM writes mask IRQs** per changed byte, and a sector-erase cluster (up
+  to 59 erases, seconds) lands roughly once per ~512 changing saves. Only ever
+  in `setup()`/`loop()` outside streaming; a glitch on acid_box's LOCAL output
+  at a pairing event is possible. Not engineered around; the figures are
+  estimates from the core's code path.
 - **First-candidate cost:** when the most recent device is absent, its three
   attempts add ~15 s before the next candidate. Accepted with decision 3.
 - **ITCM in the acid_box bench build:** ~1 KB left; mitigated by the
