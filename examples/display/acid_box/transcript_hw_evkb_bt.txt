@@ -326,3 +326,105 @@ missing profile/handshake the headset waits for after A2DP -- AVRCP (the control
 channel) is the prime suspect: this stack is A2DP-source only, and headsets
 typically announce "connected" once AVRCP is up.  Recorded for NEW-34 (reconnect
 + resilience); the drops-climbing-over-minutes above is the same link's story.
+
+================================================================================
+NEW-36 I-CACHE A/B, 2026-09-05 -- the core is the only variable
+================================================================================
+Spec: docs/superpowers/specs/2026-09-05-cm7-icache-enable-design.md
+Same bench config as NEW-33 (lines 4-7 above) + -DACIDBOX_LOOPSTAT=ON, M2Radio 7c91cca,
+blob ~/Development/mcuxsdk-ws/mcuxsdk/components/conn_fwloader/fw_bin/inc/IW416/uartIW416_bt.bin.inc.
+  PRE  = build-bench-pre:  teensy-cores 672c577 (no I-cache)   nm: startup_ccr_at_reset ABSENT
+  POST = build-bench-post: teensy-cores 2304743 (I-cache ON)   nm: startup_ccr_at_reset present
+  (objcopy -O binary: both 452608 B)
+Protocol per build: flash load -> verify -> reader -> SW4 -> bt_streaming -> PLAY -> title tap
+(wiggle=1) ~20 s -> tap (wiggle=0) -> stream >= 60 s -> CUTOFF drag.  Both: ACIDBOX_ENGINE=gpu
+ACIDBOX_UI_SUM=0x1479CEE8, fw download ok (131840 B), 3 Mbaud, connect attempt=1, SSP,
+bt_streaming frames_per_pkt=5 media_mtu=895.
+
+PREDICTIONS (spec, written before the run) -> VERDICT
+  svc us/iter     24.4 -> single digits     HELD      24.5 -> 0.46 (53x)
+  print us/iter   ~32  -> ~5                HELD      24.5 -> 1.8 (wiggle), 11.4 -> 1.14 (idle)
+  enc us/block    unchanged (ITCM)          REFUTED   171 -> 125: the slot also wraps the per-frame
+                                                      MediaPacketizer/Rtp push, FLASH-routed in this
+                                                      build; 125 == the bench's ITCM pure-encode cell
+  pcmdrops        0 held                    HELD      0 / 0, every heartbeat
+  frames          vsync-bound, unchanged    HELD      30 fps, med 32.4 ms in both wiggle windows
+  touch p95       within noise              not worse 78 -> 43 ms (a wandering sample; no more claimed)
+
+STEADY STREAMING (wiggle=0), last 4 loopstat lines averaged, per second of wall time
+                              PRE                    POST                 ratio
+  loop iterations/s           10295                  63695                6.2x
+  svc  us/s | us/iter         251816 | 24.5          29208 | 0.46         8.6x | 53x
+  print us/s | us/iter        117883 | 11.4          72359 | 1.14         -    | 10x
+  poll us/s | enc us/block    80396 | 171.0          69471 | 124.6        -    | 1.37x
+  drain us/s                  6552                   360                  18x
+  yield us/s | us/iter        39369 | 3.8            45520 | 0.71         -    | 5.4x
+  lvgl us/s (idle path)       89235                  562401               (6x more calls, ~8.7 us each)
+  max_us                      11.6-11.7 ms           12.4 ms (one 20.5)   -
+  pcmdrops | air-link drops   0 | 42 flat            0 | 967 in bursts    (RF, NEW-34 class)
+
+KNOB SWEEP (wiggle=1), last 4 loopstat lines averaged
+  loop iterations/s           2404                   14761                6.1x
+  svc us/iter                 27.4                   0.63                 43x
+  print us/iter               24.5                   1.81                 13.5x
+  enc us/block                151                    129.9                1.16x
+  lvgl us/s                   693761                 844231
+  framestat (wiggle window)   30-31 fps, med 32413 us (33 lines)   30-31 fps, med 32442 us (50 lines)
+  touchstat p95 (final)       77955 us (n=595)       43494 us (n=1104)
+  max_us                      30.8-36.9 ms           30.7-40.1 ms
+
+BRING-UP (loopstat ticks, +/-1 s): firmware download ~13 s / ~13 s; connect ~19 s / ~16 s.
+
+READING: the I-cache removes the flash-fetch tax from every flash-resident slot -- svc (the
+SdpServer/L2cap/Avdtp service chain) from 24.5 us to under half a microsecond per iteration,
+print from 24.5 to 1.8 us under the AHB-buffer thrash NEW-33 diagnosed -- and the loop runs
+6x more iterations per second.  The UI numbers did not move because they were vsync-bound
+already (NEW-33's finding); what the cache buys the UI is headroom (max_us and the frame
+interval unchanged, touch p95 not worse).  enc moved because the slot is not pure ITCM.  The
+air-link drops differ between the runs in discrete bursts unrelated to loop timing -- NEW-34's
+class, not this change's.
+
+--- PRE loopstat (last 4 wiggle=1, then last 4 wiggle=0) ---
+loopstat loops=2527 max_us=30769 yield=9922 svc=69719 poll=61692 enc=51448 drain=6838 txb=42718 print=60015 lvgl=687546 probe=538 wiggle=1
+loopstat loops=2329 max_us=36414 yield=9379 svc=63681 poll=62386 enc=51780 drain=7134 txb=42956 print=58456 lvgl=696144 probe=9955 wiggle=1
+loopstat loops=2469 max_us=32363 yield=9094 svc=67291 poll=63078 enc=52638 drain=6926 txb=42881 print=59721 lvgl=694439 probe=520 wiggle=1
+loopstat loops=2290 max_us=36855 yield=9575 svc=63219 poll=62622 enc=52698 drain=6786 txb=42577 print=56979 lvgl=696916 probe=10209 wiggle=1
+loopstat loops=10296 max_us=11606 yield=38690 svc=251795 poll=80210 enc=59077 drain=6587 txb=42573 print=118971 lvgl=89948 probe=2310 wiggle=0
+loopstat loops=10302 max_us=11702 yield=39158 svc=251954 poll=80164 enc=58875 drain=6485 txb=41956 print=118622 lvgl=88451 probe=2380 wiggle=0
+loopstat loops=10285 max_us=11578 yield=40822 svc=251878 poll=80864 enc=59076 drain=6619 txb=42952 print=116631 lvgl=88908 probe=2097 wiggle=0
+loopstat loops=10295 max_us=11660 yield=38804 svc=251637 poll=80347 enc=58923 drain=6519 txb=42573 print=117308 lvgl=89633 probe=2310 wiggle=0
+--- PRE framestat in the wiggle window (first 3 and last 3 of the 30-fps lines) + touchstat final ---
+framestat frames=30 med_us=32528 max_us=39695 flips=+30 wait_us=+26404
+framestat frames=30 med_us=32567 max_us=43003 flips=+30 wait_us=+18820
+framestat frames=30 med_us=32658 max_us=72320 flips=+30 wait_us=+15496
+framestat frames=30 med_us=31927 max_us=43205 flips=+30 wait_us=+20191
+framestat frames=30 med_us=32545 max_us=40230 flips=+30 wait_us=+21166
+framestat frames=30 med_us=31928 max_us=40118 flips=+30 wait_us=+29390
+touchstat n=595 p50_us=29711 p95_us=77955 max_us=129848
+--- POST loopstat (last 4 wiggle=1, then last 4 wiggle=0) ---
+loopstat loops=14727 max_us=30735 yield=10045 svc=9826 poll=51314 enc=44816 drain=319 txb=42956 print=27528 lvgl=841714 probe=12676 wiggle=1
+loopstat loops=14845 max_us=35500 yield=11020 svc=9258 poll=51606 enc=44978 drain=471 txb=42480 print=26556 lvgl=850529 probe=3400 wiggle=1
+loopstat loops=15361 max_us=40072 yield=11081 svc=9312 poll=50770 enc=44460 drain=320 txb=43053 print=27211 lvgl=838859 probe=12835 wiggle=1
+loopstat loops=14110 max_us=35248 yield=10267 svc=8964 poll=51316 enc=44944 drain=314 txb=42978 print=25698 lvgl=845823 probe=12777 wiggle=1
+loopstat loops=63991 max_us=20538 yield=45386 svc=29214 poll=69381 enc=43082 drain=316 txb=42216 print=73223 lvgl=565086 probe=13369 wiggle=0
+loopstat loops=63097 max_us=12414 yield=44912 svc=29199 poll=68874 enc=42938 drain=323 txb=42476 print=71593 lvgl=561466 probe=23110 wiggle=0
+loopstat loops=64573 max_us=12397 yield=45824 svc=29361 poll=70404 enc=42968 drain=485 txb=42357 print=73184 lvgl=561416 probe=13467 wiggle=0
+loopstat loops=63117 max_us=12404 yield=45959 svc=29058 poll=69224 enc=42967 drain=314 txb=42714 print=71437 lvgl=561635 probe=23071 wiggle=0
+--- POST framestat in the wiggle window (first 3 and last 3 of the 30-fps lines) + touchstat final ---
+framestat frames=30 med_us=32361 max_us=45882 flips=+30 wait_us=+26796
+framestat frames=30 med_us=32273 max_us=40354 flips=+30 wait_us=+15719
+framestat frames=30 med_us=32760 max_us=42464 flips=+30 wait_us=+23076
+framestat frames=30 med_us=32297 max_us=41167 flips=+30 wait_us=+38725
+framestat frames=30 med_us=32529 max_us=43178 flips=+30 wait_us=+17628
+framestat frames=30 med_us=32880 max_us=41696 flips=+30 wait_us=+40157
+touchstat n=1104 p50_us=29992 p95_us=43494 max_us=121206
+--- bt_hb drops transitions (PRE: one line; POST: each burst) ---
+bt_hb blocks=2765 packets=637 drops=42 pcmdrops=0 hw=64 audiomax=1
+bt_hb blocks=0 packets=0 drops=0 pcmdrops=0 hw=0 audiomax=1
+bt_hb blocks=6208 packets=1224 drops=131 pcmdrops=0 hw=64 audiomax=1
+bt_hb blocks=6553 packets=1284 drops=265 pcmdrops=0 hw=64 audiomax=1
+bt_hb blocks=15856 packets=3431 drops=424 pcmdrops=0 hw=64 audiomax=1
+bt_hb blocks=38601 packets=8329 drops=575 pcmdrops=0 hw=64 audiomax=1
+bt_hb blocks=38945 packets=8358 drops=837 pcmdrops=0 hw=64 audiomax=1
+bt_hb blocks=45837 packets=9764 drops=943 pcmdrops=0 hw=64 audiomax=1
+bt_hb blocks=49627 packets=10557 drops=967 pcmdrops=0 hw=64 audiomax=1
