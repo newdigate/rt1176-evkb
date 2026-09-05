@@ -26,6 +26,14 @@ Phases (argv[1]):
               packet (V/PT, sequence continuity, per-frame sync byte + length) --
               ends once at least one packet has been received with no framing
               fault or sequence gap
+  reconnect   the avdtp acceptor three times over on one socket (NEW-34 piece 1):
+              link 1 pairs by SSP (key #1); link 2 must be paged WITHOUT an inquiry
+              and authenticate with Link_Key_Request_Reply carrying key #1 (no IO-cap
+              dance); on link 3 the offered key is REJECTED (Authentication_Complete
+              0x06) once, so the host must pair afresh and receive key #2.  A page to
+              the DECOY address (AA:BB:CC:DD:EE:99) is answered Page Timeout and
+              recorded -- the host's target-name filter must never send one.
+              Ends when the third link's START is accepted.
 Exit 0 when the phase's last expected opcode was seen (avdtp: when the peer
 recorded an accepted START; media: when the media validation above holds).
 Prints PEER-* lines.
@@ -37,6 +45,8 @@ BD_ADDR = bytes.fromhex("665544332211")          # little-endian on the wire -> 
 ACL_LEN, SCO_LEN, ACL_NUM, SCO_NUM = 1021, 64, 8, 0
 DEVICES = [(bytes.fromhex("01EEDDCCBBAA"), 0x240404, b"FAKE-HEADSET-01"),   # prints AA:BB:CC:DD:EE:01
            (bytes.fromhex("02EEDDCCBBAA"), 0x240404, b"FAKE-HEADSET-02")]
+DECOY_BD = bytes.fromhex("99EEDDCCBBAA")           # prints AA:BB:CC:DD:EE:99 -- a bond whose name never matches the target
+KEY1, KEY2 = bytes(range(16)), bytes(range(16, 32))   # the keys notified on links 1 and 3
 
 OP_RESET, OP_READ_LOCAL_VER, OP_READ_BUFFER_SIZE, OP_READ_BD_ADDR = 0x0C03, 0x1001, 0x1005, 0x1009
 OP_INQUIRY, OP_REMOTE_NAME_REQ = 0x0401, 0x0419
@@ -74,7 +84,7 @@ def v3_data_req(length, offset, err=0):
     return f + bytes([crc8(f)])
 LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP_REMOTE_NAME_REQ,
                "starve": OP_RESET, "fwdnld": OP_READ_BD_ADDR, "baud": OP_READ_BUFFER_SIZE,
-               "avdtp": 0x0413, "media": 0x0413}   # Set_Connection_Encryption -- last COMMAND before
+               "avdtp": 0x0413, "media": 0x0413, "reconnect": 0x0413}   # Set_Connection_Encryption -- last COMMAND before
                                   # signalling; the real end of both avdtp and media is checked
                                   # separately (peer.avdtp["started"] / peer.media, below)
 LAST_OPCODE_COUNT = {"baud": 2}   # phases whose terminal opcode must be seen N times (default 1)
@@ -90,6 +100,7 @@ def phase_done(phase, peer):
     if phase == "media":
         m = peer.media
         return m["pkts"] > 0 and m["seqgaps"] == 0 and m["badsbc"] == 0 and m["badrtp"] == 0
+    if phase == "reconnect": return peer.rc["started_links"] >= 3 and not peer.avdtp["error"]
     return peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
 
 def connect(path):
@@ -117,28 +128,11 @@ class Peer:
         self.resets, self.pending = 0, []          # pending: (due, bytes)
         self.baud_seen = []
         self.peer_bd = None
-        # --- avdtp phase: L2CAP acceptor + SDP responder + AVDTP acceptor state ---
-        # key: the CID the far end (the firmware) assigned ITSELF and sent us as
-        # SCID in its Connection Request (host-owned, not ours) -> value: (the
-        # CID we assigned for our side of the channel, psm)
-        self.chans = {}
-        self.next_cid = 0x0340
-        self.avdtp = {"config": None, "opened": False, "started": False, "order": [], "error": False,
-                      "sig_cid": None,    # our (peer-assigned) CID for the FIRST psm=0x0019 channel --
-                                          # AVDTP signalling; any OTHER psm=0x0019 channel is media
-                      # --- the Shokz-shaped behaviours (Mac->Shokz PacketLogger reference, 2026-09-03) ---
-                      "discover_pending": None,   # (handle, cid, tl) of a DISCOVER we are HOLDING until the reverse SDP completes
-                      "delay_cfg": False,          # the host configured Delay Reporting (category 0x08) in SET_CONFIGURATION
-                      "delay_sent": False, "delay_acked": False,   # our DelayReport COMMAND after OPEN, and its ACCEPT
-                      "open_pending": None}        # the OPEN accept we hold until our DelayReport is accepted
-        # The Shokz SDP-queries the SOURCE (AudioSource 0x110A, attribute 0x0009 = its A2DP profile
-        # version) on a channel IT opens, and answers DISCOVER only after that query completes.
-        # This models it: on the host's DISCOVER we open PSM 0x0001 at the host, configure it (MTU 48,
-        # like the Shokz), send the Shokz's exact query, require the Mac's exact reply, disconnect,
-        # and only THEN answer the DISCOVER.  A source with no SDP server hangs at DISCOVERING here
-        # exactly as it did on the bench.
-        self.rev = {"state": "idle", "my_cid": 0x0E85, "their_cid": None, "cfg_req_seen": False, "cfg_rsp_seen": False,
-                    "query_sent": False, "answer": None, "done": False, "handle": None}
+        self.reset_link()
+        # --- reconnect phase: the tally the gate asserts, and which link we are on ---
+        self.rc = {"links": 0, "inquiries": 0, "create_conns": 0, "key_replies": 0, "key_ok": 0, "key_rejected": 0,
+                   "neg_replies": 0, "iocap_dances": 0, "notified": 0, "started_links": 0,
+                   "reject_on_link": 3, "rejected": False, "keys": {}}   # keys: bd -> the key we last notified for it
         # --- media phase: RTP/SBC validation on the media transport channel ---
         self.media = {"pkts": 0, "frames": 0, "lastseq": None, "seqgaps": 0, "badrtp": 0, "badsbc": 0}
         # --- V3 bootloader state (fwdnld phase only) ---
@@ -160,6 +154,29 @@ class Peer:
         self.boot_started = False      # True once the transfer proper has begun
         self.boot_ack_at = 0.0
     def send(self, b, delay=0.0): self.pending.append((time.time() + delay, b))
+    def reset_link(self):
+        # L2CAP acceptor + SDP responder + AVDTP acceptor state -- per ACL link.  The avdtp/media
+        # phases see one link; the reconnect phase calls this again on every Create_Connection.
+        # key: the CID the far end (the firmware) assigned ITSELF and sent us as SCID in its
+        # Connection Request (host-owned, not ours) -> value: (the CID we assigned for our side, psm)
+        self.chans = {}
+        self.next_cid = 0x0340
+        self.avdtp = {"config": None, "opened": False, "started": False, "order": [], "error": False,
+                      "sig_cid": None,    # our (peer-assigned) CID for the FIRST psm=0x0019 channel --
+                                          # AVDTP signalling; any OTHER psm=0x0019 channel is media
+                      # --- the Shokz-shaped behaviours (Mac->Shokz PacketLogger reference, 2026-09-03) ---
+                      "discover_pending": None,   # (handle, cid, tl) of a DISCOVER we are HOLDING until the reverse SDP completes
+                      "delay_cfg": False,          # the host configured Delay Reporting (category 0x08) in SET_CONFIGURATION
+                      "delay_sent": False, "delay_acked": False,   # our DelayReport COMMAND after OPEN, and its ACCEPT
+                      "open_pending": None}        # the OPEN accept we hold until our DelayReport is accepted
+        # The Shokz SDP-queries the SOURCE (AudioSource 0x110A, attribute 0x0009 = its A2DP profile
+        # version) on a channel IT opens, and answers DISCOVER only after that query completes.
+        # This models it: on the host's DISCOVER we open PSM 0x0001 at the host, configure it (MTU 48,
+        # like the Shokz), send the Shokz's exact query, require the Mac's exact reply, disconnect,
+        # and only THEN answer the DISCOVER.  A source with no SDP server hangs at DISCOVERING here
+        # exactly as it did on the bench.
+        self.rev = {"state": "idle", "my_cid": 0x0E85, "their_cid": None, "cfg_req_seen": False, "cfg_rsp_seen": False,
+                    "query_sent": False, "answer": None, "done": False, "handle": None}
     def flush(self):
         now = time.time(); keep = []
         for due, b in self.pending:
@@ -183,6 +200,7 @@ class Peer:
         elif opcode == OP_READ_BUFFER_SIZE:
             self.send(cmd_complete(opcode, b"\x00" + struct.pack("<HBHH", ACL_LEN, SCO_LEN, ACL_NUM, SCO_NUM)))
         elif opcode == OP_INQUIRY:
+            self.rc["inquiries"] += 1
             self.send(cmd_status(opcode))
             n = len(DEVICES)
             # Inquiry Result (7.7.2) is FIELD-MAJOR: all BD_ADDRs, all PSRMs, reserved, all CoDs, all clocks.
@@ -210,7 +228,17 @@ class Peer:
         elif opcode == 0x0C01 or opcode == 0x0C56 or opcode == 0x0C1A:      # Set_Event_Mask, Write_Simple_Pairing_Mode, Write_Scan_Enable
             self.send(cmd_complete(opcode, b"\x00"))
         elif opcode == 0x0405:                                              # Create_Connection -> Command Status, Connection Complete
-            self.peer_bd = params[:6]
+            bd = params[:6]
+            if self.phase == "reconnect" and bd == DECOY_BD:
+                # The decoy bond's name never matches the target: a page here means the host's name
+                # filter is gone.  Modelled as a Page Timeout so the host moves on and the run still
+                # completes -- only the tripwire records it.
+                self.log.append("PEER-DECOY-PAGED")
+                self.send(cmd_status(opcode)); self.send(event(0x03, b"\x04" + struct.pack("<H", 0x0000) + bd + b"\x01\x00"), 0.1)
+                return
+            self.peer_bd = bd
+            if self.phase == "reconnect":
+                self.rc["links"] += 1; self.rc["create_conns"] += 1; self.reset_link()
             self.log.append("PEER-CREATE-CONN role_switch=%d" % params[12])
             self.send(cmd_status(opcode)); self.send(event(0x03, b"\x00" + struct.pack("<H", 0x0001) + params[:6] + b"\x01\x00"), 0.1)
         elif opcode == 0x0C18:                                              # Write_Page_Timeout -> Command Complete
@@ -224,16 +252,38 @@ class Peer:
         elif opcode == 0x0411:                                              # Authentication_Requested: SSP Just Works, all the way to Auth Complete
             self.send(cmd_status(opcode)); bd = self.peer_bd
             self.send(event(0x17, bd), 0.05)                                # Link_Key_Request
+        elif opcode == 0x040B:                                              # Link_Key_Request_Reply: bd(6) key(16) -- the host offers a STORED key
+            bd, key = params[:6], params[6:22]
+            self.send(cmd_complete(opcode, b"\x00" + bd))
+            self.rc["key_replies"] += 1
+            known = self.rc["keys"].get(bd)
+            if known is None or key != known:
+                self.log.append("PEER-KEY-MISMATCH offered=%s known=%s" % (key.hex(), known.hex() if known else "none"))
+                self.send(event(0x06, b"\x05" + struct.pack("<H", 0x0001)), 0.05)          # Authentication Failure
+            elif self.rc["links"] == self.rc["reject_on_link"] and not self.rc["rejected"]:
+                self.rc["rejected"] = True; self.rc["key_rejected"] += 1
+                self.log.append("PEER-KEY-REJECTED link=%d" % self.rc["links"])
+                self.send(event(0x06, b"\x06" + struct.pack("<H", 0x0001)), 0.05)          # PIN or Key Missing: the peer forgot us
+            elif self.rc["links"] == self.rc["reject_on_link"]:
+                self.log.append("PEER-KEY-STALE-REPLAY link=%d" % self.rc["links"])          # the host offered the rejected key AGAIN
+                self.send(event(0x06, b"\x06" + struct.pack("<H", 0x0001)), 0.05)
+            else:
+                self.rc["key_ok"] += 1
+                self.send(event(0x06, b"\x00" + struct.pack("<H", 0x0001)), 0.05)          # authenticated, no pairing
         elif opcode == 0x040C:                                              # Link_Key_Request_Negative_Reply -> IO cap dance
+            self.rc["neg_replies"] += 1
             self.send(cmd_complete(opcode, b"\x00" + params[:6])); self.send(event(0x31, params[:6]), 0.05)   # IO_Capability_Request
         elif opcode == 0x042B:                                              # IO_Capability_Request_Reply -> peer caps, user confirm
+            self.rc["iocap_dances"] += 1
             self.send(cmd_complete(opcode, b"\x00" + params[:6]))
             self.send(event(0x32, params[:6] + b"\x03\x00\x04"), 0.05)      # IO_Capability_Response: NoInputNoOutput, no OOB, general bonding
             self.send(event(0x33, params[:6] + struct.pack("<I", 123456)), 0.1)   # User_Confirmation_Request
         elif opcode == 0x042C:                                              # User_Confirmation_Request_Reply -> pairing complete, link key, auth complete
             self.send(cmd_complete(opcode, b"\x00" + params[:6]))
+            key = KEY1 if self.rc["notified"] == 0 else KEY2                # a DIFFERENT key on the re-pair, so key_changed=1 is checkable
+            self.rc["keys"][params[:6]] = key; self.rc["notified"] += 1
             self.send(event(0x36, b"\x00" + params[:6]), 0.05)              # Simple_Pairing_Complete
-            self.send(event(0x18, params[:6] + bytes(range(16)) + b"\x04"), 0.1)   # Link_Key_Notification (unauthenticated combination)
+            self.send(event(0x18, params[:6] + key + b"\x04"), 0.1)         # Link_Key_Notification (unauthenticated combination)
             self.send(event(0x06, b"\x00" + struct.pack("<H", 0x0001)), 0.15)      # Authentication_Complete
         elif opcode == 0x0413:                                              # Set_Connection_Encryption -> Encryption_Change on
             self.send(cmd_status(opcode)); self.send(event(0x08, b"\x00" + struct.pack("<H", 0x0001) + b"\x01"), 0.1)
@@ -460,7 +510,7 @@ class Peer:
                     self.send(acl(handle, peer_cid, acc + b"\x06"), 0.02)
             elif sig == 0x07:                                                                                                       # START: only legal after OPEN
                 if not self.avdtp["opened"]: self.log.append("PEER-AVDTP-START-BEFORE-OPEN"); self.send(acl(handle, peer_cid, bytes([tl | 0x03, 0x07, 1 << 2, 0x31])), 0.02); return  # 0x31 = bad state
-                self.avdtp["started"] = True; self.log.append("PEER-AVDTP-STARTED"); self.send(acl(handle, peer_cid, acc + b"\x07"), 0.02)
+                self.avdtp["started"] = True; self.rc["started_links"] += 1; self.log.append("PEER-AVDTP-STARTED"); self.send(acl(handle, peer_cid, acc + b"\x07"), 0.02)
             else: self.send(acl(handle, peer_cid, bytes([tl | 0x03, sig, 0x19])), 0.02)                                             # unsupported command
         except Exception as e:
             self.log.append("PEER-EXCEPTION handle_avdtp: %r" % e)
@@ -543,7 +593,7 @@ if __name__ == "__main__":
         print("PEER-BOOT ok=%d acks=%d chunks=%d err=%s"
               % (1 if peer.boot_ok else 0, peer.boot_acks, peer.boot_step,
                  peer.boot_err if peer.boot_err else "none"))
-    if phase in ("avdtp", "media"):
+    if phase in ("avdtp", "media", "reconnect"):
         # Name each held-back stage the Shokz model would leave the host stuck in, so a gate fails by cause.
         if peer.rev["query_sent"] and peer.rev["answer"] is None:                print("PEER-SDP-QUERY-UNANSWERED")
         if peer.avdtp["discover_pending"] and not peer.rev["done"]:              print("PEER-AVDTP-DISCOVER-HELD (reverse SDP never completed)")
@@ -556,6 +606,10 @@ if __name__ == "__main__":
         m = peer.media
         print("PEER-MEDIA pkts=%d frames=%d seqgaps=%d badsbc=%d badrtp=%d"
               % (m["pkts"], m["frames"], m["seqgaps"], m["badsbc"], m["badrtp"]))
+    if phase == "reconnect":
+        r = peer.rc
+        print("PEER-RECONNECT inquiries=%d create_conns=%d key_replies=%d key_ok=%d key_rejected=%d neg_replies=%d iocap_dances=%d notified=%d started_links=%d"
+              % (r["inquiries"], r["create_conns"], r["key_replies"], r["key_ok"], r["key_rejected"], r["neg_replies"], r["iocap_dances"], r["notified"], r["started_links"]))
     print("PEER-DONE phase=%s cmds=%d resets=%d opcodes=%s baud=%s"
           % (phase, len(peer.cmds), peer.resets, ",".join("%04x" % c for c in peer.cmds),
              ",".join(str(b) for b in peer.baud_seen) or "none"))
