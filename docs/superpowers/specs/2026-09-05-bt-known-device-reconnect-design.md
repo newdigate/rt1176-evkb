@@ -339,8 +339,15 @@ with per-link state reset on each Connection Complete, and:
 - raises `PEER-KEY-MISMATCH` for a key reply that matches nothing it notified,
   and `PEER-KEY-STALE-REPLAY` for a key reply on the rejected link AFTER the
   rejection;
-- writes `PEER-DONE inquiries=1 create_conns=3 key_replies=2 key_ok=1
-  key_rejected=1 neg_replies=2 iocap_dances=2 notified=2` when it completes.
+- writes `PEER-RECONNECT inquiries=1 create_conns=3 key_replies=2 key_ok=1
+  key_rejected=1 neg_replies=2 iocap_dances=2 notified=2 started_links=3` when
+  it completes (its own line; `PEER-DONE` stays the generic phase footer);
+- (added in review) allocates a FRESH handle per link (0x0001, 0x0002, 0x0003)
+  and drops any ACL on a stale one with `PEER-ACL-BAD-HANDLE`, resets its link
+  state on Disconnect so a stale CID lands on `PEER-ACL-UNKNOWN-CID`, keeps a
+  sticky error count in its verdict, answers an authentication with no link
+  with `PEER-AUTH-NO-LINK`, and runs under a 60 s deadline that prints
+  `PEER-DEADLINE` when it gives up.
 
 **Gate assertions, tripwires FIRST** (the [avdtp] convention: every positive
 check downstream of STREAMING fails with the same generic message, so the named
@@ -348,7 +355,9 @@ tripwires are what let each RED be identified):
 
 1. none of `PEER-DECOY-PAGED`, `PEER-KEY-MISMATCH`, `PEER-KEY-STALE-REPLAY`,
    `PEER-UNKNOWN-OPCODE`, `PEER-AVDTP-*` in the peer result;
-2. the exact `PEER-DONE` tally above;
+2. the exact `PEER-RECONNECT` tally above (and, among the tripwires,
+   `PEER-ACL-BAD-HANDLE`, `PEER-ACL-UNKNOWN-CID`, `PEER-AUTH-NO-LINK`,
+   `PEER-DEADLINE`);
 3. UART: `^bonds_boot=0`, `^reconnect_phase=1 result=ok paired_by=ssp`,
    `^bonds_reload=2`, `^reconnect_phase=2 result=ok paired_by=stored`,
    `^bond_rejected: status=0x06 -> erased`,
