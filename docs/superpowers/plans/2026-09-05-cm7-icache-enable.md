@@ -56,7 +56,7 @@ There is no host test for six-line register sequences (the spec's Testing table 
  * cache is NOT: it needs MPU regions plus a DMA-coherency review (the rt1062
  * DMAMEM/uncached-OCRAM lesson) -- see the arm_dcache_* no-ops further down. */
 #define SCB_CCR            (*(volatile uint32_t *)0xE000ED14u)        /* Configuration and Control */
-#define SCB_CCR_BP         (1u << 18)   /* branch prediction enable (RAO/WI on the M7) */
+#define SCB_CCR_BP         (1u << 18)   /* branch prediction enable (not written by this core) */
 #define SCB_CCR_IC         (1u << 17)   /* L1 instruction cache enable */
 #define SCB_CCR_DC         (1u << 16)   /* L1 data cache enable -- never set by this core */
 #define SCB_ID_CLIDR       (*(const volatile uint32_t *)0xE000ED78u)  /* Cache Level ID */
@@ -106,7 +106,7 @@ static inline void arm_icache_disable(void)
 }
 /* SCB_CCR exactly as the boot ROM handed it over -- captured by ResetHandler
  * (startup.c) immediately before its arm_icache_enable().  A reading, not an
- * inference: timing/icache_bench_hw prints it as ccr_reset=.  (A global
+ * inference: rt1176-evkb examples/timing/icache_bench_hw prints it as ccr_reset=.  (A global
  * variable's symbol is not mangled by C++, so this one declaration serves
  * both the C definition and C++ sketches -- imxrt1176.h has no extern "C" block.) */
 extern uint32_t startup_ccr_at_reset;
@@ -143,6 +143,7 @@ No commit yet — Task 2 completes the core change and commits both files togeth
 
 **Files:**
 - Modify: `~/Development/teensy-cores/imxrt1176/startup.c:52` (header comment), `:145-146` (globals), `:196-198` (the insertion point after `memory_clear(&_sbss_dma, &_ebss_dma);`)
+- Modify: `~/Development/teensy-cores/imxrt1176/eeprom.c` (~line 249, one comment — Step 3b, added after code review)
 
 - [ ] **Step 1: Correct the header comment at line 52**
 
@@ -168,35 +169,62 @@ uint32_t startup_ccr_at_reset;           /* SCB_CCR as the boot ROM left it -- r
 ```c
 	/* L1 INSTRUCTION cache ON (NEW-36, 2026-09-05).  First a reading: what the
 	 * boot ROM left in SCB_CCR.  Nothing above touches CCR, so this IS the
-	 * hand-off state (timing/icache_bench_hw prints it as ccr_reset=).  It is
-	 * stored after the .bss zero so memory_clear cannot erase it -- which is also
-	 * why the enable sits here rather than at the top: the copy/clear loops above
-	 * are three-instruction loops the FlexSPI AHB prefetch buffer already covers
-	 * and their cost is data-bound, while everything that follows (the vector
-	 * loop, the DCDC and PLL waits, semc_sdram_init, the constructors, main) runs
-	 * cached from here on.  arm_icache_enable() invalidates before it enables, so
-	 * no line from a previous run survives a warm reset.  ITCM/DTCM are TCM ports
-	 * and never pass through the L1; only AXIM fetches (FLASH XIP, OCRAM, SDRAM)
-	 * do -- and nothing in the tree writes code it later executes.  The D-cache
-	 * stays OFF (MPU regions + a DMA-coherency review, the rt1062 lesson); every
-	 * "D-cache is off" comment in this core remains true.  Measured on silicon
-	 * before this: flash-resident code ran at raw QSPI speed, 5-30 us per small
-	 * call (NEW-33 finding (a)); the numbers after are in
+	 * hand-off state (rt1176-evkb examples/timing/icache_bench_hw prints it as
+	 * ccr_reset=).  It is stored after the .bss zero so memory_clear cannot erase
+	 * it -- which is also why the enable sits here rather than at the top.  What
+	 * the cache covers is AXIM instruction fetch only: this .startup code itself
+	 * (the rest of ResetHandler: the vector loop, the DCDC wait, the SNVS and
+	 * SEMC glue) and every flash-resident function reached later -- .progmem*,
+	 * libLVGL_flash.a in VGLite builds, anything an example's derived linker
+	 * script routes to FLASH.  The copy/clear loops above are three-instruction
+	 * loops the FlexSPI AHB prefetch buffer already covers, and
+	 * set_arm_clock_rt1176, semc_sdram_init, __libc_init_array and main are
+	 * ITCM-resident (imxrt1176.ld sends .text* to ITCM), so they run at TCM speed
+	 * with or without this.  ITCM/DTCM are TCM ports and never pass through the
+	 * L1.  The DCDC STS_DC_OK wait below is a bounded TIMEOUT, not a beneficiary:
+	 * a cached loop spends its 200000-iteration guard slightly faster (each pass
+	 * is dominated by an AIPS read the cache does not touch) -- keep that in mind
+	 * if the guard is ever retuned.  The invalidate is UNCONDITIONAL: ARMv7-M
+	 * resets CCR.IC to 0, so every reset path (SW4, SYSRESETREQ, LinkServer's
+	 * VECTRESET) reaches here with IC=0 and arm_icache_enable() would invalidate
+	 * anyway -- but a debugger flow that halts, re-flashes and jumps to
+	 * ResetHandler WITHOUT a reset arrives with IC=1 and the previous image's
+	 * lines, and arm_icache_enable()'s early return would keep them.  The M7 does
+	 * not clear cache RAM on reset, so "invalidate before enable" is the only
+	 * thing standing between a re-flash and stale instruction fetch.  Nothing in
+	 * the tree writes code it later executes; a loader that did would need
+	 * arm_icache_invalidate_all() too (the FlexSPI SWRESET in eeprom.c purges
+	 * the AHB prefetch buffer, NOT this cache).  The D-cache stays OFF (MPU
+	 * regions + a DMA-coherency review, the rt1062 lesson); every "D-cache is
+	 * off" comment in this core remains true.  Measured on silicon before this:
+	 * flash-resident code ran at raw QSPI speed, 5-30 us per small call (NEW-33
+	 * finding (a)); the numbers after are in rt1176-evkb
 	 * examples/timing/icache_bench_hw/transcript_hw_evkb.txt. */
 	startup_ccr_at_reset = SCB_CCR;
+	arm_icache_invalidate_all();
 	arm_icache_enable();
 
 ```
 
-- [ ] **Step 4: Build blink and prove the sequence was emitted into `ResetHandler`**
+- [ ] **Step 3b: One sentence in `eeprom.c` above its first `FLEXSPI_MCR0_SWRESET` (~line 249)** — the I-cache is a second buffer on that AHB read path which the SWRESET does not reach *(added after code review)*:
+
+```c
+	/* NEW-36 (2026-09-05): the L1 I-CACHE, enabled in ResetHandler, is a second
+	 * buffer on this AHB read path that the SWRESET below does NOT reach.
+	 * Harmless here -- it holds instruction fetches only and the EEPROM region
+	 * holds no code -- but a flash writer that programs CODE must call
+	 * arm_icache_invalidate_all() (imxrt1176.h) after programming. */
+```
+
+- [ ] **Step 4: Build blink and prove the sequence was emitted into `ResetHandler`** (the ELF is `build/blinky.elf` — CMake target `blinky`)
 
 ```bash
 cd ~/Development/rt1170/evkb/examples/gpio-analog/blink && cmake --build build 2>&1 | tail -2 && \
-$ARM/arm-none-eabi-nm build/blink.elf | grep -E " [BbDd] startup_ccr_at_reset$" && \
-$ARM/arm-none-eabi-objdump -d build/blink.elf | awk '/<ResetHandler>:/,/<set_arm_clock_rt1176>:/' | grep -cE "0xef50|0xed14"
+$ARM/arm-none-eabi-nm build/blinky.elf | grep -E " [BbDd] startup_ccr_at_reset$" && \
+$ARM/arm-none-eabi-objdump -d build/blinky.elf | awk '/<ResetHandler>:/,/<_init>:/' | grep -cE "0xd14|0xf50"
 ```
 
-Expected: an `nm` line ending in ` B startup_ccr_at_reset` (or `b`/`d`), and a count ≥ 2 — the `movw … ; 0xef50` (ICIALLU) and `movw … ; 0xed14` (CCR) address materialisations inside `ResetHandler`. If the count is 0 the enable was optimised somewhere unexpected: check that `arm_icache_enable()` is not being called through a non-inlined copy (`nm | grep arm_icache`) and fix the placement before continuing.
+Expected: an `nm` line ending in ` B startup_ccr_at_reset`, and a count ≥ 6. GCC materialises `0xE000E000` once in a base register and addresses CCR/ICIALLU as `[rN, #0xd14]` / `[rN, #0xf50]` offsets (no `movw 0xed14` — measured, the plan's first draft expected the `movw` form). Reading the range by hand must show, in order: `ldr [rN,#0xd14]` + a store to `startup_ccr_at_reset`; `dsb`/`isb`; `str [rN,#0xf50]` (the UNCONDITIONAL ICIALLU); `dsb`/`isb`; the `ands #0x20000` / `bne` early-return test; ICIALLU again; `orr #0x20000`; `str [rN,#0xd14]`; `dsb`/`isb`. If the count is 0 the enable was optimised somewhere unexpected: check that `arm_icache_enable()` is not being called through a non-inlined copy (`nm | grep arm_icache`).
 
 - [ ] **Step 5: Boot-regression on the fastest gate**
 
@@ -221,9 +249,14 @@ CTR, CCSIDR, CSSELR, ICIALLU) and three static inline helpers with the CMSIS
 sequences: arm_icache_invalidate_all(), arm_icache_enable() (invalidate, then
 set CCR.IC, barriers both sides), arm_icache_disable().  ResetHandler snapshots
 the ROM's CCR into startup_ccr_at_reset (a reading, printed by
-evkb/examples/timing/icache_bench_hw) and calls arm_icache_enable() right after
-the .bss/.dmabuffers zero, so everything from the vector-table loop onward runs
-cached.  No MPU is needed: the default map makes the XIP window Normal
+evkb/examples/timing/icache_bench_hw), then invalidates UNCONDITIONALLY and
+enables, right after the .bss/.dmabuffers zero.  What that covers is AXIM
+instruction fetch only: the rest of ResetHandler and every flash-resident
+function (.progmem*, libLVGL_flash.a, derived-script FLASH routing) -- .text*
+defaults to ITCM and TCM never passes through the L1.  The invalidate is
+unconditional because a debugger flow that re-flashes and jumps to ResetHandler
+without a reset arrives with IC=1 and the old image's lines, which the helper's
+CMSIS early return would keep.  No MPU is needed: the default map makes the XIP window Normal
 cacheable and executable, TCM never passes through the L1, and nothing in the
 tree writes code it later executes.  The D-cache stays OFF (MPU + DMA-coherency
 review; every \"D-cache is off\" comment remains true).

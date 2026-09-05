@@ -83,7 +83,7 @@ acid_box's CMake comment already calls that flash residency "cheap
 
 ```c
 #define SCB_CCR            (*(volatile uint32_t *)0xE000ED14u)  /* Configuration and Control */
-#define SCB_CCR_BP         (1u << 18)   /* branch prediction enable (RAO on M7) */
+#define SCB_CCR_BP         (1u << 18)   /* branch prediction enable (not written by this core) */
 #define SCB_CCR_IC         (1u << 17)   /* L1 instruction cache enable */
 #define SCB_CCR_DC         (1u << 16)   /* L1 data cache enable — NOT set by this core */
 #define SCB_ID_CLIDR       (*(const volatile uint32_t *)0xE000ED78u)
@@ -112,16 +112,35 @@ vector-table build (line 198):
 ```c
 /* Snapshot what the boot ROM left in CCR, then enable the L1 I-cache. ... */
 startup_ccr_at_reset = SCB_CCR;
+arm_icache_invalidate_all();   /* unconditional -- see below */
 arm_icache_enable();
 ```
 
 Placement, written into the comment: after the `.bss` zero so the snapshot
 survives `memory_clear` (nothing before this point touches `CCR`, so the
-value IS the ROM's hand-off state); before everything else so the vector
-loop, the DCDC and PLL wait loops, `semc_sdram_init()` and the C++
-constructors already run cached. The two `memory_copy` and three
-`memory_clear` calls that precede it run uncached — three-instruction loops
-the FlexSPI AHB prefetch buffer already covers, and their cost is data-bound.
+value IS the ROM's hand-off state). What the cache then covers is AXIM
+instruction fetch only: the rest of `ResetHandler` itself (flash-resident
+`.startup` code — the vector loop, the DCDC wait, the SNVS and SEMC glue)
+and every flash-resident function reached later (`.progmem*`,
+`libLVGL_flash.a` in VGLite builds, anything a derived linker script routes
+to FLASH). `set_arm_clock_rt1176`, `semc_sdram_init`, `__libc_init_array`
+and `main` are ITCM-resident (`imxrt1176.ld` sends `.text*` to ITCM) and run
+at TCM speed either way. The two `memory_copy` and three `memory_clear`
+calls that precede it run uncached — three-instruction loops the FlexSPI
+AHB prefetch buffer already covers, and their cost is data-bound. The DCDC
+`STS_DC_OK` wait is a bounded timeout, not a beneficiary: caching shrinks
+its guard window slightly (each pass is dominated by an AIPS read).
+*(Corrected 2026-09-05 after code review: the first draft listed the
+ITCM-resident functions as beneficiaries.)*
+
+**The invalidate is unconditional** — `arm_icache_invalidate_all()` is
+called before `arm_icache_enable()` in startup. ARMv7-M resets `CCR.IC` to
+0, so every reset path (SW4, SYSRESETREQ, LinkServer's VECTRESET) arrives
+with IC=0 and the helper would invalidate anyway; but a debugger flow that
+halts, re-flashes and jumps to `ResetHandler` without a reset arrives with
+IC=1 and the previous image's lines, and the helper's CMSIS early return
+would keep them. The M7 does not clear cache RAM on reset. *(Added
+2026-09-05 after code review.)*
 
 The header comment at line 52 changes from "MPU/cache" to "MPU/D-cache"
 with a pointer to this spec; line 258's "D-cache is off in this core"
@@ -140,7 +159,12 @@ stays as written.
   flash as *data*, from ITCM, with IRQs masked; CM4 images are copied by the
   CM7 into the CM4's TCM and executed only by the CM4; `.text.itcm` is copied
   once, in startup, into a TCM. The invalidate helper exists for a future
-  loader that would need it — none does today.
+  loader that would need it — none does today. The FlexSPI `SWRESET`s in
+  `eeprom.c` purge the AHB prefetch buffer; the L1 I-cache is a second
+  buffer on that read path which they do NOT reach — harmless for the
+  eeprom region (no code lives there), and the reason a future flash writer
+  of *code* must call `arm_icache_invalidate_all()` (a comment in
+  `eeprom.c` now says so).
 - **Debugger.** LinkServer's flash algorithm runs after a core reset and the
   next boot re-runs `ResetHandler`, which invalidates before enabling.
   Breakpoints in XIP flash are FPB hardware breakpoints, unaffected.
@@ -327,6 +351,11 @@ bench time) → bench → A/B → regression → push/pin/fresh-user → docs.
   change does not ship until the cause is found. No such path is known.
 - **`M2Radio` archive pulls in a blob symbol.** Handled by the fallback in
   §4 (compile `Sbc.cpp` directly).
+- **Instruction timing moves only for flash-resident code.** `.text*`
+  defaults to ITCM, so cycle-calibrated spin loops there —
+  `set_arm_clock_rt1176`'s ~30 µs settle loop and its OSC/PLL guards — are
+  unaffected; the only spin loop whose speed changes is `ResetHandler`'s
+  own DCDC `STS_DC_OK` timeout (§1), whose window shrinks slightly.
 - **Bench time.** The A/B needs the Shokz twice; the regression needs two
   more images. If the headset misbehaves (NEW-34), the bench and the
   regression still stand on their own and the A/B is recorded as pending.
