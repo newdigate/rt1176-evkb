@@ -1,0 +1,131 @@
+icache_bench_hw -- HARDWARE, MIMXRT1170-EVKB (NEW-36)
+================================================================================
+2026-09-05.  teensy-cores 2304743 (I-cache enabled in ResetHandler), M2Radio
+7c91cca.  Procedure: LinkServer flash load -> verify (File matches flash) ->
+tools/rt1170-console.py attached -> SW4.  Default build (Sbc.cpp.obj routed to
+FLASH): THREE boots.  build-sbc-itcm (-DICACHE_BENCH_SBC_ITCM=ON): ONE boot,
+the reference cell.
+
+READINGS
+  ccr_reset=0x00040200  -> the boot ROM hands over with IC=0, DC=0 (BP and
+                           STKALIGN set): the CM7 had been running with NO
+                           instruction cache, now a reading rather than an inference
+  ccr_now=0x00060200    -> IC set by ResetHandler
+  clidr=0x09000003 ccsidr_i=0xf03fe009 -> isize_kb=32 ways=2 line_b=32 (RT1176 datasheet: 32 KB, 2-way, 32 B)
+  calls  flash off->on 192.3 -> 8.3 cyc/call = 23.0x ; cached flash == ITCM (8.3) ; ITCM off==on (TCM control)
+  crc    9.0 cyc/byte in every cell = 1.0x (the ~20-byte inner loop lives in the FlexSPI AHB prefetch buffer)
+  sbc    flash off->on 1106 -> 187 us/frame = 5.9x ; ITCM 125 us/frame ; cached flash = 1.5x ITCM ;
+         realtime_x on = 15.5 (ITCM 23.2, uncached flash 2.6)
+  witnesses: every wit_match=1 on every boot; sbc_crc=0x6c24f764 identical across QEMU, the flash
+         build and the ITCM build; flen=119
+  boots: 1/2/3 agree within 0.05% on every min, bit-identically on every witness and decode
+         (boot 3's derived us/frame_off rounds to 1107 rather than 1106 -- the underlying
+         min_cyc/frame values are 1102528.0 / 1102290.7 / 1102710.9, a 0.038% spread)
+PREDICTIONS (spec "What the code predicts") -- HELD / REFUTED:
+  ROM leaves IC=0: HELD (0x00040200)
+  32 KB 2-way 32 B: HELD
+  calls >= 10x, cached flash within ~1.5x of ITCM: HELD (23.0x; 1.0x)
+  sbc within ~2x of ITCM, well inside 2.902 ms: HELD (187 vs 125 us = 1.5x; realtime_x 15.5)
+NOT PREDICTED, MEASURED:
+  crc 1.0x -- icache=off is "AHB-buffered", not "unbuffered"; a 20-byte loop never missed
+  uncached calls ~0.19 us/call here vs NEW-33's 5-30 us/call in acid_box: this chain is 1 KB of
+  contiguous code; the application's flash-resident chain is tens of KB interleaved with LVGL.
+  Everything here fits the 32 KB cache -- every speedup above is a BEST CASE; the application
+  number is the acid_box LOOPSTAT A/B (transcript_hw_evkb_bt.txt there).
+FOLLOW-ON: realtime_x_on 15.5 >= 5 -> NEW-37 filed (acid_box M2_BT_OUT ITCM routing).
+
+--- default build, boot 1 ---
+ICACHE-BENCH v1
+icache_bench ccr_reset=0x00040200 ccr_now=0x00060200 clidr=0x09000003 ccsidr_i=0xf03fe009 isize_kb=32 ways=2 line_b=32 hz=996000000
+icache_bench wl=calls place=itcm addr=0x000002e0 icache=off min_cyc/call=8.3 med_cyc/call=8.3 us/rep=34 wit=0x938c7678
+icache_bench wl=calls place=itcm addr=0x000002e0 icache=on cold_us/rep=34 min_cyc/call=8.3 med_cyc/call=8.3 us/rep=34 wit=0x938c7678
+icache_bench wl=calls place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=calls place=flash addr=0x30002548 icache=off min_cyc/call=192.3 med_cyc/call=192.4 us/rep=791 wit=0x938c7678
+icache_bench wl=calls place=flash addr=0x30002548 icache=on cold_us/rep=36 min_cyc/call=8.3 med_cyc/call=8.3 us/rep=34 wit=0x938c7678
+icache_bench wl=calls place=flash wit_match=1 off/on=23.0x
+icache_bench wl=crc place=itcm addr=0x00000420 icache=off min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1184 wit=0xd8a4d735
+icache_bench wl=crc place=itcm addr=0x00000420 icache=on cold_us/rep=1184 min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1184 wit=0xd8a4d735
+icache_bench wl=crc place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=crc place=flash addr=0x30002688 icache=off min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1195 wit=0xd8a4d735
+icache_bench wl=crc place=flash addr=0x30002688 icache=on cold_us/rep=1186 min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1186 wit=0xd8a4d735
+icache_bench wl=crc place=flash wit_match=1 off/on=1.0x
+icache_bench wl=sbc place=flash addr=0x30002bb8 icache=off min_cyc/frame=1102528.0 med_cyc/frame=1102561.9 us/rep=17711 wit=0x6c24f764
+icache_bench wl=sbc place=flash addr=0x30002bb8 icache=on cold_us/rep=3005 min_cyc/frame=186894.1 med_cyc/frame=186897.4 us/rep=3002 wit=0x6c24f764
+icache_bench wl=sbc place=flash wit_match=1 off/on=5.9x
+icache_bench wl=sbc place=flash flen=119 us/frame_off=1106 us/frame_on=187 realtime_x_off=2.6 realtime_x_on=15.5 sbc_crc=0x6c24f764 sbc_crc_match=1
+icache_bench summary calls=23.0x crc=1.0x sbc=5.9x flash_on_vs_itcm: calls=1.0x crc=1.0x
+ICACHE-BENCH done
+hb n=1 icache=on
+hb n=2 icache=on
+
+--- default build, boot 2 ---
+ICACHE-BENCH v1
+icache_bench ccr_reset=0x00040200 ccr_now=0x00060200 clidr=0x09000003 ccsidr_i=0xf03fe009 isize_kb=32 ways=2 line_b=32 hz=996000000
+icache_bench wl=calls place=itcm addr=0x000002e0 icache=off min_cyc/call=8.3 med_cyc/call=8.3 us/rep=34 wit=0x938c7678
+icache_bench wl=calls place=itcm addr=0x000002e0 icache=on cold_us/rep=34 min_cyc/call=8.3 med_cyc/call=8.3 us/rep=34 wit=0x938c7678
+icache_bench wl=calls place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=calls place=flash addr=0x30002548 icache=off min_cyc/call=192.4 med_cyc/call=192.4 us/rep=791 wit=0x938c7678
+icache_bench wl=calls place=flash addr=0x30002548 icache=on cold_us/rep=36 min_cyc/call=8.3 med_cyc/call=8.3 us/rep=34 wit=0x938c7678
+icache_bench wl=calls place=flash wit_match=1 off/on=23.0x
+icache_bench wl=crc place=itcm addr=0x00000420 icache=off min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1184 wit=0xd8a4d735
+icache_bench wl=crc place=itcm addr=0x00000420 icache=on cold_us/rep=1184 min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1184 wit=0xd8a4d735
+icache_bench wl=crc place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=crc place=flash addr=0x30002688 icache=off min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1195 wit=0xd8a4d735
+icache_bench wl=crc place=flash addr=0x30002688 icache=on cold_us/rep=1186 min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1186 wit=0xd8a4d735
+icache_bench wl=crc place=flash wit_match=1 off/on=1.0x
+icache_bench wl=sbc place=flash addr=0x30002bb8 icache=off min_cyc/frame=1102290.7 med_cyc/frame=1102344.0 us/rep=17707 wit=0x6c24f764
+icache_bench wl=sbc place=flash addr=0x30002bb8 icache=on cold_us/rep=3005 min_cyc/frame=186888.5 med_cyc/frame=186896.5 us/rep=3002 wit=0x6c24f764
+icache_bench wl=sbc place=flash wit_match=1 off/on=5.9x
+icache_bench wl=sbc place=flash flen=119 us/frame_off=1106 us/frame_on=187 realtime_x_off=2.6 realtime_x_on=15.5 sbc_crc=0x6c24f764 sbc_crc_match=1
+icache_bench summary calls=23.0x crc=1.0x sbc=5.9x flash_on_vs_itcm: calls=1.0x crc=1.0x
+ICACHE-BENCH done
+hb n=1 icache=on
+hb n=2 icache=on
+
+--- default build, boot 3 ---
+ICACHE-BENCH v1
+icache_bench ccr_reset=0x00040200 ccr_now=0x00060200 clidr=0x09000003 ccsidr_i=0xf03fe009 isize_kb=32 ways=2 line_b=32 hz=996000000
+icache_bench wl=calls place=itcm addr=0x000002e0 icache=off min_cyc/call=8.3 med_cyc/call=8.3 us/rep=34 wit=0x938c7678
+icache_bench wl=calls place=itcm addr=0x000002e0 icache=on cold_us/rep=34 min_cyc/call=8.3 med_cyc/call=8.3 us/rep=34 wit=0x938c7678
+icache_bench wl=calls place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=calls place=flash addr=0x30002548 icache=off min_cyc/call=192.1 med_cyc/call=192.1 us/rep=790 wit=0x938c7678
+icache_bench wl=calls place=flash addr=0x30002548 icache=on cold_us/rep=36 min_cyc/call=8.3 med_cyc/call=8.3 us/rep=34 wit=0x938c7678
+icache_bench wl=calls place=flash wit_match=1 off/on=23.0x
+icache_bench wl=crc place=itcm addr=0x00000420 icache=off min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1184 wit=0xd8a4d735
+icache_bench wl=crc place=itcm addr=0x00000420 icache=on cold_us/rep=1184 min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1184 wit=0xd8a4d735
+icache_bench wl=crc place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=crc place=flash addr=0x30002688 icache=off min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1195 wit=0xd8a4d735
+icache_bench wl=crc place=flash addr=0x30002688 icache=on cold_us/rep=1186 min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1186 wit=0xd8a4d735
+icache_bench wl=crc place=flash wit_match=1 off/on=1.0x
+icache_bench wl=sbc place=flash addr=0x30002bb8 icache=off min_cyc/frame=1102710.9 med_cyc/frame=1102748.8 us/rep=17714 wit=0x6c24f764
+icache_bench wl=sbc place=flash addr=0x30002bb8 icache=on cold_us/rep=3005 min_cyc/frame=186898.6 med_cyc/frame=186904.8 us/rep=3002 wit=0x6c24f764
+icache_bench wl=sbc place=flash wit_match=1 off/on=5.9x
+icache_bench wl=sbc place=flash flen=119 us/frame_off=1107 us/frame_on=187 realtime_x_off=2.6 realtime_x_on=15.5 sbc_crc=0x6c24f764 sbc_crc_match=1
+icache_bench summary calls=23.0x crc=1.0x sbc=5.9x flash_on_vs_itcm: calls=1.0x crc=1.0x
+ICACHE-BENCH done
+hb n=1 icache=on
+hb n=2 icache=on
+
+--- build-sbc-itcm, boot 1 ---
+ICACHE-BENCH v1
+icache_bench ccr_reset=0x00040200 ccr_now=0x00060200 clidr=0x09000003 ccsidr_i=0xf03fe009 isize_kb=32 ways=2 line_b=32 hz=996000000
+icache_bench wl=calls place=itcm addr=0x000002e0 icache=off min_cyc/call=8.3 med_cyc/call=8.3 us/rep=34 wit=0x938c7678
+icache_bench wl=calls place=itcm addr=0x000002e0 icache=on cold_us/rep=34 min_cyc/call=8.3 med_cyc/call=8.3 us/rep=34 wit=0x938c7678
+icache_bench wl=calls place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=calls place=flash addr=0x30002544 icache=off min_cyc/call=189.1 med_cyc/call=189.1 us/rep=777 wit=0x938c7678
+icache_bench wl=calls place=flash addr=0x30002544 icache=on cold_us/rep=35 min_cyc/call=8.1 med_cyc/call=8.1 us/rep=33 wit=0x938c7678
+icache_bench wl=calls place=flash wit_match=1 off/on=23.3x
+icache_bench wl=crc place=itcm addr=0x00000420 icache=off min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1184 wit=0xd8a4d735
+icache_bench wl=crc place=itcm addr=0x00000420 icache=on cold_us/rep=1184 min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1184 wit=0xd8a4d735
+icache_bench wl=crc place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=crc place=flash addr=0x30002684 icache=off min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1193 wit=0xd8a4d735
+icache_bench wl=crc place=flash addr=0x30002684 icache=on cold_us/rep=1186 min_cyc/byte=9.0 med_cyc/byte=9.0 us/rep=1186 wit=0xd8a4d735
+icache_bench wl=crc place=flash wit_match=1 off/on=1.0x
+icache_bench wl=sbc place=itcm addr=0x00002494 icache=off min_cyc/frame=125264.7 med_cyc/frame=125264.7 us/rep=2012 wit=0x6c24f764
+icache_bench wl=sbc place=itcm addr=0x00002494 icache=on cold_us/rep=2012 min_cyc/frame=125264.7 med_cyc/frame=125264.7 us/rep=2012 wit=0x6c24f764
+icache_bench wl=sbc place=itcm wit_match=1 off/on=1.0x
+icache_bench wl=sbc place=itcm flen=119 us/frame_off=125 us/frame_on=125 realtime_x_off=23.2 realtime_x_on=23.2 sbc_crc=0x6c24f764 sbc_crc_match=1
+icache_bench summary calls=23.3x crc=1.0x sbc=1.0x flash_on_vs_itcm: calls=1.0x crc=1.0x
+ICACHE-BENCH done
+hb n=1 icache=on
+hb n=2 icache=on
