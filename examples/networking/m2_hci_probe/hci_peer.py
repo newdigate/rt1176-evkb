@@ -64,6 +64,7 @@ ACL_LEN, SCO_LEN, ACL_NUM, SCO_NUM = 1021, 64, 8, 0
 DEVICES = [(bytes.fromhex("01EEDDCCBBAA"), 0x240404, b"FAKE-HEADSET-01"),   # prints AA:BB:CC:DD:EE:01
            (bytes.fromhex("02EEDDCCBBAA"), 0x240404, b"FAKE-HEADSET-02")]
 DECOY_BD = bytes.fromhex("99EEDDCCBBAA")           # prints AA:BB:CC:DD:EE:99 -- a bond whose name never matches the target
+SOAK_N = 10   # soak phase: forced drops the gate build performs (argv[3] overrides)
 KEY1, KEY2 = bytes(range(16)), bytes(range(16, 32))   # the keys notified on links 1 and 3
 
 OP_RESET, OP_READ_LOCAL_VER, OP_READ_BUFFER_SIZE, OP_READ_BD_ADDR = 0x0C03, 0x1001, 0x1005, 0x1009
@@ -102,13 +103,14 @@ def v3_data_req(length, offset, err=0):
     return f + bytes([crc8(f)])
 LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP_REMOTE_NAME_REQ,
                "starve": OP_RESET, "fwdnld": OP_READ_BD_ADDR, "baud": OP_READ_BUFFER_SIZE,
-               "avdtp": 0x0413, "media": 0x0413, "reconnect": 0x0413, "lifecycle": 0x0413}   # Set_Connection_Encryption -- last COMMAND before
-                                  # signalling; the real end of avdtp, media, reconnect and lifecycle is checked
-                                  # separately (peer.avdtp["started"] / peer.media / peer.lc, below)
+               "avdtp": 0x0413, "media": 0x0413, "reconnect": 0x0413, "lifecycle": 0x0413, "soak": 0x0413}   # Set_Connection_Encryption -- last COMMAND before
+                                  # signalling; the real end of avdtp, media, reconnect, lifecycle and soak is checked
+                                  # separately (peer.avdtp["started"] / peer.media / peer.lc / peer.sk, below)
 LAST_OPCODE_COUNT = {"baud": 2}   # phases whose terminal opcode must be seen N times (default 1)
-DEADLINE = {"reconnect": 50, "lifecycle": 55}   # seconds from socket connect; default 45.  reconnect runs one inquiry + FOUR links + four disconnects
+DEADLINE = {"reconnect": 50, "lifecycle": 55, "soak": 55}   # seconds from socket connect; default 45.  reconnect runs one inquiry + FOUR links + four disconnects
                                    # (~17 s wall measured from socket connect) and must not share [media]'s budget; 50 keeps it BELOW tools/qrun's 60 s QRUN_TIMEOUT so the peer announces before QEMU is killed.
                                    # lifecycle runs three legs with a 3 s (M2_BT_RETRY_MS) gap before leg 3's re-page (~25 s wall measured); 55 keeps it below the same 60 s cap.
+                                   # soak runs the reconnect flow N times over on a firmware-side timer (M2_BT_SOAK_PERIOD_MS); 55 is the gate's own qrun budget, not a real soak duration.
 
 def phase_done(phase, peer):
     # avdtp's real end is signalling over ACL (an accepted START), not a
@@ -127,6 +129,10 @@ def phase_done(phase, peer):
     if phase == "lifecycle":
         lc = peer.lc
         return lc["links_streamed"] >= 3 and lc["drops"] >= 2 and lc["rejected_unknown"] and not peer.avdtp["error"] and lc["errors"] == 0
+    # soak's real end: N+1 links have STREAMED media (first link + one per forced drop) and N host Disconnects were seen.
+    if phase == "soak":
+        sk = peer.sk
+        return sk["streamed"] >= sk["n"] + 1 and sk["disconnects"] >= sk["n"] and not peer.avdtp["error"] and peer.rc["errors"] == 0
     return peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
 
 def connect(path):
@@ -174,6 +180,10 @@ class Peer:
         self.lc = {"leg": 1, "links_streamed": 0, "drops": 0, "rejected_unknown": False, "errors": 0,
                    "handle": 0x0001, "conns": 0, "scan_on": 0, "scan_off": 0, "accepts": 0,
                    "bitpool2": 0, "did_incoming_page": False, "did_unknown": False}
+        # --- soak phase (NEW-34 piece 5): the reconnect flow N times over -- host-forced drops, fresh handle per page,
+        # stored-key auth each re-page, media validated per link.  streamed counts a link once its media reached 5 packets.
+        self.sk = {"n": SOAK_N, "disconnects": 0, "streamed": 0, "last_counted": 0}
+        if phase == "soak": self.rc["reject_on_link"] = 0            # never reject a key: create_conns is >= 1 whenever a key is offered
         # --- V3 bootloader state (fwdnld phase only) ---
         # While `boot` is True every received byte belongs to the download, not
         # to HCI: the host is answering the bootloader, and H4 framing has not
@@ -299,7 +309,7 @@ class Peer:
                 self.send(cmd_status(opcode)); self.send(event(0x03, b"\x04" + struct.pack("<H", 0x0000) + bd + b"\x01\x00"), 0.1)
                 return
             self.peer_bd = bd
-            if self.phase == "reconnect":
+            if self.phase in ("reconnect", "soak"):
                 if self.rc["create_conns"]: self.rc["handle"] += 1        # 0x0001..0x0004: a FRESH handle per link, so a host that cached link 1's is caught
                 self.rc["create_conns"] += 1; self.reset_link()
             if self.phase == "lifecycle":                                  # leg 1's page, and leg 3's re-page after the unknown reject
@@ -331,12 +341,13 @@ class Peer:
             self.send(event(0x03, b"\x02" + struct.pack("<H", 0x0000) + params[:6] + b"\x01\x00"), 0.05)
         elif opcode == 0x0406:                                              # Disconnect -> Command Status, Disconnection Complete
             h = struct.unpack("<H", params[:2])[0]
-            if self.phase == "reconnect" and h != self.cur_handle():
+            if self.phase in ("reconnect", "soak") and h != self.cur_handle():
                 self.log.append("PEER-DISCONNECT-BAD-HANDLE 0x%04x (current 0x%04x)" % (h, self.cur_handle()))
                 self.send(cmd_status(opcode, 0x02)); return                    # 0x02 = Unknown Connection Identifier: the live link is NOT torn down
             self.send(cmd_status(opcode)); self.send(event(0x05, b"\x00" + params[:2] + params[2:3]), 0.05)
-            if self.phase == "reconnect":
+            if self.phase in ("reconnect", "soak"):
                 self.reset_link(); self.peer_bd = None                        # the link is gone: stale CIDs must land on PEER-ACL-UNKNOWN-CID, and an authentication without a new page on PEER-AUTH-NO-LINK
+                if self.phase == "soak": self.sk["disconnects"] += 1
         elif opcode == 0x0411:                                              # Authentication_Requested: SSP Just Works, all the way to Auth Complete
             if self.peer_bd is None: self.log.append("PEER-AUTH-NO-LINK"); self.send(cmd_status(opcode, 0x02)); return   # 0x02 = Unknown Connection Identifier
             self.send(cmd_status(opcode)); bd = self.peer_bd
@@ -442,7 +453,7 @@ class Peer:
                 if len(self.buf) < 5 + alen: return
                 data, self.buf = self.buf[5:5 + alen], self.buf[5 + alen:]
                 h = hf & 0x0FFF
-                if not (self.phase in ("reconnect", "lifecycle") and h != self.cur_handle()): self.send(ncp(h))   # no buffer credit for a handle the peer has said does not exist
+                if not (self.phase in ("reconnect", "lifecycle", "soak") and h != self.cur_handle()): self.send(ncp(h))   # no buffer credit for a handle the peer has said does not exist
                 self.handle_acl(h, data); continue
             if self.buf[0] != 0x01:                                     # only commands/ACL come from a host
                 self.log.append("PEER-BAD-TYPE 0x%02x" % self.buf[0]); self.buf = self.buf[1:]; continue
@@ -461,7 +472,7 @@ class Peer:
         # bad frame".  The happy-path parses below stay unguarded on purpose:
         # this try/except is the safety net, not a substitute for them.
         try:
-            if self.phase in ("reconnect", "lifecycle") and handle != self.cur_handle():
+            if self.phase in ("reconnect", "lifecycle", "soak") and handle != self.cur_handle():
                 self.log.append("PEER-ACL-BAD-HANDLE 0x%04x (current 0x%04x)" % (handle, self.cur_handle())); return
             if len(d) < 4: return
             l2len, cid = struct.unpack("<HH", d[:4]); pl = d[4:4 + l2len]
@@ -475,7 +486,7 @@ class Peer:
                                                         # later one (opened in AVDTP's OPENING state,
                                                         # Avdtp.cpp's second m_l2->connect(PSM, ...))
                                                         # is the media transport channel
-                    elif psm == 0x0019 and self.phase == "lifecycle":       # the acceptor-leg (1/3) media channel: 119-byte frames (bitpool 53)
+                    elif psm == 0x0019 and self.phase in ("lifecycle", "soak"):       # the acceptor-leg (1/3) media channel, and every soak link: 119-byte frames (bitpool 53)
                         self.cur_media_cid = ours; self.media = fresh_media(119)
                     self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0001, 0x0000))   # pending first, like the Shokz
                     self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0000, 0x0000))
@@ -529,8 +540,8 @@ class Peer:
                 if ours == cid:
                     if psm == 0x0001: self.handle_sdp(handle, peer_cid, pl)
                     elif psm == 0x0019 and ours == self.avdtp["sig_cid"]: self.handle_avdtp(handle, peer_cid, pl)
-                    elif psm == 0x0019 and self.phase == "lifecycle":
-                        if ours == self.cur_media_cid: self.handle_media(pl)   # current leg's media only; a stale leg's tail is ignored
+                    elif psm == 0x0019 and self.phase in ("lifecycle", "soak"):
+                        if ours == self.cur_media_cid: self.handle_media(pl)   # current leg's/link's media only; a stale one's tail is ignored
                     elif psm == 0x0019: self.handle_media(pl)              # the OTHER 0x0019 channel: media transport
                     return
             self.log.append("PEER-ACL-UNKNOWN-CID 0x%04x" % cid)
@@ -722,6 +733,7 @@ if __name__ == "__main__":
     if phase not in LAST_OPCODE: print("ERROR: unknown phase %s" % phase); sys.exit(2)
     sock = connect(path); sock.settimeout(0.05)
     print("PEER-CONNECTED phase=%s" % phase)
+    if phase == "soak" and len(sys.argv) > 3: SOAK_N = int(sys.argv[3])   # module-level code: no `global` needed to rebind SOAK_N here
     peer = Peer(sock, phase)
     if peer.boot:
         # ★ REPEAT the start indication until it is answered, which is what the
@@ -769,6 +781,12 @@ if __name__ == "__main__":
                 lc["links_streamed"] += 1                                                           # leg 3 streamed: three links total
             if phase_done("lifecycle", peer) and not peer.pending:
                 break                                                                              # all three legs done; the gate waits out the host's final heartbeat
+        if phase == "soak":
+            sk = peer.sk
+            if peer.media["pkts"] >= 5 and sk["last_counted"] != peer.rc["create_conns"]:   # this link has streamed: count it once
+                sk["streamed"] += 1; sk["last_counted"] = peer.rc["create_conns"]
+            if phase_done("soak", peer) and not peer.pending:
+                break                                                                          # the gate waits out the host's soak_done line
         if peer.boot and not peer.boot_started:
             if peer.boot_acks == 0 and time.time() - peer.boot_last_ind > 0.3:
                 if peer.boot_inds_sent < 40:      # ~12 s of retries, then give up
@@ -814,6 +832,10 @@ if __name__ == "__main__":
         lc = peer.lc
         print("PEER-LIFECYCLE links=%d drops=%d accepts=%d rejects=%d scan_on=%d scan_off=%d bitpool2=%d"
               % (lc["links_streamed"], lc["drops"], lc["accepts"], 1 if lc["rejected_unknown"] else 0, lc["scan_on"], lc["scan_off"], lc["bitpool2"]))
+    if phase == "soak":
+        r, sk = peer.rc, peer.sk
+        print("PEER-SOAK links=%d disconnects=%d streamed=%d key_ok=%d notified=%d"
+              % (r["create_conns"], sk["disconnects"], sk["streamed"], r["key_ok"], r["notified"]))
     print("PEER-DONE phase=%s cmds=%d resets=%d opcodes=%s baud=%s"
           % (phase, len(peer.cmds), peer.resets, ",".join("%04x" % c for c in peer.cmds),
              ",".join(str(b) for b in peer.baud_seen) or "none"))
