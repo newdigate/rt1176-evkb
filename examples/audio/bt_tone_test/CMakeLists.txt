@@ -147,6 +147,19 @@ if(M2_BT_ACCEPT_AVCTP)
     add_definitions(-DM2_BT_ACCEPT_AVCTP=1)
 endif()
 
+# NEW-34 piece 5: the unattended connection-resilience soak driver (spec 2026-09-06-bt-resilience-soak-design.md).
+# Every M2_BT_SOAK_PERIOD_MS while STREAMING the firmware forces a drop with a RAW HCI_Disconnect and lets BtSession
+# auto-reconnect; M2_BT_SOAK_CYCLES bounds the run (0 = unlimited, the silicon soak; the [soak] gate sets 10).
+# OFF by default so the default image and every existing gate stay byte-identical.
+option(M2_BT_SOAK "Resilience soak: force a drop every period and count the auto-reconnects" OFF)
+set(M2_BT_SOAK_PERIOD_MS "15000" CACHE STRING "Soak: ms of streaming between forced drops")
+set(M2_BT_SOAK_CYCLES "0" CACHE STRING "Soak: stop after this many forced drops (0 = unlimited)")
+set(M2_BT_SOAK_RECONNECT_BOUND_MS "30000" CACHE STRING "Soak: a cycle not re-streaming within this many ms is a failure")
+if(M2_BT_SOAK)
+    add_definitions(-DM2_BT_SOAK=1 -DM2_BT_SOAK_PERIOD_MS=${M2_BT_SOAK_PERIOD_MS}
+                    -DM2_BT_SOAK_CYCLES=${M2_BT_SOAK_CYCLES} -DM2_BT_SOAK_RECONNECT_BOUND_MS=${M2_BT_SOAK_RECONNECT_BOUND_MS})
+endif()
+
 # Bench diagnostic: dump every in/out ACL packet on the link as hex over the VCOM
 # (feed tools/acl-trace-to-btsnoop.py). OFF by default; gates/default build unchanged.
 option(M2_BT_ACL_TRACE "Trace every ACL packet (L2cap::onAclTrace) over the console" OFF)

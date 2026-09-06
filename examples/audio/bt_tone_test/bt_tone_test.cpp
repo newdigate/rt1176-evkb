@@ -256,12 +256,97 @@ static AudioOutputBluetooth   btout;
 static AudioConnection pc0(toneGen, 0, btout, 0);
 static AudioConnection pc1(toneGen, 0, btout, 1);      // same tone to L and R
 
+#if defined(M2_BT_SOAK)
+// --- NEW-34 piece 5: the unattended resilience soak driver ---------------------------------------
+// Every M2_BT_SOAK_PERIOD_MS while STREAMING, force a drop with a RAW HCI_Disconnect (0x0406, reason 0x13)
+// on the live handle -- deliberately NOT session.disconnect(): that is the MANUAL hook and BtSession would
+// treat the loss as intended.  A raw disconnect arrives as Disconnection_Complete with BtLink outside its
+// DISCONNECT op, so BtLink goes LINK_LOST, A2dpSource::tick() tears the media path down (m_avdtp.reset();
+// m_l2.reset()), BtSession records the loss and goes WAITING -- the AUTOMATIC path a range loss triggers.
+// retryNow() then fires the reconnect at once: the retry TIMER is [lifecycle]'s claim; this soak measures
+// the reconnect MACHINERY (and the QEMU gate lives inside a 60 s budget).  A cycle that does not re-stream
+// within M2_BT_SOAK_RECONNECT_BOUND_MS is COUNTED as a failure and the driver moves on -- a soak records
+// failures, it does not stop on the first.
+#include <malloc.h>
+extern unsigned long _ebss;
+static uint32_t soakHeapUsed()     { struct mallinfo mi = mallinfo(); return (uint32_t)mi.uordblks; }   // newlib live total; the arena is OCRAM (.bss.dma), clear of the DTCM stack
+static uint32_t soakStackFreeMin() { static uint32_t fl = 0xFFFFFFFF; register uint32_t sp __asm__("sp");
+                                     uint32_t f = sp - (uint32_t)&_ebss; if (f < fl) fl = f; return fl; }   // running floor: stack grows down from DTCM top
+static const uint16_t OP_DISCONNECT = 0x0406;
+enum SoakState : uint8_t { SOAK_STREAM, SOAK_DROPPING, SOAK_RECONNECTING, SOAK_DONE };
+static SoakState s_soakSt = SOAK_STREAM;
+static uint32_t s_soakAt = 0;                    // period reference while streaming; bound reference while dropping/reconnecting
+static uint32_t s_soakCycles = 0, s_soakReconnects = 0, s_soakFails = 0, s_soakReconnectMsMax = 0;
+static bool     s_soakBaseSet = false;
+static uint8_t  s_soakL2FreeBase = 0, s_soakL2FreeRestreamMin = 0xFF;   // the slot-leak baseline and the floor seen at re-stream entries
+static void soakOnStream() {                     // from onStreamCb(streaming=true): sample the structural baseline
+    uint8_t f = src.l2().freeSlots();
+    if (!s_soakBaseSet) { s_soakL2FreeBase = f; s_soakBaseSet = true; }
+    else if (f < s_soakL2FreeRestreamMin) s_soakL2FreeRestreamMin = f;
+}
+static void soakPrintDone() {
+    uint8_t rm = s_soakBaseSet && s_soakL2FreeRestreamMin != 0xFF ? s_soakL2FreeRestreamMin : s_soakL2FreeBase;
+    CONSOLE.print("soak_done cycles="); CONSOLE.print(s_soakCycles);
+    CONSOLE.print(" reconnects="); CONSOLE.print(s_soakReconnects);
+    CONSOLE.print(" fails="); CONSOLE.print(s_soakFails);
+    CONSOLE.print(" reconnect_ms_max="); CONSOLE.print(s_soakReconnectMsMax);
+    CONSOLE.print(" l2_free_base="); CONSOLE.print(s_soakL2FreeBase);
+    CONSOLE.print(" l2_free_restream_min="); CONSOLE.print(rm);
+    CONSOLE.print(" l2_leak="); CONSOLE.print(s_soakL2FreeBase > rm ? s_soakL2FreeBase - rm : 0);
+    CONSOLE.print(" bonds="); CONSOLE.println(bonds.count());
+}
+static void soakTick(uint32_t now) {
+    switch (s_soakSt) {
+    case SOAK_STREAM:
+        if (session.state() != BtSession::STREAMING) { s_soakAt = now; break; }        // not streaming yet: keep re-arming the period
+        if (M2_BT_SOAK_CYCLES && s_soakCycles >= (uint32_t)M2_BT_SOAK_CYCLES) { s_soakSt = SOAK_DONE; soakPrintDone(); break; }
+        if (now - s_soakAt >= (uint32_t)M2_BT_SOAK_PERIOD_MS) {
+            uint16_t h = src.link().handle();
+            uint8_t p[3] = { (uint8_t)h, (uint8_t)(h >> 8), 0x13 };                    // handle, reason 0x13 Remote User Terminated
+            if (hci.submit(OP_DISCONNECT, p, 3, nullptr, nullptr) == Hci::OK) {
+                s_soakCycles++; s_soakAt = now; s_soakSt = SOAK_DROPPING;
+                CONSOLE.print("soak_drop cycle="); CONSOLE.print(s_soakCycles); CONSOLE.print(" handle=0x"); printHex16(h); CONSOLE.println();
+            }
+        }
+        break;
+    case SOAK_DROPPING:                                                                 // wait for BtSession to see the loss
+        if (session.state() == BtSession::WAITING) { session.retryNow(); s_soakSt = SOAK_RECONNECTING; }
+        else if (now - s_soakAt >= (uint32_t)M2_BT_SOAK_RECONNECT_BOUND_MS) {
+            s_soakFails++; s_soakSt = SOAK_STREAM; s_soakAt = now; CONSOLE.println("soak_fail stage=drop-not-seen"); }
+        break;
+    case SOAK_RECONNECTING:
+        if (session.state() == BtSession::STREAMING) {
+            uint32_t ms = now - s_soakAt; if (ms > s_soakReconnectMsMax) s_soakReconnectMsMax = ms;
+            s_soakReconnects++; s_soakSt = SOAK_STREAM; s_soakAt = now;
+        } else if (now - s_soakAt >= (uint32_t)M2_BT_SOAK_RECONNECT_BOUND_MS) {
+            s_soakFails++; s_soakSt = SOAK_STREAM; s_soakAt = now; CONSOLE.println("soak_fail stage=reconnect-timeout"); }
+        break;
+    case SOAK_DONE: break;
+    }
+}
+static void soakPrintLine() {                    // every 2 s (NEW-8 cadence): the health signature
+    CONSOLE.print("bt_soak cycles="); CONSOLE.print(s_soakCycles);
+    CONSOLE.print(" reconnects="); CONSOLE.print(s_soakReconnects);
+    CONSOLE.print(" fails="); CONSOLE.print(s_soakFails);
+    CONSOLE.print(" reconnect_ms_max="); CONSOLE.print(s_soakReconnectMsMax);
+    CONSOLE.print(" l2_free="); CONSOLE.print(src.l2().freeSlots());
+    CONSOLE.print(" l2_free_base="); CONSOLE.print(s_soakL2FreeBase);
+    CONSOLE.print(" handle=0x"); printHex16(src.link().handle());
+    CONSOLE.print(" bonds="); CONSOLE.print(bonds.count());
+    CONSOLE.print(" heap="); CONSOLE.print(soakHeapUsed());
+    CONSOLE.print(" stack_free_min="); CONSOLE.println(soakStackFreeMin());
+}
+#endif /* M2_BT_SOAK */
+
 static uint32_t nowMs() { return millis(); }
 static void btLog(void *, const char *s) { CONSOLE.println(s); }
 static void onStreamCb(void *, bool streaming, uint8_t reason, BtSession::By by) {
     if (streaming) {
         btout.begin(src);
         src.l2().resetCreditStats();   // NEW-34 piece 4: zero the credit-leak counters at each STREAMING entry
+#if defined(M2_BT_SOAK)
+        soakOnStream();                // NEW-34 piece 5: sample the slot-leak baseline at every STREAMING entry
+#endif
         const char *bs = by == BtSession::BY_PAGED ? "paged" : by == BtSession::BY_INQUIRY ? "inquiry" : by == BtSession::BY_INCOMING ? "incoming" : "none";
         CONSOLE.print("streaming by="); CONSOLE.print(bs);
         CONSOLE.print(" bitpool="); CONSOLE.print(src.sbcParams().bitpool);
@@ -386,6 +471,10 @@ void setup() {
     CONSOLE.println("avctp=accepted (capture build)");
 #endif
     CONSOLE.print("bonds_boot="); CONSOLE.println(bonds.count());
+#if defined(M2_BT_SOAK)
+    CONSOLE.print("soak period_ms="); CONSOLE.print(M2_BT_SOAK_PERIOD_MS); CONSOLE.print(" cycles="); CONSOLE.print(M2_BT_SOAK_CYCLES);
+    CONSOLE.print(" bound_ms="); CONSOLE.println(M2_BT_SOAK_RECONNECT_BOUND_MS);
+#endif
 #if defined(M2_BT_ACL_TRACE)
     src.l2().onAclTrace(aclTrace, nullptr);
 #endif
@@ -429,6 +518,10 @@ void loop() {
     src.service();
     src.l2().tickClock(millis());     // NEW-34 piece 4: ms reference for the credit-starve fingerprint
     btout.poll();
+#if defined(M2_BT_SOAK)
+    soakTick(millis());
+    { static uint32_t lastSoak = 0; if (millis() - lastSoak >= 2000) { lastSoak = millis(); soakPrintLine(); } }
+#endif
     static uint32_t last = 0;
     if (millis() - last >= 1000) {
         last = millis();
