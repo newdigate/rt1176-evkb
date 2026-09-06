@@ -497,8 +497,10 @@ bt_cts=undriven
 bt_fw_source=synthetic
 bt_fw_download=no_start_indication chip_id=0x0000 start_inds=0 sent=0/1024
 hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0
+bonds_boot=0
 inquiry=fail reason=no_response status=0xFF
 a2dp=connect_failed
+bonds=0 paired_by=none
 hb streaming=0 blocks=0 packets=0 drops=0 hw=0 n=0
 hb streaming=0 blocks=0 packets=0 drops=0 hw=0 n=1
 ABSENT
