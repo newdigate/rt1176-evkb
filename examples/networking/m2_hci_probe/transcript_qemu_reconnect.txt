@@ -17,47 +17,47 @@ bd_addr=11:22:33:44:55:66
 hci_buffer: acl_len=1021 acl_num=8 sco_len=64 sco_num=0
 bonds_boot=0
 inquiry=started
-[t=4512] ev=0x02
+[t=4514] ev=0x02
 inq: bd=AA:BB:CC:DD:EE:01 cod=0x240404 psrm=1 clk=0x1234
 inq: bd=AA:BB:CC:DD:EE:02 cod=0x240404 psrm=1 clk=0x1234
 inq: bd=AA:BB:CC:DD:EE:01 cod=0x240404 psrm=1 clk=0x1234
 inq: bd=AA:BB:CC:DD:EE:02 cod=0x240404 psrm=1 clk=0x1234
-[t=4719] ev=0x01
+[t=4728] ev=0x01
 inquiry_complete: n=2
-[t=4800] ev=0x07
+[t=4803] ev=0x07
 inq_name: bd=AA:BB:CC:DD:EE:01 status=0x00 name="FAKE-HEADSET-01"
-[t=4877] ev=0x07
+[t=4881] ev=0x07
 inq_name: bd=AA:BB:CC:DD:EE:02 status=0x00 name="FAKE-HEADSET-02"
 connect: target=AA:BB:CC:DD:EE:01 name="FAKE-HEADSET-01"
 event_mask: st=ok status=0x00
 ssp_mode: st=ok status=0x00 mode=1
 page_timeout: st=ok status=0x00 slots=0x2000
-[t=4963] ev=0x03
+[t=4968] ev=0x03
 hci_event: code=0x03 len=11
 connect=ok handle=0x0001 attempt=1
-[t=5004] ev=0x17
+[t=5007] ev=0x17
 hci_event: code=0x17 len=6
 link_key_req: bd=AA:BB:CC:DD:EE:01 -> neg_reply (no stored key)
-[t=5046] ev=0x31
+[t=5048] ev=0x31
 hci_event: code=0x31 len=6
 io_cap_req: bd=AA:BB:CC:DD:EE:01 -> NoInputNoOutput auth_req=0x04
 [t=5090] ev=0x32
 hci_event: code=0x32 len=9
 hci_event: code=0x32 len=9
-[t=5124] ev=0x33
+[t=5126] ev=0x33
 hci_event: code=0x33 len=10
 user_conf_req: bd=AA:BB:CC:DD:EE:01 numeric=123456 -> accept (Just Works)
-[t=5167] ev=0x36
+[t=5168] ev=0x36
 hci_event: code=0x36 len=7
 pairing_complete: status=0x00 bd=AA:BB:CC:DD:EE:01
 [t=5204] ev=0x18
 hci_event: code=0x18 len=23
 link_key: bd=AA:BB:CC:DD:EE:01 type=4 bond=saved
-[t=5240] ev=0x06
+[t=5241] ev=0x06
 hci_event: code=0x06 len=3
 auth_complete: status=0x00 handle=0x0001
 pairing=ok auth=ok link_key=stored
-[t=5316] ev=0x08
+[t=5317] ev=0x08
 hci_event: code=0x08 len=4
 encryption_change: status=0x00 handle=0x0001 enabled=1
 connect_secure=ok encryption=on paired_by=ssp
@@ -84,7 +84,7 @@ hci_event: code=0x13 len=5
 hci_event: code=0x13 len=5
 hci_event: code=0x13 len=5
 reconnect_phase=1 result=ok paired_by=ssp
-[t=6029] ev=0x05
+[t=6036] ev=0x05
 hci_event: code=0x05 len=4
 disconnection_complete: status=0x00 handle=0x0001 reason=0x13
 disconnect=ok reason=0x13 handle=0x0001
@@ -93,17 +93,17 @@ bond_try: bd=AA:BB:CC:DD:EE:01 name="FAKE-HEADSET-01" attempts=3
 event_mask: st=ok status=0x00
 ssp_mode: st=ok status=0x00 mode=1
 page_timeout: st=ok status=0x00 slots=0x2000
-[t=6119] ev=0x03
+[t=6128] ev=0x03
 hci_event: code=0x03 len=11
 connect=ok handle=0x0002 attempt=1
-[t=6157] ev=0x17
+[t=6169] ev=0x17
 hci_event: code=0x17 len=6
 link_key_req: bd=AA:BB:CC:DD:EE:01 -> reply(stored type=4)
-[t=6197] ev=0x06
+[t=6212] ev=0x06
 hci_event: code=0x06 len=3
 auth_complete: status=0x00 handle=0x0002
 pairing=incomplete auth=ok link_key=none
-[t=6271] ev=0x08
+[t=6290] ev=0x08
 hci_event: code=0x08 len=4
 encryption_change: status=0x00 handle=0x0002 enabled=1
 connect_secure=ok encryption=on paired_by=stored
@@ -130,7 +130,7 @@ hci_event: code=0x13 len=5
 hci_event: code=0x13 len=5
 hci_event: code=0x13 len=5
 reconnect_phase=2 result=ok paired_by=stored
-[t=6975] ev=0x05
+[t=6990] ev=0x05
 hci_event: code=0x05 len=4
 disconnection_complete: status=0x00 handle=0x0002 reason=0x13
 disconnect=ok reason=0x13 handle=0x0002
@@ -138,40 +138,40 @@ bond_try: bd=AA:BB:CC:DD:EE:01 name="FAKE-HEADSET-01" attempts=3
 event_mask: st=ok status=0x00
 ssp_mode: st=ok status=0x00 mode=1
 page_timeout: st=ok status=0x00 slots=0x2000
-[t=7062] ev=0x03
+[t=7079] ev=0x03
 hci_event: code=0x03 len=11
 connect=ok handle=0x0003 attempt=1
-[t=7103] ev=0x17
+[t=7116] ev=0x17
 hci_event: code=0x17 len=6
 link_key_req: bd=AA:BB:CC:DD:EE:01 -> reply(stored type=4)
-[t=7144] ev=0x06
+[t=7156] ev=0x06
 hci_event: code=0x06 len=3
 auth_complete: status=0x06 handle=0x0003
 pairing=incomplete auth=fail/timeout link_key=none
 bond_rejected: status=0x06 -> erased
-[t=7187] ev=0x17
+[t=7199] ev=0x17
 hci_event: code=0x17 len=6
 link_key_req: bd=AA:BB:CC:DD:EE:01 -> neg_reply (no stored key)
-[t=7228] ev=0x31
+[t=7240] ev=0x31
 hci_event: code=0x31 len=6
 io_cap_req: bd=AA:BB:CC:DD:EE:01 -> NoInputNoOutput auth_req=0x04
-[t=7268] ev=0x32
+[t=7281] ev=0x32
 hci_event: code=0x32 len=9
 hci_event: code=0x32 len=9
-[t=7306] ev=0x33
+[t=7316] ev=0x33
 hci_event: code=0x33 len=10
 user_conf_req: bd=AA:BB:CC:DD:EE:01 numeric=123456 -> accept (Just Works)
-[t=7345] ev=0x36
+[t=7358] ev=0x36
 hci_event: code=0x36 len=7
 pairing_complete: status=0x00 bd=AA:BB:CC:DD:EE:01
-[t=7383] ev=0x18
+[t=7394] ev=0x18
 hci_event: code=0x18 len=23
 link_key: bd=AA:BB:CC:DD:EE:01 type=4 bond=saved
-[t=7420] ev=0x06
+[t=7429] ev=0x06
 hci_event: code=0x06 len=3
 auth_complete: status=0x00 handle=0x0003
 pairing(fresh)=ok auth=ok link_key=stored
-[t=7497] ev=0x08
+[t=7504] ev=0x08
 hci_event: code=0x08 len=4
 encryption_change: status=0x00 handle=0x0003 enabled=1
 connect_secure=ok encryption=on paired_by=ssp
@@ -198,13 +198,59 @@ hci_event: code=0x13 len=5
 hci_event: code=0x13 len=5
 hci_event: code=0x13 len=5
 reconnect_phase=3 result=ok paired_by=ssp
-[t=8200] ev=0x05
+[t=8202] ev=0x05
 hci_event: code=0x05 len=4
 disconnection_complete: status=0x00 handle=0x0003 reason=0x13
 disconnect=ok reason=0x13 handle=0x0003
+bonds_reload2=2 front="FAKE-HEADSET-01"
+bond_try: bd=AA:BB:CC:DD:EE:01 name="FAKE-HEADSET-01" attempts=3
+event_mask: st=ok status=0x00
+ssp_mode: st=ok status=0x00 mode=1
+page_timeout: st=ok status=0x00 slots=0x2000
+[t=8292] ev=0x03
+hci_event: code=0x03 len=11
+connect=ok handle=0x0004 attempt=1
+[t=8331] ev=0x17
+hci_event: code=0x17 len=6
+link_key_req: bd=AA:BB:CC:DD:EE:01 -> reply(stored type=4)
+[t=8374] ev=0x06
+hci_event: code=0x06 len=3
+auth_complete: status=0x00 handle=0x0004
+pairing=incomplete auth=ok link_key=none
+[t=8452] ev=0x08
+hci_event: code=0x08 len=4
+encryption_change: status=0x00 handle=0x0004 enabled=1
+connect_secure=ok encryption=on paired_by=stored
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+hci_event: code=0x13 len=5
+reconnect_phase=4 result=ok paired_by=stored
+[t=9163] ev=0x05
+hci_event: code=0x05 len=4
+disconnection_complete: status=0x00 handle=0x0004 reason=0x13
+disconnect=ok reason=0x13 handle=0x0004
 bonds_final=2 front="FAKE-HEADSET-01" key_changed=1
 reconnect=done
 hci_probe_done
-hb card=0 btfw=no_start_indication hci=ok n=0 pump=1490845 conn=ok sec=ok/ssp avdtp=7 mtu=672 timeouts=0 framing=0 starved=0 qfull=0 late=0
-hb card=0 btfw=no_start_indication hci=ok n=1 pump=1793428 conn=ok sec=ok/ssp avdtp=7 mtu=672 timeouts=0 framing=0 starved=0 qfull=0 late=0
-hb card=0 btfw=no_start_indication hci=ok n=2 pump=2094094 conn=ok sec=ok/ssp avdtp=7 mtu=672 timeouts=0 framing=0 starved=0 qfull=0 late=0
+hb card=0 btfw=no_start_indication hci=ok n=0 pump=1874835 conn=ok sec=ok/stored avdtp=7 mtu=672 timeouts=0 framing=0 starved=0 qfull=0 late=0
+hb card=0 btfw=no_start_indication hci=ok n=1 pump=2179817 conn=ok sec=ok/stored avdtp=7 mtu=672 timeouts=0 framing=0 starved=0 qfull=0 late=0
+hb card=0 btfw=no_start_indication hci=ok n=2 pump=2482930 conn=ok sec=ok/stored avdtp=7 mtu=672 timeouts=0 framing=0 starved=0 qfull=0 late=0

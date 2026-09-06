@@ -744,24 +744,30 @@ static void probeConnect() {
 #endif
 
 #if defined(M2_BT_RECONNECT)
-// --- NEW-34 piece 1: three connects in one boot against hci_peer.py's `reconnect` phase.
+// --- NEW-34 piece 1: FOUR connects in one boot against hci_peer.py's `reconnect` phase.
+//   1  fresh pairing (inquiry + SSP) -> key #1 notified, bonded, STREAMING;
+//   2  cold reload past a planted decoy -> paged with no inquiry, key #1 from the store;
+//   3  the peer rejects the offered key -> the bond is erased and re-paired, key #2;
+//   4  a third cold reload, then a stored-key connect on key #2 -- so key #2 has made the
+//      SAME EEPROM round trip key #1 did, and the key it authenticates with is checked by
+//      the PEER against the one it notified.  Phase 4 is the only corroboration of
+//      key_changed=1 from the other side of the socket: the probe's own comparison is
+//      against its own memory.
 // Every line below is asserted by run_qemu_reconnect.sh; every number in the peer's tally
 // is counted by the PEER, so none can be satisfied by printing.  Each link is torn down
 // (disconnect) BEFORE the next page: the peer refuses a Disconnect on a stale handle.
-// QEMU-ONLY by intent: on the EVKB with a real card and a real target name, phases 1-2 would
-// write a permanent DECOY bond into the shared EEPROM region (costing every later
-// bt_tone_test/acid_box boot a page attempt) and phase 3 cannot be rejected by a real headset.
+// QEMU-ONLY by intent: on the EVKB with a real card and a real target name, phase 2 plants a
+// permanent DECOY bond in the shared EEPROM region -- it costs a page only on a WILDCARD
+// (no-target-name) connect, since the name filter skips it otherwise, but it consumes a bond
+// slot for good -- and a permanent FAKE-HEADSET-01 bond at AA:BB:CC:DD:EE:01 is written
+// beside it.  Phase 3 also cannot be rejected on demand by a real headset.
 // Never flash this build with M2_BT_TARGET_NAME set to a real device.
 static const uint8_t RC_FAKE_BD[6]  = { 0x01, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA };   // FAKE-HEADSET-01 (hci_peer.py DEVICES[0])
 static const uint8_t RC_DECOY_BD[6] = { 0x99, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA };   // a bond whose name never matches the target
-#if defined(M2_BT_TARGET_NAME)
-#define RC_TARGET M2_BT_TARGET_NAME
-#else
-#define RC_TARGET nullptr
-#endif
 #if !defined(M2_BT_TARGET_NAME)
 #error "M2_BT_RECONNECT needs M2_BT_TARGET_NAME: the decoy discrimination is the name filter"
 #endif
+#define RC_TARGET M2_BT_TARGET_NAME
 static A2dpSource::Result rcConnect(int phase) {
     A2dpSource::Result r = src.connect(RC_TARGET, s_aclNum, nowMs, idleMs);
     CONSOLE.print("reconnect_phase="); CONSOLE.print(phase);
@@ -816,6 +822,15 @@ static void probeReconnect() {
     r = rcConnect(3);
     BondStoreEeprom::save(bonds);
     if (r != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=3"); return; }
+    src.link().disconnect(nowMs, idleMs);
+    // Phase 4: cold reload once more, so key #2 has made the same EEPROM round trip key #1 did, then
+    // connect: the peer verifies the offered key against the one IT notified, so this is the one
+    // place key_changed=1 is corroborated by the other side of the socket.
+    rcColdReload();
+    CONSOLE.print("bonds_reload2="); CONSOLE.print(bonds.count());
+    CONSOLE.print(" front=\""); CONSOLE.print(bonds.count() ? bonds.at(0).name : ""); CONSOLE.println("\"");
+    r = rcConnect(4); BondStoreEeprom::save(bonds);
+    if (r != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=4"); return; }
     src.link().disconnect(nowMs, idleMs);
     const Bond *b3 = bonds.find(RC_FAKE_BD);
     CONSOLE.print("bonds_final="); CONSOLE.print(bonds.count());

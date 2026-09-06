@@ -26,16 +26,20 @@ Phases (argv[1]):
               packet (V/PT, sequence continuity, per-frame sync byte + length) --
               ends once at least one packet has been received with no framing
               fault or sequence gap
-  reconnect   the avdtp acceptor three times over on one socket (NEW-34 piece 1):
+  reconnect   the avdtp acceptor FOUR times over on one socket (NEW-34 piece 1):
               link 1 pairs by SSP (key #1); link 2 must be paged WITHOUT an inquiry
               and authenticate with Link_Key_Request_Reply carrying key #1 (no IO-cap
               dance); on link 3 the offered key is REJECTED (Authentication_Complete
-              0x06) once, so the host must pair afresh and receive key #2.  A page to
-              the DECOY address (AA:BB:CC:DD:EE:99) is answered Page Timeout and
-              recorded -- the host's target-name filter must never send one.
-              Ends when the third link's START is accepted.
+              0x06) once, so the host must pair afresh and receive key #2; link 4
+              re-offers key #2 after another cold reload and must be ACCEPTED -- no
+              peer logic for that: known == KEY2 and rejected_key == KEY1, so it
+              lands on key_ok, and that acceptance is the peer-side corroboration
+              that the key really changed.  A page to the DECOY address
+              (AA:BB:CC:DD:EE:99) is answered Page Timeout and recorded -- the host's
+              target-name filter must never send one.
+              Ends when the fourth link's START is accepted.
 Exit 0 when the phase's last expected opcode was seen (avdtp: when the peer
-recorded an accepted START; media: when the media validation above holds; reconnect: when the third
+recorded an accepted START; media: when the media validation above holds; reconnect: when the FOURTH
 link's START is accepted with no exception and no deadline).
 Prints PEER-* lines.
 """
@@ -89,8 +93,8 @@ LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP
                                   # signalling; the real end of avdtp, media and reconnect is checked
                                   # separately (peer.avdtp["started"] / peer.media, below)
 LAST_OPCODE_COUNT = {"baud": 2}   # phases whose terminal opcode must be seen N times (default 1)
-DEADLINE = {"reconnect": 50}       # seconds from socket connect; default 45.  reconnect runs one inquiry + three links + three disconnects
-                                   # (~12-15 s wall measured from the [avdtp] capture's 1.7 s per link) and must not share [media]'s budget; 50 keeps it BELOW tools/qrun's 60 s QRUN_TIMEOUT so the peer announces before QEMU is killed
+DEADLINE = {"reconnect": 50}       # seconds from socket connect; default 45.  reconnect runs one inquiry + FOUR links + four disconnects
+                                   # (~17 s wall measured from socket connect) and must not share [media]'s budget; 50 keeps it BELOW tools/qrun's 60 s QRUN_TIMEOUT so the peer announces before QEMU is killed
 
 def phase_done(phase, peer):
     # avdtp's real end is signalling over ACL (an accepted START), not a
@@ -103,7 +107,7 @@ def phase_done(phase, peer):
     if phase == "media":
         m = peer.media
         return m["pkts"] > 0 and m["seqgaps"] == 0 and m["badsbc"] == 0 and m["badrtp"] == 0
-    if phase == "reconnect": return peer.rc["started_links"] >= 3 and peer.rc["create_conns"] >= 3 and not peer.avdtp["error"] and peer.rc["errors"] == 0
+    if phase == "reconnect": return peer.rc["started_links"] >= 4 and peer.rc["create_conns"] >= 4 and not peer.avdtp["error"] and peer.rc["errors"] == 0
     return peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
 
 def connect(path):
@@ -245,7 +249,7 @@ class Peer:
                 return
             self.peer_bd = bd
             if self.phase == "reconnect":
-                if self.rc["create_conns"]: self.rc["handle"] += 1        # 0x0001, 0x0002, 0x0003: a FRESH handle per link, so a host that cached link 1's is caught
+                if self.rc["create_conns"]: self.rc["handle"] += 1        # 0x0001..0x0004: a FRESH handle per link, so a host that cached link 1's is caught
                 self.rc["create_conns"] += 1; self.reset_link()
             self.log.append("PEER-CREATE-CONN role_switch=%d" % params[12])
             self.send(cmd_status(opcode)); self.send(event(0x03, b"\x00" + struct.pack("<H", self.cur_handle()) + params[:6] + b"\x01\x00"), 0.1)

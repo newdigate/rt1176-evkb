@@ -6,7 +6,7 @@
 # WHAT THIS PROVES
 #   Built with -DM2_BT_CONNECT=ON -DM2_BT_TARGET_NAME=FAKE-HEADSET-01 -DM2_BT_RECONNECT=ON,
 #   probeReconnect() drives the SHIPPED stack (A2dpSource + BondTable + BondStoreEeprom)
-#   three times in one boot against hci_peer.py's `reconnect` phase:
+#   FOUR times in one boot against hci_peer.py's `reconnect` phase:
 #     1. fresh pairing: inquiry -> SSP -> key #1 notified -> bond saved -> AVDTP STREAMING;
 #     2. cold reload from the EEPROM emulation (RAM wiped, the journal index rebuilt from
 #        the flash, loaded), a DECOY bond planted at the front and reloaded again, then a
@@ -14,10 +14,13 @@
 #        no IO-capability dance, STREAMING again -- the name filter must skip the decoy;
 #     3. the peer REJECTS the offered key (Authentication_Complete 0x06): the bond is erased,
 #        a fresh pairing yields key #2, the store holds it, STREAMING a third time.
+#     4. a third cold reload, then a stored-key connect on key #2 -- verified by the PEER
+#        against the key it notified, the only corroboration of key_changed (the probe's own
+#        comparison is against its own memory, and key #2 has now made key #1's round trip).
 #   Every tally value is counted by the PEER (inquiries, pages, key replies and whether each
 #   matched the key it notified, per-link handles), so none can be satisfied by printing.
 #   The peer allocates a FRESH handle per link and refuses ACL or Disconnect on a stale one,
-#   and each link is torn down before the next page: three clean L2cap/Avdtp re-inits.
+#   and each link is torn down before the next page: four clean L2cap/Avdtp re-inits.
 #
 # ★ OWNS ITS OWN BUILD DIRECTORY, build-reconnect/ (same convention as build-avdtp/).
 #
@@ -30,12 +33,14 @@
 #   pins that on the host).  The bench claims live in audio/bt_tone_test/transcript_hw_evkb.txt.
 #
 # TIMING
-#   Measured ~18 s wall for the whole run.  hci_peer.py gives up at 50 s (DEADLINE), BELOW
+#   Measured ~17 s of QEMU+peer wall (18 s for the gate steady-state, ~26 s when build-reconnect/
+#   has to rebuild), so the four links leave the peer's budget more than half unused.
+#   hci_peer.py gives up at 50 s (DEADLINE), BELOW
 #   tools/qrun's 60 s QRUN_TIMEOUT, so on a hung run the peer announces (PEER-DEADLINE)
 #   before QEMU is killed; if QEMU dies first the peer prints PEER-EOF.  Do NOT raise
 #   QRUN_TIMEOUT here without raising the peer's deadline with it.
 #
-# DEMONSTRATED RED (filled in by Task 9 of the plan -- keep the five entries here).
+# DEMONSTRATED RED (filled in below in Part B -- four gate mutations plus one host-suite arm).
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
@@ -90,14 +95,12 @@ echo "==== peer ===="; cat "$RES"
 
 grep -q "RT1176 M.2 HCI probe up" "$OUT" || fail "[reconnect] banner missing"
 
-# ★ Infrastructure verdicts first: neither of these is a firmware regression.
-if grep -q "^PEER-EOF" "$RES";      then fail "[reconnect] QEMU closed the socket under the peer -- infrastructure, not firmware: $(grep -m1 '^PEER-EOF' "$RES")"; fi
-if grep -q "^PEER-DEADLINE" "$RES"; then fail "[reconnect] the peer gave up at its deadline (sweep load? raise DEADLINE with QRUN_TIMEOUT): $(grep -m1 '^PEER-DEADLINE' "$RES")"; fi
-
-# ★ Tripwires next (the [avdtp] convention): each names a specific violation the PEER itself
+# ★ Tripwires first (the [avdtp] convention): each names a specific violation the PEER itself
 # detected.  Every positive check below is downstream of STREAMING, so without these a failure
-# at any stage collapses onto the same generic message.  Anchored: PEER-AVDTP-START is a prefix
-# of STARTED, START-TWICE and START-BEFORE-OPEN.
+# at any stage collapses onto the same generic message.
+# Anchored with ^ so a token quoted INSIDE another line (a PEER-EXCEPTION repr, PEER-DONE's
+# opcode list) cannot trip a wire; the full tokens keep STARTED / START-TWICE /
+# START-BEFORE-OPEN apart.
 while IFS='|' read -r pat msg; do
     [ -n "$pat" ] || continue
     if grep -q "$pat" "$RES"; then fail "[reconnect] $msg: $(grep -m1 "$pat" "$RES")"; fi
@@ -137,22 +140,32 @@ grep -q '^bonds_reload=2 front="DECOY"[[:space:]]*$' "$OUT"                     
 grep -q "^reconnect_phase=2 result=ok paired_by=stored[[:space:]]*$" "$OUT"       || fail "[reconnect] phase 2 did not authenticate with the stored key"
 grep -q "^bond_rejected: status=0x06 -> erased" "$OUT"                            || fail "[reconnect] the rejected bond was not erased by name"
 grep -q "^reconnect_phase=3 result=ok paired_by=ssp[[:space:]]*$" "$OUT"          || fail "[reconnect] phase 3 (rejection -> fresh pairing) did not reach STREAMING by SSP"
+grep -q '^bonds_reload2=2 front="FAKE-HEADSET-01"[[:space:]]*$' "$OUT"           || fail "[reconnect] key #2's bond did not survive the third cold reload in front: $(grep '^bonds_reload2=' "$OUT" || echo none)"
+grep -q "^reconnect_phase=4 result=ok paired_by=stored[[:space:]]*$" "$OUT"      || fail "[reconnect] phase 4 did not authenticate with key #2 from the store"
 grep -q '^bonds_final=2 front="FAKE-HEADSET-01" key_changed=1[[:space:]]*$' "$OUT" || fail "[reconnect] the re-pairing did not replace the key (or the re-created bond is not in front): $(grep '^bonds_final=' "$OUT" || echo none)"
 grep -q "^reconnect=done" "$OUT"                                                  || fail "[reconnect] probe did not reach reconnect=done"
 NINQ=$(grep -c "^inquiry=started" "$OUT" || true)
 [ "$NINQ" -eq 1 ] || fail "[reconnect] expected exactly ONE inquiry (phase 1); saw $NINQ -- a bonded page was replaced by an inquiry"
 NTRY=$(grep -c '^bond_try: bd=AA:BB:CC:DD:EE:01 name="FAKE-HEADSET-01" attempts=3' "$OUT" || true)
-[ "$NTRY" -eq 2 ] || fail "[reconnect] expected the bonded device paged FIRST (attempts=3) in phases 2 and 3 -- the decoy was not filtered, or the walk changed; saw $NTRY"
+[ "$NTRY" -eq 3 ] || fail "[reconnect] expected the bonded device paged FIRST (attempts=3) in phases 2, 3 and 4 -- the decoy was not filtered, or the walk changed; saw $NTRY"
 if grep -q "^bond_page=none" "$OUT"; then fail "[reconnect] a bonded page fell through to inquiry"; fi
 NKR=$(grep -c "reply(stored type=4)" "$OUT" || true)
-[ "$NKR" -eq 2 ] || fail "[reconnect] expected exactly two stored-key replies (phases 2 and 3); saw $NKR"
+[ "$NKR" -eq 3 ] || fail "[reconnect] expected exactly three stored-key replies (phases 2, 3 and 4 -- phase 3's is the rejected one); saw $NKR"
 NNEG=$(grep -c "neg_reply (no stored key)" "$OUT" || true)
 [ "$NNEG" -eq 2 ] || fail "[reconnect] expected exactly two negative replies (phase 1, and phase 3 after the erase); saw $NNEG"
+
+# ★ Infrastructure verdicts: placed AFTER the UART checks on purpose -- the peer waits out its
+# deadline on any firmware failure, so putting these first would mask every named failure above.
+# A run whose UART lines are all right but whose peer died here is infrastructure, not firmware.
+if grep -q "^PEER-EOF" "$RES";      then fail "[reconnect] QEMU closed the socket under the peer -- infrastructure, not firmware: $(grep -m1 '^PEER-EOF' "$RES")"; fi
+if grep -q "^PEER-DEADLINE" "$RES"; then fail "[reconnect] the peer gave up at its deadline (sweep load? raise DEADLINE with QRUN_TIMEOUT): $(grep -m1 '^PEER-DEADLINE' "$RES")"; fi
+if grep -q "^Traceback (most recent call last)" "$RES"; then fail "[reconnect] the fake controller crashed -- peer bug, not firmware: $(grep -A3 '^Traceback' "$RES" | tail -1)"; fi
 
 # The peer's tally, last: every number here was counted on the other side of the socket.
 grep -q "^PEER-CONNECTED phase=reconnect" "$RES" || fail "[reconnect] the fake controller never attached to LPUART2"
 [ "$PEER_RC" -eq 0 ] || fail "[reconnect] peer exited $PEER_RC"
-grep -q "^PEER-RECONNECT inquiries=1 create_conns=3 key_replies=2 key_ok=1 key_rejected=1 neg_replies=2 iocap_dances=2 notified=2 started_links=3[[:space:]]*$" "$RES" \
+grep -q "^PEER-RECONNECT inquiries=1 create_conns=4 key_replies=3 key_ok=2 key_rejected=1 neg_replies=2 iocap_dances=2 notified=2 started_links=4[[:space:]]*$" "$RES" \
     || fail "[reconnect] peer tally mismatch: $(grep '^PEER-RECONNECT' "$RES" || echo none)"
+grep -q "^PEER-KEY-REJECTED link=3" "$RES" || fail "[reconnect] the modelled rejection did not happen on link 3"
 
-echo "PASS: a bonded device is paged with no inquiry and authenticates with the stored key after an EEPROM cold reload past a decoy; a rejected bond is erased and re-paired with a new key; three links on three fresh handles"
+echo "PASS: a bonded device is paged with no inquiry and authenticates with the stored key after an EEPROM cold reload past a decoy; a rejected bond is erased and re-paired with a new key; four links on four fresh handles"

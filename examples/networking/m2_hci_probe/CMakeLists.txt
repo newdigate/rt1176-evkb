@@ -187,13 +187,21 @@ if(M2_BT_CONNECT)
 endif()
 
 # NEW-34 piece 1: the [reconnect] gate's build.  Replaces the hand-driven probeConnect() with
-# A2dpSource + BondTable + BondStoreEeprom and runs THREE connects in one boot: a fresh pairing,
-# a cold reload from the EEPROM emulation + a stored-key reconnect past a decoy bond, then a
-# modelled rejection -> re-pair.  Requires M2_BT_CONNECT: nowMs/btLog and the s_p2* heartbeat fields live under it (bt/ itself is imported unconditionally on rt1176).  Default OFF.
-option(M2_BT_RECONNECT "NEW-34: known-device reconnect probe (three connects, bond store round trip)" OFF)
+# A2dpSource + BondTable + BondStoreEeprom and runs FOUR connects in one boot: a fresh pairing,
+# a cold reload from the EEPROM emulation + a stored-key reconnect past a decoy bond, a modelled
+# rejection -> re-pair, then a third cold reload + a stored-key reconnect on the REPLACEMENT key.
+# Requires M2_BT_CONNECT: nowMs/btLog and the s_p2* heartbeat fields live under it (bt/ itself is imported unconditionally on rt1176).  Default OFF.
+option(M2_BT_RECONNECT "NEW-34: known-device reconnect probe (four connects, bond store round trip)" OFF)
 if(M2_BT_RECONNECT)
     if(NOT M2_BT_CONNECT)
         message(FATAL_ERROR "M2_BT_RECONNECT needs M2_BT_CONNECT=ON")
+    endif()
+    # ★ QUOTED on purpose.  M2_BT_TARGET_NAME's set(... CACHE ...) is BELOW this block, so on a
+    # fresh configure with no -D the variable is UNDEFINED here -- and unquoted, CMake compares
+    # the literal string "M2_BT_TARGET_NAME" against "", so the guard would never fire in the
+    # one case it exists for.  Measured with a two-line cmake -P, not reasoned.
+    if("${M2_BT_TARGET_NAME}" STREQUAL "")
+        message(FATAL_ERROR "M2_BT_RECONNECT needs M2_BT_TARGET_NAME (the decoy discrimination is the name filter)")
     endif()
     add_definitions(-DM2_BT_RECONNECT=1)
 endif()
