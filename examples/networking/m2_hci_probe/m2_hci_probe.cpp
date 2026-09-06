@@ -748,12 +748,19 @@ static void probeConnect() {
 // Every line below is asserted by run_qemu_reconnect.sh; every number in the peer's tally
 // is counted by the PEER, so none can be satisfied by printing.  Each link is torn down
 // (disconnect) BEFORE the next page: the peer refuses a Disconnect on a stale handle.
+// QEMU-ONLY by intent: on the EVKB with a real card and a real target name, phases 1-2 would
+// write a permanent DECOY bond into the shared EEPROM region (costing every later
+// bt_tone_test/acid_box boot a page attempt) and phase 3 cannot be rejected by a real headset.
+// Never flash this build with M2_BT_TARGET_NAME set to a real device.
 static const uint8_t RC_FAKE_BD[6]  = { 0x01, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA };   // FAKE-HEADSET-01 (hci_peer.py DEVICES[0])
 static const uint8_t RC_DECOY_BD[6] = { 0x99, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA };   // a bond whose name never matches the target
 #if defined(M2_BT_TARGET_NAME)
 #define RC_TARGET M2_BT_TARGET_NAME
 #else
 #define RC_TARGET nullptr
+#endif
+#if !defined(M2_BT_TARGET_NAME)
+#error "M2_BT_RECONNECT needs M2_BT_TARGET_NAME: the decoy discrimination is the name filter"
 #endif
 static A2dpSource::Result rcConnect(int phase) {
     A2dpSource::Result r = src.connect(RC_TARGET, s_aclNum, nowMs, idleMs);
@@ -780,10 +787,16 @@ static void probeReconnect() {
     BondStoreEeprom::load(bonds);
     CONSOLE.print("bonds_boot="); CONSOLE.println(bonds.count());
     // Phase 1: a fresh pairing (inquiry + SSP).  The notification creates the bond; the store persists it.
-    if (rcConnect(1) != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=1"); return; }
-    uint8_t key1[16];
-    { const Bond *b = bonds.find(RC_FAKE_BD); if (!b) { CONSOLE.println("reconnect=fail phase=1 no_bond"); return; } memcpy(key1, b->key, 16); }
+    // The store's contract is "save after EVERY connect return", not "after every success":
+    // a connect that fails part-way can still have erased or replaced a bond, and that change
+    // must reach the flash before we give up on the phase.
+    A2dpSource::Result r = rcConnect(1);
     BondStoreEeprom::save(bonds);
+    if (r != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=1"); return; }
+    uint8_t key1[16];
+    { const Bond *b = bonds.find(RC_FAKE_BD);
+      if (!b) { src.link().disconnect(nowMs, idleMs); CONSOLE.println("reconnect=fail phase=1 no_bond"); return; }
+      memcpy(key1, b->key, 16); }
     src.link().disconnect(nowMs, idleMs);
     // Phase 2: cold reload (proves the round trip), plant a DECOY at the front, save, cold reload
     // again -- the load that matters must recover BOTH.  Then connect: the name filter must skip
@@ -793,16 +806,20 @@ static void probeReconnect() {
       BondTable::copyName(d.name, "DECOY"); bonds.upsert(d); }
     BondStoreEeprom::save(bonds);
     rcColdReload();
-    CONSOLE.print("bonds_reload="); CONSOLE.println(bonds.count());
-    if (rcConnect(2) != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=2"); return; }
+    CONSOLE.print("bonds_reload="); CONSOLE.print(bonds.count());
+    CONSOLE.print(" front=\""); CONSOLE.print(bonds.count() ? bonds.at(0).name : ""); CONSOLE.println("\"");
+    r = rcConnect(2);
     BondStoreEeprom::save(bonds);
+    if (r != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=2"); return; }
     src.link().disconnect(nowMs, idleMs);
     // Phase 3: the peer rejects the stored key on this link -> erase, fresh pairing, a different key.
-    if (rcConnect(3) != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=3"); return; }
+    r = rcConnect(3);
     BondStoreEeprom::save(bonds);
+    if (r != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=3"); return; }
     src.link().disconnect(nowMs, idleMs);
     const Bond *b3 = bonds.find(RC_FAKE_BD);
     CONSOLE.print("bonds_final="); CONSOLE.print(bonds.count());
+    CONSOLE.print(" front=\""); CONSOLE.print(bonds.count() ? bonds.at(0).name : ""); CONSOLE.print("\"");
     CONSOLE.print(" key_changed="); CONSOLE.println(b3 && memcmp(b3->key, key1, 16) != 0 ? 1 : 0);
     CONSOLE.println("reconnect=done");
 }

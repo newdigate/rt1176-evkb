@@ -189,7 +189,7 @@ endif()
 # NEW-34 piece 1: the [reconnect] gate's build.  Replaces the hand-driven probeConnect() with
 # A2dpSource + BondTable + BondStoreEeprom and runs THREE connects in one boot: a fresh pairing,
 # a cold reload from the EEPROM emulation + a stored-key reconnect past a decoy bond, then a
-# modelled rejection -> re-pair.  Requires M2_BT_CONNECT (the bt/ manifest).  Default OFF.
+# modelled rejection -> re-pair.  Requires M2_BT_CONNECT: nowMs/btLog and the s_p2* heartbeat fields live under it (bt/ itself is imported unconditionally on rt1176).  Default OFF.
 option(M2_BT_RECONNECT "NEW-34: known-device reconnect probe (three connects, bond store round trip)" OFF)
 if(M2_BT_RECONNECT)
     if(NOT M2_BT_CONNECT)
