@@ -12,7 +12,7 @@ void AudioOutputBluetooth::begin(L2cap &l2, uint16_t cid, uint16_t mtu, const Sb
     // at ~17, cred idle, NCP frozen -- NOT a flow-control problem).  Cap the
     // packetiser at the L2CAP send limit so it batches only frames that fit.
     if (mtu > L2cap::MAX_PAYLOAD) mtu = L2cap::MAX_PAYLOAD;
-    m_l2 = &l2; m_cid = cid; m_sbc.begin(p); m_pk.begin(mtu); m_blocks = 0;
+    m_l2 = &l2; m_cid = cid; m_sbc.begin(p); m_pk.begin(mtu, Sbc::frameLength(p)); m_blocks = 0;
     m_pcmHead = m_pcmTail = 0; m_pcmDrops = 0;
     // begin() is only reached after a2dp=ok (bt_tone_test.cpp gates it on
     // A2dpSource::connect() succeeding), so the card-absent path never calls
@@ -33,7 +33,12 @@ void AudioOutputBluetooth::begin(L2cap &l2, uint16_t cid, uint16_t mtu, const Sb
     m_lastDrainUs = micros();
 }
 void AudioOutputBluetooth::begin(A2dpSource &src) {
-    begin(src.l2(), src.mediaCid(), src.mediaMtu(), src.sbcParams());
+    m_src = &src; begin(src.l2(), src.mediaCid(), src.mediaMtu(), src.sbcParams());
+}
+void AudioOutputBluetooth::end() {
+    m_l2 = nullptr; m_cid = 0; m_src = nullptr;
+    m_pcmHead = m_pcmTail = 0;                    // empty the PCM ring (SPSC: safe when no external clock runs it)
+    m_pk.begin(0);                                // reset the packetizer (seq, ring); mtu 0 -> perPkt clamps to 1, harmless until the next begin()
 }
 void AudioOutputBluetooth::update(void) {
     // Runs in whatever context clocks the graph: poll()'s cooperative update_all() when
@@ -46,7 +51,10 @@ void AudioOutputBluetooth::update(void) {
     // drives the graph, update() runs from power-on -- buffering into a ring that is never
     // drained (m_l2 null) would wrap the head past the tail forever, and even the memcpy is
     // wasted before there is a channel to send on.
-    if (!m_l2) { if (l) release(l); if (r) release(r); return; }
+    if (!m_l2) { if (l) release(l); if (r) release(r); m_idleBlocks++; return; }
+    if (m_src && !m_src->started()) {             // SUSPENDED: keep the channel but discard audio
+        if (l) release(l); if (r) release(r); m_pausedBlocks++; return;
+    }
     uint16_t head = m_pcmHead;
     uint16_t next = head + 1; if (next >= PCM_RING) next = 0;
     if (next == m_pcmTail) {

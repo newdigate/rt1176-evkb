@@ -26,6 +26,9 @@ public:
     void begin(A2dpSource &src);                 // sugar: pulls l2/cid/mtu/params from src
     virtual void update(void);                   // audio clock (maybe an ISR): copy PCM into the ring
     void poll();                                 // main loop: encode ring -> pk.push -> l2.send
+    void end();                                  // tear down for a link loss: clears the channel, empties the ring/packetizer
+    uint32_t idleBlocks()   const { return m_idleBlocks; }    // blocks dropped while not begun (no channel)
+    uint32_t pausedBlocks() const { return m_pausedBlocks; }  // blocks dropped while begun but the stream is SUSPENDED
     // Self-clock (default): poll() calls AudioStream::update_all() to drive the graph,
     // for a graph with no hardware audio clock (bt_tone_test).  Set false when another
     // sink (e.g. AudioOutputI2S) already clocks the graph from its DMA ISR -- then poll()
@@ -68,7 +71,9 @@ private:
     audio_block_t *inputQueueArray[2];
     Sbc m_sbc; MediaPacketizer m_pk;
     L2cap *m_l2 = nullptr; uint16_t m_cid = 0;
+    A2dpSource *m_src = nullptr;              // set by begin(A2dpSource&); update() pauses when !m_src->started()
     uint32_t m_blocks = 0;
+    uint32_t m_idleBlocks = 0, m_pausedBlocks = 0;
     // PCM hand-off ring: update() (the audio clock -- an external DMA ISR when another sink
     // clocks the graph) copies each stereo block in (cheap); poll() (the main loop) encodes
     // them to SBC (expensive) and drains.  Single-producer/single-consumer: the head index
