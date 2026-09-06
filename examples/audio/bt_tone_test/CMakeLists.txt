@@ -119,14 +119,16 @@ if(M2_BT_LEGACY_PIN)
     add_definitions(-DM2_BT_LEGACY_PIN=1)
 endif()
 
-# Bench knob: A2dpSource::connect() is one-shot, and the BR/EDR remote-name step
-# races on some peers (a headset intermittently returns no_name_event).  With
-# this ON, setup() defers the connect and loop() retries it every 5 s until it
-# succeeds -- no manual reset dance.  OFF by default so the gates and the default
-# build keep the byte-identical setup()-time one-shot connect.
-option(M2_BT_CONNECT_RETRY "Bench: retry A2dpSource::connect() from loop() until it succeeds" OFF)
-if(M2_BT_CONNECT_RETRY)
-    add_definitions(-DM2_BT_CONNECT_RETRY=1)
+# NEW-34 piece 2: the reconnect retry cadence (ms between lost-peer page attempts).  Default in the library
+# is 10 s; the [lifecycle] gate builds with 3000 to keep the run short.
+set(M2_BT_RETRY_MS "" CACHE STRING "BtSession retry cadence in ms (empty = library default 10000)")
+if(NOT M2_BT_RETRY_MS STREQUAL "")
+    add_definitions(-DM2_BT_RETRY_MS=${M2_BT_RETRY_MS})
+endif()
+# NEW-34 piece 2 bench knob: link supervision timeout in ms (0/empty = controller default ~20 s).
+set(M2_BT_SUPERVISION_MS "" CACHE STRING "Write_Link_Supervision_Timeout in ms (empty = controller default)")
+if(NOT M2_BT_SUPERVISION_MS STREQUAL "")
+    add_definitions(-DM2_BT_SUPERVISION_MS=${M2_BT_SUPERVISION_MS})
 endif()
 
 # Bench knob (NEW-34): wipe the bond store at boot (bonds_forgotten=1), so a run can prove that a

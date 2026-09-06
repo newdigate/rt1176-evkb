@@ -22,6 +22,7 @@
 #include <HciPump.h>
 #include <BtFwLoader.h>
 #include <A2dpSource.h>
+#include <BtSession.h>
 #include <BondTable.h>
 #include <BondStoreEeprom.h>
 
@@ -248,6 +249,7 @@ static void btFirmwareDownload() {
 
 // --- application -------------------------------------------------------------
 static A2dpSource src(hci, hciIo);
+static BtSession  session(src);
 static BondTable bonds;                                // NEW-34: bonded devices, persisted in the EEPROM emulation (BondStoreEeprom, offset 4000)
 static AudioSynthWaveformSine toneGen;                // "tone" collides with core_pins.h's tone(pin,freq,ms)
 static AudioOutputBluetooth   btout;
@@ -256,6 +258,26 @@ static AudioConnection pc1(toneGen, 0, btout, 1);      // same tone to L and R
 
 static uint32_t nowMs() { return millis(); }
 static void btLog(void *, const char *s) { CONSOLE.println(s); }
+static void onStreamCb(void *, bool streaming, uint8_t reason, BtSession::By by) {
+    if (streaming) {
+        btout.begin(src);
+        const char *bs = by == BtSession::BY_PAGED ? "paged" : by == BtSession::BY_INQUIRY ? "inquiry" : by == BtSession::BY_INCOMING ? "incoming" : "none";
+        CONSOLE.print("streaming by="); CONSOLE.print(bs);
+        CONSOLE.print(" bitpool="); CONSOLE.print(src.sbcParams().bitpool);
+        CONSOLE.print(" frames_per_pkt="); CONSOLE.print(btout.framesPerPacket());
+        CONSOLE.print(" media_mtu="); CONSOLE.println(src.mediaMtu());
+    } else {
+        btout.end();
+        CONSOLE.print("bt_dropped reason=0x"); printHex8(reason);
+        CONSOLE.print(" links="); CONSOLE.println(session.stats().links);
+    }
+}
+static void onAttemptCb(void *, A2dpSource::Result r, const char *pairedBy) {
+    BondStoreEeprom::save(bonds);
+    CONSOLE.print("a2dp="); CONSOLE.print(A2dpSource::resultName(r));
+    CONSOLE.print(" bonds="); CONSOLE.print(bonds.count());
+    CONSOLE.print(" paired_by="); CONSOLE.println(pairedBy);
+}
 #if defined(M2_BT_ACL_TRACE)
 static void aclTrace(void *, bool out, uint16_t handle, const uint8_t *pdu, uint16_t len) {
     // ★ SKIP RTP media packets (A2DP media payload starts with RTP V2/PT96 = 0x80 0x60).
@@ -347,7 +369,13 @@ void setup() {
     // (an erased stale bond must persist too).  M2_BT_FORGET_BONDS wipes it instead -- the control
     // arm that proves a headset out of pairing mode refuses us WITHOUT a bond.
 #if defined(M2_BT_FORGET_BONDS)
-    CONSOLE.print("bonds_forgotten="); CONSOLE.println(BondStoreEeprom::wipe(bonds) ? 1 : 0);
+    // NOTE (deviation from the plan): the plan's snippet read bonds.count() here without a prior
+    // load(), which always reads 0 (a freshly-constructed BondTable) -- it would not actually print
+    // "the pre-wipe count", just always print 0 (the same class of bug as the original always-1).
+    // load() first so `before` reflects what was really persisted before it is wiped.
+    BondStoreEeprom::load(bonds);
+    { uint8_t before = bonds.count(); (void)BondStoreEeprom::wipe(bonds);
+      CONSOLE.print("bonds_forgotten="); CONSOLE.println(before); }
 #else
     BondStoreEeprom::load(bonds);
 #endif
@@ -359,24 +387,24 @@ void setup() {
 #if defined(M2_BT_LEGACY_PIN)
     src.setLegacyPin(true);
 #endif
-#if !defined(M2_BT_CONNECT_RETRY)
+#if defined(M2_BT_SUPERVISION_MS)
+    src.link().setSupervisionSlots((uint16_t)((uint32_t)M2_BT_SUPERVISION_MS * 1000u / 625u));  // ms -> 0.625 ms slots
+#endif
+    session.onStream(onStreamCb, nullptr);
+    session.onAttempt(onAttemptCb, nullptr);
+#if defined(M2_BT_RETRY_MS)
+    session.setRetryMs(M2_BT_RETRY_MS);
+#endif
+    // begin the session only if HCI came up; with no card it never reaches STREAMING and the heartbeat stays vacuous
+    if (s_hciSt == Hci::OK) {
 #if defined(M2_BT_TARGET_NAME)
-    A2dpSource::Result r2 = src.connect(M2_BT_TARGET_NAME, s_aclNum, nowMs, idleMs);
+        session.begin(&bonds, M2_BT_TARGET_NAME, s_aclNum, millis());
 #else
-    A2dpSource::Result r2 = src.connect(nullptr, s_aclNum, nowMs, idleMs);
+        session.begin(&bonds, nullptr, s_aclNum, millis());
 #endif
-    CONSOLE.print("a2dp="); CONSOLE.println(A2dpSource::resultName(r2));
-    BondStoreEeprom::save(bonds);
-    CONSOLE.print("bonds="); CONSOLE.print(bonds.count());
-    CONSOLE.print(" paired_by="); CONSOLE.println(src.link().pairedBy());
-    if (r2 == A2dpSource::OK) {
-        btout.begin(src);
-        CONSOLE.print("streaming frames_per_pkt="); CONSOLE.print(btout.framesPerPacket());
-        CONSOLE.print(" media_mtu="); CONSOLE.println(src.mediaMtu());
+    } else {
+        CONSOLE.println("a2dp=deferred (no HCI: card absent)");
     }
-#else
-    CONSOLE.println("a2dp=deferred (M2_BT_CONNECT_RETRY: loop() retries connect)");
-#endif
 }
 
 // Every pass, no delay: btout.poll() has to run far more often than once a
@@ -392,41 +420,32 @@ void loop() {
     // and media send stalls after the first credit pool (silicon: packets froze
     // at 43 while blocks/drops climbed). yield() is non-blocking.
     yield();
-    src.service(); btout.poll();      // SdpServer (the peer's SDP queries of us) + L2cap + Avdtp, every pass
-#if defined(M2_BT_CONNECT_RETRY)
-    // Bench: retry the one-shot connect until it succeeds (a headset's remote-name
-    // step races; the ESP32 sink can hold a stale link across an EVKB reboot).
-    {
-        static bool     begun   = false;
-        static uint32_t lastTry = 0;
-        if (!begun && (lastTry == 0 || millis() - lastTry >= 5000)) {
-            lastTry = millis();
-#if defined(M2_BT_TARGET_NAME)
-            A2dpSource::Result rr = src.connect(M2_BT_TARGET_NAME, s_aclNum, nowMs, idleMs);
-#else
-            A2dpSource::Result rr = src.connect(nullptr, s_aclNum, nowMs, idleMs);
-#endif
-            CONSOLE.print("a2dp_try="); CONSOLE.println(A2dpSource::resultName(rr));
-            BondStoreEeprom::save(bonds);
-            CONSOLE.print("bonds="); CONSOLE.print(bonds.count());
-            CONSOLE.print(" paired_by="); CONSOLE.println(src.link().pairedBy());
-            if (rr == A2dpSource::OK) {
-                btout.begin(src); begun = true;
-                CONSOLE.print("streaming frames_per_pkt="); CONSOLE.print(btout.framesPerPacket());
-                CONSOLE.print(" media_mtu="); CONSOLE.println(src.mediaMtu());
-            }
-        }
-    }
-#endif
+    session.tick(millis());
+    src.service();
+    btout.poll();
     static uint32_t last = 0;
     if (millis() - last >= 1000) {
         last = millis();
-        static uint32_t n = 0;
+        const BtSession::Stats &st = session.stats();
+        const char *bs = st.by == BtSession::BY_PAGED ? "paged" : st.by == BtSession::BY_INQUIRY ? "inquiry" : st.by == BtSession::BY_INCOMING ? "incoming" : "none";
         CONSOLE.print("hb streaming="); CONSOLE.print(src.started() ? 1 : 0);
         CONSOLE.print(" blocks="); CONSOLE.print(btout.blocks());
         CONSOLE.print(" packets="); CONSOLE.print(btout.packets());
         CONSOLE.print(" drops="); CONSOLE.print(btout.drops());
-        CONSOLE.print(" hw="); CONSOLE.print(btout.queueHighWater());
-        CONSOLE.print(" n="); CONSOLE.println(n++);
+        CONSOLE.print(" hw="); CONSOLE.println(btout.queueHighWater());
+        CONSOLE.print("bt_link links="); CONSOLE.print(st.links);
+        CONSOLE.print(" lost="); CONSOLE.print(st.lost);
+        CONSOLE.print(" reason=0x"); printHex8(st.lastReason);
+        CONSOLE.print(" by="); CONSOLE.print(bs);
+        CONSOLE.print(" reconnect_ms="); CONSOLE.print(st.reconnectMs);
+        CONSOLE.print(" scan="); CONSOLE.print(session.wantPageScan() ? 1 : 0);
+        CONSOLE.print(" role="); CONSOLE.println(src.link().role() ? 's' : (src.link().linkState() >= BtLink::LINK_UP ? 'm' : '-'));
+        CONSOLE.print("bt_hci ncmd="); CONSOLE.print(hci.ncmd());
+        CONSOLE.print(" timeouts="); CONSOLE.print(hci.timeouts());
+        CONSOLE.print(" starved="); CONSOLE.print(hci.starved());
+        CONSOLE.print(" l2drop="); CONSOLE.print(src.l2().dropped());
+        CONSOLE.print(" credmin="); CONSOLE.println(src.l2().creditsMin());
+        CONSOLE.print("bt_mem idle_blocks="); CONSOLE.print(btout.idleBlocks());
+        CONSOLE.print(" paused_blocks="); CONSOLE.println(btout.pausedBlocks());
     }
 }
