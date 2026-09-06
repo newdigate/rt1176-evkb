@@ -106,7 +106,13 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **128 gates** — the merge of
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **129 gates** — NEW-34 piece 1's
+ONE new gate, `networking/m2_hci_probe[reconnect]` (a bonded device paged with NO
+inquiry and authenticated with a STORED key after an EEPROM cold reload past a
+decoy bond, a rejected bond erased and re-paired with a new key that the peer
+then verifies after a third reload: four links on four fresh handles, every tally
+counted by the peer; DEMONSTRATED RED four ways plus one host arm), then the
+merge of
 THREE independent lines, plus the first two Bluetooth gates, NEW-20's one new
 gate, NEW-23's one, NEW-32's one, BT-3 phase 4's TWO (`audio/bt_tone_test`
 card-absent + `[media]` — the A2DP media path), and BT-3's TWO more Bluetooth gates
@@ -569,8 +575,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **128 passed, 0 failed, 0 SKIP**, or
-**127 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
+`usb/usb_descriptor_survey`). The target is **129 passed, 0 failed, 0 SKIP**, or
+**128 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
 (`cm4_audio_test`) is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
@@ -598,6 +604,29 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-09-06: 129 gates discovered, 129 passed, 0 failed, 0 SKIP**
+(`gates: 129 passed`, exit 0; `-l` reports 129), on the **NEW-34 piece 1
+known-device reconnect** close-out — fully clean, no red to disposition, with
+every member of the load-sensitivity class green in the sweep itself
+(`bt_tone_test[media]` 50 s, `m2_hci_probe[hci]` 69 s, `m2_rx_demo[txaggr]` 24 s,
+`m2_uap_lwip[uap]` 4 s, `cm4_audio_test` 3 s); the new
+`m2_hci_probe[reconnect]` ran green in 19 s on its first sweep, ~20 min wall.
+`LICENSE-AUDIT: PASS`; vacuity 35/35 (three `[reconnect]` negatives added; the
+suite now runs ~9 min, 506 s measured). M2Radio pin bumped to `63101a6`,
+fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING
+`m2_hci_probe[reconnect]` against the fetched ELF.
+`m2_hci_probe/build/` was REBUILT before the sweep (its ELF predated the library
+change; the card-absent gate and `[hci]` do not build).
+★ **The gate proves the POLICY, not the NVM**: QEMU has no backing store behind
+the FlexSPI window, so its cold reload is a within-boot sector rescan;
+persistence across a power cycle, a real headset accepting a stored key out of
+pairing mode, and a real 0x05/0x06 rejection are the bench's claims
+(bt_tone_test RECONNECT section, runs A-E).
+★ **`BondTable::NAME_MAX` collided with the POSIX macro** `<limits.h>` defines
+and `Audio.h` pulls in through `arm_math.h` — found only when the `[media]` gate
+failed to BUILD, because the three probe gates never include `Audio.h`. Renamed
+`NAME_LEN`; the host suite now includes `<limits.h>` FIRST to pin the class.
 
 ✅ **Measured 2026-09-05 (evening), TWICE: 128 gates discovered, 127 passed /
 1 failed, then 126 passed / 2 failed, 0 SKIP both times** on the **NEW-36 CM7 L1
