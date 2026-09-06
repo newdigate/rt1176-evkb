@@ -55,6 +55,12 @@
 #include <Sdp.h>
 #include <Avdtp.h>
 #endif
+#if defined(M2_BT_RECONNECT)
+#include <A2dpSource.h>
+#include <BondTable.h>
+#include <BondStoreEeprom.h>
+#include <avr/eeprom.h>            // eeprom_initialize(): the cold-reload instrument
+#endif
 
 // --- the Bluetooth side: identical on both boards ---------------------------
 static HciTransport hciIo(Serial2);
@@ -353,6 +359,18 @@ static uint8_t       s_foundN = 0;
 static volatile bool s_inqDone = false;
 static uint8_t       s_inqStatus = 0xFF;
 static volatile bool s_nameDone = false;
+#if defined(M2_BT_CONNECT)
+static uint32_t nowMs() { return millis(); }
+static void btLog(void *, const char *s) { CONSOLE.println(s); }
+// Phase-2 outcome, latched by the connect probe and echoed in every loop() heartbeat
+// so the result is readable from ANY capture -- the one-shot setup() output is
+// easily missed across a reset (the VCOM reconnect gap), and this makes the bench
+// run deterministic regardless of when the reader attaches.
+static const char *s_p2link = "n/a", *s_p2sec = "n/a", *s_p2pair = "-";
+static int         s_p2avdtp = -1;
+static uint16_t    s_p2mtu   = 0;
+#endif
+
 // B4/B6/B7 (BT-2/BT-3): the productized path, from M2Radio/bt -- L2cap (basic
 // mode signalling + CO channels + ACL demux + credits), BtLink (inquiry,
 // Create_Connection, SSP pairing with legacy-PIN fallback, encryption), Sdp
@@ -360,26 +378,16 @@ static volatile bool s_nameDone = false;
 // START initiator).  These replace the BT-2 inline prototype this file used
 // to carry -- BtLink.cpp's header records it was ported line-for-line from
 // this file's former probeInquiry()/probeConnect()/onEvent().
-#if defined(M2_BT_CONNECT)
+#if defined(M2_BT_CONNECT) && !defined(M2_BT_RECONNECT)
 static L2cap  l2(hciIo);
 static BtLink link(hci);
 static Avdtp  avdtp;
 static SdpServer sdpServer;   // answers the peer's SDP queries of US (both headsets make one on AVDTP contact)
 
-static uint32_t nowMs() { return millis(); }
-static void btLog(void *, const char *s) { CONSOLE.println(s); }
-
 // B6/B7 bookkeeping: filled by the L2cap data callback (record only; all TX
 // happens from probeConnect()'s main-context loop, never from here).
 static volatile bool     s_sdpDone  = false;
 static volatile uint16_t s_avdtpVer = 0;
-// Phase-2 outcome, latched by probeConnect() and echoed in every loop() heartbeat
-// so the result is readable from ANY capture -- the one-shot setup() output is
-// easily missed across a reset (the VCOM reconnect gap), and this makes the bench
-// run deterministic regardless of when the reader attaches.
-static const char *s_p2link = "n/a", *s_p2sec = "n/a", *s_p2pair = "-";
-static int         s_p2avdtp = -1;
-static uint16_t    s_p2mtu   = 0;
 
 static void onL2capData(void *, L2cap::Channel &ch, const uint8_t *payload, uint16_t len) {
     if (sdpServer.onData(ch, payload, len)) return;        // the PEER's SDP query on its own channel: answered from the main loop
@@ -395,6 +403,15 @@ static void onL2capData(void *, L2cap::Channel &ch, const uint8_t *payload, uint
 static void onAclThunk(void *, uint16_t handle, const uint8_t *d, uint16_t len) {
     l2.onAcl(handle, d, len);
 }
+#endif
+
+#if defined(M2_BT_RECONNECT)
+// NEW-34 piece 1: the shipped stack (A2dpSource) plus the bond store, driven three times in
+// one boot by probeReconnect().  The hand-driven B4/B6/B7 path above is compiled out here so
+// exactly ONE BtLink answers each Link_Key_Request.
+static A2dpSource src(hci, hciIo);
+static BondTable  bonds;
+static void onAclThunk(void *, uint16_t handle, const uint8_t *d, uint16_t len) { src.onAcl(handle, d, len); }
 #endif
 
 #if defined(M2_BT_LOOPBACK)
@@ -463,7 +480,11 @@ static void onEvent(void *, uint8_t code, const uint8_t *p, uint8_t len) {
     else {
         CONSOLE.print("hci_event: code=0x"); printHex8(code); CONSOLE.print(" len="); CONSOLE.println(len);
     }
-#if defined(M2_BT_CONNECT)
+#if defined(M2_BT_RECONNECT)
+    // NEW-34: A2dpSource forwards to ITS BtLink and L2cap -- the only ones compiled in,
+    // so exactly one reply leaves per Link_Key_Request.
+    src.onEvent(code, p, len);
+#elif defined(M2_BT_CONNECT)
     // BtLink owns inquiry/connect/SSP-pairing/encryption; L2cap owns ACL
     // credit accounting (Number_Of_Completed_Packets, code 0x13).  Forward
     // every event to both, IN ADDITION to the base handling above -- this is
@@ -638,7 +659,7 @@ static void probeInquiry() {
     }
 }
 
-#if defined(M2_BT_CONNECT)
+#if defined(M2_BT_CONNECT) && !defined(M2_BT_RECONNECT)
 // --- B4+B6+B7: connect + pair/encrypt (BtLink) -> SDP (L2cap+Sdp) -> AVDTP
 // DISCOVER..START (L2cap+Avdtp).  This is the productized replacement for the
 // BT-2 inline prototype this function used to be: BtLink now drives its own
@@ -719,6 +740,71 @@ static void probeConnect() {
         CONSOLE.print(" error=0x"); printHex8(avdtp.error());
         CONSOLE.println();
     }
+}
+#endif
+
+#if defined(M2_BT_RECONNECT)
+// --- NEW-34 piece 1: three connects in one boot against hci_peer.py's `reconnect` phase.
+// Every line below is asserted by run_qemu_reconnect.sh; every number in the peer's tally
+// is counted by the PEER, so none can be satisfied by printing.  Each link is torn down
+// (disconnect) BEFORE the next page: the peer refuses a Disconnect on a stale handle.
+static const uint8_t RC_FAKE_BD[6]  = { 0x01, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA };   // FAKE-HEADSET-01 (hci_peer.py DEVICES[0])
+static const uint8_t RC_DECOY_BD[6] = { 0x99, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA };   // a bond whose name never matches the target
+#if defined(M2_BT_TARGET_NAME)
+#define RC_TARGET M2_BT_TARGET_NAME
+#else
+#define RC_TARGET nullptr
+#endif
+static A2dpSource::Result rcConnect(int phase) {
+    A2dpSource::Result r = src.connect(RC_TARGET, s_aclNum, nowMs, idleMs);
+    CONSOLE.print("reconnect_phase="); CONSOLE.print(phase);
+    CONSOLE.print(" result="); CONSOLE.print(A2dpSource::resultName(r));
+    CONSOLE.print(" paired_by="); CONSOLE.println(src.link().pairedBy());
+    s_p2link = A2dpSource::resultName(r); s_p2pair = src.link().pairedBy();
+    s_p2sec = r == A2dpSource::OK ? "ok" : "fail"; s_p2avdtp = (int)src.avdtp().state(); s_p2mtu = src.mediaMtu();
+    return r;
+}
+static void rcColdReload() {
+    // Forget everything in RAM, rebuild the emulation's sector index FROM THE FLASH (the same
+    // instrument storage-memory/eeprom_test uses for its cold-start rescan -- strictly stronger
+    // than trusting the incrementally maintained copy), then load.
+    bonds.clear(); eeprom_initialize(); BondStoreEeprom::load(bonds);
+}
+static void probeReconnect() {
+    src.setLog(btLog, nullptr); src.setPin("1234"); src.setBonds(&bonds);
+    // probeInquiry() is skipped on this build and it is what used to register the probe's
+    // onEvent() -- which is the ONLY forwarder to src.onEvent().  Without this line BtLink
+    // sees no event at all: the inquiry starts and nothing ever follows it.
+    hci.onEvent(onEvent, nullptr);
+    hci.onAcl(onAclThunk, nullptr);
+    BondStoreEeprom::load(bonds);
+    CONSOLE.print("bonds_boot="); CONSOLE.println(bonds.count());
+    // Phase 1: a fresh pairing (inquiry + SSP).  The notification creates the bond; the store persists it.
+    if (rcConnect(1) != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=1"); return; }
+    uint8_t key1[16];
+    { const Bond *b = bonds.find(RC_FAKE_BD); if (!b) { CONSOLE.println("reconnect=fail phase=1 no_bond"); return; } memcpy(key1, b->key, 16); }
+    BondStoreEeprom::save(bonds);
+    src.link().disconnect(nowMs, idleMs);
+    // Phase 2: cold reload (proves the round trip), plant a DECOY at the front, save, cold reload
+    // again -- the load that matters must recover BOTH.  Then connect: the name filter must skip
+    // the decoy and the stored key must authenticate with no inquiry and no pairing.
+    rcColdReload();
+    { Bond d; memset(&d, 0, sizeof d); memcpy(d.bd, RC_DECOY_BD, 6); memset(d.key, 0xEE, 16); d.keyType = 4; d.psrm = 1;
+      BondTable::copyName(d.name, "DECOY"); bonds.upsert(d); }
+    BondStoreEeprom::save(bonds);
+    rcColdReload();
+    CONSOLE.print("bonds_reload="); CONSOLE.println(bonds.count());
+    if (rcConnect(2) != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=2"); return; }
+    BondStoreEeprom::save(bonds);
+    src.link().disconnect(nowMs, idleMs);
+    // Phase 3: the peer rejects the stored key on this link -> erase, fresh pairing, a different key.
+    if (rcConnect(3) != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=3"); return; }
+    BondStoreEeprom::save(bonds);
+    src.link().disconnect(nowMs, idleMs);
+    const Bond *b3 = bonds.find(RC_FAKE_BD);
+    CONSOLE.print("bonds_final="); CONSOLE.print(bonds.count());
+    CONSOLE.print(" key_changed="); CONSOLE.println(b3 && memcmp(b3->key, key1, 16) != 0 ? 1 : 0);
+    CONSOLE.println("reconnect=done");
 }
 #endif
 
@@ -1184,8 +1270,12 @@ void setup() {
 #if defined(M2_BT_LOOPBACK)
         probeLoopback();
 #endif
-        probeInquiry();
-#if defined(M2_BT_CONNECT)
+#if !defined(M2_BT_RECONNECT)
+        probeInquiry();                 // the reconnect probe counts inquiries; BtLink's is the only one allowed
+#endif
+#if defined(M2_BT_RECONNECT)
+        probeReconnect();
+#elif defined(M2_BT_CONNECT)
         probeConnect();
 #endif
     } else if (s_hciSt == Hci::TIMEOUT) {

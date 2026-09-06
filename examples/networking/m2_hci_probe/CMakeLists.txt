@@ -186,6 +186,18 @@ if(M2_BT_CONNECT)
     add_definitions(-DM2_BT_CONNECT=1)
 endif()
 
+# NEW-34 piece 1: the [reconnect] gate's build.  Replaces the hand-driven probeConnect() with
+# A2dpSource + BondTable + BondStoreEeprom and runs THREE connects in one boot: a fresh pairing,
+# a cold reload from the EEPROM emulation + a stored-key reconnect past a decoy bond, then a
+# modelled rejection -> re-pair.  Requires M2_BT_CONNECT (the bt/ manifest).  Default OFF.
+option(M2_BT_RECONNECT "NEW-34: known-device reconnect probe (three connects, bond store round trip)" OFF)
+if(M2_BT_RECONNECT)
+    if(NOT M2_BT_CONNECT)
+        message(FATAL_ERROR "M2_BT_RECONNECT needs M2_BT_CONNECT=ON")
+    endif()
+    add_definitions(-DM2_BT_RECONNECT=1)
+endif()
+
 # Bench knob: with several headsets discoverable at once, prefer the inquiry hit
 # whose resolved name contains this substring (else first Audio/Video hit).
 set(M2_BT_TARGET_NAME "" CACHE STRING "Prefer the A/V inquiry hit whose name contains this substring")
