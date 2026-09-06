@@ -356,7 +356,7 @@ static bool s_btBegun = false;
 // graph via AudioOutputI2S `out`'s DMA completion, so btout.poll() only drains -- same shape as
 // bt_tone_test.cpp's onStreamCb/onAttemptCb (Task 8), the reference pattern for this wiring.
 static void onStreamCb(void *, bool streaming, uint8_t reason, BtSession::By by) {
-    if (streaming) { btout.setSelfClock(false); btout.begin(src); s_btBegun = true;
+    if (streaming) { btout.setSelfClock(false); btout.begin(src); s_btBegun = true; src.l2().resetCreditStats();
         CONSOLE.print("bt_streaming by="); CONSOLE.print(by == BtSession::BY_INCOMING ? "incoming" : by == BtSession::BY_INQUIRY ? "inquiry" : "paged");
         CONSOLE.print(" bitpool="); CONSOLE.print(src.sbcParams().bitpool);
         CONSOLE.print(" media_mtu="); CONSOLE.println(src.mediaMtu());
@@ -616,6 +616,32 @@ static uint32_t btMemStackFreeMin() {
     uint32_t freeNow = sp - (uint32_t)&_ebss;      // stack grows down from DTCM top; _ebss is DTCM .bss end
     if (freeNow < floor) floor = freeNow;
     return floor;
+}
+// NEW-34 piece 4: the per-second BT report (bt_hb/bt_link/bt_cred/bt_mem) lives in FLASH -- loop() is
+// ITCM-resident and this M2_BT_OUT bench build sits at the ITCM limit, so the print block overflowed ITCM
+// inline (measured +28 B when the bt_cred fields were added).  Routed to flash regardless of ACIDBOX_LOOPSTAT
+// via .progmem (the core collects *(.progmem*) into XIP flash); loop() keeps only the once-a-second gate + call.
+__attribute__((section(".progmem.btreport"), noinline))
+static void acidBtReport() {
+    const BtSession::Stats &st = session.stats();
+    CONSOLE.print("bt_hb blocks="); CONSOLE.print(btout.blocks());
+    CONSOLE.print(" packets="); CONSOLE.print(btout.packets());
+    CONSOLE.print(" drops="); CONSOLE.print(btout.drops());
+    CONSOLE.print(" pcmdrops="); CONSOLE.print(btout.pcmDrops());  // PCM-ring overflow = loop too slow to encode
+    CONSOLE.print(" hw="); CONSOLE.println(btout.queueHighWater());
+    CONSOLE.print("bt_link links="); CONSOLE.print(st.links);
+    CONSOLE.print(" lost="); CONSOLE.print(st.lost);
+    CONSOLE.print(" reason=0x"); CONSOLE.print(st.lastReason, HEX);
+    CONSOLE.print(" reconnect_ms="); CONSOLE.print(st.reconnectMs);
+    CONSOLE.print(" scan="); CONSOLE.println(session.wantPageScan() ? 1 : 0);
+    CONSOLE.print("bt_cred sent="); CONSOLE.print(src.l2().pktsSent());   // NEW-34 piece 4 soak record
+    CONSOLE.print(" returned="); CONSOLE.print(src.l2().creditsReturned());
+    CONSOLE.print(" credmin="); CONSOLE.print(src.l2().creditsMin());
+    CONSOLE.print(" starves="); CONSOLE.print(src.l2().starves());
+    CONSOLE.print(" starve_max_ms="); CONSOLE.print(src.l2().starveMaxMs());
+    CONSOLE.print(" clamp="); CONSOLE.println(src.l2().clampHits());
+    CONSOLE.print("bt_mem heap="); CONSOLE.print(btMemHeapUsed());
+    CONSOLE.print(" stack_free_min="); CONSOLE.println(btMemStackFreeMin());
 }
 #endif /* M2_BT_OUT */
 
@@ -1379,6 +1405,7 @@ void loop()
     yield();                                   // drives the yield-attached HciPump (parses NCP/credits)
     LS_LAP(LS_YIELD);
     src.service();                             // SdpServer + L2cap::service() (the ACL UART write) + Avdtp
+    src.l2().tickClock(millis());               // NEW-34 piece 4: ms reference for the credit-starve fingerprint
     LS_LAP(LS_SVC);
     if (s_btBegun) btout.poll();               // SBC encode of the buffered PCM + drain into L2cap's queue
     LS_LAP(LS_POLL);
@@ -1390,22 +1417,7 @@ void loop()
     session.tick(millis());
     {
         static uint32_t last = 0;
-        if (millis() - last >= 1000) {
-            last = millis();
-            const BtSession::Stats &st = session.stats();
-            CONSOLE.print("bt_hb blocks="); CONSOLE.print(btout.blocks());
-            CONSOLE.print(" packets="); CONSOLE.print(btout.packets());
-            CONSOLE.print(" drops="); CONSOLE.print(btout.drops());
-            CONSOLE.print(" pcmdrops="); CONSOLE.print(btout.pcmDrops());  // PCM-ring overflow = loop too slow to encode
-            CONSOLE.print(" hw="); CONSOLE.println(btout.queueHighWater());
-            CONSOLE.print("bt_link links="); CONSOLE.print(st.links);
-            CONSOLE.print(" lost="); CONSOLE.print(st.lost);
-            CONSOLE.print(" reason=0x"); CONSOLE.print(st.lastReason, HEX);
-            CONSOLE.print(" reconnect_ms="); CONSOLE.print(st.reconnectMs);
-            CONSOLE.print(" scan="); CONSOLE.println(session.wantPageScan() ? 1 : 0);
-            CONSOLE.print("bt_mem heap="); CONSOLE.print(btMemHeapUsed());
-            CONSOLE.print(" stack_free_min="); CONSOLE.println(btMemStackFreeMin());
-        }
+        if (millis() - last >= 1000) { last = millis(); acidBtReport(); }   // report block is flash-resident (see acidBtReport)
     }
     LS_LAP(LS_PRINT);                          // session.tick() (the attempt walk) and bt_hb land here
 #endif
