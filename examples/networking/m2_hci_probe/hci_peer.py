@@ -38,6 +38,19 @@ Phases (argv[1]):
               (AA:BB:CC:DD:EE:99) is answered Page Timeout and recorded -- the host's
               target-name filter must never send one.
               Ends when the fourth link's START is accepted.
+  lifecycle   the A2DP link lifecycle in THREE legs on one socket (NEW-34 piece 2):
+              leg 1 runs the avdtp+media acceptor to STREAMING (by inquiry, bitpool 53),
+              then the peer INJECTS a Disconnection_Complete reason 0x08.  Leg 2: one
+              second later the peer PAGES the host (Connection_Request from the bonded
+              address); the host Accepts as SLAVE (role 0x01, a fresh handle) and
+              authenticates with the STORED key from leg 1, then the PEER drives AVDTP
+              AS INITIATOR at bitpool 35 -- the media the host then sends is 83-byte SBC
+              frames, which proves it ADOPTED the config (its own initiator only uses 53
+              = 119 bytes); then the peer drops reason 0x13.  Leg 3: half a second later
+              a Connection_Request from an UNKNOWN address must be Rejected 0x0F; then the
+              host's own re-page reconnects and streams at bitpool 53.  Page scan on/off,
+              the Accept role byte and ACL-on-a-dead-handle are peer-side tripwires.
+              Ends once three links have streamed and both drops + the reject happened.
 Exit 0 when the phase's last expected opcode was seen (avdtp: when the peer
 recorded an accepted START; media: when the media validation above holds; reconnect: when the FOURTH
 link's START is accepted with no exception and no deadline).
@@ -89,12 +102,13 @@ def v3_data_req(length, offset, err=0):
     return f + bytes([crc8(f)])
 LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP_REMOTE_NAME_REQ,
                "starve": OP_RESET, "fwdnld": OP_READ_BD_ADDR, "baud": OP_READ_BUFFER_SIZE,
-               "avdtp": 0x0413, "media": 0x0413, "reconnect": 0x0413}   # Set_Connection_Encryption -- last COMMAND before
-                                  # signalling; the real end of avdtp, media and reconnect is checked
-                                  # separately (peer.avdtp["started"] / peer.media, below)
+               "avdtp": 0x0413, "media": 0x0413, "reconnect": 0x0413, "lifecycle": 0x0413}   # Set_Connection_Encryption -- last COMMAND before
+                                  # signalling; the real end of avdtp, media, reconnect and lifecycle is checked
+                                  # separately (peer.avdtp["started"] / peer.media / peer.lc, below)
 LAST_OPCODE_COUNT = {"baud": 2}   # phases whose terminal opcode must be seen N times (default 1)
-DEADLINE = {"reconnect": 50}       # seconds from socket connect; default 45.  reconnect runs one inquiry + FOUR links + four disconnects
-                                   # (~17 s wall measured from socket connect) and must not share [media]'s budget; 50 keeps it BELOW tools/qrun's 60 s QRUN_TIMEOUT so the peer announces before QEMU is killed
+DEADLINE = {"reconnect": 50, "lifecycle": 55}   # seconds from socket connect; default 45.  reconnect runs one inquiry + FOUR links + four disconnects
+                                   # (~17 s wall measured from socket connect) and must not share [media]'s budget; 50 keeps it BELOW tools/qrun's 60 s QRUN_TIMEOUT so the peer announces before QEMU is killed.
+                                   # lifecycle runs three legs with a 3 s (M2_BT_RETRY_MS) gap before leg 3's re-page (~25 s wall measured); 55 keeps it below the same 60 s cap.
 
 def phase_done(phase, peer):
     # avdtp's real end is signalling over ACL (an accepted START), not a
@@ -108,6 +122,11 @@ def phase_done(phase, peer):
         m = peer.media
         return m["pkts"] > 0 and m["seqgaps"] == 0 and m["badsbc"] == 0 and m["badrtp"] == 0
     if phase == "reconnect": return peer.rc["started_links"] >= 4 and peer.rc["create_conns"] >= 4 and not peer.avdtp["error"] and peer.rc["errors"] == 0
+    # lifecycle's real end is all three legs having streamed, both drops injected and the
+    # unknown-address page rejected -- a command opcode says nothing about that.
+    if phase == "lifecycle":
+        lc = peer.lc
+        return lc["links_streamed"] >= 3 and lc["drops"] >= 2 and lc["rejected_unknown"] and not peer.avdtp["error"] and lc["errors"] == 0
     return peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
 
 def connect(path):
@@ -128,6 +147,12 @@ def acl(handle, cid, payload):                    # controller -> host ACL, PB=1
 def ncp(handle, n=1):                             # Number_Of_Completed_Packets: the credit the host's L2cap pacing needs
     return event(0x13, bytes([1]) + struct.pack("<HH", handle, n))
 SBC_CIE_EXPECT = bytes.fromhex("21150235")        # 44.1k joint / 16 blk 8 sub loudness / bitpool 2..53 -- the calibration config
+SBC_CIE_BITPOOL35 = bytes.fromhex("21150223")     # ...bitpool 2..35 -- what the peer SETs as leg-2 initiator (83-byte frames)
+
+def fresh_media(frame_bytes=119):
+    # The RTP/SBC validation state for ONE stream.  frame_bytes is the negotiated SBC frame
+    # length the media MUST carry: 119 at bitpool 53 (legs 1 & 3), 83 at bitpool 35 (leg 2).
+    return {"pkts": 0, "frames": 0, "lastseq": None, "seqgaps": 0, "badrtp": 0, "badsbc": 0, "frame_bytes": frame_bytes}
 
 class Peer:
     def __init__(self, sock, phase):
@@ -142,7 +167,13 @@ class Peer:
                    "handle": 0x0001, "errors": 0,
                    "reject_on_link": 3, "rejected": False, "rejected_key": None, "keys": {}}   # keys: bd -> the key we last notified for it
         # --- media phase: RTP/SBC validation on the media transport channel ---
-        self.media = {"pkts": 0, "frames": 0, "lastseq": None, "seqgaps": 0, "badrtp": 0, "badsbc": 0}
+        self.media = fresh_media()
+        # --- lifecycle phase (NEW-34 piece 2): three legs, two drops, an unknown-address reject.
+        # `conns` counts every link established (a page or an accept) so a FRESH handle is issued per
+        # link exactly like the reconnect phase; `handle` is the live one (cur_handle() returns it). ---
+        self.lc = {"leg": 1, "links_streamed": 0, "drops": 0, "rejected_unknown": False, "errors": 0,
+                   "handle": 0x0001, "conns": 0, "scan_on": 0, "scan_off": 0, "accepts": 0,
+                   "bitpool2": 0, "did_incoming_page": False, "did_unknown": False}
         # --- V3 bootloader state (fwdnld phase only) ---
         # While `boot` is True every received byte belongs to the download, not
         # to HCI: the host is answering the bootloader, and H4 framing has not
@@ -185,8 +216,24 @@ class Peer:
         # exactly as it did on the bench.
         self.rev = {"state": "idle", "my_cid": 0x0E85, "their_cid": None, "cfg_req_seen": False, "cfg_rsp_seen": False,
                     "query_sent": False, "answer": None, "done": False, "handle": None}
+        # --- lifecycle leg 2 ONLY: the peer is the A2DP INITIATOR (opens L2CAP AVDTP + drives
+        # DISCOVER..START toward the host's acceptor).  Reset per link; unused in legs 1 & 3
+        # (there the host is the initiator and the existing acceptor path handles it). ---
+        self.lc_init = {"state": "idle", "sig_scid": None, "sig_dcid": None, "sig_cfgreq": False, "sig_cfgrsp": False,
+                        "media_scid": None, "media_dcid": None, "media_cfgreq": False, "media_cfgrsp": False,
+                        "tl": 0, "acp_seid": None}
+        self.next_l2id = 0x60           # our L2CAP signalling identifier counter (initiator side)
+        # lifecycle: the ONE media channel whose RTP we validate this leg.  In-flight media on a stale
+        # channel (from a leg that just dropped) is ignored -- a real sink drops a torn-down channel too --
+        # so a leg's badsbc/seqgaps reflect only ITS stream, not the previous leg's tail.
+        self.cur_media_cid = None
     def cur_handle(self):
+        if self.phase == "lifecycle": return self.lc["handle"]
         return self.rc["handle"]
+    def l2id(self):
+        i = self.next_l2id; self.next_l2id = (self.next_l2id + 1) & 0xFF
+        if self.next_l2id == 0: self.next_l2id = 0x60
+        return i
     def flush(self):
         now = time.time(); keep = []
         for due, b in self.pending:
@@ -235,6 +282,10 @@ class Peer:
             self.log.append("PEER-SETBAUD rate=%d" % rate)
             self.send(cmd_complete(opcode, b"\x00"))
         # --- avdtp phase: link bring-up through the full SSP dance -------------
+        elif opcode == 0x0C1A and self.phase == "lifecycle":               # Write_Scan_Enable: count on/off (page-scan side channel)
+            if params and (params[0] & 0x02): self.lc["scan_on"] += 1
+            else: self.lc["scan_off"] += 1
+            self.log.append("PEER-SCAN-ENABLE 0x%02x" % (params[0] if params else 0)); self.send(cmd_complete(opcode, b"\x00"))
         elif opcode == 0x0C01 or opcode == 0x0C56 or opcode == 0x0C1A:      # Set_Event_Mask, Write_Simple_Pairing_Mode, Write_Scan_Enable
             self.send(cmd_complete(opcode, b"\x00"))
         elif opcode == 0x0405:                                              # Create_Connection -> Command Status, Connection Complete
@@ -251,8 +302,27 @@ class Peer:
             if self.phase == "reconnect":
                 if self.rc["create_conns"]: self.rc["handle"] += 1        # 0x0001..0x0004: a FRESH handle per link, so a host that cached link 1's is caught
                 self.rc["create_conns"] += 1; self.reset_link()
+            if self.phase == "lifecycle":                                  # leg 1's page, and leg 3's re-page after the unknown reject
+                if self.lc["conns"]: self.lc["handle"] += 1                # fresh handle per link (leg 3 must differ from leg 1/2)
+                self.lc["conns"] += 1; self.reset_link()
             self.log.append("PEER-CREATE-CONN role_switch=%d" % params[12])
             self.send(cmd_status(opcode)); self.send(event(0x03, b"\x00" + struct.pack("<H", self.cur_handle()) + params[:6] + b"\x01\x00"), 0.1)
+        elif opcode == 0x0409:                                              # Accept_Connection_Request (lifecycle leg 2): the host accepts OUR page
+            bd = params[:6]; role = params[6] if len(params) > 6 else 0xFF
+            if role != 0x01: self.log.append("PEER-ACCEPT-BAD-ROLE 0x%02x" % role); self.lc["errors"] += 1   # must remain SLAVE
+            if self.lc["conns"]: self.lc["handle"] += 1                     # a fresh handle for this link, distinct from leg 1's
+            self.lc["conns"] += 1; self.lc["accepts"] += 1; self.reset_link()
+            self.log.append("PEER-ACCEPTED role=0x%02x handle=0x%04x" % (role, self.lc["handle"]))
+            self.send(cmd_complete(opcode, b"\x00" + bd))
+            self.send(event(0x03, b"\x00" + struct.pack("<H", self.lc["handle"]) + bd + b"\x01\x00"), 0.05)   # Connection_Complete
+            self.peer_bd = bd
+            # the host is SLAVE now; WE (the peer/master) authenticate with the STORED key -> Link_Key_Request
+            self.send(event(0x17, bd), 0.15)
+        elif opcode == 0x040A:                                              # Reject_Connection_Request (lifecycle leg 3): the unknown page
+            reason = params[6] if len(params) > 6 else 0xFF
+            if reason == 0x0F: self.lc["rejected_unknown"] = True
+            self.log.append("PEER-REJECTED reason=0x%02x" % reason)
+            self.send(cmd_complete(opcode, b"\x00" + params[:6]))
         elif opcode == 0x0C18:                                              # Write_Page_Timeout -> Command Complete
             self.log.append("PEER-PAGE-TIMEOUT slots=0x%04x" % struct.unpack("<H", params[:2])[0])
             self.send(cmd_complete(opcode, b"\x00"))
@@ -274,6 +344,8 @@ class Peer:
         elif opcode == 0x040B:                                              # Link_Key_Request_Reply: bd(6) key(16) -- the host offers a STORED key
             bd, key = params[:6], params[6:22]
             self.send(cmd_complete(opcode, b"\x00" + bd))
+            if self.phase == "lifecycle":
+                self.lc_key_reply(bd, key); return
             self.rc["key_replies"] += 1
             known = self.rc["keys"].get(bd)
             if known is None or key != known:
@@ -370,7 +442,7 @@ class Peer:
                 if len(self.buf) < 5 + alen: return
                 data, self.buf = self.buf[5:5 + alen], self.buf[5 + alen:]
                 h = hf & 0x0FFF
-                if not (self.phase == "reconnect" and h != self.cur_handle()): self.send(ncp(h))   # no buffer credit for a handle the peer has said does not exist
+                if not (self.phase in ("reconnect", "lifecycle") and h != self.cur_handle()): self.send(ncp(h))   # no buffer credit for a handle the peer has said does not exist
                 self.handle_acl(h, data); continue
             if self.buf[0] != 0x01:                                     # only commands/ACL come from a host
                 self.log.append("PEER-BAD-TYPE 0x%02x" % self.buf[0]); self.buf = self.buf[1:]; continue
@@ -389,7 +461,7 @@ class Peer:
         # bad frame".  The happy-path parses below stay unguarded on purpose:
         # this try/except is the safety net, not a substitute for them.
         try:
-            if self.phase == "reconnect" and handle != self.cur_handle():
+            if self.phase in ("reconnect", "lifecycle") and handle != self.cur_handle():
                 self.log.append("PEER-ACL-BAD-HANDLE 0x%04x (current 0x%04x)" % (handle, self.cur_handle())); return
             if len(d) < 4: return
             l2len, cid = struct.unpack("<HH", d[:4]); pl = d[4:4 + l2len]
@@ -403,11 +475,15 @@ class Peer:
                                                         # later one (opened in AVDTP's OPENING state,
                                                         # Avdtp.cpp's second m_l2->connect(PSM, ...))
                                                         # is the media transport channel
+                    elif psm == 0x0019 and self.phase == "lifecycle":       # the acceptor-leg (1/3) media channel: 119-byte frames (bitpool 53)
+                        self.cur_media_cid = ours; self.media = fresh_media(119)
                     self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0001, 0x0000))   # pending first, like the Shokz
                     self.sig(handle, bytes([0x03, ident, 8, 0]) + struct.pack("<HHHH", ours, scid, 0x0000, 0x0000))
                     self.sig(handle, bytes([0x04, ident + 1, 8, 0]) + struct.pack("<HH", scid, 0) + bytes([0x01, 0x02, 0xA0, 0x02]))  # our Config Request: MTU 672
                 elif code == 0x03:                                               # Connection Response to OUR reverse Connection Request
                     dcid, scid, result, status = struct.unpack("<HHHH", body[:8])
+                    if self.phase == "lifecycle" and self.lc["leg"] == 2 and scid in (self.lc_init["sig_scid"], self.lc_init["media_scid"]):
+                        self.lc_l2_conn_rsp(handle, dcid, scid, result); return
                     if scid != self.rev["my_cid"]: self.log.append("PEER-L2CAP-CONNRSP-UNKNOWN-SCID 0x%04x" % scid); return
                     if result == 0x0001: return                                  # pending: wait for the final one
                     if result != 0: self.log.append("PEER-REV-CONN-REFUSED result=0x%04x" % result); self.rev["state"] = "failed"; return
@@ -429,10 +505,16 @@ class Peer:
                     if not has_mtu: self.log.append("PEER-L2CAP-CFGREQ-NO-MTU dcid=0x%04x" % dcid)
                     self.sig(handle, bytes([0x05, ident, 6 + len(opts), 0]) + struct.pack("<HHH", peer[0], 0, 0) + opts)   # SCID = the host's CID
                     if dcid == self.rev["my_cid"]: self.rev["cfg_req_seen"] = True; self.rev_maybe_query(handle)
+                    if self.phase == "lifecycle" and self.lc["leg"] == 2:
+                        if dcid == self.lc_init["sig_scid"]:     self.lc_init["sig_cfgreq"] = True;   self.lc_chan_ready(handle)
+                        elif dcid == self.lc_init["media_scid"]: self.lc_init["media_cfgreq"] = True; self.lc_chan_ready(handle)
                 elif code == 0x05:                                               # Config Response to ours: check the receiver-side SCID rule
                     scid, flags, result = struct.unpack("<HHH", body[:6])
                     if scid not in [o for (o, _) in self.chans.values()]: self.log.append("PEER-L2CAP-CFGRSP-BAD-SCID 0x%04x" % scid)
                     if scid == self.rev["my_cid"] and result == 0: self.rev["cfg_rsp_seen"] = True; self.rev_maybe_query(handle)
+                    if self.phase == "lifecycle" and self.lc["leg"] == 2 and result == 0:
+                        if scid == self.lc_init["sig_scid"]:     self.lc_init["sig_cfgrsp"] = True;   self.lc_chan_ready(handle)
+                        elif scid == self.lc_init["media_scid"]: self.lc_init["media_cfgrsp"] = True; self.lc_chan_ready(handle)
                 elif code == 0x06:                                               # Disconnection Request from the host: acknowledge
                     self.sig(handle, bytes([0x07, ident, 4, 0]) + body[:4])
                 elif code == 0x07: pass                                          # Disconnection Response to ours (the reverse SDP channel)
@@ -447,6 +529,8 @@ class Peer:
                 if ours == cid:
                     if psm == 0x0001: self.handle_sdp(handle, peer_cid, pl)
                     elif psm == 0x0019 and ours == self.avdtp["sig_cid"]: self.handle_avdtp(handle, peer_cid, pl)
+                    elif psm == 0x0019 and self.phase == "lifecycle":
+                        if ours == self.cur_media_cid: self.handle_media(pl)   # current leg's media only; a stale leg's tail is ignored
                     elif psm == 0x0019: self.handle_media(pl)              # the OTHER 0x0019 channel: media transport
                     return
             self.log.append("PEER-ACL-UNKNOWN-CID 0x%04x" % cid)
@@ -489,6 +573,8 @@ class Peer:
         self.send(acl(h, cid, bytes([tl | 0x02, 0x01, 2 << 2, 0x08, 1 << 2, 0x08])), 0.02)
     def handle_avdtp(self, handle, peer_cid, pl):
         try:
+            if self.phase == "lifecycle" and self.lc["leg"] == 2:            # leg 2: WE are the AVDTP initiator -> these are RESPONSES
+                self.lc_avdtp_response(handle, pl); return
             hdr, sig = pl[0], pl[1]; tl = hdr & 0xF0; acc = bytes([tl | 0x02])
             if hdr & 0x03:                                                                                                          # a RESPONSE to one of OUR commands
                 if sig == 0x0D and (hdr & 0x03) == 0x02:
@@ -538,6 +624,68 @@ class Peer:
         except Exception as e:
             self.log.append("PEER-EXCEPTION handle_avdtp: %r" % e)
             self.avdtp["error"] = True; self.rc["errors"] += 1
+    # --- lifecycle leg 2: the peer authenticates (master) then drives AVDTP as INITIATOR ---
+    def lc_key_reply(self, bd, key):
+        # The host offered the key it saved when WE paired it (as SSP initiator) in leg 1.  It is stored in
+        # self.rc["keys"] by the shared 0x042C handler.  In leg 2 WE are master: on a match, complete auth +
+        # encryption ourselves and open AVDTP.  In leg 3 the HOST is master (it paged): we only complete auth;
+        # the host then sends Set_Connection_Encryption (0x0413, handled below) and drives AVDTP itself.
+        known = self.rc["keys"].get(bd)
+        if known is not None and key != known:
+            self.log.append("PEER-LC-KEY-MISMATCH offered=%s known=%s" % (key.hex(), known.hex())); self.lc["errors"] += 1
+            self.send(event(0x06, b"\x05" + struct.pack("<H", self.cur_handle())), 0.05); return   # 0x05 Authentication Failure
+        self.send(event(0x06, b"\x00" + struct.pack("<H", self.cur_handle())), 0.05)               # Authentication_Complete (no pairing)
+        if self.lc["leg"] == 2:
+            self.send(event(0x08, b"\x00" + struct.pack("<H", self.cur_handle()) + b"\x01"), 0.1)  # Encryption_Change on (we are master)
+            self.lc_start_leg2_avdtp(0.3)                                                          # give the host PAIRING->L2->AVDTP_WAIT, then open AVDTP
+    def lc_start_leg2_avdtp(self, delay):
+        li = self.lc_init; li["sig_scid"] = self.next_cid; self.next_cid += 0x40; li["state"] = "sig_conn"
+        self.send(acl(self.cur_handle(), 0x0001, bytes([0x02, self.l2id(), 4, 0]) + struct.pack("<HH", 0x0019, li["sig_scid"])), delay)   # L2CAP Connection Request: AVDTP
+    def lc_l2_conn_rsp(self, handle, dcid, scid, result):
+        if result == 0x0001: return                                                                # pending: the final response follows
+        if result != 0: self.log.append("PEER-LC-CONN-REFUSED result=0x%04x" % result); self.lc["errors"] += 1; return
+        li = self.lc_init; self.chans[dcid] = (scid, 0x0019)                                        # host cid -> (our cid, psm)
+        self.sig(handle, bytes([0x04, self.l2id(), 8, 0]) + struct.pack("<HH", dcid, 0) + bytes([0x01, 0x02, 0xA0, 0x02]))   # our Config Request: MTU 672
+        if scid == li["sig_scid"]:     li["sig_dcid"] = dcid;   li["state"] = "sig_cfg"
+        elif scid == li["media_scid"]: li["media_dcid"] = dcid; li["state"] = "media_cfg"
+    def lc_chan_ready(self, handle):
+        # a channel is OPEN once BOTH config exchanges (ours and theirs) have completed
+        li = self.lc_init
+        if li["state"] == "sig_cfg" and li["sig_cfgreq"] and li["sig_cfgrsp"]:
+            li["state"] = "discovering"; self.avdtp["sig_cid"] = li["sig_scid"]                     # route this channel's data to handle_avdtp
+            self.lc_send_avdtp(handle, [0x01])                                                      # DISCOVER
+        elif li["state"] == "media_cfg" and li["media_cfgreq"] and li["media_cfgrsp"]:
+            self.cur_media_cid = li["media_scid"]; self.media = fresh_media(83)                      # leg-2 media: bitpool 35 -> 83-byte frames
+            li["state"] = "starting"; self.lc_send_avdtp(handle, [0x07, li["acp_seid"] << 2])       # START
+    def lc_send_avdtp(self, handle, payload):
+        li = self.lc_init; tl = li["tl"]; li["tl"] = (li["tl"] + 1) & 0x0F
+        self.send(acl(handle, li["sig_dcid"], bytes([tl << 4]) + bytes(payload)), 0.02)             # tl<<4 | COMMAND(0)
+    def lc_avdtp_response(self, handle, pl):
+        # We are the INITIATOR: inbound AVDTP on the signalling channel is a RESPONSE to our command
+        # (or, rarely, the host's own self-START if we were slow -- accept it).
+        li = self.lc_init; hdr, sig = pl[0], pl[1]; mt = hdr & 0x03
+        if mt == 0x00:                                                                              # a COMMAND from the host acceptor
+            self.send(acl(handle, li["sig_dcid"], bytes([(hdr & 0xF0) | 0x02, sig])), 0.02)         # ACCEPT it (we are the sink)
+            if sig == 0x07 and li["state"] != "streaming": li["state"] = "streaming"; self.log.append("PEER-LC-STREAMING leg=2 (host self-START)")
+            return
+        if mt == 0x03: self.log.append("PEER-LC-AVDTP-REJECT sig=%d err=0x%02x" % (sig, pl[-1] if len(pl) > 2 else 0)); self.lc["errors"] += 1; return
+        if mt != 0x02: self.log.append("PEER-LC-AVDTP-UNEXPECTED mt=%d sig=%d" % (mt, sig)); return
+        st = li["state"]
+        if st == "discovering" and sig == 0x01:
+            li["acp_seid"] = (pl[2] >> 2) if len(pl) > 2 else 1; li["state"] = "caps"
+            self.lc_send_avdtp(handle, [0x0C, li["acp_seid"] << 2])                                 # GET_ALL_CAPABILITIES
+        elif st == "caps" and sig == 0x0C:
+            li["state"] = "config"; self.lc["bitpool2"] = 35
+            self.lc_send_avdtp(handle, [0x03, li["acp_seid"] << 2, 5 << 2, 0x01, 0x00, 0x07, 0x06, 0x00, 0x00] + list(SBC_CIE_BITPOOL35))   # SET_CONFIGURATION bitpool 35
+        elif st == "config" and sig == 0x03:
+            li["state"] = "opening"; self.lc_send_avdtp(handle, [0x06, li["acp_seid"] << 2])        # OPEN
+        elif st == "opening" and sig == 0x06:
+            li["media_scid"] = self.next_cid; self.next_cid += 0x40; li["state"] = "media_conn"
+            self.sig(handle, bytes([0x02, self.l2id(), 4, 0]) + struct.pack("<HH", 0x0019, li["media_scid"]))   # open the media transport channel
+        elif st == "starting" and sig == 0x07:
+            li["state"] = "streaming"; self.log.append("PEER-LC-STREAMING leg=2")
+        else:
+            self.log.append("PEER-LC-AVDTP-UNEXPECTED st=%s sig=%d" % (st, sig)); self.lc["errors"] += 1
     def handle_media(self, pl):
         # RTP v2 (RFC 3550) + A2DP v1.3 sec 4.3.4 SBC media payload, validated
         # against values this firmware cannot invent: V=2/PT=96, a strictly
@@ -546,6 +694,7 @@ class Peer:
         # fixed length the negotiated bitpool-53 config produces.
         try:
             m = self.media
+            fb = m.get("frame_bytes", 119)                    # 119 at bitpool 53 (legs 1 & 3), 83 at bitpool 35 (leg 2)
             if len(pl) < 13 or pl[0] != 0x80 or pl[1] != 96:
                 m["badrtp"] += 1
                 return
@@ -556,14 +705,14 @@ class Peer:
             frame_count = pl[12] & 0x0F
             off = 13
             for _ in range(frame_count):
-                if off + 119 > len(pl) or pl[off] != 0x9C:
+                if off + fb > len(pl) or pl[off] != 0x9C:
                     m["badsbc"] += 1
-                off += 119
+                off += fb
             m["pkts"] += 1
             m["frames"] += frame_count
             if m["pkts"] % 20 == 0:
-                self.log.append("PEER-MEDIA pkts=%d frames=%d seqgaps=%d badsbc=%d badrtp=%d"
-                                % (m["pkts"], m["frames"], m["seqgaps"], m["badsbc"], m["badrtp"]))
+                self.log.append("PEER-MEDIA pkts=%d frames=%d seqgaps=%d badsbc=%d badrtp=%d fb=%d"
+                                % (m["pkts"], m["frames"], m["seqgaps"], m["badsbc"], m["badrtp"], fb))
         except Exception as e:
             self.log.append("PEER-EXCEPTION handle_media: %r" % e)
             self.avdtp["error"] = True; self.rc["errors"] += 1
@@ -595,6 +744,31 @@ if __name__ == "__main__":
         except socket.timeout:
             pass
         peer.flush()
+        if phase == "lifecycle":
+            lc = peer.lc
+            if lc["leg"] == 1 and peer.media["pkts"] >= 20 and lc["drops"] == 0:
+                peer.send(event(0x05, b"\x00" + struct.pack("<H", lc["handle"]) + b"\x08"), 0.05)   # Disconnection_Complete reason 0x08
+                lc["drops"] += 1; lc["links_streamed"] += 1
+                peer.cur_media_cid = None; peer.media = fresh_media(); lc["leg"] = 2                 # stop counting; leg 2's channel resets media when it opens
+                # one second later, PAGE the host from the bonded address (Connection_Request); the host Accepts as slave.
+                # reset_link() is deferred to the Accept handler, so leg-1 CIDs stay valid for any in-flight media --
+                # a host that failed to end() on the drop then writes on the OLD handle 0 and trips PEER-ACL-BAD-HANDLE.
+                peer.send(event(0x04, DEVICES[0][0] + struct.pack("<I", DEVICES[0][1])[:3] + b"\x01"), 1.0)
+                lc["did_incoming_page"] = True
+            elif lc["leg"] == 2 and peer.media["pkts"] >= 20 and lc["drops"] == 1:
+                if peer.media["badsbc"] == 0 and peer.media["badrtp"] == 0 and peer.media["seqgaps"] == 0:
+                    lc["bitpool2"] = 35                                                             # the host really adopted bitpool 35 (83-byte frames validated)
+                peer.send(event(0x05, b"\x00" + struct.pack("<H", lc["handle"]) + b"\x13"), 0.05)   # drop reason 0x13
+                lc["drops"] += 1; lc["links_streamed"] += 1
+                peer.cur_media_cid = None; peer.media = fresh_media(); lc["leg"] = 3                 # stop counting; leg 3's channel resets media when it opens
+                # half a second later, an UNKNOWN-address Connection_Request (the host must Reject 0x0F);
+                # then the host's own 3 s retry re-pages us and the acceptor path runs again.
+                peer.send(event(0x04, bytes.fromhex("0102030405DE") + b"\x00\x00\x00\x01"), 0.5)
+                lc["did_unknown"] = True
+            elif lc["leg"] == 3 and peer.avdtp["started"] and lc["links_streamed"] == 2 and peer.media["pkts"] >= 20:
+                lc["links_streamed"] += 1                                                           # leg 3 streamed: three links total
+            if phase_done("lifecycle", peer) and not peer.pending:
+                break                                                                              # all three legs done; the gate waits out the host's final heartbeat
         if peer.boot and not peer.boot_started:
             if peer.boot_acks == 0 and time.time() - peer.boot_last_ind > 0.3:
                 if peer.boot_inds_sent < 40:      # ~12 s of retries, then give up
@@ -619,7 +793,7 @@ if __name__ == "__main__":
         print("PEER-BOOT ok=%d acks=%d chunks=%d err=%s"
               % (1 if peer.boot_ok else 0, peer.boot_acks, peer.boot_step,
                  peer.boot_err if peer.boot_err else "none"))
-    if phase in ("avdtp", "media", "reconnect"):
+    if phase in ("avdtp", "media", "reconnect", "lifecycle"):
         # Name each held-back stage the Shokz model would leave the host stuck in, so a gate fails by cause.
         if peer.rev["query_sent"] and peer.rev["answer"] is None:                print("PEER-SDP-QUERY-UNANSWERED")
         if peer.avdtp["discover_pending"] and not peer.rev["done"]:              print("PEER-AVDTP-DISCOVER-HELD (reverse SDP never completed)")
@@ -636,6 +810,10 @@ if __name__ == "__main__":
         r = peer.rc
         print("PEER-RECONNECT inquiries=%d create_conns=%d key_replies=%d key_ok=%d key_rejected=%d neg_replies=%d iocap_dances=%d notified=%d started_links=%d"
               % (r["inquiries"], r["create_conns"], r["key_replies"], r["key_ok"], r["key_rejected"], r["neg_replies"], r["iocap_dances"], r["notified"], r["started_links"]))
+    if phase == "lifecycle":
+        lc = peer.lc
+        print("PEER-LIFECYCLE links=%d drops=%d accepts=%d rejects=%d scan_on=%d scan_off=%d bitpool2=%d"
+              % (lc["links_streamed"], lc["drops"], lc["accepts"], 1 if lc["rejected_unknown"] else 0, lc["scan_on"], lc["scan_off"], lc["bitpool2"]))
     print("PEER-DONE phase=%s cmds=%d resets=%d opcodes=%s baud=%s"
           % (phase, len(peer.cmds), peer.resets, ",".join("%04x" % c for c in peer.cmds),
              ",".join(str(b) for b in peer.baud_seen) or "none"))
