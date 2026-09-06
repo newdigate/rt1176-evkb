@@ -267,7 +267,7 @@ if (bonds) {
     first = true
     for i in 0..count-1:
         b = copy of at(i)                       // copy: page() does not mutate, but the ladder later may
-        if (name && name[0] && !strstr(b.name, name)) continue    // target-name filter
+        if (name && name[0] && b.name[0] && !strstr(b.name, name)) continue    // target-name filter; an EMPTY stored name is a wildcard
         log "bond_try: bd=.. name=\"..\" attempts=N"
         if (link.page(b.bd, b.psrm, first ? PAGE_ATTEMPTS : 1)) == OK → connected; break
         first = false
@@ -282,13 +282,20 @@ pairAndEncrypt → L2CAP → SDP → AVDTP, unchanged
   bonds, nobody home — is ~30 s before the inquiry starts. With no table set,
   today's cycle is unchanged.
 - (Added in the Task 4 review.) A bond with an EMPTY stored name is a
-  WILDCARD for the target-name filter, never a dead slot: a name can be lost
+  WILDCARD for the target-name filter, never a dead slot (the pseudocode above
+  carries the `b.name[0]` term): a name can be lost
   legitimately (a bond made by a build with no target name, read by a build
   with one — bench run E does exactly that), and a nameless bond must cost one
   page, not occupy a slot forever. Also: `BtLink` marks a key as OFFERED only
   when the request names the address it paged (`m_bd`); a request for another
   bonded peer is still answered, but the rung's erase can never land on the
-  wrong bond.
+  wrong bond. Known, deliberately deferred: `m_haveLinkKey` (the flag that
+  separates "stored-key success" from "the peer chose to re-pair") is still
+  set by a notification for ANY address; through today's single-link
+  `A2dpSource::connect()` a foreign notification cannot arrive inside our
+  authentication window, so the consequence (a missed move-to-front and a
+  `pairedBy()` reading `ssp` instead of `stored`) is unreachable. Piece 2, which
+  may accept incoming links, must scope it to `m_bd` the same way.
 - A build with no target name (`nullptr`) treats every bond as a candidate.
 - A2dpSource stays BLOCKING. Making it a state machine is piece 2's job.
 
