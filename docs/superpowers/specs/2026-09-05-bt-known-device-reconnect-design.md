@@ -501,6 +501,24 @@ capture:
 reaches `paired_by=stored` with the panel live throughout (`idleUi`), and its
 `.text.itcm` figure is recorded before and after BondTable joins the
 flash-routing list. Appended to `transcript_hw_evkb_bt.txt`.
+★ **Task 12 finding (2026-09-06): the bench build only linked after a FOURTH
+edit.** Its routing rule for the example's static initialiser
+(`.text._GLOBAL__sub*`) had never matched GCC's real section name
+(`.text.startup._GLOBAL__sub_I_transport`, 1236 B), so that run-once code had
+sat in ITCM contrary to the rule's intent; it is now routed to flash. The
+numbers, re-derived in review: ITCM headroom at HEAD before the change was
+320 B (sibling libraries moved since 2026-09-04 — the "~1 KB left" premise was
+stale), the store pulls the core's `eeprom.c` into the link for the first time
+(824 B, ITCM by necessity: it programs the NOR the image XIPs from, IRQs
+masked), the wiring itself adds ~130 B, and the result is 1060 B of headroom
+(`.text.itcm` 261824 → 261072). Not quite behaviour-neutral: the initialiser
+now runs once from cold flash before `setup()`, and its `AudioOutputI2S`
+constructor arms the SAI DMA ISR before the graph's `AudioConnection`s finish
+— a window widened by tens of µs against a 2.9 ms block. No gate builds
+`M2_BT_OUT`, so the witness run is the only check of that placement: boot
+must be unchanged. And a FIRST-PAIRING run writes ~234 IRQ-masked byte
+programs while the local SAI/vsync path is live, so `ACIDBOX_VSYNC timeouts=0`
+is expected of the stored-key run, not necessarily of the pairing run.
 
 **Close-out:** M2Radio pushed and the `evkb.cmake` pin bumped;
 `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the new gate against the fetched
