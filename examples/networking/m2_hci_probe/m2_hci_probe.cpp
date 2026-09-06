@@ -57,6 +57,7 @@
 #endif
 #if defined(M2_BT_RECONNECT)
 #include <A2dpSource.h>
+#include <BtSession.h>
 #include <BondTable.h>
 #include <BondStoreEeprom.h>
 #include <avr/eeprom.h>            // eeprom_initialize(): the cold-reload instrument
@@ -770,8 +771,79 @@ static const uint8_t RC_DECOY_BD[6] = { 0x99, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA };   
 #error "M2_BT_RECONNECT needs M2_BT_TARGET_NAME: the decoy discrimination is the name filter"
 #endif
 #define RC_TARGET M2_BT_TARGET_NAME
+// NEW-34 piece 2: the four phases drive a BtSession walk to a verdict + a session disconnect.  The
+// blocking A2dpSource::connect()/src.link().disconnect(now,idle) forms piece 1 used are gone; the
+// session owns the bonded-candidate walk (bonds MRU-first through the name filter, then inquiry) --
+// exactly the walk the old connect() ran, so the peer's tally is byte-identical.
+static BtSession rcSession(src);
+
+// BtSession owns the bonded-candidate walk now and does NOT log it; reproduce the per-candidate log the
+// old A2dpSource::connect emitted (bond_try / bond_page=none) so the gate's accounting -- "the bonded
+// device was paged FIRST with PAGE_ATTEMPTS, the decoy filtered out" -- survives the move into the
+// session.  This MIRRORS BtSession::advanceBootWalk's selection exactly (bonds MRU-first; name filter,
+// with an empty stored name a wildcard; the first match gets PAGE_ATTEMPTS) and reads the SAME table the
+// session pages from an instant later, so the logged intent is what is actually paged; the peer's own
+// PEER-DECOY-PAGED tripwire and create_conns tally corroborate it from the far side of the socket.
+static void rcLogWalk() {
+    if (!bonds.count()) return;                                // no bonds (phase 1) -> inquiry fallback, nothing to log
+    for (uint8_t i = 0; i < bonds.count(); i++) {
+        Bond b = bonds.at(i);
+        if (b.name[0] && !strstr(b.name, RC_TARGET)) continue; // filtered out (the decoy); an empty stored name is a wildcard
+        char bs[18]; hciFormatBd(b.bd, bs);
+        CONSOLE.print("bond_try: bd="); CONSOLE.print(bs);
+        CONSOLE.print(" name=\""); CONSOLE.print(b.name);
+        CONSOLE.print("\" attempts="); CONSOLE.println((unsigned)BtLink::PAGE_ATTEMPTS);
+        return;                                                // the session pages this candidate first (and, in the probe, links)
+    }
+    CONSOLE.println("bond_page=none -> inquiry");              // every bond filtered out -> inquiry (never in a passing run)
+}
+
+// Run ONE full boot walk to a verdict, then report it: page bonded candidates MRU-first (name-filtered,
+// the decoy skipped) then fall back to inquiry, exactly as the old A2dpSource::connect did.  Returns OK
+// on STREAMING, else the attempt's last failure Result.  The session's RETRY policy stays inert here --
+// the probe wants deterministic single connects, so we stop at the first WAITING (a failed walk) rather
+// than loop, and we keep the session's PAGE-SCAN side channel off: the old blocking path never enabled
+// it, and letting BtSession do so would add Write_Scan_Enable traffic the reconnect transcript never
+// carried (harmless to the peer tally, but a needless deviation).  nowMs()/idleMs() are the file's clock
+// and idle-pump helpers -- using them (not millis()) keeps nowMs referenced under M2_BT_RECONNECT, where
+// probeConnect()'s only other uses of it are compiled out.
+static A2dpSource::Result rcRunWalk() {
+    // Clear any LINK_LOST left by the previous phase's deliberate rcDisconnect(): A2dpSource::begin()
+    // (via BtSession::begin) resets the attempt state but NOT BtLink's link state, and a DISCONNECTING
+    // teardown never acks the LOST that disconnection_complete raises (the tick's abort-on-lost path is
+    // skipped while m_st == DISCONNECTING).  Without this, the fresh attempt's first tick sees
+    // m_link.lost() and ends the phase LOST before it ever pages -- a no-op on phase 1 (no prior link).
+    src.link().ackLost();
+    rcLogWalk();                                               // reproduce the walk's per-candidate log (see rcLogWalk)
+    rcSession.begin(&bonds, RC_TARGET, s_aclNum, nowMs());     // re-arms the boot walk cleanly each phase
+    uint32_t t0 = nowMs();
+    while (nowMs() - t0 < 25000) {
+        rcSession.tick(nowMs());
+        src.link().wantPageScan(false);                       // keep the page-scan side channel inert (see above)
+        src.service(); idleMs();
+        if (rcSession.state() == BtSession::STREAMING) return A2dpSource::OK;
+        if (rcSession.state() == BtSession::WAITING)   break; // the walk tried everything and nothing answered
+    }
+    return src.result();
+}
+// Tear the link down through the session (DISCONNECTING -> MANUAL), waiting for the session to reach
+// MANUAL rather than for the handle to clear.  BtLink's disconnection_complete handler zeroes m_handle
+// the instant the event arrives -- one tick BEFORE tickDisconnect prints `disconnect=ok` and finishes --
+// so a `handle != 0` loop (the plan sketch's) exits early and drops that line and leaves the attempt
+// machine mid-teardown.  Waiting for MANUAL keeps the disconnect=ok/disconnection_complete evidence and
+// guarantees the attempt is fully idle before the next phase re-begins.  The wire behaviour (HCI_Disconnect
+// 0x0C13) is identical to the old src.link().disconnect(): A2dpSource::stop() drives the same BtLink engine.
+static void rcDisconnect() {
+    rcSession.disconnect();
+    uint32_t t0 = nowMs();
+    while (nowMs() - t0 < 5000 && rcSession.state() != BtSession::MANUAL) {
+        rcSession.tick(nowMs());
+        src.link().wantPageScan(false);
+        src.service(); idleMs();
+    }
+}
 static A2dpSource::Result rcConnect(int phase) {
-    A2dpSource::Result r = src.connect(RC_TARGET, s_aclNum, nowMs, idleMs);
+    A2dpSource::Result r = rcRunWalk();
     CONSOLE.print("reconnect_phase="); CONSOLE.print(phase);
     CONSOLE.print(" result="); CONSOLE.print(A2dpSource::resultName(r));
     CONSOLE.print(" paired_by="); CONSOLE.println(src.link().pairedBy());
@@ -803,9 +875,9 @@ static void probeReconnect() {
     if (r != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=1"); return; }
     uint8_t key1[16];
     { const Bond *b = bonds.find(RC_FAKE_BD);
-      if (!b) { src.link().disconnect(nowMs, idleMs); CONSOLE.println("reconnect=fail phase=1 no_bond"); return; }
+      if (!b) { rcDisconnect(); CONSOLE.println("reconnect=fail phase=1 no_bond"); return; }
       memcpy(key1, b->key, 16); }
-    src.link().disconnect(nowMs, idleMs);
+    rcDisconnect();
     // Phase 2: cold reload (proves the round trip), plant a DECOY at the front, save, cold reload
     // again -- the load that matters must recover BOTH.  Then connect: the name filter must skip
     // the decoy and the stored key must authenticate with no inquiry and no pairing.
@@ -819,12 +891,12 @@ static void probeReconnect() {
     r = rcConnect(2);
     BondStoreEeprom::save(bonds);
     if (r != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=2"); return; }
-    src.link().disconnect(nowMs, idleMs);
+    rcDisconnect();
     // Phase 3: the peer rejects the stored key on this link -> erase, fresh pairing, a different key.
     r = rcConnect(3);
     BondStoreEeprom::save(bonds);
     if (r != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=3"); return; }
-    src.link().disconnect(nowMs, idleMs);
+    rcDisconnect();
     // Phase 4: cold reload once more, so key #2 has made the same EEPROM round trip key #1 did, then
     // connect: the peer verifies the offered key against the one IT notified, so this is the one
     // place key_changed=1 is corroborated by the other side of the socket.
@@ -833,7 +905,7 @@ static void probeReconnect() {
     CONSOLE.print(" front=\""); CONSOLE.print(bonds.count() ? bonds.at(0).name : ""); CONSOLE.println("\"");
     r = rcConnect(4); BondStoreEeprom::save(bonds);
     if (r != A2dpSource::OK) { CONSOLE.println("reconnect=fail phase=4"); return; }
-    src.link().disconnect(nowMs, idleMs);
+    rcDisconnect();
     const Bond *b3 = bonds.find(RC_FAKE_BD);
     CONSOLE.print("bonds_final="); CONSOLE.print(bonds.count());
     CONSOLE.print(" front=\""); CONSOLE.print(bonds.count() ? bonds.at(0).name : ""); CONSOLE.print("\"");
