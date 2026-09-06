@@ -36,6 +36,8 @@
 #include <HciPump.h>
 #include <BtFwLoader.h>
 #include <A2dpSource.h>
+#include <BondTable.h>
+#include <BondStoreEeprom.h>
 #include "AudioOutputBluetooth.h"
 #endif
 #include <Wire.h>                 // Wire2 = LPI2C5: codec AND touch controller
@@ -339,6 +341,7 @@ AudioConnection     cR(acid, 0, out, 1);
 // via AudioOutputI2S `out`'s DMA completion, so btout.poll() only drains.
 static A2dpSource        src(hci, hciIo);
 static AudioOutputBluetooth btout;
+static BondTable bonds;   // NEW-34: bonded devices, persisted in the EEPROM emulation (BondStoreEeprom, offset 4000)
 static AudioConnection   cBtL(acid, 0, btout, 0);
 static AudioConnection   cBtR(acid, 0, btout, 1);   // mono acid duplicated to L+R
 static uint32_t nowMs() { return millis(); }
@@ -1284,6 +1287,16 @@ void setup()
     hci.onEvent(onEvt, nullptr);
     hci.onAcl(onAclThunk, nullptr);
     src.setLog(btLog, nullptr); src.setPin("1234");
+    // NEW-34: the bond store.  load() once, after Hci::begin(); save() after EVERY connect() return
+    // (in loop(), before btout.begin(): outside streaming).  M2_BT_FORGET_BONDS wipes it instead --
+    // the control arm that proves a headset out of pairing mode refuses us WITHOUT a bond.
+#if defined(M2_BT_FORGET_BONDS)
+    CONSOLE.print("bonds_forgotten="); CONSOLE.println(BondStoreEeprom::wipe(bonds) ? 1 : 0);
+#else
+    BondStoreEeprom::load(bonds);
+#endif
+    src.setBonds(&bonds);
+    CONSOLE.print("bonds_boot="); CONSOLE.println(bonds.count());
 #if defined(M2_BT_LEGACY_PIN)
     src.setLegacyPin(true);
 #endif
@@ -1313,6 +1326,9 @@ void loop()
             A2dpSource::Result rr = src.connect(nullptr, s_aclNum, nowMs, idleUi);
 #endif
             CONSOLE.print("a2dp_try="); CONSOLE.println(A2dpSource::resultName(rr));
+            BondStoreEeprom::save(bonds);                                  // outside streaming: begin() has not run yet
+            CONSOLE.print("bonds="); CONSOLE.print(bonds.count());
+            CONSOLE.print(" paired_by="); CONSOLE.println(src.link().pairedBy());
             if (rr == A2dpSource::OK) {
                 btout.setSelfClock(false);     // the I2S SAI ISR clocks the graph; poll() only drains
                 btout.begin(src);
