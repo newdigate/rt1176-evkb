@@ -316,6 +316,45 @@ else
         rm -f "$EVKB/$avdtp_rel"/build-avdtp/avdtp.uart "$EVKB/$avdtp_rel"/build-avdtp/avdtp.peer \
               "$EVKB/$avdtp_rel"/build-avdtp/avdtp.dbg
     fi
+
+    # [reconnect] (NEW-34 piece 1).  Three negatives, each failing BY NAME: the card-absent
+    # capture (the probe never ran), the committed fixture with its bonds_reload= line stripped
+    # (the store's round trip was not proven), and the fixture with a second inquiry appended
+    # (a bonded page was replaced by an inquiry).  NO green replay: like [hci]/[baud]/[avdtp]
+    # this gate is peer-driven, and under the fake qemu the peer cannot connect, so even a
+    # green capture fails at the peer tally -- by design, not a gap.  Each case costs the
+    # peer's 20 s connect timeout: ~60 s for the three, not a hang.
+    recon_rel="$hci_rel"
+    recon_elf="$EVKB/$recon_rel/build-reconnect/m2_hci_probe.elf"
+    recon_fixture="$EVKB/$recon_rel/transcript_qemu_reconnect.txt"
+    if [ ! -x "$recon_elf" ] || [ ! -f "$recon_fixture" ]; then
+        echo "SKIP: reconnect vacuity cases (need build-reconnect/m2_hci_probe.elf and transcript_qemu_reconnect.txt -- build the gate first)"
+    else
+        export GATE_VACUITY=1
+        run_gate "$recon_rel" "run_qemu_reconnect.sh" "$hci_absent"; rc=$?
+        result=0
+        [ "$rc" -ne 0 ] || result=1                                                          # must not pass
+        echo "$OUT_TEXT" | grep -q "\[reconnect\] no bonds_boot line" || result=1            # and name it
+        report "absent_capture_fails_reconnect_gate" $result
+
+        grep -v "^bonds_reload=" "$recon_fixture" > "$WORK/recon_noreload.txt"
+        run_gate "$recon_rel" "run_qemu_reconnect.sh" "$WORK/recon_noreload.txt"; rc=$?
+        result=0
+        [ "$rc" -ne 0 ] || result=1
+        echo "$OUT_TEXT" | grep -q "\[reconnect\] bond did not survive the cold reload" || result=1
+        report "stripped_reload_fails_reconnect_gate" $result
+
+        { cat "$recon_fixture"; echo "inquiry=started"; } > "$WORK/recon_twoinq.txt"
+        run_gate "$recon_rel" "run_qemu_reconnect.sh" "$WORK/recon_twoinq.txt"; rc=$?
+        result=0
+        [ "$rc" -ne 0 ] || result=1
+        echo "$OUT_TEXT" | grep -q "\[reconnect\] expected exactly ONE inquiry" || result=1
+        report "double_inquiry_fails_reconnect_gate" $result
+        unset GATE_VACUITY
+
+        rm -f "$EVKB/$recon_rel"/build-reconnect/reconnect.uart "$EVKB/$recon_rel"/build-reconnect/reconnect.peer \
+              "$EVKB/$recon_rel"/build-reconnect/reconnect.dbg
+    fi
 fi
 
 # --- 7. rotary_knob_bench: green fixture passes; tamper and bad-golden fail --
