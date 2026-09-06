@@ -41,6 +41,13 @@
 //                       tools/esp32-a2dp-sink
 // Opening the serial port toggles DTR, which RESETS the board -- so a reader
 // always sees a fresh boot banner.  115200 8N1.
+//   ★ For the `forget` command that is a TRAP: open the port with dtr=False, rts=False
+//     (pyserial: `serial.Serial(port, 115200, dsrdtr=False, rtscts=False)` then set
+//     `.dtr = False; .rts = False` BEFORE the first read), or the reader resets the module,
+//     the link drops and the typed command is lost.  A fresh boot banner right after you
+//     connect means you reset it.  Then type `forget` + Enter; expect the sink to DROP the
+//     live link first (gap_acl_disconn ... conn=0) -- the key removal completes behind
+//     that disconnect -- and only then power-cycle the EVKB for the rejection run.
 //
 // MIT.
 
@@ -265,11 +272,13 @@ void setup() {
 // a reader that asserts them resets the module into its bootloader).
 static void forgetBonds() {
     int n = esp_bt_gap_get_bond_device_num();
-    if (n <= 0) { Serial.println("bonds_cleared=0"); return; }
+    if (n < 0)  { Serial.println("bonds_cleared=num_fail"); return; }   // ESP_FAIL from the stack, not an empty store
+    if (n == 0) { Serial.println("bonds_cleared=0 remaining=0"); return; }
     esp_bd_addr_t *list = (esp_bd_addr_t *)malloc(sizeof(esp_bd_addr_t) * n);
     if (!list) { Serial.println("bonds_cleared=alloc_fail"); return; }
     int got = n;
     if (esp_bt_gap_get_bond_device_list(&got, list) != ESP_OK) { free(list); Serial.println("bonds_cleared=list_fail"); return; }
+    if (got > n) got = n;   // the API honours the input capacity; keep the walk inside the allocation regardless
     int cleared = 0;
     for (int i = 0; i < got; i++) {
         char bda[18]; fmtBda(list[i], bda);
@@ -278,7 +287,8 @@ static void forgetBonds() {
         if (e == ESP_OK) cleared++;
     }
     free(list);
-    Serial.printf("bonds_cleared=%d\n", cleared);
+    int remaining = esp_bt_gap_get_bond_device_num();       // read back: the removals are DEFERRED behind the BT task (and behind an ACL teardown when the peer is linked)
+    Serial.printf("bonds_cleared=%d remaining=%d\n", cleared, remaining < 0 ? -1 : remaining);
 }
 
 void loop() {
