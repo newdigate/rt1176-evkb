@@ -256,12 +256,47 @@ void setup() {
     const uint8_t *a = esp_bt_dev_get_address();
     char me[18]; fmtBda(a, me);
     Serial.printf("bt=up name=\"%s\" bd_addr=%s cod=AV/headphones iocap=DisplayYesNo(auto-confirm) legacy_pin=1234 discoverable=yes\n", kName, me);
-    Serial.println("ready: pair from a phone/Mac first to calibrate, then point m2_hci_probe at it (M2_BT_TARGET_NAME=EVKB-SINK)");
+    Serial.println("ready: pair from a phone/Mac first to calibrate, then point m2_hci_probe at it (M2_BT_TARGET_NAME=EVKB-SINK) -- type 'forget' to drop every bond (rejection-path check)");
+}
+
+// Serial console (NEW-34): `forget` drops every bond the sink holds, so the EVKB's next
+// stored-key connect is REJECTED (Authentication_Complete 0x06) -- the un-fakeable
+// rejection-path instrument.  Open the port with dtr=False/rts=False (see the bench notes:
+// a reader that asserts them resets the module into its bootloader).
+static void forgetBonds() {
+    int n = esp_bt_gap_get_bond_device_num();
+    if (n <= 0) { Serial.println("bonds_cleared=0"); return; }
+    esp_bd_addr_t *list = (esp_bd_addr_t *)malloc(sizeof(esp_bd_addr_t) * n);
+    if (!list) { Serial.println("bonds_cleared=alloc_fail"); return; }
+    int got = n;
+    if (esp_bt_gap_get_bond_device_list(&got, list) != ESP_OK) { free(list); Serial.println("bonds_cleared=list_fail"); return; }
+    int cleared = 0;
+    for (int i = 0; i < got; i++) {
+        char bda[18]; fmtBda(list[i], bda);
+        esp_err_t e = esp_bt_gap_remove_bond_device(list[i]);
+        Serial.printf("forget peer=%s %s\n", bda, e == ESP_OK ? "ok" : esp_err_to_name(e));
+        if (e == ESP_OK) cleared++;
+    }
+    free(list);
+    Serial.printf("bonds_cleared=%d\n", cleared);
 }
 
 void loop() {
     static uint32_t n = 0;
-    delay(5000);
+    static char cmd[16]; static uint8_t len = 0;
+    uint32_t until = millis() + 5000;
+    while ((int32_t)(until - millis()) > 0) {
+        while (Serial.available()) {
+            char c = (char)Serial.read();
+            if (c == '\n' || c == '\r') {
+                cmd[len] = 0;
+                if (len && strcmp(cmd, "forget") == 0) forgetBonds();
+                else if (len) Serial.printf("unknown command \"%s\" (try: forget)\n", cmd);
+                len = 0;
+            } else if (len < sizeof(cmd) - 1) cmd[len++] = c;
+        }
+        delay(10);
+    }
     uint32_t now = millis();
     uint32_t bytes = s_bytes;
     uint32_t rateBps = (now > s_lastRateMs) ? (uint32_t)((uint64_t)(bytes - s_lastRateBytes) * 1000 / (now - s_lastRateMs)) : 0;
