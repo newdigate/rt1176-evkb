@@ -155,9 +155,28 @@ option(M2_BT_SOAK "Resilience soak: force a drop every period and count the auto
 set(M2_BT_SOAK_PERIOD_MS "15000" CACHE STRING "Soak: ms of streaming between forced drops")
 set(M2_BT_SOAK_CYCLES "0" CACHE STRING "Soak: stop after this many forced drops (0 = unlimited)")
 set(M2_BT_SOAK_RECONNECT_BOUND_MS "30000" CACHE STRING "Soak: a cycle not re-streaming within this many ms is a failure")
+# Empty-value hardening: an explicit `-D...=""` (or a cache entry cleared by hand) must fall back to the
+# documented default rather than emitting a bare `-DM2_BT_SOAK_PERIOD_MS=` that fails to compile -- mirrors
+# the M2_BT_RETRY_MS/M2_BT_SUPERVISION_MS `if(NOT ... STREQUAL "")` idiom above, inverted for a non-empty default.
+if(M2_BT_SOAK_PERIOD_MS STREQUAL "")
+    set(M2_BT_SOAK_PERIOD_MS 15000)
+endif()
+if(M2_BT_SOAK_CYCLES STREQUAL "")
+    set(M2_BT_SOAK_CYCLES 0)
+endif()
+if(M2_BT_SOAK_RECONNECT_BOUND_MS STREQUAL "")
+    set(M2_BT_SOAK_RECONNECT_BOUND_MS 30000)
+endif()
+# retry_now=ON (default) fires BtSession's reconnect immediately after each forced drop, so a budgeted QEMU
+# gate measures the reconnect machinery rather than waiting out the field retry cadence.  The unattended
+# SILICON soak should build with this OFF, to exercise BtSession's own retry-timer policy instead.
+option(M2_BT_SOAK_RETRY_NOW "Soak: fire BtSession's reconnect immediately after each forced drop (OFF = the session's own retry timer, the field policy)" ON)
 if(M2_BT_SOAK)
     add_definitions(-DM2_BT_SOAK=1 -DM2_BT_SOAK_PERIOD_MS=${M2_BT_SOAK_PERIOD_MS}
                     -DM2_BT_SOAK_CYCLES=${M2_BT_SOAK_CYCLES} -DM2_BT_SOAK_RECONNECT_BOUND_MS=${M2_BT_SOAK_RECONNECT_BOUND_MS})
+    if(M2_BT_SOAK_RETRY_NOW)
+        add_definitions(-DM2_BT_SOAK_RETRY_NOW=1)
+    endif()
 endif()
 
 # Bench diagnostic: dump every in/out ACL packet on the link as hex over the VCOM
