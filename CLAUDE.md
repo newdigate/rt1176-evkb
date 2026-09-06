@@ -106,11 +106,12 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **130 gates** — NEW-34 piece 2's
-ONE new gate, `audio/bt_tone_test[lifecycle]` (the non-blocking BT link lifecycle:
-a stream is dropped, re-paged in BOTH directions, the peer's bitpool-35 config
-adopted, an unknown-address page rejected 0x0F — three legs on one socket), then
-NEW-34 piece 1's
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **131 gates** — the concurrent
+infrastructure merge (`912c8d1`) added `gpio-analog/blink`, and NEW-34 piece 2's
+ONE new gate is `audio/bt_tone_test[lifecycle]` (the non-blocking BT link
+lifecycle: a stream is dropped, re-paged in BOTH directions, the peer's
+bitpool-35 config adopted, an unknown-address page rejected 0x0F — three legs on
+one socket), then NEW-34 piece 1's
 `networking/m2_hci_probe[reconnect]` (a bonded device paged with NO
 inquiry and authenticated with a STORED key after an EEPROM cold reload past a
 decoy bond, a rejected bond erased and re-paired with a new key that the peer
@@ -134,7 +135,7 @@ its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
 `networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
 more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
 That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
-130.
+131.
 
 NEW-20 added ONE — `display/rotary_knob_bench`, the RotaryKnob render-strategy
 bench: 12 cells ({vector,bitmap,strip} × {sw,gpu} × {notch,facet}) in ONE ELF,
@@ -579,8 +580,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **130 passed, 0 failed, 0 SKIP**, or
-**129 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
+`usb/usb_descriptor_survey`). The target is **131 passed, 0 failed, 0 SKIP**, or
+**130 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
 (`cm4_audio_test`) is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
@@ -609,13 +610,21 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
-✅ **Measured 2026-09-06: 130 gates discovered, 130 passed, 0 failed, 0 SKIP**
-(`gates: 130 passed`, exit 0; `-l` reports 130), on the **NEW-34 piece 2 BT
-link-lifecycle** close-out — fully clean on the first single-run sweep, no red to
-disposition, every member of the load-sensitivity class green in the sweep itself
-(`bt_tone_test[media]` 50 s, `[lifecycle]` 23 s, `m2_hci_probe[hci]` 68 s,
-`[avdtp]` 15 s, `[reconnect]` 19 s, `m2_rx_demo[txaggr]` 24 s, `cm4_audio_test`
-3 s). `LICENSE-AUDIT: PASS` (after the sweep, never during); vacuity **38/38**
+✅ **Measured 2026-09-06: 131 gates discovered, 131 passed, 0 failed, 0 SKIP**
+(`gates: 131 passed`, exit 0; `-l` reports 131), on the **NEW-34 piece 2 BT
+link-lifecycle** close-out — fully clean, no red to disposition, every member of
+the load-sensitivity class green in the sweep itself (`bt_tone_test[media]` 50 s,
+`[lifecycle]` 23–25 s, `m2_hci_probe[hci]` 68 s, `[avdtp]` 15 s, `[reconnect]`
+19 s, `m2_rx_demo[txaggr]` 24 s, `cm4_audio_test` 3 s). **Two counts, both
+measured:** the piece-2 work first swept 130/130 on its own; the branch was then
+rebased onto a CONCURRENT infrastructure commit (`912c8d1` — root CMake targets,
+opt-in on-demand gate builds via `run-all-qemu-gates.sh -b`, compiler-path
+fallbacks in the toolchains, and a NEW `gpio-analog/blink` gate) that another
+session pushed to master mid-work, and the sweep was RE-RUN on the merged tree:
+131/131. No file overlapped between the two (their changes are infra + the blink
+gate; piece 2 is the bt examples + docs + the pin), so the rebase was clean; the
+re-sweep is what proves the merged `qrun`/`gate-lib`/runner still run every gate
+green. `LICENSE-AUDIT: PASS` (after the sweep, never during); vacuity **38/38**
 (three `[lifecycle]` negatives added). M2Radio pin bumped to `82e9172` (10
 commits), fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING
 `bt_tone_test[lifecycle]` against the GitHub-fetched ELF (`git clone … @ 82e9172`

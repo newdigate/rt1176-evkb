@@ -1,6 +1,6 @@
 # M2Radio BT: link lifecycle -- drop, teardown, auto-reconnect, resume (NEW-34 piece 2)
 
-**Status:** IMPLEMENTED and QEMU-gated 2026-09-06 (sweep 130/130, 0 SKIP; the ONE
+**Status:** IMPLEMENTED and QEMU-gated 2026-09-06 (sweep 131/131, 0 SKIP (re-verified on the merged tree after a concurrent infra commit added a blink gate); the ONE
 new gate is `audio/bt_tone_test[lifecycle]`; M2Radio `82e9172` pushed + pinned,
 fresh-user verified). The silicon bench matrix (§10, plan Task 15) is PENDING the
 bench. Three library bugs were caught during implementation (the [lifecycle] gate
