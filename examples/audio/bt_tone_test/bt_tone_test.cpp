@@ -261,6 +261,7 @@ static void btLog(void *, const char *s) { CONSOLE.println(s); }
 static void onStreamCb(void *, bool streaming, uint8_t reason, BtSession::By by) {
     if (streaming) {
         btout.begin(src);
+        src.l2().resetCreditStats();   // NEW-34 piece 4: zero the credit-leak counters at each STREAMING entry
         const char *bs = by == BtSession::BY_PAGED ? "paged" : by == BtSession::BY_INQUIRY ? "inquiry" : by == BtSession::BY_INCOMING ? "incoming" : "none";
         CONSOLE.print("streaming by="); CONSOLE.print(bs);
         CONSOLE.print(" bitpool="); CONSOLE.print(src.sbcParams().bitpool);
@@ -422,6 +423,7 @@ void loop() {
     yield();
     session.tick(millis());
     src.service();
+    src.l2().tickClock(millis());     // NEW-34 piece 4: ms reference for the credit-starve fingerprint
     btout.poll();
     static uint32_t last = 0;
     if (millis() - last >= 1000) {
@@ -445,6 +447,13 @@ void loop() {
         CONSOLE.print(" starved="); CONSOLE.print(hci.starved());
         CONSOLE.print(" l2drop="); CONSOLE.print(src.l2().dropped());
         CONSOLE.print(" credmin="); CONSOLE.println(src.l2().creditsMin());
+        // NEW-34 piece 4: the credit-leak soak record.  outstanding == sent-returned (<= maxCredits when healthy);
+        // a lost NCP shows as starve_max_ms growing run-over-run with credmin pinned at 0.
+        CONSOLE.print("bt_cred sent="); CONSOLE.print(src.l2().pktsSent());
+        CONSOLE.print(" returned="); CONSOLE.print(src.l2().creditsReturned());
+        CONSOLE.print(" starves="); CONSOLE.print(src.l2().starves());
+        CONSOLE.print(" starve_max_ms="); CONSOLE.print(src.l2().starveMaxMs());
+        CONSOLE.print(" clamp="); CONSOLE.println(src.l2().clampHits());
         CONSOLE.print("bt_mem idle_blocks="); CONSOLE.print(btout.idleBlocks());
         CONSOLE.print(" paused_blocks="); CONSOLE.println(btout.pausedBlocks());
     }
