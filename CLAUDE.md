@@ -610,6 +610,36 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-09-06: 131 gates discovered, 130 passed / 1 failed, 0 SKIP in
+the sweep, effectively 131/131 idle**, on the **NEW-34 piece 4 credit-leak
+instrument** close-out. **No new gate** (investigation-first; the instrument is
+additive). The one sweep red is `m2_rx_demo[txaggr]` ("7 of 6 frames") -- the
+DOCUMENTED load-sensitivity class, re-run idle immediately and GREEN (`rx=6 ...
+1 batch / 6 slots`); it does not link `bt/`, so piece 4 cannot have regressed it.
+M2Radio pinned to `0c31ad5`, fresh-user `-DEVKB_FORCE_FETCH=ON` verified by
+RUNNING `bt_tone_test[media]` against the GitHub-fetched ELF; every bt-linking
+gate ELF rebuilt fresh against the new pin. `LICENSE-AUDIT: PASS`. Host suites
+include the extended `l2cap_test` credit-leak arms (normal flow, the withheld-NCP
+fingerprint, over-return clamp -- each RED-pinned by a mutant).
+★ **Piece 4 is investigation-first and mostly a bench claim.** The motivating
+"~14% drops over minutes" was resolved by the piece-2 batching fix (drops=0 over
+6+ min); piece 4 adds the HOST-SIDE credit-leak instrument -- `L2cap`
+`pktsSent`/`creditsReturned`/`starves`/`starveMaxMs`/`clampHits` beside
+`creditsMin`, logged as a `bt_cred` heartbeat line -- so a 30-min soak can
+confirm/deny a residual lost-NCP leak. The leak fingerprint: `credmin` pinned at
+0 with `starveMaxMs` growing run-over-run (a lost NCP never recovers; RF
+backpressure recovers in ms). QEMU has no baud/RF pacing, so the soak is
+SILICON-only; the instrument's CORRECTNESS is proven by `l2cap_test`'s
+withheld-NCP arm -- the negative that makes a clean soak trustworthy. The soak
+and the flush-timeout (0x0C28) / ESP32-reconciliation escalation are a bench
+session (plan Task 5), built only if the soak shows a leak.
+★ **acid_box ITCM trap, again.** The six new `bt_cred` prints overflowed the
+`M2_BT_OUT` bench's ITCM by 28 B inline (`loop()` is ITCM-resident and that build
+sits at the limit -- piece-2's `bt_link`/`bt_mem` prints had consumed the slack).
+Fixed by routing the whole per-second BT report to a FLASH-resident
+`acidBtReport()` (`.progmem`, the pattern the loopstat helpers already use); the
+default (BT-OFF) image is untouched (all `M2_BT_OUT`-guarded).
+
 ✅ **Measured 2026-09-06: 131 gates discovered, 131 passed, 0 failed, 0 SKIP**
 (`gates: 131 passed`, exit 0; `-l` reports 131), on the **NEW-34 piece 2 BT
 link-lifecycle** close-out — fully clean, no red to disposition, every member of

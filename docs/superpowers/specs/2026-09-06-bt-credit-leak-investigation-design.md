@@ -1,6 +1,6 @@
 # M2Radio BT: A2DP credit-leak soak investigation (NEW-34 piece 4)
 
-**Status:** design APPROVED 2026-09-06 (brainstorm in session); plan follows.
+**Status:** IMPLEMENTED and QEMU-swept 2026-09-06 (instrument only, NO new gate; sweep effectively 131/131, LICENSE-AUDIT PASS, M2Radio 0c31ad5 pushed+pinned, fresh-user verified). The 30-min SILICON SOAK (both RF arms) + the flush-timeout/ESP32 escalation are PENDING the bench (plan Task 5).
 **Issue:** NEW-34 "M2Radio BT: reconnect known devices + soak-test connection
 resilience (range loss/recovery)", piece 4 of 5.
 **Depends on:** piece 2 (the non-blocking link layer + `L2cap::creditsMin()`,
