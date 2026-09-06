@@ -90,7 +90,7 @@ Add these four scenarios to `bt/test/l2cap_test.cpp`, immediately before the fin
         std::vector<uint8_t> req = l2(0x0001, {0x02, 0x20, 4, 0, 0x17, 0x00, 0x55, 0x00});
         l.onAcl(0x0001, req.data(), (uint16_t)req.size()); l.service();
         bool sawRefuse = false;
-        for (auto &t : io.tx) if (t.size() >= 9 + 16 && t[9] == 0x03) {              // CONN_RSP
+        for (auto &t : io.tx) if (t.size() >= 9 + 12 && t[9] == 0x03) {              // CONN_RSP (12-byte L2CAP payload; cf. line ~92)
             CHECK(t[9 + 4] == 0x00 && t[9 + 5] == 0x00);                             // DCID 0 (no channel)
             CHECK(t[9 + 8] == 0x02 && t[9 + 9] == 0x00);                             // result 0x0002 PSM not supported
             sawRefuse = true;
@@ -101,7 +101,7 @@ Add these four scenarios to `bt/test/l2cap_test.cpp`, immediately before the fin
         std::vector<uint8_t> ok = l2(0x0001, {0x02, 0x21, 4, 0, 0x19, 0x00, 0x56, 0x00});
         l.onAcl(0x0001, ok.data(), (uint16_t)ok.size()); l.service();
         bool sawAccept = false;
-        for (auto &t : io.tx) if (t.size() >= 9 + 16 && t[9] == 0x03 && t[9 + 8] == 0x00 && t[9 + 9] == 0x00) sawAccept = true;
+        for (auto &t : io.tx) if (t.size() >= 9 + 12 && t[9] == 0x03 && t[9 + 8] == 0x00 && t[9 + 9] == 0x00) sawAccept = true;
         CHECK(sawAccept); CHECK(l.byPsm(0x0019) != nullptr);
     }
     {   // A2. With NO allow-list set (default), acceptIncoming(true) keeps today's behaviour: any PSM is
@@ -119,10 +119,10 @@ Add these four scenarios to `bt/test/l2cap_test.cpp`, immediately before the fin
         l.service();                                                                  // nothing queued survives reset()
         CHECK(io.tx.empty());
     }
-    {   // A4. nextInbound(): iterates peer-initiated OPEN channels of a PSM, in slot order, and creditsMin()
-        //     tracks the running minimum credit seen (piece 4's floor instrument).
-        CapIo io; L2cap l(io); l.begin(0x0001, 5); l.acceptIncoming(true); l.allowPsm(0x0019);
-        // two peer channels on 0x0019: scid 0x0060 then 0x0061; drive each to OPEN.
+    {   // A4a. nextInbound(): iterates peer-initiated OPEN channels of a PSM, in slot order.
+        //      Ample credits (20): accepting each inbound channel costs 3 signalling packets (CONN_RSP +
+        //      our CFG_REQ + our CFG_RSP), so two channels need 6 -- with only 5, the second never reaches OPEN.
+        CapIo io; L2cap l(io); l.begin(0x0001, 20); l.acceptIncoming(true); l.allowPsm(0x0019);
         for (uint8_t k = 0; k < 2; k++) {
             std::vector<uint8_t> rq = l2(0x0001, {0x02, (uint8_t)(0x30 + k), 4, 0, 0x19, 0x00, (uint8_t)(0x60 + k), 0x00});
             l.onAcl(0x0001, rq.data(), (uint16_t)rq.size()); l.service();
@@ -136,12 +136,17 @@ Add these four scenarios to `bt/test/l2cap_test.cpp`, immediately before the fin
         const L2cap::Channel *a = l.nextInbound(0x0019, nullptr); CHECK(a && a->remoteCid == 0x0060);
         const L2cap::Channel *b = l.nextInbound(0x0019, a);       CHECK(b && b->remoteCid == 0x0061);
         CHECK(l.nextInbound(0x0019, b) == nullptr);
-        // credit floor: start 5, send three ACL packets (credits 5->2), NCP returns 2 (->4); min stays 2.
+    }
+    {   // A4b. creditsMin(): the running minimum credit since resetCreditsMin(); an NCP refill does NOT raise
+        //      the floor.  Standalone (no channel setup to consume credits): send() queues on any cid, service()
+        //      transmits while credits>0.  Start 5, send 3 (->2), NCP(+2) (->4); the floor stays at 2.
+        CapIo io; L2cap l(io); l.begin(0x0001, 5);
         l.resetCreditsMin();
-        for (int i = 0; i < 3; i++) l.send(a->remoteCid, (const uint8_t[]){0,1,2,3}, 4);
+        for (int i = 0; i < 3; i++) { const uint8_t d[4] = {0, 1, 2, 3}; l.send(0x0040, d, 4); }
         l.service();
+        CHECK(l.credits() == 2 && l.creditsMin() == 2);
         uint8_t ncp[] = { 0x01, 0x01, 0x00, 0x02, 0x00 };  l.onEvent(0x13, ncp, sizeof ncp);
-        CHECK(l.creditsMin() == 2);
+        CHECK(l.credits() == 4 && l.creditsMin() == 2);
     }
 ```
 
@@ -248,7 +253,7 @@ cd ~/Development/M2Radio && D=/private/tmp/claude-501/*/*/scratchpad/l2mut && rm
 sed -i.bak 's/bool psmOk = (m_nAllow == 0);/bool psmOk = true;/' bt/L2cap.cpp
 c++ -std=c++11 -Wall -Wextra -Werror -Ibt -Ihci bt/test/l2cap_test.cpp bt/*.cpp hci/H4Parser.cpp hci/Hci.cpp hci/HciEvents.cpp -o /tmp/l2m && /tmp/l2m; echo "exit=$?"
 ```
-Expected: `FAIL ... A1` (or the refuse-arm CHECK) and `exit=1`. Restore (`mv bt/L2cap.cpp.bak bt/L2cap.cpp`) and repeat for: `nextInbound` returning `nullptr` always (A4 iterator fails); `m_creditsMin` never lowered (A4 floor fails). Then `rm -rf $D`.
+Expected: `FAIL ... A1` (or the refuse-arm CHECK) and `exit=1`. Restore (`mv bt/L2cap.cpp.bak bt/L2cap.cpp`) and repeat for: `nextInbound` returning `nullptr` always (A4a iterator fails); `m_creditsMin` never lowered (A4b floor fails). Then `rm -rf $D`.
 
 - [ ] **Step 7: Commit**
 
