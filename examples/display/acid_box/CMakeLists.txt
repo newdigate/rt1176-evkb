@@ -78,6 +78,19 @@ if(M2_BT_OUT)
     if(M2_BT_LEGACY_PIN)
         add_definitions(-DM2_BT_LEGACY_PIN=1)
     endif()
+    # NEW-34 piece 2: the reconnect retry cadence (ms between lost-peer page attempts).  Default in the
+    # library is 10 s.  Same knob as audio/bt_tone_test; Task 15's silicon bench matrix runs against
+    # "bt_tone_test (or acid_box -DM2_BT_OUT=ON)" so both examples must honour it.
+    set(M2_BT_RETRY_MS "" CACHE STRING "BtSession retry cadence in ms (empty = library default 10000)")
+    if(NOT M2_BT_RETRY_MS STREQUAL "")
+        add_definitions(-DM2_BT_RETRY_MS=${M2_BT_RETRY_MS})
+    endif()
+    # NEW-34 piece 2 bench knob: link supervision timeout in ms (0/empty = controller default ~20 s).
+    # Task 15's "Supervision knob" bench step (-DM2_BT_SUPERVISION_MS=5000) is run against this example too.
+    set(M2_BT_SUPERVISION_MS "" CACHE STRING "Write_Link_Supervision_Timeout in ms (empty = controller default)")
+    if(NOT M2_BT_SUPERVISION_MS STREQUAL "")
+        add_definitions(-DM2_BT_SUPERVISION_MS=${M2_BT_SUPERVISION_MS})
+    endif()
     # (No M2_BT_CONNECT_RETRY knob: acid_box's loop() ALWAYS defers + retries the
     # connect -- a bench build has no reason to want a one-shot setup() connect --
     # so the switch would be inert.  bt_tone_test keeps it because it gates that mode.)
@@ -180,6 +193,7 @@ if(M2_BT_OUT)
 		*libM2Radio*.a:HciPump.cpp.obj(.text* .fastrun)
 		*libM2Radio*.a:HciTransport.cpp.obj(.text* .fastrun)
 		*libM2Radio*.a:A2dpSource.cpp.obj(.text* .fastrun)
+		*libM2Radio*.a:BtSession.cpp.obj(.text* .fastrun)
 		*libM2Radio*.a:Avdtp.cpp.obj(.text* .fastrun)
 		*libM2Radio*.a:BtLink.cpp.obj(.text* .fastrun)
 		*libM2Radio*.a:BondTable.cpp.obj(.text* .fastrun)

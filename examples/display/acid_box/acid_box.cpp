@@ -36,6 +36,7 @@
 #include <HciPump.h>
 #include <BtFwLoader.h>
 #include <A2dpSource.h>
+#include <BtSession.h>
 #include <BondTable.h>
 #include <BondStoreEeprom.h>
 #include "AudioOutputBluetooth.h"
@@ -340,15 +341,31 @@ AudioConnection     cR(acid, 0, out, 1);
 // (setSelfClock(false) in setup()) -- the I2S SAI ISR already walks the graph
 // via AudioOutputI2S `out`'s DMA completion, so btout.poll() only drains.
 static A2dpSource        src(hci, hciIo);
+static BtSession         session(src);
 static AudioOutputBluetooth btout;
 static BondTable bonds;   // NEW-34: bonded devices, persisted in the EEPROM emulation (BondStoreEeprom, offset 4000)
 static AudioConnection   cBtL(acid, 0, btout, 0);
 static AudioConnection   cBtR(acid, 0, btout, 1);   // mono acid duplicated to L+R
-static uint32_t nowMs() { return millis(); }
 static void btLog(void *, const char *s) { CONSOLE.println(s); }
 static void onEvt(void *, uint8_t c, const uint8_t *p, uint8_t l) { src.onEvent(c, p, l); }
 static void onAclThunk(void *, uint16_t h, const uint8_t *d, uint16_t l) { src.onAcl(h, d, l); }
 static bool s_btBegun = false;
+// NEW-34 piece 2: BtSession callbacks -- session.tick() drives A2dpSource's attempt state machine
+// (boot walk + inquiry, lost-peer retry forever, page-scan-when-idle) and fires these at a link's
+// start/end.  acid_box is externally clocked (setSelfClock(false)): the I2S SAI ISR already walks the
+// graph via AudioOutputI2S `out`'s DMA completion, so btout.poll() only drains -- same shape as
+// bt_tone_test.cpp's onStreamCb/onAttemptCb (Task 8), the reference pattern for this wiring.
+static void onStreamCb(void *, bool streaming, uint8_t reason, BtSession::By by) {
+    if (streaming) { btout.setSelfClock(false); btout.begin(src); s_btBegun = true;
+        CONSOLE.print("bt_streaming by="); CONSOLE.print(by == BtSession::BY_INCOMING ? "incoming" : by == BtSession::BY_INQUIRY ? "inquiry" : "paged");
+        CONSOLE.print(" bitpool="); CONSOLE.print(src.sbcParams().bitpool);
+        CONSOLE.print(" media_mtu="); CONSOLE.println(src.mediaMtu());
+    } else { btout.end(); s_btBegun = false; CONSOLE.print("bt_dropped reason=0x"); CONSOLE.println(reason, HEX); }
+}
+static void onAttemptCb(void *, A2dpSource::Result r, const char *pairedBy) {
+    BondStoreEeprom::save(bonds);
+    CONSOLE.print("a2dp="); CONSOLE.print(A2dpSource::resultName(r)); CONSOLE.print(" paired_by="); CONSOLE.println(pairedBy);
+}
 // NEW-33 fix 1: the transport's TX ring must cover the IW416's 7-credit ACL
 // window (hci_buffer acl_num=7) so L2cap::service()'s write never spins on the
 // core's 64-byte Serial2 ring.  64 is the core's built-in ring (HardwareSerial2.cpp
@@ -571,6 +588,36 @@ LOOPSTAT_FN static void ls_summary(void)
 #define LS_LAP(slot) ((void)0)
 #define LS_KNOB(x)   (x)
 #endif /* ACIDBOX_LOOPSTAT */
+
+#if defined(M2_BT_OUT)
+/* bt_mem heap=/stack_free_min= -- NEW-34 piece 2 soak instrument (Task 15 R5 asserts heap flat / the
+ * floor stable over a 30 min soak).  heap is newlib's live allocation total via mallinfo(): the malloc
+ * arena (_heap_start/_heap_end, imxrt1176.ld) lives in OCRAM (.bss.dma), well clear of the DTCM stack,
+ * so this is safe to sample every second regardless of stack depth.  stack_free_min is a running floor
+ * of (sp - _ebss): the stack lives in DTCM above .bss, growing down from _estack with nothing else
+ * between .bss and the stack, so sp - &_ebss is exactly the untouched headroom below the current frame,
+ * and the floor is the closest any pass has come to exhausting it. Placed AFTER the loopstat block (not
+ * inside the BT globals above it) so LOOPSTAT_FN -- used below when ACIDBOX_LOOPSTAT is also on, per
+ * Task 15's "acid_box witness" bench build -- is already defined (or correctly absent) at this point;
+ * the preprocessor is single-pass, so using it any earlier would silently see an undefined token. */
+#include <malloc.h>
+extern "C" char *_sbrk(int);
+extern unsigned long _ebss;
+#if defined(ACIDBOX_LOOPSTAT)
+LOOPSTAT_FN
+#endif
+static uint32_t btMemHeapUsed() { struct mallinfo mi = mallinfo(); return (uint32_t)mi.uordblks; }
+#if defined(ACIDBOX_LOOPSTAT)
+LOOPSTAT_FN
+#endif
+static uint32_t btMemStackFreeMin() {
+    static uint32_t floor = 0xFFFFFFFF;
+    register uint32_t sp __asm__("sp");
+    uint32_t freeNow = sp - (uint32_t)&_ebss;      // stack grows down from DTCM top; _ebss is DTCM .bss end
+    if (freeNow < floor) floor = freeNow;
+    return floor;
+}
+#endif /* M2_BT_OUT */
 
 /* --- the preset: a classic 16-step acid line (A minor-ish), documented so
  * the first frame and the audio windows are deterministic.  note 0 = rest. */
@@ -1300,6 +1347,25 @@ void setup()
 #if defined(M2_BT_LEGACY_PIN)
     src.setLegacyPin(true);
 #endif
+#if defined(M2_BT_SUPERVISION_MS)
+    src.link().setSupervisionSlots((uint16_t)((uint32_t)M2_BT_SUPERVISION_MS * 1000u / 625u));  // ms -> 0.625 ms slots
+#endif
+    // NEW-34 piece 2: register the session callbacks and start the boot walk (bonded candidates,
+    // most-recent-first, then inquiry).  Guarded on s_hciSt like bt_tone_test's setup() (Task 8): with
+    // no card, session.begin() is never called, so session.tick()/src.service() in loop() stay vacuous
+    // (IDLE state, zeroed Stats) rather than paging into a dead transport forever.
+    session.onStream(onStreamCb, nullptr);
+    session.onAttempt(onAttemptCb, nullptr);
+#if defined(M2_BT_RETRY_MS)
+    session.setRetryMs(M2_BT_RETRY_MS);
+#endif
+    if (s_hciSt == Hci::OK) {
+#if defined(M2_BT_TARGET_NAME)
+        session.begin(&bonds, M2_BT_TARGET_NAME, s_aclNum, millis());
+#else
+        session.begin(&bonds, nullptr, s_aclNum, millis());
+#endif
+    }
 #endif
 }
 
@@ -1316,47 +1382,32 @@ void loop()
     LS_LAP(LS_SVC);
     if (s_btBegun) btout.poll();               // SBC encode of the buffered PCM + drain into L2cap's queue
     LS_LAP(LS_POLL);
-    {
-        static uint32_t lastTry = 0;
-        if (!s_btBegun && (lastTry == 0 || millis() - lastTry >= 5000)) {
-            lastTry = millis();
-#if defined(M2_BT_TARGET_NAME)
-            A2dpSource::Result rr = src.connect(M2_BT_TARGET_NAME, s_aclNum, nowMs, idleUi);
-#else
-            A2dpSource::Result rr = src.connect(nullptr, s_aclNum, nowMs, idleUi);
-#endif
-            CONSOLE.print("a2dp_try="); CONSOLE.println(A2dpSource::resultName(rr));
-            BondStoreEeprom::save(bonds);                                  // before btout.begin() (no BT media yet) -- but the LOCAL SAI/vsync path is live: a FIRST pairing writes ~234 IRQ-masked byte programs here and may glitch local audio / a vsync; a stored-key reconnect leaves the table clean and writes nothing
-            CONSOLE.print("bonds="); CONSOLE.print(bonds.count());
-            CONSOLE.print(" paired_by="); CONSOLE.println(src.link().pairedBy());
-            if (rr == A2dpSource::OK) {
-                btout.setSelfClock(false);     // the I2S SAI ISR clocks the graph; poll() only drains
-                btout.begin(src);
-                s_btBegun = true;
-                CONSOLE.print("bt_streaming frames_per_pkt="); CONSOLE.print(btout.framesPerPacket());
-                CONSOLE.print(" media_mtu="); CONSOLE.println(src.mediaMtu());
-                {
-                    const uint32_t ring = (uint32_t)Serial2.availableForWrite() + 1u;   // idle ring == total capacity
-                    const uint32_t need = (uint32_t)s_aclNum * (9u + L2cap::MAX_PAYLOAD);
-                    CONSOLE.printf("hci_txring=%lu need=%lu%s\n", (unsigned long)ring, (unsigned long)need,
-                                   need > ring ? " WARN" : "");
-                }
-            }
-        }
-    }
+    // NEW-34 piece 2: session.tick() replaces the old 5 s retry block -- it drives A2dpSource's attempt
+    // state machine (boot walk / lost-peer retry-forever / page-scan-when-idle / retry-cancel-on-
+    // incoming) and fires onStreamCb/onAttemptCb (above) at a link's start/end, including
+    // BondStoreEeprom::save() on every attempt end, same ordering guarantee as before (save happens
+    // before btout.begin(), which onStreamCb also does).
+    session.tick(millis());
     {
         static uint32_t last = 0;
-        if (s_btBegun && millis() - last >= 1000) {
+        if (millis() - last >= 1000) {
             last = millis();
+            const BtSession::Stats &st = session.stats();
             CONSOLE.print("bt_hb blocks="); CONSOLE.print(btout.blocks());
             CONSOLE.print(" packets="); CONSOLE.print(btout.packets());
             CONSOLE.print(" drops="); CONSOLE.print(btout.drops());
             CONSOLE.print(" pcmdrops="); CONSOLE.print(btout.pcmDrops());  // PCM-ring overflow = loop too slow to encode
-            CONSOLE.print(" hw="); CONSOLE.print(btout.queueHighWater());
-            CONSOLE.print(" audiomax="); CONSOLE.println(AudioMemoryUsageMax());
+            CONSOLE.print(" hw="); CONSOLE.println(btout.queueHighWater());
+            CONSOLE.print("bt_link links="); CONSOLE.print(st.links);
+            CONSOLE.print(" lost="); CONSOLE.print(st.lost);
+            CONSOLE.print(" reason=0x"); CONSOLE.print(st.lastReason, HEX);
+            CONSOLE.print(" reconnect_ms="); CONSOLE.print(st.reconnectMs);
+            CONSOLE.print(" scan="); CONSOLE.println(session.wantPageScan() ? 1 : 0);
+            CONSOLE.print("bt_mem heap="); CONSOLE.print(btMemHeapUsed());
+            CONSOLE.print(" stack_free_min="); CONSOLE.println(btMemStackFreeMin());
         }
     }
-    LS_LAP(LS_PRINT);                          // the connect attempt (once, ~30 s) and bt_hb land here
+    LS_LAP(LS_PRINT);                          // session.tick() (the attempt walk) and bt_hb land here
 #endif
 #if defined(ACIDBOX_LOOPSTAT)
     ls_summary();
