@@ -1257,6 +1257,14 @@ void BtSession::tick(uint32_t now) {
 
 `disconnect`: `m_src.stop(); m_state = DISCONNECTING;`. `resume`: `m_boot = true; startBootWalk();`. `retryNow`: `m_retryAt = 0;` (fires next tick if WAITING).
 
+> **Corrections applied during implementation (found by the Task 6 implementer, all verified):**
+> 1. **CONNECTING must detect STREAMING BEFORE the busy-guard.** A2dpSource stays `busy()` while STREAMING (its state is not IDLE/DONE), so `if (m_src.busy() || m_src.link().busy()) return;` never clears on a *successful* attempt and the session hangs in CONNECTING forever. Put `if (m_src.state() == A2dpSource::STREAMING) { handleAttemptEnd(now); break; }` ahead of the busy-guard.
+> 2. **Only `CONNECT_FAILED` advances the boot walk.** A page that comes UP then fails later (pairing/L2CAP/AVDTP) must NOT page the next candidate — that is the "stop at the first successful link" walk pin. So `handleAttemptEnd` advances the walk only when the link never came up (`CONNECT_FAILED`); any post-link failure → WAITING.
+> 3. **Compute `wantScan` at the END of `tick()`** (after the state machine), or it reads one tick stale and shows "on" on the tick that enters MANUAL (fails the "off in MANUAL" pin).
+> 4. **WAITING branches on `m_haveLost`:** `if (m_haveLost) startReconnect(now); else startBootWalk();` — otherwise a boot walk that merely exhausted (never connected) would page the all-zero `m_lostBd`.
+> 5. **`begin()` calls `m_src.setBonds(bonds)`** so the source and session share one table (inbound accept + reconnect lookups need it) and resets `m_stats`.
+> 6. Inbound-attempt start is gated on `!m_src.busy()` so `start()` cannot silently fail into a stranded CONNECTING.
+
 - [ ] **Step 6: Build + run + iterate** — `./bt/test/run.sh` → `btsession_test: N checks, 0 failures`, `BT-HOST-TESTS: PASS`, every suite green.
 
 - [ ] **Step 7: Mutation-check** (scratch): (a) reconnect pages every bond, not just the lost one → B2 fails (a page to the other bond appears); (b) first retry fires immediately (no full-cycle wait) → B2's cadence count is off by one; (c) `wantScan` true while linked → B3 fails; (d) incoming does not cancel the retry (remove the inboundUp branch) → B4 sees an extra Create_Connection.
