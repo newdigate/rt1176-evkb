@@ -23,8 +23,10 @@
 # example built, because the gates check for their ELF.
 #
 # Usage: sh tools/gate-vacuity.test.sh   (PASS:/FAIL: per case; exit 1 on any FAIL)
-# Runtime ~70s (was ~40s; the [baud] fixture added ~30s): the dead-QEMU cases necessarily burn each gate's full poll
-# ceiling, because "nothing ever arrives" is exactly what they are testing.
+# Runtime ~9 min (509s measured 2026-09-06; was ~70s): ~65s of that is the
+# three peer-driven [reconnect] negatives, each waiting out hci_peer.py's 20s
+# connect timeout, and the rest is the [hci]/[baud]/[avdtp]/[media]
+# peer-driven cases plus the ordinary replays.
 set -u
 EVKB=$(cd "$(dirname "$0")/.." && pwd)
 FAILED=0

@@ -1288,7 +1288,7 @@ void setup()
     hci.onAcl(onAclThunk, nullptr);
     src.setLog(btLog, nullptr); src.setPin("1234");
     // NEW-34: the bond store.  load() once, after Hci::begin(); save() after EVERY connect() return
-    // (in loop(), before btout.begin(): outside streaming).  M2_BT_FORGET_BONDS wipes it instead --
+    // (in loop(), before btout.begin(): no BT media yet; the local audio path IS live).  M2_BT_FORGET_BONDS wipes it instead --
     // the control arm that proves a headset out of pairing mode refuses us WITHOUT a bond.
 #if defined(M2_BT_FORGET_BONDS)
     CONSOLE.print("bonds_forgotten="); CONSOLE.println(BondStoreEeprom::wipe(bonds) ? 1 : 0);
@@ -1326,7 +1326,7 @@ void loop()
             A2dpSource::Result rr = src.connect(nullptr, s_aclNum, nowMs, idleUi);
 #endif
             CONSOLE.print("a2dp_try="); CONSOLE.println(A2dpSource::resultName(rr));
-            BondStoreEeprom::save(bonds);                                  // outside streaming: begin() has not run yet
+            BondStoreEeprom::save(bonds);                                  // before btout.begin() (no BT media yet) -- but the LOCAL SAI/vsync path is live: a FIRST pairing writes ~234 IRQ-masked byte programs here and may glitch local audio / a vsync; a stored-key reconnect leaves the table clean and writes nothing
             CONSOLE.print("bonds="); CONSOLE.print(bonds.count());
             CONSOLE.print(" paired_by="); CONSOLE.println(src.link().pairedBy());
             if (rr == A2dpSource::OK) {
