@@ -113,6 +113,7 @@ DEADLINE = {"reconnect": 50, "lifecycle": 55, "soak": 55}   # seconds from socke
                                    # (~17 s wall measured from socket connect) and must not share [media]'s budget; 50 keeps it BELOW tools/qrun's 60 s QRUN_TIMEOUT so the peer announces before QEMU is killed.
                                    # lifecycle runs three legs with a 3 s (M2_BT_RETRY_MS) gap before leg 3's re-page (~25 s wall measured); 55 keeps it below the same 60 s cap.
                                    # soak runs the reconnect flow N times over on a firmware-side timer (M2_BT_SOAK_PERIOD_MS); 55 is the gate's own qrun budget, not a real soak duration.
+                                   # 55 s fits N=10 (measured 43.5 s idle); N > ~12 will not fit under tools/qrun's 60 s cap -- do not raise N on the command line without raising both.
 
 def phase_done(phase, peer):
     # avdtp's real end is signalling over ACL (an accepted START), not a
@@ -134,7 +135,11 @@ def phase_done(phase, peer):
     # soak's real end: N+1 links have STREAMED media (first link + one per forced drop) and N host Disconnects were seen.
     if phase == "soak":
         sk = peer.sk
-        return sk["streamed"] >= sk["n"] + 1 and sk["disconnects"] >= sk["n"] and not peer.avdtp["error"] and peer.rc["errors"] == 0
+        # The LAST link (N+1) is never dropped, so its verdict is never accumulated into badmedia at a drop -- that
+        # is fine: the run-loop's "streamed" count below already requires that link's media to be CLEAN before
+        # counting it, and this check requires streamed >= n+1, so an unclean final link fails via streamed anyway.
+        return (sk["streamed"] >= sk["n"] + 1 and sk["disconnects"] >= sk["n"] and sk["badmedia"] == 0
+                and not peer.avdtp["error"] and peer.rc["errors"] == 0)
     return peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
 
 def connect(path):
@@ -183,8 +188,12 @@ class Peer:
                    "handle": 0x0001, "conns": 0, "scan_on": 0, "scan_off": 0, "accepts": 0,
                    "bitpool2": 0, "did_incoming_page": False, "did_unknown": False}
         # --- soak phase (NEW-34 piece 5): the reconnect flow N times over -- host-forced drops, fresh handle per page,
-        # stored-key auth each re-page, media validated per link.  streamed counts a link once its media reached 5 packets.
-        self.sk = {"n": SOAK_N, "disconnects": 0, "streamed": 0, "last_counted": 0}
+        # stored-key auth each re-page, media validated per link.  streamed counts a link once its media reached 20
+        # CLEAN packets.  badmedia = seqgaps+badsbc+badrtp accumulated per link at each drop; stale_* = media
+        # stragglers on a dropped link (the window before the host parses Disconnection_Complete), total and worst
+        # single window.
+        self.sk = {"n": SOAK_N, "disconnects": 0, "streamed": 0, "last_counted": 0,
+                   "badmedia": 0, "stale_acl": 0, "stale_run": 0, "stale_max": 0}
         if phase == "soak": self.rc["reject_on_link"] = 0            # never reject a key: create_conns is >= 1 whenever a key is offered
         # --- V3 bootloader state (fwdnld phase only) ---
         # While `boot` is True every received byte belongs to the download, not
@@ -347,9 +356,21 @@ class Peer:
                 self.log.append("PEER-DISCONNECT-BAD-HANDLE 0x%04x (current 0x%04x)" % (h, self.cur_handle()))
                 self.send(cmd_status(opcode, 0x02)); return                    # 0x02 = Unknown Connection Identifier: the live link is NOT torn down
             self.send(cmd_status(opcode)); self.send(event(0x05, b"\x00" + params[:2] + params[2:3]), 0.05)
-            if self.phase in ("reconnect", "soak"):
-                self.reset_link(); self.peer_bd = None                        # the link is gone: stale CIDs must land on PEER-ACL-UNKNOWN-CID, and an authentication without a new page on PEER-AUTH-NO-LINK
-                if self.phase == "soak": self.sk["disconnects"] += 1; self.media = fresh_media(119)
+            if self.phase == "reconnect":
+                self.reset_link(); self.peer_bd = None                        # unchanged: no media flows on this vehicle
+            elif self.phase == "soak":
+                # A real controller keeps the ACL usable until it REPORTS Disconnection_Complete, and the host cannot
+                # know the link is down before it has parsed that event (BtLink.cpp: LINK_LOST is set ONLY there).
+                # Tearing the CIDs down here made every media packet the host legitimately sent in the 50 ms window a
+                # PEER-ACL-UNKNOWN-CID -- measured: exactly 3 per drop, 30 in a 10-cycle run.  The next
+                # Create_Connection's reset_link() is the real teardown, exactly as the lifecycle phase defers its own
+                # to the Accept handler.  Stragglers are COUNTED (stale_acl / stale_max) rather than assumed away.
+                m = self.media
+                self.sk["badmedia"] += m["seqgaps"] + m["badsbc"] + m["badrtp"]   # this link's media verdict, accumulated
+                self.sk["disconnects"] += 1
+                self.peer_bd = None                                           # an Authentication with no new page still trips PEER-AUTH-NO-LINK
+                self.cur_media_cid = None; self.media = fresh_media(119)      # stop counting THIS link; the next link's channel re-arms it
+                self.sk["stale_run"] = 0                                      # a fresh straggler window
         elif opcode == 0x0411:                                              # Authentication_Requested: SSP Just Works, all the way to Auth Complete
             if self.peer_bd is None: self.log.append("PEER-AUTH-NO-LINK"); self.send(cmd_status(opcode, 0x02)); return   # 0x02 = Unknown Connection Identifier
             self.send(cmd_status(opcode)); bd = self.peer_bd
@@ -543,7 +564,10 @@ class Peer:
                     if psm == 0x0001: self.handle_sdp(handle, peer_cid, pl)
                     elif psm == 0x0019 and ours == self.avdtp["sig_cid"]: self.handle_avdtp(handle, peer_cid, pl)
                     elif psm == 0x0019 and self.phase in ("lifecycle", "soak"):
-                        if ours == self.cur_media_cid: self.handle_media(pl)   # current leg's/link's media only; a stale one's tail is ignored
+                        if ours == self.cur_media_cid: self.handle_media(pl)   # current leg's/link's media only
+                        elif self.phase == "soak":                             # the dropped link's tail: legitimate only until the host parses the event
+                            sk = self.sk; sk["stale_acl"] += 1; sk["stale_run"] += 1
+                            if sk["stale_run"] > sk["stale_max"]: sk["stale_max"] = sk["stale_run"]
                     elif psm == 0x0019: self.handle_media(pl)              # the OTHER 0x0019 channel: media transport
                     return
             self.log.append("PEER-ACL-UNKNOWN-CID 0x%04x" % cid)
@@ -735,7 +759,12 @@ if __name__ == "__main__":
     if phase not in LAST_OPCODE: print("ERROR: unknown phase %s" % phase); sys.exit(2)
     sock = connect(path); sock.settimeout(0.05)
     print("PEER-CONNECTED phase=%s" % phase)
-    if phase == "soak" and len(sys.argv) > 3: SOAK_N = int(sys.argv[3])   # module-level code: no `global` needed to rebind SOAK_N here
+    if phase == "soak" and len(sys.argv) > 3:                             # module-level code: no `global` needed to rebind SOAK_N here
+        try:
+            SOAK_N = int(sys.argv[3])
+            if SOAK_N < 1: raise ValueError(sys.argv[3])
+        except ValueError:
+            print("PEER-BAD-ARG soak N must be an integer >= 1: %r" % sys.argv[3]); sys.exit(2)
     peer = Peer(sock, phase)
     if peer.boot:
         # ★ REPEAT the start indication until it is answered, which is what the
@@ -785,7 +814,11 @@ if __name__ == "__main__":
                 break                                                                              # all three legs done; the gate waits out the host's final heartbeat
         if phase == "soak":
             sk = peer.sk
-            if peer.cur_media_cid is not None and peer.media["pkts"] >= 5 and sk["last_counted"] != peer.rc["create_conns"]:   # this link has streamed: count it once
+            # threshold raised 5 -> 20 to match [lifecycle]'s clean-media bar, and CLEAN is now required, not just
+            # present: a link with a seqgap/badsbc/badrtp must not count as streamed.
+            if (peer.cur_media_cid is not None and peer.media["pkts"] >= 20
+                    and peer.media["seqgaps"] == 0 and peer.media["badsbc"] == 0 and peer.media["badrtp"] == 0
+                    and sk["last_counted"] != peer.rc["create_conns"]):   # this link has streamed CLEAN media: count it once
                 sk["streamed"] += 1; sk["last_counted"] = peer.rc["create_conns"]
             if phase_done("soak", peer) and not peer.pending:
                 break                                                                          # the gate waits out the host's soak_done line
@@ -836,8 +869,9 @@ if __name__ == "__main__":
               % (lc["links_streamed"], lc["drops"], lc["accepts"], 1 if lc["rejected_unknown"] else 0, lc["scan_on"], lc["scan_off"], lc["bitpool2"]))
     if phase == "soak":
         r, sk = peer.rc, peer.sk
-        print("PEER-SOAK links=%d disconnects=%d streamed=%d key_ok=%d notified=%d"
-              % (r["create_conns"], sk["disconnects"], sk["streamed"], r["key_ok"], r["notified"]))
+        print("PEER-SOAK links=%d disconnects=%d streamed=%d key_ok=%d notified=%d badmedia=%d stale_acl=%d stale_max=%d"
+              % (r["create_conns"], sk["disconnects"], sk["streamed"], r["key_ok"], r["notified"],
+                 sk["badmedia"], sk["stale_acl"], sk["stale_max"]))
     print("PEER-DONE phase=%s cmds=%d resets=%d opcodes=%s baud=%s"
           % (phase, len(peer.cmds), peer.resets, ",".join("%04x" % c for c in peer.cmds),
              ",".join(str(b) for b in peer.baud_seen) or "none"))
