@@ -279,8 +279,20 @@ pairAndEncrypt → L2CAP → SDP → AVDTP, unchanged
 
 - Candidates are walked in recency order; the first candidate gets
   `PAGE_ATTEMPTS` (3), each later one a single attempt. Worst case — four
-  bonds, nobody home — is ~30 s before the inquiry starts. With no table set,
-  today's cycle is unchanged.
+  bonds, nobody home — is ~30 s before the inquiry starts when the controller
+  reports Page Timeout (0x04) at the 5.12 s page timeout, as the IW416 does;
+  on the silent-controller path (no Connection_Complete at all, each page
+  driven through the 10 s wait and the cancel) it is ~65 s. Either way a fully
+  failed attempt then adds the inquiry, so the hosts' "5 s retry loop" is a
+  ~45-80 s cycle when nothing is home. With no table set, or a table set but
+  EMPTY (no `bond_page=none` line then), today's cycle is unchanged.
+- (Added in the Task 5 review.) `page()` treats a page that completes while
+  its cancel is in flight as a LINK (the cancel's Command Complete says 0x02,
+  a Connection_Complete status 0 follows): before this, that race returned
+  TIMEOUT and the walk would have paged the next candidate behind a live ACL.
+  A handle is latched only on a status-0 Connection_Complete, and
+  `A2dpSource::connect()` calls `disconnect()` (a no-op with no handle) before
+  returning CONNECT_FAILED so a link a racing page left up is reclaimed.
 - (Added in the Task 4 review.) A bond with an EMPTY stored name is a
   WILDCARD for the target-name filter, never a dead slot (the pseudocode above
   carries the `b.name[0]` term): a name can be lost
@@ -320,6 +332,10 @@ Three connects in one boot, every one to STREAMING — which also proves L2cap
 and Avdtp re-initialise cleanly on a fresh handle three times over, a piece-2
 prerequisite:
 
+0. (Found in Task 7.) The probe's HCI event handler is registered by
+   `probeInquiry()`, which this build skips, so `probeReconnect()` registers
+   it itself (`hci.onEvent(onEvent, nullptr)`) beside `hci.onAcl` — the plan
+   omitted this and the first hand-run showed BtLink seeing no events at all.
 1. `load()`; print `bonds_boot=0`. `connect("FAKE-HEADSET-01")`: inquiry,
    SSP, key #1 notified, bond saved, `save()`. Keep a copy of the bond's key.
    Print `reconnect_phase=1 result=ok paired_by=ssp`. `link().disconnect()`.
