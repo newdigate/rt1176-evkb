@@ -51,6 +51,8 @@ Phases (argv[1]):
               host's own re-page reconnects and streams at bitpool 53.  Page scan on/off,
               the Accept role byte and ACL-on-a-dead-handle are peer-side tripwires.
               Ends once three links have streamed and both drops + the reject happened.
+  soak        N host-forced drops; the reconnect flow N times over -- fresh handle per page,
+              stored-key auth each re-page, media validated per link; tally PEER-SOAK
 Exit 0 when the phase's last expected opcode was seen (avdtp: when the peer
 recorded an accepted START; media: when the media validation above holds; reconnect: when the FOURTH
 link's START is accepted with no exception and no deadline).
@@ -347,7 +349,7 @@ class Peer:
             self.send(cmd_status(opcode)); self.send(event(0x05, b"\x00" + params[:2] + params[2:3]), 0.05)
             if self.phase in ("reconnect", "soak"):
                 self.reset_link(); self.peer_bd = None                        # the link is gone: stale CIDs must land on PEER-ACL-UNKNOWN-CID, and an authentication without a new page on PEER-AUTH-NO-LINK
-                if self.phase == "soak": self.sk["disconnects"] += 1
+                if self.phase == "soak": self.sk["disconnects"] += 1; self.media = fresh_media(119)
         elif opcode == 0x0411:                                              # Authentication_Requested: SSP Just Works, all the way to Auth Complete
             if self.peer_bd is None: self.log.append("PEER-AUTH-NO-LINK"); self.send(cmd_status(opcode, 0x02)); return   # 0x02 = Unknown Connection Identifier
             self.send(cmd_status(opcode)); bd = self.peer_bd
@@ -783,7 +785,7 @@ if __name__ == "__main__":
                 break                                                                              # all three legs done; the gate waits out the host's final heartbeat
         if phase == "soak":
             sk = peer.sk
-            if peer.media["pkts"] >= 5 and sk["last_counted"] != peer.rc["create_conns"]:   # this link has streamed: count it once
+            if peer.cur_media_cid is not None and peer.media["pkts"] >= 5 and sk["last_counted"] != peer.rc["create_conns"]:   # this link has streamed: count it once
                 sk["streamed"] += 1; sk["last_counted"] = peer.rc["create_conns"]
             if phase_done("soak", peer) and not peer.pending:
                 break                                                                          # the gate waits out the host's soak_done line
@@ -811,7 +813,7 @@ if __name__ == "__main__":
         print("PEER-BOOT ok=%d acks=%d chunks=%d err=%s"
               % (1 if peer.boot_ok else 0, peer.boot_acks, peer.boot_step,
                  peer.boot_err if peer.boot_err else "none"))
-    if phase in ("avdtp", "media", "reconnect", "lifecycle"):
+    if phase in ("avdtp", "media", "reconnect", "lifecycle", "soak"):
         # Name each held-back stage the Shokz model would leave the host stuck in, so a gate fails by cause.
         if peer.rev["query_sent"] and peer.rev["answer"] is None:                print("PEER-SDP-QUERY-UNANSWERED")
         if peer.avdtp["discover_pending"] and not peer.rev["done"]:              print("PEER-AVDTP-DISCOVER-HELD (reverse SDP never completed)")
