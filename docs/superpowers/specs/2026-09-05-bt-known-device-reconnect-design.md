@@ -5,7 +5,13 @@
 resilience (range loss/recovery)". This spec covers the FIRST of that issue's
 five pieces; the decomposition and the other four are recorded below so the
 boundary is explicit.
-**Status:** Design, approved in brainstorming; pending spec review.
+**Status:** IMPLEMENTED and QEMU-gated 2026-09-06 — M2Radio `63101a6` pushed and
+pinned; `networking/m2_hci_probe[reconnect]` green in its first sweep (129/129/0 SKIP,
+`LICENSE-AUDIT: PASS`, vacuity 35/35); fresh-user `-DEVKB_FORCE_FETCH=ON` verified by
+running the gate on the fetched ELF. Silicon runs A-E and the acid_box witness (§4)
+are PENDING the bench — until they are recorded in
+`examples/audio/bt_tone_test/transcript_hw_evkb.txt`, nothing here has been shown
+against a real headset or a real power cycle.
 
 ## Problem
 
