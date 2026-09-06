@@ -139,6 +139,14 @@ if(M2_BT_FORGET_BONDS)
     add_definitions(-DM2_BT_FORGET_BONDS=1)
 endif()
 
+# NEW-34 piece 3 capture: accept the peer's AVCTP/AVRCP L2CAP channel (0x0017) instead of refusing it
+# (piece-2 allow-list), to see whether the refusal alone triggers the Shokz self-power-off.  Diagnostic
+# only -- no AVRCP logic.  OFF by default so the default image and every gate stay byte-identical.
+option(M2_BT_ACCEPT_AVCTP "Bench capture: accept the peer's AVCTP/AVRCP L2CAP channel (0x0017)" OFF)
+if(M2_BT_ACCEPT_AVCTP)
+    add_definitions(-DM2_BT_ACCEPT_AVCTP=1)
+endif()
+
 # Bench diagnostic: dump every in/out ACL packet on the link as hex over the VCOM
 # (feed tools/acl-trace-to-btsnoop.py). OFF by default; gates/default build unchanged.
 option(M2_BT_ACL_TRACE "Trace every ACL packet (L2cap::onAclTrace) over the console" OFF)
