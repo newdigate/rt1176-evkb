@@ -808,12 +808,9 @@ static void rcLogWalk() {
 // and idle-pump helpers -- using them (not millis()) keeps nowMs referenced under M2_BT_RECONNECT, where
 // probeConnect()'s only other uses of it are compiled out.
 static A2dpSource::Result rcRunWalk() {
-    // Clear any LINK_LOST left by the previous phase's deliberate rcDisconnect(): A2dpSource::begin()
-    // (via BtSession::begin) resets the attempt state but NOT BtLink's link state, and a DISCONNECTING
-    // teardown never acks the LOST that disconnection_complete raises (the tick's abort-on-lost path is
-    // skipped while m_st == DISCONNECTING).  Without this, the fresh attempt's first tick sees
-    // m_link.lost() and ends the phase LOST before it ever pages -- a no-op on phase 1 (no prior link).
-    src.link().ackLost();
+    // (A stale LINK_LOST from the previous phase's deliberate rcDisconnect() is cleared by
+    // A2dpSource::start()'s ackLost() -- the DISCONNECTING teardown is excluded from tick()'s loss-check,
+    // so the library acks it when the next attempt begins.  No in-example workaround is needed.)
     rcLogWalk();                                               // reproduce the walk's per-candidate log (see rcLogWalk)
     rcSession.begin(&bonds, RC_TARGET, s_aclNum, nowMs());     // re-arms the boot walk cleanly each phase
     uint32_t t0 = nowMs();
