@@ -40,7 +40,25 @@
 #   before QEMU is killed; if QEMU dies first the peer prints PEER-EOF.  Do NOT raise
 #   QRUN_TIMEOUT here without raising the peer's deadline with it.
 #
-# DEMONSTRATED RED (filled in below in Part B -- four gate mutations plus one host-suite arm).
+# DEMONSTRATED RED (2026-09-06), four mutations of M2Radio/bt run against this gate, each failing
+# BY THE NAMED ASSERTION, each reverted (git -C M2Radio checkout -- bt/) and the gate confirmed GREEN
+# again before the next; plus one host-suite arm that this gate cannot reach:
+#   (a) BtLink answers every Link_Key_Request negatively  -> "FAIL: [reconnect] phase 2 did not
+#       authenticate with the stored key"  (peer tally corroborates: key_replies=0 neg_replies=4
+#       iocap_dances=4 -- every link re-paired by SSP)
+#   (b) BondStoreEeprom::save() is a no-op                -> "FAIL: [reconnect] bond did not survive
+#       the cold reload (expected 2 = the paired device + the decoy, decoy in front):
+#       bonds_reload=0 front=\"\""
+#   (c) the rejection rung keeps the bond                 -> "FAIL: [reconnect] the rejected key was
+#       offered again -- the bond was not erased: PEER-KEY-STALE-REPLAY link=3"
+#   (d) A2dpSource ignores the target-name filter         -> "FAIL: [reconnect] a bond whose name does
+#       not match the target was paged -- the name filter is gone: PEER-DECOY-PAGED"
+#   (e) BondTable::load() skips the CRC                   -> bondtable_test's flipped-key-byte arm (host
+#       suite), not this gate.  It needs a (void)want; beside it or -Werror rejects the mutant unused.
+# ★ Only (c) waits out the peer's 50 s deadline (52 s wall).  (a), (b) and (d) fail in ~20 s, because
+# all four links still STREAM under them -- phase_done is satisfied and the peer exits 0 while the
+# UART assertions are the only thing that notices.  A failing run here is not reliably a slow one, so
+# never read a fast red as "it cannot have got that far".
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
