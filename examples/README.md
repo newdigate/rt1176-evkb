@@ -10,8 +10,16 @@ mostly HW-verified on the EVKB. Organized into categories on 2026-07-20
 ```sh
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake
 cmake --build build
-./run_qemu.sh            # QEMU gate — never `sh run_qemu.sh` (it re-execs under gtimeout)
+./run_qemu*.sh           # QEMU gate (named run_qemu.sh or run_qemu_<name>.sh)
+                         # execute directly; never `sh run_qemu*.sh` (re-execs under gtimeout)
 ```
+
+You can also build and run all examples from the repository root using the root CMake target:
+```sh
+cmake -B build
+cmake --build build --target qemu_run_all
+```
+
 The two toolchain files (`rt1170-evkb.toolchain.cmake`, `rt1062-evkb.toolchain.cmake`)
 live once at the repo root, in `toolchain/`, and are shared by every example —
 a new example needs no `toolchain/` directory of its own.
@@ -31,7 +39,7 @@ fresh clone with no sibling checkouts fetches everything at the SHAs pinned in
 once; pass `-DEVKB_FORCE_FETCH=ON` to force the fetch path (fresh-user mode);
 note the macros repo itself is fetched with plain FetchContent — the one repo
 `CPM_SOURCE_CACHE` doesn't cover, deliberately;
-set `ARM_TOOLCHAIN_BIN` if your ARM GCC isn't at `/Applications/ARM_10/bin/`.
+set `ARM_TOOLCHAIN_BIN` if your ARM GCC isn't at `/Applications/ARM_10/bin/` or `/Applications/ARM/bin/` or in `$PATH`.
 
 ## Categories
 

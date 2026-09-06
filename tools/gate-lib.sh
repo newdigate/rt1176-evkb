@@ -164,6 +164,10 @@ gate_cleanup() {
 
 gate_init() {
     if [ -z "${GATE_GUARDED:-}" ]; then
+        command -v gtimeout >/dev/null 2>&1 || {
+            echo "error: gtimeout not found (on macOS: brew install coreutils) — gate-lib.sh needs it" >&2
+            exit 2
+        }
         export GATE_GUARDED=1
         # Runners take no CLI args, so re-exec "$0" with none. (Inside a function
         # "$@" is the function's own args, not the script's, so a runner's CLI args

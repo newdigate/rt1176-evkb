@@ -34,12 +34,14 @@
 #   tools/run-all-qemu-gates.sh [options] [pattern...]
 #
 # Options:
+#   -b, --build auto-build missing target ELFs before running gates
+#   --build-only build missing/selected target ELFs without running gates
 #   -j N        run N gates in parallel (default 1 = serial; see note above)
 #   -t SECS     per-gate timeout, exported as GATE_TIMEOUT (default 120)
 #   -l          list the matching gates and exit
 #   -x          fail fast: stop at the first failing gate
 #   -q          quiet: only the summary and failing-gate output
-#   -h          this help
+#   -h, --help  this help
 #
 # Patterns (optional) are matched as substrings against "<board>:<category>/<name>",
 # e.g.  run-all-qemu-gates.sh dualcore        # just the dual-core gates
@@ -56,18 +58,29 @@ GATE_TIMEOUT_SECS=120
 LIST_ONLY=0
 FAIL_FAST=0
 QUIET=0
+BUILD_IF_MISSING=0
+BUILD_ONLY=0
 PATTERNS=""
 
-usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '/^# Usage:/,/^# Exit status:/p' "$0" | sed 's/^# \{0,1\}//'; }
 
-while getopts ":j:t:lxqh" opt; do
+while getopts ":j:t:lxqhb-:" opt; do
     case "$opt" in
         j) JOBS=$OPTARG ;;
         t) GATE_TIMEOUT_SECS=$OPTARG ;;
         l) LIST_ONLY=1 ;;
         x) FAIL_FAST=1 ;;
         q) QUIET=1 ;;
+        b) BUILD_IF_MISSING=1 ;;
         h) usage; exit 0 ;;
+        -)
+            case "$OPTARG" in
+                build) BUILD_IF_MISSING=1 ;;
+                build-only) BUILD_IF_MISSING=1; BUILD_ONLY=1 ;;
+                help) usage; exit 0 ;;
+                *) echo "error: unknown option --$OPTARG (try -h)" >&2; exit 2 ;;
+            esac
+            ;;
         :) echo "error: -$OPTARG needs an argument" >&2; exit 2 ;;
         \?) echo "error: unknown option -$OPTARG (try -h)" >&2; exit 2 ;;
     esac
@@ -89,7 +102,15 @@ fi
 # --- prerequisites ----------------------------------------------------------
 command -v gtimeout >/dev/null 2>&1 || {
     echo "error: gtimeout not found (brew install coreutils) — gate-lib.sh needs it" >&2; exit 2; }
-REAL_QEMU="${REAL_QEMU:-$HOME/Development/qemu2/build/qemu-system-arm}"
+if [ -z "${REAL_QEMU:-}" ]; then
+    if [ -x "$HOME/Development/qemu2/build/qemu-system-arm" ]; then
+        REAL_QEMU="$HOME/Development/qemu2/build/qemu-system-arm"
+    elif [ -x "$HOME/Development/qemu-rt1170/build/qemu-system-arm" ]; then
+        REAL_QEMU="$HOME/Development/qemu-rt1170/build/qemu-system-arm"
+    else
+        REAL_QEMU="$HOME/Development/qemu2/build/qemu-system-arm"
+    fi
+fi
 [ -x "$REAL_QEMU" ] || {
     echo "error: QEMU not found/executable at $REAL_QEMU" >&2
     echo "       build gitlab.com/Newdigate/qemu-rt1170, or set REAL_QEMU=<path>" >&2; exit 2; }
@@ -213,10 +234,49 @@ run_gate() {
         echo "gate is not executable: $_path (chmod +x it)" > "$_log"
         echo "ERROR 0" > "$RESULT_DIR/$_slug.result"; return
     fi
+
+    # Check if target ELF(s) exist
+    _need_build=0
     if ! ls "$_dir/$_bdir"/*.elf >/dev/null 2>&1; then
-        echo "no $_bdir/*.elf in $_dir — build the example for $_board first:" > "$_log"
-        echo "  cd $_dir && cmake -B $_bdir$_bopt -DCMAKE_TOOLCHAIN_FILE=toolchain/$_tc-evkb.toolchain.cmake && cmake --build $_bdir" >> "$_log"
-        echo "SKIP 0" > "$RESULT_DIR/$_slug.result"; return
+        _need_build=1
+    fi
+    if [ "$_dir" = "$REPO/examples/display/pxp_draw_bench" ] && [ ! -f "$_dir/build-32/pxp_draw_bench.elf" ]; then
+        _need_build=1
+    fi
+
+    if [ "$_need_build" -eq 1 ]; then
+        if [ "$BUILD_IF_MISSING" -eq 1 ]; then
+            if ! ls "$_dir/$_bdir"/*.elf >/dev/null 2>&1; then
+                ( cd "$_dir" && \
+                  cmake -B "$_bdir"$_bopt -DCMAKE_TOOLCHAIN_FILE="$REPO/toolchain/$_tc-evkb.toolchain.cmake" && \
+                  cmake --build "$_bdir" ) >> "$_log" 2>&1
+                if [ $? -ne 0 ]; then
+                    echo "BUILD FAILED: $_id" >> "$_log"
+                    echo "FAIL 0" > "$RESULT_DIR/$_slug.result"
+                    return
+                fi
+            fi
+            if [ "$_dir" = "$REPO/examples/display/pxp_draw_bench" ] && [ ! -f "$_dir/build-32/pxp_draw_bench.elf" ]; then
+                ( cd "$_dir" && \
+                  cmake -B build-32 -DDRAW_BENCH_32=ON -DCMAKE_TOOLCHAIN_FILE="$REPO/toolchain/rt1170-evkb.toolchain.cmake" && \
+                  cmake --build build-32 ) >> "$_log" 2>&1
+                if [ $? -ne 0 ]; then
+                    echo "BUILD FAILED: $_id (build-32)" >> "$_log"
+                    echo "FAIL 0" > "$RESULT_DIR/$_slug.result"
+                    return
+                fi
+            fi
+        else
+            echo "no $_bdir/*.elf in $_dir — build the example for $_board first:" > "$_log"
+            echo "  cd $_dir && cmake -B $_bdir$_bopt -DCMAKE_TOOLCHAIN_FILE=toolchain/$_tc-evkb.toolchain.cmake && cmake --build $_bdir" >> "$_log"
+            echo "SKIP 0" > "$RESULT_DIR/$_slug.result"; return
+        fi
+    fi
+
+    if [ "$BUILD_ONLY" -eq 1 ]; then
+        _elapsed=$(( $(date +%s) - _start ))
+        echo "BUILT $_elapsed" > "$RESULT_DIR/$_slug.result"
+        return
     fi
 
     # GATE_GUARDED cleared -> the gate arms its own gtimeout backstop.
@@ -251,6 +311,7 @@ report_one() {                                # $1 = id, $2 = slug
     read -r _st _secs < "$RESULT_DIR/$2.result"
     case "$_st" in
         PASS)  [ "$QUIET" -eq 1 ] || printf '%s  PASS%s  %-46s %s%ss%s\n' "$C_PASS" "$C_OFF" "$1" "$C_DIM" "$_secs" "$C_OFF" ;;
+        BUILT) [ "$QUIET" -eq 1 ] || printf '%s BUILT%s  %-46s %s%ss%s\n' "$C_PASS" "$C_OFF" "$1" "$C_DIM" "$_secs" "$C_OFF" ;;
         SKIP)  [ "$QUIET" -eq 1 ] || printf '%s  SKIP%s  %-46s %s(not built)%s\n' "$C_SKIP" "$C_OFF" "$1" "$C_DIM" "$C_OFF" ;;
         ERROR) printf '%s ERROR%s  %-46s\n' "$C_FAIL" "$C_OFF" "$1" ;;
         *)     printf '%s  FAIL%s  %-46s %s%ss%s\n' "$C_FAIL" "$C_OFF" "$1" "$C_DIM" "$_secs" "$C_OFF" ;;
@@ -298,10 +359,10 @@ while IFS=$'\t' read -r id slug; do
     [ -f "$RESULT_DIR/$slug.result" ] || continue
     read -r st _ < "$RESULT_DIR/$slug.result"
     case "$st" in
-        PASS)  pass=$((pass + 1)) ;;
-        SKIP)  skip=$((skip + 1)) ;;
-        ERROR) err=$((err + 1));  failed_ids="$failed_ids$id	$slug"$'\n' ;;
-        *)     fail=$((fail + 1)); failed_ids="$failed_ids$id	$slug"$'\n' ;;
+        PASS|BUILT) pass=$((pass + 1)) ;;
+        SKIP)       skip=$((skip + 1)) ;;
+        ERROR)      err=$((err + 1));  failed_ids="$failed_ids$id	$slug"$'\n' ;;
+        *)          fail=$((fail + 1)); failed_ids="$failed_ids$id	$slug"$'\n' ;;
     esac
 done < "$RESULT_DIR/order"
 
@@ -316,7 +377,11 @@ if [ -n "$failed_ids" ]; then
 fi
 
 printf '\n%s' "$C_BOLD"
-printf 'gates: %d passed' "$pass"
+if [ "$BUILD_ONLY" -eq 1 ]; then
+    printf 'targets: %d built' "$pass"
+else
+    printf 'gates: %d passed' "$pass"
+fi
 [ "$fail" -gt 0 ] && printf ', %d failed' "$fail"
 [ "$err"  -gt 0 ] && printf ', %d error' "$err"
 [ "$skip" -gt 0 ] && printf ', %d skipped (not built)' "$skip"

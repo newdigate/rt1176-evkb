@@ -335,6 +335,15 @@ test_gates_exempt_suppresses; report test_gates_exempt_suppresses $?
 # path is read back out of the audit rather than restated, so the two cannot
 # drift apart.
 TOOLBIN=$(sed -n 's/^TOOL=//p' "$AUDIT" | head -1)
+if [ ! -d "$TOOLBIN" ]; then
+    if [ -n "${ARM_TOOLCHAIN_BIN:-}" ] && [ -d "$ARM_TOOLCHAIN_BIN" ]; then
+        TOOLBIN="$ARM_TOOLCHAIN_BIN"
+    elif [ -d "/Applications/ARM/bin" ]; then
+        TOOLBIN=/Applications/ARM/bin
+    elif command -v arm-none-eabi-gcc >/dev/null 2>&1; then
+        TOOLBIN=$(dirname "$(command -v arm-none-eabi-gcc)")
+    fi
+fi
 
 # An archive with two members whose names COLLIDE by suffix: Stream.cpp.obj is a
 # tail of AudioStream.cpp.obj. That is the real shape from cores/teensy4 under

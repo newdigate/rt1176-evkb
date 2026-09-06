@@ -15,7 +15,15 @@
 # Quit QEMU: Ctrl-A then X.   (-serial mon:stdio also gives the monitor via Ctrl-A C)
 set -euo pipefail
 
-QEMU="${QEMU:-$HOME/Development/qemu2/build/qemu-system-arm}"
+if [ -z "${QEMU:-}" ]; then
+  if [ -x "$HOME/Development/qemu2/build/qemu-system-arm" ]; then
+    QEMU="$HOME/Development/qemu2/build/qemu-system-arm"
+  elif [ -x "$HOME/Development/qemu-rt1170/build/qemu-system-arm" ]; then
+    QEMU="$HOME/Development/qemu-rt1170/build/qemu-system-arm"
+  else
+    QEMU="$HOME/Development/qemu2/build/qemu-system-arm"
+  fi
+fi
 MACHINE="mimxrt1170-evk"
 IMG="${1:-$HOME/Development/zephyr/projects/zepherproject/build-hello/zephyr/zephyr.elf}"
 

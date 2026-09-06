@@ -12,8 +12,16 @@
 # Part 3: Ethernet/NativeEthernet shared files must be byte-identical.
 #
 # Exit 0 = LICENSE-AUDIT: PASS, nonzero otherwise. Run from anywhere.
-set -u
 TOOL=/Applications/ARM_10/bin
+if [ ! -d "$TOOL" ]; then
+  if [ -n "${ARM_TOOLCHAIN_BIN:-}" ] && [ -d "$ARM_TOOLCHAIN_BIN" ]; then
+    TOOL="$ARM_TOOLCHAIN_BIN"
+  elif [ -d "/Applications/ARM/bin" ]; then
+    TOOL=/Applications/ARM/bin
+  elif command -v arm-none-eabi-gcc >/dev/null 2>&1; then
+    TOOL=$(dirname "$(command -v arm-none-eabi-gcc)")
+  fi
+fi
 # EVKB / GATES / GATES_EXEMPT are overridable for the same reason REPOS and
 # PARTS are: license-audit.test.sh drives the checks against throwaway trees so
 # the negative tests need no gate builds and no network. Nothing in normal use
@@ -31,7 +39,7 @@ TOOL=/Applications/ARM_10/bin
 # location that a same-repo, different-directory clone silently violates.
 # Always pass LICENSE_AUDIT_EVKB=$(pwd) (or the checkout's absolute path) when
 # running from anywhere but the canonical clone.
-EVKB=${LICENSE_AUDIT_EVKB:-$HOME/Development/rt1170/evkb}
+EVKB=${LICENSE_AUDIT_EVKB:-$(cd "$(dirname "$0")/.." && pwd)}
 # Sibling-checkout root — the same TEENSY_LIB_ROOT the build resolves against
 # (evkb.cmake / teensy-cmake-macros). The audit must sweep the SAME trees the
 # firmware compiles from, or it passes by measuring less: the core moved from
@@ -368,7 +376,7 @@ examples/framework/edma_test:edma_test examples/framework/eventresponder_test:ev
 examples/framework/stream_test:stream_test examples/framework/string_test:string_test \
 examples/framework/string_test/build-rt1062:string_test \
 examples/framework/wprogram_parity_test:wprogram_parity_test \
-examples/gpio-analog/analog_test:analog_test examples/gpio-analog/dac_test:dac_test \
+examples/gpio-analog/analog_test:analog_test examples/gpio-analog/blink:blinky examples/gpio-analog/dac_test:dac_test \
 examples/gpio-analog/irq_attach_test:irq_attach_test examples/networking/enet_test:enet_test \
 examples/networking/ethernet_test:ethernet_test examples/networking/lwip_test:lwip_test \
 examples/networking/m2_lwip_test:m2_lwip_test \
@@ -490,7 +498,7 @@ for pair in $GATES; do
   n=$(printf '%s\n' $files | grep -c '^/' || true)
   # Project files only: GCC + newlib headers are GPL with the GCC Runtime
   # Library Exception / BSD — linking into firmware permitted.
-  project=$(printf '%s\n' $files | grep -v '^/Applications/ARM_10/' || true)
+  project=$(printf '%s\n' $files | grep -vE '^/Applications/ARM(_10)?/' || true)
   # REPOS coverage: every project dep path must lie under a swept root — $EVKB
   # or a REPOS entry. Part 1 sweeps only what REPOS names, and its
   # `[ -d ] || continue` skips a missing repo silently, so firmware that

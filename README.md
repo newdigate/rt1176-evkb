@@ -51,17 +51,16 @@ with no sibling checkouts at all.
 
 **Prerequisites**
 
-- macOS (the tree is developed on macOS; paths below reflect that)
-- **ARM GCC 10** (`arm-none-eabi-gcc`) — default path `/Applications/ARM_10/bin/`;
-  point the `ARM_TOOLCHAIN_BIN` environment variable at your toolchain's `bin`
-  directory to override
+- macOS or Linux
+- **ARM GCC 10** (`arm-none-eabi-gcc`) — searches `$ARM_TOOLCHAIN_BIN`, `/Applications/ARM_10/bin/`, `/Applications/ARM/bin/`, or `$PATH`
 - **CMake ≥ 3.24**
+- **Host utilities**: `coreutils` (provides `gtimeout` required by gate runners; on macOS: `brew install coreutils`)
 - **NXP LinkServer** (e.g. `/Applications/LinkServer_26.6.137/`) for flashing
   via the on-board MCU-Link — use LinkServer, not pyOCD (pyOCD is unreliable
   programming this board's FlexSPI NOR)
 - Optional: the custom
   [**qemu-rt1170**](https://gitlab.com/Newdigate/qemu-rt1170) (`mimxrt1170-evk`
-  machine) to run every example without hardware
+  machine) to run every example without hardware (see instructions below)
 - Optional: sibling library checkouts under `$TEENSY_LIB_ROOT` (default
   `~/Development/`) — used when present, including the core (`teensy-cores`)
   and build macros (`teensy-cmake-macros`); otherwise fetched automatically
@@ -69,6 +68,27 @@ with no sibling checkouts at all.
   `~/.cache/CPM`) so each repo is cloned once and shared across build
   directories — the macros themselves are the one exception (~½ MB, plain
   FetchContent per build dir, deliberate)
+
+### Building the QEMU emulator
+
+To run the firmware verification gates without physical hardware:
+
+1. **Host Prerequisites**:
+   - macOS: `brew install pkg-config ninja glib pixman libslirp coreutils`
+   - Linux: `apt-get install pkg-config ninja-build libglib2.0-dev libpixman-1-dev libslirp-dev coreutils`
+
+2. **Clone & Build**:
+   Only `--target-list=arm-softmmu` is required (`qemu-system-arm`), providing both the RT1176 (`mimxrt1170-evk`) and RT1062 (`mimxrt1060-evk`) machine models:
+   ```sh
+   git clone https://gitlab.com/Newdigate/qemu-rt1170.git ~/Development/qemu-rt1170
+   cd ~/Development/qemu-rt1170
+   mkdir -p build && cd build
+   ../configure --target-list=arm-softmmu --enable-slirp --enable-pixman --enable-png --disable-werror
+   ninja qemu-system-arm
+   ```
+
+   > [!NOTE]
+   > `--enable-slirp` (with `libslirp`) is required to run the user-mode networking tests (`ethernet_test`, `lwip_test`, `native_ethernet_test`). `qrun` and `run-all-qemu-gates.sh` automatically search `~/Development/qemu-rt1170/build/qemu-system-arm`.
 
 **Try an example**
 
@@ -93,19 +113,38 @@ Examples are grouped by category under `examples/` (dualcore, usb, audio,
 camera, networking, storage-memory, gpio-analog, timing, serial, display,
 framework) — see [examples/README.md](examples/README.md) for the full index.
 
-To run every QEMU gate at once (exits non-zero if any fail, so it drops
-straight into CI):
+**Run all QEMU gates**
+
+To build and run all QEMU gates across all examples via CMake (or CTest):
 
 ```sh
-./tools/run-all-qemu-gates.sh              # all gates, serial
-./tools/run-all-qemu-gates.sh dualcore     # only gates matching a pattern
-./tools/run-all-qemu-gates.sh -j 4         # parallel (faster; timing-sensitive
-                                           # gates can flake under contention)
+# Configure root CMake build directory
+cmake -B build
+
+# Build any missing example ELFs and run all QEMU gates:
+cmake --build build --target qemu_run_all
+
+# Run gates against pre-built ELFs without auto-building missing targets:
+cmake --build build --target qemu_check
+
+# Build all example ELFs without executing QEMU:
+cmake --build build --target build_all_examples
+
+# Or run via CTest:
+ctest --test-dir build
 ```
 
-Gates assume the example is already built; unbuilt ones are reported as SKIP
-rather than a confusing failure. `-l` lists what would run, `-x` stops at the
-first failure, `-h` documents the rest.
+You can also invoke the sweep script directly:
+
+```sh
+./tools/run-all-qemu-gates.sh -b            # all gates, auto-building missing targets
+./tools/run-all-qemu-gates.sh               # all gates against existing ELFs (unbuilt = SKIP)
+./tools/run-all-qemu-gates.sh dualcore      # only gates matching a pattern
+./tools/run-all-qemu-gates.sh -j 4          # parallel (faster; timing-sensitive
+                                            # gates can flake under contention)
+```
+
+Gates assume the example is already built unless `-b` / `--build` is passed (unbuilt examples are reported as SKIP). `-l` lists what would run, `-x` stops at the first failure, `-h` documents all options.
 
 **Flash the board**
 

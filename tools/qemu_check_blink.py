@@ -6,9 +6,37 @@ Modes:
   --symbol S --advances   : assert symbol S's value increases over --seconds
   --addr A --bit B --toggles : assert the bit at A goes both 0 and 1 over --seconds
 """
-import argparse, subprocess, json, socket, time, os, re, sys
-QEMU = os.path.expanduser("~/Development/qemu2/build/qemu-system-arm")
-NM = "/Applications/ARM_10/bin/arm-none-eabi-nm"
+import argparse, subprocess, json, socket, time, os, re, sys, shutil
+
+def find_qemu():
+    if os.environ.get("REAL_QEMU"):
+        return os.environ["REAL_QEMU"]
+    for candidate in [
+        os.path.expanduser("~/Development/qemu2/build/qemu-system-arm"),
+        os.path.expanduser("~/Development/qemu-rt1170/build/qemu-system-arm"),
+    ]:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return os.path.expanduser("~/Development/qemu2/build/qemu-system-arm")
+
+def find_nm():
+    if os.environ.get("ARM_TOOLCHAIN_BIN"):
+        candidate = os.path.join(os.environ["ARM_TOOLCHAIN_BIN"], "arm-none-eabi-nm")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    for candidate in [
+        "/Applications/ARM_10/bin/arm-none-eabi-nm",
+        "/Applications/ARM/bin/arm-none-eabi-nm",
+    ]:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    which_nm = shutil.which("arm-none-eabi-nm")
+    if which_nm:
+        return which_nm
+    return "/Applications/ARM_10/bin/arm-none-eabi-nm"
+
+QEMU = find_qemu()
+NM = find_nm()
 
 def sym_addr(elf, sym):
     for line in subprocess.check_output([NM, elf]).decode().splitlines():

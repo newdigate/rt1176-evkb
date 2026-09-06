@@ -21,9 +21,27 @@
 # Tunables (env):
 #   QRUN_TIMEOUT    hard runtime cap, e.g. 60 or 90s  (default 60)
 #   QRUN_MAXLOG_MB  guest-error log cap in MB          (default 100)
-#   REAL_QEMU       path to the real binary  (default ~/Development/qemu2/build/qemu-system-arm)
+if [ -z "${REAL_QEMU:-}" ]; then
+  if [ -x "$HOME/Development/qemu2/build/qemu-system-arm" ]; then
+    REAL_QEMU="$HOME/Development/qemu2/build/qemu-system-arm"
+  elif [ -x "$HOME/Development/qemu-rt1170/build/qemu-system-arm" ]; then
+    REAL_QEMU="$HOME/Development/qemu-rt1170/build/qemu-system-arm"
+  else
+    REAL_QEMU="$HOME/Development/qemu2/build/qemu-system-arm"
+  fi
+fi
 
-REAL_QEMU="${REAL_QEMU:-$HOME/Development/qemu2/build/qemu-system-arm}"
+command -v gtimeout >/dev/null 2>&1 || {
+  echo "error: gtimeout not found (on macOS: brew install coreutils) — qrun needs it" >&2
+  exit 2
+}
+
+[ -x "$REAL_QEMU" ] || {
+  echo "error: QEMU not found/executable at $REAL_QEMU" >&2
+  echo "       build gitlab.com/Newdigate/qemu-rt1170, or set REAL_QEMU=<path>" >&2
+  exit 2
+}
+
 TIMEOUT="${QRUN_TIMEOUT:-60}"
 MAXBYTES=$(( ${QRUN_MAXLOG_MB:-100} * 1024 * 1024 ))
 
