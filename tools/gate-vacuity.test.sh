@@ -518,4 +518,58 @@ ABSENT
           "$EVKB/$bt_rel"/build-media/media.dbg
 fi
 
+# --- 11. bt_tone_test[lifecycle] (NEW-34 piece 2) ---------------------------
+# run_qemu_lifecycle.sh asserts A2DP streaming survives the link: a drop is detected, torn
+# down, and the link reconnects in EITHER direction (page-scan-when-idle for the peer's
+# incoming page; the host's own retry when it must re-page), adopting the peer's config when
+# the peer drives AVDTP as initiator. Same shared-ELF risk as every other bt_tone_test/
+# m2_hci_probe variant above: a card-absent capture must be unable to satisfy it, or the
+# bring-up assertions would pass on an image that never reached A2DP at all. Three negatives,
+# each failing BY NAME: an absent capture (leg 1 never streamed), the committed fixture with
+# its leg-1 drop line stripped (the teardown trigger was never proven to have fired), and the
+# fixture with leg 2's adopted-config line rewritten to the INITIATOR's own bitpool (config
+# adoption was never proven -- this is the one only the peer-un-fakeable frame length catches
+# on silicon, and here stands in for it structurally). $bt_rel is set by item 10 above.
+bt_lc_elf="$EVKB/$bt_rel/build-lifecycle/bt_tone_test.elf"
+if [ ! -x "$bt_lc_elf" ]; then
+    echo "SKIP: lifecycle vacuity cases (no build-lifecycle/bt_tone_test.elf -- build it first)"
+else
+    # (a) absent capture -> the gate must fail on the missing leg-1 stream, by name.
+    cat > "$WORK/bt_lc_absent.txt" <<'ABSENT'
+RT1176 BT tone test up
+serial2=up_115200
+hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0
+bonds_boot=0
+a2dp=deferred (no HCI: card absent)
+hb streaming=0 blocks=0 packets=0 drops=0 hw=0
+bt_link links=0 lost=0 reason=0x00 by=none reconnect_ms=0 scan=0 role=-
+ABSENT
+    export GATE_VACUITY=1; run_gate "$bt_rel" "run_qemu_lifecycle.sh" "$WORK/bt_lc_absent.txt"; rc=$?; unset GATE_VACUITY
+    result=0; [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "\[lifecycle\] leg 1 never streamed by inquiry" || result=1
+    report "absent_capture_fails_lifecycle_gate" $result
+
+    # (b) the committed fixture with every bt_dropped line stripped -> must fail on the leg-1
+    # 0x08 assertion (the teardown trigger the session reacts to was never seen).
+    sed '/^bt_dropped/d' "$EVKB/$bt_rel/transcript_qemu_lifecycle.txt" > "$WORK/bt_lc_nodrop.txt"
+    export GATE_VACUITY=1; run_gate "$bt_rel" "run_qemu_lifecycle.sh" "$WORK/bt_lc_nodrop.txt"; rc=$?; unset GATE_VACUITY
+    result=0; [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "\[lifecycle\] leg 1 drop (0x08) not seen" || result=1
+    report "nodrop_capture_fails_lifecycle_gate" $result
+
+    # (c) the committed fixture with leg 2's streaming line rewritten from the ADOPTED bitpool
+    # 35 to the INITIATOR default 53 -> must fail on the adopted-bitpool assertion, not merely
+    # "did it stream". NOTE: run_qemu_lifecycle.sh's own message capitalises ADOPTED (its line
+    # 148) -- matched verbatim below, or this case would pass on a gate failing for the wrong
+    # reason (the plan draft's grep used lowercase "adopted" and would not have matched).
+    sed 's/^streaming by=incoming bitpool=35 /streaming by=incoming bitpool=53 /' "$EVKB/$bt_rel/transcript_qemu_lifecycle.txt" > "$WORK/bt_lc_wrongbp.txt"
+    export GATE_VACUITY=1; run_gate "$bt_rel" "run_qemu_lifecycle.sh" "$WORK/bt_lc_wrongbp.txt"; rc=$?; unset GATE_VACUITY
+    result=0; [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "\[lifecycle\] leg 2 did not stream by incoming at the ADOPTED bitpool 35" || result=1
+    report "wrongbitpool_capture_fails_lifecycle_gate" $result
+
+    rm -f "$EVKB/$bt_rel"/build-lifecycle/lifecycle.uart "$EVKB/$bt_rel"/build-lifecycle/lifecycle.peer \
+          "$EVKB/$bt_rel"/build-lifecycle/lifecycle.dbg
+fi
+
 exit $FAILED
