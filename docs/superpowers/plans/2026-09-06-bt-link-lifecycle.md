@@ -704,7 +704,7 @@ Add private members for the engine (keep every existing `m_*` used by `onEvent`)
     uint8_t m_attempt = 0, m_attempts = 0; bool m_pairInbound = false; uint8_t m_hitIdx = 0;
     const char *m_inqFilter = nullptr;
     // page scan
-    bool m_wantScan = false; bool m_haveScan = false; bool m_scanKnown = false;
+    bool m_wantScan = false; bool m_haveScan = false; bool m_scanKnown = true;   // true: post-Reset scanning is OFF, so reconcileScan is a no-op until wantPageScan() creates a delta (a false here fires a spurious Write_Scan_Enable(0x00) on every op's first tick)
     uint32_t m_encWaitMs = 2000;
 ```
 (Keep `PENDING` OUT of `Result` — `busy()` is the "still running" signal; `result()` is only read once `busy()` is false.)
@@ -715,7 +715,7 @@ Keep the anonymous-namespace opcode/event enums and `resultName`/`logf` unchange
 ```cpp
 void BtLink::begin(uint32_t now) {
     m_op = NONE; m_result = OK; m_sub = 0; m_deadline = now; m_cmdBusy = false;
-    m_wantScan = false; m_haveScan = false; m_scanKnown = false;
+    m_wantScan = false; m_haveScan = false; m_scanKnown = true;   // see the header note: NOT false (would emit an unsolicited scan-disable each op)
     // note: does NOT clear m_bd/m_handle/link state -- begin() may be re-called mid-session by the app's reset path
 }
 ```
