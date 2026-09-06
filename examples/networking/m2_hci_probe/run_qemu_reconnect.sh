@@ -55,9 +55,10 @@
 #       not match the target was paged -- the name filter is gone: PEER-DECOY-PAGED"
 #   (e) BondTable::load() skips the CRC                   -> bondtable_test's flipped-key-byte arm (host
 #       suite), not this gate.  It needs a (void)want; beside it or -Werror rejects the mutant unused.
-# ★ Only (c) waits out the peer's 50 s deadline (52 s wall).  (a), (b) and (d) fail in ~20 s, because
-# all four links still STREAM under them -- phase_done is satisfied and the peer exits 0 while the
-# UART assertions are the only thing that notices.  A failing run here is not reliably a slow one, so
+# ★ Only (c) waits out the peer's 50 s deadline (52 s wall).  (a), (b) and (d) fail in ~20 s: the
+# peer's EXIT CODE does not notice them -- all four links still STREAM, so phase_done is satisfied
+# and the peer exits 0 -- it is the gate's own UART checks and its peer-derived checks (the
+# tripwires and the tally) that catch them.  A failing run here is not reliably a slow one, so
 # never read a fast red as "it cannot have got that far".
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
@@ -153,13 +154,13 @@ TRIPWIRES
 # The probe's own lines, in boot order.  (If phase 1 fails and the peer file shows no
 # PEER-CONNECTED line, the controller never attached -- see the peer file above.)
 grep -q "^bonds_boot=0[[:space:]]*$" "$OUT"                                       || fail "[reconnect] no bonds_boot line -- the reconnect probe never ran (or the store was not empty at boot)"
-grep -q "^reconnect_phase=1 result=ok paired_by=ssp[[:space:]]*$" "$OUT"          || fail "[reconnect] phase 1 (fresh pairing) did not reach STREAMING by SSP -- if the peer never printed PEER-CONNECTED, the controller never attached"
+grep -q "^reconnect_phase=1 result=ok paired_by=ssp[[:space:]]*$" "$OUT"          || fail "[reconnect] phase 1 (fresh pairing) did not reach STREAMING by SSP -- if the peer file shows PEER-EOF, QEMU died under it (infrastructure); if it shows no PEER-CONNECTED at all, the controller never attached"
 grep -q '^bonds_reload=2 front="DECOY"[[:space:]]*$' "$OUT"                       || fail "[reconnect] bond did not survive the cold reload (expected 2 = the paired device + the decoy, decoy in front): $(grep '^bonds_reload=' "$OUT" || echo none)"
 grep -q "^reconnect_phase=2 result=ok paired_by=stored[[:space:]]*$" "$OUT"       || fail "[reconnect] phase 2 did not authenticate with the stored key"
 grep -q "^bond_rejected: status=0x06 -> erased" "$OUT"                            || fail "[reconnect] the rejected bond was not erased by name"
 grep -q "^reconnect_phase=3 result=ok paired_by=ssp[[:space:]]*$" "$OUT"          || fail "[reconnect] phase 3 (rejection -> fresh pairing) did not reach STREAMING by SSP"
-grep -q '^bonds_reload2=2 front="FAKE-HEADSET-01"[[:space:]]*$' "$OUT"           || fail "[reconnect] key #2's bond did not survive the third cold reload in front: $(grep '^bonds_reload2=' "$OUT" || echo none)"
-grep -q "^reconnect_phase=4 result=ok paired_by=stored[[:space:]]*$" "$OUT"      || fail "[reconnect] phase 4 did not authenticate with key #2 from the store"
+grep -q '^bonds_reload2=2 front="FAKE-HEADSET-01"[[:space:]]*$' "$OUT"            || fail "[reconnect] key #2's bond did not survive the third cold reload in front: $(grep '^bonds_reload2=' "$OUT" || echo none)"
+grep -q "^reconnect_phase=4 result=ok paired_by=stored[[:space:]]*$" "$OUT"       || fail "[reconnect] phase 4 did not authenticate with key #2 from the store"
 grep -q '^bonds_final=2 front="FAKE-HEADSET-01" key_changed=1[[:space:]]*$' "$OUT" || fail "[reconnect] the re-pairing did not replace the key (or the re-created bond is not in front): $(grep '^bonds_final=' "$OUT" || echo none)"
 grep -q "^reconnect=done" "$OUT"                                                  || fail "[reconnect] probe did not reach reconnect=done"
 NINQ=$(grep -c "^inquiry=started" "$OUT" || true)

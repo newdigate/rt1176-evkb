@@ -759,8 +759,10 @@ static void probeConnect() {
 // QEMU-ONLY by intent: on the EVKB with a real card and a real target name, phase 2 plants a
 // permanent DECOY bond in the shared EEPROM region -- it costs a page only on a WILDCARD
 // (no-target-name) connect, since the name filter skips it otherwise, but it consumes a bond
-// slot for good -- and a permanent FAKE-HEADSET-01 bond at AA:BB:CC:DD:EE:01 is written
-// beside it.  Phase 3 also cannot be rejected on demand by a real headset.
+// slot for good -- and, on silicon, the EEPROM would also hold a permanent bond for whichever
+// REAL device answers M2_BT_TARGET_NAME (RC_FAKE_BD is only ever looked up here via find(),
+// never upserted -- AA:BB:CC:DD:EE:01 is hci_peer.py's fake identity, not an address this
+// firmware writes).  Phase 3 also cannot be rejected on demand by a real headset.
 // Never flash this build with M2_BT_TARGET_NAME set to a real device.
 static const uint8_t RC_FAKE_BD[6]  = { 0x01, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA };   // FAKE-HEADSET-01 (hci_peer.py DEVICES[0])
 static const uint8_t RC_DECOY_BD[6] = { 0x99, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA };   // a bond whose name never matches the target
