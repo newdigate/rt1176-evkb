@@ -22,6 +22,8 @@
 #include <HciPump.h>
 #include <BtFwLoader.h>
 #include <A2dpSource.h>
+#include <BondTable.h>
+#include <BondStoreEeprom.h>
 
 #include "AudioOutputBluetooth.h"
 
@@ -246,6 +248,7 @@ static void btFirmwareDownload() {
 
 // --- application -------------------------------------------------------------
 static A2dpSource src(hci, hciIo);
+static BondTable bonds;                                // NEW-34: bonded devices, persisted in the EEPROM emulation (BondStoreEeprom, offset 4000)
 static AudioSynthWaveformSine toneGen;                // "tone" collides with core_pins.h's tone(pin,freq,ms)
 static AudioOutputBluetooth   btout;
 static AudioConnection pc0(toneGen, 0, btout, 0);
@@ -340,6 +343,16 @@ void setup() {
     hci.onEvent(onEvt, nullptr);
     hci.onAcl(onAclThunk, nullptr);                    // A2dpSource does NOT seize this
     src.setLog(btLog, nullptr); src.setPin("1234");
+    // NEW-34: the bond store.  load() once, after Hci::begin(); save() after EVERY connect() return
+    // (an erased stale bond must persist too).  M2_BT_FORGET_BONDS wipes it instead -- the control
+    // arm that proves a headset out of pairing mode refuses us WITHOUT a bond.
+#if defined(M2_BT_FORGET_BONDS)
+    CONSOLE.print("bonds_forgotten="); CONSOLE.println(BondStoreEeprom::wipe(bonds) ? 1 : 0);
+#else
+    BondStoreEeprom::load(bonds);
+#endif
+    src.setBonds(&bonds);
+    CONSOLE.print("bonds_boot="); CONSOLE.println(bonds.count());
 #if defined(M2_BT_ACL_TRACE)
     src.l2().onAclTrace(aclTrace, nullptr);
 #endif
@@ -353,6 +366,9 @@ void setup() {
     A2dpSource::Result r2 = src.connect(nullptr, s_aclNum, nowMs, idleMs);
 #endif
     CONSOLE.print("a2dp="); CONSOLE.println(A2dpSource::resultName(r2));
+    BondStoreEeprom::save(bonds);
+    CONSOLE.print("bonds="); CONSOLE.print(bonds.count());
+    CONSOLE.print(" paired_by="); CONSOLE.println(src.link().pairedBy());
     if (r2 == A2dpSource::OK) {
         btout.begin(src);
         CONSOLE.print("streaming frames_per_pkt="); CONSOLE.print(btout.framesPerPacket());
@@ -391,6 +407,9 @@ void loop() {
             A2dpSource::Result rr = src.connect(nullptr, s_aclNum, nowMs, idleMs);
 #endif
             CONSOLE.print("a2dp_try="); CONSOLE.println(A2dpSource::resultName(rr));
+            BondStoreEeprom::save(bonds);
+            CONSOLE.print("bonds="); CONSOLE.print(bonds.count());
+            CONSOLE.print(" paired_by="); CONSOLE.println(src.link().pairedBy());
             if (rr == A2dpSource::OK) {
                 btout.begin(src); begun = true;
                 CONSOLE.print("streaming frames_per_pkt="); CONSOLE.print(btout.framesPerPacket());

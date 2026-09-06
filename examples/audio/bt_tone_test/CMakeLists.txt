@@ -129,6 +129,14 @@ if(M2_BT_CONNECT_RETRY)
     add_definitions(-DM2_BT_CONNECT_RETRY=1)
 endif()
 
+# Bench knob (NEW-34): wipe the bond store at boot (bonds_forgotten=1), so a run can prove that a
+# headset out of pairing mode REFUSES us without a bond -- the control arm of the stored-key claim.
+# OFF by default; the gates and the default build load the store as usual.
+option(M2_BT_FORGET_BONDS "Bench: wipe the bonded-device store at boot" OFF)
+if(M2_BT_FORGET_BONDS)
+    add_definitions(-DM2_BT_FORGET_BONDS=1)
+endif()
+
 # Bench diagnostic: dump every in/out ACL packet on the link as hex over the VCOM
 # (feed tools/acl-trace-to-btsnoop.py). OFF by default; gates/default build unchanged.
 option(M2_BT_ACL_TRACE "Trace every ACL packet (L2cap::onAclTrace) over the console" OFF)
