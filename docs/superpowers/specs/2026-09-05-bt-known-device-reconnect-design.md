@@ -350,10 +350,17 @@ prerequisite:
    `reconnect_phase=2 result=ok paired_by=stored`. Disconnect.
 3. `connect(…)` again. The peer rejects the offered key on THIS link
    (Authentication_Complete 0x06). The host erases the bond, pairs fresh,
-   receives key #2. Print `reconnect_phase=3 result=ok paired_by=ssp`, then
-   `bonds_final=2 key_changed=1` (the fake headset's stored key differs from
-   the phase-1 copy; the decoy is still there), then `reconnect=done`; the
-   heartbeat continues.
+   receives key #2. Print `reconnect_phase=3 result=ok paired_by=ssp`.
+4. (Added in the Task 8 review.) A THIRD cold reload, then a fourth connect
+   that must authenticate with key #2 FROM THE STORE — the peer verifies the
+   offered key against the one it notified, so this is the one place the
+   host-computed `key_changed=1` is corroborated by the other side of the
+   socket. Print `bonds_reload2=2 front="FAKE-HEADSET-01"`,
+   `reconnect_phase=4 result=ok paired_by=stored`, then
+   `bonds_final=2 front="FAKE-HEADSET-01" key_changed=1` (the decoy is still
+   there; the re-created bond is most recent), then `reconnect=done`; the
+   heartbeat continues. Each count line carries the FRONT entry's name, so a
+   count can never be satisfied by the wrong entries.
 
 **Peer (`hci_peer.py`, new `reconnect` phase)** extends the avdtp acceptor
 with per-link state reset on each Connection Complete, and:
@@ -382,7 +389,14 @@ with per-link state reset on each Connection Complete, and:
 
 **Gate assertions, tripwires FIRST** (the [avdtp] convention: every positive
 check downstream of STREAMING fails with the same generic message, so the named
-tripwires are what let each RED be identified):
+tripwires are what let each RED be identified). One ordering decision, found
+in the Task 8 review: the peer runs in the FOREGROUND and waits out its 50 s
+deadline on any firmware failure before the last link, so its infrastructure
+verdicts (`PEER-EOF`, `PEER-DEADLINE`, a Python traceback) sit AFTER the UART
+checks — placed first they would report every firmware-side RED as "the peer
+gave up". The tally with phase 4 is `inquiries=1 create_conns=4 key_replies=3
+key_ok=2 key_rejected=1 neg_replies=2 iocap_dances=2 notified=2
+started_links=4`.
 
 1. none of `PEER-DECOY-PAGED`, `PEER-KEY-MISMATCH`, `PEER-KEY-STALE-REPLAY`,
    `PEER-UNKNOWN-OPCODE`, `PEER-AVDTP-*` in the peer result;
