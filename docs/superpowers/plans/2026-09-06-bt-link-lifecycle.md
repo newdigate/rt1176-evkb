@@ -994,7 +994,7 @@ In the Disconnection_Complete handler, set link state and clear the handle at on
 In the Encryption_Change handler, add `if (m_encrypted) m_link = LINK_SECURE;` after `m_encrypted = (p[3] != 0);`.
 Address-scope the key flags: in Link_Key_Notification's handler, the existing code already guards psrm/name on `memcmp(p, m_bd, 6)`; leave `m_haveLinkKey = true` but guard it: change the first line to `if (memcmp(p, m_bd, 6) == 0) m_haveLinkKey = true;` (closing the address-blind `m_haveLinkKey` deferral). `m_keyOffered` is already `m_bd`-scoped (Task-3/piece-1 code).
 
-Drive the supervision write from `reconcileScan()` (it already runs every tick when no command is outstanding) — extend it:
+Drive the supervision write from `reconcileScan()` (it already runs every tick when no command is outstanding) — extend it. **Placement matters:** the existing scan-delta check early-returns in the steady state (`if (m_scanKnown && m_haveScan == m_wantScan) return;`), which is exactly the state the supervision write runs in — so the supervision block must be REACHED on that path. Invert the scan check into `if (<delta pending>) { <issue scan>; return; }` and put the supervision block as fall-through AFTER it (one command per tick preserved), rather than appending it after an unconditional early return (which makes it dead code — measured):
 ```cpp
     if (!m_supDone && m_supSlots && (m_link == LINK_UP || m_link == LINK_SECURE) && m_role == 0 && !m_cmdBusy) {
         uint8_t w[4] = { (uint8_t)(m_handle & 0xFF), (uint8_t)(m_handle >> 8), (uint8_t)(m_supSlots & 0xFF), (uint8_t)(m_supSlots >> 8) };
