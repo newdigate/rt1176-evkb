@@ -106,8 +106,12 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **129 gates** — NEW-34 piece 1's
-ONE new gate, `networking/m2_hci_probe[reconnect]` (a bonded device paged with NO
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **130 gates** — NEW-34 piece 2's
+ONE new gate, `audio/bt_tone_test[lifecycle]` (the non-blocking BT link lifecycle:
+a stream is dropped, re-paged in BOTH directions, the peer's bitpool-35 config
+adopted, an unknown-address page rejected 0x0F — three legs on one socket), then
+NEW-34 piece 1's
+`networking/m2_hci_probe[reconnect]` (a bonded device paged with NO
 inquiry and authenticated with a STORED key after an EEPROM cold reload past a
 decoy bond, a rejected bond erased and re-paired with a new key that the peer
 then verifies after a third reload: four links on four fresh handles, every tally
@@ -130,7 +134,7 @@ its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
 `networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
 more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
 That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
-128.
+130.
 
 NEW-20 added ONE — `display/rotary_knob_bench`, the RotaryKnob render-strategy
 bench: 12 cells ({vector,bitmap,strip} × {sw,gpu} × {notch,facet}) in ONE ELF,
@@ -575,8 +579,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **129 passed, 0 failed, 0 SKIP**, or
-**128 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
+`usb/usb_descriptor_survey`). The target is **130 passed, 0 failed, 0 SKIP**, or
+**129 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
 (`cm4_audio_test`) is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
@@ -604,6 +608,62 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-09-06: 130 gates discovered, 130 passed, 0 failed, 0 SKIP**
+(`gates: 130 passed`, exit 0; `-l` reports 130), on the **NEW-34 piece 2 BT
+link-lifecycle** close-out — fully clean on the first single-run sweep, no red to
+disposition, every member of the load-sensitivity class green in the sweep itself
+(`bt_tone_test[media]` 50 s, `[lifecycle]` 23 s, `m2_hci_probe[hci]` 68 s,
+`[avdtp]` 15 s, `[reconnect]` 19 s, `m2_rx_demo[txaggr]` 24 s, `cm4_audio_test`
+3 s). `LICENSE-AUDIT: PASS` (after the sweep, never during); vacuity **38/38**
+(three `[lifecycle]` negatives added). M2Radio pin bumped to `82e9172` (10
+commits), fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING
+`bt_tone_test[lifecycle]` against the GitHub-fetched ELF (`git clone … @ 82e9172`
+in the configure log, then the gate PASSED). Every bt-linking gate ELF was
+REBUILT fresh against the new M2Radio and BtSession-symbol-checked before the
+sweep (NEW-36 freshness discipline: an ELF from the old library boots fine, so an
+unrebuilt sweep would pass vacuously).
+★ **The ONE new gate is `audio/bt_tone_test[lifecycle]`** (130th) — three legs on
+one socket against `hci_peer.py`'s new `lifecycle` phase: leg 1 inquiry+SSP+media
+at bitpool 53 then a peer-injected `Disconnection_Complete` reason 0x08; leg 2 the
+PEER pages us, BtLink Accepts as SLAVE (role 0x01, fresh handle) and authenticates
+with the STORED key from leg 1, then the peer drives AVDTP AS INITIATOR at
+**bitpool 35** and the firmware ADOPTS that config, so it streams **83-byte** SBC
+frames (a length the host's own initiator, always bitpool 53 → 119, cannot invent
+— un-fakeable proof of adoption), then drops 0x13; leg 3 an UNKNOWN-address page
+is REJECTED 0x0F and the host's own retry re-pages and streams a third time at 53.
+Tally `PEER-LIFECYCLE links=3 drops=2 accepts=1 rejects=1 scan_on=2 scan_off=2
+bitpool2=35`, peer-counted. **Demonstrated RED five ways by name** (config leak →
+`bitpool=53` fails; wrong Accept role → `PEER-ACCEPT-BAD-ROLE`; retry not cancelled
+on incoming; unknown address accepted; page scan never enabled) plus one
+**documented gate gap** — the app-level `btout.end()`-on-drop omission is not
+observable because `A2dpSource::tick()` resets L2cap/Avdtp on loss BEFORE the
+`onStream` callback fires; the LIBRARY-level teardown IS covered
+(`PEER-ACL-BAD-HANDLE`, proven live), and `btout.end()` matters for drop-then-idle
+(a silicon claim).
+★ **Piece 2 made the whole BT link layer NON-BLOCKING** (approach B): `BtLink` is
+an operation engine (`startInquiry`/`startPage`/`startPair`/`startDisconnect` +
+`tick(now)`, incoming-page/link-state/supervision), `A2dpSource` is one attempt in
+either direction (an AVDTP **acceptor** beside the initiator, config adoption,
+teardown-on-loss), and a new `BtSession` owns the policy (boot walk + inquiry,
+lost-peer retry forever, page-scan-when-idle, retry-cancel-on-incoming,
+MANUAL/`resume`, stats, `onStream`/`onAttempt` callbacks). `A2dpSource::connect()`
+and `BtLink::page()`'s blocking forms are GONE; `M2_BT_CONNECT_RETRY` is removed
+(retry is the session default); both examples call `session.tick(millis())` from
+`loop()` and never block on Bluetooth again (acid_box keeps `idleUi` only for the
+boot download). The `[media]`/`[reconnect]` transcripts moved; host suites re-shaped
+onto `tick`+`runUntil` and all piece-1 pins held.
+★ **Three library bugs were caught during implementation, each RED-pinned before
+trust** — and the sharpest is a two-gate-rule win: the `[lifecycle]` GATE caught
+what host tests could not, because host suites only ran a single attempt while the
+gate ran inbound-then-outbound. (1) `A2dpSource::m_params` was written only by
+`adoptConfig()` (inbound), so an OUTBOUND reconnect after an INBOUND stream encoded
+the adopted bitpool 35 instead of the initiator default 53 — `start()` now resets
+it for outbound. (2) `Avdtp::reset()` left `m_sig`/`m_l2` stale, so a NEW inbound
+attempt (reconnect) silently never became ACCEPTOR. (3) `A2dpSource::start()` did
+not ack a stale `LINK_LOST` (the DISCONNECTING teardown is excluded from `tick()`'s
+loss-check), so the first reconnect after a deliberate `disconnect()` aborted LOST
+before paging. All three have a mutation-RED host-test regression.
 
 ✅ **Measured 2026-09-06: 129 gates discovered, 129 passed, 0 failed, 0 SKIP**
 (`gates: 129 passed`, exit 0; `-l` reports 129), on the **NEW-34 piece 1

@@ -1,6 +1,18 @@
 # M2Radio BT: link lifecycle -- drop, teardown, auto-reconnect, resume (NEW-34 piece 2)
 
-**Status:** design APPROVED 2026-09-06 (brainstorm in session); plan follows.
+**Status:** IMPLEMENTED and QEMU-gated 2026-09-06 (sweep 130/130, 0 SKIP; the ONE
+new gate is `audio/bt_tone_test[lifecycle]`; M2Radio `82e9172` pushed + pinned,
+fresh-user verified). The silicon bench matrix (§10, plan Task 15) is PENDING the
+bench. Three library bugs were caught during implementation (the [lifecycle] gate
+and reviews) and fixed with RED-demonstrated regressions: `Avdtp::reset()` left
+channel bindings stale (inbound re-adoption); `A2dpSource::start()` did not ack a
+stale `LINK_LOST` (first reconnect after a disconnect aborted); `A2dpSource` never
+reset the SBC config for an outbound attempt (a reconnect after an inbound stream
+encoded the adopted bitpool instead of the initiator default). One accepted gate
+gap: the app-level `btout.end()`-on-drop omission is not observable because
+`A2dpSource::tick()` resets L2cap/Avdtp on loss before the callback fires, so five
+of the gate's six RED demonstrations fail by name and the sixth is documented; the
+library-level teardown IS covered (`PEER-ACL-BAD-HANDLE`, proven live).
 **Issue:** NEW-34 "M2Radio BT: reconnect known devices + soak-test connection
 resilience (range loss/recovery)", piece 2 of 5 (the decomposition is recorded in
 the NEW-34 comment of 2026-09-05 and in the piece-1 spec,
