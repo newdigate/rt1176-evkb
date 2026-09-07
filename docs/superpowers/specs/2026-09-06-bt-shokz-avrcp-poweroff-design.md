@@ -196,3 +196,31 @@ the Shokz sends AFTER it receives that (a re-capture with the responder decides)
 **The self-power-off did not reproduce in any of the three arms** (≈699 / ≈333 /
 ≈471 s); the original observation came from the acid_box build on the pre-piece-2
 stack. "Connected" was never announced (arm 1 by ear; arms 2/3 not reported).
+
+## 9. Task 4 built (2026-09-07, same bench session)
+
+- **`bt/Avrcp.{h,cpp}`** (M2Radio `8e22082`): AVCTP framing (transaction label / packet
+  type / C-R / IPID, PID 0x110E) + the AV/C target sized to §8's capture.
+  `RegisterNotification(PLAYBACK_STATUS_CHANGED)` → INTERIM (`0F`) + PLAYING on the
+  same transaction label (`22 11 0E 0F 48 00 00 19 58 31 00 00 02 01 01`); every other
+  AV/C command → NOT IMPLEMENTED (`08`, operands echoed) so a peer never hangs on an
+  unanswered transaction; a foreign PID → the AVCTP IPID reply; fragments and
+  response frames ignored. RX records one command slot, TX from `service()` (B6).
+  `A2dpSource` now allows PSM 0x0017 UNCONDITIONALLY (the `setAllowAvctp` capture hook
+  and the example's `M2_BT_ACCEPT_AVCTP` option are gone), routes the channel to
+  `Avrcp`, services it beside the SDP server (logging `avrcp: register_notification
+  playback_status -> interim playing` the first time each attempt) and resets it with
+  `Avdtp`. `avrcp_test` 15 checks, RED-pinned by the PLAYING→STOPPED and
+  INTERIM→ACCEPTED mutants.
+- ★ **A latent library bug surfaced when the member was added**: `a2dpsource_test`
+  SEGV'd in `L2cap::service()` with `m_txHead` read as 155. `L2cap` initialised its
+  state only in `begin()`, and `A2dpSource::service()` ticks it from boot before any
+  attempt has called `begin()` — a stack-allocated host object therefore serviced a
+  garbage TX queue, harmless while the garbage happened to be zero and fatal once
+  `A2dpSource` grew by 84 bytes. Static firmware objects are zero-filled, which is why
+  silicon never saw it. Fixed with in-class initialisers matching `begin()`; `l2cap_test`
+  A6 pins `service()`-before-`begin()` as inert. Bisected by shifting the member
+  (layout-independent), by stack size (64 MB still crashed) and by `-O2` (passed) —
+  the crash report's registers named the instruction.
+- **Re-capture (arm 4) pending:** what the Shokz sends after its INTERIM, and whether
+  it announces "connected".

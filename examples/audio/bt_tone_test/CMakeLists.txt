@@ -139,13 +139,8 @@ if(M2_BT_FORGET_BONDS)
     add_definitions(-DM2_BT_FORGET_BONDS=1)
 endif()
 
-# NEW-34 piece 3 capture: accept the peer's AVCTP/AVRCP L2CAP channel (0x0017) instead of refusing it
-# (piece-2 allow-list), to see whether the refusal alone triggers the Shokz self-power-off.  Diagnostic
-# only -- no AVRCP logic.  OFF by default so the default image and every gate stay byte-identical.
-option(M2_BT_ACCEPT_AVCTP "Bench capture: accept the peer's AVCTP/AVRCP L2CAP channel (0x0017)" OFF)
-if(M2_BT_ACCEPT_AVCTP)
-    add_definitions(-DM2_BT_ACCEPT_AVCTP=1)
-endif()
+# NEW-34 piece 3: AVCTP (0x0017) is accepted UNCONDITIONALLY since M2Radio 8e22082 -- the AVRCP target answers the
+# headset's RegisterNotification -- so the M2_BT_ACCEPT_AVCTP capture option of 2026-09-06 is gone.
 
 # NEW-34 piece 5: the unattended connection-resilience soak driver (spec 2026-09-06-bt-resilience-soak-design.md).
 # Every M2_BT_SOAK_PERIOD_MS while STREAMING the firmware forces a drop with a RAW HCI_Disconnect and lets BtSession

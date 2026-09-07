@@ -515,10 +515,6 @@ void setup() {
     BondStoreEeprom::load(bonds);
 #endif
     src.setBonds(&bonds);
-#if defined(M2_BT_ACCEPT_AVCTP)
-    src.setAllowAvctp(true);   // NEW-34 piece 3 capture: accept the Shokz's AVCTP channel (see M2_BT_ACCEPT_AVCTP)
-    CONSOLE.println("avctp=accepted (capture build)");
-#endif
     CONSOLE.print("bonds_boot="); CONSOLE.println(bonds.count());
 #if defined(M2_BT_SOAK)
     CONSOLE.print("soak period_ms="); CONSOLE.print(M2_BT_SOAK_PERIOD_MS); CONSOLE.print(" cycles="); CONSOLE.print(M2_BT_SOAK_CYCLES);

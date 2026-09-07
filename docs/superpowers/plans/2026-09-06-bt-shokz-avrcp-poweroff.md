@@ -89,7 +89,7 @@ Real Shokz OpenMove required. Flash, free-run, read the console with `tools/rt11
 
 ---
 
-## Task 4 (branch C): the minimal `Avrcp` target — sized to the capture  ★ SIZED 2026-09-07: first PDU = RegisterNotification(PLAYBACK_STATUS_CHANGED) → INTERIM PLAYING (spec §8); re-capture after it to size the rest
+## Task 4 (branch C): the minimal `Avrcp` target — sized to the capture  ★ BUILT 2026-09-07 (M2Radio 8e22082, spec §9): RegisterNotification → INTERIM PLAYING, NOT IMPLEMENTED for the rest, 0x0017 accepted by default; found + fixed L2cap's uninitialised-before-begin() state on the way. Re-capture (arm 4) pending; the fake-peer gate (Task 5) after it
 
 **Files:** Create `~/Development/M2Radio/bt/Avrcp.{h,cpp}`, `bt/test/avrcp_test.cpp`; modify `bt/A2dpSource.{h,cpp}`.
 
