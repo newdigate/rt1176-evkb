@@ -12,7 +12,7 @@ hci_buffer: acl_len=1021 acl_num=8 sco_len=64 sco_num=0
 bonds_boot=0
 hb streaming=0 blocks=0 packets=0 drops=0 hw=0
 bt_link links=0 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=-
-bt_hci ncmd=0 timeouts=0 starved=0 l2drop=0 credmin=0
+bt_hci ncmd=0 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
 bt_cred sent=0 returned=0 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 event_mask: st=ok status=0x00
@@ -36,186 +36,186 @@ auth_complete: status=0x00 handle=0x0001
 pairing=ok auth=ok link_key=stored
 hb streaming=0 blocks=0 packets=0 drops=0 hw=0
 bt_link links=0 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
 bt_cred sent=0 returned=0 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 encryption_change: status=0x00 handle=0x0001 enabled=1
 connect_secure=ok encryption=on paired_by=ssp
 a2dp=ok bonds=1 paired_by=ssp
 streaming by=inquiry bitpool=53 frames_per_pkt=5 media_mtu=672
-hb streaming=1 blocks=48 packets=16 drops=0 hw=5
+hb streaming=1 blocks=42 packets=14 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
-bt_cred sent=15 returned=14 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=7
+bt_cred sent=13 returned=12 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=193 packets=65 drops=0 hw=5
+hb streaming=1 blocks=187 packets=63 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
-bt_cred sent=64 returned=63 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=7
+bt_cred sent=62 returned=61 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 avrcp: register_notification playback_status -> interim playing
-hb streaming=1 blocks=338 packets=114 drops=0 hw=5
+hb streaming=1 blocks=332 packets=112 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=118 returned=117 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=116 returned=115 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=483 packets=163 drops=0 hw=5
+hb streaming=1 blocks=477 packets=161 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=167 returned=166 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=165 returned=164 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=628 packets=212 drops=0 hw=5
+hb streaming=1 blocks=622 packets=210 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=216 returned=215 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=214 returned=213 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=779 packets=263 drops=0 hw=5
+hb streaming=1 blocks=767 packets=259 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=267 returned=266 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=263 returned=262 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=930 packets=314 drops=0 hw=5
+hb streaming=1 blocks=912 packets=308 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=318 returned=317 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=312 returned=311 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=1081 packets=365 drops=0 hw=5
+hb streaming=1 blocks=1057 packets=357 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=369 returned=368 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=361 returned=360 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=1232 packets=416 drops=0 hw=5
+hb streaming=1 blocks=1202 packets=406 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=420 returned=419 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=410 returned=409 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=1377 packets=465 drops=0 hw=5
+hb streaming=1 blocks=1347 packets=455 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=469 returned=468 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=459 returned=458 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=1520 packets=512 drops=0 hw=5
+hb streaming=1 blocks=1491 packets=503 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=517 returned=517 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=507 returned=507 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=1660 packets=560 drops=0 hw=5
+hb streaming=1 blocks=1632 packets=550 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=564 returned=563 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=555 returned=555 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=1799 packets=607 drops=0 hw=5
+hb streaming=1 blocks=1775 packets=598 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=611 returned=610 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=603 returned=603 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=1938 packets=654 drops=0 hw=5
+hb streaming=1 blocks=1919 packets=646 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=658 returned=657 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=651 returned=651 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=2077 packets=701 drops=0 hw=5
+hb streaming=1 blocks=2059 packets=694 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=705 returned=704 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=698 returned=697 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=2216 packets=748 drops=0 hw=5
+hb streaming=1 blocks=2204 packets=743 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=752 returned=751 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=747 returned=746 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=2350 packets=793 drops=0 hw=5
+hb streaming=1 blocks=2350 packets=792 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=798 returned=797 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=797 returned=796 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=2482 packets=838 drops=0 hw=5
+hb streaming=1 blocks=2495 packets=841 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=842 returned=841 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=845 returned=844 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=2615 packets=883 drops=0 hw=5
+hb streaming=1 blocks=2640 packets=890 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=887 returned=886 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=894 returned=893 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=2748 packets=928 drops=0 hw=5
+hb streaming=1 blocks=2785 packets=939 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=932 returned=931 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=943 returned=942 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=2881 packets=973 drops=0 hw=5
+hb streaming=1 blocks=2930 packets=988 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=977 returned=976 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=992 returned=991 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=3014 packets=1018 drops=0 hw=5
+hb streaming=1 blocks=3075 packets=1037 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1022 returned=1021 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1041 returned=1040 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=3147 packets=1063 drops=0 hw=5
+hb streaming=1 blocks=3220 packets=1086 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1067 returned=1066 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1090 returned=1089 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=3278 packets=1106 drops=0 hw=5
+hb streaming=1 blocks=3365 packets=1135 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1111 returned=1111 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1139 returned=1138 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=3406 packets=1150 drops=0 hw=5
+hb streaming=1 blocks=3507 packets=1182 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1154 returned=1153 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1187 returned=1187 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=3534 packets=1193 drops=0 hw=5
+hb streaming=1 blocks=3647 packets=1230 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1198 returned=1197 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1234 returned=1233 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=3664 packets=1238 drops=0 hw=5
+hb streaming=1 blocks=3792 packets=1279 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1242 returned=1241 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1283 returned=1282 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=3792 packets=1281 drops=0 hw=5
+hb streaming=1 blocks=3937 packets=1328 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1286 returned=1285 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1332 returned=1331 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=3923 packets=1326 drops=0 hw=5
+hb streaming=1 blocks=4082 packets=1377 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1330 returned=1329 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1381 returned=1380 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=4050 packets=1369 drops=0 hw=5
+hb streaming=1 blocks=4227 packets=1426 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1373 returned=1372 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1430 returned=1429 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=4177 packets=1412 drops=0 hw=5
+hb streaming=1 blocks=4366 packets=1477 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1416 returned=1415 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1481 returned=1480 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=4299 packets=1453 drops=0 hw=5
+hb streaming=1 blocks=4511 packets=1526 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1458 returned=1457 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1530 returned=1529 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=4424 packets=1496 drops=0 hw=5
+hb streaming=1 blocks=4656 packets=1575 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1500 returned=1499 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1579 returned=1578 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=4549 packets=1537 drops=0 hw=5
+hb streaming=1 blocks=4795 packets=1622 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1542 returned=1542 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1626 returned=1625 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=4671 packets=1579 drops=0 hw=5
+hb streaming=1 blocks=4934 packets=1669 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=5
-bt_cred sent=1583 returned=1582 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=5
+bt_cred sent=1673 returned=1672 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
