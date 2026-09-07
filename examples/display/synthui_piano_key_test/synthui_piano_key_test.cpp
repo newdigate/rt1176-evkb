@@ -299,7 +299,7 @@ void setup()
         static const char *NOTE_NAMES[] = {"C", "d", "D", "E", "E", "F", "G", "G", "A", "A", "b", "B"};
         int oct = (cur_midi / 12) + 3;
         const char *nn = NOTE_NAMES[cur_midi % 12];
-        char note_buf[8];
+        char note_buf[16];
         snprintf(note_buf, sizeof(note_buf), "%s%d", nn, oct);
         synthui_seven_segment_set_text(g_note_readout, note_buf);
 
@@ -393,7 +393,7 @@ void loop()
     /* Update note readout */
     int oct = (cur_midi / 12) + 3;
     const char *nn = NOTE_NAMES[cur_midi % 12];
-    char note_buf[8];
+    char note_buf[16];
     snprintf(note_buf, sizeof(note_buf), "%s%d", nn, oct);
     synthui_seven_segment_set_text(g_note_readout, note_buf);
 
