@@ -732,9 +732,14 @@ which step (the ACL trace is off by design). Drop-to-stream p50 12.0 s, p90
 65.7 s, max 240.7 s. Follow-up bench: a headset power-cycle control with the
 board NOT reset (rate back to ~20 % ⇒ the accumulating state is in the headset),
 the converse board-reset control, and a short `M2_BT_ACL_TRACE` run (media is
-skipped, so it is safe) to name the step. Piece 5: software done, silicon run,
-acceptance OPEN on that class. Spec §8/§8.1 and the transcript's SOAK section
-carry the numbers.
+skipped, so it is safe) to name the step. **Both controls RAN the same afternoon (spec §8.2) and
+LOCALISED IT**: the headset power-cycle (board untouched) took the rate 60 → 33 %
+over 110 attempts; the SW4 board reset (fresh host stack AND re-downloaded
+controller firmware, headset untouched) moved nothing — 47 % and climbing again
+on the 2 h run's slope. The accumulating state is in the Shokz; nothing this host
+owns contributes. Piece 5: software done, silicon run, acceptance OPEN on that
+class pending the traced run that names the AVDTP step. Spec §8/§8.1/§8.2 and
+the transcript's SOAK section carry the numbers.
 
 ✅ **Measured 2026-09-06: 131 gates discovered, 130 passed / 1 failed, 0 SKIP in
 the sweep, effectively 131/131 idle**, on the **NEW-34 piece 4 credit-leak

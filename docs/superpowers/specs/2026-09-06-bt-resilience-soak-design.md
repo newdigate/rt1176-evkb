@@ -290,3 +290,40 @@ accumulating state is in the headset; (b) a board-reset control for the converse
 (c) a short `M2_BT_ACL_TRACE` run (media skipped, so it is safe) to name the
 AVDTP step a stall sits at. Until then piece 5 is *software done, silicon run,
 acceptance open on the AVDTP-stall class*.
+
+### 8.2 The two controls (2026-09-07, 16:03–17:33, same board, never reflashed)
+
+Run as the follow-up §8.1 named, in the order that keeps each arm clean. The
+board kept soaking untouched after §8.1's reader was stopped (cycles 167 → 186
+by the time the first marker was set); the log is `p5-soak4-controls-final.log`
+with markers at heartbeat 345 (headset power-cycle, 16:15:14) and 1760 (SW4
+board reset, 17:02:40 — a full firmware re-download to the IW416, so the
+CONTROLLER is reset too, and the bond reloaded from EEPROM, `bonds_boot=1`).
+
+| arm | condition | minutes | attempts | ok | avdtp_failed | stall |
+|---|---|---|---|---|---|---|
+| pre-cycle | 2 h 10 min into the soak, nothing reset | 11 | 25 | 10 | 15 | **60 %** |
+| headset power-cycled | board + controller untouched | 47 | 110 | 73 | 36 | **33 %** |
+| board reset (SW4) | headset untouched, 47 min after its cycle | 30 | 70 | 37 | 33 | **47 %** |
+
+Ten-minute windows after the headset cycle, running straight through the board
+reset: 39, 43, 29, 33, 27 | 39, 41, 60 %. Every host invariant flat throughout
+(`l2_free_loss_min=5`, `l2_leak=0`, `bonds=1`, stack floor 207104, credits
+`1067 == 1067`, `starves=0`).
+
+**Reading:** the headset power-cycle is the only intervention that moved the
+rate (60 → 33 %), and it did not restore the run's opening 23 %; the board reset —
+fresh host stack AND fresh controller firmware — moved nothing (47 % and the
+windows climbing again, 27 → 39 → 41 → 60 % over the ninety minutes since the
+headset's cycle, the same slope as §8.1's). So the accumulating state that makes
+AVDTP stall is in the Shokz, it builds with the headset's uptime or connection
+count, and nothing this host owns contributes. Two caveats: the arms are 25–110
+attempts each, so a single window is noise and only the arm totals and the slope
+are claims; and a soak at one forced drop per 15 s is itself an unusual stressor
+for a consumer headset — the trend may be its response to that, not a defect a
+user would meet. **What remains** is naming the AVDTP step a stall sits at (the
+short `M2_BT_ACL_TRACE` run), which decides whether a host-side mitigation exists
+(a different retry shape, a longer AVDTP deadline, an AVDTP ABORT before
+disconnecting) or whether piece 5's acceptance should be restated as
+"structural signature flat + reconnects within bound against a peer that is
+itself healthy".

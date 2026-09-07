@@ -148,3 +148,16 @@ FUNCTIONAL (spec §5: reconnects==cycles, fails==0): NOT MET -- 146/167 within t
   the run while nothing host-side moves.  Follow-up: headset power-cycle control
   (board not reset), board-reset control, and a short ACL-traced run to name the
   AVDTP step.  Piece 5: software done, silicon run, acceptance OPEN on that class.
+
+-- the two controls (16:03-17:33, same board, never reflashed; log p5-soak4-controls-final.log) --
+pre-cycle (2 h 10 min in)                  attempts= 25 ok= 10 avdtp_failed=15  stall=60%
+Shokz power-cycled, board untouched (47')  attempts=110 ok= 73 avdtp_failed=36  stall=33%
+SW4 board reset, Shokz untouched (30')     attempts= 70 ok= 37 avdtp_failed=33  stall=47%
+  (bonds_boot=1 after SW4; first page connect=ok attempt=1 with the stored key)
+10-min windows after the headset cycle, through the board reset:
+  39 43 29 33 27 | 39 41 60 %  -- climbing again on the same slope as the 2 h run.
+invariants flat throughout: l2_free_loss_min=5 l2_leak=0 bonds=1 stack_free_min=207104
+  bt_cred sent=1067 returned=1067 starves=0 starve_max_ms=0 clamp=0
+READING: only the headset power-cycle moved the rate; a fresh host AND a fresh
+  controller moved nothing.  The accumulating state is in the Shokz.  Next: the
+  ACL-traced run to name the AVDTP step.
