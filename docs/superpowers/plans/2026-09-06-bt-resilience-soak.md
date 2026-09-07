@@ -60,7 +60,7 @@ Expected: a compile error naming `freeSlots`.
     uint8_t  freeSlots() const { uint8_t n = 0; for (const auto &ch : m_ch) if (ch.state == FREE || ch.state == CLOSED) n++; return n; }
 ```
 
-- [ ] **Step 4: Run the suite** → `l2cap_test: N checks, 0 failures` (N = 73 + 6), `BT-HOST-TESTS: PASS`.
+- [ ] **Step 4: Run the suite** → `l2cap_test: N checks, 0 failures` (N = 73 + 5 = 78; the block has five CHECKs — an earlier draft said 6), `BT-HOST-TESTS: PASS`.
 
 - [ ] **Step 5: Mutant (scratch copy).** `cp bt/L2cap.h /tmp/L2cap.h.orig`; change the body to `return MAX_CHANNELS;`; run → the `MAX_CHANNELS - 1` checks FAIL by line; `cp /tmp/L2cap.h.orig bt/L2cap.h`; run → green.
 

@@ -1,0 +1,220 @@
+RT1176 BT tone test up
+serial2=up_115200
+m2_wifi_reset=released
+bt_wake=pulsed_10ms_low (GPIO_DISP_B2_13, mux returned to LPUART2_RTS_B)
+bt_cts=undriven
+bt_fw_source=synthetic
+bt_fw_download=no_start_indication chip_id=0x0000 start_inds=0 sent=0/1024
+hci_reset=ok attempts=1 timeouts=0 framing=0 starved=0 qfull=0 late=0
+hci_version: hci_ver=11 hci_rev=0xBEEF lmp_ver=11 manufacturer=0x1234 lmp_subver=0xCAFE
+bd_addr=11:22:33:44:55:66
+hci_buffer: acl_len=1021 acl_num=8 sco_len=64 sco_num=0
+bonds_boot=0
+hb streaming=0 blocks=0 packets=0 drops=0 hw=0
+bt_link links=0 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=-
+bt_hci ncmd=0 timeouts=0 starved=0 l2drop=0 credmin=0
+bt_cred sent=0 returned=0 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+event_mask: st=ok status=0x00
+ssp_mode: st=ok status=0x00 mode=1
+page_timeout: st=ok status=0x00 slots=0x2000
+inquiry=started
+inq: bd=AA:BB:CC:DD:EE:01 cod=0x240404 psrm=1 clk=0x1234
+inq: bd=AA:BB:CC:DD:EE:02 cod=0x240404 psrm=1 clk=0x1234
+inquiry_complete: n=2
+inq_name: bd=AA:BB:CC:DD:EE:01 status=0x00 name="FAKE-HEADSET-01"
+inq_name: bd=AA:BB:CC:DD:EE:02 status=0x00 name="FAKE-HEADSET-02"
+connect: target=AA:BB:CC:DD:EE:01 name="FAKE-HEADSET-01"
+connect=ok handle=0x0001 attempt=1
+link_key_req: bd=AA:BB:CC:DD:EE:01 -> neg_reply (no stored key)
+io_cap_req: bd=AA:BB:CC:DD:EE:01 -> NoInputNoOutput auth_req=0x04
+hci_event: code=0x32 len=9
+user_conf_req: bd=AA:BB:CC:DD:EE:01 numeric=123456 -> accept (Just Works)
+pairing_complete: status=0x00 bd=AA:BB:CC:DD:EE:01
+link_key: bd=AA:BB:CC:DD:EE:01 type=4 bond=saved
+auth_complete: status=0x00 handle=0x0001
+pairing=ok auth=ok link_key=stored
+encryption_change: status=0x00 handle=0x0001 enabled=1
+connect_secure=ok encryption=on paired_by=ssp
+hb streaming=0 blocks=0 packets=0 drops=0 hw=0
+bt_link links=0 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
+bt_cred sent=1 returned=1 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+a2dp=ok bonds=1 paired_by=ssp
+streaming by=inquiry bitpool=53 frames_per_pkt=5 media_mtu=672
+hb streaming=1 blocks=54 packets=18 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
+bt_cred sent=17 returned=16 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=193 packets=65 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
+bt_cred sent=64 returned=63 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=326 packets=110 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
+bt_cred sent=109 returned=108 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=454 packets=153 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
+bt_cred sent=153 returned=152 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=584 packets=198 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
+bt_cred sent=197 returned=196 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=717 packets=243 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
+bt_cred sent=242 returned=241 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=850 packets=288 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
+bt_cred sent=287 returned=286 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=978 packets=331 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
+bt_cred sent=331 returned=330 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=1104 packets=374 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
+bt_cred sent=374 returned=374 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=1226 packets=416 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=415 returned=414 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=1347 packets=460 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=459 returned=458 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=1468 packets=501 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=500 returned=499 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=1583 packets=540 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=539 returned=538 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=1704 packets=581 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=580 returned=579 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=1825 packets=622 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=621 returned=620 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=1946 packets=663 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=662 returned=661 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=2067 packets=704 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=703 returned=702 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=2188 packets=745 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=744 returned=743 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=2307 packets=788 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=787 returned=786 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=2429 packets=829 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=829 returned=828 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=2553 packets=872 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=871 returned=870 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=2668 packets=911 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=910 returned=909 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=2789 packets=952 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=951 returned=950 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=2910 packets=993 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=992 returned=991 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=3037 packets=1036 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=1035 returned=1034 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=3164 packets=1079 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=1078 returned=1077 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=3291 packets=1122 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=1121 returned=1120 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=3416 packets=1163 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=1163 returned=1163 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=3539 packets=1205 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=1205 returned=1204 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=3665 packets=1248 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=1247 returned=1246 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=3792 packets=1291 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=1290 returned=1289 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=3919 packets=1334 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=1333 returned=1332 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=4046 packets=1377 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=1376 returned=1375 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=4173 packets=1420 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=1419 returned=1418 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=4300 packets=1463 drops=0 hw=5
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=6
+bt_cred sent=1462 returned=1461 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0

@@ -106,7 +106,12 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **131 gates** — the concurrent
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **132 gates** — NEW-34 piece 5's ONE new gate is
+`audio/bt_tone_test[soak]` (the unattended connection-resilience soak: ten
+forced drops by a RAW HCI_Disconnect, ten auto-reconnects with the stored key on
+fresh handles, the LOSS-time teardown witness `l2_free_loss_min=5`, clean media
+on all eleven links, credit stats reset per cycle, stragglers bounded; 131
+before it), then the concurrent
 infrastructure merge (`912c8d1`) added `gpio-analog/blink`, and NEW-34 piece 2's
 ONE new gate is `audio/bt_tone_test[lifecycle]` (the non-blocking BT link
 lifecycle: a stream is dropped, re-paged in BOTH directions, the peer's
@@ -135,7 +140,7 @@ its own (94 + 3 + 11 = 108) — plus W17's TWO on the new
 `networking/m2_uap_probe` and ONE on `networking/m2_uap_lwip`, then W18's FIVE
 more once the QEMU model grew a uAP surface, a station and a readable TxPD tag.
 That arithmetic is CHECKED against the runner rather than trusted: `-l` reports
-131.
+132.
 
 NEW-20 added ONE — `display/rotary_knob_bench`, the RotaryKnob render-strategy
 bench: 12 cells ({vector,bitmap,strip} × {sw,gpu} × {notch,facet}) in ONE ELF,
@@ -580,8 +585,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **131 passed, 0 failed, 0 SKIP**, or
-**130 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
+`usb/usb_descriptor_survey`). The target is **132 passed, 0 failed, 0 SKIP**, or
+**131 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
 (`cm4_audio_test`) is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
@@ -609,6 +614,62 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-09-07: 132 gates discovered, 132 passed, 0 failed, 0 SKIP**
+(`gates: 132 passed`, exit 0; `-l` reports 132), on the **NEW-34 piece 5
+unattended connection-resilience soak** close-out — fully clean, every member of
+the load-sensitivity class green in the sweep itself (`bt_tone_test[media]` 49 s,
+the new `[soak]` 49 s, `[lifecycle]` 23 s, `m2_hci_probe[hci]` 68 s,
+`m2_rx_demo[txaggr]` 23 s, `m2_uap_lwip[uap]` 5 s, `cm4_audio_test` 3 s).
+`LICENSE-AUDIT: PASS` (after the sweep); vacuity **42/42** (four `[soak]`
+negatives added, and the `[media]`/`[lifecycle]` fixtures RE-CAPTURED — they had
+predated piece 4's `bt_cred` line, a silent staleness the sweep cannot see).
+M2Radio pin bumped to `580f435` (`L2cap::freeSlots()`, host-tested — a
+count-OPEN-as-reusable mutant that survived the first test is what added the
+CONFIG/OPEN legs), fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the
+`[soak]` gate against the GitHub-fetched ELF; every bt-linking gate ELF rebuilt
+fresh and freshness-checked by mtime — which caught `m2_hci_probe/build-baud`,
+the `[baud]` gate's directory, stale.
+★ **The ONE new gate is `audio/bt_tone_test[soak]`** (132nd): an `M2_BT_SOAK`
+build forces a drop every 2 s while STREAMING with a RAW `HCI_Disconnect` on the
+live handle — deliberately NOT `BtSession::disconnect()`, the MANUAL hook — so
+BtLink goes `LINK_LOST`, `A2dpSource::tick()` tears down, BtSession goes WAITING
+and `retryNow()` fires the AUTOMATIC reconnect; ten cycles against the fake
+peer's new `soak` phase (the `reconnect` flow N times: fresh handle per page,
+stored-key auth, media validated per link). Tally `PEER-SOAK links=11
+disconnects=10 streamed=11 key_ok=10 notified=1 badmedia=0`, peer-counted;
+firmware `soak_done cycles=10 reconnects=10 fails=0 … l2_free_loss_min=5
+l2_leak=0 bonds=1`. **Demonstrated RED three ways by name** (the L2cap reset in
+the loss branch removed → `l2_free_loss_min=2`; a stale handle on the forced
+disconnect → `reconnects=1 fails=9`; `resetCreditStats()` removed → `max
+sent=1297`) plus one documented gate gap (the app-level `btout.end()` is
+redundant to everything the peer observes — the same gap `[lifecycle]` records)
+and one DROPPED demo (the bond-upsert always-insert is UNREACHABLE: one call
+site, one key notified per run — the live bond pin is `notified=1`).
+★ **Three review findings changed the design, each worth keeping.** (1) The
+slot-leak witness had to move to LOSS time: `A2dpSource` calls `m_l2.begin()`
+unconditionally per attempt, which zeroes the channel table, so a STREAMING-entry
+sample is always fresh and a skipped teardown is invisible there — sampled from
+the stream-lost callback (which fires AFTER the library's reset) it reads 5 vs
+2. (2) The peer's `PEER-ACL-UNKNOWN-CID` fired exactly 3× per drop on the first
+end-to-end run — a PEER-MODEL artefact: it tore its channel table down at the
+Disconnect COMMAND, 50 ms before reporting Disconnection_Complete, while BtLink
+(correctly) believes the link up until the event. Fixed by deferring the
+teardown to the next page (the lifecycle phase's own idiom) and COUNTING the
+stragglers (`stale_max<=8`, measured 4) instead of assuming them away — both
+ACL tripwires stay strict. (3) QEMU credit DYNAMICS are noise (piece 4), so the
+gate asserts the credit stats RESET per cycle (`sent=` must FALL once per
+reconnect) plus `clamp=0`/HCI `starved=0`, not `credmin` recovery — a silicon
+claim. Also: `CONSOLE.println` emits `\r\n`, which silently defeats `$`-anchored
+greps on a live capture (the gate strips `\r`); `heap=0` on this vehicle is a
+nothing-ever-allocated tripwire, not a leak witness; `btout.packets()` resets
+per reconnect too, so a sent-vs-packets ratio was never a valid reset check.
+★ **The 2–4 h SILICON soak is the piece's actual claim and is PENDING** (plan
+Task 7): `M2_BT_SOAK` at 15 s, `M2_BT_SOAK_RETRY_NOW=OFF` (the session's own
+retry policy) with a ~60 s reconnect bound, against the ESP32 sink, a single
+bond in the store (an EEPROM save per attempt-end is a no-op with one bond and
+wear with more); a flat `bt_soak` signature end to end settles pieces 1/2/4's
+pending silicon claims in one run.
 
 ✅ **Measured 2026-09-06: 131 gates discovered, 130 passed / 1 failed, 0 SKIP in
 the sweep, effectively 131/131 idle**, on the **NEW-34 piece 4 credit-leak
