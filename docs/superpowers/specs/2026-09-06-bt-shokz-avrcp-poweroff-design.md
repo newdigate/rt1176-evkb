@@ -1,6 +1,6 @@
 # M2Radio BT: Shokz self-power-off — AVRCP capture + minimal target (NEW-34 piece 3)
 
-**Status:** design APPROVED 2026-09-06 (brainstorm in session); plan follows.
+**Status:** CAPTURE DONE 2026-09-07 — branch **D → C** selected on the bench (§8): the SDP AVRCP-Target record is IMPLEMENTED (M2Radio `c2a4025`, host-tested) and the Shokz then sends its first AV/C — `RegisterNotification(PLAYBACK_STATUS_CHANGED)`, exactly the §4 anchor. Two silicon findings fixed on the way (§8). The minimal AV/C responder (plan Task 4) is NEXT; the 1–2 min self-power-off did NOT reproduce in three arms (§8).
 **Issue:** NEW-34 "M2Radio BT: reconnect known devices + soak-test connection
 resilience (range loss/recovery)", piece 3 of 5.
 **Depends on:** piece 2 (the A2DP source + `L2cap` allow-list). Heavily
@@ -141,3 +141,58 @@ AVRCP record). M2Radio (branch C): NEW `bt/Avrcp.{h,cpp}` + `bt/test/avrcp_test.
 `bt/A2dpSource.*` wiring. evkb gate + fake peer (`hci_peer.py`) if branch C.
 `evkb.cmake` pin, `CLAUDE.md`, memory. The captures and the acceptance are bench
 artifacts.
+
+## 8. Capture outcome (bench, 2026-09-07, real Shokz OpenMove `C0:86:B3:31:29:2F`)
+
+Three arms of `bt_tone_test` (bench config: BT-only UART firmware, RXRTSE flow,
+3 Mbaud, `M2_BT_ACL_TRACE=ON`, target `Shokz`), console via the MCU-Link VCOM.
+
+- **Arm 1 (baseline, channel refused).** SSP pair by inquiry, `streaming by=inquiry`.
+  1.8 s after AVDTP START the Shokz opens **PSM 0x0017 (AVCTP)**; we refuse it
+  `CONN_RSP result=0x0002`; it retries 0.5 s later, refused again, then gives up.
+  Its only SDP query is the known AudioSource one (0x110A). **It streamed ≈699 s
+  with `drops=0` and did NOT power off**; it never announced "connected" (by ear).
+  Piece-4 instrument over the run: `sent=30160 returned=30160 starves=0
+  starve_max_ms=0 clamp=0` — no credit leak at close range.
+- **Arm 2 (`M2_BT_ACCEPT_AVCTP`) — first a SILICON BUG in the capture build
+  itself:** the channel was STILL refused (0x0002) with `avctp=accepted` printed,
+  because `L2cap`'s allow-list held only TWO PSMs and `A2dpSource` fills them with
+  SDP + AVDTP, so the AVCTP entry was silently dropped. No gate could see it (none
+  opens three PSMs). Fixed: `MAX_ALLOW=4`, `allowedCount()`, host test A5 (three
+  accepted, an unlisted fourth refused) RED-pinned by the capacity-2 mutant
+  (M2Radio `0084bc2`). Rebuilt: the channel is **accepted and configured** (our
+  dcid 0x0081, MTU 1004/672). The Shokz then opens a fresh SDP channel and asks
+  **{0x110C AV Remote Control Target}** with attributes {0x0009, 0x0311}, gets an
+  empty list, then asks **{0x110E}** the same way, gets an empty list — and sends
+  **no AV/C at all** (0 frames in ≈333 s). So the record is the prerequisite for
+  the AV/C to START, not for the channel open (the design's branch D, in a
+  variant: it opens AVCTP first, then asks). Also on this arm, piece 1/2 silicon
+  evidence: after the abrupt reflash the Shokz would not accept our page (page
+  timeout ×2, status 0x04) but **paged US**; we accepted as slave with the stored
+  key and it drove AVDTP as initiator (`streaming by=incoming`, `role=s`). ★ A
+  piece-2 defect surfaced: the boot walk's failed OUTBOUND attempt (`connect=fail
+  reason=no_inquiry_hit`) tore down the freshly-authenticated INBOUND link
+  (`disconnect reason=0x16`); the Shokz paged again and the second attempt
+  streamed — filed for piece 2's follow-up.
+- **Arm 3 (AVRCP Target record served).** `Sdp` is now multi-record: record 2
+  (handle 0x00010001) = ServiceClassIDList {0x110C}, ProtocolDescriptorList
+  {L2CAP psm 0x0017, AVCTP 0x0104}, BluetoothProfileDescriptorList {0x110E,
+  0x0104}, SupportedFeatures 0x0001 (Category 1); a search for 0x110E matches it
+  too; ServiceSearch lists both handles (M2Radio `c2a4025`, `sdp_test` 39 checks,
+  the Shokz's two queries answered byte-for-byte, RED-pinned by `N_RECORDS=1`).
+  Paged with the stored key (`by=paged`). The Shokz then sent its first AV/C
+  frame on the AVCTP channel:
+  `20 11 0E | 03 48 00 | 00 19 58 | 31 00 | 00 05 | 01 00 00 00 00` — AVCTP
+  tl=2 command PID=AVRCP; AV/C ctype NOTIFY, panel subunit, VENDOR DEPENDENT,
+  Bluetooth SIG; PDU 0x31 **RegisterNotification**, event 0x01
+  **PLAYBACK_STATUS_CHANGED**, interval 0. We sent no response (no responder yet)
+  and it sent nothing further; it kept streaming (≈471 s, `drops=0`).
+
+**Branch:** D → C. The prerequisite record is built; the responder's first PDU is
+known. **Task 4 (the minimal `Avrcp` responder) is sized to:** an INTERIM response
+to RegisterNotification(PLAYBACK_STATUS_CHANGED) carrying PLAYING (`0F 48 00 00 19
+58 31 00 00 02 01 01`, same AVCTP transaction label, C/R = response), and whatever
+the Shokz sends AFTER it receives that (a re-capture with the responder decides).
+**The self-power-off did not reproduce in any of the three arms** (≈699 / ≈333 /
+≈471 s); the original observation came from the acid_box build on the pre-piece-2
+stack. "Connected" was never announced (arm 1 by ear; arms 2/3 not reported).

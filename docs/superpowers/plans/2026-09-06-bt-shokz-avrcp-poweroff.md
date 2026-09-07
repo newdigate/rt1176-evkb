@@ -64,7 +64,7 @@ Expected: default gate PASS; capture build compiles. (Replace `<Shokz>` with the
 
 ---
 
-## Task 2: the bench capture (USER, on hardware) — selects the branch
+## Task 2: the bench capture (USER, on hardware) — selects the branch  ★ DONE 2026-09-07: branch D → C (spec §8); two silicon fixes landed on the way (L2cap allow-list capacity, M2Radio 0084bc2; multi-record Sdp with the AVRCP Target record, M2Radio c2a4025 = Task 3 done)
 
 **Files (evidence):** `examples/audio/bt_tone_test/transcript_hw_evkb.txt`.
 
@@ -76,7 +76,7 @@ Real Shokz OpenMove required. Flash, free-run, read the console with `tools/rt11
 
 ---
 
-## Task 3 (branches B/C/D): SDP AVRCP-target record + accept AVCTP by default
+## Task 3 (branches B/C/D): SDP AVRCP-target record + accept AVCTP by default  ★ RECORD DONE (M2Radio c2a4025, bench-verified: the Shokz answers with RegisterNotification). STILL TO DO: make allowPsm(0x0017) the A2dpSource DEFAULT (retire the capture option) — fold into Task 4.
 
 **Files:** `~/Development/M2Radio/bt/SdpServer.{h,cpp}` (or `bt/Sdp.*`), `bt/A2dpSource.cpp`.
 
@@ -89,7 +89,7 @@ Real Shokz OpenMove required. Flash, free-run, read the console with `tools/rt11
 
 ---
 
-## Task 4 (branch C): the minimal `Avrcp` target — sized to the capture
+## Task 4 (branch C): the minimal `Avrcp` target — sized to the capture  ★ SIZED 2026-09-07: first PDU = RegisterNotification(PLAYBACK_STATUS_CHANGED) → INTERIM PLAYING (spec §8); re-capture after it to size the rest
 
 **Files:** Create `~/Development/M2Radio/bt/Avrcp.{h,cpp}`, `bt/test/avrcp_test.cpp`; modify `bt/A2dpSource.{h,cpp}`.
 
