@@ -222,7 +222,7 @@ git commit -m "synthui_lamp: LVGL 9 custom widget implementation (NEW-24)"
 - Consumes: `synthui_lamp.h`, `lvgl_mipi_panel.h`, `Display.h`
 - Produces: `synthui_lamp_test.elf`
 
-- [ ] **Step 1: Create `CMakeLists.txt`**
+- [x] **Step 1: Create `CMakeLists.txt`**
 
 Create `/Users/moolet/Development/rt1170/rt1176-evkb/examples/display/synthui_lamp_test/CMakeLists.txt`:
 ```cmake
@@ -248,7 +248,7 @@ target_include_directories(synthui_lamp_test.elf PRIVATE
 )
 ```
 
-- [ ] **Step 2: Create `synthui_lamp_test.cpp`**
+- [x] **Step 2: Create `synthui_lamp_test.cpp`**
 
 Implement `synthui_lamp_test.cpp` with:
 - 16-lamp bank (4×4 grid on 720×1280 RK055 panel) exercising Round, Bar, Pill shapes, On/Off states, all 6 DC colors, and Disabled state.
@@ -260,7 +260,7 @@ Implement `synthui_lamp_test.cpp` with:
 - Tokens: `SYNTHUI_LAMP_BEGIN`, `PANEL_OK`, `LVGL_FLUSHED=PASS`, `LVGL_BYTES=3686400`, `lamp_crc=0x...`, `lamp_delta_crc=0x...`, `lamp_fresh_crc=0x...`, `lamp_delta_eq=PASS`, `lamp_damage max=...`, `crc_done`, `PASS: SynthUI lamp render verified`.
 - Phase B continuous chaser animation loop measuring frame time (`lamp_fps`).
 
-- [ ] **Step 3: Build the example**
+- [x] **Step 3: Build the example**
 
 ```bash
 mkdir -p /Users/moolet/Development/rt1170/rt1176-evkb/examples/display/synthui_lamp_test/build
@@ -270,7 +270,7 @@ cmake --build .
 ```
 Expected: `synthui_lamp_test.elf` created successfully.
 
-- [ ] **Step 4: Commit scaffold**
+- [x] **Step 4: Commit scaffold**
 
 ```bash
 cd /Users/moolet/Development/rt1170/rt1176-evkb
