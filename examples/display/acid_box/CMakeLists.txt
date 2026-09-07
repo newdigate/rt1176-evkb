@@ -195,6 +195,8 @@ if(M2_BT_OUT)
 		*libM2Radio*.a:A2dpSource.cpp.obj(.text* .fastrun)
 		*libM2Radio*.a:BtSession.cpp.obj(.text* .fastrun)
 		*libM2Radio*.a:Avdtp.cpp.obj(.text* .fastrun)
+		/* Avrcp (NEW-34 piece 3) -- missing from this list overflowed ITCM by 316-652 B in the M2_BT_OUT bench builds (found 2026-09-07 rebuilding them for the ACL-reassembly change) */
+		*libM2Radio*.a:Avrcp.cpp.obj(.text* .fastrun)
 		*libM2Radio*.a:BtLink.cpp.obj(.text* .fastrun)
 		*libM2Radio*.a:BondTable.cpp.obj(.text* .fastrun)
 		*libM2Radio*.a:L2cap.cpp.obj(.text* .fastrun)

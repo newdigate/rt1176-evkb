@@ -434,7 +434,7 @@ static void aclTrace(void *, bool out, uint16_t handle, const uint8_t *pdu, uint
 }
 #endif
 static void onEvt(void *, uint8_t c, const uint8_t *p, uint8_t l) { src.onEvent(c, p, l); }
-static void onAclThunk(void *, uint16_t h, const uint8_t *d, uint16_t l) { src.onAcl(h, d, l); }
+static void onAclThunk(void *, uint16_t h, uint8_t pb, const uint8_t *d, uint16_t l) { src.onAcl(h, d, l, pb); }   // Hci::AclFn puts pb before data; A2dpSource/L2cap take it last
 
 void setup() {
     CONSOLE.begin(115200);
@@ -593,6 +593,8 @@ void loop() {
         CONSOLE.print(" timeouts="); CONSOLE.print(hci.timeouts());
         CONSOLE.print(" starved="); CONSOLE.print(hci.starved());
         CONSOLE.print(" l2drop="); CONSOLE.print(src.l2().dropped());
+        CONSOLE.print(" l2frag="); CONSOLE.print(src.l2().reasmFrags());        // ACL continuation fragments reassembled
+        CONSOLE.print(" l2fragdrop="); CONSOLE.print(src.l2().reasmDrops());    // partial PDUs discarded
         CONSOLE.print(" credmin="); CONSOLE.println(src.l2().creditsMin());
         // NEW-34 piece 4: the credit-leak soak record.  outstanding == sent-returned (<= maxCredits when healthy);
         // a lost NCP shows as starve_max_ms growing run-over-run with credmin pinned at 0.

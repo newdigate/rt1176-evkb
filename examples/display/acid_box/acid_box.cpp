@@ -348,7 +348,7 @@ static AudioConnection   cBtL(acid, 0, btout, 0);
 static AudioConnection   cBtR(acid, 0, btout, 1);   // mono acid duplicated to L+R
 static void btLog(void *, const char *s) { CONSOLE.println(s); }
 static void onEvt(void *, uint8_t c, const uint8_t *p, uint8_t l) { src.onEvent(c, p, l); }
-static void onAclThunk(void *, uint16_t h, const uint8_t *d, uint16_t l) { src.onAcl(h, d, l); }
+static void onAclThunk(void *, uint16_t h, uint8_t pb, const uint8_t *d, uint16_t l) { src.onAcl(h, d, l, pb); }   // Hci::AclFn puts pb before data; A2dpSource/L2cap take it last
 static bool s_btBegun = false;
 // NEW-34 piece 2: BtSession callbacks -- session.tick() drives A2dpSource's attempt state machine
 // (boot walk + inquiry, lost-peer retry forever, page-scan-when-idle) and fires these at a link's

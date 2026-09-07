@@ -401,8 +401,9 @@ static void onL2capData(void *, L2cap::Channel &ch, const uint8_t *payload, uint
 }
 
 // Hci::AclFn -> L2cap::onAcl thunk (L2cap's RX entry point takes no ctx).
-static void onAclThunk(void *, uint16_t handle, const uint8_t *d, uint16_t len) {
-    l2.onAcl(handle, d, len);
+// NOTE: Hci::AclFn puts pb BEFORE data; L2cap::onAcl/A2dpSource::onAcl take it LAST (defaulted).
+static void onAclThunk(void *, uint16_t handle, uint8_t pb, const uint8_t *d, uint16_t len) {
+    l2.onAcl(handle, d, len, pb);
 }
 #endif
 
@@ -412,7 +413,7 @@ static void onAclThunk(void *, uint16_t handle, const uint8_t *d, uint16_t len) 
 // exactly ONE BtLink answers each Link_Key_Request.
 static A2dpSource src(hci, hciIo);
 static BondTable  bonds;
-static void onAclThunk(void *, uint16_t handle, const uint8_t *d, uint16_t len) { src.onAcl(handle, d, len); }
+static void onAclThunk(void *, uint16_t handle, uint8_t pb, const uint8_t *d, uint16_t len) { src.onAcl(handle, d, len, pb); }
 #endif
 
 #if defined(M2_BT_LOOPBACK)
@@ -582,7 +583,8 @@ static void probeFastBaud() {
 static uint16_t s_lbHandle = 0; static uint32_t s_lbEchoed = 0, s_lbBytes = 0;
 // Loopback ACL packets come back on the loopback handle (Vol 4 Part E 7.6.2):
 // count them and their bytes from onAcl -- no TX here, this is record-only.
-static void lbOnAcl(void *, uint16_t handle, const uint8_t *, uint16_t len) {
+static void lbOnAcl(void *, uint16_t handle, uint8_t pb, const uint8_t *, uint16_t len) {
+    (void)pb;
     if (handle == s_lbHandle) { s_lbEchoed++; s_lbBytes += len; }
 }
 // Phase 0 (BT-3): put the controller in LOCAL LOOPBACK and count N ACL
