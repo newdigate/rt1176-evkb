@@ -1,0 +1,15 @@
+SYNTHUI_PANEL_BUTTON_BEGIN
+PANEL_OK
+panel_button_scene=16 grid=4x4
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+panel_button_crc=0xF90B7996
+panel_button_delta_crc=0x99C92E3B
+panel_button_fresh_crc=0x99C92E3B
+panel_button_delta_eq=PASS
+panel_button_damage max=7200 total=564036 steps=64
+panel_button_vsync flips=66 isrs=66 timeouts=0
+crc_done
+PASS: SynthUI panel_button render verified
+panel_button_fps frames=64 mfps_med=214822 us_med=4655 us_min=3500 us_max=6309
+panel_button_mem total=1045668 used_pct=2 max_used=11536 frag_pct=1
