@@ -222,5 +222,21 @@ stack. "Connected" was never announced (arm 1 by ear; arms 2/3 not reported).
   A6 pins `service()`-before-`begin()` as inert. Bisected by shifting the member
   (layout-independent), by stack size (64 MB still crashed) and by `-O2` (passed) —
   the crash report's registers named the instruction.
-- **Re-capture (arm 4) pending:** what the Shokz sends after its INTERIM, and whether
-  it announces "connected".
+- **Arm 4 (responder, GetCapabilities still NOT IMPLEMENTED):** the Shokz sent
+  `GetCapabilities(EVENTS_SUPPORTED)` FIRST (`10 11 0E 01 48 00 00 19 58 10 00 00 01
+  03`), took our NOT IMPLEMENTED, then `RegisterNotification` and took our INTERIM
+  PLAYING; nothing further; streamed ≈18 k packets, `drops=0`, no power-off.
+  GetCapabilities was then built (M2Radio `fea6d52`: STABLE `0C … 10 00 00 03 03 01
+  01` for EVENTS_SUPPORTED, the SIG id for COMPANY_ID; RED-pinned by an empty event
+  list).
+- **Arm 5 (both PDUs answered) — the complete exchange, on the wire:** AVCTP opened
+  (this time during the INBOUND bring-up, before `a2dp=ok`), ONE SDP query (0x110C —
+  the Target record satisfied it, no 0x110E follow-up), then
+  `GetCapabilities(EVENTS_SUPPORTED)` → our STABLE `{PLAYBACK_STATUS_CHANGED}`, then
+  `RegisterNotification(PLAYBACK_STATUS_CHANGED)` → our INTERIM PLAYING, then nothing.
+  **The Shokz's AV/C set is two PDUs, both now answered.** Streaming `by=incoming`,
+  `drops=0`. Six A2DP-path gates re-run PASS against the library (`[avdtp]`
+  `[reconnect]` `[media]` `[lifecycle]` `[soak]` card-absent).
+- **Still open:** whether the Shokz announces "connected" now (a bench observation),
+  the fake-peer gate for the exchange (plan Task 5), the 5+ min acceptance run.
+
