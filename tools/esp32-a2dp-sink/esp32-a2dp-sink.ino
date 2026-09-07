@@ -143,8 +143,14 @@ static void a2dpEvent(esp_a2d_cb_event_t ev, esp_a2d_cb_param_t *p) {
         fmtBda(p->conn_stat.remote_bda, s_peer);
         s_connected = (p->conn_stat.state == ESP_A2D_CONNECTION_STATE_CONNECTED);
         Serial.printf("a2dp_conn: state=%s peer=%s", st[p->conn_stat.state], s_peer);
-        if (p->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED)
+        if (p->conn_stat.state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
             Serial.printf(" reason=%s", p->conn_stat.disc_rsn == ESP_A2D_DISC_RSN_NORMAL ? "normal" : "abnormal");
+            // NEW-34 piece 5 soak (2026-09-07): after a HOST-initiated disconnect this sink stopped answering pages
+            // for 15+ minutes (no Connection_Complete / status 0x08) until it was power-cycled.  Re-arm the scan
+            // mode on every disconnect so the source's re-page finds us -- the soak drops the link every 15 s.
+            esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+            Serial.print(" scan=rearmed");
+        }
         Serial.println();
         break; }
     case ESP_A2D_AUDIO_STATE_EVT: {
