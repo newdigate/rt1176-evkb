@@ -615,6 +615,44 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+✅ **Measured 2026-09-07 (evening): 136 gates discovered, 132 passed, 0 failed,
+4 SKIP** (`gates: 132 passed, 4 skipped (not built)`, exit 0), on the **L2CAP
+ACL-reassembly** close-out (M2Radio `0233d53` pinned; fresh-user
+`-DEVKB_FORCE_FETCH=ON` verified by RUNNING `bt_tone_test[media]` against the
+GitHub-fetched ELF — the configure log shows the clone at `0233d53`). **No new
+gate from this work**; every bt-linking gate green in the sweep itself
+(`bt_tone_test` 15 s, `[lifecycle]` 23 s, `[media]` 50 s, `[soak]` 49 s,
+`acid_box` 17 s, `m2_hci_probe` 18 s, `[avdtp]` 15 s, `[baud]` 12 s, `[hci]`
+66 s, `[reconnect]` 19 s) and the load-sensitivity class too (`cm4_audio_test`
+4 s, `m2_rx_demo[txaggr]` 21 s, `m2_uap_lwip[uap]` 4 s). Vacuity **43/43**, the
+`[media]`, `[soak]` and `[lifecycle]` fixtures RE-CAPTURED (the last two had
+silently predated the heartbeat's new `l2frag=` fields). Every bt-linking ELF
+rebuilt and freshness-checked by SYMBOL (`nm … _ZN5L2cap8dispatch`; the three
+dirs that link no L2cap — `m2_hci_probe/build`, `/build-baud`, `acid_box/build`
+— read STALE by that test and are fresh by object mtime).
+★ **The 4 SKIP and a `LICENSE-AUDIT: FAIL` are the CONCURRENT SynthUI
+workstream's, not this change's**, and both were true of master before this
+work landed: `display/synthui_{lamp,level_meter,panel_button,seven_segment}_test`
+(NEW-24/26/27/29, pushed 2026-09-07 from another checkout) pin a SynthUI SHA
+(`463e74f`) that this machine's `~/Development/SynthUI` does not contain, so
+local-first resolution cannot build them (`synthui_lamp.h: No such file`) and
+they SKIP; and none of the four has a `GATES` manifest entry, so the audit's
+drift check fails BY NAME on each. Both belong to that stream's close-out.
+This is exactly the "a SKIP hides in a count" class: read the SKIP names, not
+the total. (Two more of theirs, `synthui_piano_key_test` and
+`synthui_slide_toggle_test`, landed on origin during this sweep.)
+★ **acid_box's `M2_BT_OUT` bench builds had NOT LINKED since piece 3** — found
+only because the close-out rebuilt EVERY build dir: `Avrcp.cpp` was added to
+the library on 2026-09-07 but never to acid_box's hand-maintained flash-routing
+list, overflowing ITCM by 316–652 B; the three `ACIDBOX_LOOPSTAT` bench dirs
+had a SECOND, independent 60 B overflow from three inline helpers in
+`loopstat_pct.h` that defaulted to ITCM. Both fixed (placement only; the gate
+build takes neither branch). Headroom now: `build-bt` **272 B**, the loopstat
+bench dirs **96 B**, of 262144. The durable fix is a wildcard with
+`EXCLUDE_FILE(*Sbc.cpp.obj)` instead of eighteen per-object lines — a
+follow-up, because the NEXT file added to `M2Radio/bt/` reproduces this by
+construction.
+
 ✅ **Measured 2026-09-07: 132 gates discovered, 132 passed, 0 failed, 0 SKIP**
 (`gates: 132 passed`, exit 0; `-l` reports 132), on the **NEW-34 piece 3 Shokz
 AVRCP** close-out — fully clean. `LICENSE-AUDIT: PASS`; vacuity **43/43** (one
@@ -737,9 +775,32 @@ LOCALISED IT**: the headset power-cycle (board untouched) took the rate 60 → 3
 over 110 attempts; the SW4 board reset (fresh host stack AND re-downloaded
 controller firmware, headset untouched) moved nothing — 47 % and climbing again
 on the 2 h run's slope. The accumulating state is in the Shokz; nothing this host
-owns contributes. Piece 5: software done, silicon run, acceptance OPEN on that
-class pending the traced run that names the AVDTP step. Spec §8/§8.1/§8.2 and
-the transcript's SOAK section carry the numbers.
+owns contributes. Spec §8/§8.1/§8.2 and the transcript's SOAK section carry
+the numbers. **The traced run then NAMED IT, and it is OURS, not the
+headset's** (spec `2026-09-07-bt-acl-reassembly-design.md`): the Shokz's
+22-byte SDP query of our AudioSource record arrived as TWO HCI ACL packets, 17
+bytes (PB first) then `03 09 00 09 00` (PB continuation), and this host had
+NEVER reassembled ACL fragments — `Hci` masked the Packet_Boundary flag out of
+the handle and `L2cap::onAcl` treated every packet as a whole PDU — so the SDP
+server answered the truncated first packet with an SDP ErrorResponse
+(`01 00 01 00 02 00 03`), the tail was parsed as a garbage L2CAP header, and the
+Shokz, which answers DISCOVER only after its SDP query completes, waited out
+our 15 s deadline. Bluetooth Core Vol 4 Part E §5.4.2 makes reassembly the
+HOST's job. FIXED (M2Radio `0233d53`, pinned): `Hci::AclFn` carries `pb` (a
+SIGNATURE change — every registered ACL thunk takes `uint8_t pb` after the
+handle and must forward it LAST to `A2dpSource`/`L2cap::onAcl`; the defaulted
+parameter makes an omission compile and silently disable reassembly, which is
+why the thunk comments say so), `L2cap` holds one `RX_MTU+4` reassembly buffer
+(zero-copy for whole packets, which dispatch their DECLARED length; counted
+drops for an orphan tail, a superseded partial, an oversize or wrapped declared
+length), host scenarios R1–R9 with mutants RED, and the `[media]` fake peer now
+sends that query fragmented ALWAYS, so `bt_tone_test[media]` was RED by name
+against `9d3da4c` and is GREEN with `l2frag=1` on every streaming heartbeat (no
+new gate). Two things stay OPEN: why the Shokz fragments MORE as its uptime
+grows, and why the traced build saw 1 stall in 70 against the same degraded
+headset — neither changes the fix. The silicon re-run (untraced soak, degraded
+headset, `l2frag` climbing, stall class gone) is Task 7 of the plan and is what
+closes piece 5's acceptance.
 
 ✅ **Measured 2026-09-06: 131 gates discovered, 130 passed / 1 failed, 0 SKIP in
 the sweep, effectively 131/131 idle**, on the **NEW-34 piece 4 credit-leak

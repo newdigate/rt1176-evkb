@@ -327,3 +327,17 @@ short `M2_BT_ACL_TRACE` run), which decides whether a host-side mitigation exist
 disconnecting) or whether piece 5's acceptance should be restated as
 "structural signature flat + reconnects within bound against a peer that is
 itself healthy".
+
+### 8.3 Root cause and fix (2026-09-07, evening)
+
+The traced run named the step and the side: the Shokz's 22-byte SDP query of our
+AudioSource record arrives as TWO ACL packets (17 + 5, PB first + continuation)
+and this host never reassembled ACL fragments — the SDP server answered the
+truncated first packet with an ErrorResponse and the headset, which answers
+DISCOVER only after its query completes, waited out our 15 s deadline. Design,
+proof and close-out: `2026-09-07-bt-acl-reassembly-design.md` (M2Radio
+`0233d53`; `bt_tone_test[media]` RED by name against the old library, GREEN
+with `l2frag=1`; sweep clean for every bt gate). The headset's rising
+fragmentation with uptime and the traced build's lower rate are recorded OPEN.
+**Silicon re-run (plan Task 7): pending** — the untraced soak against the
+still-degraded Shokz; the claim is `avdtp_failed` gone and `l2frag` climbing.
