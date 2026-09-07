@@ -1,0 +1,26 @@
+SYNTHUI_SEVEN_SEGMENT_BEGIN
+PANEL_OK
+seven_segment_scene=6 count=6
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+seven_segment_crc=0xA9629782
+seven_segment_delta_crc=0x6B4D45FE
+seven_segment_fresh_crc=0x6B4D45FE
+seven_segment_delta_eq=PASS
+seven_segment_damage max=8736 total=851704
+seven_segment_vsync flips=66 isrs=66 timeouts=0
+crc_done
+PASS: SynthUI seven_segment render verified
+seven_segment_fps=0.5
+seven_segment_fps=42406.1
+seven_segment_fps=45007.0
+seven_segment_fps=43571.0
+seven_segment_fps=41494.0
+seven_segment_fps=42804.0
+seven_segment_fps=43611.8
+seven_segment_fps=45875.0
+seven_segment_fps=42257.6
+seven_segment_fps=45214.0
+seven_segment_fps=45322.1
+seven_segment_fps=44586.0
+seven_segment_fps=42964.0
