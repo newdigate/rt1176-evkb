@@ -55,9 +55,15 @@
 #       NEXT page rather than at the moment it answers our Disconnect (a real controller
 #       keeps the ACL alive until it reports Disconnection_Complete back to us), so a few
 #       media packets legitimately arrive in that ~50 ms window after the host has already
-#       moved on -- stale_max<=5 (measured 4: this is the ~3-4 packets/cycle the host
+#       moved on -- stale_max<=8 (measured 4: this is the ~3-4 packets/cycle the host
 #       legitimately sends before Disconnection_Complete lands, NOT a bound on total
-#       stragglers, which vary cycle to cycle and are NOT pinned exactly here).
+#       stragglers, which vary cycle to cycle and are NOT pinned exactly here). Bound 8
+#       (measured 4, three runs; stale_acl 33-37 across runs, ~12% spread): stale_run is the
+#       number of media packets the guest emits before it PARSES Disconnection_Complete, i.e.
+#       host-Python scheduling latency measured in guest time -- the same wall-clock/guest-time
+#       skew behind the tree's load-sensitivity class, so one packet of margin (5) would flake;
+#       the defect it guards against (a host that ignores Disconnection_Complete streams the
+#       whole ~2 s cycle, 100+ packets) is still caught with ~12x margin at 8.
 #
 #   Every peer-side number is one the firmware cannot invent (see [lifecycle]/[reconnect]).
 #
@@ -77,12 +83,18 @@
 #   Ten 2 s periods plus reconnects, ~40-50 s wall. hci_peer.py's soak DEADLINE is 55 s,
 #   below tools/qrun's 60 s QRUN_TIMEOUT -- on a hung run the peer announces PEER-DEADLINE
 #   before QEMU is killed. Do NOT raise QRUN_TIMEOUT without raising the peer's deadline.
+#   The gate runs ~49 s idle against the sweep runner's 120 s per-gate GATE_TIMEOUT; with
+#   [media] (~50 s, same example) it is in the documented LOAD-SENSITIVITY class -- a red
+#   under sweep load is re-run idle before it is believed. The post-peer wait below is capped
+#   at 15 s (LOOP=60 at 0.25 s polls) so a stalled UART cannot push the script past ~70 s.
 #
 # DEMONSTRATED RED (2026-09-07): each mutation made in the named COMMITTED source file,
 # build-soak/ rebuilt, this gate run against it, then reverted (`git -C <repo> checkout --
 # <file>`) and rebuilt from clean source -- confirmed GREEN again after each revert, both
-# repos clean between demos. THREE of the four fail BY THE NAMED ASSERTION; the second is a
-# documented GATE GAP for the SAME reason [lifecycle]'s own demo (1) is one:
+# repos clean between demos. The four demonstrated are (1) the skipped L2cap reset,
+# (2) the btout.end() gap, (3) the stale handle, (4) resetCreditStats removed -- THREE of
+# the four fail BY THE NAMED ASSERTION; (2) is a documented GATE GAP for the SAME reason
+# [lifecycle]'s own demo (1) is one:
 #   (1) M2Radio bt/A2dpSource.cpp tick(): the link-lost branch's `m_l2.reset();` removed --
 #         FAIL: [soak] loss-time teardown witness wrong (expected l2_free_loss_min=5 == MAX_CHANNELS; a skipped L2cap reset reads 2): soak_done cycles=10 reconnects=10 fails=0 reconnect_ms_max=993 l2_free_base=2 l2_free_restream_min=2 l2_free_loss_min=2 l2_leak=0 submit_fails=0 bonds=1
 #   (2) GATE GAP -- evkb bt_tone_test.cpp onStreamCb() else branch: `btout.end();`
@@ -104,6 +116,12 @@
 #         FAIL: [soak] credit stats not reset per cycle (max sent=1297 over the run -- expected each ~2 s cycle to stay under a few hundred)
 #   Confirmed green again after each revert; `git -C M2Radio status` and `git status`
 #   clean after all four.
+#   The plan's demo (2) (BondTable upsert() re-broken to always insert -> bonds=4) was DROPPED
+#   as unreachable: upsert() has ONE call site (M2Radio bt/BtLink.cpp, the
+#   Link_Key_Notification handler) and the peer counts notified=1 for the whole run (every
+#   re-page authenticates with the STORED key, so no new key is ever notified), so no mutation
+#   there can move bonds. The live bond-churn pin is therefore the peer-counted notified=1
+#   equality in the PEER-SOAK tally (links == key_ok + notified), not ` bonds=1$` alone.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
@@ -114,6 +132,10 @@ gate_init
     echo "FAIL: this gate is rt1176-only (EVKB_BOARD=$(gate_board)) -- the M.2 socket is on the MIMXRT1170-EVKB"; exit 1; }
 
 fail() { echo "FAIL: $*"; exit 1; }
+
+# N > ~12 does not fit hci_peer.py's soak DEADLINE (55 s, see its own comment) under tools/qrun's
+# 60 s QRUN_TIMEOUT -- do not raise N without raising both.
+N=10; NP1=$((N + 1))
 
 # This gate owns its build: M2_BT_TARGET_NAME + M2_BT_SOAK(_*) must be set here and match no
 # other bt_tone_test build. Under the vacuity harness (GATE_VACUITY=1, no ARM toolchain
@@ -129,7 +151,7 @@ else
     CONFIGURE_RC=0
     cmake -S "$DIR" -B "$BUILD_DIR" -DCMAKE_TOOLCHAIN_FILE="$EVKB/toolchain/rt1170-evkb.toolchain.cmake" \
           -DM2_BT_TARGET_NAME=FAKE-HEADSET-01 -DM2_BT_RETRY_MS=3000 -DM2_BT_SOAK=ON \
-          -DM2_BT_SOAK_PERIOD_MS=2000 -DM2_BT_SOAK_CYCLES=10 -DM2_BT_SOAK_RECONNECT_BOUND_MS=8000 \
+          -DM2_BT_SOAK_PERIOD_MS=2000 -DM2_BT_SOAK_CYCLES=$N -DM2_BT_SOAK_RECONNECT_BOUND_MS=8000 \
           >"$BUILD_DIR/configure.log" 2>&1 || CONFIGURE_RC=$?
     BUILD_RC=0
     if [ "$CONFIGURE_RC" -eq 0 ]; then
@@ -147,7 +169,7 @@ SOCK="/tmp/m2soak_$$.sock"; rm -f "$SOCK"; gate_tmp "$SOCK"
     -serial unix:"$SOCK",server -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
 PEER_RC=0
-python3 "$EVKB/examples/networking/m2_hci_probe/hci_peer.py" soak "$SOCK" 10 > "$RES" 2>&1 || PEER_RC=$?
+python3 "$EVKB/examples/networking/m2_hci_probe/hci_peer.py" soak "$SOCK" "$N" > "$RES" 2>&1 || PEER_RC=$?
 # The peer runs in the FOREGROUND and returns once all ten cycles have streamed (or it gave
 # up). Then wait for the LAST line the gate parses -- never an earlier one (the m2_rx_demo[irq]
 # mid-line reap is the standing lesson). soak_done fires the instant the tenth reconnect's
@@ -157,10 +179,10 @@ python3 "$EVKB/examples/networking/m2_hci_probe/hci_peer.py" soak "$SOCK" 10 > "
 # for that heartbeat to catch up too (it will, within ~1 s, and then holds steady -- no further
 # drops are forced once cycles=10), or a reap here would read a real but stale snapshot. A
 # failed peer means a failed run: poll briefly, not the full deadline.
-LOOP=240; [ "$PEER_RC" -eq 0 ] || LOOP=40
+LOOP=60; [ "$PEER_RC" -eq 0 ] || LOOP=40
 for _ in $(seq 1 $LOOP); do
-    [ -f "$OUT" ] && grep -qE "^soak_done cycles=10 " "$OUT" 2>/dev/null \
-        && grep -qE "^bt_link links=11 lost=10 " "$OUT" 2>/dev/null \
+    [ -f "$OUT" ] && grep -qE "^soak_done cycles=$N " "$OUT" 2>/dev/null \
+        && grep -qE "^bt_link links=$NP1 lost=$N " "$OUT" 2>/dev/null \
         && [ -f "$RES" ] && grep -q "^PEER-SOAK " "$RES" 2>/dev/null && break
     sleep 0.25
 done
@@ -174,19 +196,21 @@ echo "==== peer ===="; cat "$RES"
 
 grep -q "RT1176 BT tone test up" "$OUT" || fail "[soak] banner missing"
 
-grep -qE "^soak period_ms=2000 cycles=10 bound_ms=8000 retry_now=1" "$OUT" \
+grep -qE "^soak period_ms=2000 cycles=$N bound_ms=8000 retry_now=1" "$OUT" \
     || fail "[soak] soak config line missing (not a soak build?)"
 
 grep -q "^streaming by=inquiry " "$OUT" || fail "[soak] never streamed (first link by inquiry missing)"
 
-grep -q "^soak_done cycles=10 " "$OUT" || fail "[soak] soak_done never printed with cycles=10"
+grep -q "^soak_done cycles=$N " "$OUT" || fail "[soak] soak_done never printed with cycles=$N"
 DONE=$(grep -m1 "^soak_done " "$OUT")
-echo "$DONE" | grep -q " reconnects=10 fails=0 " \
+echo "$DONE" | grep -q " reconnects=$N fails=0 " \
     || fail "[soak] not every cycle reconnected: $DONE"
 echo "$DONE" | grep -q " l2_free_loss_min=5 " \
     || fail "[soak] loss-time teardown witness wrong (expected l2_free_loss_min=5 == MAX_CHANNELS; a skipped L2cap reset reads 2): $DONE"
 echo "$DONE" | grep -q " l2_leak=0 " \
     || fail "[soak] L2CAP slot leak: $DONE"
+echo "$DONE" | grep -q " l2_free_base=2 " \
+    || fail "[soak] L2CAP baseline moved (expected 2 of MAX_CHANNELS=5 free at STREAMING entry -- AVDTP signalling + media + the outbound SDP channel held; l2_leak is RELATIVE so a channel held from the first stream onward would hide in it): $DONE"
 echo "$DONE" | grep -q " submit_fails=0 " \
     || fail "[soak] HCI submit failures: $DONE"
 echo "$DONE" | grep -q " bonds=1$" \
@@ -201,8 +225,8 @@ if grep -q "^soak_drop_status=" "$OUT"; then
     fail "[soak] a forced disconnect was refused by the controller: $(grep -m1 '^soak_drop_status=' "$OUT")"
 fi
 
-grep -qE "^bt_link links=11 lost=10 " "$OUT" \
-    || fail "[soak] final bt_link wrong (expected links=11 lost=10)"
+grep -qE "^bt_link links=$NP1 lost=$N " "$OUT" \
+    || fail "[soak] final bt_link wrong (expected links=$NP1 lost=$N)"
 
 # --- credit stats reset per cycle. btout's own "packets=" ALSO resets at every begin() (a
 # link reconnect), so it cannot serve as a "cumulative" reference to compare the final
@@ -219,10 +243,20 @@ MAXSENT=$(grep "^bt_cred " "$OUT" | sed -E 's/.*sent=([0-9]+).*/\1/' | sort -n |
 [ -n "$MAXSENT" ] || fail "[soak] no bt_cred line found"
 [ "$MAXSENT" -lt 300 ] \
     || fail "[soak] credit stats not reset per cycle (max sent=$MAXSENT over the run -- expected each ~2 s cycle to stay under a few hundred)"
+# Structural companion: sent= must FALL once per reconnect (the per-attempt reset) -- immune to period/packet-rate changes.
+DROPS=$(grep "^bt_cred " "$OUT" | sed -E 's/.*sent=([0-9]+).*/\1/' | awk 'NR>1 && $1<p {n++} {p=$1} END{print n+0}')
+[ "${DROPS:-0}" -ge 9 ] \
+    || fail "[soak] credit stats never reset (sent= fell $DROPS times over 10 reconnects; expected >= 9)"
 
-LASTHCI=$(grep "^bt_hci " "$OUT" | tail -1)
+# Require the line-final field on each extraction, rejecting a line torn by a reap that lands
+# mid-print (the m2_rx_demo[irq] lesson): bt_hci and bt_cred both print AFTER the bt_link line
+# the wait loop keys on, so a reap timed between "bt_link ..." and the next heartbeat's tail can
+# catch either mid-write.
+LASTHCI=$(grep -E "^bt_hci .* credmin=[0-9]+\$" "$OUT" | tail -1)
+[ -n "$LASTHCI" ] || fail "[soak] no complete bt_hci line captured (torn at reap?)"
 echo "$LASTHCI" | grep -q " starved=0 " || fail "[soak] HCI command-credit starvation: $LASTHCI"
-LASTCRED=$(grep "^bt_cred " "$OUT" | tail -1)
+LASTCRED=$(grep -E "^bt_cred .* clamp=[0-9]+\$" "$OUT" | tail -1)
+[ -n "$LASTCRED" ] || fail "[soak] no complete bt_cred line captured (torn at reap?)"
 echo "$LASTCRED" | grep -q " clamp=0$" || fail "[soak] NCP clamp hit: $LASTCRED"
 
 LASTSOAK=$(grep "^bt_soak " "$OUT" | tail -1)
@@ -239,11 +273,12 @@ done
 grep -q "^PEER-CONNECTED phase=soak" "$RES" || fail "[soak] the fake controller never attached to LPUART2"
 
 # --- the peer tally: every number counted on the other side of the socket. ---
-grep -qE "^PEER-SOAK links=11 disconnects=10 streamed=11 key_ok=10 notified=1 badmedia=0 stale_acl=[0-9]+ stale_max=[0-9]+\$" "$RES" \
+PEER_SOAK_PAT="^PEER-SOAK links=$NP1 disconnects=$N streamed=$NP1 key_ok=$N notified=1 badmedia=0 stale_acl=[0-9]+ stale_max=[0-9]+\$"
+grep -qE "$PEER_SOAK_PAT" "$RES" \
     || fail "[soak] peer tally wrong: $(grep -m1 '^PEER-SOAK' "$RES")"
 SM=$(grep -m1 "^PEER-SOAK" "$RES" | sed -E 's/.* stale_max=([0-9]+).*/\1/')
-[ "$SM" -le 5 ] \
-    || fail "[soak] stragglers exceeded the bound (stale_max=$SM > 5; media kept flowing after the host should have torn down): $(grep -m1 '^PEER-SOAK' "$RES")"
+[ "$SM" -le 8 ] \
+    || fail "[soak] stragglers exceeded the bound (stale_max=$SM > 8; media kept flowing after the host should have torn down): $(grep -m1 '^PEER-SOAK' "$RES")"
 
 # --- infrastructure LAST (the peer waits out its deadline on any firmware failure, so
 # these would mask every named failure above if placed first). ---
