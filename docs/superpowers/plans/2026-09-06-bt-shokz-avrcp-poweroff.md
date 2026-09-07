@@ -103,7 +103,7 @@ Real Shokz OpenMove required. Flash, free-run, read the console with `tools/rt11
 
 ---
 
-## Task 5 (branch C): the QEMU gate — fake peer replays the capture's AVCTP/AV/C
+## Task 5 (branch C): the QEMU gate — fake peer replays the capture's AVCTP/AV/C  ★ DONE 2026-09-07 as an extension of the [media] peer (spec §10): PEER-AVRCP tally + UART line, RED three ways, fixture re-captured, vacuity negative added; gate count unchanged at 132
 
 **Files:** `examples/networking/m2_hci_probe/hci_peer.py` (or the `bt_tone_test` peer), a new `run_qemu_avrcp.sh` or a `[media]`-peer extension, transcript.
 

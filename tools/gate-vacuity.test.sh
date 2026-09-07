@@ -514,6 +514,15 @@ ABSENT
     echo "$OUT_TEXT" | grep -q "\[media\] bring-up did not reach AVDTP START" || result=1  # and name it
     report "absent_capture_fails_media_gate" $result
 
+    # (b) NEW-34 piece 3: the committed fixture with the AVRCP target's own line stripped -> the gate must fail on
+    # "never answered the RegisterNotification", by name.  The peer tally (PEER-AVRCP) is unreachable under vacuity
+    # (the fake QEMU opens no socket), so the UART-side assertion is the one this replay can prove.
+    sed '/^avrcp: register_notification/d' "$EVKB/$bt_rel/transcript_qemu_media.txt" > "$WORK/bt_media_noavrcp.txt"
+    export GATE_VACUITY=1; run_gate "$bt_rel" "run_qemu_media.sh" "$WORK/bt_media_noavrcp.txt"; rc=$?; unset GATE_VACUITY
+    result=0; [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "\[media\] the AVRCP target never answered the RegisterNotification" || result=1
+    report "noavrcp_fixture_fails_media_gate" $result
+
     rm -f "$EVKB/$bt_rel"/build-media/media.uart "$EVKB/$bt_rel"/build-media/media.peer \
           "$EVKB/$bt_rel"/build-media/media.dbg
 fi

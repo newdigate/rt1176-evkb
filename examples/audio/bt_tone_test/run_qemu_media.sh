@@ -96,6 +96,24 @@
 #       finds a bad sync byte either. Caught ONLY because the awk check below
 #       also requires frames=[1-9] on the final PEER-MEDIA line.)
 #   Confirmed green again after each revert; `git -C M2Radio status` clean.
+# NEW-34 PIECE 3 (2026-09-07): THE PEER IS ALSO THE HEADSET'S AVRCP CONTROLLER.  Modelled on the Shokz OpenMove bench
+# capture (arms 4/5): 1.8 s after AVDTP START it opens AVCTP (PSM 0x0017) at us, sends GetCapabilities(EVENTS_SUPPORTED)
+# (10 11 0E 01 48 00 00 19 58 10 00 00 01 03) then RegisterNotification(PLAYBACK_STATUS_CHANGED) (20 11 0E 03 48 00 00 19
+# 58 31 00 00 05 01 00 00 00 00), and requires our STABLE {PLAYBACK_STATUS_CHANGED} (12 11 0E 0C 48 00 00 19 58 10 00 00 03
+# 03 01 01) and INTERIM PLAYING (22 11 0E 0F 48 00 00 19 58 31 00 00 02 01 01) BYTE FOR BYTE, transaction labels echoed
+# -- the two PDUs a real headset sends, both answered on the wire on silicon before this gate existed.  Asserted:
+# `PEER-AVRCP state=done caps=1 notif=1 bad=0` (the round trip, peer-counted) and the firmware's own
+# `avrcp: register_notification playback_status -> interim playing` line; tripwires PEER-AVRCP-BAD-RESPONSE /
+# PEER-AVRCP-CONN-REFUSED / PEER-AVRCP-UNEXPECTED.
+# DEMONSTRATED RED (2026-09-07), each in the named COMMITTED M2Radio file, build-media/ rebuilt, run, reverted, green again:
+#   (1) bt/Avrcp.cpp: the INTERIM ctype (0x0F) replaced by ACCEPTED (0x09) --
+#         FAIL: [media] the AVRCP target answered wrongly: PEER-AVRCP-BAD-RESPONSE notif 22110e094800001958310000020101
+#   (2) bt/Avrcp.cpp: EVENTS_SUPPORTED answered with an EMPTY event list --
+#         FAIL: [media] the AVRCP target answered wrongly: PEER-AVRCP-BAD-RESPONSE caps 12110e0c480000195810000003030001
+#   (3) bt/A2dpSource.cpp: allowPsm(Avrcp::PSM) removed (the pre-piece-3 allow-list) --
+#         FAIL: [media] the AVCTP channel was refused: PEER-AVRCP-CONN-REFUSED result=0x0002
+#   Under the vacuity harness the peer tally is unreachable (no socket), so the UART-side assertion carries that replay
+#   (tools/gate-vacuity.test.sh: noavrcp_fixture_fails_media_gate).
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
@@ -156,6 +174,9 @@ echo "==== peer ===="; cat "$RES"
 grep -q "RT1176 BT tone test up" "$OUT" || fail "[media] banner missing"
 
 grep -q '^a2dp=ok' "$OUT"                          || fail "[media] bring-up did not reach AVDTP START"
+# NEW-34 piece 3, UART side FIRST (every peer check below is unreachable under the vacuity replay): the firmware's own claim
+# that it answered the headset's RegisterNotification; the PEER-AVRCP tally further down is the round trip.
+grep -q '^avrcp: register_notification playback_status -> interim playing' "$OUT" || fail "[media] the AVRCP target never answered the RegisterNotification (no interim-playing line)"
 # The fake acceptor models the Shokz since 2026-09-04 (see run_qemu_avdtp.sh's header): it SDP-queries our
 # AudioSource record before answering DISCOVER, lists its MPEG SEP first, and sends a DelayReport after OPEN.
 # A2dpSource must get through all of it -- named here so a regression fails by cause, not as "no media".
@@ -170,6 +191,14 @@ grep -q "^PEER-SET-CONFIG cie=21150235 acp_seid=1 delay_reporting=1" "$RES" || f
 grep -q '^streaming' "$OUT"                        || fail "[media] node never began streaming"
 grep -qE '^hb streaming=1 blocks=[1-9]' "$OUT"      || fail "[media] reached STREAMING but the audio clock produced no blocks (self-clock not running)"
 grep -q '^PEER-MEDIA ' "$RES"                      || fail "[media] peer received no media"
+# NEW-34 piece 3: the peer is also the headset's AVRCP CONTROLLER (Shokz-shaped, bench capture 2026-09-07): after START it
+# opens AVCTP at us, sends GetCapabilities(EVENTS_SUPPORTED) then RegisterNotification(PLAYBACK_STATUS_CHANGED), and requires
+# our STABLE {PLAYBACK_STATUS_CHANGED} and INTERIM PLAYING byte for byte.  The UART line is the firmware's own claim; the
+# PEER-AVRCP tally is the round trip.
+if grep -q "^PEER-AVRCP-BAD-RESPONSE" "$RES";  then fail "[media] the AVRCP target answered wrongly: $(grep -m1 '^PEER-AVRCP-BAD-RESPONSE' "$RES")"; fi
+if grep -q "^PEER-AVRCP-CONN-REFUSED" "$RES";  then fail "[media] the AVCTP channel was refused: $(grep -m1 '^PEER-AVRCP-CONN-REFUSED' "$RES")"; fi
+if grep -q "^PEER-AVRCP-UNEXPECTED" "$RES";    then fail "[media] unexpected AV/C traffic from the target: $(grep -m1 '^PEER-AVRCP-UNEXPECTED' "$RES")"; fi
+grep -q '^PEER-AVRCP state=done caps=1 notif=1 bad=0' "$RES" || fail "[media] AVRCP round trip incomplete: $(grep -m1 '^PEER-AVRCP ' "$RES")"
 awk '/^PEER-MEDIA/{p=$0} END{exit !(p ~ /pkts=[1-9]/ && p ~ /frames=[1-9]/ && p ~ /seqgaps=0/ && p ~ /badsbc=0/ && p ~ /badrtp=0/)}' "$RES" \
                                                    || fail "[media] RTP/SBC framing invalid or sequence gapped"
 

@@ -235,6 +235,12 @@ class Peer:
         # like the Shokz), send the Shokz's exact query, require the Mac's exact reply, disconnect,
         # and only THEN answer the DISCOVER.  A source with no SDP server hangs at DISCOVERING here
         # exactly as it did on the bench.
+        # --- media phase, NEW-34 piece 3: the headset's AVRCP CONTROLLER, modelled on the Shokz (bench capture
+        # 2026-09-07, arms 4/5): after AVDTP START it opens AVCTP (PSM 0x0017) at us, sends GetCapabilities(EVENTS_SUPPORTED)
+        # then RegisterNotification(PLAYBACK_STATUS_CHANGED), and expects STABLE {PLAYBACK_STATUS_CHANGED} then INTERIM
+        # PLAYING -- byte for byte, transaction labels echoed.  Anything else is PEER-AVRCP-BAD-RESPONSE. ---
+        self.avc = {"state": "idle", "my_cid": 0x0E86, "their_cid": None, "cfg_req_seen": False, "cfg_rsp_seen": False,
+                    "caps_sent": False, "caps_ok": 0, "notif_sent": False, "notif_ok": 0, "bad": 0, "handle": None}
         self.rev = {"state": "idle", "my_cid": 0x0E85, "their_cid": None, "cfg_req_seen": False, "cfg_rsp_seen": False,
                     "query_sent": False, "answer": None, "done": False, "handle": None}
         # --- lifecycle leg 2 ONLY: the peer is the A2DP INITIATOR (opens L2CAP AVDTP + drives
@@ -518,6 +524,12 @@ class Peer:
                     dcid, scid, result, status = struct.unpack("<HHHH", body[:8])
                     if self.phase == "lifecycle" and self.lc["leg"] == 2 and scid in (self.lc_init["sig_scid"], self.lc_init["media_scid"]):
                         self.lc_l2_conn_rsp(handle, dcid, scid, result); return
+                    if scid == self.avc["my_cid"]:                                 # our AVCTP channel (media phase)
+                        if result == 0x0001: return
+                        if result != 0: self.log.append("PEER-AVRCP-CONN-REFUSED result=0x%04x" % result); self.avc["state"] = "failed"; return
+                        self.avc["their_cid"] = dcid; self.avc["state"] = "config"; self.chans[dcid] = (self.avc["my_cid"], 0x0017)
+                        self.sig(handle, bytes([0x04, self.l2id(), 8, 0]) + struct.pack("<HH", dcid, 0) + bytes([0x01, 0x02, 0xA0, 0x02]))   # our Config Request: MTU 672 (the Shokz's)
+                        return
                     if scid != self.rev["my_cid"]: self.log.append("PEER-L2CAP-CONNRSP-UNKNOWN-SCID 0x%04x" % scid); return
                     if result == 0x0001: return                                  # pending: wait for the final one
                     if result != 0: self.log.append("PEER-REV-CONN-REFUSED result=0x%04x" % result); self.rev["state"] = "failed"; return
@@ -539,6 +551,7 @@ class Peer:
                     if not has_mtu: self.log.append("PEER-L2CAP-CFGREQ-NO-MTU dcid=0x%04x" % dcid)
                     self.sig(handle, bytes([0x05, ident, 6 + len(opts), 0]) + struct.pack("<HHH", peer[0], 0, 0) + opts)   # SCID = the host's CID
                     if dcid == self.rev["my_cid"]: self.rev["cfg_req_seen"] = True; self.rev_maybe_query(handle)
+                    if dcid == self.avc["my_cid"]: self.avc["cfg_req_seen"] = True; self.avc_maybe_send(handle)
                     if self.phase == "lifecycle" and self.lc["leg"] == 2:
                         if dcid == self.lc_init["sig_scid"]:     self.lc_init["sig_cfgreq"] = True;   self.lc_chan_ready(handle)
                         elif dcid == self.lc_init["media_scid"]: self.lc_init["media_cfgreq"] = True; self.lc_chan_ready(handle)
@@ -546,6 +559,7 @@ class Peer:
                     scid, flags, result = struct.unpack("<HHH", body[:6])
                     if scid not in [o for (o, _) in self.chans.values()]: self.log.append("PEER-L2CAP-CFGRSP-BAD-SCID 0x%04x" % scid)
                     if scid == self.rev["my_cid"] and result == 0: self.rev["cfg_rsp_seen"] = True; self.rev_maybe_query(handle)
+                    if scid == self.avc["my_cid"] and result == 0: self.avc["cfg_rsp_seen"] = True; self.avc_maybe_send(handle)
                     if self.phase == "lifecycle" and self.lc["leg"] == 2 and result == 0:
                         if scid == self.lc_init["sig_scid"]:     self.lc_init["sig_cfgrsp"] = True;   self.lc_chan_ready(handle)
                         elif scid == self.lc_init["media_scid"]: self.lc_init["media_cfgrsp"] = True; self.lc_chan_ready(handle)
@@ -561,6 +575,7 @@ class Peer:
             # data on one of our channels
             for peer_cid, (ours, psm) in self.chans.items():
                 if ours == cid:
+                    if psm == 0x0017: self.handle_avrcp(handle, pl); return
                     if psm == 0x0001: self.handle_sdp(handle, peer_cid, pl)
                     elif psm == 0x0019 and ours == self.avdtp["sig_cid"]: self.handle_avdtp(handle, peer_cid, pl)
                     elif psm == 0x0019 and self.phase in ("lifecycle", "soak"):
@@ -595,6 +610,27 @@ class Peer:
             self.log.append("PEER-EXCEPTION handle_sdp: %r" % e)
             self.avdtp["error"] = True; self.rc["errors"] += 1
     # --- the reverse SDP query (the Shokz's behaviour) ---
+    # --- media phase: the AVRCP controller (see self.avc) ------------------------------------------
+    AVRCP_GET_CAPS = bytes.fromhex("10110e01480000195810000001 03".replace(" ", ""))                 # tl 1, GetCapabilities(EVENTS_SUPPORTED)
+    AVRCP_GET_CAPS_RSP = bytes.fromhex("12110e0c4800001958100000030301 01".replace(" ", ""))         # STABLE {PLAYBACK_STATUS_CHANGED}
+    AVRCP_REG_NOTIF = bytes.fromhex("20110e0348000019583100000501 00000000".replace(" ", ""))        # tl 2, RegisterNotification(PLAYBACK_STATUS_CHANGED)
+    AVRCP_REG_NOTIF_RSP = bytes.fromhex("22110e0f48000019583100000201 01".replace(" ", ""))          # INTERIM PLAYING
+    def avc_start(self, handle):
+        self.avc["state"] = "connecting"; self.avc["handle"] = handle
+        self.sig(handle, bytes([0x02, self.l2id(), 4, 0]) + struct.pack("<HH", 0x0017, self.avc["my_cid"]))   # Connection Request: AVCTP, our SCID
+    def avc_maybe_send(self, handle):
+        if self.avc["caps_sent"] or not (self.avc["cfg_req_seen"] and self.avc["cfg_rsp_seen"]): return
+        self.avc["caps_sent"] = True; self.avc["state"] = "caps"
+        self.send(acl(handle, self.avc["their_cid"], self.AVRCP_GET_CAPS), 0.02)
+    def handle_avrcp(self, handle, pl):
+        a = self.avc
+        if a["state"] == "caps":
+            if pl == self.AVRCP_GET_CAPS_RSP: a["caps_ok"] += 1; a["state"] = "notif"; a["notif_sent"] = True; self.send(acl(handle, a["their_cid"], self.AVRCP_REG_NOTIF), 0.02)
+            else: a["bad"] += 1; self.log.append("PEER-AVRCP-BAD-RESPONSE caps %s" % pl.hex())
+        elif a["state"] == "notif":
+            if pl == self.AVRCP_REG_NOTIF_RSP: a["notif_ok"] += 1; a["state"] = "done"
+            else: a["bad"] += 1; self.log.append("PEER-AVRCP-BAD-RESPONSE notif %s" % pl.hex())
+        else: a["bad"] += 1; self.log.append("PEER-AVRCP-UNEXPECTED %s" % pl.hex())
     def rev_start(self, handle):
         self.rev["state"] = "connecting"; self.rev["handle"] = handle
         self.sig(handle, bytes([0x02, 0x0A, 4, 0]) + struct.pack("<HH", 0x0001, self.rev["my_cid"]))   # Connection Request: SDP, our SCID
@@ -656,7 +692,9 @@ class Peer:
             elif sig == 0x07:                                                                                                       # START: only legal after OPEN, and only once
                 if not self.avdtp["opened"]: self.log.append("PEER-AVDTP-START-BEFORE-OPEN"); self.send(acl(handle, peer_cid, bytes([tl | 0x03, 0x07, 1 << 2, 0x31])), 0.02); return  # 0x31 = bad state
                 if self.avdtp["started"]:  self.log.append("PEER-AVDTP-START-TWICE");       self.send(acl(handle, peer_cid, bytes([tl | 0x03, 0x07, 1 << 2, 0x31])), 0.02); return  # STREAMING already: BAD_STATE, and a second START must never count as a link
-                self.avdtp["started"] = True; self.rc["started_links"] += 1; self.log.append("PEER-AVDTP-STARTED"); self.send(acl(handle, peer_cid, acc + b"\x07"), 0.02)
+                self.avdtp["started"] = True; self.rc["started_links"] += 1; self.log.append("PEER-AVDTP-STARTED");
+                if self.phase == "media" and self.avc["state"] == "idle": self.send_later_avc = handle; self.avdtp_started_at = time.time()
+                self.send(acl(handle, peer_cid, acc + b"\x07"), 0.02)
             else: self.send(acl(handle, peer_cid, bytes([tl | 0x03, sig, 0x19])), 0.02)                                             # unsupported command
         except Exception as e:
             self.log.append("PEER-EXCEPTION handle_avdtp: %r" % e)
@@ -787,6 +825,8 @@ if __name__ == "__main__":
         except socket.timeout:
             pass
         peer.flush()
+        if phase == "media" and getattr(peer, "send_later_avc", None) is not None and peer.avc["state"] == "idle" and time.time() - peer.avdtp_started_at >= 1.8:
+            peer.avc_start(peer.send_later_avc)
         if phase == "lifecycle":
             lc = peer.lc
             if lc["leg"] == 1 and peer.media["pkts"] >= 20 and lc["drops"] == 0:
@@ -859,6 +899,8 @@ if __name__ == "__main__":
         m = peer.media
         print("PEER-MEDIA pkts=%d frames=%d seqgaps=%d badsbc=%d badrtp=%d"
               % (m["pkts"], m["frames"], m["seqgaps"], m["badsbc"], m["badrtp"]))
+        a = peer.avc
+        print("PEER-AVRCP state=%s caps=%d notif=%d bad=%d" % (a["state"], a["caps_ok"], a["notif_ok"], a["bad"]))
     if phase == "reconnect":
         r = peer.rc
         print("PEER-RECONNECT inquiries=%d create_conns=%d key_replies=%d key_ok=%d key_rejected=%d neg_replies=%d iocap_dances=%d notified=%d started_links=%d"

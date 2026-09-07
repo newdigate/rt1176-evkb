@@ -616,6 +616,52 @@ as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
 ✅ **Measured 2026-09-07: 132 gates discovered, 132 passed, 0 failed, 0 SKIP**
+(`gates: 132 passed`, exit 0; `-l` reports 132), on the **NEW-34 piece 3 Shokz
+AVRCP** close-out — fully clean. `LICENSE-AUDIT: PASS`; vacuity **43/43** (one
+`[media]` negative added: the fixture with the AVRCP target's own line stripped
+fails by name). **No new gate**: the `[media]` fake peer is now also the headset's
+AVRCP CONTROLLER, so the count stays 132. M2Radio pin bumped to `fea6d52` across
+FOUR pushed commits, every one born on the bench and RED-pinned (`0084bc2` allow-list
+capacity, `c2a4025` multi-record SDP with the AVRCP Target record, `8e22082` the
+`Avrcp` responder + the latent `L2cap` init fix, `fea6d52` GetCapabilities); six
+A2DP-path gates re-run PASS on the new library before the sweep.
+★ **The piece was filed on a premise that did not reproduce, and the capture said
+so in bytes.** Five traced arms of `bt_tone_test` on the real Shokz OpenMove
+(spec §8/§9): the "self-powers-off after 1–2 min" never happened — 699 / 333 /
+471 / ~18 k-packet / 923 s runs, `drops=0` throughout, credits `sent == returned`
+with `starves=0` (piece 4's instrument reading a clean run on silicon). What the
+Shokz DOES do: 1.8 s after AVDTP START it opens AVCTP (PSM 0x0017), which the
+piece-2 allow-list refused with 0x0002; it never announced "connected" (arm 1, by
+ear; later arms not reported).
+★ **Three bugs the bench found that no gate could** — each is the class "a
+capability nobody had exercised yet": (1) `L2cap`'s allow-list held TWO PSMs and
+`A2dpSource` fills them with SDP + AVDTP, so the capture build's AVCTP entry was
+silently dropped and the channel was STILL refused with `avctp=accepted` printed
+(no gate opens three PSMs). (2) With the channel accepted the Shokz SDP-queries
+{0x110C} then {0x110E} and sends NO AV/C until it has an AVRCP Target record; the
+SDP server held one record (no gate asks for a second). (3) Adding the `Avrcp`
+member to `A2dpSource` SEGV'd `a2dpsource_test`: `L2cap` initialised its state
+only in `begin()` while `A2dpSource::service()` ticks it from boot — a stack host
+object serviced a garbage TX queue (`m_txHead` read as 155 from the crash report's
+registers), harmless while the garbage happened to be zero, fatal once the object
+grew 84 bytes; static firmware objects are zero-filled, which is why silicon never
+saw it. Bisected by moving the member (no change), by stack size (64 MB still
+crashed) and by `-O2` (passed) before the crash report named the instruction.
+★ **The Shokz's whole AV/C set is TWO PDUs**, now answered on the wire and by the
+gate: `GetCapabilities(EVENTS_SUPPORTED)` → STABLE `{PLAYBACK_STATUS_CHANGED}`,
+then `RegisterNotification(PLAYBACK_STATUS_CHANGED)` → INTERIM PLAYING, every other
+AV/C command NOT IMPLEMENTED so a peer never hangs. Minimal-to-satisfy held:
+nothing the headset did not send was built.
+★ **Bench traps, new this session:** `LinkServer flash … load` can leave the core
+HALTED (`DHCSR 0x00030003`, `VTOR` in the ROM) so SW4 alone does not boot it —
+`LinkServer run` releases it (a DHCSR key-write worked once and not the second
+time); a dead VCOM after programming (heartbeats provably running over SWD, zero
+bytes on the port, DTR/RTS toggle no help) was the DEBUG-USB replug. And a
+piece-2 defect surfaced twice: the boot walk's failed OUTBOUND attempt tears down
+the Shokz's freshly-authenticated INBOUND link (`disconnect reason=0x16`); the
+headset's second page then streams. Filed for piece 2's follow-up.
+
+✅ **Measured 2026-09-07: 132 gates discovered, 132 passed, 0 failed, 0 SKIP**
 (`gates: 132 passed`, exit 0; `-l` reports 132), on the **NEW-34 piece 5
 unattended connection-resilience soak** close-out — fully clean, every member of
 the load-sensitivity class green in the sweep itself (`bt_tone_test[media]` 49 s,

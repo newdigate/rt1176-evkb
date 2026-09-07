@@ -1,6 +1,6 @@
 # M2Radio BT: Shokz self-power-off — AVRCP capture + minimal target (NEW-34 piece 3)
 
-**Status:** CAPTURE DONE 2026-09-07 — branch **D → C** selected on the bench (§8): the SDP AVRCP-Target record is IMPLEMENTED (M2Radio `c2a4025`, host-tested) and the Shokz then sends its first AV/C — `RegisterNotification(PLAYBACK_STATUS_CHANGED)`, exactly the §4 anchor. Two silicon findings fixed on the way (§8). The minimal AV/C responder (plan Task 4) is NEXT; the 1–2 min self-power-off did NOT reproduce in three arms (§8).
+**Status:** IMPLEMENTED 2026-09-07 — capture → branch D→C (§8) → the minimal AVRCP target built and verified on the real Shokz (§9: its whole AV/C set is two PDUs, both answered on the wire, M2Radio `fea6d52`) → the `[media]` fake peer now drives that exchange as the headset's controller and asserts our two responses byte-for-byte (three RED demos; no new gate, count stays 132). The 1–2 min self-power-off never reproduced in five arms. Open: the "connected" announcement (not reported from the bench), the 5+ min acceptance run as a formal transcript, and the piece-2 inbound-teardown defect filed from arm 2.
 **Issue:** NEW-34 "M2Radio BT: reconnect known devices + soak-test connection
 resilience (range loss/recovery)", piece 3 of 5.
 **Depends on:** piece 2 (the A2DP source + `L2cap` allow-list). Heavily
@@ -240,3 +240,18 @@ stack. "Connected" was never announced (arm 1 by ear; arms 2/3 not reported).
 - **Still open:** whether the Shokz announces "connected" now (a bench observation),
   the fake-peer gate for the exchange (plan Task 5), the 5+ min acceptance run.
 
+
+## 10. The gate (2026-09-07)
+
+No new gate: the `[media]` fake peer (`hci_peer.py`, media phase) is now also the
+headset's AVRCP controller, Shokz-shaped — 1.8 s after AVDTP START it opens AVCTP
+at us, sends GetCapabilities(EVENTS_SUPPORTED) then
+RegisterNotification(PLAYBACK_STATUS_CHANGED) verbatim from the capture, and
+requires our STABLE {PLAYBACK_STATUS_CHANGED} and INTERIM PLAYING byte for byte.
+`run_qemu_media.sh` asserts `PEER-AVRCP state=done caps=1 notif=1 bad=0` and the
+firmware's `avrcp: register_notification playback_status -> interim playing` line,
+with tripwires for a wrong response, a refused channel and unexpected AV/C.
+**Demonstrated RED three ways by name:** INTERIM→ACCEPTED, an empty event list,
+and the pre-piece-3 allow-list (channel refused 0x0002). Fixture re-captured;
+vacuity gains `noavrcp_fixture_fails_media_gate` (the peer tally is unreachable
+under the fake QEMU, so the UART-side assertion carries that replay).
