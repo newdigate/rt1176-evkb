@@ -710,12 +710,31 @@ claim. Also: `CONSOLE.println` emits `\r\n`, which silently defeats `$`-anchored
 greps on a live capture (the gate strips `\r`); `heap=0` on this vehicle is a
 nothing-ever-allocated tripwire, not a leak witness; `btout.packets()` resets
 per reconnect too, so a sent-vs-packets ratio was never a valid reset check.
-★ **The 2–4 h SILICON soak is the piece's actual claim and is PENDING** (plan
-Task 7): `M2_BT_SOAK` at 15 s, `M2_BT_SOAK_RETRY_NOW=OFF` (the session's own
-retry policy) with a ~60 s reconnect bound, against the ESP32 sink, a single
-bond in the store (an EEPROM save per attempt-end is a no-op with one bond and
-wear with more); a flat `bt_soak` signature end to end settles pieces 1/2/4's
-pending silicon claims in one run.
+★ **The 2 h SILICON soak RAN 2026-09-07 (plan Task 7) and split the verdict in
+two.** `M2_BT_SOAK` at 15 s, `RETRY_NOW=OFF`, 60 s bound, against the **Shokz**
+— NOT the ESP32 the spec planned: the ESP32 sink forgets its link key on every
+disconnect (`Authentication_Complete 0x24`, its own console proves it) and stops
+answering pages after a host disconnect, so a stored-key reconnect cannot be
+soaked against it (`BtLink` now erases the bond on 0x24 as well as 0x05/0x06,
+M2Radio `9d3da4c`, RED-pinned; and **opening the ESP32's serial port resets it**,
+DTR/RTS flags or not). 167 cycles, 274 stored-key links both directions, and the
+**structural signature is FLAT end to end**: `l2_free_loss_min=5` on every loss,
+`l2_leak=0`, `bonds=1`, `heap=0`, stack floor unchanged, `sent == returned` with
+`starves=0`/`clamp=0` on every link — pieces 1/2/4's silicon claims are settled
+by this run. **But §5's functional acceptance is NOT MET**: `reconnects=146
+fails=20`, every failure the same class — the ACL and stored-key auth succeed in
+0.3 s and then **AVDTP stalls to its 15 s deadline** (`a2dp=avdtp_failed`), 105
+of 274 attempts, and its rate GROWS monotonically, **23 → 31 → 43 → 57 %** per
+half hour, while nothing host-side moves. In 90 of those 105 the headset had
+already opened AVCTP and finished AVRCP on the same link, so the link was alive
+and the stall is inside AVDTP signalling; the soak log cannot say which side or
+which step (the ACL trace is off by design). Drop-to-stream p50 12.0 s, p90
+65.7 s, max 240.7 s. Follow-up bench: a headset power-cycle control with the
+board NOT reset (rate back to ~20 % ⇒ the accumulating state is in the headset),
+the converse board-reset control, and a short `M2_BT_ACL_TRACE` run (media is
+skipped, so it is safe) to name the step. Piece 5: software done, silicon run,
+acceptance OPEN on that class. Spec §8/§8.1 and the transcript's SOAK section
+carry the numbers.
 
 ✅ **Measured 2026-09-06: 131 gates discovered, 130 passed / 1 failed, 0 SKIP in
 the sweep, effectively 131/131 idle**, on the **NEW-34 piece 4 credit-leak

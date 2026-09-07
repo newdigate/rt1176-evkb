@@ -202,3 +202,91 @@ M2Radio: `bt/L2cap.h` (`freeSlots()`), `bt/test/l2cap_test.cpp`. evkb:
 `transcript_qemu_soak.txt`, `examples/networking/m2_hci_probe/hci_peer.py` (the
 `soak` phase), `tools/gate-vacuity.test.sh`, `evkb.cmake` pin, `CLAUDE.md`,
 memory. The silicon transcript is a bench artifact.
+
+## 8. The silicon soak, as run (2026-09-07)
+
+**The sink changed, and the reason is measured.** The soak was started against the
+ESP32 `EVKB-SINK` as §4 planned and hit two of its limitations inside the first
+cycle: (a) after a HOST-initiated disconnect it stopped answering pages for
+15+ min (no Connection_Complete / status 0x08, then 0x04) until reset — re-arming
+its scan mode on disconnect (`tools/esp32-a2dp-sink`, now done) did not change
+that; (b) **it forgets the link key on every disconnect** — a page that DID
+connect was then refused with `Authentication_Complete 0x24` with no reset in
+between (its own console proves it), so every cycle could only recover by erasing
+the bond and re-pairing by PIN from a fresh inquiry, 1–2 min, always outside the
+bound. A stored-key reconnect cannot be soaked against it. Two things came out
+of that detour: `BtLink` now erases the bond on 0x24 as well as 0x05/0x06 (M2Radio
+`9d3da4c`, host-tested, RED-pinned — a peer that forgot us presents as "LMP PDU
+not allowed", and the old rung looped on the stale key every 10 s forever), and a
+bench trap: **opening the ESP32's serial port resets it** (the auto-reset line,
+regardless of the DTR/RTS flags) — hold the port open once for the whole session
+rather than reading it repeatedly, or every read costs a bond.
+**The soak therefore runs against the Shokz OpenMove** (SSP, stored key, the real
+headset piece 3 characterised; `-DM2_BT_TARGET_NAME=Shokz`, no legacy PIN,
+15 s period, `retry_now` OFF, 60 s bound; the ESP32 off). Started 13:55:57.
+**Early shape (first ~25 min, 39 cycles):** every drop reconnects by page with the
+stored key; p50 reconnect 12.0 s (the session's 10 s retry timer + ~2 s connect),
+p90 38.8 s, worst 92.5 s; `l2_free_loss_min=5`, `l2_leak=0`, `bonds=1`, stack floor
+flat, `heap=0` (this vehicle never allocates). **Finding:** ~1 in 5 reconnect
+attempts reaches the ACL + stored-key auth and then **stalls in AVDTP** for the
+15 s deadline (`a2dp=avdtp_failed`), our side disconnects and the next attempt
+usually streams; two runs of three in a row crossed the 60 s bound and are the
+soak's only counted failures. The AVRCP exchange completes even on those attempts.
+The stage it stalls at is not in the soak log (the ACL trace is off by design) —
+a short traced run to catch one is the follow-up. Final numbers in §8.1.
+
+### 8.1 Final numbers (run stopped at 2 h 02 min)
+
+13:55:57 → 15:57:58, 3641 `bt_soak` lines (7282 s), Shokz OpenMove, 15 s period,
+`retry_now` OFF, 60 s bound. Log: `p5-soak3-final.log` (44609 lines); the
+transcript's SOAK section carries the quoted lines.
+
+**Last signature:** `bt_soak cycles=167 reconnects=146 fails=20
+reconnect_ms_max=41431 l2_free=5 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5
+l2_leak=0 bonds=1 heap=0 stack_free_min=207104`; `bt_link links=168 lost=168`;
+`bt_cred sent=960 returned=960 starves=0 starve_max_ms=0 clamp=0` on the last
+link; `soak_drop_status` errors 0; every loss event reason 0x16 (ours) except one
+0x13 (the headset's, the single `lost`).
+
+**The structural signature is FLAT end to end** — the thing piece 5 exists to
+watch: `l2_free_loss_min=5` on all 167 losses (the teardown ran every time),
+`l2_leak=0`, one bond, `heap=0`, the stack floor unchanged over two hours,
+`credmin=3` while streaming with `sent == returned` on every link and
+`starves=0`/`clamp=0` (piece 4's leak fingerprint absent over 168 real links),
+and 274 ACL links authenticated with the STORED key across the run (pieces 1/2's
+silicon claims — a real headset accepting the stored key out of pairing mode,
+both directions: 4 of the 274 were the headset paging us, accepted as slave with
+its config adopted).
+
+**The functional acceptance of §5 (`reconnects == cycles`, `fails == 0`) is NOT
+MET**, and the reason is a single class with a TREND:
+
+| window | attempts | ok | avdtp_failed | stall rate | soak_fail |
+|---|---|---|---|---|---|
+| 0–30 min | 66 | 51 | 15 | 23 % | 3 |
+| 30–60 min | 68 | 47 | 21 | 31 % | 3 |
+| 60–90 min | 67 | 37 | 29 | 43 % | 7 |
+| 90–120 min | 69 | 30 | 39 | 57 % | 7 |
+
+274 attempts: 168 streamed (median 0.3 s from `connect=ok` to `a2dp=ok`), 105
+stalled in AVDTP to the full 15 s deadline (`a2dp=avdtp_failed`, then our
+disconnect 0x16), 1 lost. Longest run of consecutive stalls: 9. Drop-to-stream
+latency (n=169): p50 12.0 s, p90 65.7 s, max 240.7 s. In **90 of the 105 stalls
+the headset opened AVCTP and completed the AVRCP exchange** on that same link, so
+the ACL, L2CAP and the stored-key auth were healthy and the stall is inside AVDTP
+signalling — which side, and at which step, the soak log cannot say (the ACL
+trace is off by design). Three of the 168 streamed links (each adjacent to one of
+the headset's inbound pages) stalled on MEDIA at packet 145 (`hw=64`, ~4000
+drops) before the next drop.
+
+**Verdict:** piece 5's own machinery holds — every host-side invariant it was
+built to watch is flat over 167 real drop/reconnect cycles, and pieces 1/2/4's
+pending silicon claims are settled by this run. The programme's reconnect is NOT
+yet "flat": the AVDTP-stall rate GROWS over the run, from ~1 in 4 to more than 1
+in 2, and nothing on the host side moves with it. Follow-up (bench, next
+session): (a) a headset power-cycle CONTROL — restart the soak with the Shokz
+power-cycled and the board NOT reset; if the rate returns to ~20 % the
+accumulating state is in the headset; (b) a board-reset control for the converse;
+(c) a short `M2_BT_ACL_TRACE` run (media skipped, so it is safe) to name the
+AVDTP step a stall sits at. Until then piece 5 is *software done, silicon run,
+acceptance open on the AVDTP-stall class*.

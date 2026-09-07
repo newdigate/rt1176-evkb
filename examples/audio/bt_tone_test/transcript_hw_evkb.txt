@@ -81,3 +81,70 @@ Reaches STREAMING through the same new negotiation:
   a2dp_try=ok ; streaming frames_per_pkt=5 media_mtu=1008
 Its media is THROUGHPUT-LIMITED (~128 kbps sink, ~80% drops, ring full) -- the
 ESP32's own ceiling, a separate known thread, unrelated to the Shokz result.
+
+================================================================
+SOAK -- NEW-34 piece 5, unattended 2 h resilience soak vs the Shokz (2026-09-07)
+================================================================
+build-soak-hw: the SHOKZ build above (SSP, stored key) + -DM2_BT_SOAK=ON
+  -DM2_BT_SOAK_PERIOD_MS=15000 -DM2_BT_SOAK_CYCLES=0 -DM2_BT_SOAK_RETRY_NOW=OFF
+  -DM2_BT_SOAK_RECONNECT_BOUND_MS=60000; M2Radio 9d3da4c.  13:55:57 -> 15:57:58,
+  3641 bt_soak lines (one per 2 s), reader tools/rt1170-console.py, log
+  p5-soak3-final.log.  (The ESP32 sink was tried first and cannot be soaked with
+  a stored key: it forgets the link key on every disconnect -- auth 0x24 -- and
+  stops answering pages after a host disconnect; see the spec §8.)
+
+-- first / last signature --
+bt_soak cycles=0 reconnects=0 fails=0 reconnect_ms_max=0 l2_free=5 l2_free_base=0 l2_free_min=n/a l2_free_loss_min=n/a l2_leak=n/a handle=0x0000 bonds=1 heap=0 stack_free_min=207104
+bt_soak cycles=167 reconnects=146 fails=20 reconnect_ms_max=41431 l2_free=5 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0000 bonds=1 heap=0 stack_free_min=207104
+bt_link links=168 lost=168 reason=0x16 by=paged reconnect_ms=11994 scan=0 role=s
+bt_cred sent=960 returned=960 starves=0 starve_max_ms=0 clamp=0
+hb streaming=1 blocks=4720 packets=949 drops=0 hw=5
+
+-- a healthy cycle (168 of these; connect=ok -> a2dp=ok in 0.3 s) --
+page_scan=off
+hci_event: code=0x20 len=7
+connect=ok handle=0x0001 attempt=1
+link_key_req: bd=C0:86:B3:31:29:2F -> reply(stored type=4)
+auth_complete: status=0x00 handle=0x0001
+pairing=incomplete auth=ok link_key=none
+encryption_change: status=0x00 handle=0x0001 enabled=1
+connect_secure=ok encryption=on paired_by=stored
+a2dp=ok bonds=1 paired_by=stored
+streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=895
+ ... 15 s of streaming, drops=0 ...
+soak_drop cycle=N handle=0x0001            (raw HCI_Disconnect 0x13 on the live handle)
+bt_dropped reason=0x16 links=N
+attempt: link lost reason=0x16
+
+-- an AVDTP stall (105 of these; the same ACL + stored-key auth, then 15 s of
+   heartbeats, then OUR 0x16 at the AVDTP deadline; in 90 of 105 the headset
+   opened AVCTP and finished the AVRCP exchange on that link first) --
+connect_secure=ok encryption=on paired_by=stored
+avrcp: register_notification playback_status -> interim playing
+ ... bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=3  (x ~15) ...
+disconnection_complete: status=0x00 handle=0x0001 reason=0x16
+disconnect=ok reason=0x16 handle=0x0000
+a2dp=avdtp_failed bonds=1 paired_by=stored
+page_scan=on
+
+-- tally --
+attempts 274 (all authenticated with the STORED key; 4 were the headset paging us,
+  accepted as slave, its bitpool-53 config adopted); streamed 168; avdtp_failed 105;
+  lost 1 (the one 0x13 from the headset).  Longest run of stalls: 9.
+drop->stream latency (n=169): p50 12.0 s  p90 65.7 s  max 240.7 s
+per 30 min:  attempts/ok/avdtp_failed/soak_fail = 66/51/15/3, 68/47/21/3,
+  67/37/29/7, 69/30/39/7  -> stall rate 23 % -> 31 % -> 43 % -> 57 %.
+media: drops=0 on 165 of 168 streamed links; 3 links (each adjacent to an
+  inbound page from the headset) stalled at packet 145 (hw=64, ~4000 drops).
+soak_drop_status errors: 0.
+
+-- verdict --
+STRUCTURAL: FLAT over 167 real drop/reconnect cycles -- l2_free_loss_min=5 on
+  every loss, l2_leak=0, bonds=1, heap=0, stack floor unchanged, credits
+  sent==returned with starves=0/clamp=0 on every link (piece 4's leak fingerprint
+  ABSENT), stored-key reconnect x274 both directions (pieces 1/2 settled).
+FUNCTIONAL (spec §5: reconnects==cycles, fails==0): NOT MET -- 146/167 within the
+  60 s bound, 20 over it, all from the AVDTP-stall class whose rate GROWS over
+  the run while nothing host-side moves.  Follow-up: headset power-cycle control
+  (board not reset), board-reset control, and a short ACL-traced run to name the
+  AVDTP step.  Piece 5: software done, silicon run, acceptance OPEN on that class.
