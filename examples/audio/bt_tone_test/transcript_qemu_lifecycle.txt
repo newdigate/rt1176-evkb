@@ -12,7 +12,7 @@ hci_buffer: acl_len=1021 acl_num=8 sco_len=64 sco_num=0
 bonds_boot=0
 hb streaming=0 blocks=0 packets=0 drops=0 hw=0
 bt_link links=0 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=-
-bt_hci ncmd=0 timeouts=0 starved=0 l2drop=0 credmin=0
+bt_hci ncmd=0 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
 bt_cred sent=0 returned=0 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 event_mask: st=ok status=0x00
@@ -32,62 +32,62 @@ hci_event: code=0x32 len=9
 user_conf_req: bd=AA:BB:CC:DD:EE:01 numeric=123456 -> accept (Just Works)
 pairing_complete: status=0x00 bd=AA:BB:CC:DD:EE:01
 link_key: bd=AA:BB:CC:DD:EE:01 type=4 bond=saved
+hb streaming=0 blocks=0 packets=0 drops=0 hw=0
+bt_link links=0 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
+bt_cred sent=0 returned=0 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
 auth_complete: status=0x00 handle=0x0001
 pairing=ok auth=ok link_key=stored
 encryption_change: status=0x00 handle=0x0001 enabled=1
 connect_secure=ok encryption=on paired_by=ssp
-hb streaming=0 blocks=0 packets=0 drops=0 hw=0
-bt_link links=0 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
-bt_cred sent=1 returned=1 starves=0 starve_max_ms=0 clamp=0
-bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=ssp
 streaming by=inquiry bitpool=53 frames_per_pkt=5 media_mtu=672
-hb streaming=1 blocks=54 packets=18 drops=0 hw=5
+hb streaming=1 blocks=18 packets=6 drops=0 hw=5
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
-bt_cred sent=17 returned=16 starves=0 starve_max_ms=0 clamp=0
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
+bt_cred sent=5 returned=4 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 disconnection_complete: status=0x00 handle=0x0001 reason=0x08
 attempt: link lost reason=0x08
 bt_dropped reason=0x08 links=1
 page_scan=on
+hb streaming=0 blocks=68 packets=0 drops=0 hw=0
+bt_link links=1 lost=1 reason=0x08 by=inquiry reconnect_ms=0 scan=1 role=-
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
+bt_cred sent=23 returned=23 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
 conn_req: bd=AA:BB:CC:DD:EE:01 -> accept(slave)
 page_scan=off
 link_key_req: bd=AA:BB:CC:DD:EE:01 -> reply(stored type=4)
 auth_complete: status=0x00 handle=0x0002
 encryption_change: status=0x00 handle=0x0002 enabled=1
-hb streaming=0 blocks=68 packets=0 drops=0 hw=0
-bt_link links=1 lost=1 reason=0x08 by=incoming reconnect_ms=0 scan=0 role=s
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=8
-bt_cred sent=23 returned=23 starves=0 starve_max_ms=0 clamp=0
-bt_mem idle_blocks=0 paused_blocks=0
 attempt: adopted sbc bitpool=35 mode=3 blocks=16 sub=8
 a2dp=ok bonds=1 paired_by=stored
 streaming by=incoming bitpool=35 frames_per_pkt=7 media_mtu=672
+hb streaming=1 blocks=16 packets=4 drops=0 hw=7
+bt_link links=2 lost=1 reason=0x08 by=incoming reconnect_ms=1510 scan=0 role=s
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
+bt_cred sent=3 returned=3 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
 disconnection_complete: status=0x00 handle=0x0002 reason=0x13
 attempt: link lost reason=0x13
 bt_dropped reason=0x13 links=2
 page_scan=on
-hb streaming=0 blocks=89 packets=0 drops=0 hw=0
-bt_link links=2 lost=2 reason=0x13 by=incoming reconnect_ms=1329 scan=1 role=s
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=0
-bt_cred sent=22 returned=23 starves=0 starve_max_ms=0 clamp=0
-bt_mem idle_blocks=0 paused_blocks=0
 conn_req: bd=DE:05:04:03:02:01 -> reject(0x0F unknown)
 hb streaming=0 blocks=89 packets=0 drops=0 hw=0
-bt_link links=2 lost=2 reason=0x13 by=incoming reconnect_ms=1329 scan=1 role=s
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=0
+bt_link links=2 lost=2 reason=0x13 by=incoming reconnect_ms=1510 scan=1 role=s
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
 bt_cred sent=22 returned=23 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 hb streaming=0 blocks=89 packets=0 drops=0 hw=0
-bt_link links=2 lost=2 reason=0x13 by=incoming reconnect_ms=1329 scan=1 role=s
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=0
+bt_link links=2 lost=2 reason=0x13 by=incoming reconnect_ms=1510 scan=1 role=s
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
 bt_cred sent=22 returned=23 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 hb streaming=0 blocks=89 packets=0 drops=0 hw=0
-bt_link links=2 lost=2 reason=0x13 by=paged reconnect_ms=1329 scan=1 role=s
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=0
+bt_link links=2 lost=2 reason=0x13 by=incoming reconnect_ms=1510 scan=1 role=s
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
 bt_cred sent=22 returned=23 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 page_scan=off
@@ -97,10 +97,15 @@ auth_complete: status=0x00 handle=0x0003
 pairing=incomplete auth=ok link_key=none
 encryption_change: status=0x00 handle=0x0003 enabled=1
 connect_secure=ok encryption=on paired_by=stored
+hb streaming=0 blocks=89 packets=0 drops=0 hw=0
+bt_link links=2 lost=2 reason=0x13 by=paged reconnect_ms=1510 scan=0 role=s
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
+bt_cred sent=30 returned=31 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=stored
 streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=672
-hb streaming=1 blocks=24 packets=8 drops=0 hw=5
-bt_link links=3 lost=2 reason=0x13 by=paged reconnect_ms=3885 scan=0 role=s
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 credmin=7
-bt_cred sent=7 returned=6 starves=0 starve_max_ms=0 clamp=0
+hb streaming=1 blocks=67 packets=22 drops=0 hw=5
+bt_link links=3 lost=2 reason=0x13 by=paged reconnect_ms=4013 scan=0 role=s
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+bt_cred sent=22 returned=20 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0

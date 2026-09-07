@@ -636,6 +636,8 @@ static void acidBtReport() {
     CONSOLE.print(" scan="); CONSOLE.println(session.wantPageScan() ? 1 : 0);
     CONSOLE.print("bt_cred sent="); CONSOLE.print(src.l2().pktsSent());   // NEW-34 piece 4 soak record
     CONSOLE.print(" returned="); CONSOLE.print(src.l2().creditsReturned());
+    CONSOLE.print(" l2frag="); CONSOLE.print(src.l2().reasmFrags());
+    CONSOLE.print(" l2fragdrop="); CONSOLE.print(src.l2().reasmDrops());
     CONSOLE.print(" credmin="); CONSOLE.print(src.l2().creditsMin());
     CONSOLE.print(" starves="); CONSOLE.print(src.l2().starves());
     CONSOLE.print(" starve_max_ms="); CONSOLE.print(src.l2().starveMaxMs());

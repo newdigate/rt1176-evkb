@@ -1290,15 +1290,3 @@ The phase's fps criterion (≥30 fps for the animating grid) was measured
 2026-08-17 and NOT met — software 2.83 fps, GPU 2.45 fps, GPU CPU-bound in
 per-task path construction (transcript, Task 9 section). The gate is
 correctness-only; no gate asserts a frame rate.
-
-## `rt1176:audio/bt_tone_test[media]` — DELIBERATELY RED (commit d4abd1a)
-
-The `[media]` peer's SDP query of our AudioSource record now goes out as two
-HCI ACL fragments (PB first + PB continuation, 17 + 5 bytes) — modelling the
-Shokz's own on-silicon behaviour — and the pinned M2Radio library does not yet
-reassemble L2CAP fragments, so it answers the truncated first packet:
-
-    FAIL: [media] our AudioSource SDP record does not match the Mac's reply
-
-Expected until Task 5 of `docs/superpowers/plans/2026-09-07-bt-acl-reassembly.md`
-lands `L2cap` reassembly. **REMOVE this entry in Task 6 of that plan.**

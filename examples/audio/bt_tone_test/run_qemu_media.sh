@@ -120,7 +120,7 @@
 # and AVDTP stalled to its 15 s deadline on 105 of 274 attempts.  DEMONSTRATED RED against the pre-reassembly library
 # (M2Radio 9d3da4c):
 #     FAIL: [media] our AudioSource SDP record does not match the Mac's reply
-# GREEN once L2cap reassembles (M2Radio <sha from Task 6>).  Every [media] run now exercises reassembly; the other
+# GREEN once L2cap reassembles (M2Radio 0233d53).  Every [media] run now exercises reassembly; the other
 # hci_peer.py phases send whole PDUs.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
