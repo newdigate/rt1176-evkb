@@ -1,0 +1,15 @@
+SYNTHUI_LAMP_BEGIN
+PANEL_OK
+lamp_scene=16 grid=4x4
+LVGL_FLUSHED=PASS
+LVGL_BYTES=3686400
+lamp_crc=0xFC0C967C
+lamp_delta_crc=0x8E720CD4
+lamp_fresh_crc=0x8E720CD4
+lamp_delta_eq=PASS
+lamp_damage max=4900 total=509800 steps=64
+lamp_vsync flips=66 isrs=66 timeouts=0
+crc_done
+PASS: SynthUI lamp render verified
+lamp_fps frames=64 mfps_med=312109 us_med=3204 us_min=2553 us_max=5015
+lamp_mem total=1045676 used_pct=1 max_used=11524 frag_pct=1
