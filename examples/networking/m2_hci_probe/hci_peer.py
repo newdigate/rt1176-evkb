@@ -154,9 +154,10 @@ def connect(path):
 def event(code, params):               return bytes([0x04, code, len(params)]) + params
 def cmd_complete(opcode, ret, ncmd=1): return event(0x0E, bytes([ncmd]) + struct.pack("<H", opcode) + ret)
 def cmd_status(opcode, status=0, n=1): return event(0x0F, bytes([status, n]) + struct.pack("<H", opcode))
-def acl(handle, cid, payload, pb=0x02):           # controller -> host ACL; PB=10 (first, auto-flushable) by default
-    hf = (handle & 0x0FFF) | (pb << 12)
-    return bytes([0x02]) + struct.pack("<HH", hf, len(payload) + 4) + struct.pack("<HH", len(payload), cid) + payload
+def acl_pkt(handle, pb, body):                    # controller -> host ACL: HCI header + an already-framed body
+    return bytes([0x02]) + struct.pack("<HH", (handle & 0x0FFF) | (pb << 12), len(body)) + body
+def acl(handle, cid, payload, pb=0x02):           # one whole L2CAP PDU in one ACL packet; PB=10 (first, auto-flushable)
+    return acl_pkt(handle, pb, struct.pack("<HH", len(payload), cid) + payload)
 def acl_frag(handle, cid, payload, at=13):
     """One L2CAP PDU as TWO HCI ACL packets: a FIRST packet (PB=10) carrying the 4-byte L2CAP header plus the
     first `at` payload bytes, then a CONTINUATION packet (PB=01) with the rest.  This is byte-for-byte how the
@@ -164,12 +165,9 @@ def acl_frag(handle, cid, payload, at=13):
     `03 09 00 09 00`), and a host that does not reassemble answers the truncated first packet with an SDP
     ErrorResponse and drops the tail -- the AVDTP-stall root cause.  Core Vol 4 Part E 5.4.2: the HOST
     reassembles on the PB flag."""
-    first = struct.pack("<HH", len(payload), cid) + payload[:at]
-    rest  = payload[at:]
-    hf1 = (handle & 0x0FFF) | (0x02 << 12)
-    hf2 = (handle & 0x0FFF) | (0x01 << 12)
-    return (bytes([0x02]) + struct.pack("<HH", hf1, len(first)) + first,
-            bytes([0x02]) + struct.pack("<HH", hf2, len(rest)) + rest)
+    assert 0 <= at < len(payload), "acl_frag: `at` must split the payload, not consume it"   # at >= len would emit a 0-byte continuation
+    hdr = struct.pack("<HH", len(payload), cid)
+    return (acl_pkt(handle, 0x02, hdr + payload[:at]), acl_pkt(handle, 0x01, payload[at:]))
 def ncp(handle, n=1):                             # Number_Of_Completed_Packets: the credit the host's L2cap pacing needs
     return event(0x13, bytes([1]) + struct.pack("<HH", handle, n))
 SBC_CIE_EXPECT = bytes.fromhex("21150235")        # 44.1k joint / 16 blk 8 sub loudness / bitpool 2..53 -- the calibration config
@@ -656,8 +654,13 @@ class Peer:
             # The `media` peer models the Shokz, which FRAGMENTS this query on silicon (17 + 5 bytes).  Always on
             # here (brainstorm decision 2026-09-07), so every [media] run exercises L2CAP reassembly; the other
             # phases keep sending whole PDUs.
-            p1, p2 = acl_frag(handle, self.rev["their_cid"], q, 13)
-            self.send(p1, 0.02); self.send(p2, 0.04)
+            # Equal due-times are load-bearing: flush() sends every due entry in list order, so if p1 and p2 had
+            # different delays, an entry appended after p2 with an EARLIER due time (e.g. a sig() reply at +0.02
+            # triggered by a later packet in the same feed() batch) could be transmitted BETWEEN the two fragments;
+            # a correct reassembler treats that as a new PDU and drops the partial.  Adjacent list positions plus
+            # equal due-times keep the two fragments going out back-to-back.
+            p1, p2 = acl_frag(handle, self.rev["their_cid"], q)
+            self.send(p1, 0.02); self.send(p2, 0.02)
         else:
             self.send(acl(handle, self.rev["their_cid"], q), 0.02)
     def answer_discover(self):

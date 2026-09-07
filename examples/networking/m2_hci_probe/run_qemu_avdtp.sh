@@ -57,10 +57,12 @@
 # Apple PacketLogger reference decoded for the headset AVDTP DISCOVER fix
 # (docs/superpowers/handoffs/2026-09-03-headset-avdtp-discover-handoff.md):
 #   * it opens an SDP channel BACK at the host on DISCOVER, configures it (MTU
-#     48), asks the source's A2DP profile version with the Shokz's exact query,
-#     requires the Mac's exact 25-byte reply, disconnects, and only THEN answers
-#     DISCOVER -- a source with no SDP server hangs at DISCOVERING, as on the
-#     bench (PEER-SDP-QUERY-UNANSWERED / PEER-AVDTP-DISCOVER-HELD);
+#     48), asks the source's A2DP profile version with the Shokz's exact query
+#     -- sent as a WHOLE PDU here; the fragmenting Shokz (17 + 5 bytes) is
+#     modelled in [media] only -- requires the Mac's exact 25-byte reply,
+#     disconnects, and only THEN answers DISCOVER -- a source with no SDP server
+#     hangs at DISCOVERING, as on the bench (PEER-SDP-QUERY-UNANSWERED /
+#     PEER-AVDTP-DISCOVER-HELD);
 #   * its DISCOVER reply lists the MPEG SEP (SEID 2) BEFORE the SBC one (SEID 1),
 #     so a host that configures the first audio sink is refused
 #     (PEER-AVDTP-SETCONFIG-WRONG-SEID) -- the host must read each SEP's
