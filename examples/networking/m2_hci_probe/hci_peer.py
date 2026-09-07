@@ -154,9 +154,22 @@ def connect(path):
 def event(code, params):               return bytes([0x04, code, len(params)]) + params
 def cmd_complete(opcode, ret, ncmd=1): return event(0x0E, bytes([ncmd]) + struct.pack("<H", opcode) + ret)
 def cmd_status(opcode, status=0, n=1): return event(0x0F, bytes([status, n]) + struct.pack("<H", opcode))
-def acl(handle, cid, payload):                    # controller -> host ACL, PB=10 (first, auto-flushable)
-    hf = (handle & 0x0FFF) | (0x02 << 12)
+def acl(handle, cid, payload, pb=0x02):           # controller -> host ACL; PB=10 (first, auto-flushable) by default
+    hf = (handle & 0x0FFF) | (pb << 12)
     return bytes([0x02]) + struct.pack("<HH", hf, len(payload) + 4) + struct.pack("<HH", len(payload), cid) + payload
+def acl_frag(handle, cid, payload, at=13):
+    """One L2CAP PDU as TWO HCI ACL packets: a FIRST packet (PB=10) carrying the 4-byte L2CAP header plus the
+    first `at` payload bytes, then a CONTINUATION packet (PB=01) with the rest.  This is byte-for-byte how the
+    Shokz OpenMove delivered its 22-byte SDP query on silicon (piece-5 soak trace, 2026-09-07: 17 bytes, then
+    `03 09 00 09 00`), and a host that does not reassemble answers the truncated first packet with an SDP
+    ErrorResponse and drops the tail -- the AVDTP-stall root cause.  Core Vol 4 Part E 5.4.2: the HOST
+    reassembles on the PB flag."""
+    first = struct.pack("<HH", len(payload), cid) + payload[:at]
+    rest  = payload[at:]
+    hf1 = (handle & 0x0FFF) | (0x02 << 12)
+    hf2 = (handle & 0x0FFF) | (0x01 << 12)
+    return (bytes([0x02]) + struct.pack("<HH", hf1, len(first)) + first,
+            bytes([0x02]) + struct.pack("<HH", hf2, len(rest)) + rest)
 def ncp(handle, n=1):                             # Number_Of_Completed_Packets: the credit the host's L2cap pacing needs
     return event(0x13, bytes([1]) + struct.pack("<HH", handle, n))
 SBC_CIE_EXPECT = bytes.fromhex("21150235")        # 44.1k joint / 16 blk 8 sub loudness / bitpool 2..53 -- the calibration config
@@ -638,7 +651,15 @@ class Peer:
         if self.rev["query_sent"] or not (self.rev["cfg_req_seen"] and self.rev["cfg_rsp_seen"]): return
         self.rev["query_sent"] = True
         # frame 749 of the reference, verbatim: ServiceSearchAttributeRequest, txn 1, {AudioSource 0x110A}, max 32, {0x0009}
-        self.send(acl(handle, self.rev["their_cid"], bytes.fromhex("060001000d350319110a0020350309000900")), 0.02)
+        q = bytes.fromhex("060001000d350319110a0020350309000900")
+        if self.phase == "media":
+            # The `media` peer models the Shokz, which FRAGMENTS this query on silicon (17 + 5 bytes).  Always on
+            # here (brainstorm decision 2026-09-07), so every [media] run exercises L2CAP reassembly; the other
+            # phases keep sending whole PDUs.
+            p1, p2 = acl_frag(handle, self.rev["their_cid"], q, 13)
+            self.send(p1, 0.02); self.send(p2, 0.04)
+        else:
+            self.send(acl(handle, self.rev["their_cid"], q), 0.02)
     def answer_discover(self):
         if not self.avdtp["discover_pending"]: return
         h, cid, tl = self.avdtp["discover_pending"]; self.avdtp["discover_pending"] = None

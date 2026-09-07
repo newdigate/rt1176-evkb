@@ -114,6 +114,16 @@
 #         FAIL: [media] the AVCTP channel was refused: PEER-AVRCP-CONN-REFUSED result=0x0002
 #   Under the vacuity harness the peer tally is unreachable (no socket), so the UART-side assertion carries that replay
 #   (tools/gate-vacuity.test.sh: noavrcp_fixture_fails_media_gate).
+# ★ L2CAP REASSEMBLY REGRESSION (2026-09-07). The peer's SDP query of our
+# AudioSource record is sent as TWO ACL packets (PB first + PB continuation,
+# 17 + 5 bytes) -- byte-for-byte how the Shokz delivered it on silicon in the
+# piece-5 soak, where a host that did not reassemble answered the truncated
+# first packet with an SDP ErrorResponse, dropped the tail, and AVDTP stalled
+# to its 15 s deadline on 105 of 274 attempts.  DEMONSTRATED RED against the
+# pre-reassembly library (M2Radio 9d3da4c):
+#     FAIL: [media] our AudioSource SDP record does not match the Mac's reply
+# GREEN once L2cap reassembles (M2Radio <sha from Task 6>).  Every [media] run
+# now exercises reassembly; the other hci_peer.py phases send whole PDUs.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
