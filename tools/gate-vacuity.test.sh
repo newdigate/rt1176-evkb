@@ -572,4 +572,74 @@ ABSENT
           "$EVKB/$bt_rel"/build-lifecycle/lifecycle.dbg
 fi
 
+# --- 12. bt_tone_test[soak] (NEW-34 piece 5) --------------------------------
+# run_qemu_soak.sh asserts the link SURVIVES REPETITION: ten forced drops, ten auto-reconnects,
+# the loss-time teardown witness, no slot/handle/bond leak. Four negatives, each failing BY NAME:
+# an absent capture (never streamed), the fixture's soak_done rewritten to a failed cycle (must not
+# read as success), the fixture's loss-time witness rewritten to the skipped-reset value (a slot
+# leak must be named), and the fixture's final bt_link line rewritten one link/drop short (a run
+# that stopped early must not read as the completed one). $bt_rel is set by item 10 above.
+#
+# (d) note: the natural fourth negative would seed a PEER-ACL-BAD-HANDLE line into the peer
+# result and prove that tripwire fires -- but under GATE_VACUITY the peer result cannot be
+# injected. run_qemu_soak.sh `rm -f "$OUT" "$DBG" "$RES"` before every run and then launches the
+# REAL hci_peer.py python process against $SOCK; the fake qemu in this harness never creates that
+# unix socket (it only writes $FAKE_CAPTURE to a `-serial file:` target), so hci_peer.py's own
+# connect() retries for up to 20 s and then exits 2 with nothing usable pre-seeded into $RES --
+# the same reason items 10/11 above mutate only the UART fixture and never the peer side. So (d)
+# is implemented as a UART-side negative instead, exercising the gate's OTHER end-of-run
+# assertion (the final `bt_link` line) rather than repeating (b)'s or (c)'s.
+bt_sk_elf="$EVKB/$bt_rel/build-soak/bt_tone_test.elf"
+if [ ! -x "$bt_sk_elf" ]; then
+    echo "SKIP: soak vacuity cases (no build-soak/bt_tone_test.elf -- build it first)"
+else
+    # (a) absent capture -> the gate must fail on the missing first-link stream, by name.
+    cat > "$WORK/bt_sk_absent.txt" <<'ABSENT'
+RT1176 BT tone test up
+serial2=up_115200
+hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0
+bonds_boot=0
+soak period_ms=2000 cycles=10 bound_ms=8000 retry_now=1
+a2dp=deferred (no HCI: card absent)
+hb streaming=0 blocks=0 packets=0 drops=0 hw=0
+ABSENT
+    export GATE_VACUITY=1; run_gate "$bt_rel" "run_qemu_soak.sh" "$WORK/bt_sk_absent.txt"; rc=$?; unset GATE_VACUITY
+    result=0; [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "\[soak\] never streamed" || result=1
+    report "absent_capture_fails_soak_gate" $result
+
+    # (b) the committed fixture with soak_done's cycle tally rewritten to a failed cycle -> must
+    # fail on the "not every cycle reconnected" assertion, not read as a clean run.
+    sed 's/^soak_done cycles=10 reconnects=10 fails=0 /soak_done cycles=10 reconnects=9 fails=1 /' \
+        "$EVKB/$bt_rel/transcript_qemu_soak.txt" > "$WORK/bt_sk_failedcycle.txt"
+    export GATE_VACUITY=1; run_gate "$bt_rel" "run_qemu_soak.sh" "$WORK/bt_sk_failedcycle.txt"; rc=$?; unset GATE_VACUITY
+    result=0; [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "\[soak\] not every cycle reconnected" || result=1
+    report "failed_cycle_fixture_fails_soak_gate" $result
+
+    # (c) the committed fixture with every l2_free_loss_min=5 rewritten to the skipped-reset value
+    # 2 (soak_done and every bt_soak heartbeat alike) -> must fail on the loss-time teardown
+    # witness, not merely "did the run finish". This is DEMONSTRATED RED (1) in the gate's own
+    # header, reproduced structurally here.
+    sed 's/ l2_free_loss_min=5 / l2_free_loss_min=2 /g' \
+        "$EVKB/$bt_rel/transcript_qemu_soak.txt" > "$WORK/bt_sk_skippedreset.txt"
+    export GATE_VACUITY=1; run_gate "$bt_rel" "run_qemu_soak.sh" "$WORK/bt_sk_skippedreset.txt"; rc=$?; unset GATE_VACUITY
+    result=0; [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "\[soak\] loss-time teardown witness wrong" || result=1
+    report "skipped_reset_fixture_fails_soak_gate" $result
+
+    # (d) the committed fixture with the FINAL bt_link line rewritten one link/drop short (a run
+    # that stopped after nine reconnects, not ten) -> must fail on the final bt_link assertion.
+    # See the note above this block for why this stands in for the peer handle tripwire.
+    sed 's/^bt_link links=11 lost=10 /bt_link links=10 lost=9 /' \
+        "$EVKB/$bt_rel/transcript_qemu_soak.txt" > "$WORK/bt_sk_shortrun.txt"
+    export GATE_VACUITY=1; run_gate "$bt_rel" "run_qemu_soak.sh" "$WORK/bt_sk_shortrun.txt"; rc=$?; unset GATE_VACUITY
+    result=0; [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "\[soak\] final bt_link wrong" || result=1
+    report "short_run_fixture_fails_soak_gate" $result
+
+    rm -f "$EVKB/$bt_rel"/build-soak/soak.uart "$EVKB/$bt_rel"/build-soak/soak.peer \
+          "$EVKB/$bt_rel"/build-soak/soak.dbg
+fi
+
 exit $FAILED
