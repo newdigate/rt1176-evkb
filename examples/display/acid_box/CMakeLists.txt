@@ -183,27 +183,12 @@ if(M2_BT_OUT)
         string(REPLACE "*libLVGL_flash.a:(.text*)"
                        "*libLVGL_flash.a:(.text*)
 		*acid_box.cpp.obj(.text.setup .text._GLOBAL__sub* .text.startup._GLOBAL__sub*)
-		*libM2Radio*.a:Iw416.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:SdioHost.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:SdioFunc.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:BtFwLoader.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:H4Parser.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:Hci.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:HciEvents.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:HciPump.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:HciTransport.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:A2dpSource.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:BtSession.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:Avdtp.cpp.obj(.text* .fastrun)
-		/* Avrcp (NEW-34 piece 3) -- missing from this list overflowed ITCM by 316-652 B in the M2_BT_OUT bench builds (found 2026-09-07 rebuilding them for the ACL-reassembly change) */
-		*libM2Radio*.a:Avrcp.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:BtLink.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:BondTable.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:L2cap.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:MediaPacketizer.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:Rtp.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:Sdp.cpp.obj(.text* .fastrun)
-		*libM2Radio*.a:SdpServer.cpp.obj(.text* .fastrun)"
+		/* Every libM2Radio object EXCEPT Sbc.cpp (the per-audio-block-hot SBC encoder: ITCM by design, NEW-9)
+		   goes to flash.  Until 2026-09-08 this was a hand-maintained list of eighteen per-object lines, and
+		   Avrcp.cpp (added to the library 2026-09-07) was missing from it: the M2_BT_OUT bench builds overflowed
+		   ITCM by 316-652 B for a day before anyone rebuilt them.  A wildcard cannot drift when the library grows;
+		   the acceptance for the swap was an IDENTICAL ITCM symbol set and .text.itcm size in all four bench builds. */
+		*libM2Radio*.a:(EXCLUDE_FILE(*Sbc.cpp.obj) .text* EXCLUDE_FILE(*Sbc.cpp.obj) .fastrun)"
                        _acidbt_ld "${_acidbt_ld}")
         file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/acid_box_bt.ld" "${_acidbt_ld}")
         string(REPLACE "${_acidbt_coreld}"

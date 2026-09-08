@@ -648,10 +648,13 @@ list, overflowing ITCM by 316–652 B; the three `ACIDBOX_LOOPSTAT` bench dirs
 had a SECOND, independent 60 B overflow from three inline helpers in
 `loopstat_pct.h` that defaulted to ITCM. Both fixed (placement only; the gate
 build takes neither branch). Headroom now: `build-bt` **272 B**, the loopstat
-bench dirs **96 B**, of 262144. The durable fix is a wildcard with
-`EXCLUDE_FILE(*Sbc.cpp.obj)` instead of eighteen per-object lines — a
-follow-up, because the NEXT file added to `M2Radio/bt/` reproduces this by
-construction.
+bench dirs **96 B**, of 262144. **DONE 2026-09-08**: the list is now one wildcard,
+`*libM2Radio*.a:(EXCLUDE_FILE(*Sbc.cpp.obj) .text* …)`, so the next file added
+to `M2Radio/bt/` cannot reproduce it. Accepted by an IDENTICAL ITCM symbol set
+and `.text.itcm` size in all four bench builds (nm-diffed, not eyeballed;
+`EXCLUDE_FILE` matches the archive MEMBER name under ld 2.35) and a
+byte-identical gate ELF. The M2Radio-named symbols that remain in ITCM are
+long-branch veneers and one inlined constructor — the same before and after.
 
 ✅ **Measured 2026-09-07: 132 gates discovered, 132 passed, 0 failed, 0 SKIP**
 (`gates: 132 passed`, exit 0; `-l` reports 132), on the **NEW-34 piece 3 Shokz
