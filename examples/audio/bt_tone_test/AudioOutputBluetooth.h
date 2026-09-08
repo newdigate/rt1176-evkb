@@ -38,6 +38,8 @@ public:
     bool     connected()      const { return m_l2 != nullptr && m_cid != 0; }
     uint32_t blocks()         const { return m_blocks; }
     uint32_t packets()        const { return m_pk.packets(); }
+    uint32_t resyncs()  const { return m_resyncs; }   // self-clock: stalls too long to catch up (blocks dropped)
+    uint32_t burstMax() const { return m_burstMax; }  // self-clock: largest catch-up burst seen
     uint32_t drops()          const { return m_pk.drops(); }
     uint32_t pcmDrops()       const { return m_pcmDrops; }   // PCM-ring overflow: loop too slow to encode
     // NEW-33 attribution: cumulative us spent in poll()'s SBC encode loop and in
@@ -63,6 +65,7 @@ private:
     // -- and update_all() still pends IRQ_SOFTWARE, so the actual graph walk
     // runs at the right (software-ISR) priority, just triggered cooperatively.
     static bool s_setupDone;                 // AudioStream::update_setup() once, globally
+    uint32_t m_resyncs = 0, m_burstMax = 0;
     uint32_t m_usPerBlock = 0;               // audio block period in microseconds (~2902)
     uint32_t m_nextUpdate = 0;               // micros() deadline for the next block
     uint32_t m_flushUs = 0;                  // drain-flush deadline: bound the batching latency

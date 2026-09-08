@@ -13,6 +13,7 @@ bonds_boot=0
 soak period_ms=2000 cycles=10 bound_ms=8000 retry_now=1
 bt_soak cycles=0 reconnects=0 fails=0 reconnect_ms_max=0 l2_free=5 l2_free_base=0 l2_free_min=n/a l2_free_loss_min=n/a l2_leak=n/a handle=0x0000 bonds=0 heap=0 stack_free_min=206104
 hb streaming=0 blocks=0 packets=0 drops=0 hw=0
+bt_clock resyncs=0 burst_max=0
 bt_link links=0 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=-
 bt_hci ncmd=0 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
 bt_cred sent=0 returned=0 starves=0 starve_max_ms=0 clamp=0
@@ -34,39 +35,36 @@ hci_event: code=0x32 len=9
 user_conf_req: bd=AA:BB:CC:DD:EE:01 numeric=123456 -> accept (Just Works)
 pairing_complete: status=0x00 bd=AA:BB:CC:DD:EE:01
 link_key: bd=AA:BB:CC:DD:EE:01 type=4 bond=saved
-hb streaming=0 blocks=0 packets=0 drops=0 hw=0
-bt_link links=0 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
-bt_cred sent=0 returned=0 starves=0 starve_max_ms=0 clamp=0
-bt_mem idle_blocks=0 paused_blocks=0
 auth_complete: status=0x00 handle=0x0001
 pairing=ok auth=ok link_key=stored
 encryption_change: status=0x00 handle=0x0001 enabled=1
 connect_secure=ok encryption=on paired_by=ssp
+hb streaming=0 blocks=0 packets=0 drops=0 hw=0
+bt_clock resyncs=0 burst_max=0
+bt_link links=0 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
+bt_cred sent=1 returned=1 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=ssp
 streaming by=inquiry bitpool=53 frames_per_pkt=5 media_mtu=672
 bt_soak cycles=0 reconnects=0 fails=0 reconnect_ms_max=0 l2_free=2 l2_free_base=2 l2_free_min=n/a l2_free_loss_min=n/a l2_leak=n/a handle=0x0001 bonds=1 heap=0 stack_free_min=206104
-hb streaming=1 blocks=24 packets=8 drops=0 hw=5
-bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=7 returned=6 starves=0 starve_max_ms=0 clamp=0
-bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=162 packets=55 drops=0 hw=5
+hb streaming=1 blocks=61 packets=16 drops=0 hw=10
+bt_clock resyncs=4 burst_max=10
 bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=55 returned=55 starves=0 starve_max_ms=0 clamp=0
+bt_cred sent=15 returned=13 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+hb streaming=1 blocks=215 packets=57 drops=0 hw=12
+bt_clock resyncs=14 burst_max=12
+bt_link links=1 lost=0 reason=0x00 by=inquiry reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=5
+bt_cred sent=57 returned=56 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 soak_drop cycle=1 handle=0x0001
 disconnection_complete: status=0x00 handle=0x0001 reason=0x13
 attempt: link lost reason=0x13
 bt_dropped reason=0x13 links=1
 page_scan=on
-bt_soak cycles=1 reconnects=0 fails=0 reconnect_ms_max=0 l2_free=5 l2_free_base=2 l2_free_min=n/a l2_free_loss_min=5 l2_leak=n/a handle=0x0000 bonds=1 heap=0 stack_free_min=206104
-hb streaming=0 blocks=296 packets=0 drops=0 hw=0
-bt_link links=1 lost=1 reason=0x13 by=paged reconnect_ms=0 scan=1 role=-
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
-bt_cred sent=100 returned=100 starves=0 starve_max_ms=0 clamp=0
-bt_mem idle_blocks=0 paused_blocks=0
 page_scan=off
 connect=ok handle=0x0002 attempt=1
 link_key_req: bd=AA:BB:CC:DD:EE:01 -> reply(stored type=4)
@@ -74,25 +72,29 @@ auth_complete: status=0x00 handle=0x0002
 pairing=incomplete auth=ok link_key=none
 encryption_change: status=0x00 handle=0x0002 enabled=1
 connect_secure=ok encryption=on paired_by=stored
+bt_soak cycles=1 reconnects=0 fails=0 reconnect_ms_max=0 l2_free=4 l2_free_base=2 l2_free_min=n/a l2_free_loss_min=5 l2_leak=n/a handle=0x0002 bonds=1 heap=0 stack_free_min=206104
+hb streaming=0 blocks=327 packets=0 drops=0 hw=0
+bt_clock resyncs=22 burst_max=12
+bt_link links=1 lost=1 reason=0x13 by=paged reconnect_ms=0 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
+bt_cred sent=88 returned=88 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=stored
 streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=672
-hb streaming=1 blocks=12 packets=4 drops=0 hw=5
-bt_link links=2 lost=1 reason=0x13 by=paged reconnect_ms=1009 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=3 returned=2 starves=0 starve_max_ms=0 clamp=0
-bt_mem idle_blocks=0 paused_blocks=0
-bt_soak cycles=1 reconnects=1 fails=0 reconnect_ms_max=1098 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0002 bonds=1 heap=0 stack_free_min=206104
-hb streaming=1 blocks=152 packets=52 drops=0 hw=5
-bt_link links=2 lost=1 reason=0x13 by=paged reconnect_ms=1009 scan=0 role=m
+hb streaming=1 blocks=64 packets=16 drops=0 hw=9
+bt_clock resyncs=26 burst_max=12
+bt_link links=2 lost=1 reason=0x13 by=paged reconnect_ms=905 scan=0 role=m
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=51 returned=50 starves=0 starve_max_ms=0 clamp=0
+bt_cred sent=16 returned=16 starves=0 starve_max_ms=0 clamp=0
+bt_mem idle_blocks=0 paused_blocks=0
+bt_soak cycles=1 reconnects=1 fails=0 reconnect_ms_max=1009 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0002 bonds=1 heap=0 stack_free_min=206104
+hb streaming=1 blocks=223 packets=60 drops=0 hw=11
+bt_clock resyncs=37 burst_max=12
+bt_link links=2 lost=1 reason=0x13 by=paged reconnect_ms=905 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=5
+bt_cred sent=59 returned=57 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 soak_drop cycle=2 handle=0x0002
-hb streaming=1 blocks=291 packets=99 drops=0 hw=5
-bt_link links=2 lost=1 reason=0x13 by=paged reconnect_ms=1009 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=98 returned=97 starves=0 starve_max_ms=0 clamp=0
-bt_mem idle_blocks=0 paused_blocks=0
 disconnection_complete: status=0x00 handle=0x0002 reason=0x13
 attempt: link lost reason=0x13
 bt_dropped reason=0x13 links=2
@@ -104,24 +106,26 @@ auth_complete: status=0x00 handle=0x0003
 pairing=incomplete auth=ok link_key=none
 encryption_change: status=0x00 handle=0x0003 enabled=1
 connect_secure=ok encryption=on paired_by=stored
-bt_soak cycles=2 reconnects=1 fails=0 reconnect_ms_max=1098 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0003 bonds=1 heap=0 stack_free_min=206104
-hb streaming=0 blocks=291 packets=0 drops=0 hw=0
-bt_link links=2 lost=2 reason=0x13 by=paged reconnect_ms=1009 scan=0 role=m
+hb streaming=0 blocks=326 packets=0 drops=0 hw=0
+bt_clock resyncs=44 burst_max=12
+bt_link links=2 lost=2 reason=0x13 by=paged reconnect_ms=905 scan=0 role=m
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=120 returned=120 starves=0 starve_max_ms=0 clamp=0
+bt_cred sent=91 returned=91 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=stored
 streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=672
-hb streaming=1 blocks=132 packets=44 drops=0 hw=5
-bt_link links=3 lost=2 reason=0x13 by=paged reconnect_ms=993 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=43 returned=42 starves=0 starve_max_ms=0 clamp=0
+bt_soak cycles=2 reconnects=2 fails=0 reconnect_ms_max=1009 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0003 bonds=1 heap=0 stack_free_min=206104
+hb streaming=1 blocks=76 packets=20 drops=0 hw=10
+bt_clock resyncs=49 burst_max=12
+bt_link links=3 lost=2 reason=0x13 by=paged reconnect_ms=891 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+bt_cred sent=19 returned=17 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-bt_soak cycles=2 reconnects=2 fails=0 reconnect_ms_max=1101 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0003 bonds=1 heap=0 stack_free_min=206104
-hb streaming=1 blocks=263 packets=89 drops=0 hw=5
-bt_link links=3 lost=2 reason=0x13 by=paged reconnect_ms=993 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=88 returned=87 starves=0 starve_max_ms=0 clamp=0
+hb streaming=1 blocks=238 packets=64 drops=0 hw=11
+bt_clock resyncs=60 burst_max=12
+bt_link links=3 lost=2 reason=0x13 by=paged reconnect_ms=891 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=5
+bt_cred sent=63 returned=61 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 soak_drop cycle=3 handle=0x0003
 disconnection_complete: status=0x00 handle=0x0003 reason=0x13
@@ -135,23 +139,27 @@ auth_complete: status=0x00 handle=0x0004
 pairing=incomplete auth=ok link_key=none
 encryption_change: status=0x00 handle=0x0004 enabled=1
 connect_secure=ok encryption=on paired_by=stored
-hb streaming=0 blocks=271 packets=0 drops=0 hw=0
-bt_link links=3 lost=3 reason=0x13 by=paged reconnect_ms=993 scan=0 role=m
+bt_soak cycles=3 reconnects=2 fails=0 reconnect_ms_max=1009 l2_free=4 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0004 bonds=1 heap=0 stack_free_min=206104
+hb streaming=0 blocks=338 packets=0 drops=0 hw=0
+bt_clock resyncs=67 burst_max=12
+bt_link links=3 lost=3 reason=0x13 by=paged reconnect_ms=891 scan=0 role=m
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=111 returned=111 starves=0 starve_max_ms=0 clamp=0
+bt_cred sent=94 returned=94 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=stored
 streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=672
-bt_soak cycles=3 reconnects=3 fails=0 reconnect_ms_max=1101 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0004 bonds=1 heap=0 stack_free_min=206104
-hb streaming=1 blocks=114 packets=38 drops=0 hw=5
-bt_link links=4 lost=3 reason=0x13 by=paged reconnect_ms=1034 scan=0 role=m
+hb streaming=1 blocks=75 packets=20 drops=0 hw=9
+bt_clock resyncs=72 burst_max=12
+bt_link links=4 lost=3 reason=0x13 by=paged reconnect_ms=889 scan=0 role=m
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=37 returned=36 starves=0 starve_max_ms=0 clamp=0
+bt_cred sent=19 returned=17 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=248 packets=84 drops=0 hw=5
-bt_link links=4 lost=3 reason=0x13 by=paged reconnect_ms=1034 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=83 returned=82 starves=0 starve_max_ms=0 clamp=0
+bt_soak cycles=3 reconnects=3 fails=0 reconnect_ms_max=1009 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0004 bonds=1 heap=0 stack_free_min=206104
+hb streaming=1 blocks=236 packets=64 drops=0 hw=11
+bt_clock resyncs=83 burst_max=12
+bt_link links=4 lost=3 reason=0x13 by=paged reconnect_ms=889 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=5
+bt_cred sent=63 returned=61 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 soak_drop cycle=4 handle=0x0004
 disconnection_complete: status=0x00 handle=0x0004 reason=0x13
@@ -165,24 +173,26 @@ auth_complete: status=0x00 handle=0x0005
 pairing=incomplete auth=ok link_key=none
 encryption_change: status=0x00 handle=0x0005 enabled=1
 connect_secure=ok encryption=on paired_by=stored
-bt_soak cycles=4 reconnects=3 fails=0 reconnect_ms_max=1101 l2_free=3 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0005 bonds=1 heap=0 stack_free_min=206104
-hb streaming=0 blocks=268 packets=0 drops=0 hw=0
-bt_link links=4 lost=4 reason=0x13 by=paged reconnect_ms=1034 scan=0 role=m
+hb streaming=0 blocks=335 packets=0 drops=0 hw=0
+bt_clock resyncs=90 burst_max=12
+bt_link links=4 lost=4 reason=0x13 by=paged reconnect_ms=889 scan=0 role=m
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=108 returned=108 starves=0 starve_max_ms=0 clamp=0
+bt_cred sent=95 returned=95 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=stored
 streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=672
-hb streaming=1 blocks=108 packets=36 drops=0 hw=5
-bt_link links=5 lost=4 reason=0x13 by=paged reconnect_ms=1003 scan=0 role=m
+bt_soak cycles=4 reconnects=4 fails=0 reconnect_ms_max=1009 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0005 bonds=1 heap=0 stack_free_min=206104
+hb streaming=1 blocks=90 packets=23 drops=0 hw=10
+bt_clock resyncs=95 burst_max=12
+bt_link links=5 lost=4 reason=0x13 by=paged reconnect_ms=884 scan=0 role=m
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=35 returned=34 starves=0 starve_max_ms=0 clamp=0
+bt_cred sent=21 returned=20 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-bt_soak cycles=4 reconnects=4 fails=0 reconnect_ms_max=1101 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0005 bonds=1 heap=0 stack_free_min=206104
-hb streaming=1 blocks=236 packets=80 drops=0 hw=5
-bt_link links=5 lost=4 reason=0x13 by=paged reconnect_ms=1003 scan=0 role=m
+hb streaming=1 blocks=241 packets=64 drops=0 hw=10
+bt_clock resyncs=106 burst_max=12
+bt_link links=5 lost=4 reason=0x13 by=paged reconnect_ms=884 scan=0 role=m
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=79 returned=78 starves=0 starve_max_ms=0 clamp=0
+bt_cred sent=63 returned=61 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 soak_drop cycle=5 handle=0x0005
 disconnection_complete: status=0x00 handle=0x0005 reason=0x13
@@ -196,23 +206,27 @@ auth_complete: status=0x00 handle=0x0006
 pairing=incomplete auth=ok link_key=none
 encryption_change: status=0x00 handle=0x0006 enabled=1
 connect_secure=ok encryption=on paired_by=stored
-hb streaming=0 blocks=262 packets=0 drops=0 hw=0
-bt_link links=5 lost=5 reason=0x13 by=paged reconnect_ms=1003 scan=0 role=m
+bt_soak cycles=5 reconnects=4 fails=0 reconnect_ms_max=1009 l2_free=4 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0006 bonds=1 heap=0 stack_free_min=206104
+hb streaming=0 blocks=332 packets=0 drops=0 hw=0
+bt_clock resyncs=112 burst_max=12
+bt_link links=5 lost=5 reason=0x13 by=paged reconnect_ms=884 scan=0 role=m
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=105 returned=105 starves=0 starve_max_ms=0 clamp=0
+bt_cred sent=93 returned=93 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=stored
 streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=672
-bt_soak cycles=5 reconnects=5 fails=0 reconnect_ms_max=1101 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0006 bonds=1 heap=0 stack_free_min=206104
-hb streaming=1 blocks=103 packets=35 drops=0 hw=5
-bt_link links=6 lost=5 reason=0x13 by=paged reconnect_ms=1014 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=34 returned=33 starves=0 starve_max_ms=0 clamp=0
+hb streaming=1 blocks=79 packets=21 drops=0 hw=11
+bt_clock resyncs=117 burst_max=12
+bt_link links=6 lost=5 reason=0x13 by=paged reconnect_ms=897 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=5
+bt_cred sent=21 returned=20 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=230 packets=78 drops=0 hw=5
-bt_link links=6 lost=5 reason=0x13 by=paged reconnect_ms=1014 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=77 returned=76 starves=0 starve_max_ms=0 clamp=0
+bt_soak cycles=5 reconnects=5 fails=0 reconnect_ms_max=1009 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0006 bonds=1 heap=0 stack_free_min=206104
+hb streaming=1 blocks=237 packets=64 drops=0 hw=11
+bt_clock resyncs=128 burst_max=12
+bt_link links=6 lost=5 reason=0x13 by=paged reconnect_ms=897 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=5
+bt_cred sent=63 returned=61 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 soak_drop cycle=6 handle=0x0006
 disconnection_complete: status=0x00 handle=0x0006 reason=0x13
@@ -226,24 +240,26 @@ auth_complete: status=0x00 handle=0x0007
 pairing=incomplete auth=ok link_key=none
 encryption_change: status=0x00 handle=0x0007 enabled=1
 connect_secure=ok encryption=on paired_by=stored
-bt_soak cycles=6 reconnects=5 fails=0 reconnect_ms_max=1101 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0007 bonds=1 heap=0 stack_free_min=206104
-hb streaming=0 blocks=262 packets=0 drops=0 hw=0
-bt_link links=6 lost=6 reason=0x13 by=paged reconnect_ms=1014 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=104 returned=104 starves=0 starve_max_ms=0 clamp=0
+hb streaming=0 blocks=336 packets=0 drops=0 hw=0
+bt_clock resyncs=135 burst_max=12
+bt_link links=6 lost=6 reason=0x13 by=paged reconnect_ms=897 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
+bt_cred sent=95 returned=95 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=stored
 streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=672
-hb streaming=1 blocks=91 packets=30 drops=0 hw=5
-bt_link links=7 lost=6 reason=0x13 by=paged reconnect_ms=1015 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=30 returned=29 starves=0 starve_max_ms=0 clamp=0
+bt_soak cycles=6 reconnects=6 fails=0 reconnect_ms_max=1009 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0007 bonds=1 heap=0 stack_free_min=206104
+hb streaming=1 blocks=75 packets=20 drops=0 hw=9
+bt_clock resyncs=140 burst_max=12
+bt_link links=7 lost=6 reason=0x13 by=paged reconnect_ms=893 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+bt_cred sent=19 returned=17 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-bt_soak cycles=6 reconnects=6 fails=0 reconnect_ms_max=1101 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0007 bonds=1 heap=0 stack_free_min=206104
-hb streaming=1 blocks=221 packets=75 drops=0 hw=5
-bt_link links=7 lost=6 reason=0x13 by=paged reconnect_ms=1015 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=74 returned=73 starves=0 starve_max_ms=0 clamp=0
+hb streaming=1 blocks=235 packets=63 drops=0 hw=10
+bt_clock resyncs=151 burst_max=12
+bt_link links=7 lost=6 reason=0x13 by=paged reconnect_ms=893 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+bt_cred sent=62 returned=60 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 soak_drop cycle=7 handle=0x0007
 disconnection_complete: status=0x00 handle=0x0007 reason=0x13
@@ -257,23 +273,27 @@ auth_complete: status=0x00 handle=0x0008
 pairing=incomplete auth=ok link_key=none
 encryption_change: status=0x00 handle=0x0008 enabled=1
 connect_secure=ok encryption=on paired_by=stored
-hb streaming=0 blocks=265 packets=0 drops=0 hw=0
-bt_link links=7 lost=7 reason=0x13 by=paged reconnect_ms=1015 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=102 returned=102 starves=0 starve_max_ms=0 clamp=0
+bt_soak cycles=7 reconnects=6 fails=0 reconnect_ms_max=1009 l2_free=4 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0008 bonds=1 heap=0 stack_free_min=206104
+hb streaming=0 blocks=335 packets=0 drops=0 hw=0
+bt_clock resyncs=158 burst_max=12
+bt_link links=7 lost=7 reason=0x13 by=paged reconnect_ms=893 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
+bt_cred sent=94 returned=94 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=stored
 streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=672
-bt_soak cycles=7 reconnects=7 fails=0 reconnect_ms_max=1101 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0008 bonds=1 heap=0 stack_free_min=206104
-hb streaming=1 blocks=85 packets=29 drops=0 hw=5
-bt_link links=8 lost=7 reason=0x13 by=paged reconnect_ms=1003 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=28 returned=27 starves=0 starve_max_ms=0 clamp=0
+hb streaming=1 blocks=88 packets=23 drops=0 hw=9
+bt_clock resyncs=163 burst_max=12
+bt_link links=8 lost=7 reason=0x13 by=paged reconnect_ms=887 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+bt_cred sent=21 returned=20 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=213 packets=72 drops=0 hw=5
-bt_link links=8 lost=7 reason=0x13 by=paged reconnect_ms=1003 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=72 returned=71 starves=0 starve_max_ms=0 clamp=0
+bt_soak cycles=7 reconnects=7 fails=0 reconnect_ms_max=1009 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0008 bonds=1 heap=0 stack_free_min=206104
+hb streaming=1 blocks=240 packets=64 drops=0 hw=10
+bt_clock resyncs=174 burst_max=12
+bt_link links=8 lost=7 reason=0x13 by=paged reconnect_ms=887 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+bt_cred sent=63 returned=61 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 soak_drop cycle=8 handle=0x0008
 disconnection_complete: status=0x00 handle=0x0008 reason=0x13
@@ -287,24 +307,26 @@ auth_complete: status=0x00 handle=0x0009
 pairing=incomplete auth=ok link_key=none
 encryption_change: status=0x00 handle=0x0009 enabled=1
 connect_secure=ok encryption=on paired_by=stored
-bt_soak cycles=8 reconnects=7 fails=0 reconnect_ms_max=1101 l2_free=3 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0009 bonds=1 heap=0 stack_free_min=206104
-hb streaming=0 blocks=262 packets=0 drops=0 hw=0
-bt_link links=8 lost=8 reason=0x13 by=paged reconnect_ms=1003 scan=0 role=m
+hb streaming=0 blocks=325 packets=0 drops=0 hw=0
+bt_clock resyncs=180 burst_max=12
+bt_link links=8 lost=8 reason=0x13 by=paged reconnect_ms=887 scan=0 role=m
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=100 returned=100 starves=0 starve_max_ms=0 clamp=0
+bt_cred sent=94 returned=94 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=stored
 streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=672
-hb streaming=1 blocks=72 packets=24 drops=0 hw=5
-bt_link links=9 lost=8 reason=0x13 by=paged reconnect_ms=1031 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=23 returned=22 starves=0 starve_max_ms=0 clamp=0
+bt_soak cycles=8 reconnects=8 fails=0 reconnect_ms_max=1009 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0009 bonds=1 heap=0 stack_free_min=206104
+hb streaming=1 blocks=92 packets=24 drops=0 hw=10
+bt_clock resyncs=186 burst_max=12
+bt_link links=9 lost=8 reason=0x13 by=paged reconnect_ms=878 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+bt_cred sent=23 returned=21 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-bt_soak cycles=8 reconnects=8 fails=0 reconnect_ms_max=1101 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0009 bonds=1 heap=0 stack_free_min=206104
-hb streaming=1 blocks=194 packets=65 drops=0 hw=5
-bt_link links=9 lost=8 reason=0x13 by=paged reconnect_ms=1031 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=65 returned=64 starves=0 starve_max_ms=0 clamp=0
+hb streaming=1 blocks=252 packets=67 drops=0 hw=10
+bt_clock resyncs=197 burst_max=12
+bt_link links=9 lost=8 reason=0x13 by=paged reconnect_ms=878 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+bt_cred sent=67 returned=66 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 soak_drop cycle=9 handle=0x0009
 disconnection_complete: status=0x00 handle=0x0009 reason=0x13
@@ -318,23 +340,27 @@ auth_complete: status=0x00 handle=0x000A
 pairing=incomplete auth=ok link_key=none
 encryption_change: status=0x00 handle=0x000A enabled=1
 connect_secure=ok encryption=on paired_by=stored
-hb streaming=0 blocks=253 packets=0 drops=0 hw=0
-bt_link links=9 lost=9 reason=0x13 by=paged reconnect_ms=1031 scan=0 role=m
+bt_soak cycles=9 reconnects=8 fails=0 reconnect_ms_max=1009 l2_free=3 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x000A bonds=1 heap=0 stack_free_min=206104
+hb streaming=0 blocks=332 packets=0 drops=0 hw=0
+bt_clock resyncs=204 burst_max=12
+bt_link links=9 lost=9 reason=0x13 by=paged reconnect_ms=878 scan=0 role=m
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
-bt_cred sent=94 returned=94 starves=0 starve_max_ms=0 clamp=0
+bt_cred sent=99 returned=99 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=stored
 streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=672
-bt_soak cycles=9 reconnects=9 fails=0 reconnect_ms_max=1101 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x000A bonds=1 heap=0 stack_free_min=206104
-hb streaming=1 blocks=63 packets=22 drops=0 hw=5
-bt_link links=10 lost=9 reason=0x13 by=paged reconnect_ms=1019 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=21 returned=20 starves=0 starve_max_ms=0 clamp=0
+hb streaming=1 blocks=106 packets=28 drops=0 hw=11
+bt_clock resyncs=210 burst_max=12
+bt_link links=10 lost=9 reason=0x13 by=paged reconnect_ms=898 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+bt_cred sent=25 returned=24 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
-hb streaming=1 blocks=185 packets=63 drops=0 hw=5
-bt_link links=10 lost=9 reason=0x13 by=paged reconnect_ms=1019 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=63 returned=62 starves=0 starve_max_ms=0 clamp=0
+bt_soak cycles=9 reconnects=9 fails=0 reconnect_ms_max=1009 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x000A bonds=1 heap=0 stack_free_min=206104
+hb streaming=1 blocks=257 packets=68 drops=0 hw=11
+bt_clock resyncs=220 burst_max=12
+bt_link links=10 lost=9 reason=0x13 by=paged reconnect_ms=898 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=5
+bt_cred sent=66 returned=65 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 soak_drop cycle=10 handle=0x000A
 disconnection_complete: status=0x00 handle=0x000A reason=0x13
@@ -348,17 +374,19 @@ auth_complete: status=0x00 handle=0x000B
 pairing=incomplete auth=ok link_key=none
 encryption_change: status=0x00 handle=0x000B enabled=1
 connect_secure=ok encryption=on paired_by=stored
-bt_soak cycles=10 reconnects=9 fails=0 reconnect_ms_max=1101 l2_free=4 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x000B bonds=1 heap=0 stack_free_min=206104
-hb streaming=0 blocks=256 packets=0 drops=0 hw=0
-bt_link links=10 lost=10 reason=0x13 by=paged reconnect_ms=1019 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=92 returned=92 starves=0 starve_max_ms=0 clamp=0
+hb streaming=0 blocks=319 packets=0 drops=0 hw=0
+bt_clock resyncs=225 burst_max=12
+bt_link links=10 lost=10 reason=0x13 by=paged reconnect_ms=898 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+bt_cred sent=95 returned=95 starves=0 starve_max_ms=0 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0
 a2dp=ok bonds=1 paired_by=stored
 streaming by=paged bitpool=53 frames_per_pkt=5 media_mtu=672
-soak_done cycles=10 reconnects=10 fails=0 reconnect_ms_max=1104 l2_free_base=2 l2_free_restream_min=2 l2_free_loss_min=5 l2_leak=0 submit_fails=0 bonds=1
-hb streaming=1 blocks=48 packets=16 drops=0 hw=5
-bt_link links=11 lost=10 reason=0x13 by=paged reconnect_ms=1038 scan=0 role=m
-bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=7
-bt_cred sent=15 returned=14 starves=0 starve_max_ms=0 clamp=0
+soak_done cycles=10 reconnects=10 fails=0 reconnect_ms_max=1009 l2_free_base=2 l2_free_restream_min=2 l2_free_loss_min=5 l2_leak=0 submit_fails=0 bonds=1
+bt_soak cycles=10 reconnects=10 fails=0 reconnect_ms_max=1009 l2_free=2 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x000B bonds=1 heap=0 stack_free_min=206104
+hb streaming=1 blocks=114 packets=30 drops=0 hw=12
+bt_clock resyncs=231 burst_max=12
+bt_link links=11 lost=10 reason=0x13 by=paged reconnect_ms=896 scan=0 role=m
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
+bt_cred sent=28 returned=20 starves=1 starve_max_ms=3 clamp=0
 bt_mem idle_blocks=0 paused_blocks=0

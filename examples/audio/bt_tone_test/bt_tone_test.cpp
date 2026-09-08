@@ -531,6 +531,10 @@ void setup() {
 #if defined(M2_BT_LEGACY_PIN)
     src.setLegacyPin(true);
 #endif
+#if defined(M2_BT_INQUIRY_LIAC)
+    src.link().setInquiryLap(0x9E8B00);                   // limited inquiry: bench knob for sinks that hide from GIAC in pairing mode
+    CONSOLE.println("inquiry_lap=LIAC");
+#endif
 #if defined(M2_BT_SUPERVISION_MS)
     src.link().setSupervisionSlots((uint16_t)((uint32_t)M2_BT_SUPERVISION_MS * 1000u / 625u));  // ms -> 0.625 ms slots
 #endif
@@ -582,6 +586,8 @@ void loop() {
         CONSOLE.print(" packets="); CONSOLE.print(btout.packets());
         CONSOLE.print(" drops="); CONSOLE.print(btout.drops());
         CONSOLE.print(" hw="); CONSOLE.println(btout.queueHighWater());
+        // self-clock health (its own line: the card-absent gate anchors the whole hb line above)
+        CONSOLE.print("bt_clock resyncs="); CONSOLE.print(btout.resyncs()); CONSOLE.print(" burst_max="); CONSOLE.println(btout.burstMax());
         CONSOLE.print("bt_link links="); CONSOLE.print(st.links);
         CONSOLE.print(" lost="); CONSOLE.print(st.lost);
         CONSOLE.print(" reason=0x"); printHex8(st.lastReason);

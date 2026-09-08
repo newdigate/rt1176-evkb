@@ -115,6 +115,10 @@ endif()
 # Bench knob: disable Simple Pairing on our side so pairing falls back to
 # legacy PIN (we answer PIN_Code_Request with 1234).
 option(M2_BT_LEGACY_PIN "Write_Simple_Pairing_Mode=0: legacy PIN pairing (1234)" OFF)
+option(M2_BT_INQUIRY_LIAC "Bench: inquire with the LIMITED access code (0x9E8B00) -- some sinks answer only this in pairing mode" OFF)
+if(M2_BT_INQUIRY_LIAC)
+    add_definitions(-DM2_BT_INQUIRY_LIAC=1)
+endif()
 if(M2_BT_LEGACY_PIN)
     add_definitions(-DM2_BT_LEGACY_PIN=1)
 endif()

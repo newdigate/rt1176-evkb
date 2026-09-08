@@ -88,10 +88,22 @@ void AudioOutputBluetooth::poll() {
         // update_all() pends IRQ_SOFTWARE, whose handler walks the graph -> our update()
         // copies one block into the PCM ring.  Resync to now after a stall rather than
         // bursting several update_all()s and overrunning the ring.
-        if ((int32_t)(now - m_nextUpdate) >= 0) {
-            m_nextUpdate += m_usPerBlock;
-            if ((int32_t)(now - m_nextUpdate) > (int32_t)(4 * m_usPerBlock)) m_nextUpdate = now + m_usPerBlock;
-            AudioStream::update_all();
+        // CATCH UP after a stall rather than resync: a resync throws the stalled blocks away, and the
+        // once-a-second heartbeat burst (~335 chars, ~29 ms at 115200 baud, blocking once the UART TX
+        // buffer fills) stalled the loop past the old 4-block threshold EVERY second -- measured on the
+        // Bose Mini SoundLink 2026-09-08 as 338 blocks/s against 44100/128 = 344.5, a 1.9 % slow clock
+        // that starved the sink's jitter buffer every ~10 s (audible artefacts, Shokz and Bose alike).
+        // Up to CATCHUP_MAX blocks are produced back to back (the PCM ring holds 32 and poll() drains
+        // below); only a stall longer than that is dropped and re-phased.
+        {
+            const uint32_t CATCHUP_MAX = 12;
+            if ((int32_t)(now - m_nextUpdate) > (int32_t)(CATCHUP_MAX * m_usPerBlock)) { m_nextUpdate = now; m_resyncs++; }
+            uint32_t burst = 0;
+            while ((int32_t)(now - m_nextUpdate) >= 0 && burst < CATCHUP_MAX) {
+                m_nextUpdate += m_usPerBlock; burst++;
+                AudioStream::update_all();
+            }
+            if (burst > m_burstMax) m_burstMax = burst;
         }
     }
     // else: an external sink's ISR (AudioOutputI2S) already called update_all() this period,
