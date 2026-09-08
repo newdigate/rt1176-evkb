@@ -615,6 +615,56 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
 
+★ **A SECOND REAL SINK — the Bose Mini SoundLink (2026-09-08 evening) — found two
+more host defects, both fixed the same evening** (M2Radio `bc38cb5` pinned; evkb
+`cce2b0c`; four `bt_tone_test` gates green, fixtures re-captured, fresh-user
+verified by RUNNING `[media]` on the fetched ELF; no new gate). Bring-up was done
+with an EMPTY `M2_BT_TARGET_NAME` — a null inquiry filter takes the first named
+audio/video device the inquiry finds — and `M2_BT_FORGET_BONDS=ON` so the boot
+walk does not spend 30 s paging stale bonds before it inquires.
+  1. **AVDTP 1.2 sinks reject GET_ALL_CAPABILITIES.** The Bose (2013, AVDTP
+     1.2) pairs over SSP and encrypts fine, then answers our 0x0C (an AVDTP 1.3
+     command, adopted for the Shokz) with a LEGACY two-byte General Reject
+     `[tl<<4 | 00][00]` — message type "command", signal id 0, which no real
+     command carries. `Avdtp::onSignalling` read it as a peer command, sent a
+     General Reject back, the Bose rejected THAT with BAD_HEADER_FORMAT, and both
+     sides sat out our 15 s deadline; the ACL trace + `stall_decode.py` named it
+     in one attempt. Fix: `Avdtp::setPeerVersion()` (A2dpSource passes the SDP
+     AudioSink record's AVDTP version) asks GET_CAPABILITIES (0x02) when < 1.3,
+     and EITHER form of General Reject of 0x0C falls back to 0x02 for that SEP
+     and every later one. Host scenarios 8/8b/9, RED first. On silicon the Bose
+     then drove AVDTP itself as INITIATOR (its own DISCOVER → GET_CAPABILITIES →
+     SET_CONFIG bitpool 53 → OPEN → START, 970 ms), our ACCEPTOR path answered
+     every step and the tone was audible; our OUTBOUND fallback is host-tested
+     but has not yet run on the wire, because the Bose's auto-reconnect pages
+     us before our page lands on every reboot.
+  2. **The self-clocked graph ran 1.9 % SLOW, and it was the HEARTBEAT.**
+     `AudioOutputBluetooth`'s micros() pacing resynced (threw the backlog away)
+     after any stall over 4 block periods (11.6 ms); the once-a-second heartbeat
+     burst (~335 chars, ~29 ms at 115200 baud, blocking once the UART TX buffer
+     fills) stalled the loop past that EVERY second. Measured: 338 blocks per
+     heartbeat where 44100/128 = 344.5 — a sink's jitter buffer starved 2 %
+     empties every ~10 s, the artefacts heard on BOTH the Shokz and the Bose,
+     and the same observer-effect class as the ACL-trace crackle of 2026-09-04
+     (the print volume had grown line by line through pieces 2/4/5). Fix:
+     CATCH UP after a stall (up to 12 blocks back to back — the PCM ring holds
+     32 and `poll()` drains in the same pass), resync only past that; measured
+     344/345 per heartbeat, `bt_clock resyncs=0 burst_max=9` (the recovered
+     heartbeat stall), ring high-water 12, **and the listener confirmed the tone
+     clean, artefacts gone** (2026-09-08 19:35). acid_box was never affected — its
+     graph is SAI-clocked. The counters ride their own `bt_clock` line because
+     the card-absent gate anchors the whole `hb` line; in QEMU they are noise
+     (`resyncs=373`) and are not gated.
+  ★ Bench notes from the same evening: a FAILED SSP with the ESP32 sink still
+  delivers a Link_Key_Notification, so a bogus bond lands in the store and the
+  boot walk pages a device that will never answer — clear with
+  `M2_BT_FORGET_BONDS=ON`. Class-of-device decodes matter before chasing a
+  "missing" sink: `0x2E4104` was the Mac (major class 0x01, computer, with audio
+  services), `0x7A020C` the phone; a Fishman Loudbox never answered general OR
+  limited inquiry from this radio while the phone listed it — unresolved (range
+  or LE-only), `M2_BT_INQUIRY_LIAC` exists because of it. The board "Wire not
+  connected" that looked like the DAP wedge was the board being switched OFF.
+
 ✅ **Measured 2026-09-08: 138 gates discovered, 137 passed, 1 failed, 0 SKIP**
 (`gates: 137 passed, 1 failed`; `-l` reports 138), the first full sweep with
 all six SynthUI widget gates BUILT and green (each 20–21 s) — after the
