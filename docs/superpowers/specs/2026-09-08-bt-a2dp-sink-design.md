@@ -1,6 +1,6 @@
 # M2Radio BT: A2DP SINK — the EVKB as a Bluetooth speaker
 
-**Status:** DESIGN, approved 2026-09-08 (brainstorm). Linear issue created the same day.
+**Status:** DESIGN, approved 2026-09-08 (brainstorm). **Linear: NEW-41** (Backlog). Plan: not yet written.
 **Builds on:** NEW-9 (A2DP source: L2cap/BtLink/Sdp/Avdtp/Sbc encoder/AudioOutputBluetooth),
 NEW-34 (non-blocking link lifecycle, the AVDTP ACCEPTOR path, BtSession, bond store,
 AVRCP target, ACL reassembly), and the 2026-09-08 Bose findings (AVDTP 1.2 fallback,
