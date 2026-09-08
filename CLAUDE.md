@@ -106,7 +106,7 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **132 gates** — NEW-34 piece 5's ONE new gate is
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **138 gates** — the SynthUI widget line added SIX on 2026-09-07/08 (`display/synthui_{lamp,level_meter,panel_button,piano_key,seven_segment,slide_toggle}_test`, NEW-24/26/27/28/29/30, one render golden each; 132 before them), and before that NEW-34 piece 5's ONE new gate is
 `audio/bt_tone_test[soak]` (the unattended connection-resilience soak: ten
 forced drops by a RAW HCI_Disconnect, ten auto-reconnects with the stored key on
 fresh handles, the LOSS-time teardown witness `l2_free_loss_min=5`, clean media
@@ -585,8 +585,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **132 passed, 0 failed, 0 SKIP**, or
-**131 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
+`usb/usb_descriptor_survey`). The target is **138 passed, 0 failed, 0 SKIP**, or
+**137 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
 (`cm4_audio_test`) is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
@@ -614,6 +614,26 @@ W14 phase 2 exercised that suffixing further: `networking/m2_rx_demo` owns
 **SEVEN** scripts (W15 phase 2 added the fourth, W16 the last three), and lists
 as `rt1176:networking/m2_rx_demo`, `…[ring]`, `…[stranded]`, `…[irq]`,
 `…[rxaggr]`, `…[txaggr]` and `…[regfallback]`.
+
+✅ **Measured 2026-09-08: 138 gates discovered, 137 passed, 1 failed, 0 SKIP**
+(`gates: 137 passed, 1 failed`; `-l` reports 138), the first full sweep with
+all six SynthUI widget gates BUILT and green (each 20–21 s) — after the
+SynthUI push landed (`abc44e1` now on its `origin/master`, the local checkout
+fast-forwarded to it), slide_toggle built and passed, and `LICENSE-AUDIT: PASS`
+with 117 manifests walked (run BEFORE the sweep, never during). The ONE red is
+`networking/m2_rx_demo[txaggr]` with its documented signature ("7 of 6 frames")
+and it PASSES alone, idle, immediately after (`1 batch / 6 slots`) — the
+load-sensitivity class, not a regression; the other members were green in the
+sweep itself (`cm4_audio_test` 4 s, `m2_uap_lwip[uap]` 4 s,
+`bt_tone_test[media]` 53 s). **0 SKIP is true again on this machine.**
+★ **What it took to get there is worth more than the number**: the six new
+gates arrived from another checkout with (a) a SynthUI pin that was on NO
+remote for a day, (b) no `GATES` entries, and (c) four scripts hard-coding
+`export REAL_QEMU=` to that machine's path, which overrode `tools/qrun`'s
+fallback chain and made the gates read "no UART capture" here — the same text
+dead firmware produces. Each was invisible to the stream that wrote them,
+because every one of them passed on its author's machine. A gate is not done
+until it has run on a SECOND machine, or at least through `-DEVKB_FORCE_FETCH=ON`.
 
 ✅ **Measured 2026-09-07 (evening): 136 gates discovered, 132 passed, 0 failed,
 4 SKIP** (`gates: 132 passed, 4 skipped (not built)`, exit 0), on the **L2CAP
