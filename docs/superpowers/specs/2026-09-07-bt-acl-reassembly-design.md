@@ -1,6 +1,6 @@
 # M2Radio BT: L2CAP reassembly of ACL continuation fragments (NEW-34 piece 5 follow-up)
 
-**Status:** IMPLEMENTED 2026-09-07 (M2Radio `0233d53` pushed + pinned; `[media]` RED→GREEN, host R1–R9, sweep 132 passed / 4 SKIP-of-another-stream / 0 failed, vacuity 43/43, fresh-user verified). Silicon re-run (§3.4, plan Task 7) PENDING. Plan: `docs/superpowers/plans/2026-09-07-bt-acl-reassembly.md`.
+**Status:** IMPLEMENTED 2026-09-07 (M2Radio `0233d53` pushed + pinned; `[media]` RED→GREEN, host R1–R9, sweep 132 passed / 4 SKIP-of-another-stream / 0 failed, vacuity 43/43, fresh-user verified). Silicon re-run (§3.4, plan Task 7) DONE 2026-09-08: 2 h, 274/274/0, zero AVDTP stalls, 46 fragments on 37 links reassembled and every one streamed — see the soak spec §8.4. Plan: `docs/superpowers/plans/2026-09-07-bt-acl-reassembly.md`.
 **Issue:** NEW-34 "M2Radio BT: reconnect known devices + soak-test connection
 resilience (range loss/recovery)" — the defect the piece-5 silicon soak found.
 **Depends on:** piece 5 (`bt_tone_test` `M2_BT_SOAK` driver, the `[media]` gate, `hci_peer.py`).

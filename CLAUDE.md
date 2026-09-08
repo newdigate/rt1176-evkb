@@ -798,9 +798,17 @@ sends that query fragmented ALWAYS, so `bt_tone_test[media]` was RED by name
 against `9d3da4c` and is GREEN with `l2frag=1` on every streaming heartbeat (no
 new gate). Two things stay OPEN: why the Shokz fragments MORE as its uptime
 grows, and why the traced build saw 1 stall in 70 against the same degraded
-headset — neither changes the fix. The silicon re-run (untraced soak, degraded
-headset, `l2frag` climbing, stall class gone) is Task 7 of the plan and is what
-closes piece 5's acceptance.
+headset — neither changes the fix. **The silicon re-run CLOSED piece 5 (2026-09-08)**: 2 h
+untraced soak on the reassembling host, `cycles=274 reconnects=274 fails=0`,
+**zero** AVDTP stalls (was 105 of 274), drop→stream p50 10.7 s / p90 10.8 s /
+max 13.3 s (was 12.0 / 65.7 / 240.7), the structural signature flat end to end,
+and the witness that removes the headset's uptime as a variable: **46
+fragmented PDUs on 37 links, max 3 per link, `l2fragdrop=0`, every one of the
+37 streamed** — the old host stalled on every fragment it met. §5's silicon
+acceptance is MET, and pieces 1/2/4's silicon claims now stand on a run whose
+functional half is clean too. Note `l2frag` RESETS per attempt (`L2cap::begin()`
+per connection): it reads fragments on the current link, so tally per link, not
+as a running total. Soak spec §8.4 has the table.
 
 ✅ **Measured 2026-09-06: 131 gates discovered, 130 passed / 1 failed, 0 SKIP in
 the sweep, effectively 131/131 idle**, on the **NEW-34 piece 4 credit-leak

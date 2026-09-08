@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status: COMPLETE 2026-09-08** — Tasks 1–6 executed subagent-driven on 2026-09-07 (evkb `c3f9d98`, M2Radio `0233d53`), Task 7 on 2026-09-08 (2 h silicon run, 274/274/0, zero stalls; soak spec §8.4).
+
 **Goal:** The M2Radio BT host reassembles L2CAP PDUs that arrive as several HCI ACL data packets (Packet_Boundary continuation), so a peer that fragments its SDP query — as the Shokz OpenMove does on silicon — gets its answer and AVDTP proceeds.
 
 **Architecture:** `Hci` passes the Packet_Boundary flag to its ACL callback; `L2cap` keeps one reassembly buffer per ACL handle and dispatches a PDU only when its declared length has arrived (zero-copy when a single packet already carries it). The fake peer's `media` phase fragments its SDP query exactly as the headset did, so the existing `[media]` gate is the regression pin (RED on today's library, GREEN on the fix). Spec: `docs/superpowers/specs/2026-09-07-bt-acl-reassembly-design.md`.

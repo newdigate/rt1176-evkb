@@ -161,3 +161,19 @@ invariants flat throughout: l2_free_loss_min=5 l2_leak=0 bonds=1 stack_free_min=
 READING: only the headset power-cycle moved the rate; a fresh host AND a fresh
   controller moved nothing.  The accumulating state is in the Shokz.  Next: the
   ACL-traced run to name the AVDTP step.
+
+-- 2026-09-08: the RE-RUN on the reassembling host (M2Radio 0233d53; same build-soak-hw
+   config, ACL trace OFF; Shokz powered on that morning) -- piece 5 acceptance MET --
+10:30:36 -> 12:29:17, 3576 bt_soak lines.  First / last signature:
+bt_soak cycles=1 reconnects=0 fails=0 reconnect_ms_max=0 l2_free=5 l2_free_base=2 l2_free_min=n/a l2_free_loss_min=5 l2_leak=n/a handle=0x0000 bonds=1 heap=0 stack_free_min=206080
+bt_soak cycles=274 reconnects=274 fails=0 reconnect_ms_max=13329 l2_free=1 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5 l2_leak=0 handle=0x0001 bonds=1 heap=0 stack_free_min=206080
+bt_cred sent=944 returned=944 starves=0 starve_max_ms=0 clamp=0
+a2dp=avdtp_failed: 0 of 274 attempts (was 105 of 274).  soak_fail: 0 (was 20).
+drop->stream p50 10.7 s  p90 10.8 s  max 13.3 s  (was 12.0 / 65.7 / 240.7).
+the witness -- fragmented PDUs the OLD host could not see and always stalled on:
+  bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1 l2fragdrop=0 credmin=3   (per-link; resets per attempt)
+  46 fragments on 37 of 277 links, max 3 per link, l2fragdrop=0 throughout, all 37 streamed.
+observations: boot walk after a mid-stream board reset needed 2 failed pages + 1 failed
+  pairing round before the stored key connected (headset held the old link to its
+  supervision timeout; outside the counters); 1 link of 274 shed 160 media packets
+  before its drop, 273 read drops=0; the headset paged us twice, both accepted.

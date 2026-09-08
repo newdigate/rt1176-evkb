@@ -339,5 +339,46 @@ proof and close-out: `2026-09-07-bt-acl-reassembly-design.md` (M2Radio
 `0233d53`; `bt_tone_test[media]` RED by name against the old library, GREEN
 with `l2frag=1`; sweep clean for every bt gate). The headset's rising
 fragmentation with uptime and the traced build's lower rate are recorded OPEN.
-**Silicon re-run (plan Task 7): pending** — the untraced soak against the
-still-degraded Shokz; the claim is `avdtp_failed` gone and `l2frag` climbing.
+**Silicon re-run (plan Task 7): DONE, see §8.4.**
+
+### 8.4 The re-run on the reassembling host — piece 5's acceptance MET (2026-09-08)
+
+Same `build-soak-hw` configuration (15 s period, `retry_now` OFF, 60 s bound,
+Shokz, SSP, stored key), M2Radio `0233d53`, ACL trace OFF. A first run
+(07:36–08:44, 67 min, stopped for the bench) read 148/148 with 7 fragmented
+links, all streamed; the run below is the clean one: **10:30:36 → 12:29:17**,
+3576 `bt_soak` lines (7152 s), the Shokz powered on that morning and left alone.
+
+**Last signature:** `bt_soak cycles=274 reconnects=274 fails=0
+reconnect_ms_max=13329 l2_free=1 l2_free_base=2 l2_free_min=2 l2_free_loss_min=5
+l2_leak=0 handle=0x0001 bonds=1 heap=0 stack_free_min=206080`; `bt_cred
+sent=944 returned=944 starves=0 starve_max_ms=0 clamp=0`; `soak_fail` lines 0;
+every loss event reason 0x16 (ours), 274 of them; the headset paged us twice
+(`conn_req`), both accepted.
+
+| | old library (§8.1, 2026-09-07) | reassembling host (this run) |
+|---|---|---|
+| cycles / reconnects / fails | 167 / 146 / 20 | **274 / 274 / 0** |
+| `avdtp_failed` attempts | 105 of 274 (23 → 57 % per half hour) | **0 of 274** |
+| drop→stream p50 / p90 / max | 12.0 / 65.7 / 240.7 s | **10.7 / 10.8 / 13.3 s** |
+| fragmented PDUs received | invisible (no counter; every one stalled) | **46 on 37 links, max 3 per link, 0 dropped, all 37 streamed** |
+| structural signature | flat | flat (`l2_free_loss_min=5` ×274, `l2_leak=0`, `bonds=1`, `heap=0`, stack floor 206080 first → last) |
+
+The comparison that removes the headset's uptime as a variable: the old
+library's FIRST half hour on a fresh Shokz stalled 15 of 66 attempts; this
+host's first half hour on a fresh Shokz stalled 0 of 69, and its last half hour
+0 of 67 with the fragment rate rising through the run (the `l2frag` witness:
+37 links carried a fragmented PDU and every one reached streaming). **§5's
+silicon acceptance — `reconnects == cycles`, `fails == 0`, the flat signature
+end to end over ≥2 h — is MET. Piece 5 is CLOSED**, and with it the programme's
+silicon evidence for pieces 1, 2 and 4 stands on a run whose functional half is
+clean as well.
+
+Observations, none a defect of this piece: (a) the boot walk after a board
+reset taken mid-stream needed two failed pages and one failed pairing round
+(~40 s) before the stored key connected — the headset still held the old link
+until its supervision timeout; outside the soak's counters, filed under
+piece 2's boot-walk notes; (b) one link of 274 shed 160 media packets before
+its scheduled drop (`drops=160`, the other 273 read 0); (c) `l2frag` resets per
+attempt (`L2cap::begin()` per connection), so it reads fragments on the CURRENT
+link — the per-link tally above is `soak_frag.py`'s, not a running total.
