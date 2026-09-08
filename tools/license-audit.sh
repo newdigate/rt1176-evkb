@@ -352,6 +352,12 @@ examples/display/rotary_knob_bench:rotary_knob_bench \
 examples/display/synthui_fader_test:synthui_fader_test \
 examples/display/synthui_knob_test:synthui_knob_test \
 examples/display/synthui_step_test:synthui_step_test \
+examples/display/synthui_lamp_test:synthui_lamp_test \
+examples/display/synthui_level_meter_test:synthui_level_meter_test \
+examples/display/synthui_panel_button_test:synthui_panel_button_test \
+examples/display/synthui_piano_key_test:synthui_piano_key_test \
+examples/display/synthui_seven_segment_test:synthui_seven_segment_test \
+examples/display/synthui_slide_toggle_test:synthui_slide_toggle_test \
 examples/display/vglite_lvgl_test:vglite_lvgl_test \
 examples/display/vglite_conformance:vglite_conformance \
 examples/display/vglite_probe:vglite_probe \

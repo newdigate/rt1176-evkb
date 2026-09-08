@@ -2,7 +2,6 @@
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
-export REAL_QEMU="${REAL_QEMU:-/Users/moolet/Development/qemu-rt1170/build/qemu-system-arm}"
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init

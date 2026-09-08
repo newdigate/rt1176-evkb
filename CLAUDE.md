@@ -640,7 +640,21 @@ they SKIP; and none of the four has a `GATES` manifest entry, so the audit's
 drift check fails BY NAME on each. Both belong to that stream's close-out.
 This is exactly the "a SKIP hides in a count" class: read the SKIP names, not
 the total. (Two more of theirs, `synthui_piano_key_test` and
-`synthui_slide_toggle_test`, landed on origin during this sweep.)
+`synthui_slide_toggle_test`, landed on origin during this sweep; `-l` now
+reports **138**.)
+★ **Dispositioned 2026-09-08 as far as this machine can**: the local
+`~/Development/SynthUI` was fast-forwarded to its `origin/master` (`f3199b4`,
+a clean ancestor), which builds FIVE of the six; all six got `GATES` entries;
+and a portability bug in FOUR of the new scripts was fixed — they hard-coded
+`export REAL_QEMU=` to the other machine's path (one literally under
+`/Users/moolet/`), overriding `tools/qrun`'s own fallback chain, so QEMU never
+started here and the gates read "no UART capture" (a message that looks like
+dead firmware). With the line removed all five PASS. **The audit still fails on
+ONE named line, `MISSING BUILD: synthui_slide_toggle_test`, and cannot pass
+anywhere but that machine**: `evkb.cmake` pins SynthUI `abc44e1`, which is on
+NO remote ref — `synthui_slide_toggle.h` was never pushed — so fresh-user
+builds of EVERY SynthUI-linking example are broken until that push lands. A
+pin must name a pushed SHA; that is the other stream's close-out item.
 ★ **acid_box's `M2_BT_OUT` bench builds had NOT LINKED since piece 3** — found
 only because the close-out rebuilt EVERY build dir: `Avrcp.cpp` was added to
 the library on 2026-09-07 but never to acid_box's hand-maintained flash-routing
