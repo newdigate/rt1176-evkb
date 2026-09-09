@@ -731,7 +731,7 @@ ABSENT
     # (c) NEW-42: a bt_jit line that merely EXISTS must not satisfy the gap histogram.  Take the green
     # transcript and move g120's whole count into g30 -- the five buckets still sum to 149, so the
     # interval-COUNT assertion is untouched and ONLY "where the bulk lands" can fire.  That is exactly
-    # the shape a stubbed `m_gap[0]++` produces (measured: RED demo (a), g30=149 g120=0), and it is
+    # the shape a stubbed `m_gap[0]++` produces (measured: RED demo (e), g30=149 g120=0), and it is
     # invisible to every other assertion in the gate -- the packets still all arrived, decoded without
     # a refusal and hit the PCM golden, because the histogram is an instrument beside the audio path
     # and not in it.  Without this case the whole instrument could be dead and the gate green.

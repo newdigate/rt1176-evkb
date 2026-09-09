@@ -310,23 +310,32 @@ GAPWANT=$(echo "$LASTHB" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^pkts=/) { split($
 echo "$LASTJIT" | awk -v want="$GAPWANT" \
     '{s=0; for(i=1;i<=NF;i++) if ($i ~ /^g(30|50|80|120|big)=/) { split($i,a,"="); s+=a[2] } } END{exit !(s == want+0)}' \
     || fail "[jit] the gap buckets do not account for every interval (want $GAPWANT = pkts-1): $LASTJIT"
-# The peer paces media at 100 ms -- a number the firmware has no way to know and cannot invent -- so
-# the bulk of the 149 intervals must land in the band that straddles that pace: g80 (50-80 ms) plus
-# g120 (80-120 ms).  A stubbed m_gap[0]++ still sums to 149 and fails HERE, which is what makes this
-# assertion separate from the one above rather than a duplicate; so does any bucketing that does not
-# read the interval's DURATION at all.
-# ★ THE BAND, NOT g120 ALONE, AND THAT IS A MEASUREMENT RATHER THAN A PREFERENCE.  Spec s4.2 asks for
-# `g120 >= 120` on the strength of three IDLE runs (138 / 140 / 142).  Measured 2026-09-09 under eight
-# CPU spinners, g120 reads 122 / 124 / 125 -- a margin of two on a floor of 120 -- because the same
-# guest-clock lag that invents the 3.14 s outlier also makes the ordinary 100 ms interval MEASURE
-# short, and it migrates into g80 (6 -> 9..13) as the machine gets busier.  A single-bucket floor
-# would therefore have joined this tree's documented load-sensitivity class (m_rx_demo[txaggr],
-# m2_uap_lwip[uap], bt_tone_test[media]) by construction.  The band absorbs exactly that migration
-# and nothing else: it reads 145-147 idle and 133-135 under the same eight spinners, and it is still
-# 0 against the stubbed histogram.  gbig is deliberately OUTSIDE it -- the artefact lives there.
+# The peer paces media at 100 ms -- a number the firmware has no way to know and cannot MEASURE its
+# way to by accident -- so the bulk of the 149 intervals must land in the band that straddles that
+# pace: g80 (50-80 ms) plus g120 (80-120 ms).  A stubbed m_gap[0]++ still sums to 149 and fails
+# HERE, which is what makes this assertion separate from the one above rather than a duplicate; so
+# does any bucketing that does not read the interval's DURATION at all.
+# ★ WHAT THIS DOES *NOT* CATCH, stated so nobody reads it as stronger than it is: a constant
+# m_gap[3]++ scores 149 in the band and passes both assertions.  The band cannot tell 50-80 ms from
+# 80-120 ms -- that is the price of widening it below -- and the BUCKET EDGES are pinned instead on
+# the host, in node_test case 11, where micros() is injectable and all four inclusive tops are
+# driven on the boundary and demonstrated RED.
+# ★ THE BAND RATHER THAN g120 ALONE, AND THE FLOOR AT 90 RATHER THAN 120: BOTH ARE MEASUREMENTS.
+# Spec s4.2 first asked for `g120 >= 120` on the strength of three IDLE runs (138 / 140 / 142).
+# Under eight CPU spinners g120 reads 122 / 124 / 125 -- a margin of two -- because the same
+# guest-clock lag that invents the 3.14 s outlier also makes an ordinary 100 ms interval MEASURE
+# SHORT.  Widening to the band was the first fix and it was NOT ENOUGH: a review re-ran it under the
+# same eight spinners and it went RED 2 of 5, the band reading 118 / 119 / 124 / 125 / 135 against
+# 144-145 idle.  The migration's dominant sink under load is gbig (4 idle -> 14..26), which is
+# deliberately outside the band because the artefact lives there -- so the band absorbs the smaller
+# half of the drift and not the larger.  A floor of 120 would therefore have joined this tree's
+# documented load-sensitivity class (m2_rx_demo[txaggr], m2_uap_lwip[uap], bt_tone_test[media]) by
+# construction, on a gate that has never been in it.  90 (60% of 149) leaves 28 of headroom under
+# the worst measured reading and is still exactly 0 against the stubbed histogram, which is the only
+# discrimination this assertion was ever buying.
 echo "$LASTJIT" \
-    | awk '{s=0; for(i=1;i<=NF;i++) if ($i ~ /^g(80|120)=/) { split($i,a,"="); s+=a[2] } } END{exit !(s >= 120)}' \
-    || fail "[jit] the 50-120 ms band does not carry the bulk of the peer's 100 ms pacing (want g80+g120 >= 120): $LASTJIT"
+    | awk '{s=0; for(i=1;i<=NF;i++) if ($i ~ /^g(80|120)=/) { split($i,a,"="); s+=a[2] } } END{exit !(s >= 90)}' \
+    || fail "[jit] the 50-120 ms band does not carry the bulk of the peer's 100 ms pacing (want g80+g120 >= 90): $LASTJIT"
 # The START pre-fill ran to completion -- the node buffered TARGET blocks of audio before it played
 # the first one, instead of playing from an empty ring and counting the whole start-up as underruns.
 echo "$LASTJIT" | grep -qE " primed=1( |$)" \
