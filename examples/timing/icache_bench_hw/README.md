@@ -20,6 +20,18 @@ Readings: `ccr_reset=0x00040200` — the boot ROM hands over with **IC=0**
 `wit_match=1`, `sbc_crc=0x6c24f764` identical across QEMU, the flash build
 and the ITCM build. Every prediction in the spec's table held.
 
+★ **`sbc_crc=0x6c24f764` is STALE since M2Radio `7145030`** (NEW-41, 2026-09-09):
+the encoder's leftover-bit distribution was corrected to be SUBBAND-major per
+A2DP v1.3 §12.7, so `Sbc::encode` now emits different bytes for the same input
+and the constant above no longer describes this bench. It is deliberately NOT
+replaced with a guess — the number belongs to a silicon run, and re-recording it
+is a bench task for the next boot. Measured under QEMU meanwhile (two runs,
+identical): **`sbc_crc=0x59fed328`, silicon pending**. Nothing else in this file
+moves: the crc is a cross-build IDENTITY witness, and the in-image
+`sbc_crc_match` compares this boot's own flash and ITCM cells against each other
+rather than against any recorded constant, so it is unaffected — it read
+`sbc_crc_match=1` on both QEMU runs.
+
 ## Read the numbers with these caveats
 - **Best case.** The bench's whole flash footprint (~3 KB) fits the 32 KB
   cache, so no cell ever sees a capacity or conflict miss. acid_box's
