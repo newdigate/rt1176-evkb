@@ -160,7 +160,11 @@ def phase_done(phase, peer):
     # `phase not in LAST_OPCODE` keeps rejecting typos.
     if phase == "source":
         s = peer.src
-        return s["started"] and s["pkts"] >= SOURCE_PKTS and s["errors"] == 0 and not peer.avdtp["error"]
+        # ... AND the sink opened AVCTP itself and answered both volume commands.  An iPhone never opens that
+        # channel (bench 2026-09-09), so a sink that waits for one is mute to every phone: set_ok is the
+        # end-to-end proof that the channel existed and carried a real SetAbsoluteVolume.
+        return (s["started"] and s["pkts"] >= SOURCE_PKTS and s["errors"] == 0 and not peer.avdtp["error"]
+                and s["avctp_open"] and s["set_ok"] == 1)
     return peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
 
 def connect(path):
@@ -265,7 +269,13 @@ class Peer:
                     "media_scid": None, "media_dcid": None, "sdp_scid": 0x0E87, "sdp_dcid": None,
                     "tl": 0, "acp_seid": None, "sink_record_ok": False, "started": False,
                     "pkts": 0, "seq": 0, "ts": 0, "frame_idx": 0, "delay_reports": 0, "errors": 0,
-                    "frames": None, "next_at": 0.0, "started_at": 0.0, "paged": False, "psm": {}, "cfg": {}}
+                    "frames": None, "next_at": 0.0, "started_at": 0.0, "paged": False, "psm": {}, "cfg": {},
+                    # --- AVCTP/AVRCP, opened by the SINK (NEW-41 follow-up).  This phase models an iPhone,
+                    # and an iPhone NEVER opens AVCTP at a sink -- it waits for the sink to initiate and then
+                    # drives absolute volume over the sink's channel.  So we open nothing here: avctp_scid is
+                    # OUR cid for the channel the sink asked for, avctp_dcid the sink's own.
+                    "avctp_scid": None, "avctp_dcid": None, "avctp_open": False, "avctp_at": 0.0,
+                    "vol_state": "idle", "interim_vol": None, "set_ok": 0}
         # --- V3 bootloader state (fwdnld phase only) ---
         # While `boot` is True every received byte belongs to the download, not
         # to HCI: the host is answering the bootloader, and H4 framing has not
@@ -614,6 +624,16 @@ class Peer:
                 if code == 0x02:                                                 # Connection Request: psm, scid
                     psm, scid = struct.unpack("<HH", body[:4]); ours = self.next_cid; self.next_cid += 0x40
                     self.chans[scid] = (ours, psm)
+                    if psm == 0x0017 and self.phase == "source":
+                        # The SINK opened AVCTP at US.  Accepted like any other channel (the generic answer
+                        # below sends the Connection Response and our own Config Request); registered here so
+                        # the config exchange completes into src_chan_ready and the volume exchange can start.
+                        sv = self.src
+                        if sv["avctp_scid"] is not None:
+                            self.log.append("PEER-SINK-AVCTP-SECOND scid=0x%04x" % scid); sv["errors"] += 1
+                        else:
+                            sv["avctp_scid"] = ours; sv["avctp_dcid"] = scid
+                            sv["cfg"][ours] = {"req": False, "rsp": False, "ready": False}
                     if psm == 0x0019 and self.avdtp["sig_cid"] is None:
                         self.avdtp["sig_cid"] = ours    # the FIRST 0x0019 channel is signalling; a
                                                         # later one (opened in AVDTP's OPENING state,
@@ -689,6 +709,7 @@ class Peer:
                         # sends on it is not a sink.
                         if ours == self.src["sig_scid"]:   self.src_avdtp_response(handle, pl)
                         elif ours == self.src["sdp_scid"]: self.src_sdp_response(handle, pl)
+                        elif ours == self.src["avctp_scid"]: self.src_avrcp_response(handle, pl)
                         elif ours == self.src["media_scid"]:
                             self.log.append("PEER-SOURCE-MEDIA-FROM-SINK hex=%s" % pl[:16].hex()); self.src["errors"] += 1
                         else: self.log.append("PEER-SOURCE-UNEXPECTED-DATA cid=0x%04x" % cid)
@@ -936,6 +957,8 @@ class Peer:
             s["state"] = "discovering"; self.src_send_avdtp(handle, [0x01])                       # DISCOVER
         elif our_cid == s["media_scid"]:
             s["state"] = "starting"; self.src_send_avdtp(handle, [0x07, s["acp_seid"] << 2])      # START
+        elif our_cid == s["avctp_scid"]:
+            s["avctp_open"] = True; s["avctp_at"] = time.time(); self.log.append("PEER-SINK-AVCTP opened")
     def src_sdp_response(self, handle, pl):
         s = self.src
         if s["sink_record_ok"]: return
@@ -990,6 +1013,46 @@ class Peer:
         except Exception as e:
             self.log.append("PEER-EXCEPTION src_avdtp_response: %r" % e)
             self.avdtp["error"] = True; self.src["errors"] += 1
+    # --- source phase: the CONTROLLER half, on the channel the SINK opened -------------------------
+    # An iPhone's whole AVRCP conversation with a speaker is these two commands, and both are what the
+    # bench could not observe on 2026-09-09 because no channel ever existed: the phone registers for
+    # VOLUME_CHANGED (so the speaker can push its own knob back), then writes the slider's position.
+    # tl 2, RegisterNotification(VOLUME_CHANGED 0x0D); parameter length 5 = the event byte plus the
+    # 4-byte interval field, which AVRCP 1.4 leaves unused for this event:
+    SRC_REG_VOL = bytes.fromhex("20110e034800001958310000050d00000000")
+    # tl 3, SetAbsoluteVolume(0x40) -- exactly half of the 0x7F maximum:
+    SRC_SET_VOL = bytes.fromhex("30110e0048000019585000000140")
+    SRC_REG_VOL_RSP_HDR = bytes.fromhex("22110e0f4800001958310000 02".replace(" ", ""))   # INTERIM; event byte + volume follow
+    SRC_SET_VOL_RSP = bytes.fromhex("32110e0948000019585000000140")                       # ACCEPTED, volume echoed
+    def src_avrcp_pump(self):
+        """Once the sink's AVCTP channel is open, drive the phone's volume exchange over it."""
+        s = self.src
+        if not s["avctp_open"] or s["vol_state"] != "idle": return
+        if time.time() - s["avctp_at"] < 0.2: return                      # let the sink settle, as a phone does
+        s["vol_state"] = "reg"
+        self.send(acl(self.cur_handle(), s["avctp_dcid"], self.SRC_REG_VOL), 0.0)
+    def src_avrcp_response(self, handle, pl):
+        s = self.src
+        try:
+            if s["vol_state"] == "reg":
+                # INTERIM (0x0F) for event 0x0D, carrying the target's CURRENT volume -- a target that answers
+                # anything else (NOT IMPLEMENTED, the wrong event) leaves a phone's slider dead.
+                if len(pl) == 15 and pl[:13] == self.SRC_REG_VOL_RSP_HDR and pl[13] == 0x0D:
+                    s["interim_vol"] = pl[14]; s["vol_state"] = "set"
+                    self.log.append("PEER-SINK-AVRCP-INTERIM vol=%d" % pl[14])
+                    self.send(acl(handle, s["avctp_dcid"], self.SRC_SET_VOL), 0.05)
+                else:
+                    self.log.append("PEER-SINK-AVRCP-BAD interim hex=%s" % pl.hex()); s["errors"] += 1; s["vol_state"] = "failed"
+            elif s["vol_state"] == "set":
+                if pl == self.SRC_SET_VOL_RSP:
+                    s["set_ok"] = 1; s["vol_state"] = "done"
+                    self.log.append("PEER-SINK-AVRCP interim_vol=%d set_ok=1" % s["interim_vol"])
+                else:
+                    self.log.append("PEER-SINK-AVRCP-BAD setvol hex=%s" % pl.hex()); s["errors"] += 1; s["vol_state"] = "failed"
+            else:
+                self.log.append("PEER-SINK-AVRCP-BAD unexpected state=%s hex=%s" % (s["vol_state"], pl.hex())); s["errors"] += 1
+        except Exception as e:
+            self.log.append("PEER-EXCEPTION src_avrcp_response: %r" % e); s["errors"] += 1
     def src_pump(self):
         """One RTP packet of five SBC frames every 14.512 ms -- the rate the tone was encoded at.
 
@@ -1117,6 +1180,7 @@ if __name__ == "__main__":
                 break                                                                              # all three legs done; the gate waits out the host's final heartbeat
         if phase == "source":
             if peer.src["started"]: peer.src_pump()
+            peer.src_avrcp_pump()
             if phase_done("source", peer) and not peer.pending:
                 break                                                                          # the gate waits out the sink's own heartbeat
         if phase == "soak":
@@ -1181,8 +1245,9 @@ if __name__ == "__main__":
         print("PEER-SOURCE pkts=%d frames=%d delay_reports=%d sink_record=%d started=%d errors=%d"
               % (s["pkts"], s["pkts"] * SOURCE_FRAMES_PER_PKT, s["delay_reports"],
                  1 if s["sink_record_ok"] else 0, 1 if s["started"] else 0, s["errors"]))
-        print("PEER-SOURCE-STATE state=%s acp_seid=%s handle=0x%04x"
-              % (s["state"], s["acp_seid"], s["handle"]))
+        print("PEER-SOURCE-STATE state=%s acp_seid=%s handle=0x%04x avctp=%d vol_state=%s interim_vol=%s set_ok=%d"
+              % (s["state"], s["acp_seid"], s["handle"], 1 if s["avctp_open"] else 0,
+                 s["vol_state"], s["interim_vol"], s["set_ok"]))
     if phase == "soak":
         r, sk = peer.rc, peer.sk
         print("PEER-SOAK links=%d disconnects=%d streamed=%d key_ok=%d notified=%d badmedia=%d stale_acl=%d stale_max=%d"

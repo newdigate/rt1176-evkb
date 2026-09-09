@@ -24,6 +24,14 @@
 #       second L2CAP channel for media, then START;
 #     * it sends the source ONE DelayReport once streaming (AVDTP 1.3 s8.19 makes that the SINK's
 #       command, and only when the source configured delay reporting);
+#     * it OPENS AVCTP ITSELF (PSM 0x0017) once STREAMING, and absolute volume then works over that
+#       channel: the peer registers for VOLUME_CHANGED (answered INTERIM with the target's current
+#       volume, 100) and writes SetAbsoluteVolume(0x40), which is ACCEPTED and reaches the codec
+#       (`volume=64` on the UART).  ★ THE PEER OPENS NOTHING -- deliberately, because an iPhone does
+#       not: bench 2026-09-09, four connections over ~15 minutes with `bt_avrcp avctp=0` throughout,
+#       even after the AVRCP Target record moved to Category 2.  iOS waits for the sink to initiate,
+#       as real speakers do.  So a sink that only ever ACCEPTS an AVCTP channel has a dead volume
+#       slider on every phone, and passes every other assertion in this gate;
 #     * and then the real claim: 150 RTP packets carrying 750 119-byte SBC frames of a 1 kHz
 #       tone -- the committed sine.sbc, the same file M2Radio's own decoder tests use -- reach
 #       AudioInputBluetooth, are decoded with NO refused frame and NO sequence gap, and land in
@@ -56,10 +64,10 @@
 # 2 runs in 8 stalled at exactly pkts=2 immediately after START.  At 100 ms/packet, 8 consecutive
 # runs were green with byte-identical rms and golden.  Nothing asserted here depends on the rate.
 #
-# DEMONSTRATED RED (2026-09-09), three ways.  Each mutation was made in the named COMMITTED
+# DEMONSTRATED RED (2026-09-09), four ways.  Each mutation was made in the named COMMITTED
 # source, build/ rebuilt, this gate run, confirmed to fail BY THE NAMED ASSERTION, then reverted
 # (`git -C ~/Development/M2Radio checkout -- <file>`), rebuilt and confirmed green again;
-# `git -C ~/Development/M2Radio status` clean after all three:
+# `git -C ~/Development/M2Radio status` clean after all four:
 #   (a) bt/A2dpSink.h, the constructor: `Sdp::setRole(Sdp::SINK)` removed, so the image publishes
 #       the AudioSource record instead --
 #         FAIL: [sink] the AudioSink SDP record is wrong: PEER-SINK-RECORD-BAD hex=07000100050002350000
@@ -76,6 +84,11 @@
 #       (the sink REJECTS it 0x07/0x29 -- badCat = media codec, INVALID_CODEC_PARAMETER -- as it
 #       must; PEER-SOURCE-REJECT sig=3 records the refusal from the other side.  This is the arm
 #       that proves the configuration is really validated rather than adopted verbatim.)
+#   (d) bt/A2dpSink.cpp: the `openAvctp()` call on the transition to STREAMING commented out (the
+#       state the bench measured) --
+#         FAIL: [sink] the sink did not open AVCTP itself
+#       (the peer opens none either, so the channel never exists and no volume command can arrive:
+#       every OTHER assertion in this gate still passes, which is precisely why this one is here.)
 #
 # ★ The GOLDEN (SINK_GOLDEN below) is the CRC32 of the first 200 decoded left-channel blocks.  It
 # is reproducible because both halves are: the peer streams the committed sine.sbc's frames in
@@ -185,6 +198,8 @@ if grep -q "PEER-SINK-DELAY-BAD" "$RES";   then fail "[sink] the DelayReport val
 if grep -q "PEER-SOURCE-REJECT" "$RES";    then fail "[sink] the sink rejected a source command: $(grep -m1 PEER-SOURCE-REJECT "$RES")"; fi
 if grep -q "PEER-ACCEPT-BAD-ROLE" "$RES";  then fail "[sink] the sink accepted the page in the wrong role: $(grep -m1 PEER-ACCEPT-BAD-ROLE "$RES")"; fi
 if grep -q "PEER-SOURCE-MEDIA-FROM-SINK" "$RES"; then fail "[sink] the sink sent media back at the source: $(grep -m1 PEER-SOURCE-MEDIA-FROM-SINK "$RES")"; fi
+if grep -q "PEER-SINK-AVRCP-BAD" "$RES";   then fail "[sink] the AVRCP target answered wrongly: $(grep -m1 PEER-SINK-AVRCP-BAD "$RES")"; fi
+if grep -q "PEER-SINK-AVCTP-SECOND" "$RES"; then fail "[sink] the sink opened a SECOND AVCTP channel: $(grep -m1 PEER-SINK-AVCTP-SECOND "$RES")"; fi
 
 grep -q '^a2dp_sink=ok bonds=1 paired_by=peer' "$OUT" \
     || fail "[sink] bring-up did not reach STREAMING as acceptor"
@@ -193,12 +208,22 @@ grep -q '^sink: adopted sbc bitpool=53 mode=3 blocks=16 sub=8' "$OUT" \
 grep -q '^streaming by=incoming bitpool=53' "$OUT" || fail "[sink] node never began"
 grep -q '^sink: delay_report=' "$OUT" \
     || fail "[sink] no DelayReport was sent to a source that configured it"
+# ★ SINK-INITIATED AVCTP.  The peer models an iPhone and opens NOTHING; if the sink does not ask, no
+# AVRCP channel exists at all, and the four assertions that follow -- two on the UART here, two on the
+# peer's tally below -- are unreachable together.
+grep -q '^sink: avctp connect' "$OUT" || fail "[sink] the sink did not open AVCTP itself"
+grep -q '^volume=64' "$OUT" \
+    || fail "[sink] SetAbsoluteVolume(0x40) never reached the codec (no ^volume=64 line)"
 
 # --- the source's positive tally (it really streamed) -------------------------------------------
 grep -q "^PEER-SINK-RECORD ok" "$RES"      || fail "[sink] the source never read our AudioSink record"
 grep -q "^PEER-SOURCE-STARTED" "$RES"      || fail "[sink] the source never reached START"
 grep -qE "^PEER-SOURCE pkts=150 frames=750 delay_reports=1 sink_record=1 started=1 errors=0" "$RES" \
     || fail "[sink] source tally wrong: $(grep -m1 '^PEER-SOURCE ' "$RES")"
+grep -q "^PEER-SINK-AVCTP opened" "$RES" \
+    || fail "[sink] the peer never saw an AVCTP Connection Request from the sink"
+grep -q "^PEER-SINK-AVRCP interim_vol=100 set_ok=1" "$RES" \
+    || fail "[sink] absolute volume did not complete: $(grep -m1 '^PEER-SOURCE-STATE ' "$RES")"
 
 # --- what actually arrived in the audio graph --------------------------------------------------
 LASTHB=$(grep -E "^hb streaming=1 " "$OUT" | tail -1)
@@ -218,5 +243,11 @@ echo "$LASTSINK" | grep -q "rms_blocks=750"                || fail "[sink] not e
 echo "$LASTSINK" | grep -q "crc200=0x$SINK_GOLDEN"          || fail "[sink] decoded-PCM golden moved (was 0x$SINK_GOLDEN): $LASTSINK"
 echo "$LASTSINK" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^trim_ppm=/) { split($i,a,"="); v=a[2]+0 } } END{exit !(v >= -200 && v <= 200)}' \
     || fail "[sink] servo trim outside its clamp: $LASTSINK"
+# The sink's OWN account of the control channel, read from the freshest heartbeat: the channel is up and
+# the volume the phone wrote is the volume the target holds.
+LASTAVRCP=$(grep -E "^bt_avrcp " "$OUT" | tail -1)
+[ -n "$LASTAVRCP" ] || fail "[sink] no bt_avrcp line"
+echo "$LASTAVRCP" | grep -q "avctp=1" || fail "[sink] the sink does not report its AVCTP channel up: $LASTAVRCP"
+echo "$LASTAVRCP" | grep -q "vol=64"  || fail "[sink] the target did not keep the volume the phone set: $LASTAVRCP"
 
-echo "PASS: A2DP SINK -- a paging source is accepted as an unbonded slave, paired and encrypted by the peer, reads our AudioSink record, configures 44.1/joint/16/8/loudness/53 with delay reporting and reaches START; 150 RTP packets / 750 SBC frames of the 1 kHz tone decoded into the graph (no gap, no refusal, level and PCM golden exact, one DelayReport); underruns and the servo's trim are SILICON claims -- QEMU has no audio clock"
+echo "PASS: A2DP SINK -- a paging source is accepted as an unbonded slave, paired and encrypted by the peer, reads our AudioSink record, configures 44.1/joint/16/8/loudness/53 with delay reporting and reaches START; 150 RTP packets / 750 SBC frames of the 1 kHz tone decoded into the graph (no gap, no refusal, level and PCM golden exact, one DelayReport); the SINK opens AVCTP itself at a peer that opens none (as an iPhone does not) and absolute volume completes over it -- VOLUME_CHANGED answered INTERIM vol=100, SetAbsoluteVolume(0x40) ACCEPTED and on the codec (volume=64, bt_avrcp avctp=1 vol=64); underruns and the servo's trim are SILICON claims -- QEMU has no audio clock"

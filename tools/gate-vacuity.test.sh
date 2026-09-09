@@ -683,8 +683,11 @@ PEER-SCAN-ENABLE 0x00
 PEER-SINK-RECORD ok
 PEER-SOURCE-STARTED
 PEER-SINK-DELAYREPORT tenth_ms=232
+PEER-SINK-AVCTP opened
+PEER-SINK-AVRCP-INTERIM vol=100
+PEER-SINK-AVRCP interim_vol=100 set_ok=1
 PEER-SOURCE pkts=150 frames=750 delay_reports=1 sink_record=1 started=1 errors=0
-PEER-SOURCE-STATE state=streaming acp_seid=1 handle=0x0001
+PEER-SOURCE-STATE state=streaming acp_seid=1 handle=0x0001 avctp=1 vol_state=done interim_vol=100 set_ok=1
 PEERGREEN
 
     # (a) the card-absent capture this example produces with no controller: the HCI Reset times out

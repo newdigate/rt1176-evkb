@@ -313,6 +313,11 @@ static void onAclThunk(void *, uint16_t h, uint8_t pb, const uint8_t *d, uint16_
 
 void setup() {
     CONSOLE.begin(115200);
+    // Bench 2026-09-09: with the core's small TX ring the once-a-second heartbeat (~6 lines, ~30 ms at 115200) BLOCKED
+    // loop() inside CONSOLE.print, so onMedia() stalled longer than the ring's ~10 blocks of cover and the sink took ONE
+    // underrun (+ a paired overrun from the queued burst) every ~10 s -- the same observer effect the Bose session hit in
+    // the source's self-clock.  A 4 KB TX extension lets a whole heartbeat leave without waiting for the wire.
+    static uint8_t s_consoleTx[4096]; CONSOLE.addMemoryForWrite(s_consoleTx, sizeof s_consoleTx);
     delay(50);
     CONSOLE.println("RT1176 BT sink test up");
 
