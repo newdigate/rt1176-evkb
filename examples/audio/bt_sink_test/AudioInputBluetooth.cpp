@@ -1,8 +1,15 @@
 #include "AudioInputBluetooth.h"
 static uint32_t crc32Update(uint32_t c, const uint8_t *p, size_t n) { for (size_t i = 0; i < n; i++) { c ^= p[i]; for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u))); } return c; }
 void AudioInputBluetooth::begin() {
+    // m_live goes FALSE first, before anything else is touched.  update() runs from the SAI ISR and can land
+    // between the head/tail reset and the rest of this function; with m_live still true from a previous stream
+    // it would read a half-reset ring (and count an underrun on it).  Closing that window structurally costs
+    // one store and removes the need to reason about the interleaving at all.
+    m_live = false;
+    m_hold = false;
     m_head = m_tail = 0; m_dec.reset(); m_haveSeq = false; m_fragLen = 0; m_fragging = false;
-    servo_init(&m_servo, TARGET); m_live = true; m_applied = m_servo.trim_ppm; audioPllTrimPpm(m_servo.trim_ppm);
+    servo_init(&m_servo, TARGET); m_applied = m_servo.trim_ppm; audioPllTrimPpm(m_servo.trim_ppm);
+    m_live = true;                                 // ... and last: everything update() reads is settled by here
 }
 void AudioInputBluetooth::end() { m_live = false; m_head = m_tail = 0; m_fragLen = 0; m_fragging = false; }   // the trim HOLDS (servo_step is skipped while !m_live)
 void AudioInputBluetooth::pushFrame(const uint8_t *f, uint16_t len) {
@@ -61,10 +68,16 @@ void AudioInputBluetooth::update(void) {
     audio_block_t *l = allocate(), *r = allocate();
     if (!l || !r) { if (l) release(l); if (r) release(r); return; }
     uint16_t tail = m_tail;
-    if (!m_live || tail == m_head) { memset(l->data, 0, sizeof l->data); memset(r->data, 0, sizeof r->data); if (m_live) m_under++; }
+    // HELD (the source SUSPENDed) is silence that is NOT an underrun: nothing is missing, the source stopped on
+    // purpose.  Counting it would bury the real underruns under 344 of these a second, and the ring is left
+    // alone so a RESUME plays what is already in it.
+    bool run = m_live && !m_hold;
+    if (!run || tail == m_head) { memset(l->data, 0, sizeof l->data); memset(r->data, 0, sizeof r->data); if (run) m_under++; }
     else { memcpy(l->data, m_ring[tail].l, sizeof l->data); memcpy(r->data, m_ring[tail].r, sizeof r->data); m_tail = (uint16_t)((tail + 1) % RING); }
-    // The servo runs once per audio block -- this IS the block clock -- and only while the link is up: with the
-    // link down the trim is frozen where it was, so a resumed stream starts from the rate it had learned.
-    if (m_live) { int32_t t = servo_step(&m_servo, fill(), 0); if (t != m_applied) { m_applied = t; audioPllTrimPpm(t); } }
+    // The servo runs once per audio block -- this IS the block clock -- and only while the link is up and not
+    // held: with the link down or the source suspended the trim is frozen where it was, so a resumed stream
+    // starts from the rate it had learned.  (servo_step's own `hold` argument expresses the same freeze; the
+    // node skips the call outright so a held stream costs nothing at all in the ISR.)
+    if (run) { int32_t t = servo_step(&m_servo, fill(), 0); if (t != m_applied) { m_applied = t; audioPllTrimPpm(t); } }
     transmit(l, 0); transmit(r, 1); release(l); release(r);
 }

@@ -682,7 +682,7 @@ PEER-SOURCE-ACCEPTED role=0x01 handle=0x0001
 PEER-SCAN-ENABLE 0x00
 PEER-SINK-RECORD ok
 PEER-SOURCE-STARTED
-PEER-SINK-DELAYREPORT tenth_ms=460
+PEER-SINK-DELAYREPORT tenth_ms=232
 PEER-SOURCE pkts=150 frames=750 delay_reports=1 sink_record=1 started=1 errors=0
 PEER-SOURCE-STATE state=streaming acp_seid=1 handle=0x0001
 PEERGREEN

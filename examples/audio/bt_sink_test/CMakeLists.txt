@@ -138,6 +138,11 @@ if(M2_BT_FAST_BAUD)
     add_definitions(-DM2_BT_FAST_BAUD=${M2_BT_FAST_BAUD_RATE})
 endif()
 
+# NO M2_BT_LEGACY_PIN here, deliberately -- bt_tone_test and m2_hci_probe both carry that knob and this
+# example does not.  A sink's peers are PHONES, which all do SSP; the legacy-PIN path exists for the ESP32 sink
+# bt_tone_test pairs with as a SOURCE.  Re-add it (BtLink::setLegacyPin, as bt_tone_test does) if a legacy-PIN
+# source ever has to be paired at the bench.
+#
 # NEW-41: the sink's own identity.  Written to the controller in BtLink's PREPARE (Write_Local_Name), so this
 # is the name a phone's Bluetooth settings list shows.
 set(M2_BT_SINK_NAME "EVKB-SINK" CACHE STRING "The sink's Bluetooth name (Write_Local_Name)")

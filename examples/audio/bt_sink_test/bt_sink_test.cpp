@@ -396,6 +396,11 @@ void setup() {
 #if defined(M2_BT_SUPERVISION_MS)
     sink.link().setSupervisionSlots((uint16_t)((uint32_t)M2_BT_SUPERVISION_MS * 1000u / 625u));  // ms -> 0.625 ms slots
 #endif
+    // What we tell the source its media is running ahead of playback by (AVDTP 1.3 s8.19, 0.1 ms units): the
+    // ring target IS that latency, so derive it rather than carrying a second number that can drift from it.
+    // TARGET blocks x 128 samples at 44100 Hz = 8 * 128 * 10000 / 44100 = 232 (23.2 ms).  A2dpSink's own default
+    // (460) was a standing guess; this is the figure the servo actually holds the ring at.
+    sink.setDelayTenthMs((uint16_t)((uint32_t)AudioInputBluetooth::TARGET * AUDIO_BLOCK_SAMPLES * 10000u / 44100u));
     session.onStream(onStreamCb, nullptr);
     session.onAttempt(onAttemptCb, nullptr);
 #if defined(M2_BT_SINK_ALWAYS_DISCOVERABLE)
@@ -418,6 +423,11 @@ void loop() {
     yield();
     session.tick(millis());
     sink.service();
+    // AVDTP SUSPEND: the source stopped sending on purpose and the stream stays configured, so the node's
+    // m_live is still true and its ring simply runs dry.  Told nothing, the servo would integrate fill=0 to its
+    // -200 ppm clamp and `under` would climb at 344 Hz on a link doing exactly what it was asked.  suspended()
+    // is a state read (Avdtp::state() == SUSPENDED), so this costs nothing to call every pass.
+    btin.hold(sink.suspended());
     sink.l2().tickClock(millis());     // ms reference for the credit-starve fingerprint
     static uint32_t last = 0;
     if (millis() - last >= 1000) {

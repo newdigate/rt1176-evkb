@@ -15,7 +15,7 @@
 #if defined(__IMXRT1176__)
 #include "I2S.h"                                   // audioPllTrimPpm()
 #else
-// The example is rt1176-only; this keeps the node HOST-COMPILABLE (tests/node_compile.sh) and buildable on any
+// The example is rt1176-only; this keeps the node HOST-COMPILABLE (tests/node_test.cpp) and buildable on any
 // other board, where there is no trimmable audio PLL to talk to.
 static inline int32_t audioPllTrimPpm(int32_t) { return 0; }
 #endif
@@ -27,6 +27,14 @@ public:
     AudioInputBluetooth() : AudioStream(0, nullptr) {}
     void begin();                                 // stream started: reset ring/decoder, recentre the servo, start counting
     void end();                                   // stream lost/closed: clear the ring, hold the trim
+    // AVDTP SUSPEND: the source stopped sending but the stream is still configured, so m_live stays true and the
+    // ring simply runs dry.  Left alone the servo would then integrate fill=0 all the way to its -200 ppm clamp
+    // and update() would count an underrun 344 times a second, for a link that is behaving exactly as it should.
+    // While held the node outputs silence, steps no servo and counts no underrun; the trim stays where the live
+    // stream left it, so a RESUME starts from the rate it had learned.  The sketch calls this every loop pass
+    // with A2dpSink::suspended().
+    void hold(bool on) { m_hold = on; }
+    bool held() const { return m_hold; }
     void onMedia(const uint8_t *rtp, uint16_t len);   // A2dpSink's media callback target (main context)
     virtual void update(void);                    // the SAI ISR: pop a block (or silence) + servo
     uint32_t pkts() const { return m_pkts; } uint32_t frames() const { return m_frames; } uint32_t seqGaps() const { return m_seqGaps; }
@@ -44,10 +52,21 @@ public:
 private:
     struct Blk { int16_t l[AUDIO_BLOCK_SAMPLES]; int16_t r[AUDIO_BLOCK_SAMPLES]; };
     Blk m_ring[RING]; volatile uint16_t m_head = 0, m_tail = 0;
-    SbcDecoder m_dec; sink_servo_t m_servo; bool m_live = false;
-    int32_t m_applied = 0;                         // last ppm handed to the PLL, so update() only writes on a change
+    SbcDecoder m_dec;
+    // m_servo is written ONLY by update() (the SAI ISR) after begin() has initialised it; loop() reads
+    // m_servo.trim_ppm through trimPpm() for the heartbeat.  That read is a single aligned int32 of a value the
+    // ISR only ever replaces wholesale, so a torn read is not expressible -- it can be one block stale, which a
+    // once-a-second log line does not care about.  Nothing outside update() may WRITE it.
+    sink_servo_t m_servo;
+    volatile bool m_live = false;
+    volatile bool m_hold = false;                  // AVDTP SUSPEND: run silent, freeze the servo, count nothing
+    volatile int32_t m_applied = 0;                // last ppm handed to the PLL, so update() only writes on a change
     uint16_t m_lastSeq = 0; bool m_haveSeq = false;
     uint8_t m_frag[1100]; uint16_t m_fragLen = 0; bool m_fragging = false;  // a fragmented SBC frame being reassembled across packets
-    uint32_t m_pkts = 0, m_frames = 0, m_seqGaps = 0, m_under = 0, m_over = 0, m_bad = 0, m_rmsAcc = 0, m_rmsBlocks = 0, m_crc = 0xFFFFFFFFu, m_crcBlocks = 0;
+    // m_under is written by update() (the SAI ISR) and read by loop(); m_over by onMedia() (main context) and
+    // read by loop().  Both are volatile so the compiler cannot cache either across the heartbeat's read -- a
+    // counter that never appears to move is the one shape of instrument failure that reads as good news.
+    volatile uint32_t m_under = 0, m_over = 0;
+    uint32_t m_pkts = 0, m_frames = 0, m_seqGaps = 0, m_bad = 0, m_rmsAcc = 0, m_rmsBlocks = 0, m_crc = 0xFFFFFFFFu, m_crcBlocks = 0;
     void pushFrame(const uint8_t *f, uint16_t len);
 };

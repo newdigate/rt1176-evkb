@@ -30,6 +30,10 @@ int main(void) {
     run(+300, 344 * 120, &f, &t, &dev, 8);  CHECK(t == 200);                 // beyond the clamp: saturate, do not chase
     run(0, 344 * 10, &f, &t, &dev, 12);     CHECK(t > 0 && dev <= 4);        // started 4 blocks long: drain it
     // No dither: at rest on target the servo must emit exactly 0 and never twitch, or the pitch wanders audibly.
+    // ★ ONE-SIDED, deliberately: this arm proves the servo does not move when it SHOULD NOT, and says nothing
+    // about whether it moves when it should -- a servo hard-wired to return 0 passes it.  The arms above are
+    // what carry that half (a +100 ppm drift must reach t == 100), and they are why this one is safe to keep
+    // as a pure quiet check rather than a band.
     {   sink_servo_t s; servo_init(&s, 8); int32_t worst = 0;
         for (int i = 0; i < 344 * 60; i++) { int32_t x = servo_step(&s, 8, 0); if (x < 0) x = -x; if (x > worst) worst = x; }
         CHECK(worst == 0); CHECK(s.trim_ppm == 0); }

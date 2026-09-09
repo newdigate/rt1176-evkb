@@ -205,6 +205,11 @@ LASTHB=$(grep -E "^hb streaming=1 " "$OUT" | tail -1)
 [ -n "$LASTHB" ] || fail "[sink] no streaming heartbeat"
 echo "$LASTHB" | grep -qE "pkts=150 frames=750 seqgaps=0 " || fail "[sink] the node did not receive every packet/frame with no gap: $LASTHB"
 echo "$LASTHB" | grep -qE " bad=0$"                         || fail "[sink] the decoder refused frames: $LASTHB"
+# over= is the ring's OVERRUN count, and crc200 depends on it as much as on bad=: an overrun drops the NEW
+# frame, so a run with over>0 has decoded a DIFFERENT set of blocks from the one the golden was pressed over,
+# and would either move the golden or (worse) hit it by accident with 750 frames of which some were never
+# played.  bad=0 alone does not say that -- a dropped frame is not a refused one.
+echo "$LASTHB" | grep -qE " over=0 "                        || fail "[sink] the PCM ring overran -- frames were dropped, so crc200 is over a different block set: $LASTHB"
 LASTSINK=$(grep -E "^bt_sink " "$OUT" | tail -1)
 [ -n "$LASTSINK" ] || fail "[sink] no bt_sink ring/servo line"
 echo "$LASTSINK" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^rms=/) { split($i,a,"="); v=a[2]+0 } } END{exit !(v >= 9900 && v <= 10950)}' \
