@@ -7,3 +7,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+
+// NEW-42: the node timestamps every accepted RTP packet with micros() to measure the source's inter-packet
+// gaps.  On the target that is the core's clock; here it is whatever the test last set, so an interval is exact.
+uint32_t micros(void);
+void shimSetMicros(uint32_t us);

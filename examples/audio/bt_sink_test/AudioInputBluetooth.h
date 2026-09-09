@@ -42,7 +42,16 @@ public:
     // While held the node outputs silence, steps no servo and counts no underrun; the trim stays where the live
     // stream left it, so a RESUME starts from the rate it had learned.  The sketch calls this every loop pass
     // with A2dpSink::suspended().
-    void hold(bool on) { m_hold = on; }
+    // A RESUME also starts a FRESH gap interval, for the same reason the file already gives for the underrun
+    // counter: a suspended source is not a delivery failure, so the silence it left behind is not jitter.  The
+    // node otherwise times the first post-RESUME packet against the last pre-SUSPEND one and books the whole
+    // pause as one delivery gap -- MEASURED on this instrument before the reset went in: `gapmax_ms=23` while
+    // streaming became `gapmax_ms=30023` across a 30 s SUSPEND/RESUME.  The iPhone bench run exercises
+    // pause/resume and spec s3 makes this distribution the thing that SIZES TARGET, so a pause left in it would
+    // corrupt the one number the whole task exists to produce.  Only the true->false EDGE resets: this is called
+    // every loop pass (above), so an unconditional reset would restart the interval on every pass and the
+    // histogram would measure nothing at all.
+    void hold(bool on) { if (m_hold && !on) m_haveRx = false; m_hold = on; }
     bool held() const { return m_hold; }
     void onMedia(const uint8_t *rtp, uint16_t len);   // A2dpSink's media callback target (main context)
     virtual void update(void);                    // the SAI ISR: pop a block (or silence) + servo
@@ -66,15 +75,39 @@ public:
     // mean at the ceiling (iPhone bench 2026-09-09, run 3).  The gate always builds the defaults.
     static constexpr uint16_t RING = BT_SINK_RING, TARGET = BT_SINK_TARGET;
     static constexpr bool PREFILL = (BT_SINK_PREFILL) != 0;
-    static_assert(RING >= 4 && RING <= 256 && TARGET >= 1 && TARGET <= RING - 2,
+    static_assert(RING >= 4 && RING <= 255 && TARGET >= 1 && TARGET <= RING - 2,
         "AudioInputBluetooth: TARGET must leave two slots below RING (one is the SPSC sentinel), and RING "
-        "must fit fill()'s uint8_t return.  The one-packet-of-headroom claim is TARGET's, not this bound's: "
-        "it is asserted in node_test case 14, because the bench's CONTROL arm (16/8) deliberately breaks it.");
+        "must fit fill()'s uint8_t return AND stay <= 255 so (uint8_t)RING remains an OUT-OF-BAND sentinel "
+        "for m_fillMin -- at RING == 256 it truncates to 0, the low-water mark can never be lowered, and the "
+        "instrument prints a permanent false fillmin=0 while looking perfectly healthy.  The "
+        "one-packet-of-headroom claim is TARGET's, not this bound's: it is asserted in node_test case 14, "
+        "because the bench's CONTROL arm (16/8) deliberately breaks it.");
     // Whether begin() pre-fills to TARGET before the first pop, and whether a dry ring re-primes (Task 3/4 of the
     // NEW-42 plan).  Defaults to the compile-time PREFILL; the sketch never calls this, the host tests do, so that
     // the ring/parser cases run without the pre-fill and the pre-fill cases run with it, in BOTH CMake arms.
     void setPrefill(bool on) { m_prefill = on; }
+    // --- the NEW-42 instrument: cumulative for the RUN, never per-heartbeat -----------------------------------
+    // The committed transcript samples every 30th heartbeat, so a per-window maximum would be invisible in 29 of
+    // 30 windows -- and an extreme that is never printed reads exactly like one that never happened.
+    // LIFETIME, not per-stream: these tallies and extremes are printed beside m_over/m_under/m_pkts, which
+    // begin() has never reset, and begin() runs on EVERY stream start (bt_sink_test.cpp's onStreamCb).  Resetting
+    // them there would put `overev=0` next to `over=89` after a reconnect and make a 30 s heartbeat delta -- which
+    // is exactly how spec s1 read the bench's run 3 -- jump backwards with nothing saying why.  (CLAUDE.md records
+    // the same footgun from L2cap's l2frag, which DOES reset per attempt and needs a standing warning saying so.)
+    static constexpr uint8_t GAP_BUCKETS = 5;      // <=30 / <=50 / <=80 / <=120 / >120 ms, against a 23.2 ms nominal period
+    uint32_t gapMaxUs() const { return m_gapMaxUs; }                       // longest interval between two accepted RTP packets
+    // The 0 for i >= GAP_BUCKETS is a BOUNDS GUARD, not a reading: there is no such bucket to report.
+    uint32_t gapBucket(uint8_t i) const { return i < GAP_BUCKETS ? m_gap[i] : 0; }
+    uint8_t  fillMin() const { return m_fillMin; }                         // ring fill at the instant of a pop: the true low-side margin
+    uint8_t  fillMax() const { return m_fillMax; }                         // ... and the high side; RING (min) / 0 (max) until the first pop
+    int32_t  trimLo() const { return m_trimLo; }                           // the servo's output range: "is the trim settled" as a number
+    int32_t  trimHi() const { return m_trimHi; }
+    uint32_t overEvents() const { return m_overEv; }                       // RUNS of consecutive dropped frames (a burst of 8 is one event)
 private:
+    // PRIVATE: one caller (onMedia).  The bucket edges are pinned END TO END through gapBucket() in node_test
+    // case 11, by feeding intervals that sit exactly on each inclusive top -- asserting this function against
+    // itself would pin nothing that the counters do not already pin, and would freeze an implementation detail.
+    static uint8_t gapBucketOf(uint32_t us) { return us <= 30000u ? 0 : us <= 50000u ? 1 : us <= 80000u ? 2 : us <= 120000u ? 3 : 4; }
     struct Blk { int16_t l[AUDIO_BLOCK_SAMPLES]; int16_t r[AUDIO_BLOCK_SAMPLES]; };
     Blk m_ring[RING]; volatile uint16_t m_head = 0, m_tail = 0;
     SbcDecoder m_dec;
@@ -89,12 +122,28 @@ private:
     // never while update() is running, so no ISR can observe it change.  Nothing reads it yet -- begin() and
     // update() take it up in Task 3/4 of the NEW-42 plan.
     bool m_prefill = PREFILL;
+    // Instrument state.  m_gap*/m_lastRx*/m_overEv are written by onMedia() (main context) and read by loop() --
+    // the same context m_over is written from, and volatile for the same reason given at m_under/m_over below.
+    // The fill/trim extremes are written by update() (the SAI ISR) and read by loop(); they are 8/32-bit aligned
+    // and volatile for that same reason.  What makes the ISR's READ-MODIFY-WRITE of them safe is NOT the store
+    // width: it is that no other context writes them while the ISR can run -- begin()'s writes are fenced behind
+    // m_live = false, and loop() only ever reads.  Say so rather than reasoning from width, because the width
+    // argument would read as permission the day someone adds a "clear the instrument" call from loop(), and the
+    // ISR's RMW would silently swallow it.
+    // m_lastRxUs/m_haveRx/m_inOverrun are the instrument's own working state, read only by their writer.
+    uint32_t m_lastRxUs = 0; bool m_haveRx = false;
+    volatile uint32_t m_gapMaxUs = 0, m_gap[GAP_BUCKETS] = {};
+    volatile uint8_t m_fillMin = (uint8_t)RING, m_fillMax = 0;
+    volatile int32_t m_trimLo = 0, m_trimHi = 0;
+    volatile uint32_t m_overEv = 0; bool m_inOverrun = false;
     volatile int32_t m_applied = 0;                // last ppm handed to the PLL, so update() only writes on a change
     uint16_t m_lastSeq = 0; bool m_haveSeq = false;
     uint8_t m_frag[1100]; uint16_t m_fragLen = 0; bool m_fragging = false;  // a fragmented SBC frame being reassembled across packets
     // m_under is written by update() (the SAI ISR) and read by loop(); m_over by onMedia() (main context) and
     // read by loop().  Both are volatile so the compiler cannot cache either across the heartbeat's read -- a
-    // counter that never appears to move is the one shape of instrument failure that reads as good news.
+    // counter that never appears to move is the one shape of instrument failure that reads as good news.  Every
+    // instrument counter above carries volatile for exactly this reason and no other; they are not shared with
+    // any context that would need more than that.
     volatile uint32_t m_under = 0, m_over = 0;
     uint32_t m_pkts = 0, m_frames = 0, m_seqGaps = 0, m_bad = 0, m_rmsAcc = 0, m_rmsBlocks = 0, m_crc = 0xFFFFFFFFu, m_crcBlocks = 0;
     void pushFrame(const uint8_t *f, uint16_t len);

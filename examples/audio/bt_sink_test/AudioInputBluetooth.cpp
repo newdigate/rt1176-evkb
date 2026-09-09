@@ -8,6 +8,18 @@ void AudioInputBluetooth::begin() {
     m_live = false;
     m_hold = false;
     m_head = m_tail = 0; m_dec.reset(); m_haveSeq = false; m_fragLen = 0; m_fragging = false;
+    // The instrument's TALLIES and EXTREMES are LIFETIME, like m_over/m_under/m_pkts beside which they are
+    // printed: begin() runs on EVERY stream start (bt_sink_test.cpp's onStreamCb), so resetting them here would
+    // put `overev=0` next to `over=89` after a reconnect and make a heartbeat delta jump backwards.  (CLAUDE.md
+    // records the same footgun from L2cap's l2frag, which does reset per attempt and needs a warning saying so.)
+    // Only these two FLAGS reset, because a stale one produces a WRONG reading rather than a stale one:
+    // m_haveRx would time the first packet of this stream against the last packet of the previous one -- an
+    // interval of seconds, landing in the >120 ms bucket and pinning gapMaxUs at something that is not jitter.
+    // m_inOverrun is cleared for the same structural reason, though it is NOT independently observable today:
+    // the ring is emptied two lines above, so the new stream cannot overrun until RING-1 frames have landed and
+    // each landing frame clears the latch itself.  Resetting it keeps that invariant local to begin() instead of
+    // resting on the ring reset, and there is deliberately no host case pinning it -- there is nothing to pin.
+    m_haveRx = false; m_inOverrun = false;
     servo_init(&m_servo, TARGET); m_applied = m_servo.trim_ppm; audioPllTrimPpm(m_servo.trim_ppm);
     m_live = true;                                 // ... and last: everything update() reads is settled by here
 }
@@ -25,7 +37,7 @@ void AudioInputBluetooth::pushFrame(const uint8_t *f, uint16_t len) {
     // the ISR consumer owns -- that is a genuine race, not a style point, and it buys nothing: the ring size
     // already bounds latency, and the servo is what holds the fill near TARGET.  A standing m_over count is the
     // signal that the sink is consuming too slowly, which is the servo's job to correct.
-    if (next == m_tail) { m_over++; return; }
+    if (next == m_tail) { m_over++; if (!m_inOverrun) { m_inOverrun = true; m_overEv++; } return; }
     // decode() returns the frame LENGTH consumed (0 = refused: bad sync, CRC, truncated, unsupported).
     if (m_dec.decode(f, len, m_ring[head].l, m_ring[head].r) == 0) { m_bad++; return; }
     if (m_crcBlocks < 200) { m_crc = crc32Update(m_crc, (const uint8_t *)m_ring[head].l, sizeof m_ring[head].l); m_crcBlocks++; }
@@ -33,6 +45,7 @@ void AudioInputBluetooth::pushFrame(const uint8_t *f, uint16_t len) {
     for (int i = 0; i < AUDIO_BLOCK_SAMPLES; i++) { int32_t v = m_ring[head].l[i]; sum += (uint32_t)(v < 0 ? -v : v); }
     m_rmsAcc += sum / AUDIO_BLOCK_SAMPLES; m_rmsBlocks++;
     m_head = next; m_frames++;                     // publish AFTER the decode (SPSC)
+    m_inOverrun = false;                           // a frame landed: the run of drops, if any, is over
 }
 void AudioInputBluetooth::onMedia(const uint8_t *p, uint16_t len) {
     if (!m_live || len < 13) return;                                                       // 12-byte RTP header + 1 media header
@@ -46,6 +59,10 @@ void AudioInputBluetooth::onMedia(const uint8_t *p, uint16_t len) {
     uint16_t seq = (uint16_t)((p[2] << 8) | p[3]);
     if (m_haveSeq && seq != (uint16_t)(m_lastSeq + 1)) m_seqGaps++;
     m_lastSeq = seq; m_haveSeq = true; m_pkts++;
+    // The source's delivery cadence, measured on every ACCEPTED packet (a rejected header is not a delivery).
+    uint32_t now = micros();
+    if (m_haveRx) { uint32_t d = now - m_lastRxUs; if (d > m_gapMaxUs) m_gapMaxUs = d; m_gap[gapBucketOf(d)]++; }
+    m_lastRxUs = now; m_haveRx = true;
     uint8_t mh = p[hdr]; bool F = (mh & 0x80) != 0, S = (mh & 0x40) != 0, L = (mh & 0x20) != 0; uint8_t n = (uint8_t)(mh & 0x0F);
     const uint8_t *q = p + hdr + 1; uint16_t rem = (uint16_t)(len - hdr - 1);
     if (F) {                                                                               // a fragmented frame: gather until L
@@ -73,11 +90,21 @@ void AudioInputBluetooth::update(void) {
     // alone so a RESUME plays what is already in it.
     bool run = m_live && !m_hold;
     if (!run || tail == m_head) { memset(l->data, 0, sizeof l->data); memset(r->data, 0, sizeof r->data); if (run) m_under++; }
-    else { memcpy(l->data, m_ring[tail].l, sizeof l->data); memcpy(r->data, m_ring[tail].r, sizeof r->data); m_tail = (uint16_t)((tail + 1) % RING); }
+    else {
+        uint8_t f = fill();                        // pre-pop: the margin this block found, for fillMin/fillMax
+        if (f < m_fillMin) m_fillMin = f;
+        if (f > m_fillMax) m_fillMax = f;
+        memcpy(l->data, m_ring[tail].l, sizeof l->data); memcpy(r->data, m_ring[tail].r, sizeof r->data); m_tail = (uint16_t)((tail + 1) % RING);
+    }
     // The servo runs once per audio block -- this IS the block clock -- and only while the link is up and not
     // held: with the link down or the source suspended the trim is frozen where it was, so a resumed stream
     // starts from the rate it had learned.  (servo_step's own `hold` argument expresses the same freeze; the
     // node skips the call outright so a held stream costs nothing at all in the ISR.)
-    if (run) { int32_t t = servo_step(&m_servo, fill(), 0); if (t != m_applied) { m_applied = t; audioPllTrimPpm(t); } }
+    if (run) {
+        int32_t t = servo_step(&m_servo, fill(), 0);
+        if (t < m_trimLo) m_trimLo = t;
+        if (t > m_trimHi) m_trimHi = t;
+        if (t != m_applied) { m_applied = t; audioPllTrimPpm(t); }
+    }
     transmit(l, 0); transmit(r, 1); release(l); release(r);
 }

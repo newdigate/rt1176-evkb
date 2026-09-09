@@ -1,3 +1,4 @@
+#include "Arduino.h"                               // micros()/shimSetMicros(): declared there, defined here
 #include "AudioStream.h"
 namespace {
 audio_block_t s_pool[ShimAudio::POOL];
@@ -36,3 +37,6 @@ void AudioStream::transmit(audio_block_t *b, unsigned char index) {
     if (!b || s_logN >= ShimAudio::LOG) return;
     s_logCh[s_logN] = index; memcpy(s_logData[s_logN], b->data, sizeof b->data); s_logN++;
 }
+namespace { uint32_t s_micros = 0; }
+uint32_t micros(void) { return s_micros; }
+void shimSetMicros(uint32_t us) { s_micros = us; }

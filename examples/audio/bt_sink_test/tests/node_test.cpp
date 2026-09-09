@@ -33,6 +33,10 @@
 // the suite with no output, which reads as a build that never ran rather than a configuration that is wrong.
 static_assert(AudioInputBluetooth::TARGET + 4 <= AudioInputBluetooth::RING - 1,
     "node_test cases 8/9 need TARGET + 4 reachable within the ring");
+// Case 11's fill walk is a fixed 9-block climb, so it carries a RING dependency the header's own bounds do not:
+// RING 8 / TARGET 1 satisfies both static_asserts in the header and would fail case 11 with a bare
+// `fillMax() == 9`, which names a ring size nowhere and reads as a broken instrument.
+static_assert(AudioInputBluetooth::RING >= 10, "case 11's fill walk needs 9 blocks in the ring");
 
 static int g_fails = 0, g_checks = 0;
 #define CHECK(c) do { g_checks++; if (!(c)) { g_fails++; printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
@@ -293,6 +297,128 @@ int main() {
         CHECK(nd->badFrames() == 1);                                              // RED with the check removed: 0
         CHECK(nd->frames() == 1);                                                 // RED with the check removed: 2
         CHECK(nd->fill() == 1);
+    }
+    {   // 11. THE INSTRUMENT (NEW-42).  Inter-packet intervals land in the bucket their length names and the max
+        //     is the MAX; the ISR-side fill/trim extremes are the extremes of a scripted sequence in BOTH
+        //     directions; a RUN of dropped frames is ONE overrun event; a RECONNECT keeps every tally and
+        //     restarts only the interval; and an AVDTP SUSPEND is not a delivery gap.  micros() is the shim's,
+        //     so every interval is exact.
+        Node nd; nd->setPrefill(false); nd->begin();
+        std::vector<uint8_t> f = encodeFrame(8000);
+        uint32_t t = 1000000; shimSetMicros(t); feed(nd, onePacket(1, f));
+        for (uint8_t i = 0; i < AudioInputBluetooth::GAP_BUCKETS; i++) CHECK(nd->gapBucket(i) == 0);   // no predecessor yet
+        // Bucket tops are INCLUSIVE, and ALL FOUR are now exercised exactly ON the top: 30000, 50000, 80000 and
+        // 120000 are the tops of buckets 0, 1, 2 and 3.  RED with any one of those four compares turned into a
+        // `<` -- that entry alone moves up a bucket.  80000 was MISSING until this review: MEASURED, mutating
+        // only the third top left the entire suite green, so one of the four edges was decorative.
+        // The TRAILING 15000 is what makes gapMaxUs a MAX rather than a last-writer-wins store.  With the
+        // sequence ending at its own largest interval, `m_gapMaxUs = d` is indistinguishable from
+        // `if (d > m_gapMaxUs) m_gapMaxUs = d` -- MEASURED: that mutant left the entire suite green, while it
+        // makes `gapmax_ms` report the MOST RECENT gap, and gapmax_ms is the single number the bench and Task 7's
+        // gate read as "the worst gap".
+        const uint32_t gaps_us[] = { 10000, 30000, 25000, 45000, 50000, 70000, 80000, 100000, 120000, 130000, 15000 };
+        uint16_t seq = 2;
+        for (size_t i = 0; i < sizeof gaps_us / sizeof gaps_us[0]; i++) {
+            nd->update(); t += gaps_us[i]; shimSetMicros(t); feed(nd, onePacket(seq++, f));
+        }
+        CHECK(nd->gapBucket(0) == 4);                                             // 10, 30 (on the top), 25, 15
+        CHECK(nd->gapBucket(1) == 2);                                             // 45, 50 (on the top)
+        CHECK(nd->gapBucket(2) == 2);                                             // 70, 80 (on the top)
+        CHECK(nd->gapBucket(3) == 2);                                             // 100, 120 (on the top)
+        CHECK(nd->gapBucket(4) == 1);                                             // 130, past the last top
+        CHECK(nd->gapMaxUs() == 130000);                                          // ... and NOT the 15 ms that came after it
+        // Give this node a non-zero OVERRUN tally too, so the survival check below is not merely "0 stayed 0".
+        // micros() is left FROZEN across these feeds, so each is a 0 us interval in bucket 0 and neither the max
+        // nor the >120 ms bucket moves.  The loop is bounded rather than `while (overEvents() == 0)`: a broken
+        // ring must fail this case, not hang it.
+        for (int i = 0; i < AudioInputBluetooth::RING + 2 && nd->overEvents() == 0; i++) feed(nd, onePacket(seq++, f));
+        // A RECONNECT: begin() runs again.  The two FLAGS must reset -- the first packet of the new stream must
+        // not be timed against the last packet of the old one -- while every TALLY and EXTREME must SURVIVE,
+        // because they are printed beside m_over/m_pkts, which begin() has never reset.  All four survivors
+        // checked here are NON-ZERO, so this is a real survival check and not "0 stayed 0".
+        // RED with `m_haveRx = false` removed from begin(): the 5 s cross-stream interval lands in gbig, so
+        // gapBucket(4) reads b4Before + 1 and gapMaxUs reads 5000000 instead of 130000.
+        // RED with the tallies reset again in begin(): overEvents() reads 0 here, and gapMaxUs() 0.
+        uint32_t gapMaxBefore = nd->gapMaxUs(), evBefore = nd->overEvents();
+        uint32_t b0Before = nd->gapBucket(0), b4Before = nd->gapBucket(4);
+        CHECK(evBefore == 1); CHECK(gapMaxBefore == 130000); CHECK(b4Before == 1); CHECK(b0Before > 4);
+        nd->begin();
+        CHECK(nd->overEvents() == evBefore);                                      // tallies SURVIVE a reconnect
+        CHECK(nd->gapMaxUs() == gapMaxBefore);
+        CHECK(nd->gapBucket(0) == b0Before);
+        CHECK(nd->gapBucket(4) == b4Before);
+        t += 5000000; shimSetMicros(t); feed(nd, onePacket(500, f));              // 5 s later: a new stream's first packet
+        CHECK(nd->gapBucket(4) == b4Before);                                      // ... and it is NOT an interval
+        CHECK(nd->gapBucket(0) == b0Before);
+        t += 20000; shimSetMicros(t); feed(nd, onePacket(501, f));
+        CHECK(nd->gapMaxUs() == gapMaxBefore);                                    // 20 ms did not raise the max
+        CHECK(nd->gapBucket(4) == b4Before);
+        CHECK(nd->gapBucket(0) == b0Before + 1);                                  // ... and the NEXT interval IS measured
+        // Fill extremes are sampled by update() at the instant it POPS (pre-pop fill) and only then: a sample
+        // taken on a dry block would pin fillMin at 0 forever and say nothing about margin.  The ring is walked
+        // up to 9 and down to 0; the only extremes consistent with that walk are max 9 / min 1.
+        // RED against extremes latched at their init values: fillMin() reads RING, fillMax() 0.
+        Node n2; n2->setPrefill(false); n2->begin();
+        uint16_t s2 = 1;
+        for (int i = 0; i < 9; i++) feed(n2, onePacket(s2++, f));
+        n2->update();                                                             // samples 9, pops -> 8
+        for (int i = 0; i < 7; i++) n2->update();                                // samples 8..2, pops -> 1
+        CHECK(n2->fillMax() == 9); CHECK(n2->fillMin() == 2);
+        n2->update();                                                             // samples 1, pops -> 0
+        CHECK(n2->fillMin() == 1);
+        CHECK(n2->trimLo() <= 0 && n2->trimHi() >= 0 && n2->trimLo() <= n2->trimHi());
+        // ... and the extremes must BRACKET the trim the servo actually reached, in BOTH directions.  The
+        // ordering invariant above is satisfied by the INIT values on their own -- MEASURED: with the directional
+        // checks below absent, deleting BOTH tracking lines from update() leaves every other check green.  Each
+        // line needs its own arm, because the scripted sequence only ever drove the trim ONE way: the drain above
+        // parks it BELOW zero (the servo samples fill AFTER the pop, so an emptied ring reads -12 at TARGET 16
+        // and -4 at TARGET 8) and pins trimLo, while trimHi stayed at its init value of 0 and `if (t > m_trimHi)`
+        // was UNPINNED -- MEASURED: deleting that line ALONE left the whole suite green.
+        CHECK(n2->trimLo() < 0);                                                  // the DRAIN pins trimLo: RED with its tracking line removed
+        CHECK(n2->trimLo() <= n2->trimPpm() && n2->trimHi() >= n2->trimPpm());
+        // The WIND-UP is what pins trimHi: hold the ring ABOVE target until the servo's output goes positive,
+        // the same idiom cases 8 and 9 use (and what the file-scope TARGET + 4 <= RING - 1 static_assert exists
+        // to keep reachable).  Bounded, so a servo that cannot wind up fails this case rather than hanging it.
+        for (int i = 0; i < 3000 && n2->trimPpm() <= 0; i++) {
+            while (n2->fill() < AudioInputBluetooth::TARGET + 4) feed(n2, onePacket(s2++, f));
+            n2->update();
+        }
+        CHECK(n2->trimPpm() > 0);                                                 // a standing fill above TARGET speeds us up
+        CHECK(n2->trimHi() > 0);                                                  // the WIND-UP pins trimHi: RED with its tracking line removed
+        CHECK(n2->trimLo() < 0);                                                  // ... and the low end is still the drain's
+        CHECK(n2->trimLo() <= n2->trimPpm() && n2->trimHi() >= n2->trimPpm());
+        // Overrun EVENTS: a full ring dropping eight in a row is over=8 overev=1; free one slot, land one, drop
+        // one more -> overev=2.  RED with the run latch removed: overEvents() == 8.
+        Node n3; n3->setPrefill(false); n3->begin();
+        uint16_t s3 = 1;
+        for (int i = 0; i < AudioInputBluetooth::RING - 1; i++) feed(n3, onePacket(s3++, f));
+        CHECK(n3->overruns() == 0 && n3->overEvents() == 0);
+        for (int i = 0; i < 8; i++) feed(n3, onePacket(s3++, f));
+        CHECK(n3->overruns() == 8); CHECK(n3->overEvents() == 1);
+        n3->update(); feed(n3, onePacket(s3++, f)); CHECK(n3->overruns() == 8);   // one slot freed, one frame landed
+        feed(n3, onePacket(s3++, f));
+        CHECK(n3->overruns() == 9); CHECK(n3->overEvents() == 2);
+        // An AVDTP SUSPEND is NOT a delivery gap.  This file already applies that principle to the underrun
+        // counter (case 9: "a suspended source is not an underrun" -- the source stopped on purpose); the gap
+        // histogram is the same claim about the same silence, and it matters more, because spec s3 makes this
+        // distribution the thing that SIZES TARGET and the iPhone bench run exercises pause/resume.  MEASURED
+        // before hold() reset the timestamp: gapmax_ms=23 streaming became gapmax_ms=30023 across one 30 s
+        // SUSPEND/RESUME.  RED with the `m_haveRx = false` removed from hold(): gapBucket(4) reads 1 and
+        // gapMaxUs 30020000.
+        Node n4; n4->setPrefill(false); n4->begin();
+        uint32_t t4 = 2000000; shimSetMicros(t4); feed(n4, onePacket(1, f));
+        t4 += 20000; shimSetMicros(t4); feed(n4, onePacket(2, f));
+        CHECK(n4->gapBucket(0) == 1); CHECK(n4->gapMaxUs() == 20000);
+        n4->hold(true);
+        t4 += 30000000; shimSetMicros(t4);                                        // 30 s of SUSPEND, exactly the bench's
+        n4->hold(false);
+        feed(n4, onePacket(3, f));
+        CHECK(n4->gapBucket(4) == 0);                                             // the pause is not a gap ...
+        CHECK(n4->gapMaxUs() == 20000);
+        CHECK(n4->pkts() == 3);                                                   // ... and the packet itself is still a packet
+        t4 += 20000; shimSetMicros(t4); feed(n4, onePacket(4, f));
+        CHECK(n4->gapBucket(0) == 2);                                             // the interval AFTER the resume IS measured
+        CHECK(n4->gapMaxUs() == 20000);
     }
     {   // 14. HEADROOM (NEW-42).  A real source delivers EIGHT frames per RTP packet (iPhone bench 2026-09-09:
         //     frames/pkts = 7.97), so three back-to-back packets are 24 blocks.  The DEFAULT ring must swallow
