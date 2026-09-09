@@ -747,6 +747,27 @@ VOLUME_CHANGED) since the Avrcp absolute-volume work; `bt_tone_test[media]` was 
 the six commits between and its fixture was re-captured. `A2dpSink` is a SEPARATE class from
 `A2dpSource` (two policies, not one with flags), and `BtSinkSession` from `BtSession` — the piece-2 lesson.
 
+★★ **THE SINK RAN AGAINST AN iPHONE THE SAME DAY (2026-09-09) AND THE AUDIBLE ACCEPTANCE IS MET** —
+`examples/audio/bt_sink_test/transcript_hw_evkb.txt`, spec §8. Just Works pairing, 44.1/joint/bitpool 53,
+clean music by ear for 13 min, pause/resume (the SUSPEND hold froze the ring and counted nothing), a
+range loss (reason 0x08 → LISTENING) and a stored-key reconnect afterwards, three board resets with
+`paired_by=stored`. Two bench-found defects, both RED-pinned and asserted by the sink gate's source peer
+(M2Radio `9f24315` pinned): **iOS never opens AVRCP to a sink** — four connections, `avctp=0` throughout,
+even with the Target record moved to Category 2 (which iOS ALSO requires for absolute volume; it said
+Category 1) — so `A2dpSink` now opens AVCTP itself once STREAMING, as real speakers do, and every volume
+press arrives as SetAbsoluteVolume; and **the heartbeat print stalled `loop()` past the ring's cover**
+(~30 ms of blocking `CONSOLE.print` against ~29 ms of buffered audio → one underrun + one paired overrun
+every ~10 s) — fixed with a 4 KB console TX extension, the Bose session's observer effect wearing the
+sink's face. **NOT met: `under=0 over=0`.** +103/+89 per 10 min in PAIRED bursts of 11–17 (a 35–45 ms
+delivery gap from the phone, then a catch-up burst overflowing the 16-slot ring — jitter, not drift; under
+and over move together), the servo hunting 25–96 ppm around ~65 with fill 11–15 against target 8, ~27
+underruns while the ring first fills. Inaudible over music; filed as **NEW-42** (ring depth, servo,
+pre-fill, a runtime pairing mode) rather than tuned blind. Bench ergonomics worth knowing: a bonded sink is
+NOT discoverable by design, so once the phone "forgets" it the only way back today is the
+`M2_BT_FORGET_BONDS=ON` build; the phone does not re-page after a range loss (iOS waits for the user).
+Read the bench log with `tr -d '\r\000'` first — the capture starts with a NUL and the grep wrapper
+treats it as binary.
+
 ✅ **Measured 2026-09-08: 138 gates discovered, 137 passed, 1 failed, 0 SKIP**
 (`gates: 137 passed, 1 failed`; `-l` reports 138), the first full sweep with
 all six SynthUI widget gates BUILT and green (each 20–21 s) — after the

@@ -1,6 +1,6 @@
 # M2Radio BT: A2DP SINK — the EVKB as a Bluetooth speaker
 
-**Status:** IMPLEMENTED 2026-09-09, silicon (the iPhone, plan Task 13) PENDING. **Linear: NEW-41.** Plan: `docs/superpowers/plans/2026-09-08-bt-a2dp-sink.md` (Tasks 1-12 done). M2Radio `56bcc8d`, teensy-cores `a9b0de5`, Audio `ff610a2`, all pushed and pinned; the example is `examples/audio/bt_sink_test` with ONE gate (the 139th: the fake peer as a SOURCE, golden `crc200=0x954D2C41`) and two host suites (servo 113 checks, node 81). What implementation changed against this design: the servo's EMA runs x65536 (x256 stalled on an integer fill), the P-only servo has a steady-state fill offset of drift/kp (2.5 blocks at +-100 ppm, ~213 s to converge -- a design property, recorded in `servo.h`); the sink's advertised caps are 16 blocks / 8 subbands / loudness ONLY (the codec implements nothing else -- the SOURCE now rejects the same, which it used to adopt silently); `rmsAcc` accumulates the per-block MEAN |L| (the per-sample sum overflowed uint32 in 3 s); the QEMU peer streams 150 packets at 100 ms (the audio rate needs ~4x what 115200-baud H4 carries through the guest's 1 KB RX ring -- a transport artefact, not a firmware limit); the sink sends its DelayReport as the ring target (232 = 23.2 ms) and HOLDS the servo + underrun count while SUSPENDED. Found on the way and fixed: the SBC ENCODER's leftover-bit distribution was channel-major (A2DP 12.7 is subband-major) -- every stereo/joint stream this tree ever sent to a real sink was mis-parsed on broadband content and every bench acceptance was blind to it (L == R feeds).
+**Status:** IMPLEMENTED and VERIFIED ON SILICON against an iPhone 2026-09-09 (§8 below; audible acceptance MET, the under/over counter target NOT met -> NEW-42). **Linear: NEW-41.** Plan: `docs/superpowers/plans/2026-09-08-bt-a2dp-sink.md` (Tasks 1-12 done). M2Radio `56bcc8d`, teensy-cores `a9b0de5`, Audio `ff610a2`, all pushed and pinned; the example is `examples/audio/bt_sink_test` with ONE gate (the 139th: the fake peer as a SOURCE, golden `crc200=0x954D2C41`) and two host suites (servo 113 checks, node 81). What implementation changed against this design: the servo's EMA runs x65536 (x256 stalled on an integer fill), the P-only servo has a steady-state fill offset of drift/kp (2.5 blocks at +-100 ppm, ~213 s to converge -- a design property, recorded in `servo.h`); the sink's advertised caps are 16 blocks / 8 subbands / loudness ONLY (the codec implements nothing else -- the SOURCE now rejects the same, which it used to adopt silently); `rmsAcc` accumulates the per-block MEAN |L| (the per-sample sum overflowed uint32 in 3 s); the QEMU peer streams 150 packets at 100 ms (the audio rate needs ~4x what 115200-baud H4 carries through the guest's 1 KB RX ring -- a transport artefact, not a firmware limit); the sink sends its DelayReport as the ring target (232 = 23.2 ms) and HOLDS the servo + underrun count while SUSPENDED. Found on the way and fixed: the SBC ENCODER's leftover-bit distribution was channel-major (A2DP 12.7 is subband-major) -- every stereo/joint stream this tree ever sent to a real sink was mis-parsed on broadband content and every bench acceptance was blind to it (L == R feeds).
 **Builds on:** NEW-9 (A2DP source: L2cap/BtLink/Sdp/Avdtp/Sbc encoder/AudioOutputBluetooth),
 NEW-34 (non-blocking link lifecycle, the AVDTP ACCEPTOR path, BtSession, bond store,
 AVRCP target, ACL reassembly), and the 2026-09-08 Bose findings (AVDTP 1.2 fallback,
@@ -203,3 +203,34 @@ SEP personality, DelayReport send), `bt/Sdp.{h,cpp}` (AudioSink record),
 `CMakeLists.txt`, `run_qemu.sh`, `tests/servo_test.c`, transcripts),
 `examples/networking/m2_hci_probe/hci_peer.py` (`source` phase), `tools/`
 vacuity + `license-audit.sh` GATES entry, `evkb.cmake` pins, `CLAUDE.md`, memory.
+
+## 8. Silicon: the iPhone bench (2026-09-09)
+
+Three runs on the EVKB + Murata 1XK, transcript `examples/audio/bt_sink_test/transcript_hw_evkb.txt`.
+What the bench changed (both fixes RED-pinned, gated by the sink gate's source peer, M2Radio `9f24315`):
+
+- **iOS never opens AVRCP to a sink.** 13 min + four connections with `bt_avrcp avctp=0` throughout, even
+  after the AVRCP Target record advertised Category 2 (amplifier — AVRCP 1.4 §6.13 makes absolute volume a
+  Category 2 feature, and the record had said Category 1). Real speakers open AVCTP themselves; `A2dpSink`
+  now does, once STREAMING (none if the peer already opened one; a refusal is counted, never retried). With
+  that the phone registers VOLUME_CHANGED and every button press arrives as SetAbsoluteVolume (8 steps of
+  127 per press, `volume=87 → 95 → … → 127`), audible on the jack.
+- **The heartbeat print stalled the loop past the ring's cover**: one underrun + one paired overrun every
+  ~10 s in run 1 (~6 lines ≈ 30 ms at 115200 blocking in `CONSOLE.print` while onMedia() waits; the ring
+  held ~10 blocks ≈ 29 ms). A 4 KB `addMemoryForWrite` extension removed most of it. The same observer
+  effect the Bose session hit on the source's self-clock.
+
+Measured (run 3, a 10-min window with music and one pause/resume): audible artefacts NONE; `seqgaps` 2
+(both at edges); `bad=0 l2drop=0 timeouts=0`; `links=1 lost=0`; pause → SUSPEND hold (ring frozen at 14,
+no underruns counted), resume clean; walk out of range → `reason=0x08`, LISTENING, page scan on, and the
+phone does NOT re-page after a range loss (iOS waits for the user to re-select the speaker) → tapped →
+stored-key reconnect, AVCTP re-opened, streaming (`links=2`). Stored-key reconnect across three board
+resets in run 2 (`paired_by=stored`). **NOT met**: `under=0 over=0` — +103/+89 in 10 min, in PAIRED
+bursts of 11–17 every ~2 min (a 35–45 ms delivery gap then a catch-up burst overflowing the 16-slot ring:
+the phone's jitter, not clock drift) plus singles; the servo hunts 25–96 ppm around ~65 with fill 11–15
+against target 8; ~27 underruns at start while the ring first fills. Filed as **NEW-42** (ring depth,
+servo, pre-fill) rather than tuned blind.
+
+Bench ergonomics: a bonded sink is not discoverable by design, so after the phone "forgets" it the only
+way back is the `M2_BT_FORGET_BONDS=ON` build — a runtime pairing-mode trigger is NEW-42's last item.
+The one disconnect with reason 0x16 in run 2 was the user ending the connection to take a call.
