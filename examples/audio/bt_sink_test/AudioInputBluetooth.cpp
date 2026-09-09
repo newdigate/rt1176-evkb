@@ -107,20 +107,29 @@ void AudioInputBluetooth::update(void) {
         // block that finds TARGET, and THAT BLOCK POPS: waiting one more period would add a silent block for
         // nothing, and popping here is what makes the first block out the first block decoded.
         // servo_recentre() states the completion postcondition -- a prime hands the servo a filter with no
-        // history, so the 0 -> TARGET climb cannot drag the trim.  For the START prime it is a NO-OP today and
-        // NO CASE CAN REDDEN IT: begin()'s servo_init already centres the filter and a priming block steps no
-        // servo, so the filter is still centred when the prime ends (MEASURED -- deleting this call leaves both
-        // host arms green).  It is Task 4's mid-stream re-prime, which starts from a wound-up filter, that will
-        // give it teeth; it is stated here rather than there because it is this transition's postcondition.
+        // history, so the 0 -> TARGET climb cannot drag the trim.  For the START prime it is a NO-OP (begin()'s
+        // servo_init already centres the filter and a priming block steps no servo), and it earns its keep on
+        // the MID-STREAM re-prime below, which begins from a filter wound up by the pre-drop fill: node_test
+        // case 13 winds it >4 blocks off centre, and with this call deleted the filter is still 4.3 blocks off
+        // after the resume instead of one EMA step from centre.
         if (m_priming && fill() >= TARGET) { m_priming = false; m_primed = true; servo_recentre(&m_servo); }
         if (m_priming) {
-            // The prime is TIMED, and primeBlocks() says so.  There is deliberately NO `if (!m_primed)` guard
-            // here: m_primed cannot be true while m_priming is (only begin() arms a prime, and it clears both),
-            // so a guard would be dead code that no case could redden.  Task 4's re-prime is what makes the
-            // question real -- extend this figure or re-time it -- and it must be answered there, with a case.
-            m_primeBlocks++;
+            // primeBlocks() is the START prime's length and ONLY that: a mid-stream re-prime neither extends nor
+            // re-times it, which is what `!m_primed` buys (m_primed latches at the first completed prime and is
+            // cleared only by begin()).  Reason: spec s5's acceptance reads "ONE prime_ms ~ TARGET * 2.9 ms at
+            // START" off a heartbeat sampled at the END of a 10-min window, and s5 also allows re-primes to
+            // happen (`under <= reprimes + 2`) -- so a figure that grew or restarted with them could not be
+            // checked against TARGET at all.  reprimes() counts the events; how LONG a re-prime took is the
+            // source's absence, which the gap histogram measures on the arrival side where it is honest.
+            // node_test case 13 pins it: delete `!m_primed` and primeBlocks() reads 68 there instead of 3.
+            if (!m_primed) m_primeBlocks++;
         } else if (tail == m_head) {
-            m_under++;                             // the ring ran dry: silence, and this one IS an underrun
+            // DRY.  One underrun for the EVENT, then -- with the pre-fill on -- silence to TARGET, uncounted, and
+            // the servo recentred when it completes.  A gap of G blocks otherwise leaves the ring G short until
+            // the 72 s trim refills it; the bench measured that as the burst shape (spec s1).  `under` thereby
+            // counts dropouts, not silent blocks, which is what makes `under <= reprimes + 2` a usable bound.
+            m_under++;
+            if (m_prefill) { m_reprimes++; m_priming = true; }
         } else {
             uint8_t f = fill();                    // pre-pop: the margin this block found, for fillMin/fillMax
             if (f < m_fillMin) m_fillMin = f;

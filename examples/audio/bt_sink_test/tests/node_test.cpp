@@ -37,6 +37,12 @@ static_assert(AudioInputBluetooth::TARGET + 4 <= AudioInputBluetooth::RING - 1,
 // RING 8 / TARGET 1 satisfies both static_asserts in the header and would fail case 11 with a bare
 // `fillMax() == 9`, which names a ring size nowhere and reads as a broken instrument.
 static_assert(AudioInputBluetooth::RING >= 10, "case 11's fill walk needs 9 blocks in the ring");
+// Case 13 winds the servo up harder than cases 8/9 do -- it needs the FILTER more than 4 blocks off centre, and
+// the servo samples fill AFTER the pop, so a ring held at TARGET + 6 converges the EMA to TARGET + 5.  Same
+// hazard as the assert above: at TARGET + 6 > RING - 1 the `while (fill() < TARGET + 6)` feed loop never exits
+// and the suite hangs with no output, which reads as a build that never ran.
+static_assert(AudioInputBluetooth::TARGET + 6 <= AudioInputBluetooth::RING - 1,
+    "node_test case 13 needs TARGET + 6 reachable within the ring");
 
 static int g_fails = 0, g_checks = 0;
 #define CHECK(c) do { g_checks++; if (!(c)) { g_fails++; printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
@@ -495,8 +501,10 @@ int main() {
         // mid-prime trimPpm() above.  Kept as a postcondition of the pair, stated as one.
         CHECK(nd->trimPpm() == 0);
         // (d) ... and once PRIMED the underrun counter WORKS AGAIN.  A prime that never ended would silence it
-        //     for the rest of the run -- the one shape of instrument failure that reads as good news.  (Task 4
-        //     makes a dry ring RE-PRIME; in this commit every dry block is still one underrun.)
+        //     for the rest of the run -- the one shape of instrument failure that reads as good news.  There is
+        //     exactly ONE dry block here, so these two checks read the same before and after Task 4's re-prime
+        //     (which that block now also arms, and which (e)'s begin() then clears); case 13 is where the
+        //     re-prime itself is pinned, including that a SECOND silent block would not be a second underrun.
         for (int i = 0; i < AudioInputBluetooth::TARGET; i++) nd->update();        // TARGET-1 pops, then one dry block
         CHECK(nd->fill() == 0);
         CHECK(nd->underruns() == 1);
@@ -516,6 +524,95 @@ int main() {
         nd->end();
         CHECK(!nd->priming());
         CHECK(ShimAudio::outstanding() == 0);
+    }
+    {   // 13. RE-PRIME ON A DRY RING (NEW-42, spec s2).  Mid-stream the source stops and the ring runs dry.  Exactly
+        //     ONE underrun is counted, reprimes() goes 1, and the node holds silence -- uncounted, servo frozen --
+        //     until TARGET blocks are back, then pops.  The filter is RECENTRED on the way back so the excursion
+        //     does not drag the trim: the servo is wound far off-centre first, or "recentred" would be satisfied
+        //     by a filter that never moved.  Without this a 45 ms gap left the ring 15 blocks short for the
+        //     ~72 s it takes the trim to refill it (spec s1, fact 3).
+        //     RED against: an underrun per silent block (underruns() climbs past 1); a resume below TARGET (pops
+        //     at TARGET-1); the recentre removed -- MEASURED, the filter is still 4.3 blocks ABOVE target (4.7
+        //     in the control arm), where a recentred one sits 0.003 BELOW it; the prime's
+        //     `if (!m_primed)` guard removed (primeBlocks() stops being the START figure -- see below).
+        Node nd; nd->setPrefill(true); nd->begin();
+        std::vector<uint8_t> f = encodeFrame(12000);
+        uint16_t seq = 1;
+        // Spend three blocks in the START prime BEFORE any packet arrives, so primeBlocks() is NON-ZERO when the
+        // re-prime later has to leave it alone.  Without this the wind-up loop's first update() would find the
+        // ring already at TARGET + 6 and complete the prime in zero blocks, and every primeBlocks() check below
+        // would be "0 stayed 0" -- satisfied by an implementation that counts nothing at all.
+        for (int i = 0; i < 3; i++) nd->update();
+        const uint32_t primeAtStart = nd->primeBlocks();
+        CHECK(primeAtStart == 3);
+        for (int i = 0; i < 1500; i++) { while (nd->fill() < AudioInputBluetooth::TARGET + 6) feed(nd, onePacket(seq++, f)); nd->update(); }
+        CHECK(nd->primed() && !nd->priming());
+        CHECK(nd->underruns() == 0 && nd->reprimes() == 0);
+        CHECK(nd->servo().filt_x65536 - nd->servo().target_x65536 > 4 * 65536);   // wound up: >4 blocks above target
+        while (nd->fill() > 0) nd->update();                                        // the source stops: drain to dry
+        CHECK(nd->underruns() == 0);
+        ShimAudio::reset();
+        nd->update();                                                               // the dry block
+        CHECK(nd->underruns() == 1); CHECK(nd->reprimes() == 1); CHECK(nd->priming());
+        int32_t filtAtDry = nd->servo().filt_x65536;
+        for (int i = 0; i < 50; i++) nd->update();                                  // silent, uncounted, servo frozen
+        CHECK(nd->underruns() == 1);
+        CHECK(nd->servo().filt_x65536 == filtAtDry);
+        bool silent = true; for (int i = 0; i < ShimAudio::logCount(); i++) if (!allZero(ShimAudio::logData(i))) silent = false;
+        CHECK(silent);
+        for (int i = 1; i < AudioInputBluetooth::TARGET; i++) { feed(nd, onePacket(seq++, f)); nd->update(); CHECK(nd->priming()); }   // TARGET-1 is not enough
+        CHECK(nd->fill() == AudioInputBluetooth::TARGET - 1);
+        feed(nd, onePacket(seq++, f));                                              // TARGET
+        ShimAudio::reset();
+        nd->update();                                                               // resumes: pops
+        CHECK(!nd->priming()); CHECK(nd->reprimes() == 1); CHECK(nd->underruns() == 1);
+        CHECK(nd->fill() == AudioInputBluetooth::TARGET - 1);
+        const int16_t *tx = lastTx(0); CHECK(tx && !allZero(tx));
+        int32_t d = nd->servo().target_x65536 - nd->servo().filt_x65536;            // recentred, then ONE EMA step at TARGET-1
+        CHECK(d >= 0 && d <= 65536 / 344 + 1);                                      // RED with the recentre removed: -4.26 blocks
+        // ** THE primeBlocks QUESTION, ANSWERED: a mid-stream re-prime NEITHER EXTENDS NOR RE-TIMES primeBlocks().
+        //    prime_ms is the START prime's length and nothing else. **  Three reasons, in order of weight.
+        //    (1) Spec s5's acceptance is "ONE prime_ms ~ TARGET * 2.9 ms at START", read off a heartbeat sampled
+        //        at the END of a 10-min window.  Extend it and the number is START plus every re-prime since;
+        //        re-time it and the START figure is gone the first time the ring runs dry.  Under either the
+        //        criterion cannot be checked at all -- and s5 also allows reprimes to be non-zero
+        //        (`under <= reprimes + 2`), so "there will not be any" is not an available defence.
+        //    (2) The header types it as a PER-STREAM DURATION, not a tally.  "Total blocks ever spent priming"
+        //        is a tally wearing a duration's name, and the LIFETIME/per-stream split is already the one
+        //        thing about this instrument a reader has to hold in their head.
+        //    (3) reprimes() already counts the events, and a re-prime's LENGTH carries nothing new: it is
+        //        however long the SOURCE took to deliver TARGET blocks, which is exactly what the gap histogram
+        //        (gapmax_ms / gbig) is built to measure, on the arrival side where it can be measured honestly.
+        //    What that costs, recorded rather than fixed by overloading this counter: with `under` now counting
+        //    EVENTS, the total SILENCE inserted is in no counter.  reprimes() * TARGET bounds it from below,
+        //    and spec s5 does not ask for it.
+        //    RED with the `if (!m_primed)` guard removed from update()'s priming branch: the 50 silent blocks
+        //    plus the TARGET-1 refill blocks land here too -- MEASURED 68 against 3 in the default arm, 60
+        //    against 3 in the control arm.  (The dry block ITSELF is not among them: it takes the dry branch,
+        //    not the priming one, because m_priming is still false at the top of that update().)
+        CHECK(nd->primeBlocks() == primeAtStart);
+        CHECK(ShimAudio::outstanding() == 0);
+    }
+    {   // 13b. With the pre-fill OFF (the bench's CONTROL arm) a dry ring is the NEW-41 behaviour exactly: one
+        //      underrun per silent block, no re-prime, the servo integrating fill=0 -- the A/B's control must be
+        //      the old firmware, not a third thing.  DEMONSTRATED RED against the `if (m_prefill)` guard removed
+        //      from update()'s dry branch (a re-prime whatever the build): ALL FOUR checks below fail by name --
+        //      underruns() 1 not 10, reprimes() 1 not 0, priming() set, and the trim frozen at trimFull.  Nothing
+        //      else in either arm sees that mutation (4 failures, all here): no other case takes more than ONE
+        //      dry block with the pre-fill off, and the FIRST dry block books its underrun either way -- it is
+        //      the SECOND that separates the two behaviours, which is why this case takes ten.
+        Node nd; nd->setPrefill(false); nd->begin();
+        std::vector<uint8_t> f = encodeFrame(12000);
+        for (int i = 1; i <= 4; i++) feed(nd, onePacket((uint16_t)i, f));
+        for (int i = 0; i < 4; i++) nd->update();
+        int32_t trimFull = nd->trimPpm();
+        for (int i = 0; i < 10; i++) nd->update();
+        CHECK(nd->underruns() == 10); CHECK(nd->reprimes() == 0); CHECK(!nd->priming());
+        // STRICTLY less, not `<=`: the claim is that the servo KEPT INTEGRATING fill=0, and a servo frozen on a
+        // dry ring (which is what the re-prime does when m_prefill is on) satisfies `<=` exactly.  Measured on
+        // this construction: trimFull is -6 and the ten dry blocks take it to -24 in the default arm, -3 -> -12
+        // in the control arm, so the margin is not marginal.
+        CHECK(nd->trimPpm() < trimFull);
     }
     {   // 14. HEADROOM (NEW-42).  A real source delivers EIGHT frames per RTP packet (iPhone bench 2026-09-09:
         //     frames/pkts = 7.97), so three back-to-back packets are 24 blocks.  The DEFAULT ring must swallow

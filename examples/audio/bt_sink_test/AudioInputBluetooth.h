@@ -59,6 +59,12 @@ public:
     uint32_t underruns() const { return m_under; } uint32_t overruns() const { return m_over; } uint32_t badFrames() const { return m_bad; }
     uint8_t  fill() const { uint16_t h = m_head, t = m_tail; return (uint8_t)((h + RING - t) % RING); }
     int32_t  trimPpm() const { return m_servo.trim_ppm; }
+    // The servo's INTERNAL state, for the HOST TESTS and nothing else -- the firmware reads trimPpm() and only
+    // trimPpm().  node_test case 13 needs it because the mid-stream re-prime's servo_recentre() is invisible
+    // from the trim: a filter left wound up from the pre-drop fill still produces a perfectly plausible ppm,
+    // so "recentred" can only be asserted against filt_x65536 itself.  Nothing outside update() may WRITE
+    // m_servo (see the member's own note); this hands out a const reference so nothing can.
+    const sink_servo_t &servo() const { return m_servo; }
     // Mean |L| per decoded block, summed: rmsAcc()/rmsBlocks() is the mean absolute left-channel sample, the
     // gate's audio-clock-referenced measure of "is there really audio in here".  * The per-block MEAN is
     // accumulated, not the raw per-sample sum: a raw sum of |v| <= 32768 over 128 samples/block overflows a
@@ -82,9 +88,11 @@ public:
         "instrument prints a permanent false fillmin=0 while looking perfectly healthy.  The "
         "one-packet-of-headroom claim is TARGET's, not this bound's: it is asserted in node_test case 14, "
         "because the bench's CONTROL arm (16/8) deliberately breaks it.");
-    // Whether begin() pre-fills the ring to TARGET before the first pop (and, once Task 4 lands, whether a dry
-    // ring re-primes).  Defaults to the compile-time PREFILL; the sketch never calls this, the host tests do, so
-    // that the ring/parser cases run without the pre-fill and case 12 runs with it, in BOTH CMake arms.
+    // Whether begin() pre-fills the ring to TARGET before the first pop, AND whether a ring that runs dry
+    // mid-stream re-primes rather than counting every silent block.  One knob for both, deliberately: the
+    // bench's CONTROL arm must be the NEW-41 firmware exactly, not a third thing (node_test case 13b).
+    // Defaults to the compile-time PREFILL; the sketch never calls this, the host tests do, so that the
+    // ring/parser cases run without the pre-fill and cases 12/13 run with it, in BOTH CMake arms.
     void setPrefill(bool on) { m_prefill = on; }
     // --- the NEW-42 instrument: cumulative for the RUN, never per-heartbeat -----------------------------------
     // The committed transcript samples every 30th heartbeat, so a per-window maximum would be invisible in 29 of
@@ -103,26 +111,40 @@ public:
     int32_t  trimLo() const { return m_trimLo; }                           // the servo's output range: "is the trim settled" as a number
     int32_t  trimHi() const { return m_trimHi; }
     uint32_t overEvents() const { return m_overEv; }                       // RUNS of consecutive dropped frames (a burst of 8 is one event)
-    // --- START pre-fill (NEW-42, spec s2) -----------------------------------------------------------------
+    // --- START pre-fill and mid-stream re-prime (NEW-42, spec s2) ------------------------------------------
     // While PRIMING, update() transmits silence, counts no underrun and steps no servo; the block that finds
     // TARGET blocks in the ring ends the prime, recentres the servo's filter and pops straight away, so the
     // first block OUT is the first block DECODED.  begin() popping from an empty ring is what produced the
     // ~27 start-up underruns of the iPhone bench (spec s1) -- the SAI ISR walks the graph from the moment the
     // stream is configured, long before the source's first packet can have landed.
-    // primeBlocks() is the prime's length in blocks (x 2.9 ms).  Unlike the tallies above it is PER-STREAM,
-    // because it is a DURATION and not a count: begin() restarts it and the value stands from the moment the
-    // prime completes until the next begin().  Today the only prime is the one begin() arms, so it is the
-    // START figure; Task 4's re-prime must decide -- and pin with a case -- whether a mid-stream prime extends
-    // it or re-times it.
+    // A ring that runs DRY MID-STREAM re-primes the same way, and that is the other half of the fix: a gap of
+    // G blocks does not merely cost G blocks of audio, it leaves the ring G blocks SHORT, and only the servo's
+    // 72 s closed-loop trim puts the margin back (spec s1, fact 3 -- the bench's 15-36 underruns trailing each
+    // overrun burst).  ** So `under` counts DROPOUTS, not silent blocks. **  One dry block books one underrun
+    // and one re-prime; the silence that follows it, however long, books nothing.  That is what makes spec s5's
+    // `under <= reprimes + 2` a bound worth having, and it is why an `under` of 3 on this build is NOT
+    // comparable with an `under` of 3 on NEW-41's.
+    // primeBlocks() is the START prime's length in blocks (x 2.9 ms), and ONLY that.  Unlike the tallies above
+    // it is PER-STREAM, because it is a DURATION and not a count: begin() restarts it and the value stands from
+    // the moment that prime completes until the next begin().  A mid-stream re-prime neither EXTENDS nor
+    // RE-TIMES it -- spec s5 reads "ONE prime_ms ~ TARGET * 2.9 ms at START" off a heartbeat sampled at the END
+    // of a long window, and s5 expects re-primes to occur, so a figure that grew or restarted with them could
+    // not be checked against TARGET at all.  How long a re-prime took is the SOURCE's absence, which the gap
+    // histogram measures on the arrival side; reprimes() counts the events.  (Accepted gap: with `under`
+    // counting events, the total silence inserted is in no counter.  reprimes() * TARGET bounds it below.)
     // reprimes() counts mid-stream ring rebuilds and is LIFETIME for the same reason m_overEv is: it counts
     // EVENTS printed beside m_over/m_under, and a reconnect must not make that column jump backwards.  Nothing
-    // increments it yet (Task 4) and nothing prints it yet (Task 6), so there is no reading here to misread.
+    // prints it yet (Task 6), so there is no reading here to misread.
     // ** A PRIME THAT NEVER REACHES TARGET NEVER ENDS, and that is the one signal this pre-fill takes away. **
     // A source that delivers fewer than TARGET blocks and then stalls without SUSPEND or CLOSE -- an RF dropout
     // right at stream start -- leaves the node silent with `under` FROZEN and the servo at its begin() trim: a
     // heartbeat indistinguishable from a healthy idle stream.  Before the pre-fill the same condition drove
     // `under` at 344/s, unmistakably.  priming() stays 1 and primeBlocks() keeps climbing, and those are the
     // only witnesses until Task 6 prints them.  Bounded in practice by BtLink's link supervision reaching end().
+    // The MID-STREAM re-prime inherits that hazard and takes one more witness away, since primeBlocks() is the
+    // START figure and does not climb for it -- but it also arrives with a better one that START cannot have:
+    // `pkts`/`frames` on the existing bt_sink line STOP MOVING, which at stream start is indistinguishable from
+    // "the source has not begun yet" and mid-stream is unambiguous.  A stalled source is read there, not here.
     bool     priming() const { return m_priming; }
     bool     primed() const { return m_primed; }
     uint32_t primeBlocks() const { return m_primeBlocks; }
@@ -142,9 +164,12 @@ private:
     sink_servo_t m_servo;
     volatile bool m_live = false;
     volatile bool m_hold = false;                  // AVDTP SUSPEND: run silent, freeze the servo, count nothing
-    // Not volatile, unlike m_live/m_hold: it is written from main context BEFORE begin() publishes m_live,
-    // never while update() is running, so no ISR can observe it change.  begin() is its only reader, and it
-    // reads it once, into m_priming.
+    // Not volatile, unlike m_live/m_hold, even though update() (the SAI ISR) now reads it too -- the dry branch
+    // asks it whether to re-prime.  The justification is about the WRITE side and is unchanged by that: in
+    // FIRMWARE this member is written exactly once, by the initialiser below, and never again -- the sketch
+    // does not call setPrefill() at all -- so the ISR reads a value that cannot change under it.  setPrefill()
+    // exists for the host tests, which call it from main context BEFORE begin() publishes m_live.  A cached
+    // read is therefore always the current value, which is the only thing volatile would buy here.
     bool m_prefill = PREFILL;
     // Instrument state.  m_gap*/m_lastRx*/m_overEv are written by onMedia() (main context) and read by loop() --
     // the same context m_over is written from, and volatile for the same reason given at m_under/m_over below.
