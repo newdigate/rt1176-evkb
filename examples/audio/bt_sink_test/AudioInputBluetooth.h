@@ -22,6 +22,15 @@ static inline int32_t audioPllTrimPpm(int32_t) { return 0; }
 static_assert(AUDIO_BLOCK_SAMPLES == 128,
     "AudioInputBluetooth assumes one SBC frame (16 blocks x 8 subbands) == one Audio-library block; "
     "AUDIO_BLOCK_SAMPLES has moved.");
+#ifndef BT_SINK_RING
+#define BT_SINK_RING 32
+#endif
+#ifndef BT_SINK_TARGET
+#define BT_SINK_TARGET 16
+#endif
+#ifndef BT_SINK_PREFILL
+#define BT_SINK_PREFILL 1
+#endif
 class AudioInputBluetooth : public AudioStream {
 public:
     AudioInputBluetooth() : AudioStream(0, nullptr) {}
@@ -48,7 +57,23 @@ public:
     // The quotient the consumer computes is unchanged; the headroom is 128x larger (~380 s).
     uint32_t rmsAcc() const { return m_rmsAcc; } uint32_t rmsBlocks() const { return m_rmsBlocks; }
     uint32_t crc() const { return m_crc; }        // running CRC32 of the first 200 decoded left-channel blocks (a golden for the gate)
-    static constexpr uint16_t RING = 16, TARGET = 8;
+    // NEW-42: ring depth and target in blocks, and whether START pre-fills the ring, all overridable from CMake
+    // (BT_SINK_RING / BT_SINK_TARGET / BT_SINK_PREFILL) so the bench builds its CONTROL arm (16 / 8 / off -- the
+    // NEW-41 behaviour) and its CHANGE arm from ONE source.  Sizing (spec s2): a source delivers EIGHT blocks per
+    // packet, so the ring needs one packet of headroom above the operating point, the largest gap it should ride
+    // out below it (~16 blocks = 46 ms), and the servo's standing offset (+-2.5 blocks at +-100 ppm).  32 / 16
+    // gives 16 above and 16 below; the old 16 / 8 held exactly two packets, and the servo's offset parked the
+    // mean at the ceiling (iPhone bench 2026-09-09, run 3).  The gate always builds the defaults.
+    static constexpr uint16_t RING = BT_SINK_RING, TARGET = BT_SINK_TARGET;
+    static constexpr bool PREFILL = (BT_SINK_PREFILL) != 0;
+    static_assert(RING >= 4 && RING <= 256 && TARGET >= 1 && TARGET <= RING - 2,
+        "AudioInputBluetooth: TARGET must leave two slots below RING (one is the SPSC sentinel), and RING "
+        "must fit fill()'s uint8_t return.  The one-packet-of-headroom claim is TARGET's, not this bound's: "
+        "it is asserted in node_test case 14, because the bench's CONTROL arm (16/8) deliberately breaks it.");
+    // Whether begin() pre-fills to TARGET before the first pop, and whether a dry ring re-primes (Task 3/4 of the
+    // NEW-42 plan).  Defaults to the compile-time PREFILL; the sketch never calls this, the host tests do, so that
+    // the ring/parser cases run without the pre-fill and the pre-fill cases run with it, in BOTH CMake arms.
+    void setPrefill(bool on) { m_prefill = on; }
 private:
     struct Blk { int16_t l[AUDIO_BLOCK_SAMPLES]; int16_t r[AUDIO_BLOCK_SAMPLES]; };
     Blk m_ring[RING]; volatile uint16_t m_head = 0, m_tail = 0;
@@ -60,6 +85,10 @@ private:
     sink_servo_t m_servo;
     volatile bool m_live = false;
     volatile bool m_hold = false;                  // AVDTP SUSPEND: run silent, freeze the servo, count nothing
+    // Not volatile, unlike m_live/m_hold: it is written from main context BEFORE begin() publishes m_live,
+    // never while update() is running, so no ISR can observe it change.  Nothing reads it yet -- begin() and
+    // update() take it up in Task 3/4 of the NEW-42 plan.
+    bool m_prefill = PREFILL;
     volatile int32_t m_applied = 0;                // last ppm handed to the PLL, so update() only writes on a change
     uint16_t m_lastSeq = 0; bool m_haveSeq = false;
     uint8_t m_frag[1100]; uint16_t m_fragLen = 0; bool m_fragging = false;  // a fragmented SBC frame being reassembled across packets

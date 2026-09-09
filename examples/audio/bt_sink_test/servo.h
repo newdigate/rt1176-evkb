@@ -12,7 +12,8 @@
 // ** A P-only servo has a steady-state fill offset of drift/kp BY CONSTRUCTION, and that is a design property, not
 // a defect. **  The loop converges when trim == drift, which requires err == drift/kp blocks of standing fill
 // error: at kp = 40 ppm/block, +-100 ppm of source drift parks the ring 2.5 blocks off TARGET.  Latency is
-// therefore 8 +- 2.5 blocks (~23 +- 7 ms) over +-100 ppm, inside a 16-block ring with room at both ends.  Adding
+// therefore TARGET +- 2.5 blocks (+-7 ms) over +-100 ppm -- stated against TARGET, not a constant, because
+// NEW-42 made the ring a build knob and the CONTROL arm still builds at 16 / 8.  Adding
 // an integral term would remove the offset and buy nothing: the offset is small, bounded and silent, while an
 // integrator on a link that stalls and resumes is a wind-up hazard.  The closed-loop time constant is
 // 1 / (kp * 1e-6) = 25000 blocks = 72.7 s, so convergence to a few percent takes minutes -- deliberately slower
@@ -22,7 +23,7 @@
 typedef struct { int32_t target_x65536, filt_x65536, trim_ppm, kp_ppm_per_block_x256, clamp_ppm; } sink_servo_t;
 static inline void servo_init(sink_servo_t *s, int32_t target_blocks) {
     s->target_x65536 = target_blocks * 65536; s->filt_x65536 = s->target_x65536; s->trim_ppm = 0;
-    s->kp_ppm_per_block_x256 = 40 * 256;    /* 40 ppm per block of fill error: +-200 ppm at +-5 blocks, inside a 16-block ring */
+    s->kp_ppm_per_block_x256 = 40 * 256;    /* 40 ppm per block of fill error, so the clamp below is reached at +-5 blocks */
     s->clamp_ppm = 200;
 }
 /* one audio block elapsed; fill = blocks currently in the ring (0..ring size); hold = link down (freeze the trim) */

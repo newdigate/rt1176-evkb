@@ -39,4 +39,16 @@ $CXX -std=c++11 -Wall -Wextra -Werror $SAN \
     -o "$OUT/node_test"
 "$OUT/node_test"
 
+# NEW-42: the same node compiled as the bench's CONTROL arm (RING 16 / TARGET 8 / no pre-fill -- the NEW-41
+# behaviour).  Cases whose expectation depends on the configuration compute it from RING/TARGET, and case 14
+# additionally asserts the control arm DOES drop (9 of 24) where the default does not.  Both binaries must pass:
+# a configuration that only works at one setting is a configuration nobody measured.
+$CXX -std=c++11 -Wall -Wextra -Werror $SAN \
+    -DBT_SINK_RING=16 -DBT_SINK_TARGET=8 -DBT_SINK_PREFILL=0 -DNODE_TEST_CONTROL_ARM=1 \
+    -I"$DIR/shim" -I"$DIR/.." -I"$BT" \
+    "$DIR/node_test.cpp" "$DIR/shim/shim.cpp" "$DIR/../AudioInputBluetooth.cpp" \
+    "$BT/SbcDecoder.cpp" "$BT/Sbc.cpp" \
+    -o "$OUT/node_test_control"
+"$OUT/node_test_control"
+
 echo "BT-SINK-HOST-TESTS: PASS"
