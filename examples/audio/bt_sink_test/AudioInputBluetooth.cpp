@@ -30,6 +30,10 @@ void AudioInputBluetooth::begin() {
 // The trim HOLDS (servo_step is skipped while !m_live).  m_priming is cleared because priming() is an
 // OBSERVABLE: with the stream gone, update() would do nothing with the flag either way, but a reader between
 // end() and the next begin() must not be told a prime is running on a stream that no longer exists.
+// m_primed and m_primeBlocks deliberately do NOT clear: they are the ENDED stream's reading, and the header
+// says the duration stands until the next begin().  So `priming=0 primed=1 prime_ms=<the last stream's>` is
+// the correct idle reading, not a leak.  It cannot be pinned by a case -- the next begin() clears both before
+// any check could run -- so it is pinned here, in words.
 void AudioInputBluetooth::end() { m_live = false; m_head = m_tail = 0; m_fragLen = 0; m_fragging = false; m_priming = false; }
 void AudioInputBluetooth::pushFrame(const uint8_t *f, uint16_t len) {
     // The decoder writes blocks*subbands samples per channel and reads the block count from the FRAME HEADER, not

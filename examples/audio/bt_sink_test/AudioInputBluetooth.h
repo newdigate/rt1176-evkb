@@ -117,6 +117,12 @@ public:
     // reprimes() counts mid-stream ring rebuilds and is LIFETIME for the same reason m_overEv is: it counts
     // EVENTS printed beside m_over/m_under, and a reconnect must not make that column jump backwards.  Nothing
     // increments it yet (Task 4) and nothing prints it yet (Task 6), so there is no reading here to misread.
+    // ** A PRIME THAT NEVER REACHES TARGET NEVER ENDS, and that is the one signal this pre-fill takes away. **
+    // A source that delivers fewer than TARGET blocks and then stalls without SUSPEND or CLOSE -- an RF dropout
+    // right at stream start -- leaves the node silent with `under` FROZEN and the servo at its begin() trim: a
+    // heartbeat indistinguishable from a healthy idle stream.  Before the pre-fill the same condition drove
+    // `under` at 344/s, unmistakably.  priming() stays 1 and primeBlocks() keeps climbing, and those are the
+    // only witnesses until Task 6 prints them.  Bounded in practice by BtLink's link supervision reaching end().
     bool     priming() const { return m_priming; }
     bool     primed() const { return m_primed; }
     uint32_t primeBlocks() const { return m_primeBlocks; }

@@ -607,8 +607,12 @@ In `$S/AudioInputBluetooth.cpp`:
 `begin()` — after the instrument reset line added in Task 2, add:
 
 ```cpp
-    m_priming = m_prefill; m_primed = false; m_primeBlocks = 0; m_reprimes = 0;
+    m_priming = m_prefill; m_primed = false; m_primeBlocks = 0;
 ```
+
+★ **Corrected during execution:** this line originally also read `m_reprimes = 0`, which contradicts the spec's own §3 lifetime correction -- `m_reprimes` counts EVENTS printed beside `m_over`, and `begin()` runs on every stream start. It is LIFETIME and must not be reset.
+
+<!--
 
 `end()` — replace the whole one-line function with:
 
@@ -702,8 +706,16 @@ MSG
 ### Task 4: Re-prime on a dry ring
 
 **Files:**
+- Modify: `examples/audio/bt_sink_test/AudioInputBluetooth.h` (re-add the `servo()` accessor)
 - Modify: `examples/audio/bt_sink_test/AudioInputBluetooth.cpp`
 - Modify: `examples/audio/bt_sink_test/tests/node_test.cpp`
+
+★ **Task 3 correctly DROPPED the `const sink_servo_t &servo() const` accessor** the plan listed there: nothing
+read it, and every check it could have supported was vacuous at that point — measured, deleting
+`servo_recentre()` entirely left both arms green, because `servo_init()` already centres the filter and a
+priming block steps no servo. This task is where it earns its place: a MID-STREAM re-prime arrives with a
+WOUND-UP filter, so the recentre is observable for the first time. Re-add the accessor here, beside the case
+that reads it.
 
 - [ ] **Step 1: Write the failing re-prime cases**
 

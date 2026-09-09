@@ -452,6 +452,13 @@ int main() {
         // (b) A SUSPEND DURING THE PRIME.  hold() takes precedence over priming exactly as it does over the
         //     underrun counter (case 9): a held source is not filling the ring, so those blocks are not prime
         //     time either and primeBlocks() must not inflate across a pause.
+        //     ** WHAT THIS PINS, precisely: that a held block is not prime time (mutant: the priming branch
+        //     hoisted out of `if (run)` -> primeBlocks() reads 13), that hold(true) does not ABANDON the prime,
+        //     and that a held-and-priming block counts no underrun.  It does NOT pin the `if (run)` gate on the
+        //     prime-COMPLETION check: the ring is EMPTY here, so that branch is never reached while held, and
+        //     hoisting the completion out of `if (run)` leaves the whole suite green (measured).  Pinning it
+        //     needs TARGET frames fed while held, which would disturb (c)'s loud-first construction; the
+        //     behavioural delta is only WHEN servo_recentre() fires, so it is recorded rather than tested.
         nd->hold(true);
         for (int i = 0; i < 5; i++) nd->update();
         CHECK(nd->priming());                                                      // ... the prime is not abandoned
@@ -482,7 +489,11 @@ int main() {
         const int16_t *first = lastTx(0); CHECK(first && ShimAudio::meanAbs(first) > 3000);
         CHECK(nd->underruns() == 0);
         CHECK(nd->primeBlocks() == primeLen);                                      // latched: the completing block is not one of them
-        CHECK(nd->trimPpm() == 0);                                                 // the servo restarted from zero error
+        // NOT reddenable on its own, and the comment must not pretend otherwise: with the recentre present this
+        // is 0 whether or not the prime stepped the servo, and with the recentre DELETED it is still 0 because
+        // nothing wound the filter -- only the double mutation moves it.  The load-bearing assertion is the
+        // mid-prime trimPpm() above.  Kept as a postcondition of the pair, stated as one.
+        CHECK(nd->trimPpm() == 0);
         // (d) ... and once PRIMED the underrun counter WORKS AGAIN.  A prime that never ended would silence it
         //     for the rest of the run -- the one shape of instrument failure that reads as good news.  (Task 4
         //     makes a dry ring RE-PRIME; in this commit every dry block is still one underrun.)
