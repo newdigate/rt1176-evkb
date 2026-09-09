@@ -1686,3 +1686,474 @@ bt_sink fill=10 trim_ppm=55 rms=3987 rms_blocks=366882 crc200=0xC12DAF15
 bt_link links=2 lost=1 closed=0 reason=0x08 state=streaming
 bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
 bt_avrcp avctp=1 notif=2 unsup=99 drop=0 vol=87
+
+# ===== RUN 4 (NEW-42 CONTROL ARM) -- bench 2026-09-09 evening =====
+# Build: build-bench-control -- the NEW-41 configuration (RING 16 / TARGET 8 / no pre-fill) PLUS the NEW-42
+#   instrument, from the same source as the change arm, one CMake flag apart:
+#     -DBT_SINK_RING=16 -DBT_SINK_TARGET=8 -DBT_SINK_PREFILL=OFF
+#     (+ real uartIW416_bt.bin, M2_BT_UART_DNLD/WAKE_PULSE/RTS_FLOW=ON RTS_WATER=1 FAST_BAUD=ON 3000000,
+#      M2_BT_FORGET_BONDS=OFF).  btin = 0x2a00 in .bss; the change arm is 0x4a00, +8192 = 16 extra slots.
+# WHY THIS ARM EXISTS: it measures the phone's ACTUAL inter-packet gap distribution -- the number that
+#   SIZES TARGET, instead of the 35-45 ms estimate NEW-41 inferred from the burst shape -- and it is the
+#   only thing that proves the new instrument fires in a regime already known to be bad.  A clean reading
+#   on the change arm alone is equally consistent with a gap counter that never triggers.
+#
+# ** BENCH TRAP MET FIRST, AND IT IS NOT A NEW-42 DEFECT. **  bonds_boot=0 -- the board's bond store was
+#   empty while the iPhone still held a stale link key for EVKB-SINK.  SSP then ran CORRECTLY all the way
+#   to Just Works (io_cap_req -> user_conf_req numeric=19466 -> accept) and the PHONE failed it:
+#   pairing_complete: status=0x05 (Authentication Failure).  BtLink's designed fallback then took the
+#   legacy-PIN path -- which writes Write_Simple_Pairing_Mode=0 -- so SSP was OFF for the REST OF THE
+#   SESSION and the next attempt went straight to pin_code_req with no IO-capability exchange at all,
+#   which is the passcode prompt iOS showed.  ONE FAILED SSP POISONS EVERY LATER ATTEMPT UNTIL THE NEXT
+#   BOOT, because only PREPARE re-enables it.  Fix at the bench: forget the device on the phone, then
+#   press SW4 (PREPARE re-runs, ssp_mode mode=1) and pair fresh -- Just Works, status=0x00, first try.
+#
+# MEASURED (one continuous stream, 1585.5 s = 26.4 min -- the phone kept the A2DP stream open past the
+#   music, so this is 2.6x the planned window and the counters are normalised per minute below):
+#   pkts=68325 frames=546254 -> 7.995 frames/pkt (the EIGHT-blocks-per-packet fact, on this phone)
+#   under=425 over=346 = 16.1 / 13.1 per MINUTE   (run 3 read 10.3 / 8.9 per min: same order, same
+#     PAIRED shape -- the control arm reproduces the defect it exists to reproduce)
+#   overev=101 -> 3.4 dropped frames per overrun event;  seqgaps=0 bad=0  (nothing lost on the air)
+#   fillmin=1 fillmax=15 -- the 16-slot ring runs RAIL TO RAIL, and 15 is RING-1, the ceiling.  That is
+#     spec s1's overrun mechanism caught in the act, not inferred.
+#   trim -60..105 ppm;  reprimes=0 primed=0 prime_ms=0 (correct: the pre-fill is OFF in this arm)
+#
+# THE GAP DISTRIBUTION, which is what this arm was run for -- 68324 intervals, sum == pkts-1 EXACTLY:
+#     <=30 ms   67307   98.512%
+#     30-50 ms    988    1.446%
+#     50-80 ms     27    0.040%
+#     80-120 ms     2    0.003%
+#     >120 ms       0    0%
+#     worst gap    97 ms = 33.4 blocks
+# TARGET DECISION: KEEP 16 (46.4 ms).  It rides out 99.958% of intervals (68295 of 68324).  The worst gap
+#   is 97 ms -- BIGGER than NEW-41's 35-45 ms estimate -- but it happened TWICE in 26 minutes; covering it
+#   would need TARGET 34 / RING 50, i.e. 99 ms of latency, to save two events.  The 29 intervals over
+#   50 ms become BOUNDED re-primes (one counted underrun each) instead of underrun bursts, which is
+#   exactly what the re-prime is for.  Spec s5 says to record such a tail, not to inflate TARGET until
+#   the numbers look nice.
+# PREDICTION FOR THE CHANGE ARM, written BEFORE it runs: over=0 (hard); reprimes ~29 per 26 min with
+#   under ~= reprimes; fillmin >= 4 and fillmax <= 28; one prime_ms ~46 ms at START and no start-up burst.
+#
+# ----- RUN 4: events (complete) -----
+RT1176 BT sink test up
+serial2=up_115200
+m2_wifi_reset=released
+bt_wake=pulsed_10ms_low (GPIO_DISP_B2_13, mux returned to LPUART2_RTS_B)
+bt_flow=rxrtse rtswater=1 attached=1
+bt_fw_source=nxp
+bt_fw_download=ok chip_id=0x7201 start_inds=3 sent=131856/131840
+hci_reset=ok attempts=1 timeouts=0 framing=0 starved=0 qfull=0 late=0
+hci_version: hci_ver=15 hci_rev=0x8300 lmp_ver=15 manufacturer=0x0048 lmp_subver=0x109B
+bd_addr=A0:CD:F3:C5:B9:F3
+hci_buffer: acl_len=1021 acl_num=7 sco_len=120 sco_num=6
+bt_baud_switch=ok rate=3000000
+hci_version: hci_ver=15 hci_rev=0x8300 lmp_ver=15 manufacturer=0x0048 lmp_subver=0x109B
+bd_addr=A0:CD:F3:C5:B9:F3
+hci_buffer: acl_len=1021 acl_num=7 sco_len=120 sco_num=6
+bonds_boot=0
+sink=listening name="EVKB-SINK" cod=0x240414
+page_scan=on
+scan_enable=0x03
+event_mask: st=ok status=0x00
+ssp_mode: st=ok status=0x00 mode=1
+page_timeout: st=ok status=0x00 slots=0x2000
+class_of_device=0x240414 st=ok
+local_name="EVKB-SINK" st=ok
+conn_req: bd=44:F2:1B:8D:03:94 -> accept(slave, unbonded)
+hci_event: code=0x20 len=7
+page_scan=off
+scan_enable=0x00
+hci_event: code=0x1B len=3
+link_key_req: bd=44:F2:1B:8D:03:94 -> neg_reply (no stored key)
+io_cap_req: bd=44:F2:1B:8D:03:94 -> NoInputNoOutput auth_req=0x04
+hci_event: code=0x32 len=9
+user_conf_req: bd=44:F2:1B:8D:03:94 numeric=54765 -> accept (Just Works)
+pairing_complete: status=0x00 bd=44:F2:1B:8D:03:94
+link_key: bd=44:F2:1B:8D:03:94 type=4 bond=saved
+auth_complete: status=0x00 handle=0x0001
+pairing=ok auth=ok link_key=stored
+encryption_change: status=0x00 handle=0x0001 enabled=1
+connect_secure=ok encryption=on paired_by=ssp
+hci_event: code=0x38 len=4
+hci_event: code=0x38 len=4
+hci_event: code=0x38 len=4
+sink: adopted sbc bitpool=53 mode=3 blocks=16 sub=8
+sink: streaming bitpool=53
+sink: avctp connect
+a2dp_sink=ok bonds=1 paired_by=ssp
+streaming by=incoming bitpool=53 mode=3
+sink: delay_report=232
+volume=103
+volume=107
+volume=115
+volume=107
+volume=100
+volume=92
+volume=84
+volume=76
+volume=68
+volume=60
+volume=44
+volume=20
+volume=4
+volume=0
+volume=7
+volume=23
+volume=47
+volume=63
+volume=79
+volume=103
+volume=119
+volume=127
+volume=119
+volume=111
+volume=103
+volume=95
+volume=87
+volume=87
+volume=79
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=71
+volume=79
+volume=71
+
+# ----- RUN 4: heartbeats (sampled, every 30th block) -----
+hb streaming=0 pkts=0 frames=0 seqgaps=0 under=0 over=0 bad=0
+bt_sink fill=0 trim_ppm=0 rms=0 rms_blocks=0 crc200=0xFFFFFFFF
+bt_jit gapmax_ms=0 g30=0 g50=0 g80=0 g120=0 gbig=0 fillmin=16 fillmax=0 trimlo=0 trimhi=0 overev=0 reprimes=0 primed=0 prime_ms=0
+bt_link links=0 lost=0 closed=0 reason=0x00 state=listening
+bt_hci ncmd=0 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
+bt_avrcp avctp=0 notif=0 ans=0 unsup=0 drop=0 vol=100
+hb streaming=1 pkts=324 frames=2589 seqgaps=0 under=32 over=3 bad=0
+bt_sink fill=11 trim_ppm=89 rms=2249 rms_blocks=2589 crc200=0x78C7E51F
+bt_jit gapmax_ms=41 g30=216 g50=107 g80=0 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=89 overev=2 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=2 unsup=0 drop=0 vol=103
+hb streaming=1 pkts=1616 frames=12924 seqgaps=0 under=33 over=4 bad=0
+bt_sink fill=11 trim_ppm=56 rms=3568 rms_blocks=12924 crc200=0x78C7E51F
+bt_jit gapmax_ms=45 g30=1498 g50=117 g80=0 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=96 overev=3 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=6 unsup=0 drop=0 vol=100
+hb streaming=1 pkts=2908 frames=23259 seqgaps=0 under=35 over=5 bad=0
+bt_sink fill=11 trim_ppm=59 rms=3830 rms_blocks=23259 crc200=0x78C7E51F
+bt_jit gapmax_ms=46 g30=2775 g50=132 g80=0 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=96 overev=4 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=6 unsup=0 drop=0 vol=100
+hb streaming=1 pkts=4200 frames=33593 seqgaps=0 under=39 over=7 bad=0
+bt_sink fill=12 trim_ppm=97 rms=3998 rms_blocks=33593 crc200=0x78C7E51F
+bt_jit gapmax_ms=46 g30=4056 g50=143 g80=0 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=97 overev=6 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=6 unsup=0 drop=0 vol=100
+hb streaming=1 pkts=5492 frames=43928 seqgaps=0 under=40 over=8 bad=0
+bt_sink fill=11 trim_ppm=60 rms=4067 rms_blocks=43928 crc200=0x78C7E51F
+bt_jit gapmax_ms=46 g30=5335 g50=156 g80=0 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=101 overev=7 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=6 unsup=0 drop=0 vol=100
+hb streaming=1 pkts=6784 frames=54239 seqgaps=0 under=66 over=33 bad=0
+bt_sink fill=11 trim_ppm=59 rms=4153 rms_blocks=54239 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=6606 g50=175 g80=2 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=101 overev=14 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=29 unsup=0 drop=0 vol=87
+hb streaming=1 pkts=8076 frames=64573 seqgaps=0 under=69 over=35 bad=0
+bt_sink fill=11 trim_ppm=61 rms=3975 rms_blocks=64573 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=7881 g50=192 g80=2 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=101 overev=16 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=31 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=9368 frames=74908 seqgaps=0 under=71 over=36 bad=0
+bt_sink fill=12 trim_ppm=42 rms=3924 rms_blocks=74908 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=9162 g50=203 g80=2 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=101 overev=17 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=31 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=10660 frames=85244 seqgaps=0 under=72 over=36 bad=0
+bt_sink fill=12 trim_ppm=71 rms=3938 rms_blocks=85244 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=10440 g50=217 g80=2 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=101 overev=17 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=31 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=11952 frames=95576 seqgaps=0 under=77 over=40 bad=0
+bt_sink fill=11 trim_ppm=66 rms=3946 rms_blocks=95576 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=11717 g50=231 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=101 overev=18 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=31 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=13244 frames=105912 seqgaps=0 under=77 over=40 bad=0
+bt_sink fill=11 trim_ppm=42 rms=4024 rms_blocks=105912 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=12996 g50=244 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=101 overev=18 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=31 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=14536 frames=116248 seqgaps=0 under=79 over=40 bad=0
+bt_sink fill=12 trim_ppm=81 rms=4065 rms_blocks=116248 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=14272 g50=260 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=101 overev=18 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=31 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=15828 frames=126584 seqgaps=0 under=79 over=40 bad=0
+bt_sink fill=11 trim_ppm=45 rms=4204 rms_blocks=126584 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=15545 g50=279 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=101 overev=18 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=31 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=17120 frames=136920 seqgaps=0 under=81 over=40 bad=0
+bt_sink fill=12 trim_ppm=87 rms=4281 rms_blocks=136920 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=16823 g50=293 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=18 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=31 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=18412 frames=147256 seqgaps=0 under=82 over=40 bad=0
+bt_sink fill=11 trim_ppm=89 rms=4362 rms_blocks=147256 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=18100 g50=308 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=18 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=31 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=19704 frames=157591 seqgaps=0 under=83 over=41 bad=0
+bt_sink fill=11 trim_ppm=55 rms=4444 rms_blocks=157591 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=19379 g50=321 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=19 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=31 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=20996 frames=167926 seqgaps=0 under=85 over=42 bad=0
+bt_sink fill=11 trim_ppm=54 rms=4399 rms_blocks=167926 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=20650 g50=342 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=20 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=32 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=22288 frames=178262 seqgaps=0 under=86 over=42 bad=0
+bt_sink fill=11 trim_ppm=60 rms=4365 rms_blocks=178262 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=21929 g50=355 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=20 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=32 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=23580 frames=188597 seqgaps=0 under=88 over=43 bad=0
+bt_sink fill=11 trim_ppm=58 rms=4357 rms_blocks=188597 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=23209 g50=367 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=21 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=32 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=24872 frames=198933 seqgaps=0 under=89 over=43 bad=0
+bt_sink fill=11 trim_ppm=58 rms=4337 rms_blocks=198933 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=24483 g50=385 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=21 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=32 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=26164 frames=209269 seqgaps=0 under=89 over=43 bad=0
+bt_sink fill=11 trim_ppm=33 rms=4304 rms_blocks=209269 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=25759 g50=401 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=21 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=32 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=27456 frames=219605 seqgaps=0 under=91 over=43 bad=0
+bt_sink fill=12 trim_ppm=77 rms=4301 rms_blocks=219605 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=27032 g50=420 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=21 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=32 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=28748 frames=229941 seqgaps=0 under=92 over=43 bad=0
+bt_sink fill=12 trim_ppm=70 rms=4313 rms_blocks=229941 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=28309 g50=435 g80=3 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=21 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=32 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=30040 frames=240260 seqgaps=0 under=110 over=60 bad=0
+bt_sink fill=12 trim_ppm=69 rms=4326 rms_blocks=240260 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=29579 g50=456 g80=4 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=27 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=32 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=31332 frames=250596 seqgaps=0 under=110 over=60 bad=0
+bt_sink fill=11 trim_ppm=35 rms=4328 rms_blocks=250596 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=30859 g50=468 g80=4 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=27 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=32 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=32624 frames=260931 seqgaps=0 under=113 over=61 bad=0
+bt_sink fill=13 trim_ppm=78 rms=4359 rms_blocks=260931 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=32133 g50=486 g80=4 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=28 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=284 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=32 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=33916 frames=271263 seqgaps=0 under=118 over=65 bad=0
+bt_sink fill=12 trim_ppm=72 rms=4381 rms_blocks=271263 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=33408 g50=502 g80=5 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=30 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=32 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=35208 frames=281599 seqgaps=0 under=118 over=65 bad=0
+bt_sink fill=11 trim_ppm=42 rms=4349 rms_blocks=281599 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=34686 g50=516 g80=5 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=30 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=34 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=36500 frames=291908 seqgaps=0 under=147 over=92 bad=0
+bt_sink fill=12 trim_ppm=90 rms=4384 rms_blocks=291908 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=35955 g50=537 g80=7 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=37 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=34 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=37792 frames=302244 seqgaps=0 under=148 over=92 bad=0
+bt_sink fill=12 trim_ppm=77 rms=4460 rms_blocks=302244 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=37235 g50=549 g80=7 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=37 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=35 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=39084 frames=312579 seqgaps=0 under=150 over=93 bad=0
+bt_sink fill=13 trim_ppm=75 rms=4506 rms_blocks=312579 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=38515 g50=561 g80=7 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=38 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=36 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=40376 frames=322909 seqgaps=0 under=157 over=99 bad=0
+bt_sink fill=13 trim_ppm=68 rms=4547 rms_blocks=322909 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=39786 g50=581 g80=8 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=40 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=36 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=41668 frames=333245 seqgaps=0 under=157 over=99 bad=0
+bt_sink fill=12 trim_ppm=32 rms=4573 rms_blocks=333245 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=41054 g50=605 g80=8 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=40 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=36 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=42960 frames=343581 seqgaps=0 under=157 over=99 bad=0
+bt_sink fill=12 trim_ppm=14 rms=4608 rms_blocks=343581 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=42327 g50=624 g80=8 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=40 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=38 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=44252 frames=353917 seqgaps=0 under=157 over=99 bad=0
+bt_sink fill=11 trim_ppm=-18 rms=4570 rms_blocks=353917 crc200=0x78C7E51F
+bt_jit gapmax_ms=67 g30=43609 g50=634 g80=8 g120=0 gbig=0 fillmin=1 fillmax=15 trimlo=-52 trimhi=104 overev=40 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=38 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=45544 frames=364198 seqgaps=0 under=215 over=154 bad=0
+bt_sink fill=14 trim_ppm=59 rms=4548 rms_blocks=364198 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=44870 g50=663 g80=9 g120=1 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=51 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=38 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=46836 frames=374534 seqgaps=0 under=215 over=154 bad=0
+bt_sink fill=13 trim_ppm=25 rms=4522 rms_blocks=374534 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=46148 g50=677 g80=9 g120=1 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=51 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=38 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=48128 frames=384869 seqgaps=0 under=218 over=155 bad=0
+bt_sink fill=14 trim_ppm=83 rms=4511 rms_blocks=384869 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=47426 g50=691 g80=9 g120=1 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=52 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=41 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=49419 frames=395116 seqgaps=0 under=300 over=236 bad=0
+bt_sink fill=7 trim_ppm=75 rms=4495 rms_blocks=395116 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=48674 g50=725 g80=18 g120=1 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=68 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=42 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=50711 frames=405452 seqgaps=0 under=301 over=236 bad=0
+bt_sink fill=7 trim_ppm=67 rms=4492 rms_blocks=405452 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=49946 g50=745 g80=18 g120=1 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=68 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=43 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=52003 frames=415788 seqgaps=0 under=303 over=236 bad=0
+bt_sink fill=8 trim_ppm=86 rms=4499 rms_blocks=415788 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=51224 g50=759 g80=18 g120=1 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=68 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=406 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=43 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=53295 frames=426092 seqgaps=0 under=336 over=268 bad=0
+bt_sink fill=8 trim_ppm=63 rms=4507 rms_blocks=426092 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=52489 g50=783 g80=21 g120=1 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=75 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=851 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=43 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=54587 frames=436427 seqgaps=0 under=338 over=269 bad=0
+bt_sink fill=8 trim_ppm=84 rms=4523 rms_blocks=436427 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=53767 g50=797 g80=21 g120=1 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=76 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=851 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=44 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=55879 frames=446760 seqgaps=0 under=342 over=272 bad=0
+bt_sink fill=8 trim_ppm=67 rms=4533 rms_blocks=446760 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=55045 g50=811 g80=21 g120=1 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=77 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=851 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=46 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=57171 frames=457096 seqgaps=0 under=342 over=272 bad=0
+bt_sink fill=8 trim_ppm=27 rms=4519 rms_blocks=457096 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=56325 g50=823 g80=21 g120=1 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=77 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=851 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=46 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=58463 frames=467432 seqgaps=0 under=344 over=272 bad=0
+bt_sink fill=9 trim_ppm=67 rms=4495 rms_blocks=467432 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=57601 g50=839 g80=21 g120=1 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=77 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=851 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=46 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=59755 frames=477720 seqgaps=0 under=393 over=320 bad=0
+bt_sink fill=8 trim_ppm=61 rms=4496 rms_blocks=477720 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=58862 g50=865 g80=25 g120=2 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=90 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=851 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=46 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=61047 frames=488056 seqgaps=0 under=395 over=320 bad=0
+bt_sink fill=10 trim_ppm=99 rms=4506 rms_blocks=488056 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=60139 g50=880 g80=25 g120=2 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=90 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=851 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=46 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=62339 frames=498389 seqgaps=0 under=398 over=323 bad=0
+bt_sink fill=9 trim_ppm=54 rms=4504 rms_blocks=498389 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=61396 g50=915 g80=25 g120=2 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=93 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1038 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=47 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=63631 frames=508704 seqgaps=0 under=420 over=344 bad=0
+bt_sink fill=9 trim_ppm=61 rms=4467 rms_blocks=508704 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=62661 g50=940 g80=27 g120=2 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=99 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1299 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=49 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=64923 frames=519040 seqgaps=0 under=420 over=344 bad=0
+bt_sink fill=8 trim_ppm=30 rms=4454 rms_blocks=519040 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=63941 g50=952 g80=27 g120=2 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=99 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1299 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=49 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=66215 frames=529376 seqgaps=0 under=420 over=344 bad=0
+bt_sink fill=8 trim_ppm=16 rms=4455 rms_blocks=529376 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=65217 g50=968 g80=27 g120=2 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=104 overev=99 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1299 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=49 unsup=0 drop=0 vol=71
+hb streaming=1 pkts=67507 frames=539711 seqgaps=0 under=424 over=345 bad=0
+bt_sink fill=10 trim_ppm=98 rms=4443 rms_blocks=539711 crc200=0x78C7E51F
+bt_jit gapmax_ms=97 g30=66496 g50=981 g80=27 g120=2 gbig=0 fillmin=1 fillmax=15 trimlo=-60 trimhi=105 overev=100 reprimes=0 primed=0 prime_ms=0
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=1299 l2fragdrop=0 credmin=4
+bt_avrcp avctp=1 notif=1 ans=49 unsup=0 drop=0 vol=71

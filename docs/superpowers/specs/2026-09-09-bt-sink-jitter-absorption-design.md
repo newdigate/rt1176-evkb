@@ -308,8 +308,62 @@ that -- the phone's delivery is then the limit -- not to grow `TARGET` until the
 
 ## 7. Silicon: the bench
 
-Written from the capture after section 4.3 runs.  Both arms' `bt_jit` lines, the measured `TARGET`, the
-acceptance verdict item by item, and anything refuted.
+**PARTIAL -- the CONTROL arm has run, the CHANGE arm has not.**  Transcript: `examples/audio/bt_sink_test/
+transcript_hw_evkb.txt`, RUN 4 (2026-09-09 evening).  Section 5's acceptance is therefore still OPEN.
+
+### 7.1 Control arm (RING 16 / TARGET 8 / no pre-fill + the instrument) -- DONE
+
+One continuous stream of 1585.5 s (26.4 min; the phone held the A2DP stream open past the music, so this is
+2.6x the planned window -- counters normalised per minute).
+
+| | measured |
+|---|---|
+| `pkts` / `frames` | 68325 / 546254 -> **7.995 frames per packet** |
+| `under` / `over` | 425 / 346 = **16.1 / 13.1 per minute** (run 3: 10.3 / 8.9 -- same order, same PAIRED shape) |
+| overrun EVENTS | 101, averaging 3.4 dropped frames each |
+| ring extremes | `fillmin=1 fillmax=15` -- **rail to rail**, and 15 is `RING-1`, the ceiling |
+| `seqgaps` / `bad` | 0 / 0 -- nothing was lost on the air |
+| trim | -60 .. 105 ppm |
+| `reprimes` / `primed` / `prime_ms` | 0 / 0 / 0 -- correct, the pre-fill is OFF in this arm |
+
+**The control arm reproduces the defect it exists to reproduce**, and `fillmax=15` is section 1's overrun
+mechanism caught in the act rather than inferred.  The instrument's bucket sum came to 68324 = `pkts - 1`
+EXACTLY -- the same invariant the gate asserts, holding on silicon over 68k intervals.
+
+### 7.2 The gap distribution, and the `TARGET` decision
+
+| gap | count | share |
+|---|---:|---:|
+| <=30 ms | 67,307 | 98.512% |
+| 30-50 ms | 988 | 1.446% |
+| 50-80 ms | 27 | 0.040% |
+| 80-120 ms | 2 | 0.003% |
+| >120 ms | 0 | 0% |
+| **worst** | **97 ms** | = 33.4 blocks |
+
+**DECISION: keep `TARGET 16` (46.4 ms), `RING 32`.**  It rides out **99.958%** of intervals (68295 of 68324).
+The worst gap is 97 ms -- BIGGER than the 35-45 ms this spec estimated from run 3's burst shape, so the
+estimate was low -- but it occurred TWICE in 26 minutes.  Covering it would need `TARGET 34 / RING 50`, i.e.
+99 ms of latency, to save two events; section 5 says explicitly to record such a tail rather than inflate
+`TARGET` until the numbers look nice.  The 29 intervals over 50 ms become BOUNDED re-primes -- one counted
+underrun each -- instead of underrun bursts, which is precisely what the re-prime exists for.
+
+### 7.3 Prediction for the change arm, recorded BEFORE it runs
+
+`over = 0` (hard); `reprimes` ~29 per 26 min with `under` ~= `reprimes`; `fillmin >= 4` and `fillmax <= 28`;
+one `prime_ms` ~46 ms at START and no start-up underrun burst; no audible change.
+
+### 7.4 A bench trap met on the way, and it is NOT a NEW-42 defect
+
+`bonds_boot=0` -- the board's bond store was empty while the iPhone still held a stale link key.  SSP then ran
+CORRECTLY to Just Works (`io_cap_req` -> `user_conf_req numeric=19466 -> accept`) and the PHONE failed it
+(`pairing_complete: status=0x05`, Authentication Failure).  `BtLink`'s designed legacy-PIN fallback then wrote
+`Write_Simple_Pairing_Mode = 0`, so **SSP was off for the rest of the session** and the next attempt went
+straight to `pin_code_req` with no IO-capability exchange -- the passcode prompt iOS showed.  **One failed SSP
+poisons every later attempt until the next boot**, because only PREPARE re-enables it.  Bench fix: forget the
+device on the phone, press SW4, pair fresh -- Just Works, `status=0x00`, first try.  Worth a follow-up issue:
+the fallback could re-issue `Write_Simple_Pairing_Mode = 1` when a PIN attempt fails, so a session recovers
+without a reboot.
 
 ## 8. Files (expected)
 
