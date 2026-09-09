@@ -682,10 +682,13 @@ PEER-SOURCE-ACCEPTED role=0x01 handle=0x0001
 PEER-SCAN-ENABLE 0x00
 PEER-SINK-RECORD ok
 PEER-SOURCE-STARTED
-PEER-SINK-DELAYREPORT tenth_ms=232
+PEER-SINK-DELAYREPORT tenth_ms=464
 PEER-SINK-AVCTP opened
 PEER-SINK-AVRCP-INTERIM vol=100
 PEER-SINK-AVRCP interim_vol=100 set_ok=1
+PEER-SOURCE-PROGRESS pkts=50 frames=250 elapsed=5.2
+PEER-SOURCE-PROGRESS pkts=100 frames=500 elapsed=10.2
+PEER-SOURCE-PROGRESS pkts=150 frames=750 elapsed=15.2
 PEER-SOURCE pkts=150 frames=750 delay_reports=1 sink_record=1 started=1 errors=0
 PEER-SOURCE-STATE state=streaming acp_seid=1 handle=0x0001 avctp=1 vol_state=done interim_vol=100 set_ok=1
 PEERGREEN
@@ -724,6 +727,31 @@ ABSENT
     run_gate "$sink_rel" "run_qemu.sh" "$EVKB/$sink_rel/transcript_qemu.txt"; rc=$?
     [ "$rc" -eq 0 ] && result=0 || result=1
     report "green_still_passes_bt_sink_test" $result
+
+    # (c) NEW-42: a bt_jit line that merely EXISTS must not satisfy the gap histogram.  Take the green
+    # transcript and move g120's whole count into g30 -- the five buckets still sum to 149, so the
+    # interval-COUNT assertion is untouched and ONLY "where the bulk lands" can fire.  That is exactly
+    # the shape a stubbed `m_gap[0]++` produces (measured: RED demo (a), g30=149 g120=0), and it is
+    # invisible to every other assertion in the gate -- the packets still all arrived, decoded without
+    # a refusal and hit the PCM golden, because the histogram is an instrument beside the audio path
+    # and not in it.  Without this case the whole instrument could be dead and the gate green.
+    awk '$1 == "bt_jit" {
+             g30 = 0; g120 = 0
+             for (i = 1; i <= NF; i++) {
+                 if ($i ~ /^g30=/)  { split($i, a, "="); g30  = a[2] }
+                 if ($i ~ /^g120=/) { split($i, a, "="); g120 = a[2] }
+             }
+             for (i = 1; i <= NF; i++) {
+                 if ($i ~ /^g30=/)  { $i = "g30=" (g30 + g120) }
+                 if ($i ~ /^g120=/) { $i = "g120=0" }
+             }
+         }
+         { print }' "$EVKB/$sink_rel/transcript_qemu.txt" > "$WORK/sink_flatgap.txt"
+    run_gate "$sink_rel" "run_qemu.sh" "$WORK/sink_flatgap.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1                                                        # must not pass
+    echo "$OUT_TEXT" | grep -q "\[jit\] the 50-120 ms band does not carry the bulk" || result=1
+    report "flat_gap_histogram_fails_bt_sink_gate" $result
     unset GATE_VACUITY GATE_PEER_FIXTURE
 
     rm -f "$EVKB/$sink_rel"/build/sink.uart "$EVKB/$sink_rel"/build/sink.peer \

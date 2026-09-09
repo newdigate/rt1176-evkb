@@ -90,6 +90,30 @@
 #       (the peer opens none either, so the channel never exists and no volume command can arrive:
 #       every OTHER assertion in this gate still passes, which is precisely why this one is here.)
 #
+# DEMONSTRATED RED AGAIN (2026-09-09) for the NEW-42 assertions this gate grew -- the jitter
+# instrument's counts, the pre-fill, and the AVRCP counter partition.  Same method: mutate the named
+# COMMITTED source, rebuild, run, confirm the NAMED assertion fires, revert, rebuild, confirm green;
+# both repos `git status` clean afterwards:
+#   (e) AudioInputBluetooth.cpp onMedia(): `m_gap[gapBucketOf(d)]++` -> `m_gap[0]++` (the histogram
+#       stubbed -- it still COUNTS every interval, it just stops reading the duration) --
+#         FAIL: [jit] the 50-120 ms band does not carry the bulk of the peer's 100 ms pacing (want g80+g120 >= 120): bt_jit gapmax_ms=3142 g30=149 g50=0 g80=0 g120=0 gbig=0 ...
+#       (note g30=149: the SUM assertion is still satisfied, which is what makes the two separate
+#       assertions rather than one.  Nothing else in the gate moves -- every packet still arrived,
+#       decoded and hit the golden, because the histogram sits beside the audio path, not in it.)
+#   (f) the same line -> `m_gap[gapBucketOf(d)] += 2;` (each interval counted twice) --
+#         FAIL: [jit] the gap buckets do not account for every interval (want 149 = pkts-1): bt_jit gapmax_ms=3142 g30=0 g50=4 g80=10 g120=280 gbig=4 ...
+#       (and here the BAND assertion is still satisfied at 290, the mirror image of (e).)
+#   (g) M2Radio bt/Avrcp.cpp service(): KIND_ANSWERED folded back into `m_unsupported++`, which is
+#       exactly the pre-NEW-42 code --
+#         FAIL: [sink] the target counted an answered AV/C command as UNSUPPORTED (NEW-42 item B): bt_avrcp avctp=1 notif=1 ans=0 unsup=1 drop=0 vol=64
+#       (`vol=64` is UNCHANGED on that line -- the volume really did reach the codec.  The defect is
+#       only ever visible in the counters, which is why item B needed an assertion of its own.)
+#   (h) a scratch `-DBT_SINK_PREFILL=OFF` build dir (the bench's control arm), `build` symlinked to
+#       it for the run and restored afterwards --
+#         FAIL: [jit] the START pre-fill never completed (want primed=1): bt_jit ... fillmax=5 trimlo=-200 trimhi=0 overev=0 reprimes=0 primed=0 prime_ms=0
+#       (the ring runs shallow and the servo pins at its clamp, but neither of those is assertable
+#       here -- both are consume-side fictions under QEMU's clock.  `primed=` is not.)
+#
 # ★ The GOLDEN (SINK_GOLDEN below) is the CRC32 of the first 200 decoded left-channel blocks.  It
 # is reproducible because both halves are: the peer streams the committed sine.sbc's frames in
 # order, and SbcDecoder is integer arithmetic.  It moves only if the decoder's OUTPUT moves --
@@ -249,5 +273,63 @@ LASTAVRCP=$(grep -E "^bt_avrcp " "$OUT" | tail -1)
 [ -n "$LASTAVRCP" ] || fail "[sink] no bt_avrcp line"
 echo "$LASTAVRCP" | grep -q "avctp=1" || fail "[sink] the sink does not report its AVCTP channel up: $LASTAVRCP"
 echo "$LASTAVRCP" | grep -q "vol=64"  || fail "[sink] the target did not keep the volume the phone set: $LASTAVRCP"
+# ★ notif=1 ans=1 unsup=0 pins NEW-42 item B ON THE WIRE.  The source phase sends exactly TWO AV/C
+# commands -- one RegisterNotification(VOLUME_CHANGED) and one SetAbsoluteVolume -- and both must be
+# counted as ANSWERED.  The old firmware answered SetAbsoluteVolume perfectly and still counted it
+# `unsupported`, so `unsup=0` is the one reading that separates the two builds: every other assertion
+# in this gate, `vol=64` included, passes either way.  `ans=1` and not 2 because GetCapabilities
+# belongs to the [media] phase, which is bt_tone_test's peer, not this one.
+echo "$LASTAVRCP" | grep -qE " notif=1( |$)" || fail "[sink] the target did not answer the peer's RegisterNotification exactly once: $LASTAVRCP"
+echo "$LASTAVRCP" | grep -qE " unsup=0( |$)" || fail "[sink] the target counted an answered AV/C command as UNSUPPORTED (NEW-42 item B): $LASTAVRCP"
+echo "$LASTAVRCP" | grep -qE " ans=1( |$)"   || fail "[sink] the target did not count SetAbsoluteVolume as ANSWERED (NEW-42 item B): $LASTAVRCP"
 
-echo "PASS: A2DP SINK -- a paging source is accepted as an unbonded slave, paired and encrypted by the peer, reads our AudioSink record, configures 44.1/joint/16/8/loudness/53 with delay reporting and reaches START; 150 RTP packets / 750 SBC frames of the 1 kHz tone decoded into the graph (no gap, no refusal, level and PCM golden exact, one DelayReport); the SINK opens AVCTP itself at a peer that opens none (as an iPhone does not) and absolute volume completes over it -- VOLUME_CHANGED answered INTERIM vol=100, SetAbsoluteVolume(0x40) ACCEPTED and on the codec (volume=64, bt_avrcp avctp=1 vol=64); underruns and the servo's trim are SILICON claims -- QEMU has no audio clock"
+# --- the NEW-42 arrival instrument: its COUNTS, the only half QEMU can honestly speak to -----------
+# ★ THE MAGNITUDES ARE DELIBERATELY NOT ASSERTED, and a later reader must not "strengthen" this back
+# into a flake.  MEASURED 2026-09-09 over three runs: the guest reports one ~3.14 s inter-arrival
+# EVERY run -- gapmax_ms 3142 / 3143 / 3142 -- on a peer whose own log proves it never paused
+# (PEER-SOURCE-PROGRESS elapsed=5.2 / 10.2 / 15.2 for packets 50 / 100 / 150, exactly linear at its
+# 100 ms pace).  The guest's millis() runs slow against wall time and micros() then takes a single
+# step of the accumulated lag.  So `gbig` carries two to four entries with NO pause injected and
+# varies run to run, and `gapmax_ms` is a clock artefact rather than a measurement.  That is also why
+# nothing is scripted in hci_peer.py: a 400 ms pause could not be told apart from a 3.14 s artefact,
+# so it would have bought nothing and would have changed a peer file three other gates share.  The
+# bucket EDGES are pinned exactly where they can be pinned honestly -- tests/node_test case 11, which
+# drives boundary values through the real onMedia() with an injectable micros().
+# ★ And every CONSUME-side field on this line is exactly as fictional here as `under=` already is --
+# reprimes, fillmin, fillmax, trimlo, trimhi, prime_ms -- because QEMU walks update() on its own
+# schedule rather than at 44100/128 Hz.  None of them is asserted; they are SILICON claims.
+LASTJIT=$(grep -E "^bt_jit " "$OUT" | tail -1)
+[ -n "$LASTJIT" ] || fail "[jit] no bt_jit line -- the NEW-42 arrival instrument never printed"
+# The five buckets must sum to exactly pkts-1: every ACCEPTED packet after the first records exactly
+# one inter-arrival interval.  `pkts` is read from the same heartbeat the assertions above already
+# pinned at 150, so the 149 is DERIVED rather than a bare literal that could drift apart from it.  A
+# dead histogram sums to 0; a double-count sums to 298; a bucketing that drops the out-of-range case
+# sums to less.  None of that is visible in any other field on the line.
+GAPWANT=$(echo "$LASTHB" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^pkts=/) { split($i,a,"="); print a[2]-1 } }')
+[ -n "$GAPWANT" ] || fail "[jit] could not read pkts= from the streaming heartbeat: $LASTHB"
+echo "$LASTJIT" | awk -v want="$GAPWANT" \
+    '{s=0; for(i=1;i<=NF;i++) if ($i ~ /^g(30|50|80|120|big)=/) { split($i,a,"="); s+=a[2] } } END{exit !(s == want+0)}' \
+    || fail "[jit] the gap buckets do not account for every interval (want $GAPWANT = pkts-1): $LASTJIT"
+# The peer paces media at 100 ms -- a number the firmware has no way to know and cannot invent -- so
+# the bulk of the 149 intervals must land in the band that straddles that pace: g80 (50-80 ms) plus
+# g120 (80-120 ms).  A stubbed m_gap[0]++ still sums to 149 and fails HERE, which is what makes this
+# assertion separate from the one above rather than a duplicate; so does any bucketing that does not
+# read the interval's DURATION at all.
+# ★ THE BAND, NOT g120 ALONE, AND THAT IS A MEASUREMENT RATHER THAN A PREFERENCE.  Spec s4.2 asks for
+# `g120 >= 120` on the strength of three IDLE runs (138 / 140 / 142).  Measured 2026-09-09 under eight
+# CPU spinners, g120 reads 122 / 124 / 125 -- a margin of two on a floor of 120 -- because the same
+# guest-clock lag that invents the 3.14 s outlier also makes the ordinary 100 ms interval MEASURE
+# short, and it migrates into g80 (6 -> 9..13) as the machine gets busier.  A single-bucket floor
+# would therefore have joined this tree's documented load-sensitivity class (m_rx_demo[txaggr],
+# m2_uap_lwip[uap], bt_tone_test[media]) by construction.  The band absorbs exactly that migration
+# and nothing else: it reads 145-147 idle and 133-135 under the same eight spinners, and it is still
+# 0 against the stubbed histogram.  gbig is deliberately OUTSIDE it -- the artefact lives there.
+echo "$LASTJIT" \
+    | awk '{s=0; for(i=1;i<=NF;i++) if ($i ~ /^g(80|120)=/) { split($i,a,"="); s+=a[2] } } END{exit !(s >= 120)}' \
+    || fail "[jit] the 50-120 ms band does not carry the bulk of the peer's 100 ms pacing (want g80+g120 >= 120): $LASTJIT"
+# The START pre-fill ran to completion -- the node buffered TARGET blocks of audio before it played
+# the first one, instead of playing from an empty ring and counting the whole start-up as underruns.
+echo "$LASTJIT" | grep -qE " primed=1( |$)" \
+    || fail "[jit] the START pre-fill never completed (want primed=1): $LASTJIT"
+
+echo "PASS: A2DP SINK -- a paging source is accepted as an unbonded slave, paired and encrypted by the peer, reads our AudioSink record, configures 44.1/joint/16/8/loudness/53 with delay reporting and reaches START; 150 RTP packets / 750 SBC frames of the 1 kHz tone decoded into the graph (no gap, no refusal, level and PCM golden exact, one DelayReport); the SINK opens AVCTP itself at a peer that opens none (as an iPhone does not) and absolute volume completes over it -- VOLUME_CHANGED answered INTERIM vol=100, SetAbsoluteVolume(0x40) ACCEPTED and on the codec (volume=64, bt_avrcp avctp=1 vol=64) and BOTH AV/C commands counted as answered rather than unsupported (notif=1 ans=1 unsup=0 -- NEW-42 item B on the wire); the NEW-42 arrival instrument ran and bucketed at a pace only the peer knows -- the five gap buckets account for exactly pkts-1 intervals and the 50-120 ms band that straddles the peer's 100 ms pacing carries the bulk -- and the START pre-fill completed (primed=1); underruns, the servo's trim, every CONSUME-side field of bt_jit and every gap MAGNITUDE are SILICON claims -- QEMU has no audio clock, and its own clock invents a ~3.14 s inter-arrival on a peer that never pauses"
