@@ -106,7 +106,7 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **138 gates** — the SynthUI widget line added SIX on 2026-09-07/08 (`display/synthui_{lamp,level_meter,panel_button,piano_key,seven_segment,slide_toggle}_test`, NEW-24/26/27/28/29/30, one render golden each; 132 before them), and before that NEW-34 piece 5's ONE new gate is
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **139 gates** — NEW-41 added ONE on 2026-09-09 (`audio/bt_sink_test`: the EVKB as an A2DP SINK, driven by `hci_peer.py`'s new `source` phase; 138 before it), and before that the SynthUI widget line added SIX on 2026-09-07/08 (`display/synthui_{lamp,level_meter,panel_button,piano_key,seven_segment,slide_toggle}_test`, NEW-24/26/27/28/29/30, one render golden each; 132 before them), and before that NEW-34 piece 5's ONE new gate is
 `audio/bt_tone_test[soak]` (the unattended connection-resilience soak: ten
 forced drops by a RAW HCI_Disconnect, ten auto-reconnects with the stored key on
 fresh handles, the LOSS-time teardown witness `l2_free_loss_min=5`, clean media
@@ -585,8 +585,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **138 passed, 0 failed, 0 SKIP**, or
-**137 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
+`usb/usb_descriptor_survey`). The target is **139 passed, 0 failed, 0 SKIP**, or
+**138 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
 (`cm4_audio_test`) is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
@@ -664,6 +664,88 @@ walk does not spend 30 s paging stale bonds before it inquires.
   limited inquiry from this radio while the phone listed it — unresolved (range
   or LE-only), `M2_BT_INQUIRY_LIAC` exists because of it. The board "Wire not
   connected" that looked like the DAP wedge was the board being switched OFF.
+
+✅ **Measured 2026-09-09: 139 gates discovered, 139 passed, 0 failed, 0 SKIP** (`gates: 139 passed`,
+exit 0; `-l` reports 139; 23m31s wall), on the **NEW-41 A2DP SINK** software close-out — fully clean,
+every member of the load-sensitivity class green in the sweep itself (`cm4_audio_test` 4 s,
+`cm4_wire_int_slave_test` 1 s, `m2_rx_demo[txaggr]` 24 s, `[irq]` 21 s, `m2_uap_lwip[uap]` 4 s,
+`bt_tone_test[media]` 52 s), the new `audio/bt_sink_test` green in 31 s on its first sweep.
+`LICENSE-AUDIT: PASS` (after the sweep; `examples/audio/bt_sink_test` walked at 1177 dep paths);
+vacuity **45/45**; fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the sink gate against the
+GitHub-fetched ELF (configure log shows all three clones at the new pins; the golden `crc200=0x954D2C41`
+came back from fetched source). Every gate image REBUILT before the sweep because the CORE pin moved
+(124 rebuilt in place, 13 reconfigured fresh through the cached-toolchain-path trap, 0 failures; 16
+bench dirs with real firmware blobs skipped by name).
+★ **`nm … audioPllConfigure` is NOT a universal freshness witness**: `--gc-sections` drops it from every
+image that links neither I2S node — present in 11 of 161 rt1176 ELFs, so `grep -L` on it reports 150
+false stales. Freshness was established by the sibling checkouts sitting exactly at the pinned SHAs
+(local-first builds compile those) plus ELF mtime against the newest library source (140/141 newer;
+the one older links `teensy4`, whose newest source it postdates). Pick a symbol the image actually
+references, or use mtime against the dependency that moved.
+★ `icache_bench_hw`'s `sbc_crc` witness moved in QEMU too — `0x6c24f764` → `0x59fed328`,
+`sbc_crc_match=1` — which confirms the subband-major encoder change in bytes; silicon re-record pending.
+
+★ **NEW-41 (2026-09-09) added the 139th gate, `audio/bt_sink_test` — the EVKB as an A2DP SINK**
+(spec `docs/superpowers/specs/2026-09-08-bt-a2dp-sink-design.md`; M2Radio `56bcc8d`, teensy-cores
+`a9b0de5`, Audio `ff610a2`, all pushed and pinned). The fake peer (`m2_hci_probe/hci_peer.py`) grew a
+`source` phase: it PAGES the sink once the sink's Write_Scan_Enable shows inquiry scan, pairs by SSP as
+INITIATOR, SDP-queries our AudioSink record (`PEER-SINK-RECORD ok` requires the AVDTP 1.3 PDL bytes),
+walks DISCOVER (must carry a SNK TSEP) → GET_ALL_CAPABILITIES (must be EXACTLY `2F 15 02 35` + delay
+reporting) → SET_CONFIGURATION 44.1/joint/16/8/loudness/bitpool 53 → OPEN → the media channel → START,
+then streams 150 RTP packets (750 frames) of the encoder tests' `sine.sbc`; the firmware decodes them
+through `AudioInputBluetooth` into the SAI-clocked graph. Asserted: every packet/frame received with
+`seqgaps=0 over=0 bad=0`, decoded level `rms=10413` in a 9900–10950 band (mean |L| of a 16384 sine is
+10430 — this is what caught a doubled decoder scale, when every structural check stayed green), the
+decoded-PCM golden `crc200=0x954D2C41`, exactly ONE DelayReport (232 = the 8-block ring target in
+0.1 ms, inside the peer's 1..20000 range), and the servo trim inside its ±200 clamp. DEMONSTRATED RED
+three ways by name: `Sdp::setRole` left at SOURCE → `PEER-SINK-RECORD-BAD` (an empty attribute list —
+what a phone would call "no A2DP sink"); `SYNTH_SCALE` doubled → the level band; a 48 kHz SET_CONFIG →
+`PEER-SOURCE-REJECT sig=3 hex=23030729`. Two vacuity cases (the card-absent shape fails "never became
+listening" even with a PERFECT peer tally supplied) — 45 in the suite.
+★ **Underruns and the trim are SILICON claims.** QEMU has no audio clock, and it cannot even carry A2DP at
+the audio rate: 115200-baud H4 through the guest's 1 KB `HciTransport` RX ring stalls at exactly
+`pkts=2` after START (2 runs in 8) when the peer paces at 14.5 ms, so the gate paces 100 ms/packet and
+asserts nothing rate-dependent. The P-only servo (`servo.h`, pure C, host-tested) has a steady-state fill
+offset of drift/kp — 2.5 blocks at ±100 ppm — and takes ~213 s to converge (tau = 1/(kp·1e-6)); its EMA
+runs x65536 because at x256 an INTEGER fill truncates to zero and the servo never moves (mutant RED). The
+core's `audioPllTrimPpm` trims WHATEVER fraction `audioPllConfigure()` recorded (48 k: 32.768 counts/ppm;
+44.1 k: 30.1056) — necessary because `AudioOutputI2S` had its OWN copy of the PLL bring-up with different
+constants (loopDiv 30, num 1056/den 10000) and the first trim would have written a 48 k numerator against
+a 10000 denominator. `sai1176.c` (the `*Int` nodes) still carries a third copy; the trim declines
+(returns 0, writes nothing) when nothing has been configured — a graph on `AudioOutputI2SInt` will not
+servo. `ai_write` is now BOUNDED because the trim runs in the SAI ISR.
+★★ **THE SBC ENCODER HAD A REAL BUG THAT NO BENCH COULD HEAR** (M2Radio `7145030`, found by NEW-41's
+Task 1 review): `Sbc::allocateBits`'s leftover-bit loops were CHANNEL-major; A2DP §12.7 is SUBBAND-major.
+A foreign decoder read our sample fields at the wrong widths on any broadband stereo/joint content —
+87 of 344 noise frames bit-exact against ffmpeg, now 344/344 — and EVERY bench acceptance so far
+(`bt_tone_test`, `acid_box`'s `cBtL/cBtR`) fed the SAME signal to L and R, where the zeroed difference
+channel takes almost no bits and leaves no leftovers to misplace: measured, the defect is invisible at
+L == R even on broadband noise. The clean tones on the Shokz/Bose/ESP32 were real and proved nothing
+about this. Caught by the DIFFERENTIAL oracle (ours → ffmpeg's decoder on decorrelated noise), not by
+1436 structural checks; the encode-direction arm now pins JOINT_STEREO, which nothing else did. Two
+consequences: the encoded BYTES changed (header and scale factors identical, sample payload divergent),
+so `timing/icache_bench_hw`'s `sbc_crc=0x6c24f764` cross-build witness is STALE until re-measured on the
+bench (annotated, not re-invented); and a MONO frame at bitpool ≥129 HUNG `allocateBits` — the decoder
+bounds bitpool per mode before it allocates (448 hostile headers all return), and the encoder clamps.
+★ **Review-found defects on the sink path, each RED-pinned before trust, several shared with the SOURCE:**
+`A2dpSink::start()` (and `A2dpSource::start()`) did not reset Avdtp/Avrcp, so after any NON-loss end the
+next attempt re-adopted a dead channel and answered DISCOVER to CID 0x0000 — the same class CLAUDE.md
+already records for `Avdtp::reset()`, wearing the `start()` face; `Avdtp::reset()` left the initiator's
+kickoff armed (the next `service()` sent through a null L2cap — a SEGV in the host suite); a media
+channel that reaches L2CAP OPEN after the tick that answers START was NEVER adopted (`mediaRemoteCid()`
+0 forever, every RTP packet answered with a General Reject built from its own header) — the sink now
+adopts in STREAMING and the source too; a post-CLOSE in-flight RTP packet fell into `onSignalling` (the
+sink latches the media CID by CHANNEL IDENTITY, not by asking Avdtp, which forgets it at CLOSE); a
+CLOSE/ABORT before START ended `OK` + "stream closed" (now `AVDTP_FAILED`); session state was assigned
+AFTER callbacks in both `BtSession` and `BtSinkSession`, so a `disconnect()` from a callback was silently
+overwritten (the five source gates were re-run green on the change — the host suite provably cannot see it);
+and the SOURCE adopted a 4-subband/8-block SET_CONFIG verbatim while the encoder can only produce 16/8
+(now rejected `0x07 0x29`, caps narrowed to `0x15`). `Sdp::setRole` is PROCESS-GLOBAL — one SDP role per
+image; nothing constructs both today.
+★ The `[media]` fake peer expects the 17-byte AVRCP GetCapabilities reply (two events: PLAYBACK_STATUS +
+VOLUME_CHANGED) since the Avrcp absolute-volume work; `bt_tone_test[media]` was deliberately RED for
+the six commits between and its fixture was re-captured. `A2dpSink` is a SEPARATE class from
+`A2dpSource` (two policies, not one with flags), and `BtSinkSession` from `BtSession` — the piece-2 lesson.
 
 ✅ **Measured 2026-09-08: 138 gates discovered, 137 passed, 1 failed, 0 SKIP**
 (`gates: 137 passed, 1 failed`; `-l` reports 138), the first full sweep with
