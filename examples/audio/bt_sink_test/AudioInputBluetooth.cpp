@@ -21,9 +21,16 @@ void AudioInputBluetooth::begin() {
     // resting on the ring reset, and there is deliberately no host case pinning it -- there is nothing to pin.
     m_haveRx = false; m_inOverrun = false;
     servo_init(&m_servo, TARGET); m_applied = m_servo.trim_ppm; audioPllTrimPpm(m_servo.trim_ppm);
+    // Arm the START pre-fill for THIS stream (NEW-42).  m_primeBlocks resets with it because it is a DURATION
+    // and not a tally -- it measures one prime, and this is where a prime begins.  m_reprimes does NOT reset,
+    // for the reason given above about the EVENT counters it will be printed beside.
+    m_priming = m_prefill; m_primed = false; m_primeBlocks = 0;
     m_live = true;                                 // ... and last: everything update() reads is settled by here
 }
-void AudioInputBluetooth::end() { m_live = false; m_head = m_tail = 0; m_fragLen = 0; m_fragging = false; }   // the trim HOLDS (servo_step is skipped while !m_live)
+// The trim HOLDS (servo_step is skipped while !m_live).  m_priming is cleared because priming() is an
+// OBSERVABLE: with the stream gone, update() would do nothing with the flag either way, but a reader between
+// end() and the next begin() must not be told a prime is running on a stream that no longer exists.
+void AudioInputBluetooth::end() { m_live = false; m_head = m_tail = 0; m_fragLen = 0; m_fragging = false; m_priming = false; }
 void AudioInputBluetooth::pushFrame(const uint8_t *f, uint16_t len) {
     // The decoder writes blocks*subbands samples per channel and reads the block count from the FRAME HEADER, not
     // from the AVDTP configuration -- a peer that sends 4-block frames after negotiating 16 would leave 96 of the
@@ -89,18 +96,43 @@ void AudioInputBluetooth::update(void) {
     // purpose.  Counting it would bury the real underruns under 344 of these a second, and the ring is left
     // alone so a RESUME plays what is already in it.
     bool run = m_live && !m_hold;
-    if (!run || tail == m_head) { memset(l->data, 0, sizeof l->data); memset(r->data, 0, sizeof r->data); if (run) m_under++; }
-    else {
-        uint8_t f = fill();                        // pre-pop: the margin this block found, for fillMin/fillMax
-        if (f < m_fillMin) m_fillMin = f;
-        if (f > m_fillMax) m_fillMax = f;
-        memcpy(l->data, m_ring[tail].l, sizeof l->data); memcpy(r->data, m_ring[tail].r, sizeof r->data); m_tail = (uint16_t)((tail + 1) % RING);
+    bool popped = false;
+    if (run) {
+        // START PRE-FILL (NEW-42, spec s2).  Until TARGET blocks are buffered this transmits silence and counts
+        // NO underrun -- nothing is missing, the stream has not started yet.  A prime ends at the TOP of the
+        // block that finds TARGET, and THAT BLOCK POPS: waiting one more period would add a silent block for
+        // nothing, and popping here is what makes the first block out the first block decoded.
+        // servo_recentre() states the completion postcondition -- a prime hands the servo a filter with no
+        // history, so the 0 -> TARGET climb cannot drag the trim.  For the START prime it is a NO-OP today and
+        // NO CASE CAN REDDEN IT: begin()'s servo_init already centres the filter and a priming block steps no
+        // servo, so the filter is still centred when the prime ends (MEASURED -- deleting this call leaves both
+        // host arms green).  It is Task 4's mid-stream re-prime, which starts from a wound-up filter, that will
+        // give it teeth; it is stated here rather than there because it is this transition's postcondition.
+        if (m_priming && fill() >= TARGET) { m_priming = false; m_primed = true; servo_recentre(&m_servo); }
+        if (m_priming) {
+            // The prime is TIMED, and primeBlocks() says so.  There is deliberately NO `if (!m_primed)` guard
+            // here: m_primed cannot be true while m_priming is (only begin() arms a prime, and it clears both),
+            // so a guard would be dead code that no case could redden.  Task 4's re-prime is what makes the
+            // question real -- extend this figure or re-time it -- and it must be answered there, with a case.
+            m_primeBlocks++;
+        } else if (tail == m_head) {
+            m_under++;                             // the ring ran dry: silence, and this one IS an underrun
+        } else {
+            uint8_t f = fill();                    // pre-pop: the margin this block found, for fillMin/fillMax
+            if (f < m_fillMin) m_fillMin = f;
+            if (f > m_fillMax) m_fillMax = f;
+            memcpy(l->data, m_ring[tail].l, sizeof l->data); memcpy(r->data, m_ring[tail].r, sizeof r->data); m_tail = (uint16_t)((tail + 1) % RING);
+            popped = true;
+        }
     }
+    if (!popped) { memset(l->data, 0, sizeof l->data); memset(r->data, 0, sizeof r->data); }
     // The servo runs once per audio block -- this IS the block clock -- and only while the link is up and not
     // held: with the link down or the source suspended the trim is frozen where it was, so a resumed stream
     // starts from the rate it had learned.  (servo_step's own `hold` argument expresses the same freeze; the
-    // node skips the call outright so a held stream costs nothing at all in the ISR.)
-    if (run) {
+    // node skips the call outright so a held stream costs nothing at all in the ISR.)  And NOT while PRIMING:
+    // a priming ring is being filled deliberately, and integrating that ramp would trim the PITCH against a
+    // fill the servo did not cause.
+    if (run && !m_priming) {
         int32_t t = servo_step(&m_servo, fill(), 0);
         if (t < m_trimLo) m_trimLo = t;
         if (t > m_trimHi) m_trimHi = t;

@@ -82,9 +82,9 @@ public:
         "instrument prints a permanent false fillmin=0 while looking perfectly healthy.  The "
         "one-packet-of-headroom claim is TARGET's, not this bound's: it is asserted in node_test case 14, "
         "because the bench's CONTROL arm (16/8) deliberately breaks it.");
-    // Whether begin() pre-fills to TARGET before the first pop, and whether a dry ring re-primes (Task 3/4 of the
-    // NEW-42 plan).  Defaults to the compile-time PREFILL; the sketch never calls this, the host tests do, so that
-    // the ring/parser cases run without the pre-fill and the pre-fill cases run with it, in BOTH CMake arms.
+    // Whether begin() pre-fills the ring to TARGET before the first pop (and, once Task 4 lands, whether a dry
+    // ring re-primes).  Defaults to the compile-time PREFILL; the sketch never calls this, the host tests do, so
+    // that the ring/parser cases run without the pre-fill and case 12 runs with it, in BOTH CMake arms.
     void setPrefill(bool on) { m_prefill = on; }
     // --- the NEW-42 instrument: cumulative for the RUN, never per-heartbeat -----------------------------------
     // The committed transcript samples every 30th heartbeat, so a per-window maximum would be invisible in 29 of
@@ -103,6 +103,24 @@ public:
     int32_t  trimLo() const { return m_trimLo; }                           // the servo's output range: "is the trim settled" as a number
     int32_t  trimHi() const { return m_trimHi; }
     uint32_t overEvents() const { return m_overEv; }                       // RUNS of consecutive dropped frames (a burst of 8 is one event)
+    // --- START pre-fill (NEW-42, spec s2) -----------------------------------------------------------------
+    // While PRIMING, update() transmits silence, counts no underrun and steps no servo; the block that finds
+    // TARGET blocks in the ring ends the prime, recentres the servo's filter and pops straight away, so the
+    // first block OUT is the first block DECODED.  begin() popping from an empty ring is what produced the
+    // ~27 start-up underruns of the iPhone bench (spec s1) -- the SAI ISR walks the graph from the moment the
+    // stream is configured, long before the source's first packet can have landed.
+    // primeBlocks() is the prime's length in blocks (x 2.9 ms).  Unlike the tallies above it is PER-STREAM,
+    // because it is a DURATION and not a count: begin() restarts it and the value stands from the moment the
+    // prime completes until the next begin().  Today the only prime is the one begin() arms, so it is the
+    // START figure; Task 4's re-prime must decide -- and pin with a case -- whether a mid-stream prime extends
+    // it or re-times it.
+    // reprimes() counts mid-stream ring rebuilds and is LIFETIME for the same reason m_overEv is: it counts
+    // EVENTS printed beside m_over/m_under, and a reconnect must not make that column jump backwards.  Nothing
+    // increments it yet (Task 4) and nothing prints it yet (Task 6), so there is no reading here to misread.
+    bool     priming() const { return m_priming; }
+    bool     primed() const { return m_primed; }
+    uint32_t primeBlocks() const { return m_primeBlocks; }
+    uint32_t reprimes() const { return m_reprimes; }
 private:
     // PRIVATE: one caller (onMedia).  The bucket edges are pinned END TO END through gapBucket() in node_test
     // case 11, by feeding intervals that sit exactly on each inclusive top -- asserting this function against
@@ -119,8 +137,8 @@ private:
     volatile bool m_live = false;
     volatile bool m_hold = false;                  // AVDTP SUSPEND: run silent, freeze the servo, count nothing
     // Not volatile, unlike m_live/m_hold: it is written from main context BEFORE begin() publishes m_live,
-    // never while update() is running, so no ISR can observe it change.  Nothing reads it yet -- begin() and
-    // update() take it up in Task 3/4 of the NEW-42 plan.
+    // never while update() is running, so no ISR can observe it change.  begin() is its only reader, and it
+    // reads it once, into m_priming.
     bool m_prefill = PREFILL;
     // Instrument state.  m_gap*/m_lastRx*/m_overEv are written by onMedia() (main context) and read by loop() --
     // the same context m_over is written from, and volatile for the same reason given at m_under/m_over below.
@@ -136,6 +154,13 @@ private:
     volatile uint8_t m_fillMin = (uint8_t)RING, m_fillMax = 0;
     volatile int32_t m_trimLo = 0, m_trimHi = 0;
     volatile uint32_t m_overEv = 0; bool m_inOverrun = false;
+    // The pre-fill's state.  All three are written by update() (the SAI ISR) and read from main context -- the
+    // host tests today, loop()'s heartbeat once Task 6 prints them -- so they are volatile for the reason the
+    // block above gives.  begin() writes all three and end() writes m_priming, and those writes are safe for
+    // that block's OTHER reason and no other: both fence themselves behind m_live = false, so the ISR cannot be
+    // inside the branch that touches them.  m_reprimes is written by nothing yet (Task 4).
+    volatile bool m_priming = false, m_primed = false;
+    volatile uint32_t m_primeBlocks = 0, m_reprimes = 0;
     volatile int32_t m_applied = 0;                // last ppm handed to the PLL, so update() only writes on a change
     uint16_t m_lastSeq = 0; bool m_haveSeq = false;
     uint8_t m_frag[1100]; uint16_t m_fragLen = 0; bool m_fragging = false;  // a fragmented SBC frame being reassembled across packets

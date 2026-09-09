@@ -45,10 +45,11 @@ static int g_fails = 0, g_checks = 0;
 // A fresh node per case.  begin() resets the ring, the decoder and the servo but deliberately NOT the
 // counters (they are the run's lifetime tally, which is what the heartbeat reports), so cases must not share
 // one instance or every count would be read against the previous case's history.
-// EVERY case here calls setPrefill(false) before begin(): they exercise the ring, the parser and the servo
-// WITHOUT the START pre-fill (NEW-42), which will get its own cases in Task 3/4 of the plan.  With the pre-fill
-// on, update() holds silence until TARGET blocks are buffered, and "feed one frame, update once, it comes out"
-// would be false.
+// EVERY case here except 12 calls setPrefill(false) before begin(): they exercise the ring, the parser and the
+// servo WITHOUT the START pre-fill (NEW-42), which is case 12's own subject.  With the pre-fill on, update()
+// holds silence until TARGET blocks are buffered, and "feed one frame, update once, it comes out" would be
+// false.  Case 12 turns it ON explicitly rather than relying on the build's PREFILL default, so that it runs
+// in BOTH CMake arms -- the control arm compiles with BT_SINK_PREFILL=0.
 struct Node {
     AudioInputBluetooth *n;
     Node() : n(new AudioInputBluetooth()) { ShimAudio::reset(); }
@@ -419,6 +420,91 @@ int main() {
         t4 += 20000; shimSetMicros(t4); feed(n4, onePacket(4, f));
         CHECK(n4->gapBucket(0) == 2);                                             // the interval AFTER the resume IS measured
         CHECK(n4->gapMaxUs() == 20000);
+    }
+    {   // 12. PRE-FILL AT START (NEW-42, spec s2).  begin() used to start popping from an EMPTY ring -- the SAI
+        //     ISR walks the graph from the moment the stream is configured, so update() runs long before the
+        //     source's first packet can have landed, and the iPhone bench counted ~27 underruns in the first
+        //     second because of it.  With the pre-fill on, update() transmits silence and counts NO underrun
+        //     until TARGET blocks are buffered; the block that FINDS TARGET completes the prime AND pops, so the
+        //     first block OUT is the first block DECODED and nothing that was buffered is discarded.
+        //     DEMONSTRATED RED, each by name: the pre-fill never armed (`m_priming = false` in begin()) fails
+        //     priming() and reads underruns()=8 below; a prime that DISCARDS its buffer (`m_head = m_tail = 0`
+        //     at completion) fails meanAbs(first) > 3000; a prime whose completing block DEFERS its pop fails
+        //     that and fill() == TARGET - 1.  ** The obvious `m_tail = m_head;` mutant is NOT one of them: the
+        //     local `tail` is captured at the top of update(), so the pop branch reads m_ring[tail] and writes
+        //     m_tail = tail + 1 over it, and the whole suite stays green.  Measured, not assumed. **
+        Node nd; nd->setPrefill(true); nd->begin();
+        CHECK(nd->priming()); CHECK(!nd->primed()); CHECK(nd->primeBlocks() == 0);
+        // (a) THE DRY START -- the defect itself.  Eight blocks (23 ms) of graph walk before any packet arrives.
+        for (int i = 0; i < 8; i++) {
+            nd->update();
+            CHECK(nd->priming());
+            const int16_t *tx = lastTx(0); CHECK(tx && allZero(tx));
+        }
+        CHECK(nd->underruns() == 0);                   // RED with the pre-fill removed: 8
+        CHECK(nd->primeBlocks() == 8);                 // RED with the m_primeBlocks++ removed: 0
+        // The servo must not step while priming either: a priming ring is being filled deliberately, and
+        // integrating that 0 -> TARGET ramp would trim the PITCH against a fill the servo did not cause.
+        // Asserted HERE and not after the prime, because the recentre at completion HIDES it -- MEASURED with
+        // `!m_priming` dropped from the servo's condition: this reads -14 (default arm) / -7 (control arm) and
+        // is the ONLY failing check in either build, while the post-completion trimPpm() below stays 0.
+        CHECK(nd->trimPpm() == 0);
+        // (b) A SUSPEND DURING THE PRIME.  hold() takes precedence over priming exactly as it does over the
+        //     underrun counter (case 9): a held source is not filling the ring, so those blocks are not prime
+        //     time either and primeBlocks() must not inflate across a pause.
+        nd->hold(true);
+        for (int i = 0; i < 5; i++) nd->update();
+        CHECK(nd->priming());                                                      // ... the prime is not abandoned
+        CHECK(nd->primeBlocks() == 8);                                             // RED with the priming branch outside `if (run)`: 13
+        CHECK(nd->underruns() == 0);
+        nd->hold(false);
+        // (c) FILLING.  The first frame in is LOUD and every later one silent, so the block that eventually
+        //     comes out names which one it was -- and while the ring is part full the node must still transmit
+        //     silence, not the audio it is holding back.
+        std::vector<uint8_t> loud = encodeFrame(16000), quiet = encodeFrame(0);
+        uint16_t seq = 1;
+        feed(nd, onePacket(seq++, loud));                                          // the FIRST decoded block is loud
+        for (int i = 1; i < AudioInputBluetooth::TARGET; i++) {                    // TARGET-1 silent periods, a packet each
+            nd->update();
+            CHECK(nd->priming());                                                  // the prime does not end early
+            const int16_t *tx = lastTx(0); CHECK(tx && allZero(tx));               // ... and pops nothing while it runs
+            feed(nd, onePacket(seq++, quiet));
+        }
+        CHECK(nd->fill() == AudioInputBluetooth::TARGET);
+        const uint32_t primeLen = (uint32_t)(8 + AudioInputBluetooth::TARGET - 1);
+        CHECK(nd->primeBlocks() == primeLen);
+        ShimAudio::reset();
+        nd->update();                                                              // finds TARGET: prime complete, block popped
+        CHECK(!nd->priming()); CHECK(nd->primed());
+        CHECK(nd->fill() == AudioInputBluetooth::TARGET - 1);                      // the completing block POPPED
+        // A stream's FIRST frame decodes quiet by construction (the filterbank ramps in; case 1 measured 4299 for
+        // a 16384 sine), so the bar is 3000: well above the quiet frame's 0, well below steady state.
+        const int16_t *first = lastTx(0); CHECK(first && ShimAudio::meanAbs(first) > 3000);
+        CHECK(nd->underruns() == 0);
+        CHECK(nd->primeBlocks() == primeLen);                                      // latched: the completing block is not one of them
+        CHECK(nd->trimPpm() == 0);                                                 // the servo restarted from zero error
+        // (d) ... and once PRIMED the underrun counter WORKS AGAIN.  A prime that never ended would silence it
+        //     for the rest of the run -- the one shape of instrument failure that reads as good news.  (Task 4
+        //     makes a dry ring RE-PRIME; in this commit every dry block is still one underrun.)
+        for (int i = 0; i < AudioInputBluetooth::TARGET; i++) nd->update();        // TARGET-1 pops, then one dry block
+        CHECK(nd->fill() == 0);
+        CHECK(nd->underruns() == 1);
+        // (e) A RECONNECT re-primes.  begin() runs on EVERY stream start (bt_sink_test.cpp's onStreamCb) and the
+        //     second stream starts from an empty ring exactly as the first did.  This is what pins begin()'s
+        //     m_primed and m_primeBlocks resets: on a FRESH node both already read their initial values, so
+        //     deleting either line leaves every check above green.
+        nd->begin();
+        CHECK(nd->priming()); CHECK(!nd->primed()); CHECK(nd->primeBlocks() == 0);
+        CHECK(nd->fill() == 0);
+        CHECK(nd->underruns() == 1);                                               // the tally is LIFETIME, like m_over
+        nd->update();
+        CHECK(nd->underruns() == 1);                                               // ... and the new stream's dry start adds none
+        CHECK(nd->primeBlocks() == 1);
+        // (f) end() -- the stream was lost or closed.  A dead stream is not priming, and priming() is an
+        //     observable: leaving it set would report a prime running on a stream that no longer exists.
+        nd->end();
+        CHECK(!nd->priming());
+        CHECK(ShimAudio::outstanding() == 0);
     }
     {   // 14. HEADROOM (NEW-42).  A real source delivers EIGHT frames per RTP packet (iPhone bench 2026-09-09:
         //     frames/pkts = 7.97), so three back-to-back packets are 24 blocks.  The DEFAULT ring must swallow
