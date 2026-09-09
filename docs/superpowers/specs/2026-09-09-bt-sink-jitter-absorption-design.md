@@ -118,9 +118,25 @@ bt_jit gapmax_ms=N g30=N g50=N g80=N g120=N gbig=N fillmin=N fillmax=N trimlo=N 
   one failure of headroom rather than eight independent ones.
 * `reprimes`, `prime_ms` -- how often the buffer had to rebuild, and how long the one at START took.
 
-**All cumulative since `begin()`, not per-heartbeat-window.**  Deliberate: the committed transcript samples
-every 30th heartbeat, so a per-window max would be invisible in 29 of 30 windows -- and an extreme that is
-never printed reads exactly like an extreme that never happened.
+**All cumulative for the RUN, not per-heartbeat-window.**  Deliberate: the committed transcript samples every
+30th heartbeat, so a per-window max would be invisible in 29 of 30 windows -- and an extreme that is never
+printed reads exactly like an extreme that never happened.
+
+★ **Corrected during execution (2026-09-09).**  This section first said "cumulative since `begin()`", and that
+is WRONG on this node: `begin()` runs on every stream START, so a reconnect would have printed `overev=0` beside
+`over=89` -- an impossible pair -- and made a 30 s heartbeat delta jump backwards, which is exactly how section 1
+read the bench's run 3.  The tallies and extremes are therefore LIFETIME, like the `m_over`/`m_under`/`m_pkts`
+they are printed beside, and `begin()` resets only the two FLAGS whose staleness produces a WRONG rather than a
+stale reading: `m_haveRx` (which would otherwise time the first packet of the new stream against the last packet
+of the old one -- an interval of seconds, landing in `>120 ms` and pinning `gapMaxUs` at something that is not
+jitter) and `m_inOverrun`.  CLAUDE.md already records this footgun class from L2cap's `l2frag`, which does reset
+per attempt and needs a warning saying so; a second one was not worth having.
+
+★ **A SUSPEND is not a delivery gap.**  `hold(false)` clears `m_haveRx` on the resume edge, so a deliberate pause
+starts a fresh interval.  Without it a 30 s pause measured `gapmax_ms=30023` against `23` while streaming -- and
+since the iPhone bench exercises pause/resume, and this distribution is what SIZES `TARGET`, the pause would have
+corrupted the one number the task exists to produce.  The node already applies the same principle to the underrun
+counter ("a suspended source is not an underrun").
 
 Cost is two compares per block in the ISR and one `micros()` per packet in main context.
 

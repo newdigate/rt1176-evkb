@@ -329,14 +329,14 @@ Append to `$S/tests/node_test.cpp`, before the final `printf`:
         for (uint8_t i = 0; i < AudioInputBluetooth::GAP_BUCKETS; i++) CHECK(nd->gapBucket(i) == 0);   // no predecessor yet
         // Bucket tops are INCLUSIVE (<=30 ms is the first bucket) and 30000 / 50000 / 120000 sit exactly on them:
         // RED with a `<` compare -- three entries each move up one bucket.
-        const uint32_t gaps_us[] = { 10000, 30000, 25000, 45000, 50000, 70000, 100000, 120000, 130000 };
+        const uint32_t gaps_us[] = { 10000, 30000, 25000, 45000, 50000, 70000, 80000, 100000, 120000, 130000 };
         uint16_t seq = 2;
         for (size_t i = 0; i < sizeof gaps_us / sizeof gaps_us[0]; i++) {
             nd->update(); t += gaps_us[i]; shimSetMicros(t); feed(nd, onePacket(seq++, f));
         }
         CHECK(nd->gapBucket(0) == 3);                                             // 10, 30, 25
         CHECK(nd->gapBucket(1) == 2);                                             // 45, 50
-        CHECK(nd->gapBucket(2) == 1);                                             // 70
+        CHECK(nd->gapBucket(2) == 2);                                             // 70, 80
         CHECK(nd->gapBucket(3) == 2);                                             // 100, 120
         CHECK(nd->gapBucket(4) == 1);                                             // 130
         CHECK(nd->gapMaxUs() == 130000);
@@ -352,6 +352,12 @@ Append to `$S/tests/node_test.cpp`, before the final `printf`:
         n2->update();                                                             // samples 1, pops -> 0
         CHECK(n2->fillMin() == 1);
         CHECK(n2->trimLo() <= 0 && n2->trimHi() >= 0 && n2->trimLo() <= n2->trimHi());
+        // ... and the extremes must BRACKET the trim the servo actually reached.  The ordering invariant above is
+        // satisfied by the INIT values on its own -- MEASURED: with this line absent, deleting both tracking lines
+        // from update() leaves every other check in the suite green -- so it is THIS line that pins the tracking.
+        // The servo samples fill AFTER the pop, so draining the ring to empty parks the trim BELOW zero in both
+        // arms (-12 at TARGET 16, -4 at TARGET 8) and an untracked trimLo of 0 cannot bracket it.  RED in BOTH.
+        CHECK(n2->trimLo() <= n2->trimPpm() && n2->trimHi() >= n2->trimPpm());
         // Overrun EVENTS: a full ring dropping eight in a row is over=8 overev=1; free one slot, land one, drop
         // one more -> overev=2.  RED with the run latch removed: overEvents() == 8.
         Node n3; n3->setPrefill(false); n3->begin();
