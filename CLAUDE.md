@@ -665,6 +665,15 @@ walk does not spend 30 s paging stale bonds before it inquires.
   or LE-only), `M2_BT_INQUIRY_LIAC` exists because of it. The board "Wire not
   connected" that looked like the DAP wedge was the board being switched OFF.
 
+✅ **Measured 2026-09-09 (afternoon): 139 gates discovered, 139 passed, 0 failed, 0 SKIP** (`gates: 139
+passed`, exit 0; 23m28s wall), on the **NEW-41 bench close-out** pin (M2Radio `9f24315`: the Category 2
+AVRCP record + sink-initiated AVCTP found on the iPhone). 18 M2Radio-linking gate dirs rebuilt first (14
+blob-carrying bench dirs skipped by name); fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the sink
+gate on the GitHub-fetched ELF (clone at `9f24315`; `volume=64`, `bt_avrcp avctp=1`, golden unmoved);
+vacuity 45/45; `LICENSE-AUDIT: PASS`, 118 manifests. Every BT gate and every load-class gate green in the
+sweep itself (`bt_sink_test` 29 s, `[media]` 50 s, `[soak]` 48 s, `[hci]` 67 s, `[txaggr]` 23 s,
+`[uap]` 4 s, `cm4_audio_test` 4 s).
+
 ✅ **Measured 2026-09-09: 139 gates discovered, 139 passed, 0 failed, 0 SKIP** (`gates: 139 passed`,
 exit 0; `-l` reports 139; 23m31s wall), on the **NEW-41 A2DP SINK** software close-out — fully clean,
 every member of the load-sensitivity class green in the sweep itself (`cm4_audio_test` 4 s,
