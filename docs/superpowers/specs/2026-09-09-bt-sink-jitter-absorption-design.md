@@ -192,9 +192,15 @@ What survives is what the peer's pacing determines and the clock cannot distort:
 * **the interval COUNT** -- the five buckets must sum to exactly `pkts - 1` (149), because every accepted
   packet after the first records exactly one interval.  Measured 149 on all three runs.  A dead histogram
   sums to 0; a double-count sums to 298.
-* **where the bulk lands** -- `g120` (the <=120 ms bucket) must carry at least 120 of the 149, since the peer
-  paces at 100 ms.  Measured 138 / 140 / 142.  A stubbed `m_gap[0]++` puts all 149 in `g30` and fails this;
-  the firmware has no way to know the peer's pace, so it cannot invent a distribution that satisfies it.
+* **where the bulk lands** -- `g80 + g120` (the 50-120 ms band) must carry at least 120 of the 149, since the
+  peer paces at 100 ms.  A stubbed `m_gap[0]++` puts all 149 in `g30` and scores 0; the firmware has no way to
+  know the peer's pace, so it cannot invent a distribution that satisfies this.
+  ★ **The BAND, not the single `g120` bucket, and that was measured rather than chosen.**  `g120` alone reads
+  138 / 140 / 142 idle but **122 / 124 / 125 under eight CPU spinners** -- a margin of two over a 120 floor.
+  The same guest-clock lag that invents the 3.14 s outlier also makes ordinary 100 ms intervals measure SHORT,
+  migrating them one bucket down into `g80` (6 idle -> 9..13 loaded).  A single-bucket floor would have joined
+  this tree's documented load-sensitivity class by construction, on a gate that has never been in it.  The band
+  reads 145-147 idle and 133-135 under the same load, with identical discriminating power against the stub.
 * **`primed=1`** -- the START pre-fill completed.
 * **`bt_avrcp notif=1 ans=1 unsup=0`** -- the source phase sends exactly two AV/C commands, one
   RegisterNotification and one SetAbsoluteVolume.  `unsup=0` is where the old firmware printed `unsup=1`, so
