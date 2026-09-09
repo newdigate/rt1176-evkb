@@ -173,24 +173,46 @@ must not assert them.  With the peer pacing at 100 ms and a fictional consume cl
 re-prime dozens of times per run; a gate asserting `reprimes=1` would be asserting a fiction, and a
 fiction that happened to hold would be worse than no assertion.
 
-What is real in QEMU is the ARRIVAL side, because it is driven entirely by the peer's pacing -- a number
-the firmware has no way to know:
+What is real in QEMU is the ARRIVAL side -- but only its COUNTS, not its magnitudes, and that was measured
+rather than assumed.
 
-* the peer's `source` phase gains **one scripted ~400 ms pause** mid-stream (safe: the H4 desynchronisation
-  documented in that gate's header came from pacing too FAST, not from pausing);
-* the gate asserts the histogram reads it back -- the bulk of intervals in the 100 ms bucket, exactly one
-  entry in `gbig`, `gapmax_ms` ~ 400.  Without the injected gap every interval is 100 ms and only one
-  bucket is ever exercised, so the gap is what makes the instrument's bucket discrimination testable at
-  all;
-* `primed=1` -- the prime completed;
-* unchanged and provably unaffected: `crc200` (computed at DECODE time in `pushFrame`, so a gap that drops
-  no frame cannot move it), `over=0`, `bad=0`, the decoded-level band, the DelayReport, the AVRCP
-  assertions.
+★ **The guest's clock makes every gap MAGNITUDE a fiction too (measured 2026-09-09, three runs).**  The fake
+peer's own log proves it never pauses (`PEER-SOURCE-PROGRESS elapsed=5.2 / 10.2 / 15.2` for packets 50/100/150,
+exactly linear at its 100 ms pace), yet the guest measures one ~3.14 s inter-arrival every run --
+`gapmax_ms` 3142 / 3143 / 3142.  The guest's `millis()` runs slow against wall time (about 14 packets per guest
+second against the peer's 10 per wall second) and `micros()` then takes a single step of the accumulated lag.
+So `gbig` carries three or four entries with NO pause injected, and varies run to run.  This REFUTES two of the
+three assertions this section originally planned -- "exactly one entry in `gbig`" and "`gapmax_ms` ~ 400" --
+and it retires the idea of scripting a gap in the peer at all: a 400 ms pause cannot be distinguished from a
+3.14 s artefact, so the gap would have bought nothing and would have changed a peer file three other gates
+share.
 
-Both new assertions DEMONSTRATED RED by name before they are trusted (a stubbed instrument gives the wrong
-histogram; the injected gap removed gives `gbig=0`).  `tools/gate-vacuity.test.sh` gains negatives: a
-capture carrying a perfect `bt_jit` line but no stream must still fail, and the card-absent shape must
-still fail.
+What survives is what the peer's pacing determines and the clock cannot distort:
+
+* **the interval COUNT** -- the five buckets must sum to exactly `pkts - 1` (149), because every accepted
+  packet after the first records exactly one interval.  Measured 149 on all three runs.  A dead histogram
+  sums to 0; a double-count sums to 298.
+* **where the bulk lands** -- `g120` (the <=120 ms bucket) must carry at least 120 of the 149, since the peer
+  paces at 100 ms.  Measured 138 / 140 / 142.  A stubbed `m_gap[0]++` puts all 149 in `g30` and fails this;
+  the firmware has no way to know the peer's pace, so it cannot invent a distribution that satisfies it.
+* **`primed=1`** -- the START pre-fill completed.
+* **`bt_avrcp notif=1 ans=1 unsup=0`** -- the source phase sends exactly two AV/C commands, one
+  RegisterNotification and one SetAbsoluteVolume.  `unsup=0` is where the old firmware printed `unsup=1`, so
+  this pins item B on the wire.  (`ans=1`, not 2: `GetCapabilities` belongs to the `[media]` phase, which is
+  `bt_tone_test`'s peer, not this one.)
+
+The BUCKET EDGES are not gated, deliberately: with the magnitudes distorted a gate cannot pin them honestly.
+They are pinned exactly on the host instead, in `node_test` case 11, which drives boundary values through the
+real `onMedia()` with an injectable `micros()` -- all four inclusive tops, each demonstrated RED.  That split
+is the honest one: the gate proves the instrument RAN and bucketed at a pace only the peer knows; the host
+suite proves it bucketed CORRECTLY.
+
+Unchanged and provably unaffected: `crc200` (computed at DECODE time in `pushFrame`, so nothing about ring
+depth, pre-fill or re-prime can move it), `over=0`, `bad=0`, the decoded-level band, the DelayReport (now 464,
+derived from `TARGET`; the gate greps its presence, not its value).
+
+`tools/gate-vacuity.test.sh` gains a negative: a capture carrying a well-formed `bt_jit` line whose buckets do
+NOT account for every interval must still fail, by name.
 
 Gate count stays **139**.
 
