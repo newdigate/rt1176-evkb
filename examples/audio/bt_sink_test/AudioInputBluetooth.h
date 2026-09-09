@@ -131,7 +131,9 @@ public:
     // of a long window, and s5 expects re-primes to occur, so a figure that grew or restarted with them could
     // not be checked against TARGET at all.  How long a re-prime took is the SOURCE's absence, which the gap
     // histogram measures on the arrival side; reprimes() counts the events.  (Accepted gap: with `under`
-    // counting events, the total silence inserted is in no counter.  reprimes() * TARGET bounds it below.)
+    // counting events, the total silence inserted is in no counter.  reprimes() * TARGET estimates it -- not a
+    // strict floor: a re-prime whose source already has TARGET blocks buffered resumes on the very next block.
+    // It holds for a real-time-paced source, which is the only kind that occurs.)
     // reprimes() counts mid-stream ring rebuilds and is LIFETIME for the same reason m_overEv is: it counts
     // EVENTS printed beside m_over/m_under, and a reconnect must not make that column jump backwards.  Nothing
     // prints it yet (Task 6), so there is no reading here to misread.
@@ -185,11 +187,12 @@ private:
     volatile uint8_t m_fillMin = (uint8_t)RING, m_fillMax = 0;
     volatile int32_t m_trimLo = 0, m_trimHi = 0;
     volatile uint32_t m_overEv = 0; bool m_inOverrun = false;
-    // The pre-fill's state.  All three are written by update() (the SAI ISR) and read from main context -- the
+    // The pre-fill's state.  All FOUR are written by update() (the SAI ISR) and read from main context -- the
     // host tests today, loop()'s heartbeat once Task 6 prints them -- so they are volatile for the reason the
-    // block above gives.  begin() writes all three and end() writes m_priming, and those writes are safe for
-    // that block's OTHER reason and no other: both fence themselves behind m_live = false, so the ISR cannot be
-    // inside the branch that touches them.  m_reprimes is written by nothing yet (Task 4).
+    // block above gives.  begin() writes the first three and end() writes m_priming, and those writes are safe
+    // for that block's OTHER reason and no other: both fence themselves behind m_live = false, so the ISR cannot
+    // be inside the branch that touches them.  m_reprimes is the exception in the other direction: only the ISR
+    // ever writes it (the re-prime), because it is a LIFETIME event count and begin() must not reset it.
     volatile bool m_priming = false, m_primed = false;
     volatile uint32_t m_primeBlocks = 0, m_reprimes = 0;
     volatile int32_t m_applied = 0;                // last ppm handed to the PLL, so update() only writes on a change

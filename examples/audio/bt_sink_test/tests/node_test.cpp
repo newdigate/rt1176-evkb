@@ -584,8 +584,10 @@ int main() {
         //        however long the SOURCE took to deliver TARGET blocks, which is exactly what the gap histogram
         //        (gapmax_ms / gbig) is built to measure, on the arrival side where it can be measured honestly.
         //    What that costs, recorded rather than fixed by overloading this counter: with `under` now counting
-        //    EVENTS, the total SILENCE inserted is in no counter.  reprimes() * TARGET bounds it from below,
-        //    and spec s5 does not ask for it.
+        //    EVENTS, the total SILENCE inserted is in no counter.  reprimes() * TARGET estimates it -- not a
+        //    strict floor, since a re-prime whose source already has TARGET blocks buffered resumes on the very
+        //    next block, but true of a real-time-paced source, which is the only kind that occurs -- and spec s5
+        //    does not ask for it.
         //    RED with the `if (!m_primed)` guard removed from update()'s priming branch: the 50 silent blocks
         //    plus the TARGET-1 refill blocks land here too -- MEASURED 68 against 3 in the default arm, 60
         //    against 3 in the control arm.  (The dry block ITSELF is not among them: it takes the dry branch,
