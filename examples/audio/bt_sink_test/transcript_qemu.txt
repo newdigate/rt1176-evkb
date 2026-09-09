@@ -1,0 +1,92 @@
+RT1176 BT sink test up
+serial2=up_115200
+m2_wifi_reset=released
+bt_wake=pulsed_10ms_low (GPIO_DISP_B2_13, mux returned to LPUART2_RTS_B)
+bt_cts=undriven
+bt_fw_source=synthetic
+bt_fw_download=no_start_indication chip_id=0x0000 start_inds=0 sent=0/1024
+hci_reset=ok attempts=1 timeouts=0 framing=0 starved=0 qfull=0 late=0
+hci_version: hci_ver=11 hci_rev=0xBEEF lmp_ver=11 manufacturer=0x1234 lmp_subver=0xCAFE
+bd_addr=11:22:33:44:55:66
+hci_buffer: acl_len=1021 acl_num=8 sco_len=64 sco_num=0
+bonds_boot=0
+sink=listening name="EVKB-SINK" cod=0x240414
+hb streaming=0 pkts=0 frames=0 seqgaps=0 under=0 over=0 bad=0
+bt_sink fill=0 trim_ppm=0 rms=0 rms_blocks=0 crc200=0xFFFFFFFF
+bt_link links=0 lost=0 closed=0 reason=0x00 state=listening
+bt_hci ncmd=0 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
+page_scan=on
+scan_enable=0x03
+event_mask: st=ok status=0x00
+ssp_mode: st=ok status=0x00 mode=1
+page_timeout: st=ok status=0x00 slots=0x2000
+class_of_device=0x240414 st=ok
+local_name="EVKB-SINK" st=ok
+conn_req: bd=AA:BB:CC:DD:EE:01 -> accept(slave, unbonded)
+page_scan=off
+scan_enable=0x00
+link_key_req: bd=AA:BB:CC:DD:EE:01 -> neg_reply (no stored key)
+io_cap_req: bd=AA:BB:CC:DD:EE:01 -> NoInputNoOutput auth_req=0x04
+hci_event: code=0x32 len=9
+user_conf_req: bd=AA:BB:CC:DD:EE:01 numeric=123456 -> accept (Just Works)
+pairing_complete: status=0x00 bd=AA:BB:CC:DD:EE:01
+link_key: bd=AA:BB:CC:DD:EE:01 type=4 bond=saved
+auth_complete: status=0x00 handle=0x0001
+encryption_change: status=0x00 handle=0x0001 enabled=1
+hb streaming=0 pkts=0 frames=0 seqgaps=0 under=0 over=0 bad=0
+bt_sink fill=0 trim_ppm=0 rms=0 rms_blocks=0 crc200=0xFFFFFFFF
+bt_link links=0 lost=0 closed=0 reason=0x00 state=connecting
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+sink: adopted sbc bitpool=53 mode=3 blocks=16 sub=8
+sink: streaming bitpool=53
+a2dp_sink=ok bonds=1 paired_by=peer
+streaming by=incoming bitpool=53 mode=3
+sink: delay_report=460
+hb streaming=1 pkts=7 frames=35 seqgaps=0 under=248 over=0 bad=0
+bt_sink fill=0 trim_ppm=-173 rms=10256 rms_blocks=35 crc200=0x72510AB3
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+hb streaming=1 pkts=21 frames=105 seqgaps=0 under=563 over=0 bad=0
+bt_sink fill=0 trim_ppm=-200 rms=10376 rms_blocks=105 crc200=0x8B97E041
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+hb streaming=1 pkts=35 frames=175 seqgaps=0 under=889 over=0 bad=0
+bt_sink fill=0 trim_ppm=-200 rms=10397 rms_blocks=175 crc200=0x57893F76
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+hb streaming=1 pkts=49 frames=245 seqgaps=0 under=1215 over=0 bad=0
+bt_sink fill=0 trim_ppm=-200 rms=10396 rms_blocks=245 crc200=0x954D2C41
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+hb streaming=1 pkts=62 frames=310 seqgaps=0 under=1540 over=0 bad=0
+bt_sink fill=0 trim_ppm=-200 rms=10404 rms_blocks=310 crc200=0x954D2C41
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+hb streaming=1 pkts=77 frames=385 seqgaps=0 under=1862 over=0 bad=0
+bt_sink fill=3 trim_ppm=-200 rms=10409 rms_blocks=385 crc200=0x954D2C41
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+hb streaming=1 pkts=90 frames=450 seqgaps=0 under=2187 over=0 bad=0
+bt_sink fill=0 trim_ppm=-200 rms=10406 rms_blocks=450 crc200=0x954D2C41
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+hb streaming=1 pkts=104 frames=520 seqgaps=0 under=2508 over=0 bad=0
+bt_sink fill=0 trim_ppm=-200 rms=10410 rms_blocks=520 crc200=0x954D2C41
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+hb streaming=1 pkts=118 frames=590 seqgaps=0 under=2834 over=0 bad=0
+bt_sink fill=0 trim_ppm=-200 rms=10412 rms_blocks=590 crc200=0x954D2C41
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+hb streaming=1 pkts=132 frames=660 seqgaps=0 under=3163 over=0 bad=0
+bt_sink fill=0 trim_ppm=-200 rms=10410 rms_blocks=660 crc200=0x954D2C41
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+hb streaming=1 pkts=146 frames=730 seqgaps=0 under=3489 over=0 bad=0
+bt_sink fill=0 trim_ppm=-200 rms=10413 rms_blocks=730 crc200=0x954D2C41
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6
+hb streaming=1 pkts=150 frames=750 seqgaps=0 under=3863 over=0 bad=0
+bt_sink fill=0 trim_ppm=-200 rms=10413 rms_blocks=750 crc200=0x954D2C41
+bt_link links=1 lost=0 closed=0 reason=0x00 state=streaming
+bt_hci ncmd=1 timeouts=0 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=6

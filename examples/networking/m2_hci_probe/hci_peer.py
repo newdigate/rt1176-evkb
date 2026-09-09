@@ -53,6 +53,18 @@ Phases (argv[1]):
               Ends once three links have streamed and both drops + the reject happened.
   soak        N host-forced drops; the reconnect flow N times over -- fresh handle per page,
               stored-key auth each re-page, media validated per link; tally PEER-SOAK
+  source      THE MIRROR OF `media` (NEW-41): the peer is an A2DP SOURCE and the firmware is the
+              SINK.  It waits for the host to enable INQUIRY SCAN (a sink announces itself; a source
+              never does), then PAGES it (Connection_Request), is accepted as slave, drives the whole
+              SSP dance AS INITIATOR to Encryption_Change, opens SDP and reads the host's AudioSink
+              record (ProtocolDescriptorList: L2CAP/PSM 0x0019 + AVDTP 1.3 -- absent unless
+              Sdp::setRole(SINK) really published it), then opens AVDTP signalling and drives
+              DISCOVER -> GET_ALL_CAPABILITIES -> SET_CONFIGURATION (44.1k joint / 16 blk 8 sub
+              loudness / bitpool 53 + delay reporting) -> OPEN -> media channel -> START, and finally
+              STREAMS 250 RTP packets of five 119-byte SBC frames each -- 1250 frames of a REAL 1 kHz
+              tone read from sine.sbc (argv[3]) -- so the firmware's decoder, PCM ring and audio graph
+              are exercised with bytes it cannot invent.  Accepts the sink's DelayReport.
+              Tally PEER-SOURCE.
 Exit 0 when the phase's last expected opcode was seen (avdtp: when the peer
 recorded an accepted START; media: when the media validation above holds; reconnect: when the FOURTH
 link's START is accepted with no exception and no deadline).
@@ -105,11 +117,12 @@ def v3_data_req(length, offset, err=0):
     return f + bytes([crc8(f)])
 LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP_REMOTE_NAME_REQ,
                "starve": OP_RESET, "fwdnld": OP_READ_BD_ADDR, "baud": OP_READ_BUFFER_SIZE,
-               "avdtp": 0x0413, "media": 0x0413, "reconnect": 0x0413, "lifecycle": 0x0413, "soak": 0x0413}   # Set_Connection_Encryption -- last COMMAND before
+               "avdtp": 0x0413, "media": 0x0413, "reconnect": 0x0413, "lifecycle": 0x0413, "soak": 0x0413,
+               "source": 0x0413}   # Set_Connection_Encryption -- last COMMAND before
                                   # signalling; the real end of avdtp, media, reconnect, lifecycle and soak is checked
                                   # separately (peer.avdtp["started"] / peer.media / peer.lc / peer.sk, below)
 LAST_OPCODE_COUNT = {"baud": 2}   # phases whose terminal opcode must be seen N times (default 1)
-DEADLINE = {"reconnect": 50, "lifecycle": 55, "soak": 55}   # seconds from socket connect; default 45.  reconnect runs one inquiry + FOUR links + four disconnects
+DEADLINE = {"reconnect": 50, "lifecycle": 55, "soak": 55, "source": 50}   # seconds from socket connect; default 45.  reconnect runs one inquiry + FOUR links + four disconnects
                                    # (~17 s wall measured from socket connect) and must not share [media]'s budget; 50 keeps it BELOW tools/qrun's 60 s QRUN_TIMEOUT so the peer announces before QEMU is killed.
                                    # lifecycle runs three legs with a 3 s (M2_BT_RETRY_MS) gap before leg 3's re-page (~25 s wall measured); 55 keeps it below the same 60 s cap.
                                    # soak runs the reconnect flow N times over on a firmware-side timer (M2_BT_SOAK_PERIOD_MS); 55 is the gate's own qrun budget, not a real soak duration.
@@ -140,6 +153,14 @@ def phase_done(phase, peer):
         # counting it, and this check requires streamed >= n+1, so an unclean final link fails via streamed anyway.
         return (sk["streamed"] >= sk["n"] + 1 and sk["disconnects"] >= sk["n"] and sk["badmedia"] == 0
                 and not peer.avdtp["error"] and peer.rc["errors"] == 0)
+    # source's real end is 250 media packets DELIVERED to a sink that reached START, with every
+    # peer-side tripwire clean.  Its LAST_OPCODE entry is inert on purpose: in this phase the HOST is
+    # the slave and never issues Set_Connection_Encryption (the PEER drives security and injects the
+    # Encryption_Change), so the opcode fallback below would never fire -- the entry exists only so
+    # `phase not in LAST_OPCODE` keeps rejecting typos.
+    if phase == "source":
+        s = peer.src
+        return s["started"] and s["pkts"] >= SOURCE_PKTS and s["errors"] == 0 and not peer.avdtp["error"]
     return peer.cmds.count(LAST_OPCODE[phase]) >= LAST_OPCODE_COUNT.get(phase, 1)
 
 def connect(path):
@@ -172,6 +193,37 @@ def ncp(handle, n=1):                             # Number_Of_Completed_Packets:
     return event(0x13, bytes([1]) + struct.pack("<HH", handle, n))
 SBC_CIE_EXPECT = bytes.fromhex("21150235")        # 44.1k joint / 16 blk 8 sub loudness / bitpool 2..53 -- the calibration config
 SBC_CIE_BITPOOL35 = bytes.fromhex("21150223")     # ...bitpool 2..35 -- what the peer SETs as leg-2 initiator (83-byte frames)
+
+# --- source phase (NEW-41): the peer is the A2DP SOURCE, the firmware the SINK ------------------
+SOURCE_PKTS = 150                                 # RTP packets streamed; 5 frames each = 750 SBC frames
+SOURCE_FRAMES_PER_PKT = 5
+SOURCE_FRAME_BYTES = 119                          # bitpool 53, joint stereo, 16 blocks, 8 subbands
+# ★ DELIBERATELY SLOWER THAN REAL TIME, and it is not a fudge.  Five frames are 14.512 ms of audio
+# (5 x 128 samples at 44.1 kHz), so a real source sends ~626 wire bytes every 14.5 ms = ~43 kB/s --
+# nearly FOUR TIMES what a 115200-baud HCI UART can carry.  Real hardware runs this link at 3 Mbaud
+# (M2_BT_FAST_BAUD); qemu2's LPUART models no baud at all, so the socket delivers as fast as the
+# emulated guest will take it, and the guest's 1 KB RX extension (HciTransport::RX_EXTRA) holds
+# barely 1.7 media packets.  Any guest pause longer than that -- and a pause that is trivial in
+# guest-milliseconds can be tens of WALL milliseconds under TCG, while this pacing is wall-clock --
+# overruns the ring, desynchronises H4 and the link never recovers.  MEASURED at the audio rate:
+# 2 runs in 8 stalled at exactly pkts=2, immediately after START.  100 ms/packet is ~6.2 kB/s, about
+# half of what 115200 baud would carry, which is the honest ceiling for this transport and leaves
+# ~7 packet-times of headroom for a guest stall.  Nothing the gate asserts depends on the RATE:
+# it asserts that every frame arrived, decoded and produced the right samples.
+SOURCE_PERIOD = 0.100
+SOURCE_TS_STEP = SOURCE_FRAMES_PER_PKT * 128      # RTP timestamp units (samples) per packet
+# The sink's own class of device (Write_Class_of_Device in BtLink's PREPARE); this is OURS, the phone's:
+# 0x5A020C = audio+telephony+object-transfer services, major class 0x02 (phone), minor 0x03 (smartphone).
+# Nothing in the firmware asserts it -- a source's CoD is not a sink's business -- so it is only realism.
+SOURCE_COD = bytes([0x0C, 0x02, 0x5A])            # little-endian on the wire
+# What GET_ALL_CAPABILITIES must return for the sink's one SEP, byte for byte after the 2-byte AVDTP header:
+# media transport (01 00), media codec SBC (07 06 00 00) 44.1 kHz + all modes (2F), 16 blocks / 8 subbands /
+# LOUDNESS (15), bitpool 2..53 (02 35), delay reporting (08 00).  A sink advertising anything else -- other
+# rates, 4 subbands, SNR -- is one whose decoder cannot honour what it offers.
+SINK_CAPS_EXPECT = bytes.fromhex("010007060000" + "2F" + "15" + "0235" + "0800")
+# The AudioSink record's ProtocolDescriptorList, as it appears inside a ServiceSearchAttributeResponse:
+# UUID16 0x0019 (AVDTP), UINT16 0x0103 (AVDTP 1.3).  Present only if Sdp::setRole(SINK) published record 2.
+SINK_PDL_MARK = bytes.fromhex("190019090103")
 
 def fresh_media(frame_bytes=119):
     # The RTP/SBC validation state for ONE stream.  frame_bytes is the negotiated SBC frame
@@ -206,6 +258,14 @@ class Peer:
         self.sk = {"n": SOAK_N, "disconnects": 0, "streamed": 0, "last_counted": 0,
                    "badmedia": 0, "stale_acl": 0, "stale_run": 0, "stale_max": 0}
         if phase == "soak": self.rc["reject_on_link"] = 0            # never reject a key: create_conns is >= 1 whenever a key is offered
+        # --- source phase (NEW-41): every bit of state for ONE outbound A2DP session at the firmware's sink.
+        # `*_scid` are the CIDs WE assign (the host sees them as its channels' remote cid); `*_dcid` the ones it
+        # assigns back.  sdp_scid is fixed rather than allocated from next_cid so a capture reads unambiguously.
+        self.src = {"state": "idle", "handle": 0x0001, "sig_scid": None, "sig_dcid": None,
+                    "media_scid": None, "media_dcid": None, "sdp_scid": 0x0E87, "sdp_dcid": None,
+                    "tl": 0, "acp_seid": None, "sink_record_ok": False, "started": False,
+                    "pkts": 0, "seq": 0, "ts": 0, "frame_idx": 0, "delay_reports": 0, "errors": 0,
+                    "frames": None, "next_at": 0.0, "started_at": 0.0, "paged": False, "psm": {}, "cfg": {}}
         # --- V3 bootloader state (fwdnld phase only) ---
         # While `boot` is True every received byte belongs to the download, not
         # to HCI: the host is answering the bootloader, and H4 framing has not
@@ -267,6 +327,7 @@ class Peer:
         self.cur_media_cid = None
     def cur_handle(self):
         if self.phase == "lifecycle": return self.lc["handle"]
+        if self.phase == "source": return self.src["handle"]
         return self.rc["handle"]
     def l2id(self):
         i = self.next_l2id; self.next_l2id = (self.next_l2id + 1) & 0xFF
@@ -324,7 +385,20 @@ class Peer:
             if params and (params[0] & 0x02): self.lc["scan_on"] += 1
             else: self.lc["scan_off"] += 1
             self.log.append("PEER-SCAN-ENABLE 0x%02x" % (params[0] if params else 0)); self.send(cmd_complete(opcode, b"\x00"))
-        elif opcode == 0x0C01 or opcode == 0x0C56 or opcode == 0x0C1A:      # Set_Event_Mask, Write_Simple_Pairing_Mode, Write_Scan_Enable
+        elif opcode == 0x0C1A and self.phase == "source":                   # Write_Scan_Enable: bit 0 = INQUIRY scan -> the sink is discoverable
+            s = params[0] if params else 0
+            self.log.append("PEER-SCAN-ENABLE 0x%02x" % s)
+            self.send(cmd_complete(opcode, b"\x00"))
+            # A source pages a sink it can SEE.  The first time the firmware makes itself discoverable is
+            # therefore the only honest trigger: page before that and the gate would pass against a sink
+            # that never announced itself at all.
+            if (s & 0x01) and not self.src["paged"]:
+                self.src["paged"] = True; self.src["state"] = "paging"
+                self.log.append("PEER-SOURCE-PAGING")
+                self.send(event(0x04, DEVICES[0][0] + SOURCE_COD + b"\x01"), 0.3)      # Connection_Request: bd, class, ACL
+        elif opcode == 0x0C01 or opcode == 0x0C56 or opcode == 0x0C1A \
+                or opcode == 0x0C24 or opcode == 0x0C13:                    # Set_Event_Mask, Write_SSP_Mode, Write_Scan_Enable,
+                                                                            # Write_Class_of_Device, Write_Local_Name (the sink's identity)
             self.send(cmd_complete(opcode, b"\x00"))
         elif opcode == 0x0405:                                              # Create_Connection -> Command Status, Connection Complete
             bd = params[:6]
@@ -345,6 +419,18 @@ class Peer:
                 self.lc["conns"] += 1; self.reset_link()
             self.log.append("PEER-CREATE-CONN role_switch=%d" % params[12])
             self.send(cmd_status(opcode)); self.send(event(0x03, b"\x00" + struct.pack("<H", self.cur_handle()) + params[:6] + b"\x01\x00"), 0.1)
+        elif opcode == 0x0409 and self.phase == "source":                   # Accept_Connection_Request: the SINK accepts our page
+            bd = params[:6]; role = params[6] if len(params) > 6 else 0xFF
+            if role != 0x01: self.log.append("PEER-ACCEPT-BAD-ROLE 0x%02x" % role); self.src["errors"] += 1   # a sink stays SLAVE
+            if bd != DEVICES[0][0]:
+                self.log.append("PEER-ACCEPT-BAD-BD %s" % bd.hex()); self.src["errors"] += 1
+            self.reset_link(); self.src["state"] = "linked"; self.peer_bd = bd
+            self.log.append("PEER-SOURCE-ACCEPTED role=0x%02x handle=0x%04x" % (role, self.src["handle"]))
+            self.send(cmd_complete(opcode, b"\x00" + bd))
+            self.send(event(0x03, b"\x00" + struct.pack("<H", self.src["handle"]) + bd + b"\x01\x00"), 0.05)   # Connection_Complete
+            # WE are the master and the SSP INITIATOR: ask for a link key, which the sink (no bond) refuses,
+            # and the shared 0x040C/0x042B/0x042C ladder below runs the Just-Works dance from there.
+            self.send(event(0x17, bd), 0.15)                                # Link_Key_Request
         elif opcode == 0x0409:                                              # Accept_Connection_Request (lifecycle leg 2): the host accepts OUR page
             bd = params[:6]; role = params[6] if len(params) > 6 else 0xFF
             if role != 0x01: self.log.append("PEER-ACCEPT-BAD-ROLE 0x%02x" % role); self.lc["errors"] += 1   # must remain SLAVE
@@ -427,7 +513,14 @@ class Peer:
             self.send(event(0x36, b"\x00" + params[:6]), 0.05)              # Simple_Pairing_Complete
             self.send(event(0x18, params[:6] + key + b"\x04"), 0.1)         # Link_Key_Notification (unauthenticated combination)
             self.send(event(0x06, b"\x00" + struct.pack("<H", self.cur_handle())), 0.15)      # Authentication_Complete
-        elif opcode == 0x0413:                                              # Set_Connection_Encryption -> Encryption_Change on
+            if self.phase == "source":
+                # We are the MASTER here, so the sink never issues Set_Connection_Encryption -- it waits in
+                # BtLink's PR_WAIT_PEER_SECURE for the peer to secure the link (2 s deadline).  Injecting the
+                # Encryption_Change is what completes its inbound PAIR; only then does A2dpSink stand L2CAP up,
+                # so the SDP channel must be opened AFTER it, not before.
+                self.send(event(0x08, b"\x00" + struct.pack("<H", self.cur_handle()) + b"\x01"), 0.2)   # Encryption_Change on
+                self.src_open_sdp(0.5)
+        elif opcode == 0x0413:                                            # Set_Connection_Encryption -> Encryption_Change on
             self.send(cmd_status(opcode)); self.send(event(0x08, b"\x00" + struct.pack("<H", self.cur_handle()) + b"\x01"), 0.1)
         else:
             self.log.append("PEER-UNKNOWN-OPCODE 0x%04x" % opcode)
@@ -493,7 +586,7 @@ class Peer:
                 if len(self.buf) < 5 + alen: return
                 data, self.buf = self.buf[5:5 + alen], self.buf[5 + alen:]
                 h = hf & 0x0FFF
-                if not (self.phase in ("reconnect", "lifecycle", "soak") and h != self.cur_handle()): self.send(ncp(h))   # no buffer credit for a handle the peer has said does not exist
+                if not (self.phase in ("reconnect", "lifecycle", "soak", "source") and h != self.cur_handle()): self.send(ncp(h))   # no buffer credit for a handle the peer has said does not exist
                 self.handle_acl(h, data); continue
             if self.buf[0] != 0x01:                                     # only commands/ACL come from a host
                 self.log.append("PEER-BAD-TYPE 0x%02x" % self.buf[0]); self.buf = self.buf[1:]; continue
@@ -512,7 +605,7 @@ class Peer:
         # bad frame".  The happy-path parses below stay unguarded on purpose:
         # this try/except is the safety net, not a substitute for them.
         try:
-            if self.phase in ("reconnect", "lifecycle", "soak") and handle != self.cur_handle():
+            if self.phase in ("reconnect", "lifecycle", "soak", "source") and handle != self.cur_handle():
                 self.log.append("PEER-ACL-BAD-HANDLE 0x%04x (current 0x%04x)" % (handle, self.cur_handle())); return
             if len(d) < 4: return
             l2len, cid = struct.unpack("<HH", d[:4]); pl = d[4:4 + l2len]
@@ -533,6 +626,7 @@ class Peer:
                     self.sig(handle, bytes([0x04, ident + 1, 8, 0]) + struct.pack("<HH", scid, 0) + bytes([0x01, 0x02, 0xA0, 0x02]))  # our Config Request: MTU 672
                 elif code == 0x03:                                               # Connection Response to OUR reverse Connection Request
                     dcid, scid, result, status = struct.unpack("<HHHH", body[:8])
+                    if self.phase == "source": self.src_l2_conn_rsp(handle, dcid, scid, result); return
                     if self.phase == "lifecycle" and self.lc["leg"] == 2 and scid in (self.lc_init["sig_scid"], self.lc_init["media_scid"]):
                         self.lc_l2_conn_rsp(handle, dcid, scid, result); return
                     if scid == self.avc["my_cid"]:                                 # our AVCTP channel (media phase)
@@ -563,6 +657,7 @@ class Peer:
                     self.sig(handle, bytes([0x05, ident, 6 + len(opts), 0]) + struct.pack("<HHH", peer[0], 0, 0) + opts)   # SCID = the host's CID
                     if dcid == self.rev["my_cid"]: self.rev["cfg_req_seen"] = True; self.rev_maybe_query(handle)
                     if dcid == self.avc["my_cid"]: self.avc["cfg_req_seen"] = True; self.avc_maybe_send(handle)
+                    if self.phase == "source": self.src_cfg_seen(handle, dcid, "req")
                     if self.phase == "lifecycle" and self.lc["leg"] == 2:
                         if dcid == self.lc_init["sig_scid"]:     self.lc_init["sig_cfgreq"] = True;   self.lc_chan_ready(handle)
                         elif dcid == self.lc_init["media_scid"]: self.lc_init["media_cfgreq"] = True; self.lc_chan_ready(handle)
@@ -571,6 +666,7 @@ class Peer:
                     if scid not in [o for (o, _) in self.chans.values()]: self.log.append("PEER-L2CAP-CFGRSP-BAD-SCID 0x%04x" % scid)
                     if scid == self.rev["my_cid"] and result == 0: self.rev["cfg_rsp_seen"] = True; self.rev_maybe_query(handle)
                     if scid == self.avc["my_cid"] and result == 0: self.avc["cfg_rsp_seen"] = True; self.avc_maybe_send(handle)
+                    if self.phase == "source" and result == 0: self.src_cfg_seen(handle, scid, "rsp")
                     if self.phase == "lifecycle" and self.lc["leg"] == 2 and result == 0:
                         if scid == self.lc_init["sig_scid"]:     self.lc_init["sig_cfgrsp"] = True;   self.lc_chan_ready(handle)
                         elif scid == self.lc_init["media_scid"]: self.lc_init["media_cfgrsp"] = True; self.lc_chan_ready(handle)
@@ -586,6 +682,17 @@ class Peer:
             # data on one of our channels
             for peer_cid, (ours, psm) in self.chans.items():
                 if ours == cid:
+                    if self.phase == "source":
+                        # We are the INITIATOR of every channel here, so everything inbound is a response to
+                        # something we asked for -- except the sink's own DelayReport COMMAND, which
+                        # src_avdtp_response() handles.  Nothing may arrive on the media channel: a sink that
+                        # sends on it is not a sink.
+                        if ours == self.src["sig_scid"]:   self.src_avdtp_response(handle, pl)
+                        elif ours == self.src["sdp_scid"]: self.src_sdp_response(handle, pl)
+                        elif ours == self.src["media_scid"]:
+                            self.log.append("PEER-SOURCE-MEDIA-FROM-SINK hex=%s" % pl[:16].hex()); self.src["errors"] += 1
+                        else: self.log.append("PEER-SOURCE-UNEXPECTED-DATA cid=0x%04x" % cid)
+                        return
                     if psm == 0x0017: self.handle_avrcp(handle, pl); return
                     if psm == 0x0001: self.handle_sdp(handle, peer_cid, pl)
                     elif psm == 0x0019 and ours == self.avdtp["sig_cid"]: self.handle_avdtp(handle, peer_cid, pl)
@@ -623,7 +730,10 @@ class Peer:
     # --- the reverse SDP query (the Shokz's behaviour) ---
     # --- media phase: the AVRCP controller (see self.avc) ------------------------------------------
     AVRCP_GET_CAPS = bytes.fromhex("10110e01480000195810000001 03".replace(" ", ""))                 # tl 1, GetCapabilities(EVENTS_SUPPORTED)
-    AVRCP_GET_CAPS_RSP = bytes.fromhex("12110e0c4800001958100000030301 01".replace(" ", ""))         # STABLE {PLAYBACK_STATUS_CHANGED}
+    # STABLE {PLAYBACK_STATUS_CHANGED, VOLUME_CHANGED} -- 17 bytes, parameter length 4, TWO events.  NEW-41 added
+    # VOLUME_CHANGED (0x0D): a controller that does not see it here never registers for it, so a target's absolute
+    # volume would be write-only.  Bytes read off Avrcp::respond()'s EVENTS_SUPPORTED branch, not guessed.
+    AVRCP_GET_CAPS_RSP = bytes.fromhex("12110e0c4800001958100000040302 01 0d".replace(" ", ""))
     AVRCP_REG_NOTIF = bytes.fromhex("20110e0348000019583100000501 00000000".replace(" ", ""))        # tl 2, RegisterNotification(PLAYBACK_STATUS_CHANGED)
     AVRCP_REG_NOTIF_RSP = bytes.fromhex("22110e0f48000019583100000201 01".replace(" ", ""))          # INTERIM PLAYING
     def avc_start(self, handle):
@@ -785,6 +895,124 @@ class Peer:
             li["state"] = "streaming"; self.log.append("PEER-LC-STREAMING leg=2")
         else:
             self.log.append("PEER-LC-AVDTP-UNEXPECTED st=%s sig=%d" % (st, sig)); self.lc["errors"] += 1
+    # --- source phase (NEW-41): the peer as A2DP SOURCE, the firmware as SINK -----------------------
+    # Every channel here is opened BY US, so the shapes below are the mirror images of the acceptor
+    # helpers above: we send Connection Requests and Config Requests, and the sink answers.
+    def src_open_chan(self, handle, which, psm, delay=0.02):
+        s = self.src
+        scid = s["sdp_scid"] if which == "sdp" else self.next_cid
+        if which != "sdp": self.next_cid += 0x40
+        s[which + "_scid"] = scid; s["psm"][scid] = psm
+        s["cfg"][scid] = {"req": False, "rsp": False, "ready": False}
+        self.send(acl(handle, 0x0001, bytes([0x02, self.l2id(), 4, 0]) + struct.pack("<HH", psm, scid)), delay)
+    def src_open_sdp(self, delay):
+        self.src["state"] = "sdp_conn"; self.src_open_chan(self.cur_handle(), "sdp", 0x0001, delay)
+    def src_l2_conn_rsp(self, handle, dcid, scid, result):
+        s = self.src
+        if result == 0x0001: return                                        # pending: the final response follows
+        if scid not in s["psm"]:
+            self.log.append("PEER-SOURCE-CONNRSP-UNKNOWN-SCID 0x%04x" % scid); s["errors"] += 1; return
+        if result != 0:
+            self.log.append("PEER-SOURCE-CONN-REFUSED scid=0x%04x result=0x%04x" % (scid, result)); s["errors"] += 1; return
+        self.chans[dcid] = (scid, s["psm"][scid])                          # host cid -> (our cid, psm), like every other channel
+        for which in ("sdp", "sig", "media"):
+            if s[which + "_scid"] == scid: s[which + "_dcid"] = dcid
+        self.sig(handle, bytes([0x04, self.l2id(), 8, 0]) + struct.pack("<HH", dcid, 0) + bytes([0x01, 0x02, 0xA0, 0x02]))   # our Config Request: MTU 672
+    def src_cfg_seen(self, handle, our_cid, half):
+        s = self.src
+        c = s["cfg"].get(our_cid)
+        if c is None or c["ready"]: return
+        c[half] = True
+        if c["req"] and c["rsp"]: c["ready"] = True; self.src_chan_ready(handle, our_cid)
+    def src_chan_ready(self, handle, our_cid):
+        s = self.src
+        if our_cid == s["sdp_scid"]:
+            # The AudioSink record, asked for the way a phone asks: ServiceSearchAttributeRequest for
+            # {AudioSink 0x110B}, max 32 bytes, attribute 0x0004 (ProtocolDescriptorList).
+            q = bytes([0x06, 0x00, 0x01, 0x00, 0x0D, 0x35, 0x03, 0x19, 0x11, 0x0B,
+                       0x00, 0x20, 0x35, 0x03, 0x09, 0x00, 0x04, 0x00])
+            s["state"] = "sdp_query"; self.send(acl(handle, s["sdp_dcid"], q), 0.02)
+        elif our_cid == s["sig_scid"]:
+            s["state"] = "discovering"; self.src_send_avdtp(handle, [0x01])                       # DISCOVER
+        elif our_cid == s["media_scid"]:
+            s["state"] = "starting"; self.src_send_avdtp(handle, [0x07, s["acp_seid"] << 2])      # START
+    def src_sdp_response(self, handle, pl):
+        s = self.src
+        if s["sink_record_ok"]: return
+        if pl[0] != 0x07 or SINK_PDL_MARK not in pl:
+            self.log.append("PEER-SINK-RECORD-BAD hex=%s" % pl.hex()); s["errors"] += 1; return
+        s["sink_record_ok"] = True; self.log.append("PEER-SINK-RECORD ok")
+        self.src_open_chan(handle, "sig", 0x0019)                                                 # AVDTP signalling
+    def src_send_avdtp(self, handle, payload):
+        s = self.src; tl = s["tl"]; s["tl"] = (tl + 1) & 0x0F
+        self.send(acl(handle, s["sig_dcid"], bytes([tl << 4]) + bytes(payload)), 0.02)            # tl<<4 | COMMAND(0)
+    def src_avdtp_response(self, handle, pl):
+        try:
+            s = self.src; hdr, sig = pl[0], pl[1]; mt = hdr & 0x03
+            if mt == 0x00:                                                                        # a COMMAND from the sink
+                if sig == 0x0D:                                                                   # DelayReport (AVDTP 1.3 s8.19): sink -> source
+                    v = ((pl[3] << 8) | pl[4]) if len(pl) >= 5 else 0
+                    if not (1 <= v <= 20000): self.log.append("PEER-SINK-DELAY-BAD %d" % v); s["errors"] += 1
+                    s["delay_reports"] += 1; self.log.append("PEER-SINK-DELAYREPORT tenth_ms=%d" % v)
+                    self.send(acl(handle, s["sig_dcid"], bytes([(hdr & 0xF0) | 0x02, 0x0D])), 0.02)   # ACCEPT
+                else:
+                    self.log.append("PEER-SOURCE-UNEXPECTED-CMD sig=%d" % sig); s["errors"] += 1
+                    self.send(acl(handle, s["sig_dcid"], bytes([(hdr & 0xF0) | 0x03, sig, 0x19])), 0.02)
+                return
+            if mt == 0x03 or mt == 0x01:                                                          # REJECT / General Reject of one of OUR commands
+                self.log.append("PEER-SOURCE-REJECT sig=%d hex=%s" % (sig, pl.hex())); s["errors"] += 1; return
+            st = s["state"]
+            if st == "discovering" and sig == 0x01:
+                # The SEP list: [seid<<2 | inuse][tsep<<3 | media_type<<4].  Bit 0x08 of the second byte is
+                # TSEP=SNK -- a SOURCE advertising itself as a sink's endpoint is the bug this catches.
+                if len(pl) < 4 or not (pl[3] & 0x08):
+                    self.log.append("PEER-SINK-NOT-SNK hex=%s" % pl.hex()); s["errors"] += 1; return
+                s["acp_seid"] = pl[2] >> 2; s["state"] = "caps"
+                self.src_send_avdtp(handle, [0x0C, s["acp_seid"] << 2])                           # GET_ALL_CAPABILITIES
+            elif st == "caps" and sig == 0x0C:
+                if pl[2:] != SINK_CAPS_EXPECT:
+                    self.log.append("PEER-SINK-CAPS-BAD hex=%s" % pl[2:].hex()); s["errors"] += 1; return
+                s["state"] = "config"
+                self.src_send_avdtp(handle, [0x03, s["acp_seid"] << 2, 1 << 2, 0x01, 0x00, 0x07, 0x06, 0x00, 0x00]
+                                    + list(SBC_CIE_EXPECT) + [0x08, 0x00])                        # SET_CONFIGURATION + delay reporting
+            elif st == "config" and sig == 0x03:
+                s["state"] = "opening"; self.src_send_avdtp(handle, [0x06, s["acp_seid"] << 2])   # OPEN
+            elif st == "opening" and sig == 0x06:
+                s["state"] = "media_conn"; self.src_open_chan(handle, "media", 0x0019)            # the media transport channel
+            elif st == "starting" and sig == 0x07:
+                s["state"] = "streaming"; s["started"] = True
+                # Start pumping a beat late: the sink is still doing its own stream-start work
+                # (AudioInputBluetooth::begin, the DelayReport) when the ACCEPT reaches us.
+                s["next_at"] = time.time() + 0.25; s["started_at"] = time.time()
+                self.log.append("PEER-SOURCE-STARTED")
+            else:
+                self.log.append("PEER-SOURCE-UNEXPECTED st=%s sig=%d mt=%d" % (st, sig, mt)); s["errors"] += 1
+        except Exception as e:
+            self.log.append("PEER-EXCEPTION src_avdtp_response: %r" % e)
+            self.avdtp["error"] = True; self.src["errors"] += 1
+    def src_pump(self):
+        """One RTP packet of five SBC frames every 14.512 ms -- the rate the tone was encoded at.
+
+        The frames come from sine.sbc verbatim and in order, so what the sink decodes is a REAL 1 kHz
+        tone: its level and its PCM checksum are values no firmware can invent from a silent link."""
+        s = self.src
+        if s["pkts"] >= SOURCE_PKTS: return
+        now = time.time()
+        if now < s["next_at"]: return
+        s["next_at"] += SOURCE_PERIOD
+        if s["next_at"] < now: s["next_at"] = now + SOURCE_PERIOD          # fell behind (host scheduling): re-base rather than burst
+        frames, nf = s["frames"], len(s["frames"]) // SOURCE_FRAME_BYTES
+        body = b""
+        for _ in range(SOURCE_FRAMES_PER_PKT):
+            off = (s["frame_idx"] % nf) * SOURCE_FRAME_BYTES
+            body += frames[off:off + SOURCE_FRAME_BYTES]; s["frame_idx"] += 1
+        pl = (bytes([0x80, 0x60]) + struct.pack(">H", s["seq"] & 0xFFFF) + struct.pack(">I", s["ts"] & 0xFFFFFFFF)
+              + b"\x00\x00\x00\x01" + bytes([SOURCE_FRAMES_PER_PKT]) + body)   # RTP v2/PT96, SSRC 1, SBC media header
+        self.send(acl(self.cur_handle(), s["media_dcid"], pl))
+        s["seq"] = (s["seq"] + 1) & 0xFFFF; s["ts"] = (s["ts"] + SOURCE_TS_STEP) & 0xFFFFFFFF; s["pkts"] += 1
+        if s["pkts"] % 50 == 0:
+            self.log.append("PEER-SOURCE-PROGRESS pkts=%d frames=%d elapsed=%.1f"
+                            % (s["pkts"], s["pkts"] * SOURCE_FRAMES_PER_PKT, now - s["started_at"]))
     def handle_media(self, pl):
         # RTP v2 (RFC 3550) + A2DP v1.3 sec 4.3.4 SBC media payload, validated
         # against values this firmware cannot invent: V=2/PT=96, a strictly
@@ -828,6 +1056,17 @@ if __name__ == "__main__":
         except ValueError:
             print("PEER-BAD-ARG soak N must be an integer >= 1: %r" % sys.argv[3]); sys.exit(2)
     peer = Peer(sock, phase)
+    if phase == "source":
+        # argv[3] = the SBC file to stream (the gate passes its own sine.sbc); default for a hand run.
+        try:
+            peer.src["frames"] = open(sys.argv[3] if len(sys.argv) > 3 else "sine.sbc", "rb").read()
+        except OSError as e:
+            print("PEER-BAD-ARG source needs a readable .sbc file: %r" % e); sys.exit(2)
+        n = len(peer.src["frames"])
+        if n < SOURCE_FRAME_BYTES or n % SOURCE_FRAME_BYTES or peer.src["frames"][0] != 0x9C:
+            print("PEER-BAD-ARG source .sbc is not whole %d-byte SBC frames (len=%d first=0x%02X)"
+                  % (SOURCE_FRAME_BYTES, n, peer.src["frames"][0] if n else 0)); sys.exit(2)
+        print("PEER-SOURCE-IMAGE bytes=%d frames=%d" % (n, n // SOURCE_FRAME_BYTES))
     if peer.boot:
         # ★ REPEAT the start indication until it is answered, which is what the
         # real card does (it sent exactly three on the bench before giving up).
@@ -876,6 +1115,10 @@ if __name__ == "__main__":
                 lc["links_streamed"] += 1                                                           # leg 3 streamed: three links total
             if phase_done("lifecycle", peer) and not peer.pending:
                 break                                                                              # all three legs done; the gate waits out the host's final heartbeat
+        if phase == "source":
+            if peer.src["started"]: peer.src_pump()
+            if phase_done("source", peer) and not peer.pending:
+                break                                                                          # the gate waits out the sink's own heartbeat
         if phase == "soak":
             sk = peer.sk
             # threshold raised 5 -> 20 to match [lifecycle]'s clean-media bar, and CLEAN is now required, not just
@@ -933,6 +1176,13 @@ if __name__ == "__main__":
         lc = peer.lc
         print("PEER-LIFECYCLE links=%d drops=%d accepts=%d rejects=%d scan_on=%d scan_off=%d bitpool2=%d"
               % (lc["links_streamed"], lc["drops"], lc["accepts"], 1 if lc["rejected_unknown"] else 0, lc["scan_on"], lc["scan_off"], lc["bitpool2"]))
+    if phase == "source":
+        s = peer.src
+        print("PEER-SOURCE pkts=%d frames=%d delay_reports=%d sink_record=%d started=%d errors=%d"
+              % (s["pkts"], s["pkts"] * SOURCE_FRAMES_PER_PKT, s["delay_reports"],
+                 1 if s["sink_record_ok"] else 0, 1 if s["started"] else 0, s["errors"]))
+        print("PEER-SOURCE-STATE state=%s acp_seid=%s handle=0x%04x"
+              % (s["state"], s["acp_seid"], s["handle"]))
     if phase == "soak":
         r, sk = peer.rc, peer.sk
         print("PEER-SOAK links=%d disconnects=%d streamed=%d key_ok=%d notified=%d badmedia=%d stale_acl=%d stale_max=%d"

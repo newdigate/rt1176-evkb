@@ -651,4 +651,80 @@ ABSENT
           "$EVKB/$bt_rel"/build-soak/soak.dbg
 fi
 
+# --- 13. bt_sink_test (NEW-41) ----------------------------------------------
+# run_qemu.sh is that example's ONLY gate, and it asserts the whole sink: discoverable, an
+# incoming page accepted, paired by the peer, an AudioSink record published, AVDTP driven at it to
+# START, and 750 SBC frames of a real 1 kHz tone decoded into the audio graph with the right level
+# and PCM golden.  A card-absent capture must be unable to satisfy any of that, or the gate would
+# pass on an image that never even had a controller.
+#
+# ★ This gate reads BOTH the UART capture and the PEER's tally, and under this harness the fake
+# QEMU opens no unix socket -- so hci_peer.py cannot connect and every PEER-* assertion is
+# unreachable, the limitation recorded at item 12 above.  run_qemu.sh therefore honours
+# GATE_PEER_FIXTURE (ONLY when GATE_VACUITY=1) to replay a peer result instead of running the
+# peer, which is what makes a GREEN replay possible here at all -- the first peer-driven gate in
+# the tree with one.  A real run sets neither variable and always runs the real peer.
+sink_rel="examples/audio/bt_sink_test"
+sink_elf="$EVKB/$sink_rel/build/bt_sink_test.elf"
+if [ ! -x "$sink_elf" ]; then
+    echo "SKIP: bt_sink_test vacuity cases (no build/bt_sink_test.elf -- build it first)"
+else
+    # The peer half of a good run: exactly what hci_peer.py's `source` phase prints when the sink
+    # behaved.  Used by BOTH cases, so the absent-capture negative below fails on the UART alone --
+    # a stronger negative than one that could be failing merely because the peer never ran.
+    cat > "$WORK/sink_peer_green.txt" <<'PEERGREEN'
+PEER-CONNECTED phase=source
+PEER-SOURCE-IMAGE bytes=23800 frames=200
+PEER-SCAN-ENABLE 0x03
+PEER-SOURCE-PAGING
+PEER-PAGE-TIMEOUT slots=0x2000
+PEER-SOURCE-ACCEPTED role=0x01 handle=0x0001
+PEER-SCAN-ENABLE 0x00
+PEER-SINK-RECORD ok
+PEER-SOURCE-STARTED
+PEER-SINK-DELAYREPORT tenth_ms=460
+PEER-SOURCE pkts=150 frames=750 delay_reports=1 sink_record=1 started=1 errors=0
+PEER-SOURCE-STATE state=streaming acp_seid=1 handle=0x0001
+PEERGREEN
+
+    # (a) the card-absent capture this example produces with no controller: the HCI Reset times out
+    # by name, the session never begins, and both heartbeats are vacuous.  With a PERFECT peer
+    # result supplied, the gate must still fail -- on the sink never becoming listening.
+    cat > "$WORK/sink_absent.txt" <<'ABSENT'
+RT1176 BT sink test up
+serial2=up_115200
+m2_wifi_reset=released
+bt_wake=pulsed_10ms_low (GPIO_DISP_B2_13, mux returned to LPUART2_RTS_B)
+bt_cts=undriven
+bt_fw_source=synthetic
+bt_fw_download=no_start_indication chip_id=0x0000 start_inds=0 sent=0/1024
+hci_reset=timeout reason=no_response attempts=10 timeouts=10 framing=0 starved=0 qfull=0 late=0
+bonds_boot=0
+a2dp_sink=deferred (no HCI: card absent)
+hb streaming=0 pkts=0 frames=0 seqgaps=0 under=0 over=0 bad=0
+bt_sink fill=0 trim_ppm=0 rms=0 rms_blocks=0 crc200=0xFFFFFFFF
+bt_link links=0 lost=0 closed=0 reason=0x00 state=idle
+bt_hci ncmd=0 timeouts=10 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
+hb streaming=0 pkts=0 frames=0 seqgaps=0 under=0 over=0 bad=0
+bt_sink fill=0 trim_ppm=0 rms=0 rms_blocks=0 crc200=0xFFFFFFFF
+bt_link links=0 lost=0 closed=0 reason=0x00 state=idle
+bt_hci ncmd=0 timeouts=10 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
+ABSENT
+    export GATE_VACUITY=1 GATE_PEER_FIXTURE="$WORK/sink_peer_green.txt"
+    run_gate "$sink_rel" "run_qemu.sh" "$WORK/sink_absent.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1                                                # must not pass
+    echo "$OUT_TEXT" | grep -q "\[sink\] never became listening" || result=1   # and name it
+    report "absent_capture_fails_sink_gate" $result
+
+    # (b) over-correction guard: the committed transcript still passes its own gate.
+    run_gate "$sink_rel" "run_qemu.sh" "$EVKB/$sink_rel/transcript_qemu.txt"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_bt_sink_test" $result
+    unset GATE_VACUITY GATE_PEER_FIXTURE
+
+    rm -f "$EVKB/$sink_rel"/build/sink.uart "$EVKB/$sink_rel"/build/sink.peer \
+          "$EVKB/$sink_rel"/build/sink.dbg
+fi
+
 exit $FAILED

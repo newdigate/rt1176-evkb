@@ -327,6 +327,7 @@ examples/audio/audiooutput_i2s_test:audiooutput_i2s_test \
 examples/audio/audiooutput_i2s_test/build-rt1062:audiooutput_i2s_test \
 examples/audio/audiostream_test:audiostream_test \
 examples/audio/bt_tone_test:bt_tone_test \
+examples/audio/bt_sink_test:bt_sink_test \
 examples/audio/filter_fir_test:filter_fir_test \
 examples/audio/guard_sweep_test:guard_sweep_test examples/audio/i2s_audio_test:i2s_audio_test \
 examples/audio/i2s_int_test:i2s_int_test examples/audio/sai_rx_test:sai_rx_test \
