@@ -460,5 +460,13 @@ void loop() {
         CONSOLE.print(" l2frag="); CONSOLE.print(sink.l2().reasmFrags());        // ACL continuation fragments reassembled
         CONSOLE.print(" l2fragdrop="); CONSOLE.print(sink.l2().reasmDrops());    // partial PDUs discarded
         CONSOLE.print(" credmin="); CONSOLE.println(sink.l2().creditsMin());
+        // AVRCP, LAST so no gate assertion above it moves.  avctp= is the only thing that says whether the peer
+        // ever opened the control channel at all -- with the counters all zero, avctp=0 (never opened) and
+        // avctp=1 (opened, silent) are the same reading from the bench, and they mean opposite things.
+        CONSOLE.print("bt_avrcp avctp="); CONSOLE.print(sink.l2().byPsm(Avrcp::PSM) != nullptr ? 1 : 0);
+        CONSOLE.print(" notif="); CONSOLE.print(sink.avrcp().notifications());
+        CONSOLE.print(" unsup="); CONSOLE.print(sink.avrcp().unsupported());
+        CONSOLE.print(" drop="); CONSOLE.print(sink.avrcp().dropped());
+        CONSOLE.print(" vol="); CONSOLE.println(sink.avrcp().volume());
     }
 }
