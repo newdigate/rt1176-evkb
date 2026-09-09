@@ -403,8 +403,9 @@ void setup() {
 #endif
     // What we tell the source its media is running ahead of playback by (AVDTP 1.3 s8.19, 0.1 ms units): the
     // ring target IS that latency, so derive it rather than carrying a second number that can drift from it.
-    // TARGET blocks x 128 samples at 44100 Hz = 8 * 128 * 10000 / 44100 = 232 (23.2 ms).  A2dpSink's own default
-    // (460) was a standing guess; this is the figure the servo actually holds the ring at.
+    // TARGET blocks x 128 samples at 44100 Hz: 16 * 128 * 10000 / 44100 = 464 (46.4 ms) at the NEW-42 default,
+    // 232 at the old 8.  The phone uses this for lip sync, so a resized target is reported, not hidden.
+    // A2dpSink's own default (460) was a standing guess; this is the figure the servo actually holds the ring at.
     sink.setDelayTenthMs((uint16_t)((uint32_t)AudioInputBluetooth::TARGET * AUDIO_BLOCK_SAMPLES * 10000u / 44100u));
     session.onStream(onStreamCb, nullptr);
     session.onAttempt(onAttemptCb, nullptr);
@@ -453,6 +454,46 @@ void loop() {
         CONSOLE.print(" rms="); CONSOLE.print(btin.rmsBlocks() ? btin.rmsAcc() / btin.rmsBlocks() : 0);
         CONSOLE.print(" rms_blocks="); CONSOLE.print(btin.rmsBlocks());
         CONSOLE.print(" crc200=0x"); CONSOLE.println(btin.crc(), HEX);
+        // NEW-42 instrument, cumulative since START.  Placed right after bt_sink and before bt_link so the gate's
+        // heartbeat-completeness check (a bt_hci line for every bt_sink line) covers it: a torn final block can
+        // never leave a bt_jit line half-read.  gap*: the SOURCE's delivery cadence (main context, micros() per
+        // accepted packet) -- the half that is REAL in QEMU, since the fake peer paces it in wall time.  ONE
+        // CAVEAT, measured 2026-09-09 over two gate runs: the guest's micros() takes a single ~3.14 s step
+        // relative to millis() mid-run, so gapmax_ms reads 3142/3141 and gbig 4/3 on a peer whose own log
+        // (PEER-SOURCE-PROGRESS elapsed=5.2/10.2/15.2 for packets 50/100/150) proves it never paused.  The
+        // COUNT is trustworthy there and the magnitudes are not: the buckets summed to exactly 149 -- one
+        // interval per packet after the first -- in both runs.  fillmin/fillmax/trimlo/trimhi/overev/
+        // reprimes/primed/prime_ms: the CONSUME side -- SILICON claims, exactly as under= is, because QEMU
+        // walks update() on its own schedule and not at 44100/128 Hz.
+        // ★ Two readings here do not mean what their neighbours mean, and a bench reader meets them at this
+        // line rather than in the header:
+        //   * fillmin reads RING and fillmax reads 0 UNTIL THE FIRST POP -- out-of-band sentinels, and legible
+        //     as such because fill() sampled at a pop can be neither (one slot is the SPSC sentinel, so RING is
+        //     unreachable, and a pop only happens with a block to pop, so 0 is too).  fillmin=RING means "no
+        //     block has been popped yet", NOT "the ring stayed brim-full".
+        //   * prime_ms is PER-STREAM while every other field on this line is LIFETIME: begin() re-arms it at
+        //     each stream START, so after a reconnect it times the NEW stream's prime.  reprimes counts the
+        //     mid-stream rebuilds and deliberately does NOT move it.  Diff two heartbeats across a drop and
+        //     this one field goes backwards while its neighbours only climb.
+        // prime_ms converts the START prime's length in blocks on the BLOCK clock (x 128 / 44100), so it needs no
+        // wall clock in the ISR.  The 64-bit intermediate is not decoration: a prime that never reaches TARGET
+        // never ends (AudioInputBluetooth.h's hazard note), primeBlocks() then climbs at 344/s, and in uint32 the
+        // product wraps after ~98 s -- turning the one field that would expose a stalled source into a small,
+        // healthy-looking number.
+        CONSOLE.print("bt_jit gapmax_ms="); CONSOLE.print(btin.gapMaxUs() / 1000u);
+        CONSOLE.print(" g30=");  CONSOLE.print(btin.gapBucket(0));
+        CONSOLE.print(" g50=");  CONSOLE.print(btin.gapBucket(1));
+        CONSOLE.print(" g80=");  CONSOLE.print(btin.gapBucket(2));
+        CONSOLE.print(" g120="); CONSOLE.print(btin.gapBucket(3));
+        CONSOLE.print(" gbig="); CONSOLE.print(btin.gapBucket(4));
+        CONSOLE.print(" fillmin="); CONSOLE.print(btin.fillMin());
+        CONSOLE.print(" fillmax="); CONSOLE.print(btin.fillMax());
+        CONSOLE.print(" trimlo="); CONSOLE.print(btin.trimLo());
+        CONSOLE.print(" trimhi="); CONSOLE.print(btin.trimHi());
+        CONSOLE.print(" overev="); CONSOLE.print(btin.overEvents());
+        CONSOLE.print(" reprimes="); CONSOLE.print(btin.reprimes());
+        CONSOLE.print(" primed="); CONSOLE.print(btin.primed() ? 1 : 0);
+        CONSOLE.print(" prime_ms="); CONSOLE.println((uint32_t)((uint64_t)btin.primeBlocks() * AUDIO_BLOCK_SAMPLES * 1000u / 44100u));
         CONSOLE.print("bt_link links="); CONSOLE.print(st.links);
         CONSOLE.print(" lost="); CONSOLE.print(st.lost);
         CONSOLE.print(" closed="); CONSOLE.print(st.closed);
@@ -470,7 +511,8 @@ void loop() {
         // avctp=1 (opened, silent) are the same reading from the bench, and they mean opposite things.
         CONSOLE.print("bt_avrcp avctp="); CONSOLE.print(sink.l2().byPsm(Avrcp::PSM) != nullptr ? 1 : 0);
         CONSOLE.print(" notif="); CONSOLE.print(sink.avrcp().notifications());
-        CONSOLE.print(" unsup="); CONSOLE.print(sink.avrcp().unsupported());
+        CONSOLE.print(" ans="); CONSOLE.print(sink.avrcp().answered());          // GetCapabilities / SetAbsoluteVolume, answered properly
+        CONSOLE.print(" unsup="); CONSOLE.print(sink.avrcp().unsupported());     // NOT IMPLEMENTED (unknown PDU) or IPID
         CONSOLE.print(" drop="); CONSOLE.print(sink.avrcp().dropped());
         CONSOLE.print(" vol="); CONSOLE.println(sink.avrcp().volume());
     }
