@@ -36,4 +36,4 @@ static inline int32_t servo_step(sink_servo_t *s, int32_t fill, int hold) {
     if (t < -s->clamp_ppm) t = -s->clamp_ppm;
     s->trim_ppm = t; return t;
 }
-static inline void servo_recentre(sink_servo_t *s) { s->filt_x65536 = s->target_x65536; }   /* a new START: drop the history, keep the trim */
+static inline void servo_recentre(sink_servo_t *s) { s->filt_x65536 = s->target_x65536; }   /* drop the FILTER's history; trim_ppm is recomputed from it on the next step, so the trim does NOT survive */

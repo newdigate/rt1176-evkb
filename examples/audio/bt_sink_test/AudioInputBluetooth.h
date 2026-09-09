@@ -120,7 +120,9 @@ public:
     // A ring that runs DRY MID-STREAM re-primes the same way, and that is the other half of the fix: a gap of
     // G blocks does not merely cost G blocks of audio, it leaves the ring G blocks SHORT, and only the servo's
     // 72 s closed-loop trim puts the margin back (spec s1, fact 3 -- the bench's 15-36 underruns trailing each
-    // overrun burst).  ** So `under` counts DROPOUTS, not silent blocks. **  One dry block books one underrun
+    // overrun burst).  ** So, with the pre-fill ON, `under` counts DROPOUTS, not silent blocks; the CONTROL arm
+    // (BT_SINK_PREFILL=0) keeps NEW-41's per-block count, which is 13b's whole subject and why s5's bound cannot
+    // be applied to it. **  One dry block books one underrun
     // and one re-prime; the silence that follows it, however long, books nothing.  That is what makes spec s5's
     // `under <= reprimes + 2` a bound worth having, and it is why an `under` of 3 on this build is NOT
     // comparable with an `under` of 3 on NEW-41's.
@@ -131,9 +133,13 @@ public:
     // of a long window, and s5 expects re-primes to occur, so a figure that grew or restarted with them could
     // not be checked against TARGET at all.  How long a re-prime took is the SOURCE's absence, which the gap
     // histogram measures on the arrival side; reprimes() counts the events.  (Accepted gap: with `under`
-    // counting events, the total silence inserted is in no counter.  reprimes() * TARGET estimates it -- not a
-    // strict floor: a re-prime whose source already has TARGET blocks buffered resumes on the very next block.
-    // It holds for a real-time-paced source, which is the only kind that occurs.)
+    // counting events, the total silence inserted is in no counter.  reprimes() * TARGET is an UPPER BOUND far
+    // more often than an estimate, and for the source shape spec s1 describes it over-reads badly: a source that
+    // buffers through the gap and bursts its backlog -- which is exactly the "35-45 ms gap then a catch-up burst"
+    // -- refills past TARGET inside ONE onMedia(), so the re-prime costs a SINGLE silent block.  MEASURED in a
+    // closed-loop model at a 49 ms gap: 2 silent blocks against the 16 this product predicts, an 8x over-read.
+    // What the re-prime provably does NOT do is ADD silence: against a build without it the total emitted is
+    // identical for a non-catch-up source at four gap lengths, and LOWER for a bursting one.)
     // reprimes() counts mid-stream ring rebuilds and is LIFETIME for the same reason m_overEv is: it counts
     // EVENTS printed beside m_over/m_under, and a reconnect must not make that column jump backwards.  Nothing
     // prints it yet (Task 6), so there is no reading here to misread.

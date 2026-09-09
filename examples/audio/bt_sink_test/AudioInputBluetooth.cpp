@@ -112,6 +112,11 @@ void AudioInputBluetooth::update(void) {
         // the MID-STREAM re-prime below, which begins from a filter wound up by the pre-drop fill: node_test
         // case 13 winds it >4 blocks off centre, and with this call deleted the filter is still 4.3 blocks off
         // after the resume instead of one EMA step from centre.
+        // ** It also discards the LEARNED TRIM. **  trim_ppm is recomputed from the filter on every step, so
+        // recentring the filter returns the trim to ~0 and the loop re-converges over ~120 s (MEASURED, closed
+        // loop at -100 ppm source drift: -100 -> 0 -> overshoot -179 -> -100).  That is the right trade -- a
+        // filter reading TARGET+5 against a ring holding TARGET-1 would drive a BOGUS trim for a full 72 s tau --
+        // and it is why spec s5's trimlo/trimhi must be read beside reprimes rather than on their own.
         if (m_priming && fill() >= TARGET) { m_priming = false; m_primed = true; servo_recentre(&m_servo); }
         if (m_priming) {
             // primeBlocks() is the START prime's length and ONLY that: a mid-stream re-prime neither extends nor

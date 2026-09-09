@@ -549,7 +549,13 @@ int main() {
         CHECK(nd->primed() && !nd->priming());
         CHECK(nd->underruns() == 0 && nd->reprimes() == 0);
         CHECK(nd->servo().filt_x65536 - nd->servo().target_x65536 > 4 * 65536);   // wound up: >4 blocks above target
-        while (nd->fill() > 0) nd->update();                                        // the source stops: drain to dry
+        // BOUNDED, and that is not tidiness: this is the only loop here whose termination depends on the node
+        // continuing to POP, so an overshoot regression (the completion test weakened to `== TARGET`, which the
+        // `>=` exists to prevent) HANGS the suite instead of failing -- and stdout is block-buffered to the pipe,
+        // so the two checks above it never reach the terminal either.  A build that never ran, exactly the shape
+        // this file's static_asserts exist to stop.
+        for (int i = 0; i < AudioInputBluetooth::RING && nd->fill() > 0; i++) nd->update();   // the source stops: drain to dry
+        CHECK(nd->fill() == 0);                    // a node that stopped popping fails HERE, by name, not by hanging
         CHECK(nd->underruns() == 0);
         ShimAudio::reset();
         nd->update();                                                               // the dry block
@@ -584,10 +590,9 @@ int main() {
         //        however long the SOURCE took to deliver TARGET blocks, which is exactly what the gap histogram
         //        (gapmax_ms / gbig) is built to measure, on the arrival side where it can be measured honestly.
         //    What that costs, recorded rather than fixed by overloading this counter: with `under` now counting
-        //    EVENTS, the total SILENCE inserted is in no counter.  reprimes() * TARGET estimates it -- not a
-        //    strict floor, since a re-prime whose source already has TARGET blocks buffered resumes on the very
-        //    next block, but true of a real-time-paced source, which is the only kind that occurs -- and spec s5
-        //    does not ask for it.
+        //    EVENTS, the total SILENCE inserted is in no counter.  reprimes() * TARGET is an UPPER BOUND rather
+        //    than an estimate, and over-reads 8x for the bursting source spec s1 describes (measured in a closed
+        //    loop: 2 silent blocks at a 49 ms gap against the 16 it predicts) -- and spec s5 does not ask for it.
         //    RED with the `if (!m_primed)` guard removed from update()'s priming branch: the 50 silent blocks
         //    plus the TARGET-1 refill blocks land here too -- MEASURED 68 against 3 in the default arm, 60
         //    against 3 in the control arm.  (The dry block ITSELF is not among them: it takes the dry branch,
