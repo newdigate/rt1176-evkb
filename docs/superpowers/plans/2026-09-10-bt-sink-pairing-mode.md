@@ -170,7 +170,7 @@ In `BtSinkSession.h`, in `public:` after `void setAlwaysDiscoverable(bool on) { 
     static const uint32_t PAIR_DEFAULT_MS = 120000;
     void          setPairingWindowMs(uint32_t ms) { m_pairMs = ms; }   // auto-window length; 0 = no auto-windows (a commanded window is then PAIR_DEFAULT_MS)
     bool          canPair() const;                                     // LISTENING with no link up -- the one condition every trigger needs
-    bool          enterPairing(uint32_t now, PairingReason r);         // open, or extend to now + window; false = refused (see canPair)
+    bool          enterPairing(uint32_t now, PairingReason r = PAIR_CMD);   // open, or extend to now + window; false = refused (see canPair)
     bool          pairingOpen() const { return m_pairOpen; }           // as of the last tick(now): that is where expiry is evaluated, so the poll, the scan line and the heartbeat agree
     uint32_t      pairingRemainingMs(uint32_t now) const { return m_pairOpen && (int32_t)(m_pairUntil - now) > 0 ? m_pairUntil - now : 0; }
     PairingReason pairingReason() const { return m_pairOpen ? m_pairReason : PAIR_NONE; }
@@ -304,6 +304,34 @@ Expected: the sink still builds and the gate still passes (nothing the gate read
 **Task 1 review corrections (2026-09-10).** `PairingEnd` gained `PAIR_END_CANCELLED` and `disconnect()` closes an open window with it, because both callbacks can call `disconnect()` with a window open and `tick()`'s close check saw neither shape: the attempt callback on the success edge runs BEFORE that check and has already left `STREAMING`, so the boot window stayed open through a `LINK_SECURE` teardown (Q7); the stream callback on the loss edge runs one line AFTER the drop branch opened its window (Q6) — either way the window rode through `MANUAL` with the scans off. `resume()` opens NO window (an app command, not the end of an attempt; Q4 pins it by the scan value and the PREPARE count). P3's comment overstated what `failPairing()` reaches — it refuses at `PR_AUTH1_STATUS`, before the legacy-PIN rung, so no mode-0 write happens there; the comment now says so and the case pins the re-issued parameter `0x01`. `BtLink.h`'s two "once per session" comments (`startPrepare()`, `setIdentity()`) were rewritten: PREPARE re-runs per window, so the borrowed name must outlive the whole session.
 
 **Second Task 1 review (2026-09-10) — where the *paired* close belongs.** Answering the success edge with *cancelled* made the end reason a function of CALLBACK TIMING rather than of the wire: the same sequence (stranger paged, SSP completed, link `LINK_SECURE`, attempt `OK`) read *cancelled* with `disconnect()` inside the attempt callback and *paired* with it in `loop()` one tick later, so Task 2's `pairingEndName()` would print `pairing=off reason=cancelled` on a successful pairing. The *paired* close moved INTO the `CONNECTING` → `STREAMING` transition, beside `links++`/`accepts++` and AHEAD of `m_attemptCb`; `tick()`'s check keeps only the clock arm, the `STREAMING` arm being unreachable once nothing but `LISTENING` can open a window. `disconnect()`'s *cancelled* then means a window that never saw `STREAMING` — Q6's drop window, or a boot/commanded one torn down from `LISTENING`/`CONNECTING`. Q7's mid-teardown and post-MANUAL ends became `PAIR_END_PAIRED`, RED at `d906c08` (lines 360/363), the mid-teardown check still asserting `!pairingOpen()`. **New case P6** — Q7's sequence with `disconnect()` called from OUTSIDE the callback, asserting the identical `pairingEnd()` — is the timing-independence pin nothing had; it is green either way ALONE (that is the point: it discriminates only beside Q7) and its trailing checks re-pin the `disconnect()` guard. Mutants by name: (i) the close moved back after `m_attemptCb` → Q7 360/363; (ii) the close deleted → Q7 plus Q4/P2/P4/P6, nine checks; (iii) `disconnect()`'s guard deleted → P6 491 plus Q4/Q7. 267 checks, 0 failures. Comment sweep: `A2dpSink.h`'s `begin()` and `setIdentity()` carried the same stale "once per session" / "set it BEFORE begin()" claims (false for the sink — every window re-runs PREPARE), and `BtLink.h`'s `startPrepare()` said PREPARE runs "at begin()" when `BtLink::begin()` does not run it at all: the OWNER does. `BtSinkSession.h`'s own "a window is never open while a link is up" was measured false during `CONNECTING` (by design) and now states what the code implements. Task 2's `pairingEndName()` is unchanged — *cancelled* is still reachable.
+
+**Third Task 1 review (2026-09-10) -- code quality.**  Nine findings, each measured by the reviewer before it
+was written down.  The one that changes behaviour is `enterPairing()`'s parameter: it reached `openWindow()`
+whose `r != PAIR_CMD` guard doubled as the automatic/commanded test, so `enterPairing(now, PAIR_NONE)` opened a
+window that `pairingReason()` then reported as `PAIR_NONE` (Task 2 would print `pairing=off secs=120` with the
+LED blinking) and `enterPairing(now, PAIR_DROP)` after `setPairingWindowMs(0)` was refused.  **Step 4's
+`openWindow()`/`enterPairing()` bodies and Step 3's declaration are superseded**: `openWindow(now, r,
+commanded)` takes the distinction as an argument of its own, `enterPairing(now, r = PAIR_CMD)` always passes
+`commanded` and normalises `PAIR_NONE` to `PAIR_CMD`, and the three ad-hoc `m_pairOpen = false; m_pairEnd = X;`
+sites become one guarded `closeWindow(PairingEnd)`.  **New case P7** pins the entry's contract (normalisation,
+a labelled command not refused by the off switch, the default argument) and is kept out of P5 so that case
+still owns the off switch alone; RED first, five failures by name plus a compile error for the default.
+**P2 gained its second `pairingOpen()`**: `runUntil(state == CONNECTING)` returns on the tick that ASSIGNS
+`CONNECTING` in the `LISTENING` branch, so `case CONNECTING:` has not run once and a mutant closing the window
+at the top of it passed the whole suite -- the check after `peerAuthenticates()` reddens it by name, and with
+that line deleted the same mutant is green.  The rest are comment defects corrected against measurement: an
+inbound accept is NOT an op (`Accept_Connection_Request` is submitted straight from `BtLink::onEvent`, `m_op`
+stays `NONE`, measured `op=0 busy=0 canPair=1` in the `Connection_Request` -> `Connection_Complete` gap); the
+harm in `BtLink::begin()` is `m_op = NONE; m_cmdBusy = false` abandoning an in-flight op, NOT the scan
+bookkeeping, which self-heals (measured: a `link().begin(now)` in `openWindow()` passes 267/267); "every window
+re-issues PREPARE, so opening one guarantees SSP is on" overstates a call whose result `openWindow()` ignores;
+`setPairingWindowMs()` affects the NEXT window; `begin()` opens no boot window if `canPair()` is false;
+P6's first clause contradicted its second (it is the control -- Q7 and P6 together are the pin); `BtLink.h`'s
+`startPrepare()` comment is wrapped.  Found while demonstrating a mutant: **Q5's NEW-46 comment was false** --
+its scan `0x03` is the BOOT window, still open because Q5 never reaches `STREAMING`, not the ABORT's drop
+window; identical scan history with the failed-attempt `openWindow()` deleted.  `canPair()` KEEPS its name
+(spec §4/§5 and Task 3 use it); its gloss now says what it is and what it must not be read as.  282 checks,
+0 failures; `BT-HOST-TESTS: PASS`; the sink gate PASSES on the new pin.
 
 ---
 

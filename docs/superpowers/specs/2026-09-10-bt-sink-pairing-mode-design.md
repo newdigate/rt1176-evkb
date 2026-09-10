@@ -66,7 +66,8 @@ and after a disconnect, and on demand.
 ```cpp
 enum PairingReason : uint8_t { PAIR_NONE, PAIR_BOOT, PAIR_DROP, PAIR_CMD };
 void          setPairingWindowMs(uint32_t ms);              // auto-window length; default 120000; 0 = no auto-windows
-bool          enterPairing(uint32_t now, PairingReason r);  // open or extend to now + window; false = refused (link up)
+bool          enterPairing(uint32_t now,
+              PairingReason r = PAIR_CMD);                  // open or extend to now + window; false = refused (link up)
 bool          pairingOpen() const;                          // as of the last tick(now): that is where expiry is evaluated
 uint32_t      pairingRemainingMs(uint32_t now) const;
 PairingReason pairingReason() const;                         // the reason of the CURRENT window; PAIR_NONE when closed
@@ -131,6 +132,19 @@ Q7 and the new P6 -- Q7's sequence with `disconnect()` called from OUTSIDE the c
 timings agree; P6 is green either way alone, which is why it only bites beside Q7.  And `resume()` opens **no**
 window: "every return to `LISTENING`" above enumerates the ends of ATTEMPTS -- loss, clean close, failed
 pairing -- while `resume()` is an app command; the app calls `enterPairing()` if it wants one.
+
+★ **Corrected during the Task 1 code-quality review (2026-09-10): the reason is a LABEL, and the parameter
+defaults.**  The signature above handed the caller's enum straight to the private `openWindow()`, where
+`r != PAIR_CMD` doubled as the automatic/commanded test -- so the public parameter selected policy behind the
+caller's back, two ways, both measured.  `enterPairing(now, PAIR_NONE)` returned true and opened a window whose
+`pairingReason()` then read `PAIR_NONE`: `pairingOpen()` and `pairingReason()` contradicting each other, and
+§5's heartbeat printing `pairing=off secs=120` with the LED blinking.  And `enterPairing(now, PAIR_DROP)` after
+`setPairingWindowMs(0)` was REFUSED, so the "a commanded window is then `PAIR_DEFAULT_MS`" promise above held
+only for callers who happened to pass that one value.  `openWindow()` now takes the commanded/automatic
+distinction as an argument of its OWN, `enterPairing()` always passes *commanded* whatever the label, and
+`PAIR_NONE` -- the one value that cannot be kept, since `pairingReason()` reports it for *closed* -- normalises
+to `PAIR_CMD`.  The parameter defaults to `PAIR_CMD`, so §5's `pair` handler can call `enterPairing(now)` and
+the call shape written throughout this spec stays valid.  `btsinksession_test` P7 pins all three, RED first.
 
 **Not a new `State`.**  A window is a deadline beside `LISTENING`, not a state of its own: `MANUAL` and
 `LISTENING` both compose with it, and every `m_state == LISTENING` test in `tick()` stays as it is.
