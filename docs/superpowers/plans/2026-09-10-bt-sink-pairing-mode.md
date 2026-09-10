@@ -470,6 +470,21 @@ value there is `0x00` (`BtLink.cpp:170` composes page|inquiry and both go off wi
 - Modify: `examples/audio/bt_sink_test/bt_sink_test.cpp`
 - Modify: `tools/rt1170-console.py`
 
+**Two requirements added by the Task 2 reviews, both about not making a later reader wrong.**
+(a) **`status` must mark its block.** `printHeartbeat()` opens with the literal `hb `, so an on-demand
+block is byte-indistinguishable from a timed one -- and NEW-42's bench derived its headline
+`over 13.09/min` / `under 16.08/min` by treating heartbeat blocks as a clock, which an untagged `status`
+would silently inflate.  The handler prints `cmd=status` on its own line FIRST, which also gives Task 4's
+driver a token proving the command landed.  (`last` is a `loop()` local static, so `status` does not
+re-phase the timer; that is fine and deliberate -- the timed cadence stays a clock.)
+(b) **One owner for the `pairing=on` format.** Spec 5 keeps the split deliberately -- the edge detector
+skips `PAIR_CMD` because extending an open window is not an edge, and the command answers either way --
+but the two printers must not drift apart.  Factor the line into one helper
+(`printPairingOn(BtSinkSession::PairingReason r, uint32_t now)`) and call it from BOTH
+`pairingIndicator()` and `runCommand()`, so the format has a single definition even though it has two
+callers.
+
+
 - [ ] **Step 1: The command reader**
 
 Above `loop()` (after `pairingIndicator()`), add:

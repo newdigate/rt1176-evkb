@@ -526,8 +526,12 @@ static void printHeartbeat() {
     // ★ `drymax=0 drytot=0` beside `primed=0` means NOT MEASURED, not "the ring never ran dry": the
     // instrument starts at the END of the START prime, and a BT_SINK_PREFILL=0 build (the bench's
     // CONTROL arm) never completes one.  Same shape as the fillmin=RING sentinel above.
-    // The seven fields are ~65 more characters on a heartbeat that already runs ~345 (~30 ms at 115200);
-    // they fit the 4 KB console TX extension setup() installs many times over, so the bench's
+    // The seven fields are ~65 more characters on a heartbeat block that now runs 520 bytes at the first
+    // beat rising to ~550 by the last (the spread is counter digits, not a before/after) -- ~47 ms of wire
+    // time at 115200, 8N1.  The figure this comment carried until 2026-09-10 was "~345 (~30 ms)", true when
+    // NEW-42 wrote it and false by the time NEW-46 added the pairing field: a live measurement in a comment
+    // goes stale as lines are added, so it is re-derived here rather than carried.  They still fit the 4 KB
+    // console TX extension setup() installs (~7 whole blocks of headroom), so the bench's
     // print-stalls-loop() observer effect (NEW-41, fixed by that extension) does not come back.
     CONSOLE.print(" drymax="); CONSOLE.print(btin.dryMax());
     CONSOLE.print(" drytot="); CONSOLE.print(btin.dryTotal());
