@@ -164,7 +164,7 @@ In `BtSinkSession.h`, in `public:` after `void setAlwaysDiscoverable(bool on) { 
     // every `m_state == LISTENING` test in tick() stays as it is.  A window is never open while a link is up --
     // scans are already off then -- so enterPairing() refuses rather than queues.
     enum PairingReason : uint8_t { PAIR_NONE, PAIR_BOOT, PAIR_DROP, PAIR_CMD };
-    enum PairingEnd    : uint8_t { PAIR_END_NONE, PAIR_END_TIMEOUT, PAIR_END_PAIRED };
+    enum PairingEnd    : uint8_t { PAIR_END_NONE, PAIR_END_TIMEOUT, PAIR_END_PAIRED, PAIR_END_CANCELLED };   // CANCELLED: closed by the app's disconnect(), not by pairing or the clock
     static const uint32_t PAIR_DEFAULT_MS = 120000;
     void          setPairingWindowMs(uint32_t ms) { m_pairMs = ms; }   // auto-window length; 0 = no auto-windows (a commanded window is then PAIR_DEFAULT_MS)
     bool          canPair() const;                                     // LISTENING with no link up -- the one condition every trigger needs
@@ -299,6 +299,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && cd examples/audio/b
 ```
 Expected: the sink still builds and the gate still passes (nothing the gate reads has changed; the sketch does not call the new API yet). Also confirm the pin note's claim will be true after Task 2 — it is not yet.
 
+**Task 1 review corrections (2026-09-10).** `PairingEnd` gained `PAIR_END_CANCELLED` and `disconnect()` closes an open window with it, because both callbacks can call `disconnect()` with a window open and `tick()`'s close check sees neither shape: the attempt callback on the success edge runs BEFORE that check and has already left `STREAMING`, so the boot window stayed open through a `LINK_SECURE` teardown (Q7); the stream callback on the loss edge runs one line AFTER the drop branch opened its window (Q6) — either way the window rode through `MANUAL` with the scans off. `resume()` opens NO window (an app command, not the end of an attempt; Q4 pins it by the scan value and the PREPARE count). Q4/Q6/Q7 carry the pins, RED first; mutant (f): delete the close in `disconnect()` → Q6/Q7 red by name (six checks), everything else green. P3's comment overstated what `failPairing()` reaches — it refuses at `PR_AUTH1_STATUS`, before the legacy-PIN rung, so no mode-0 write happens there; the comment now says so and the case pins the re-issued parameter `0x01`. `BtLink.h`'s two "once per session" comments (`startPrepare()`, `setIdentity()`) were rewritten: PREPARE re-runs per window, so the borrowed name must outlive the whole session.
+
 ---
 
 ### Task 2: The sketch — `printHeartbeat()`, the `pairing=` field, edge prints, the LED
@@ -346,7 +348,8 @@ static const char *pairingReasonName(BtSinkSession::PairingReason r) {
                  case BtSinkSession::PAIR_CMD: return "cmd"; default: return "off"; }
 }
 static const char *pairingEndName(BtSinkSession::PairingEnd e) {
-    return e == BtSinkSession::PAIR_END_PAIRED ? "paired" : e == BtSinkSession::PAIR_END_TIMEOUT ? "timeout" : "none";
+    switch (e) { case BtSinkSession::PAIR_END_PAIRED: return "paired"; case BtSinkSession::PAIR_END_TIMEOUT: return "timeout";
+                 case BtSinkSession::PAIR_END_CANCELLED: return "cancelled"; default: return "none"; }
 }
 ```
 
@@ -823,4 +826,4 @@ Identical in shape to the NEW-42 close-out (`docs/superpowers/plans/2026-09-09-b
 
 **Placeholders.** T3 step 3's smoke expectation deliberately admits two valid readings and says to record which; T7's docs are written from the bench and cannot be pre-written.
 
-**Type consistency.** `PairingReason {PAIR_NONE, PAIR_BOOT, PAIR_DROP, PAIR_CMD}`, `PairingEnd {PAIR_END_NONE, PAIR_END_TIMEOUT, PAIR_END_PAIRED}`, `enterPairing(now, r)`, `canPair()`, `pairingOpen()`, `pairingRemainingMs(now)`, `pairingReason()`, `pairingEnd()`, `setPairingWindowMs(ms)`, `PAIR_DEFAULT_MS` are declared in T1 and used by those names in T1's tests, T2 and T3. `OP_SSP = 0x0C56` matches `BtLink.cpp`'s `OP_WRITE_SSP_MODE`. `PEER-SOURCE-DROP`, `PEER-SOURCE-REPAGE`, `DRIVER-SENT`, `DRIVER-STATUS-OK` are spelled identically in the peer, the driver and the gate. `$CON` is defined before use.
+**Type consistency.** `PairingReason {PAIR_NONE, PAIR_BOOT, PAIR_DROP, PAIR_CMD}`, `PairingEnd {PAIR_END_NONE, PAIR_END_TIMEOUT, PAIR_END_PAIRED, PAIR_END_CANCELLED}`, `enterPairing(now, r)`, `canPair()`, `pairingOpen()`, `pairingRemainingMs(now)`, `pairingReason()`, `pairingEnd()`, `setPairingWindowMs(ms)`, `PAIR_DEFAULT_MS` are declared in T1 and used by those names in T1's tests, T2 and T3. `OP_SSP = 0x0C56` matches `BtLink.cpp`'s `OP_WRITE_SSP_MODE`. `PEER-SOURCE-DROP`, `PEER-SOURCE-REPAGE`, `DRIVER-SENT`, `DRIVER-STATUS-OK` are spelled identically in the peer, the driver and the gate. `$CON` is defined before use.

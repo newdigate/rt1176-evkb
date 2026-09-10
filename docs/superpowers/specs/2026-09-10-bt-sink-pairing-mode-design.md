@@ -107,6 +107,19 @@ link comes up (the `CONNECTING` -> `STREAMING` transition), recorded as *paired*
 a link is up -- scans are already off then (`listening` is false), so it cannot be, and `enterPairing()`
 refuses rather than queues.
 
+★ **Corrected during Task 1 review (2026-09-10): `disconnect()` closes an open window as *cancelled*
+(`PAIR_END_CANCELLED`), and `resume()` opens none.**  The invariant in the paragraph above
+was measured broken in both shapes by the suite's own scenarios, because both callbacks can call `disconnect()`
+with a window open and `tick()`'s close check sees neither -- the attempt callback on the success edge runs
+BEFORE that check and has already left `STREAMING`, so the boot window was never closed as *paired*
+(`btsinksession_test` Q7: open with the link `LINK_SECURE` through the whole teardown); the stream callback on
+the loss edge runs one line AFTER the drop branch opened its window (Q6).  Either way the window rode through
+`DISCONNECTING` and `MANUAL` with the scans off: `pairingOpen()` true on a sink that is not discoverable (the
+LED would blink "pairing" in `MANUAL`), `enterPairing()` refused at the same time (`canPair()` false), and
+`resume()` re-entering `LISTENING` on a stale deadline with no PREPARE.  And `resume()` opens **no** window:
+"every return to `LISTENING`" above enumerates the ends of ATTEMPTS -- loss, clean close, failed pairing --
+while `resume()` is an app command; the app calls `enterPairing()` if it wants one.
+
 **Not a new `State`.**  A window is a deadline beside `LISTENING`, not a state of its own: `MANUAL` and
 `LISTENING` both compose with it, and every `m_state == LISTENING` test in `tick()` stays as it is.
 
@@ -130,7 +143,7 @@ non-printables are dropped; overflow discards the line and reports it.  Case-ins
 QEMU cannot see it; it is a silicon-only witness like `under=`.
 
 **Prints on the edge:** `pairing=on reason=boot|drop secs=120` from `loop()`'s edge detector when an AUTOMATIC
-window opens, `pairing=off reason=timeout|paired` from the same detector on every close -- and **a commanded
+window opens, `pairing=off reason=timeout|paired|cancelled` from the same detector on every close -- and **a commanded
 window prints its own `pairing=on reason=cmd secs=N` from the command handler**, because extending an already-
 open window is not an edge and the person who typed `pair` deserves an answer either way (corrected during
 planning: the first draft had one print site and would have gone silent on a second `pair`).  The heartbeat's `bt_link` line gains
