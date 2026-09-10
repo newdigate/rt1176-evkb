@@ -261,12 +261,21 @@ Silicon, change arm, a 10-min iPhone window with music:
 
 * **`over = 0`.**  Hard.  With `RING 32 / TARGET 16` an arriving packet can never find fewer than 8 free
   slots at the operating point, so a drop means the design is wrong -- not that the phone misbehaved.
-* **`under <= reprimes + 2`.**  Each genuine dropout costs exactly one counted underrun and one re-prime;
-  anything beyond that is unexplained and must be explained rather than tuned away.
-* **`fillmin >= TARGET/4` and `fillmax <= RING - 4`** -- real margin at both ends, measured by the ISR
-  rather than sampled.  At the provisional `RING 32 / TARGET 16` that is `fillmin >= 4`, `fillmax <= 28`;
-  the bounds move with `TARGET` if step 2 of section 4.3 resizes it, since they express margin, not
-  absolute depth.
+* **`under <= dryTotal`.**  ~~`under <= reprimes + 2`~~ -- RETIRED by section 9, and the reason is worth
+  keeping.  That bound assumed one counted underrun per dropout, which was true only while EVERY dry block
+  re-primed.  With the threshold, a sub-threshold spell ticks one underrun PER BLOCK (NEW-41's semantics)
+  and only a crossing spell books an event, so `under` counts blocks again and must be bounded by the
+  blocks actually spent dry.  Holds on the gate's own fictional numbers as a sanity check: `drytot=1249`
+  against `under=748`.
+* **`fillmax <= RING - 4`** -- real margin above the operating point, measured by the ISR rather than
+  sampled.  At `RING 32` that is `fillmax <= 28`; it moves with `RING`, since it expresses margin.
+* ~~**`fillmin >= TARGET/4`**~~ -- **RETIRED as UNSOUND, 2026-09-10.**  `fillMin` samples the PRE-POP fill
+  on the pop branch only, so approaching empty the sequence is ...fill=2 pop, fill=1 pop, then a dry block:
+  `fillmin=1` is GUARANTEED on any run where the ring ever empties, and emptying is exactly what a dropout
+  does.  The criterion is therefore equivalent to "no dropout ever happened" and never measured the
+  habitual low-side margin this section claimed for it.  Measured 1 in every arm of RUN 5 and RUN 6.  The
+  instrument that would measure it is the fill HISTOGRAM, which section 6 deferred on the grounds that
+  `fillmin`/`fillmax` answered the question -- refuted for the low side.
 * **One `prime_ms` ~ `TARGET * 2.9 ms` at START and no start-up underrun burst** (run 3: ~27).  The START
   prime is NOT a re-prime and does not appear in `reprimes`, so the bound above counts only mid-stream
   rebuffers.
@@ -430,10 +439,27 @@ first successful pop", which excludes the same start-up stretch without dependin
 block that would end the spell is itself a priming block.  Two independently written dry-branch mutants
 gave the identical reading.  The truncation is worse than the spec assumed.
 
-### 9.3 What RUN 6 decides, and what it predicts
+### 9.3 What RUN 6 decided -- MEASURED 2026-09-10, N = 16
 
-N is read off the histogram: above the bulk of self-healing spells, below a genuine stall.  If the
-distribution confirms the inference (everything <= 25), N = 32 makes the re-prime a pure safety net.
+RUN 6 (26.3 min, the change arm plus the instrument, no behavioural change): **three dry spells -- two of
+<= 4 blocks, one of <= 16, longest 9 -- eleven dry blocks in total.**  `drymax=9 drytot=11 d4=2 d8=0 d16=1
+d32=0 dbig=0`.
+
+★ **The inference in 9.1 was wrong by about 3x, which is exactly why this run existed.**  It reasoned that
+the servo holds fill at ~`TARGET`, so a gap of G blocks strands the ring for G - 16 and the worst spell
+would be near 25.  Measured: 9.  The error is visible in the same heartbeat -- `fillmax=27`, so the
+operating point PLUS the 8-block sawtooth keeps fill well above `TARGET` much of the time and a 22-block
+gap is simply absorbed.  The ring empties only when a gap lands on a trough, which is rare and shallow.
+
+★ **And `over = 0` held for the whole 26.3 min WITH three re-primes.**  So RUN 5's boot-2 overrun was a
+re-prime coinciding with a large backlog, not something every re-prime causes.  The threshold removes a
+mechanism, not a certainty -- worth stating so the next run's `over = 0` is not over-credited to it.
+
+**`REPRIME_AFTER = 16` blocks (46.4 ms)**, `TARGET`-sized and clear above every spell this phone produced,
+while still firing for a genuine stall.  Overridable as `BT_SINK_REPRIME_AFTER`, and pinned by value in
+`node_test` case 16(g) -- because the rest of the suite is parameterised on the constant and was therefore
+blind to it: mutating the default to 0 (i.e. reverting to the old always-re-prime behaviour) left every
+case green except case 12(d).
 
 **The trade to accept with open eyes, recorded before the run:** below the threshold `under` returns to
 counting BLOCKS rather than EVENTS, so it will RISE -- predicted from RUN 5's 10 events to roughly 60-100
