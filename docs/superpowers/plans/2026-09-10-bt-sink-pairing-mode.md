@@ -421,7 +421,7 @@ In `loop()`, after `btin.hold(sink.suspended());`, add `pairingIndicator();`. In
 ```bash
 cd /Users/nicholasnewdigate/Development/rt1170/evkb/examples/audio/bt_sink_test && ./run_qemu.sh 2>&1 | tail -1 | cut -c1-40; grep -E "^pairing=|^bt_link " build/sink.uart | head -4; grep -c "^hb " build/sink.uart
 ```
-Expected: `PASS: A2DP SINK ...`; a `pairing=on reason=boot secs=120` line right after `sink=listening`; `bt_link ... state=listening pairing=boot secs=1NN` on early heartbeats; then `pairing=off reason=paired` once the peer's link streams and `pairing=off secs=0` after. The `hb` count is unchanged from before this task (the refactor added no heartbeat).
+Expected: `PASS: A2DP SINK ...`; a `pairing=on reason=boot secs=119` line right after `sink=listening`; `bt_link ... state=listening pairing=boot secs=1NN` on early heartbeats; then `pairing=off reason=paired` once the peer's link streams and `pairing=off secs=0` after. The `hb` count is unchanged from before this task (the refactor added no heartbeat).
 
 - [ ] **Step 5: Commit**
 
@@ -439,6 +439,28 @@ the header audit does not state it.  The heartbeat body moves to printHeartbeat(
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 ```
+
+**Task 2 review corrections (2026-09-10).**  The heartbeat move was verified VERBATIM rather than by capture
+diff -- the old body dedented one level against the new `printHeartbeat()` differs in exactly one hunk, the
+`println`->`print` on `state=` plus the two new fields -- which is the stronger check, since a capture diff
+cannot distinguish a dropped print from a run-to-run counter.  Three things the run measured that later tasks
+need.  **`secs=119`, not 120, for the AUTOMATIC windows**: `begin()`/`tick()` open the window and
+`pairingIndicator()` prints on a LATER loop pass, so the remainder is ~119,9xx ms and `/1000u` truncates; the
+COMMANDED print is immune because Task 3's handler passes one `now` to both `enterPairing()` and
+`pairingRemainingMs()`, so `pair` really does say `secs=120`.  The literals in Step 4, spec 5/6 and the bench
+steps are corrected; Task 4's greps already use `secs=1[0-9][0-9]$` and need no change.  **`#ifndef
+BT_SINK_LED_ON` moved up beside the sink objects** -- Step 3 drew it with `pairingIndicator()`, but `setup()`
+uses it and sits ~130 lines earlier, so the plan's placement does not compile; the polarity paragraph is
+unchanged.  **`transcript_qemu.txt` is stale in FOUR classes, only two of them this task's** -- the two added
+`pairing=` lines and the `bt_link` field (Task 2), plus the seven `dry*` fields `5434d26` added to `bt_jit`
+and the `fillmin` sentinel reading 32 where the RING-40 firmware prints 40 (both PRE-EXISTING on master, and
+therefore already stale when the NEW-42 close-out recorded vacuity 46/46: the silent-staleness class, surviving
+because no assertion reads those fields).  Task 4 Step 8's re-capture fixes all four and its commit should say
+so.  Two smaller ones for Tasks 3 and 4: `bonds_forgotten=` exists today only inside
+`#if defined(M2_BT_FORGET_BONDS)` in `setup()`, so Task 3's handler EMITS that line rather than reusing one;
+and `PEER-SCAN-ENABLE` already exists in `hci_peer.py`'s `source` phase (Step 5 need not add it) -- its
+assertion is sound, but the comment claiming a windowless bonded sink writes `0x02` at link-up is wrong, the
+value there is `0x00` (`BtLink.cpp:170` composes page|inquiry and both go off with a link up).
 
 ---
 
@@ -830,7 +852,7 @@ Identical in shape to the NEW-42 close-out (`docs/superpowers/plans/2026-09-09-b
 
 - [ ] **Step 2: First light — the LED.** Press SW4. Within the first two minutes the LED must blink at ~1 Hz. If it is *solid* or *off* while `pairing=on reason=boot` shows on the console, the polarity is inverted: change `BT_SINK_LED_ON` to `LOW`, rebuild, reflash, repeat. Record the verified level in the transcript header and in the sketch comment.
 
-- [ ] **Step 3: The boot window.** LED blinking; `pairing=on reason=boot secs=120` on the console; the phone lists EVKB-SINK. Wait two minutes without connecting: LED stops, `pairing=off reason=timeout`, the phone no longer lists it (bonded sinks are invisible outside a window).
+- [ ] **Step 3: The boot window.** LED blinking; `pairing=on reason=boot secs=119` on the console; the phone lists EVKB-SINK. Wait two minutes without connecting: LED stops, `pairing=off reason=timeout`, the phone no longer lists it (bonded sinks are invisible outside a window).
 
 - [ ] **Step 4: Type `pair`.** LED resumes, `pairing=on reason=cmd secs=120`, the phone lists it again; connect; `pairing=off reason=paired`, LED off, music streams.
 

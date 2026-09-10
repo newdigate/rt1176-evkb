@@ -168,7 +168,7 @@ non-printables are dropped; overflow discards the line and reports it.  Case-ins
 `(millis() / 500) & 1`, otherwise off.  The active level is a named constant the first bench step sets.
 QEMU cannot see it; it is a silicon-only witness like `under=`.
 
-**Prints on the edge:** `pairing=on reason=boot|drop secs=120` from `loop()`'s edge detector when an AUTOMATIC
+**Prints on the edge:** `pairing=on reason=boot|drop secs=119` from `loop()`'s edge detector when an AUTOMATIC
 window opens, `pairing=off reason=timeout|paired|cancelled` from the same detector on every close -- and **a commanded
 window prints its own `pairing=on reason=cmd secs=N` from the command handler**, because extending an already-
 open window is not an edge and the person who typed `pair` deserves an answer either way (corrected during
@@ -213,7 +213,7 @@ The console chardev becomes `-chardev socket,...,logfile=$OUT -serial chardev:c0
 `hci_peer.py`'s `source` phase gains a drop-and-re-page after the volume set, borrowed from `lifecycle`.
 Asserted, in order:
 
-1. `pairing=on reason=boot secs=120` at boot.
+1. `pairing=on reason=boot secs=119` at boot.
 2. `pair` **while streaming** -> `pairing=refused reason=link_up` -- proves the whole command path over the
    socket, and that a refusal is a refusal.
 3. After the injected drop: `pairing=on reason=drop`; **`PEER-SCAN-ENABLE 0x03`** in the peer's log -- the
