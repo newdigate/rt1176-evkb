@@ -267,6 +267,16 @@ static AudioOutputI2S      i2sOut;
 static AudioConnection     c1(btin, 0, i2sOut, 0), c2(btin, 1, i2sOut, 1);
 static AudioControlWM8962  codec;
 
+// The green User LED (LED_BUILTIN = pin 3 = GPIO_AD_04, D3) blinks at 1 Hz while a pairing window is open
+// (pairingIndicator(), below); setup() drives it OFF once, card-absent included.  Defined up here because both
+// callers need it and setup() is the earlier one.
+// ** POLARITY: the RevC3 header audit names the pad but not its active level, and the only "active low" note
+// in the core is the 1060's D8 -- a different board.  BT_SINK_LED_ON is VERIFIED AT FIRST LIGHT on the bench
+// (plan Task 6) and corrected there if this default is wrong.  QEMU cannot see it: a silicon-only witness. **
+#ifndef BT_SINK_LED_ON
+#define BT_SINK_LED_ON HIGH
+#endif
+
 static void btLog(void *, const char *s) { CONSOLE.println(s); }
 // A2dpSink's media callback: main context (the L2cap RX path), NOT an ISR -- the decode happens here, out of the
 // SAI ISR, per the 2026-09-04 livelock lesson.
@@ -412,6 +422,9 @@ void setup() {
 #if defined(M2_BT_SINK_ALWAYS_DISCOVERABLE)
     session.setAlwaysDiscoverable(true);
 #endif
+    // The pairing LED is driven from here on whether or not the card answered: with no HCI no window ever opens,
+    // so this OFF write is the whole of its card-absent behaviour and the pin is never left floating.
+    pinMode(LED_BUILTIN, OUTPUT); digitalWrite(LED_BUILTIN, !BT_SINK_LED_ON);
     // Begin the session only if HCI came up; with no card it never listens and the heartbeat stays vacuous.
     if (s_hciSt == Hci::OK) {
         session.begin(&bonds, s_aclNum, millis());
@@ -419,6 +432,145 @@ void setup() {
     } else {
         CONSOLE.println("a2dp_sink=deferred (no HCI: card absent)");
     }
+}
+
+// NEW-46: the pairing window's two enums as console words.  `off` covers PAIR_NONE, which is what
+// pairingReason() returns whenever the window is shut -- so the heartbeat field reads `pairing=off` with no
+// separate open/closed test at the call site.
+static const char *pairingReasonName(BtSinkSession::PairingReason r) {
+    switch (r) { case BtSinkSession::PAIR_BOOT: return "boot"; case BtSinkSession::PAIR_DROP: return "drop";
+                 case BtSinkSession::PAIR_CMD: return "cmd"; default: return "off"; }
+}
+static const char *pairingEndName(BtSinkSession::PairingEnd e) {
+    switch (e) { case BtSinkSession::PAIR_END_PAIRED: return "paired"; case BtSinkSession::PAIR_END_TIMEOUT: return "timeout";
+                 case BtSinkSession::PAIR_END_CANCELLED: return "cancelled"; default: return "none"; }
+}
+
+// The once-a-second heartbeat, and also what `status` prints on demand (Task 3): one body, two callers, so the
+// console command and the timer can never disagree about what a heartbeat contains.
+static void printHeartbeat() {
+    const BtSinkSession::Stats &st = session.stats();
+    CONSOLE.print("hb streaming="); CONSOLE.print(session.state() == BtSinkSession::STREAMING ? 1 : 0);
+    CONSOLE.print(" pkts="); CONSOLE.print(btin.pkts());
+    CONSOLE.print(" frames="); CONSOLE.print(btin.frames());
+    CONSOLE.print(" seqgaps="); CONSOLE.print(btin.seqGaps());
+    CONSOLE.print(" under="); CONSOLE.print(btin.underruns());
+    CONSOLE.print(" over="); CONSOLE.print(btin.overruns());
+    CONSOLE.print(" bad="); CONSOLE.println(btin.badFrames());
+    // The ring/servo line: fill is the servo's input, trim_ppm its output, rms the audio-clock-referenced
+    // "is there really audio in here" measure (rmsAcc accumulates the per-block MEAN |L| -- divide by
+    // blocks alone, see AudioInputBluetooth.h), crc200 a golden over the first 200 decoded blocks.
+    CONSOLE.print("bt_sink fill="); CONSOLE.print(btin.fill());
+    CONSOLE.print(" trim_ppm="); CONSOLE.print(btin.trimPpm());
+    CONSOLE.print(" rms="); CONSOLE.print(btin.rmsBlocks() ? btin.rmsAcc() / btin.rmsBlocks() : 0);
+    CONSOLE.print(" rms_blocks="); CONSOLE.print(btin.rmsBlocks());
+    CONSOLE.print(" crc200=0x"); CONSOLE.println(btin.crc(), HEX);
+    // NEW-42 instrument, cumulative since START.  Placed right after bt_sink and before bt_link so the gate's
+    // heartbeat-completeness check (a bt_hci line for every bt_sink line) covers it: a torn final block can
+    // never leave a bt_jit line half-read.  gap*: the SOURCE's delivery cadence (main context, micros() per
+    // accepted packet) -- the half that is REAL in QEMU, since the fake peer paces it in wall time.  ONE
+    // CAVEAT, measured 2026-09-09 over two gate runs: the guest's micros() takes a single ~3.14 s step
+    // relative to millis() mid-run, so gapmax_ms reads 3142/3141 and gbig 4/3 on a peer whose own log
+    // (PEER-SOURCE-PROGRESS elapsed=5.2/10.2/15.2 for packets 50/100/150) proves it never paused.  The
+    // COUNT is trustworthy there and the magnitudes are not: the buckets summed to exactly 149 -- one
+    // interval per packet after the first -- in both runs.  fillmin/fillmax/trimlo/trimhi/overev/
+    // reprimes/primed/prime_ms: the CONSUME side -- SILICON claims, exactly as under= is, because QEMU
+    // walks update() on its own schedule and not at 44100/128 Hz.
+    // ★ Two readings here do not mean what their neighbours mean, and a bench reader meets them at this
+    // line rather than in the header:
+    //   * fillmin reads RING and fillmax reads 0 UNTIL THE FIRST POP -- out-of-band sentinels, and legible
+    //     as such because fill() sampled at a pop can be neither (one slot is the SPSC sentinel, so RING is
+    //     unreachable, and a pop only happens with a block to pop, so 0 is too).  fillmin=RING means "no
+    //     block has been popped yet", NOT "the ring stayed brim-full".
+    //   * prime_ms is PER-STREAM while every other field on this line is LIFETIME: begin() re-arms it at
+    //     each stream START, so after a reconnect it times the NEW stream's prime.  reprimes counts the
+    //     mid-stream rebuilds and deliberately does NOT move it.  Diff two heartbeats across a drop and
+    //     this one field goes backwards while its neighbours only climb.
+    // prime_ms converts the START prime's length in blocks on the BLOCK clock (x 128 / 44100), so it needs no
+    // wall clock in the ISR.  The 64-bit intermediate is not decoration: a prime that never reaches TARGET
+    // never ends (AudioInputBluetooth.h's hazard note), primeBlocks() then climbs at 344/s, and in uint32 the
+    // product wraps after ~98 s -- turning the one field that would expose a stalled source into a small,
+    // healthy-looking number.
+    CONSOLE.print("bt_jit gapmax_ms="); CONSOLE.print(btin.gapMaxUs() / 1000u);
+    CONSOLE.print(" g30=");  CONSOLE.print(btin.gapBucket(0));
+    CONSOLE.print(" g50=");  CONSOLE.print(btin.gapBucket(1));
+    CONSOLE.print(" g80=");  CONSOLE.print(btin.gapBucket(2));
+    CONSOLE.print(" g120="); CONSOLE.print(btin.gapBucket(3));
+    CONSOLE.print(" gbig="); CONSOLE.print(btin.gapBucket(4));
+    CONSOLE.print(" fillmin="); CONSOLE.print(btin.fillMin());
+    CONSOLE.print(" fillmax="); CONSOLE.print(btin.fillMax());
+    CONSOLE.print(" trimlo="); CONSOLE.print(btin.trimLo());
+    CONSOLE.print(" trimhi="); CONSOLE.print(btin.trimHi());
+    CONSOLE.print(" overev="); CONSOLE.print(btin.overEvents());
+    CONSOLE.print(" reprimes="); CONSOLE.print(btin.reprimes());
+    CONSOLE.print(" primed="); CONSOLE.print(btin.primed() ? 1 : 0);
+    CONSOLE.print(" prime_ms="); CONSOLE.print((uint32_t)((uint64_t)btin.primeBlocks() * AUDIO_BLOCK_SAMPLES * 1000u / 44100u));
+    // dry*: the DRY-SPELL instrument (spec s9) -- consecutive update()s on an EMPTY ring, which is what
+    // sizes the threshold re-prime's N.  CONSUME SIDE, so like fillmin/fillmax/reprimes above these are
+    // SILICON claims and the gate asserts none of them: QEMU walks update() on its own schedule, not at
+    // 44100/128 Hz, so a dry spell measured there counts host scheduling and not the source.
+    // Three readings, TWO populations (the header has the full note): drytot is every empty block;
+    // d4..dbig and drymax are the spells that ENDED because a block arrived, which is the only ending
+    // whose length measures the source.  A spell cut short by a SUSPEND or a stream loss is in drytot
+    // alone, and a spell still running is in neither -- so drymax lags a dropout in progress.
+    // ★ `drymax=0 drytot=0` beside `primed=0` means NOT MEASURED, not "the ring never ran dry": the
+    // instrument starts at the END of the START prime, and a BT_SINK_PREFILL=0 build (the bench's
+    // CONTROL arm) never completes one.  Same shape as the fillmin=RING sentinel above.
+    // The seven fields are ~65 more characters on a heartbeat that already runs ~345 (~30 ms at 115200);
+    // they fit the 4 KB console TX extension setup() installs many times over, so the bench's
+    // print-stalls-loop() observer effect (NEW-41, fixed by that extension) does not come back.
+    CONSOLE.print(" drymax="); CONSOLE.print(btin.dryMax());
+    CONSOLE.print(" drytot="); CONSOLE.print(btin.dryTotal());
+    CONSOLE.print(" d4=");     CONSOLE.print(btin.dryBucket(0));
+    CONSOLE.print(" d8=");     CONSOLE.print(btin.dryBucket(1));
+    CONSOLE.print(" d16=");    CONSOLE.print(btin.dryBucket(2));
+    CONSOLE.print(" d32=");    CONSOLE.print(btin.dryBucket(3));
+    CONSOLE.print(" dbig=");   CONSOLE.println(btin.dryBucket(4));
+    CONSOLE.print("bt_link links="); CONSOLE.print(st.links);
+    CONSOLE.print(" lost="); CONSOLE.print(st.lost);
+    CONSOLE.print(" closed="); CONSOLE.print(st.closed);
+    CONSOLE.print(" reason=0x"); printHex8(st.lastReason);
+    CONSOLE.print(" state="); CONSOLE.print(BtSinkSession::stateName(session.state()));
+    // NEW-46: the pairing window, so a 1-in-30 sampled transcript still shows it.  reason names the OPEN window
+    // (boot|drop|cmd); off when closed; secs the time left on this heartbeat's clock.  MEASURED on the gate
+    // capture: the bt_link line goes 60 -> 82 characters and the whole six-line block 520 -> 539 (+22 worst
+    // case, `pairing=boot secs=119`), ~0.2 ms more at 115200 against the 4 KB console TX extension setup()
+    // installs -- NEW-41's print-stalls-loop() observer effect stays bought off.  pairingReason() reads
+    // PAIR_NONE whenever the window is shut, so `off` needs no separate open/closed test here.
+    CONSOLE.print(" pairing="); CONSOLE.print(pairingReasonName(session.pairingReason()));
+    CONSOLE.print(" secs="); CONSOLE.println(session.pairingRemainingMs(millis()) / 1000u);
+    CONSOLE.print("bt_hci ncmd="); CONSOLE.print(hci.ncmd());
+    CONSOLE.print(" timeouts="); CONSOLE.print(hci.timeouts());
+    CONSOLE.print(" starved="); CONSOLE.print(hci.starved());
+    CONSOLE.print(" l2drop="); CONSOLE.print(sink.l2().dropped());
+    CONSOLE.print(" l2frag="); CONSOLE.print(sink.l2().reasmFrags());        // ACL continuation fragments reassembled
+    CONSOLE.print(" l2fragdrop="); CONSOLE.print(sink.l2().reasmDrops());    // partial PDUs discarded
+    CONSOLE.print(" credmin="); CONSOLE.println(sink.l2().creditsMin());
+    // AVRCP, LAST so no gate assertion above it moves.  avctp= is the only thing that says whether the peer
+    // ever opened the control channel at all -- with the counters all zero, avctp=0 (never opened) and
+    // avctp=1 (opened, silent) are the same reading from the bench, and they mean opposite things.
+    CONSOLE.print("bt_avrcp avctp="); CONSOLE.print(sink.l2().byPsm(Avrcp::PSM) != nullptr ? 1 : 0);
+    CONSOLE.print(" notif="); CONSOLE.print(sink.avrcp().notifications());
+    CONSOLE.print(" ans="); CONSOLE.print(sink.avrcp().answered());          // GetCapabilities / SetAbsoluteVolume, answered properly
+    CONSOLE.print(" unsup="); CONSOLE.print(sink.avrcp().unsupported());     // NOT IMPLEMENTED (unknown PDU) or IPID
+    CONSOLE.print(" drop="); CONSOLE.print(sink.avrcp().dropped());
+    CONSOLE.print(" vol="); CONSOLE.println(sink.avrcp().volume());
+}
+
+static void pairingIndicator() {
+    // Edges are printed here, for the AUTOMATIC windows and for every close.  A commanded window prints its own
+    // `pairing=on reason=cmd` from the command (Task 3) -- an extension of an open window is not an edge, and
+    // the person who typed it deserves an answer either way -- so the rising edge is skipped for PAIR_CMD.
+    static bool wasOpen = false;
+    bool open = session.pairingOpen();
+    if (open && !wasOpen && session.pairingReason() != BtSinkSession::PAIR_CMD) {
+        CONSOLE.print("pairing=on reason="); CONSOLE.print(pairingReasonName(session.pairingReason()));
+        CONSOLE.print(" secs="); CONSOLE.println(session.pairingRemainingMs(millis()) / 1000u);
+    }
+    if (!open && wasOpen) { CONSOLE.print("pairing=off reason="); CONSOLE.println(pairingEndName(session.pairingEnd())); }
+    wasOpen = open;
+    bool lit = open && ((millis() / 500u) & 1u);
+    digitalWrite(LED_BUILTIN, lit ? BT_SINK_LED_ON : !BT_SINK_LED_ON);
 }
 
 // Every pass, no delay.  yield() drives the HciPump (attached to its EventResponder), which is what parses
@@ -434,107 +586,8 @@ void loop() {
     // -200 ppm clamp and `under` would climb at 344 Hz on a link doing exactly what it was asked.  suspended()
     // is a state read (Avdtp::state() == SUSPENDED), so this costs nothing to call every pass.
     btin.hold(sink.suspended());
+    pairingIndicator();
     sink.l2().tickClock(millis());     // ms reference for the credit-starve fingerprint
     static uint32_t last = 0;
-    if (millis() - last >= 1000) {
-        last = millis();
-        const BtSinkSession::Stats &st = session.stats();
-        CONSOLE.print("hb streaming="); CONSOLE.print(session.state() == BtSinkSession::STREAMING ? 1 : 0);
-        CONSOLE.print(" pkts="); CONSOLE.print(btin.pkts());
-        CONSOLE.print(" frames="); CONSOLE.print(btin.frames());
-        CONSOLE.print(" seqgaps="); CONSOLE.print(btin.seqGaps());
-        CONSOLE.print(" under="); CONSOLE.print(btin.underruns());
-        CONSOLE.print(" over="); CONSOLE.print(btin.overruns());
-        CONSOLE.print(" bad="); CONSOLE.println(btin.badFrames());
-        // The ring/servo line: fill is the servo's input, trim_ppm its output, rms the audio-clock-referenced
-        // "is there really audio in here" measure (rmsAcc accumulates the per-block MEAN |L| -- divide by
-        // blocks alone, see AudioInputBluetooth.h), crc200 a golden over the first 200 decoded blocks.
-        CONSOLE.print("bt_sink fill="); CONSOLE.print(btin.fill());
-        CONSOLE.print(" trim_ppm="); CONSOLE.print(btin.trimPpm());
-        CONSOLE.print(" rms="); CONSOLE.print(btin.rmsBlocks() ? btin.rmsAcc() / btin.rmsBlocks() : 0);
-        CONSOLE.print(" rms_blocks="); CONSOLE.print(btin.rmsBlocks());
-        CONSOLE.print(" crc200=0x"); CONSOLE.println(btin.crc(), HEX);
-        // NEW-42 instrument, cumulative since START.  Placed right after bt_sink and before bt_link so the gate's
-        // heartbeat-completeness check (a bt_hci line for every bt_sink line) covers it: a torn final block can
-        // never leave a bt_jit line half-read.  gap*: the SOURCE's delivery cadence (main context, micros() per
-        // accepted packet) -- the half that is REAL in QEMU, since the fake peer paces it in wall time.  ONE
-        // CAVEAT, measured 2026-09-09 over two gate runs: the guest's micros() takes a single ~3.14 s step
-        // relative to millis() mid-run, so gapmax_ms reads 3142/3141 and gbig 4/3 on a peer whose own log
-        // (PEER-SOURCE-PROGRESS elapsed=5.2/10.2/15.2 for packets 50/100/150) proves it never paused.  The
-        // COUNT is trustworthy there and the magnitudes are not: the buckets summed to exactly 149 -- one
-        // interval per packet after the first -- in both runs.  fillmin/fillmax/trimlo/trimhi/overev/
-        // reprimes/primed/prime_ms: the CONSUME side -- SILICON claims, exactly as under= is, because QEMU
-        // walks update() on its own schedule and not at 44100/128 Hz.
-        // ★ Two readings here do not mean what their neighbours mean, and a bench reader meets them at this
-        // line rather than in the header:
-        //   * fillmin reads RING and fillmax reads 0 UNTIL THE FIRST POP -- out-of-band sentinels, and legible
-        //     as such because fill() sampled at a pop can be neither (one slot is the SPSC sentinel, so RING is
-        //     unreachable, and a pop only happens with a block to pop, so 0 is too).  fillmin=RING means "no
-        //     block has been popped yet", NOT "the ring stayed brim-full".
-        //   * prime_ms is PER-STREAM while every other field on this line is LIFETIME: begin() re-arms it at
-        //     each stream START, so after a reconnect it times the NEW stream's prime.  reprimes counts the
-        //     mid-stream rebuilds and deliberately does NOT move it.  Diff two heartbeats across a drop and
-        //     this one field goes backwards while its neighbours only climb.
-        // prime_ms converts the START prime's length in blocks on the BLOCK clock (x 128 / 44100), so it needs no
-        // wall clock in the ISR.  The 64-bit intermediate is not decoration: a prime that never reaches TARGET
-        // never ends (AudioInputBluetooth.h's hazard note), primeBlocks() then climbs at 344/s, and in uint32 the
-        // product wraps after ~98 s -- turning the one field that would expose a stalled source into a small,
-        // healthy-looking number.
-        CONSOLE.print("bt_jit gapmax_ms="); CONSOLE.print(btin.gapMaxUs() / 1000u);
-        CONSOLE.print(" g30=");  CONSOLE.print(btin.gapBucket(0));
-        CONSOLE.print(" g50=");  CONSOLE.print(btin.gapBucket(1));
-        CONSOLE.print(" g80=");  CONSOLE.print(btin.gapBucket(2));
-        CONSOLE.print(" g120="); CONSOLE.print(btin.gapBucket(3));
-        CONSOLE.print(" gbig="); CONSOLE.print(btin.gapBucket(4));
-        CONSOLE.print(" fillmin="); CONSOLE.print(btin.fillMin());
-        CONSOLE.print(" fillmax="); CONSOLE.print(btin.fillMax());
-        CONSOLE.print(" trimlo="); CONSOLE.print(btin.trimLo());
-        CONSOLE.print(" trimhi="); CONSOLE.print(btin.trimHi());
-        CONSOLE.print(" overev="); CONSOLE.print(btin.overEvents());
-        CONSOLE.print(" reprimes="); CONSOLE.print(btin.reprimes());
-        CONSOLE.print(" primed="); CONSOLE.print(btin.primed() ? 1 : 0);
-        CONSOLE.print(" prime_ms="); CONSOLE.print((uint32_t)((uint64_t)btin.primeBlocks() * AUDIO_BLOCK_SAMPLES * 1000u / 44100u));
-        // dry*: the DRY-SPELL instrument (spec s9) -- consecutive update()s on an EMPTY ring, which is what
-        // sizes the threshold re-prime's N.  CONSUME SIDE, so like fillmin/fillmax/reprimes above these are
-        // SILICON claims and the gate asserts none of them: QEMU walks update() on its own schedule, not at
-        // 44100/128 Hz, so a dry spell measured there counts host scheduling and not the source.
-        // Three readings, TWO populations (the header has the full note): drytot is every empty block;
-        // d4..dbig and drymax are the spells that ENDED because a block arrived, which is the only ending
-        // whose length measures the source.  A spell cut short by a SUSPEND or a stream loss is in drytot
-        // alone, and a spell still running is in neither -- so drymax lags a dropout in progress.
-        // ★ `drymax=0 drytot=0` beside `primed=0` means NOT MEASURED, not "the ring never ran dry": the
-        // instrument starts at the END of the START prime, and a BT_SINK_PREFILL=0 build (the bench's
-        // CONTROL arm) never completes one.  Same shape as the fillmin=RING sentinel above.
-        // The seven fields are ~65 more characters on a heartbeat that already runs ~345 (~30 ms at 115200);
-        // they fit the 4 KB console TX extension setup() installs many times over, so the bench's
-        // print-stalls-loop() observer effect (NEW-41, fixed by that extension) does not come back.
-        CONSOLE.print(" drymax="); CONSOLE.print(btin.dryMax());
-        CONSOLE.print(" drytot="); CONSOLE.print(btin.dryTotal());
-        CONSOLE.print(" d4=");     CONSOLE.print(btin.dryBucket(0));
-        CONSOLE.print(" d8=");     CONSOLE.print(btin.dryBucket(1));
-        CONSOLE.print(" d16=");    CONSOLE.print(btin.dryBucket(2));
-        CONSOLE.print(" d32=");    CONSOLE.print(btin.dryBucket(3));
-        CONSOLE.print(" dbig=");   CONSOLE.println(btin.dryBucket(4));
-        CONSOLE.print("bt_link links="); CONSOLE.print(st.links);
-        CONSOLE.print(" lost="); CONSOLE.print(st.lost);
-        CONSOLE.print(" closed="); CONSOLE.print(st.closed);
-        CONSOLE.print(" reason=0x"); printHex8(st.lastReason);
-        CONSOLE.print(" state="); CONSOLE.println(BtSinkSession::stateName(session.state()));
-        CONSOLE.print("bt_hci ncmd="); CONSOLE.print(hci.ncmd());
-        CONSOLE.print(" timeouts="); CONSOLE.print(hci.timeouts());
-        CONSOLE.print(" starved="); CONSOLE.print(hci.starved());
-        CONSOLE.print(" l2drop="); CONSOLE.print(sink.l2().dropped());
-        CONSOLE.print(" l2frag="); CONSOLE.print(sink.l2().reasmFrags());        // ACL continuation fragments reassembled
-        CONSOLE.print(" l2fragdrop="); CONSOLE.print(sink.l2().reasmDrops());    // partial PDUs discarded
-        CONSOLE.print(" credmin="); CONSOLE.println(sink.l2().creditsMin());
-        // AVRCP, LAST so no gate assertion above it moves.  avctp= is the only thing that says whether the peer
-        // ever opened the control channel at all -- with the counters all zero, avctp=0 (never opened) and
-        // avctp=1 (opened, silent) are the same reading from the bench, and they mean opposite things.
-        CONSOLE.print("bt_avrcp avctp="); CONSOLE.print(sink.l2().byPsm(Avrcp::PSM) != nullptr ? 1 : 0);
-        CONSOLE.print(" notif="); CONSOLE.print(sink.avrcp().notifications());
-        CONSOLE.print(" ans="); CONSOLE.print(sink.avrcp().answered());          // GetCapabilities / SetAbsoluteVolume, answered properly
-        CONSOLE.print(" unsup="); CONSOLE.print(sink.avrcp().unsupported());     // NOT IMPLEMENTED (unknown PDU) or IPID
-        CONSOLE.print(" drop="); CONSOLE.print(sink.avrcp().dropped());
-        CONSOLE.print(" vol="); CONSOLE.println(sink.avrcp().volume());
-    }
+    if (millis() - last >= 1000) { last = millis(); printHeartbeat(); }
 }
