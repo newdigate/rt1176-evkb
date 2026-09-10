@@ -665,6 +665,76 @@ walk does not spend 30 s paging stale bonds before it inquires.
   or LE-only), `M2_BT_INQUIRY_LIAC` exists because of it. The board "Wire not
   connected" that looked like the DAP wedge was the board being switched OFF.
 
+✅ **Measured 2026-09-10: 139 gates discovered, 138 passed, 1 failed, 0 SKIP** (`-l` reports 139), on the
+**NEW-42 sink jitter-absorption** close-out. `LICENSE-AUDIT: PASS`; vacuity **46/46**; host suites 113 /
+365 / 337 (the sink example now builds its node_test in TWO arms, default and the bench's CONTROL);
+fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the sink gate on the GitHub-fetched ELF at M2Radio
+`1b88c1b`. **No new gate** — gate 139 was extended in place.
+★ The one red is `display/synthui_slide_toggle_test` (`vsync fence unhealthy or missing`), dispositioned as
+the LOAD-SENSITIVITY class with evidence: it passes ALONE twice, its assertion is a `timeouts=0` fence (the
+classic host-scheduling artefact, with `fps=0` on the sweep's first sample and `flips=66 isrs=66 timeouts=0`
+idle), and it links neither M2Radio nor anything NEW-42 touched. **It is the FOURTH gate to land in that
+class** after `cm4_wire_int_slave_test`, `m2_rx_demo[txaggr]` and `m2_uap_lwip[uap]` — all of which were
+green in this sweep itself. The susceptible set is not a fixed list, and this is the third confirmation.
+
+★ **NEW-42 (2026-09-10): the A2DP sink absorbs the phone's delivery jitter.** Spec
+`docs/superpowers/specs/2026-09-09-bt-sink-jitter-absorption-design.md`, plan
+`docs/superpowers/plans/2026-09-09-bt-sink-jitter-absorption.md`. Final configuration **`RING 40 /
+TARGET 16 / pre-fill / REPRIME_AFTER 16`**, all four CMake-overridable so the bench builds its CONTROL arm
+(`16 / 8 / off`) from ONE source. Measured on an iPhone across FIVE bench runs: **`over` 13.09/min → 0
+(eliminated), `under` 16.08/min → 0.69/min**, `reprimes=0`, `fillmax` 27 of 39 where the control ran rail
+to rail at 15 of 15. Also `Avrcp::answered()` (M2Radio `1b88c1b`): `GetCapabilities` and
+`SetAbsoluteVolume` no longer count as `unsupported()`, which the gate now pins on the wire.
+★ **The issue's own hypothesis was wrong, and the run-3 data already contained the refutation.** ONE RTP
+packet delivers EIGHT blocks, so `RING 16` held exactly two packets and `TARGET 8` was one; the P-only
+servo's standing offset (`drift/kp` = 2.3 blocks at the measured 90 ppm) parked the mean at the ceiling;
+and every dropped frame becomes an underrun BY CONSERVATION, the deficit permanent at the servo's 72 s tau.
+Run 3's own control: four consecutive 30 s windows at fill 5-6 with `dunder=0 dover=0`.
+★ **THREE THINGS THIS TREE ASSERTED WERE REFUTED BY MEASUREMENT, and each is worth more than the fix.**
+(1) **QEMU's guest clock makes every TIME MAGNITUDE a fiction, not just the audio clock** — the fake peer's
+log is exactly linear at 100 ms yet the guest measures one ~3.14 s inter-arrival EVERY run (3142/3143/3142).
+So a gate may assert interval COUNTS (the five gap buckets must sum to `pkts-1`; measured 149 in QEMU and
+68324 on silicon) but NEVER durations. The scripted peer gap this plan called for was retired on that
+evidence, and the bucket EDGES are pinned on the host instead, where `micros()` is injectable.
+(2) **A load margin measured once idle is not a margin** — the first band floor was RED 2 of 5 under eight
+CPU spinners; the floor is now 90, with 28 of headroom under the worst reading.
+(3) **`fillmin >= TARGET/4` was an UNSOUND acceptance criterion of my own writing.** `fillMin` samples
+pre-pop fill on the pop branch, so `fillmin=1` is GUARANTEED on any run where the ring ever empties — and
+emptying is what a dropout does. It is equivalent to `reprimes == 0` and never measured the habitual
+low-side margin the spec claimed. Struck, not reinterpreted; the fill HISTOGRAM would measure it.
+★ **The threshold re-prime is the fix, and N was MEASURED after an inference proved 3x wrong.** RUN 5 met
+neither `over=0` nor `fillmax<=28`: a re-prime refills the ring to `TARGET` from fresh packets and THEN the
+backlog the phone buffered during the gap lands on top (`TARGET + backlog > RING-1`). Sizing N needed the
+dry-spell length — **which the re-prime TRUNCATES**, so a counter that stops at "dry" reads 1 (measured: it
+actually reads 0, never closing a spell, because with the pre-fill on the closing block is itself a priming
+block). The instrument counts consecutive EMPTY-ring `update()` calls IRRESPECTIVE of priming. RUN 6
+measured three spells in 26.3 min, longest **9** blocks — against an inference of ~25, wrong because
+`fillmax=27` shows fill sits well above `TARGET` much of the time and a 22-block gap is simply absorbed.
+`REPRIME_AFTER = 16` is clear above that and still fires for a stall. `RING 32 → 40` followed for the
+residual: the threshold removed the AMPLIFIER, not the mechanism, and RUN 7 still peaked at 30 of 31.
+★ **`under` changed meaning and the criterion was rewritten, not reinterpreted**: below the threshold a dry
+spell ticks one underrun per BLOCK (NEW-41's semantics), so `under <= reprimes + 2` became
+`under <= dryTotal` — which held with EQUALITY in all four final boots (13=13, 24=24, 3=3, 10=10).
+★ **An audible start-up artefact is GONE and I cannot say why.** Heavy distortion thinning to silence for
+~20 s at stream start, reproduced twice, absent across six later resets. The counters exclude the obvious
+causes — `under=1` in the first 24 s (not the ring), `bad=0` and `rms` flat from t=3 s (not the decoder or
+the air) — so it is downstream, in the clock/codec path. The proposed mechanism (the servo's PLL trim
+churning) was REFUTED by RUN 7's own data: the trim there sits PINNED at the +200 clamp for 14+ seconds,
+more extreme than the run that misbehaved, and the audio is clean. Not credited to the threshold; one
+candidate eliminated. `prime_ms` is the one acceptance criterion still unmet (87/101/136/89 ms against a
+predicted 46) — the pre-fill waits for `TARGET` blocks while the phone's own pipeline is still filling.
+★ **A CMake trap that lies convincingly**, met twice: editing a `set(... CACHE ...)` DEFAULT does not change
+an existing build directory — the cached value still reaches the compiler through
+`target_compile_definitions`, so the image rebuilds happily at the OLD depth. `btin` read `0x4a20` until
+each dir was reconfigured with an explicit `-D`, and `build-fetch` was found sitting at the old depth during
+close-out. **Check the symbol size, not the source.**
+★ Three issues were opened from findings made in passing, none of them NEW-42 defects: **NEW-43** (one
+failed SSP disables Simple Pairing for the whole session — `BtLink`'s legacy-PIN fallback writes
+`Write_Simple_Pairing_Mode=0` and only PREPARE re-enables it, so an iPhone gets a passcode prompt from a
+speaker until the board is rebooted), **NEW-44** (`Avrcp` re-applies `SetAbsoluteVolume` on every TX-queue
+retry), **NEW-45** (acid_box's `M2_BT_OUT` bench build overflows ITCM by 140 B — pre-existing, proven
+against the old pin, no gate affected).
+
 ✅ **Measured 2026-09-09 (afternoon): 139 gates discovered, 139 passed, 0 failed, 0 SKIP** (`gates: 139
 passed`, exit 0; 23m28s wall), on the **NEW-41 bench close-out** pin (M2Radio `9f24315`: the Category 2
 AVRCP record + sink-initiated AVCTP found on the iPhone). 18 M2Radio-linking gate dirs rebuilt first (14
