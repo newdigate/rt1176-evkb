@@ -31,6 +31,9 @@ static_assert(AUDIO_BLOCK_SAMPLES == 128,
 #ifndef BT_SINK_PREFILL
 #define BT_SINK_PREFILL 1
 #endif
+#ifndef BT_SINK_REPRIME_AFTER
+#define BT_SINK_REPRIME_AFTER 16
+#endif
 class AudioInputBluetooth : public AudioStream {
 public:
     AudioInputBluetooth() : AudioStream(0, nullptr) {}
@@ -88,6 +91,28 @@ public:
         "instrument prints a permanent false fillmin=0 while looking perfectly healthy.  The "
         "one-packet-of-headroom claim is TARGET's, not this bound's: it is asserted in node_test case 14, "
         "because the bench's CONTROL arm (16/8) deliberately breaks it.");
+    // THE THRESHOLD (NEW-42, spec s9), overridable as BT_SINK_REPRIME_AFTER like the three above: a ring that
+    // runs dry mid-stream re-primes only after it has been dry for MORE than REPRIME_AFTER consecutive blocks.
+    // Below that it simply ticks 2.9 ms underruns and the SOURCE's catch-up burst refills it, so the re-prime's
+    // `TARGET` term never enters the sum.  ** That sum is what RUN 5 failed spec s5's `over = 0` on: a re-prime
+    // refills the ring to TARGET from FRESH packets, and then the backlog the phone buffered during the gap
+    // lands on top -- TARGET + backlog > RING - 1, surplus DROPPED.  Boot 2 went fillmax 25 -> 31, overev
+    // 0 -> 3, reprimes 1 -> 2 inside one heartbeat window. **  The re-prime becomes what it should always have
+    // been: the safety net for a source that does NOT catch up and would otherwise leave the ring permanently
+    // short (spec s1, fact 3), rather than a response to ordinary jitter.  Not a bigger RING, which out-runs
+    // the mechanism instead of removing it.
+    // ** 16 IS MEASURED, NOT CHOSEN. **  RUN 6 (iPhone, 26.3 min, the dry-spell instrument below, same
+    // behaviour as RUN 5 so the two compare): THREE dry spells -- two of <= 4 blocks and one of <= 16 -- the
+    // LONGEST 9 blocks, eleven dry blocks in total (`drymax=9 drytot=11 d4=2 d8=0 d16=1 d32=0 dbig=0`).  16 is
+    // clear above every spell that phone produced and still fires for a genuine stall.  ** The INFERENCE this
+    // replaced said ~25 and was wrong by ~3x: ** spec s9.1 reasoned that the servo holds fill at ~TARGET, so a
+    // G-block gap strands the ring for about G - 16 -- but the same heartbeat reads `fillmax=27`, so the
+    // operating point PLUS the 8-block packet sawtooth keeps fill well ABOVE TARGET much of the time and a
+    // 22-block gap is simply absorbed.  The ring empties only when a gap lands on a trough, which is rare and
+    // shallow.  RUN 6 also held `over=0` for 26.3 min WITH three re-primes, so the threshold removes a
+    // MECHANISM, not a certainty.
+    // 16 blocks is 46.4 ms; it comes out TARGET-sized by arithmetic, not because it was tied to TARGET.
+    static constexpr uint16_t REPRIME_AFTER = BT_SINK_REPRIME_AFTER;
     // Whether begin() pre-fills the ring to TARGET before the first pop, AND whether a ring that runs dry
     // mid-stream re-primes rather than counting every silent block.  One knob for both, deliberately: the
     // bench's CONTROL arm must be the NEW-41 firmware exactly, not a third thing (node_test case 13b).
@@ -120,20 +145,30 @@ public:
     // A ring that runs DRY MID-STREAM re-primes the same way, and that is the other half of the fix: a gap of
     // G blocks does not merely cost G blocks of audio, it leaves the ring G blocks SHORT, and only the servo's
     // 72 s closed-loop trim puts the margin back (spec s1, fact 3 -- the bench's 15-36 underruns trailing each
-    // overrun burst).  ** So, with the pre-fill ON, `under` counts DROPOUTS, not silent blocks; the CONTROL arm
-    // (BT_SINK_PREFILL=0) keeps NEW-41's per-block count, which is 13b's whole subject and why s5's bound cannot
-    // be applied to it. **  One dry block books one underrun
-    // and one re-prime; the silence that follows it, however long, books nothing.  That is what makes spec s5's
-    // `under <= reprimes + 2` a bound worth having, and it is why an `under` of 3 on this build is NOT
-    // comparable with an `under` of 3 on NEW-41's.
+    // overrun burst).  ** But only past REPRIME_AFTER consecutive dry blocks (spec s9): below the threshold the
+    // ring ticks underruns and the source's own catch-up burst puts the margin back. **
+    // ** WHAT `under` COUNTS, AND IT CHANGED WITH THE THRESHOLD (spec s9.3): BLOCKS, uniformly. **  Every dry
+    // block that was played as silence books exactly one underrun -- INCLUDING the block that arms a re-prime --
+    // and the re-prime itself books none of its own.  So a spell of L <= REPRIME_AFTER blocks costs L, a spell
+    // that crosses costs exactly REPRIME_AFTER + 1 however long it then runs, and the priming remainder costs
+    // nothing.  The alternative -- a per-block tick below the threshold PLUS an event tick at the re-prime --
+    // would count the arming block twice and leave `under` meaning two different things on either side of one
+    // number, which is the counter-that-means-two-things shape this file already refuses elsewhere.
+    // Consequence, and it is spec s9.3's not this file's to soften: `under` no longer counts DROPOUTS, so spec
+    // s5's `under <= reprimes + 2` stops being the right bound and is restated there as `over = 0` plus
+    // `under <= dryTotal`.  The CONTROL arm (BT_SINK_PREFILL=0) counted blocks all along -- that is 13b's whole
+    // subject -- so the two arms now agree on what the number MEANS and still differ in what produces it.
+    // An `under` of 3 on this build is STILL not comparable with an `under` of 3 on NEW-41's: the threshold
+    // suppresses the trailing 15-36 that each overrun burst used to leave behind.
     // primeBlocks() is the START prime's length in blocks (x 2.9 ms), and ONLY that.  Unlike the tallies above
     // it is PER-STREAM, because it is a DURATION and not a count: begin() restarts it and the value stands from
     // the moment that prime completes until the next begin().  A mid-stream re-prime neither EXTENDS nor
     // RE-TIMES it -- spec s5 reads "ONE prime_ms ~ TARGET * 2.9 ms at START" off a heartbeat sampled at the END
     // of a long window, and s5 expects re-primes to occur, so a figure that grew or restarted with them could
     // not be checked against TARGET at all.  How long a re-prime took is the SOURCE's absence, which the gap
-    // histogram measures on the arrival side; reprimes() counts the events.  (Accepted gap: with `under`
-    // counting events, the total silence inserted is in no counter.  reprimes() * TARGET is an UPPER BOUND far
+    // histogram measures on the arrival side; reprimes() counts the events.  (Accepted gap, NARROWED by the
+    // threshold: the total silence inserted is still in no counter, but dryTotal() below now bounds it from
+    // above -- every silent block, priming or not, is one of those.  reprimes() * TARGET is an UPPER BOUND far
     // more often than an estimate, and for the source shape spec s1 describes it over-reads badly: a source that
     // buffers through the gap and bursts its backlog -- which is exactly the "35-45 ms gap then a catch-up burst"
     // -- refills past TARGET inside ONE onMedia(), so the re-prime costs a SINGLE silent block.  MEASURED in a
@@ -157,14 +192,25 @@ public:
     bool     primed() const { return m_primed; }
     uint32_t primeBlocks() const { return m_primeBlocks; }
     uint32_t reprimes() const { return m_reprimes; }
-    // --- the DRY-SPELL instrument (NEW-42, spec s9): what N will be sized against --------------------------
-    // The threshold re-prime -- rebuffer only after the ring has been dry for more than N consecutive blocks --
-    // needs N MEASURED, the way TARGET 16 was.  ** And the re-prime TRUNCATES the quantity to be measured: the
-    // ring goes dry for exactly one block and then enters priming, so any counter that stops at "dry" reads 1
-    // every time, for ever, whatever the source did. **  What is counted here instead is consecutive update()
-    // calls on an EMPTY RING, irrespective of priming state -- during a re-prime the ring genuinely is empty
-    // until packets arrive, so counting through the priming window recovers the natural dry spell exactly.
-    // Additive: no behavioural change, so the next bench run stays directly comparable with RUN 5.
+    // --- the DRY-SPELL instrument (NEW-42, spec s9): what N was sized against, and now what ARMS it ---------
+    // ** THIS IS NO LONGER ONLY AN INSTRUMENT.  update()'s dry branch triggers the re-prime off the SAME
+    // in-progress spell length this counts (m_dryRun), so deleting the counting -- the obvious tidy-up once N
+    // has been measured and the histogram has done its job -- SILENTLY DISABLES THE RE-PRIME. **  It fails
+    // safe (the node degenerates to NEW-41's per-block underruns and the source refills the ring itself, so
+    // audio still plays) and it fails INVISIBLY, which is why node_test case 16(b) pins it: with the counting
+    // gated off, "a spell of REPRIME_AFTER + 1 re-primes" goes RED by name.
+    // It was built to MEASURE N, and that rationale still stands beside the new one: N had to be measured the
+    // way TARGET 16 was, and RUN 6 did it (three spells in 26.3 min, longest 9 blocks -- see REPRIME_AFTER).
+    // ** And the re-prime TRUNCATES the quantity to be measured, which is why the counting sits HERE and not
+    // in the dry branch: ** before the threshold the ring went dry for exactly ONE block and then entered
+    // priming, so any counter that stopped at "dry" read 1 every time, for ever, whatever the source did.
+    // What is counted here instead is consecutive update() calls on an EMPTY RING, irrespective of priming
+    // state -- during a re-prime the ring genuinely is empty until packets arrive, so counting through the
+    // priming window recovers the natural dry spell exactly.
+    // ★ The threshold has since made that truncation PARTIAL rather than total, and only for the spells that
+    // do not matter: a dry-branch counter would now see every SUB-threshold spell exactly, and still truncate
+    // the long ones at REPRIME_AFTER + 1 -- which is precisely the tail N is read off.  MEASURED, node_test
+    // case 15(a)/(b).  So the placement is still right, for a narrower reason than it was written for.
     // TWO POPULATIONS, and reading one for the other is the way to misread this line:
     //   * dryTotal() counts EVERY empty block, so spec s9.3's restated bound (`under <= dryTotal`) can be
     //     checked whatever else happened;

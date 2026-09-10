@@ -128,6 +128,9 @@ void AudioInputBluetooth::update(void) {
         if (m_priming && fill() >= TARGET) { m_priming = false; m_primed = true; servo_recentre(&m_servo); }
         // THE DRY SPELL (NEW-42, spec s9): consecutive blocks that found the ring EMPTY, counted here --
         // BEFORE the branch dispatch and on the RING's state -- and deliberately NOT in the dry branch below.
+        // ** NOT ONLY AN INSTRUMENT SINCE THE THRESHOLD LANDED: the dry branch arms the re-prime off m_dryRun,
+        // so removing this counting disables the re-prime silently (safely -- the node falls back to NEW-41's
+        // per-block underruns -- but silently).  node_test case 16(b) is what goes RED. **
         // ** The dry branch would read 1 for ever. **  That branch ARMS the re-prime, so the second empty
         // block takes the priming arm and so does the third and the fortieth: the re-prime truncates the very
         // quantity N has to be sized against (spec s9.1).  During a re-prime the ring genuinely is empty until
@@ -141,10 +144,14 @@ void AudioInputBluetooth::update(void) {
         // all zeros BY CONSTRUCTION, not because the ring never ran dry.  `primed=0` on the same heartbeat
         // line is what tells those two apart, and the print site says so. **
         // The m_head read is the instrument's OWN and is deliberately not shared with the dry branch's:
-        // onMedia() can publish a frame between the two, and moving the branch onto this snapshot would be a
-        // behavioural change, however small, in an increment whose whole value is that RUN 6 stays comparable
-        // with RUN 5.  The disagreement can only run one way -- m_head only advances -- and costs at most a
-        // spell of ONE block, which is below every bucket edge N could be read at.
+        // onMedia() can publish a frame between the two, and moving the branch onto THIS snapshot would move
+        // the POP decision -- a block that could have played would be counted dry instead.  The disagreement
+        // can only run one way (m_head only advances) and costs at most a spell of ONE block, which is below
+        // every bucket edge N could be read at.  ** Since the threshold that is behaviour and not just a
+        // reading: ** a stale +1 can fire the re-prime one block early -- 2.9 ms on a 46 ms threshold, and
+        // bounded at one, since the next block the instrument sees non-empty closes the spell.  (Until the
+        // threshold landed the reason written here was that RUN 6 had to stay comparable with RUN 5, which
+        // this increment spends; the trade above is the standing one.)
         if (m_primed) {
             if (m_head == tail) { m_dryRun++; m_dryTotal++; }
             else if (m_dryRun) {
@@ -167,12 +174,40 @@ void AudioInputBluetooth::update(void) {
             // node_test case 13 pins it: delete `!m_primed` and primeBlocks() reads 68 there instead of 3.
             if (!m_primed) m_primeBlocks++;
         } else if (tail == m_head) {
-            // DRY.  One underrun for the EVENT, then -- with the pre-fill on -- silence to TARGET, uncounted, and
-            // the servo recentred when it completes.  A gap of G blocks otherwise leaves the ring G short until
-            // the 72 s trim refills it; the bench measured that as the burst shape (spec s1).  `under` thereby
-            // counts dropouts, not silent blocks, which is what makes `under <= reprimes + 2` a usable bound.
+            // DRY.  ONE UNDERRUN FOR THIS BLOCK -- always, and whether or not this block also arms the
+            // re-prime below.  `under` is a BLOCK count on both sides of the threshold (spec s9.3): the
+            // re-prime books NO event tick of its own, because before the threshold existed this same
+            // m_under++ WAS the event marker -- the re-prime fired on this very block -- and keeping both a
+            // per-block tick and an event tick would count this block twice and leave `under` meaning two
+            // different things either side of one number.  So a spell of L <= REPRIME_AFTER costs L, a spell
+            // that crosses costs exactly REPRIME_AFTER + 1 however long it then runs, and the priming
+            // remainder costs nothing.  node_test case 16 pins all three; spec s9.3 restates s5's bound.
             m_under++;
-            if (m_prefill) { m_reprimes++; m_priming = true; }
+            // ** THE THRESHOLD (NEW-42 spec s9): rebuffer only after MORE than REPRIME_AFTER consecutive dry
+            // blocks. **  RUN 5 failed s5's `over = 0` because a re-prime refills to TARGET from FRESH packets
+            // and the backlog the phone buffered during the gap then lands on top; below the threshold the
+            // ring just ticks 2.9 ms underruns and the source's catch-up burst refills it, so the TARGET term
+            // never enters the sum.  16 is RUN 6's measurement, not a choice -- see REPRIME_AFTER's own note.
+            // m_dryRun is REUSED rather than duplicated: it was incremented for THIS block at the top of the
+            // instrument above, so it is the length of the spell INCLUDING this block, and `> REPRIME_AFTER`
+            // is "more than N" with an INCLUSIVE boundary -- a spell of exactly N does not re-prime.
+            // ** The instrument's m_primed exclusion is right for TRIGGERING too, and not merely harmlessly:
+            // it is UNREACHABLE. **  This branch needs !m_priming, and with the pre-fill on the only thing
+            // that ever clears m_priming also latches m_primed -- so no dry block that could arm a re-prime
+            // is ever one the counter skipped.  Where the two CAN disagree is a host-test setPrefill() called
+            // between begin() and here, and there the degenerate behaviour is NEW-41's per-block underruns,
+            // which is safe.  (The other exclusions transfer without argument: a HELD block is not a dropout,
+            // and this branch is inside `if (run)` anyway.)
+            // The trigger inherits the instrument's one-block snapshot slop (see the note at the counting
+            // site above): it can fire one block early, 2.9 ms on a 46 ms threshold, bounded at one.
+            // m_prefill is REDUNDANT here today and kept deliberately: with the pre-fill off nothing latches
+            // m_primed, so m_dryRun never leaves 0 and the second term already blocks (MEASURED -- deleting
+            // `m_prefill &&` leaves case 13b and every other case in both arms GREEN; node_test case 16(f)
+            // builds the one construction that does see it).  It is kept because it states the intent the coupling only
+            // implies -- a BT_SINK_PREFILL=0 build is NEW-41 exactly -- and because spec s9.2a already
+            // contemplates replacing m_primed with the arm-independent "after the first successful pop",
+            // under which the control arm WOULD latch and this guard becomes the only thing holding it.
+            if (m_prefill && m_dryRun > REPRIME_AFTER) { m_reprimes++; m_priming = true; }
         } else {
             uint8_t f = fill();                    // pre-pop: the margin this block found, for fillMin/fillMax
             if (f < m_fillMin) m_fillMin = f;

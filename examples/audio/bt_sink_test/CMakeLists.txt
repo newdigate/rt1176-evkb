@@ -155,13 +155,21 @@ if(M2_BT_SINK_ALWAYS_DISCOVERABLE)
     add_definitions(-DM2_BT_SINK_ALWAYS_DISCOVERABLE=1)
 endif()
 
-# NEW-42: the PCM ring's depth and target (blocks) and the START pre-fill.  Defaults are the CHANGE arm
-# (32 / 16 / on), which is what the gate builds.  The bench's CONTROL arm -- the NEW-41 behaviour, 16 / 8 / off --
-# is `-DBT_SINK_RING=16 -DBT_SINK_TARGET=8 -DBT_SINK_PREFILL=OFF`.  The DelayReport the sink sends follows
+# NEW-42: the PCM ring's depth and target (blocks), the START pre-fill, and the mid-stream re-prime's
+# threshold.  Defaults are the CHANGE arm (32 / 16 / on / 16), which is what the gate builds.  The bench's
+# CONTROL arm -- the NEW-41 behaviour, 16 / 8 / off -- is
+# `-DBT_SINK_RING=16 -DBT_SINK_TARGET=8 -DBT_SINK_PREFILL=OFF` (the threshold is moot with the pre-fill off,
+# since that build never re-primes at all).  The DelayReport the sink sends follows
 # BT_SINK_TARGET automatically (bt_sink_test.cpp derives it), so a resized target is reported to the phone.
 set(BT_SINK_RING "32" CACHE STRING "PCM ring depth in audio blocks (AudioInputBluetooth::RING)")
 set(BT_SINK_TARGET "16" CACHE STRING "Ring fill the servo holds and START pre-fills to, in blocks (TARGET)")
 option(BT_SINK_PREFILL "Pre-fill the ring to TARGET at START and re-prime it when it runs dry" ON)
+# 16 blocks = 46.4 ms, MEASURED by bench RUN 6 (three dry spells in 26.3 min, longest 9 blocks) and not
+# chosen -- see AudioInputBluetooth::REPRIME_AFTER.  A dry spell shorter than this ticks underruns and lets
+# the source's catch-up burst refill the ring; only a longer one rebuffers.  0 restores the RUN 5 behaviour
+# (re-prime on the first dry block); node_test case 16(g) pins the default against exactly that, because
+# every other check in that suite is written against REPRIME_AFTER and follows the knob wherever it goes.
+set(BT_SINK_REPRIME_AFTER "16" CACHE STRING "Consecutive dry blocks a mid-stream re-prime waits for (REPRIME_AFTER)")
 if(BT_SINK_PREFILL)
     set(BT_SINK_PREFILL_DEF 1)
 else()
@@ -170,7 +178,8 @@ endif()
 
 teensy_add_executable(bt_sink_test bt_sink_test.cpp AudioInputBluetooth.cpp ${M2_FW_SRC} ${M2_BT_FW_SRC})
 target_compile_definitions(bt_sink_test.elf PRIVATE
-    BT_SINK_RING=${BT_SINK_RING} BT_SINK_TARGET=${BT_SINK_TARGET} BT_SINK_PREFILL=${BT_SINK_PREFILL_DEF})
+    BT_SINK_RING=${BT_SINK_RING} BT_SINK_TARGET=${BT_SINK_TARGET} BT_SINK_PREFILL=${BT_SINK_PREFILL_DEF}
+    BT_SINK_REPRIME_AFTER=${BT_SINK_REPRIME_AFTER})
 # Wire covers Wire2 = LPI2C5, the WM8962's control bus: import_evkb_audio_full() creates the target but does
 # not link it, and unlike bt_tone_test this example drives the codec (AVRCP absolute volume).
 teensy_target_link_libraries(bt_sink_test cores M2Radio Audio Wire)

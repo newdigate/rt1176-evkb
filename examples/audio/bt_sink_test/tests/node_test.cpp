@@ -43,6 +43,11 @@ static_assert(AudioInputBluetooth::RING >= 10, "case 11's fill walk needs 9 bloc
 // and the suite hangs with no output, which reads as a build that never ran.
 static_assert(AudioInputBluetooth::TARGET + 6 <= AudioInputBluetooth::RING - 1,
     "node_test case 13 needs TARGET + 6 reachable within the ring");
+// Case 15(a) drives a fixed 33-block spell and asserts the re-prime ENGAGED inside it -- that assertion is what
+// stops (a) from being equally green on a build with no re-prime at all.  A threshold at or above 33 would
+// leave the spell entirely sub-threshold and (a) would fail for a configuration reason with nothing naming it.
+static_assert(AudioInputBluetooth::REPRIME_AFTER < 33,
+    "node_test case 15(a) needs its 33-block spell to CROSS the re-prime threshold");
 
 static int g_fails = 0, g_checks = 0;
 #define CHECK(c) do { g_checks++; if (!(c)) { g_fails++; printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
@@ -502,12 +507,18 @@ int main() {
         CHECK(nd->trimPpm() == 0);
         // (d) ... and once PRIMED the underrun counter WORKS AGAIN.  A prime that never ended would silence it
         //     for the rest of the run -- the one shape of instrument failure that reads as good news.  There is
-        //     exactly ONE dry block here, so these two checks read the same before and after Task 4's re-prime
-        //     (which that block now also arms, and which (e)'s begin() then clears); case 13 is where the
-        //     re-prime itself is pinned, including that a SECOND silent block would not be a second underrun.
+        //     exactly ONE dry block here, and under the THRESHOLD re-prime (spec s9) that block arms nothing:
+        //     it books its underrun and the node stays out of priming, which is the whole point of the
+        //     threshold.  So the underrun check is unchanged in VALUE and no longer for the old reason -- it
+        //     read 1 before because a re-prime absorbed the silence after the first block, and it reads 1 now
+        //     because there IS only one silent block.  The reprimes() check is what makes that distinction
+        //     checkable rather than prose (RED at BT_SINK_REPRIME_AFTER=0: 1); case 16 owns the boundary and
+        //     case 13 the re-prime's own mechanics.
         for (int i = 0; i < AudioInputBluetooth::TARGET; i++) nd->update();        // TARGET-1 pops, then one dry block
         CHECK(nd->fill() == 0);
         CHECK(nd->underruns() == 1);
+        CHECK(nd->reprimes() == 0);                                                // one dry block is below the threshold
+        CHECK(!nd->priming());
         // (e) A RECONNECT re-primes.  begin() runs on EVERY stream start (bt_sink_test.cpp's onStreamCb) and the
         //     second stream starts from an empty ring exactly as the first did.  This is what pins begin()'s
         //     m_primed and m_primeBlocks resets: on a FRESH node both already read their initial values, so
@@ -525,16 +536,25 @@ int main() {
         CHECK(!nd->priming());
         CHECK(ShimAudio::outstanding() == 0);
     }
-    {   // 13. RE-PRIME ON A DRY RING (NEW-42, spec s2).  Mid-stream the source stops and the ring runs dry.  Exactly
-        //     ONE underrun is counted, reprimes() goes 1, and the node holds silence -- uncounted, servo frozen --
-        //     until TARGET blocks are back, then pops.  The filter is RECENTRED on the way back so the excursion
-        //     does not drag the trim: the servo is wound far off-centre first, or "recentred" would be satisfied
-        //     by a filter that never moved.  Without this a 45 ms gap left the ring 15 blocks short for the
-        //     ~72 s it takes the trim to refill it (spec s1, fact 3).
-        //     RED against: an underrun per silent block (underruns() climbs past 1); a resume below TARGET (pops
-        //     at TARGET-1); the recentre removed -- MEASURED, the filter is still 4.3 blocks ABOVE target (4.7
-        //     in the control arm), where a recentred one sits 0.003 BELOW it; the prime's
-        //     `if (!m_primed)` guard removed (primeBlocks() stops being the START figure -- see below).
+    {   // 13. RE-PRIME ON A DRY RING (NEW-42, spec s2 + s9).  Mid-stream the source stops and the ring runs dry.
+        //     Past the THRESHOLD -- REPRIME_AFTER consecutive dry blocks, each booking its own underrun -- the
+        //     next dry block rebuffers: reprimes() goes 1 and the node holds silence, UNCOUNTED and with the
+        //     servo frozen, until TARGET blocks are back, then pops.  The filter is RECENTRED on the way back so
+        //     the excursion does not drag the trim: the servo is wound far off-centre first, or "recentred"
+        //     would be satisfied by a filter that never moved.  Without the re-prime at all a 45 ms gap left the
+        //     ring 15 blocks short for the ~72 s it takes the trim to refill it (spec s1, fact 3).
+        //     ** What the threshold changed here, and what it did NOT. **  The old case drove ONE dry block and
+        //     asserted `underruns() == 1` throughout; every claim it was making -- silence uncounted while
+        //     PRIMING, the servo frozen while priming, resume only at TARGET, the recentre, primeBlocks()
+        //     untouched -- is still true and still asserted, just reached REPRIME_AFTER + 1 blocks later.  The
+        //     one claim that is gone is "exactly ONE underrun for a dropout", which spec s9.3 retired
+        //     deliberately: below the threshold `under` counts BLOCKS.  It is replaced, not dropped -- the
+        //     checks below pin that a crossing spell costs exactly REPRIME_AFTER + 1 and that the priming
+        //     remainder costs nothing, which is the same claim about the priming window that `== 1` used to make.
+        //     RED against: an underrun per silent block WHILE PRIMING (underruns() climbs past REPRIME_AFTER+1
+        //     over the 50 silent blocks); a resume below TARGET (pops at TARGET-1); the recentre removed --
+        //     MEASURED below; the prime's `if (!m_primed)` guard removed (primeBlocks() stops being the START
+        //     figure -- see below).  The boundary itself (exactly REPRIME_AFTER does NOT fire) is case 16's.
         Node nd; nd->setPrefill(true); nd->begin();
         std::vector<uint8_t> f = encodeFrame(12000);
         uint16_t seq = 1;
@@ -558,11 +578,17 @@ int main() {
         CHECK(nd->fill() == 0);                    // a node that stopped popping fails HERE, by name, not by hanging
         CHECK(nd->underruns() == 0);
         ShimAudio::reset();
-        nd->update();                                                               // the dry block
-        CHECK(nd->underruns() == 1); CHECK(nd->reprimes() == 1); CHECK(nd->priming());
+        // The sub-threshold stretch: REPRIME_AFTER dry blocks, one underrun EACH and no rebuffer.  Note the
+        // servo DOES step through these (they are not priming blocks), which is what winds the filter down
+        // before the recentre check at the end of the case -- and is why that check's RED value moved.
+        const uint32_t R13 = AudioInputBluetooth::REPRIME_AFTER;
+        for (uint32_t i = 0; i < R13; i++) nd->update();
+        CHECK(nd->underruns() == R13); CHECK(nd->reprimes() == 0); CHECK(!nd->priming());
+        nd->update();                                                               // the block that CROSSES it
+        CHECK(nd->underruns() == R13 + 1); CHECK(nd->reprimes() == 1); CHECK(nd->priming());
         int32_t filtAtDry = nd->servo().filt_x65536;
         for (int i = 0; i < 50; i++) nd->update();                                  // silent, uncounted, servo frozen
-        CHECK(nd->underruns() == 1);
+        CHECK(nd->underruns() == R13 + 1);
         CHECK(nd->servo().filt_x65536 == filtAtDry);
         bool silent = true; for (int i = 0; i < ShimAudio::logCount(); i++) if (!allZero(ShimAudio::logData(i))) silent = false;
         CHECK(silent);
@@ -571,43 +597,57 @@ int main() {
         feed(nd, onePacket(seq++, f));                                              // TARGET
         ShimAudio::reset();
         nd->update();                                                               // resumes: pops
-        CHECK(!nd->priming()); CHECK(nd->reprimes() == 1); CHECK(nd->underruns() == 1);
+        CHECK(!nd->priming()); CHECK(nd->reprimes() == 1); CHECK(nd->underruns() == R13 + 1);
         CHECK(nd->fill() == AudioInputBluetooth::TARGET - 1);
         const int16_t *tx = lastTx(0); CHECK(tx && !allZero(tx));
         int32_t d = nd->servo().target_x65536 - nd->servo().filt_x65536;            // recentred, then ONE EMA step at TARGET-1
-        CHECK(d >= 0 && d <= 65536 / 344 + 1);                                      // RED with the recentre removed: -4.26 blocks
+        // RED with the recentre removed: the filter is left 3.34 blocks ABOVE target (4.08 in the control
+        // arm), where a recentred one sits 0.003 BELOW it.  RE-MEASURED for the threshold -- it read 4.26 /
+        // 4.7 before, and it moved because the REPRIME_AFTER sub-threshold blocks are NOT priming blocks, so
+        // the servo steps through them at fill = 0 and winds the filter part of the way back on its own.
+        CHECK(d >= 0 && d <= 65536 / 344 + 1);
         // ** THE primeBlocks QUESTION, ANSWERED: a mid-stream re-prime NEITHER EXTENDS NOR RE-TIMES primeBlocks().
         //    prime_ms is the START prime's length and nothing else. **  Three reasons, in order of weight.
         //    (1) Spec s5's acceptance is "ONE prime_ms ~ TARGET * 2.9 ms at START", read off a heartbeat sampled
         //        at the END of a 10-min window.  Extend it and the number is START plus every re-prime since;
         //        re-time it and the START figure is gone the first time the ring runs dry.  Under either the
-        //        criterion cannot be checked at all -- and s5 also allows reprimes to be non-zero
-        //        (`under <= reprimes + 2`), so "there will not be any" is not an available defence.
+        //        criterion cannot be checked at all -- and s5 expects reprimes to be non-zero (its bound was
+        //        `under <= reprimes + 2`; spec s9.3 restated that once the threshold made `under` a block
+        //        count again), so "there will not be any" is not an available defence.
         //    (2) The header types it as a PER-STREAM DURATION, not a tally.  "Total blocks ever spent priming"
         //        is a tally wearing a duration's name, and the LIFETIME/per-stream split is already the one
         //        thing about this instrument a reader has to hold in their head.
         //    (3) reprimes() already counts the events, and a re-prime's LENGTH carries nothing new: it is
         //        however long the SOURCE took to deliver TARGET blocks, which is exactly what the gap histogram
         //        (gapmax_ms / gbig) is built to measure, on the arrival side where it can be measured honestly.
-        //    What that costs, recorded rather than fixed by overloading this counter: with `under` now counting
-        //    EVENTS, the total SILENCE inserted is in no counter.  reprimes() * TARGET is an UPPER BOUND rather
+        //    What that costs, recorded rather than fixed by overloading this counter: the total SILENCE
+        //    inserted is in no counter -- `under` counts only the dry blocks OUTSIDE the priming window, and
+        //    dryTotal() bounds the remainder from above without separating it.  reprimes() * TARGET is an UPPER BOUND rather
         //    than an estimate, and over-reads 8x for the bursting source spec s1 describes (measured in a closed
         //    loop: 2 silent blocks at a 49 ms gap against the 16 it predicts) -- and spec s5 does not ask for it.
         //    RED with the `if (!m_primed)` guard removed from update()'s priming branch: the 50 silent blocks
         //    plus the TARGET-1 refill blocks land here too -- MEASURED 68 against 3 in the default arm, 60
-        //    against 3 in the control arm.  (The dry block ITSELF is not among them: it takes the dry branch,
-        //    not the priming one, because m_priming is still false at the top of that update().)
+        //    against 3 in the control arm.  (The REPRIME_AFTER + 1 dry blocks are
+        //    not among them: they take the dry branch, not the priming one, because m_priming is still false
+        //    at the top of each -- which is also why those two measured figures did not move when the
+        //    threshold landed.)
         CHECK(nd->primeBlocks() == primeAtStart);
         CHECK(ShimAudio::outstanding() == 0);
     }
     {   // 13b. With the pre-fill OFF (the bench's CONTROL arm) a dry ring is the NEW-41 behaviour exactly: one
         //      underrun per silent block, no re-prime, the servo integrating fill=0 -- the A/B's control must be
-        //      the old firmware, not a third thing.  DEMONSTRATED RED against the `if (m_prefill)` guard removed
-        //      from update()'s dry branch (a re-prime whatever the build): ALL FOUR checks below fail by name --
-        //      underruns() 1 not 10, reprimes() 1 not 0, priming() set, and the trim frozen at trimFull.  Nothing
-        //      else in either arm sees that mutation (4 failures, all here): no other case takes more than ONE
-        //      dry block with the pre-fill off, and the FIRST dry block books its underrun either way -- it is
-        //      the SECOND that separates the two behaviours, which is why this case takes ten.
+        //      the old firmware, not a third thing.
+        //      ** ITS RED DEMONSTRATION IS STALE AND IS RECORDED AS SUCH RATHER THAN QUIETLY DROPPED. **  Before
+        //      the threshold, removing the `if (m_prefill)` guard from update()'s dry branch failed all four
+        //      checks here by name (underruns 1 not 10, reprimes 1, priming set, the trim frozen) and reddened
+        //      nothing else in either arm.  RE-RUN after the threshold landed: it reddens NOTHING here --
+        //      MEASURED, 3 failures and all three in case 16(f).  The reason is the threshold's own coupling:
+        //      with the pre-fill off nothing latches m_primed, so the dry counter never leaves 0, and
+        //      `m_dryRun > REPRIME_AFTER` blocks the re-prime whether or not the m_prefill term is there.
+        //      This case still pins the BEHAVIOUR (it fails outright if the dry branch re-primes at all -- the
+        //      whole condition replaced by `true` fails all four); what it no longer pins is that ONE term, and
+        //      case 16(f) builds the construction that does.  Ten dry blocks rather than one because the FIRST
+        //      dry block books its underrun either way -- it is the SECOND that separates the two behaviours.
         Node nd; nd->setPrefill(false); nd->begin();
         std::vector<uint8_t> f = encodeFrame(12000);
         for (int i = 1; i <= 4; i++) feed(nd, onePacket((uint16_t)i, f));
@@ -679,12 +719,16 @@ int main() {
         // (a) THE LOAD-BEARING CASE: 33 dry blocks read as 33, not as 1.  The re-prime is asserted to have
         //     ENGAGED first -- without that this sub-case would be equally green on a build with no re-prime at
         //     all, where nothing truncates anything and the claim is empty.
-        //     DEMONSTRATED RED against BOTH shapes of the defect, and they MEASURE IDENTICALLY here: the
-        //     obvious implementation (count in the dry branch, close the spell on the pop) and the same count
-        //     merely gated on `!m_priming`.  33 dry blocks read `dryMax=0 dryTotal=1 dbig=0` -- worse than the
-        //     "reads 1 every time" spec s9.1 predicts, because with the pre-fill on the block that ENDS the
-        //     spell is a priming block too, so a dry-branch instrument never closes the spell at all and it
-        //     reaches no bucket.  In (b) every one of the four spells reads 1 block (d4=3, dryTotal=4).
+        //     DEMONSTRATED RED against the obvious implementation -- count in the dry branch, close the spell
+        //     on the pop -- and RE-MEASURED after the threshold landed, because the threshold moved the
+        //     numbers: 33 dry blocks now read `dryMax=0 dryTotal=17 d4=0 dbig=0` (they read `dryTotal=1`
+        //     before it).  Still `dryMax=0`: with the pre-fill on the block that ENDS the spell is a priming
+        //     block, so a dry-branch instrument never closes the spell at all and it reaches no bucket.
+        //     ** The threshold has PARTLY neutralised the truncation this instrument was built against, and
+        //     only for the spells that do not matter: ** in (b) the 4/8/16-block spells are entirely
+        //     sub-threshold, so a dry-branch counter now sees all three exactly (d4=d8=d16=1, where it used
+        //     to read 1 block for each), and it is the 32-block one -- the length N is read off -- that is
+        //     still truncated, to 17.  (b)'s `dryMax == 32` is what catches it.
         Node na; na->setPrefill(true); na->begin();
         uint16_t sa = 1;
         rearm(na, sa);
@@ -692,8 +736,9 @@ int main() {
         CHECK(na->dryTotal() == 0); CHECK(na->dryMax() == 0);              // popped blocks are not dry blocks
         CHECK(na->reprimes() == 0);
         spell(na, sa, 33);
-        CHECK(na->reprimes() == 1);                                        // the re-prime engaged: 32 of the 33 primed
-        CHECK(na->underruns() == 1);                                       // ... booking the ONE underrun that truncates
+        const uint32_t R15 = AudioInputBluetooth::REPRIME_AFTER;
+        CHECK(na->reprimes() == 1);                                        // the re-prime engaged: 33 - (R15+1) of the 33 primed
+        CHECK(na->underruns() == R15 + 1);                                 // ... after R15 sub-threshold ticks; the rest are primed
         CHECK(na->dryMax() == 33);                                         // RED in the dry branch: 1
         CHECK(na->dryTotal() == 33);                                       // RED in the dry branch: 1
         CHECK(na->dryBucket(4) == 1);                                      // > 32
@@ -779,6 +824,164 @@ int main() {
         CHECK(nd2->dryBucket(1) == 1);                                     // RED without begin()'s m_dryRun reset: 2
         CHECK(nd2->dryMax() == 5);                                         // RED without it: 6 -- and a max, not the last 3
         CHECK(nd2->dryTotal() == 11 + 3);
+        CHECK(ShimAudio::outstanding() == 0);
+    }
+    {   // 16. THE THRESHOLD RE-PRIME (NEW-42, spec s9).  A ring that runs dry rebuffers only after MORE than
+        //     REPRIME_AFTER consecutive dry blocks; below that it ticks one underrun per block and lets the
+        //     SOURCE's catch-up burst refill it.  ** Why: RUN 5 failed spec s5's `over = 0` because a re-prime
+        //     refills to TARGET from FRESH packets and the backlog the phone buffered during the gap then lands
+        //     on top -- TARGET + backlog > RING - 1, surplus dropped (boot 2: fillmax 25 -> 31, overev 0 -> 3,
+        //     reprimes 1 -> 2 in one window).  RUN 6 then measured the spells the threshold has to clear:
+        //     three in 26.3 min, longest 9 blocks. **  Every sub-case turns the pre-fill ON explicitly, like
+        //     cases 12/13/15, so it runs in BOTH CMake arms -- and every one of them is written against
+        //     REPRIME_AFTER rather than 16, which makes them honest in any configuration and BLIND to the
+        //     configuration itself.  (g) is where the value is pinned, and says what that blindness measures.
+        const uint32_t R = AudioInputBluetooth::REPRIME_AFTER;
+        const int T = AudioInputBluetooth::TARGET;
+        std::vector<uint8_t> f = encodeFrame(11000);
+        // Case 15's `rearm`, and bounded for its reason: a node that stopped popping must FAIL by name rather
+        // than hang the suite with the checks above it still in stdout's pipe buffer.  Leaves the node PRIMED,
+        // dry, and with no spell in progress -- the state a mid-stream dropout starts from.
+        auto rearm = [&](Node &nd, uint16_t &seq) {
+            while (nd->fill() < T) feed(nd, onePacket(seq++, f));
+            for (int i = 0; i <= T && nd->fill() > 0; i++) nd->update();
+        };
+        // (a) THE BOUNDARY IS INCLUSIVE: exactly REPRIME_AFTER dry blocks do NOT rebuffer.  "More than N", so
+        //     N itself is below it.  Each of those blocks books its own underrun -- `under` is a BLOCK count
+        //     below the threshold (spec s9.3), and that is the trade this increment accepted with open eyes.
+        //     RED against `>` weakened to `>=` -- 17 checks across cases 13, 15(a) and 16, TWO of them here.
+        Node na; na->setPrefill(true); na->begin();
+        uint16_t sa = 1;
+        rearm(na, sa);
+        CHECK(na->fill() == 0);
+        CHECK(na->reprimes() == 0); CHECK(na->underruns() == 0);
+        for (uint32_t i = 0; i < R; i++) na->update();
+        CHECK(na->reprimes() == 0);                                        // RED with `>=`: 1
+        CHECK(!na->priming());                                             // RED with `>=`: set
+        // ** NOT reddened by `>=`, and the comment must not pretend it is -- MEASURED. **  The arming block
+        // books its own tick either way, so an off-by-one moves WHICH block arms and not how many ticked: the
+        // count reads R under both.  The two checks above are what see the boundary; this one is here because
+        // it is the block-counting claim (spec s9.3), and it goes RED against a re-prime on the first dry
+        // block (the whole guard forced true): 1, not R.
+        CHECK(na->underruns() == R);
+        // (b) ONE MORE CROSSES IT, and reprimes() increments EXACTLY ONCE however long the spell then runs.
+        //     The 40 further blocks are the "exactly once" half: an implementation that armed the re-prime
+        //     without latching m_priming would re-enter this branch and count 41.
+        //     ** This sub-case is also what pins the COUPLING: the trigger reads the dry instrument's
+        //     in-progress spell length (m_dryRun), so gating that counting off -- the obvious tidy-up now the
+        //     histogram has done its job -- disables the re-prime silently.  RED with the counter's
+        //     `if (m_primed)` forced false: reprimes stays 0 and priming() is clear. **
+        na->update();
+        CHECK(na->reprimes() == 1); CHECK(na->priming());
+        CHECK(na->underruns() == R + 1);                                   // the arming block books its BLOCK tick ...
+        for (int i = 0; i < 40; i++) na->update();
+        CHECK(na->reprimes() == 1);                                        // ... exactly one re-prime
+        CHECK(na->underruns() == R + 1);                                   // ... and the priming remainder books nothing
+        CHECK(na->priming());
+        // THE ACCOUNTING, stated as one number: a crossing spell costs exactly REPRIME_AFTER + 1 underruns,
+        // however long it runs.  RED with an extra `m_under++` in the re-prime (the double count this
+        // increment had to choose against): R + 2.
+        while (na->fill() < T) feed(na, onePacket(sa++, f));
+        na->update();                                                      // finds TARGET: prime complete, pops
+        CHECK(!na->priming());
+        CHECK(na->underruns() == R + 1);
+        CHECK(na->reprimes() == 1);
+        CHECK(na->dryTotal() == R + 41);                                   // R + the arming block + 40 primed
+        CHECK(na->underruns() <= na->dryTotal());                          // spec s9.3's restated bound, on real numbers
+        // (c) ** THE LOAD-BEARING CASE, and the whole point of the change: below the threshold the ring
+        //     RESUMES ON THE VERY NEXT PACKET, with no wait to TARGET. **  One packet is ONE block, far below
+        //     TARGET, and it must be played immediately -- that is what stops the ring from being refilled to
+        //     TARGET out of fresh packets and then overrun by the backlog behind them.
+        //     RED with `>` weakened to `>=`: the node is priming by then, so it transmits SILENCE and holds
+        //     the block -- allZero(tx) fails and fill() reads 1.  Same shape against a re-prime on every dry
+        //     block (the whole guard forced true): MEASURED, both of those checks fail there too.
+        Node nb; nb->setPrefill(true); nb->begin();
+        uint16_t sb = 1;
+        rearm(nb, sb);
+        for (uint32_t i = 0; i < R; i++) nb->update();
+        CHECK(nb->underruns() == R); CHECK(!nb->priming());
+        feed(nb, onePacket(sb++, f));                                      // ONE block arrives -- 1, not TARGET
+        ShimAudio::reset();
+        nb->update();
+        const int16_t *tx = lastTx(0);
+        CHECK(tx && !allZero(tx));                                         // it PLAYED, on the next block
+        CHECK(nb->fill() == 0);                                            // ... popped, not accumulated toward TARGET
+        CHECK(nb->underruns() == R);                                       // ... and that block is no underrun
+        CHECK(nb->reprimes() == 0); CHECK(!nb->priming());
+        // (d) THE START PRE-FILL IS UNTOUCHED by the threshold -- it primes to TARGET from block one, counting
+        //     nothing, however many empty blocks that takes.  R + 4 of them is past the threshold and must
+        //     still not book an underrun or a re-prime: the START prime is not a dropout, and a threshold
+        //     leaking into it would put NEW-41's ~27 start-up underruns straight back.
+        //     Not reddened by the threshold mutations -- it is the CONTROL for them, and it goes RED against a
+        //     threshold applied at START (underruns R+4, priming clear).
+        Node nc; nc->setPrefill(true); nc->begin();
+        uint16_t sc = 1;
+        for (uint32_t i = 0; i < R + 4; i++) { nc->update(); CHECK(nc->priming()); }
+        CHECK(nc->underruns() == 0); CHECK(nc->reprimes() == 0);
+        CHECK(nc->primeBlocks() == R + 4);
+        while (nc->fill() < T) feed(nc, onePacket(sc++, f));
+        ShimAudio::reset();
+        nc->update();
+        CHECK(!nc->priming() && nc->primed());
+        CHECK(nc->fill() == (uint8_t)(T - 1));                             // still primes to TARGET, and that block pops
+        const int16_t *tc = lastTx(0); CHECK(tc && !allZero(tc));
+        CHECK(nc->underruns() == 0); CHECK(nc->reprimes() == 0);
+        // (e) hold() STILL TAKES PRECEDENCE, and it takes precedence over the THRESHOLD too: R + 10 held blocks
+        //     are past it and must arm nothing, because an AVDTP SUSPEND is not a dropout (the same call this
+        //     file makes for `under` in case 9 and for the gap histogram in case 11).  Then the RESUME onto an
+        //     empty ring is an ordinary spell and crosses the threshold like any other -- recorded here rather
+        //     than assumed, because it is a behaviour a reader would expect the SUSPEND to have shortened.
+        //     RED with `run = m_live && !m_hold` weakened to `run = m_live`: all three of the first checks
+        //     fail -- the held blocks take the dry path, so underruns reads R+1 rather than 0, reprimes 1 and
+        //     priming set (18 checks fail suite-wide, case 9's SUSPEND case and case 15(c) among them).
+        Node nd3; nd3->setPrefill(true); nd3->begin();
+        uint16_t sd = 1;
+        rearm(nd3, sd);
+        nd3->hold(true);
+        for (uint32_t i = 0; i < R + 10; i++) nd3->update();
+        CHECK(nd3->underruns() == 0); CHECK(nd3->reprimes() == 0); CHECK(!nd3->priming());
+        nd3->hold(false);
+        for (uint32_t i = 0; i < R; i++) nd3->update();
+        CHECK(nd3->underruns() == R); CHECK(nd3->reprimes() == 0);
+        nd3->update();
+        CHECK(nd3->reprimes() == 1); CHECK(nd3->priming());
+        // (f) THE `m_prefill` GUARD ON THE DRY BRANCH, which the threshold made redundant in both SHIPPED
+        //     configurations and which is kept deliberately.  With the pre-fill off nothing latches m_primed,
+        //     so the dry counter never leaves 0 and the threshold term alone already blocks the re-prime --
+        //     MEASURED: deleting `m_prefill &&` reddens nothing in either arm, case 13b included, which is
+        //     exactly the "a check stopped working and the suite stayed green" shape.  This is the one
+        //     construction in which the two terms disagree: prime first (so m_primed latches and the counter
+        //     runs), THEN turn the pre-fill off mid-stream.  Only the guard stops the rebuffer here.
+        //     It is kept, rather than deleted as dead, because it states the intent the coupling only implies
+        //     -- a BT_SINK_PREFILL=0 build must be NEW-41 exactly (case 13b) -- and because spec s9.2a already
+        //     contemplates replacing m_primed with the arm-independent "after the first successful pop", under
+        //     which the control arm WOULD latch and this guard becomes the only thing holding it.
+        //     RED with `m_prefill &&` removed: reprimes 1, priming set, underruns R + 1.
+        Node ne; ne->setPrefill(true); ne->begin();
+        uint16_t se = 1;
+        rearm(ne, se);
+        CHECK(ne->primed());                                               // the counter is running ...
+        ne->setPrefill(false);                                             // ... and only the guard is left
+        for (uint32_t i = 0; i < R + 5; i++) ne->update();
+        CHECK(ne->underruns() == R + 5);                                   // every dry block counts, NEW-41 style
+        CHECK(ne->reprimes() == 0); CHECK(!ne->priming());
+        // (g) THE DEFAULT VALUE, pinned the way case 14 pins RING/TARGET -- and it has to be pinned SEPARATELY,
+        //     because ** every check above is parameterised on REPRIME_AFTER and therefore cannot see the
+        //     threshold being reverted. **  MEASURED, not feared: with BT_SINK_REPRIME_AFTER mutated to 0 (the
+        //     RUN 5 always-re-prime behaviour) this whole case, case 13 and case 15(a) stay GREEN -- every
+        //     `R`-relative expectation simply follows the knob -- and the ONLY failures in the suite are case
+        //     12(d)'s two, which hard-code "one dry block does not rebuffer".  A suite that adapts to the
+        //     configuration is honest about the MECHANISM and silent about the VALUE, so the value is stated.
+        //     16 is RUN 6's measurement (iPhone, 26.3 min: three dry spells, longest 9 blocks, `drymax=9
+        //     drytot=11 d4=2 d16=1`), not a choice -- see AudioInputBluetooth::REPRIME_AFTER for why the ~25
+        //     that was INFERRED beforehand was wrong by 3x.  The `> 9` states the property; the `== 16` is the
+        //     value that property was satisfied with.
+        //     Not asserted in the CONTROL arm: with BT_SINK_PREFILL=0 nothing ever re-primes, so the threshold
+        //     is moot there and run.sh leaves it at its default rather than saying anything about it.
+#if !defined(NODE_TEST_CONTROL_ARM)
+        CHECK(AudioInputBluetooth::REPRIME_AFTER > 9);                     // clear above RUN 6's longest spell
+        CHECK(AudioInputBluetooth::REPRIME_AFTER == 16);                   // ... and that is the value it chose
+#endif
         CHECK(ShimAudio::outstanding() == 0);
     }
     printf("node_test: %d checks, %d failures\n", g_checks, g_fails);
