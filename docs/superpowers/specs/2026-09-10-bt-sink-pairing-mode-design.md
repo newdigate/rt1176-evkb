@@ -77,11 +77,24 @@ result, and fires the *timeout* edge there -- so the sketch's poll, the discover
 heartbeat all read the same answer for the same pass.  An `enterPairing()` on an already-open window extends
 it to `now + window` and the reason becomes the new caller's.
 
-**Opening.**  `begin()` opens a `PAIR_BOOT` window.  Every re-entry to `LISTENING` from `STREAMING` -- the
-loss branch and the clean-close branch alike -- opens a `PAIR_DROP` window.  The sketch's `pair` and `forget`
-call `enterPairing(now, PAIR_CMD)`.  All three go through the one function, so there is one place to get
-wrong: it sets `m_pairUntil = now + m_pairMs`, records the reason, and calls `m_sink.link().startPrepare()`.
-On the boot window that call returns `false` because `begin()`'s own PREPARE is in flight -- no double.
+**Opening.**  `begin()` opens a `PAIR_BOOT` window.  **Every return to `LISTENING`** opens a `PAIR_DROP`
+window -- the loss branch, the clean-close branch, **and the failed-attempt branch** (`CONNECTING` ->
+`LISTENING`, `rejects++`).  The sketch's `pair` and `forget` call `enterPairing(now, PAIR_CMD)`.  All go through
+one private `openWindow()`, so there is one place to get wrong: it sets `m_pairUntil = now + window`, records
+the reason, and calls `m_sink.link().startPrepare()`.  On the boot window that call returns `false` because
+`begin()`'s own PREPARE is in flight -- no double.
+
+★ **Corrected during planning (2026-09-10): the failed-attempt branch is the NEW-43 path, and the first draft
+of this section missed it.**  A stale key on the phone makes SSP fail, `BtLink`'s fallback writes SSP mode 0,
+the attempt ends and the session returns to `LISTENING` from `CONNECTING` -- not from `STREAMING`.  "Re-entry
+from STREAMING" alone would have re-issued PREPARE on every path EXCEPT the one that needs it.  Host case P3
+pins that branch on its own, independently of the loss branch (P2).
+
+★ Also settled while planning: `canPair()` (`LISTENING` with no link up) is public, because `forget` must
+test it BEFORE wiping -- a refused `forget` must leave the table exactly as it was; `setPairingWindowMs(0)`
+turns the AUTOMATIC windows off and a commanded window is then `PAIR_DEFAULT_MS` (120 s); and the window
+closes as *paired* on reaching **`STREAMING`**, not on `CONNECTING` -- a page that fails to pair must not
+have closed the window it is about to need.
 
 **The one line that changes in `tick()`:**
 
@@ -116,8 +129,11 @@ non-printables are dropped; overflow discards the line and reports it.  Case-ins
 `(millis() / 500) & 1`, otherwise off.  The active level is a named constant the first bench step sets.
 QEMU cannot see it; it is a silicon-only witness like `under=`.
 
-**Prints on the edge:** `pairing=on reason=boot|drop|cmd secs=120` when a window opens (or is extended),
-`pairing=off reason=timeout|paired` when it closes.  The heartbeat's `bt_link` line gains
+**Prints on the edge:** `pairing=on reason=boot|drop secs=120` from `loop()`'s edge detector when an AUTOMATIC
+window opens, `pairing=off reason=timeout|paired` from the same detector on every close -- and **a commanded
+window prints its own `pairing=on reason=cmd secs=N` from the command handler**, because extending an already-
+open window is not an edge and the person who typed `pair` deserves an answer either way (corrected during
+planning: the first draft had one print site and would have gone silent on a second `pair`).  The heartbeat's `bt_link` line gains
 ` pairing=boot|drop|cmd|off secs=N` (`secs=0` when off).  The gate greps no `bt_link` field today, so the
 addition moves nothing.
 
