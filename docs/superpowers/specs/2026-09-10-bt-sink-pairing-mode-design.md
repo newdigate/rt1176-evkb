@@ -103,22 +103,34 @@ m_sink.link().wantDiscoverable(listening && (m_alwaysDisc || !m_bonds || m_bonds
 ```
 
 **Closing.**  In `tick(now)`, on expiry (`now >= m_pairUntil`), reason kept for the edge print as *timeout*; or the moment a
-link comes up (the `CONNECTING` -> `STREAMING` transition), recorded as *paired*.  A window is never open while
-a link is up -- scans are already off then (`listening` is false), so it cannot be, and `enterPairing()`
-refuses rather than queues.
+link reaches `STREAMING` (the `CONNECTING` -> `STREAMING` transition), recorded as *paired*.  A window never
+*survives* a link reaching `STREAMING`, and `enterPairing()` refuses rather than queues while a link is up.
+It CAN be open through `CONNECTING` -- that is the design (see the ★ above: the window closes on `STREAMING`,
+not on `CONNECTING`), and it is not discoverable there either way, because the scan line reads `listening`,
+which a link coming up has already made false.
 
-★ **Corrected during Task 1 review (2026-09-10): `disconnect()` closes an open window as *cancelled*
-(`PAIR_END_CANCELLED`), and `resume()` opens none.**  The invariant in the paragraph above
-was measured broken in both shapes by the suite's own scenarios, because both callbacks can call `disconnect()`
-with a window open and `tick()`'s close check sees neither -- the attempt callback on the success edge runs
-BEFORE that check and has already left `STREAMING`, so the boot window was never closed as *paired*
-(`btsinksession_test` Q7: open with the link `LINK_SECURE` through the whole teardown); the stream callback on
-the loss edge runs one line AFTER the drop branch opened its window (Q6).  Either way the window rode through
-`DISCONNECTING` and `MANUAL` with the scans off: `pairingOpen()` true on a sink that is not discoverable (the
-LED would blink "pairing" in `MANUAL`), `enterPairing()` refused at the same time (`canPair()` false), and
-`resume()` re-entering `LISTENING` on a stale deadline with no PREPARE.  And `resume()` opens **no** window:
-"every return to `LISTENING`" above enumerates the ends of ATTEMPTS -- loss, clean close, failed pairing --
-while `resume()` is an app command; the app calls `enterPairing()` if it wants one.
+★ **Corrected during the Task 1 reviews (2026-09-10): the *paired* close happens AT the transition, ahead of
+every callback; `disconnect()` closes *cancelled* only a window that never saw `STREAMING`; `resume()` opens
+none.**  Both callbacks can call `disconnect()` with a window open, and with the close sited at the end of
+`tick()` neither shape reached it: the attempt callback on the success edge runs BEFORE that check and has
+already left `STREAMING`, so the boot window was never closed as *paired* (`btsinksession_test` Q7 -- open with
+the link `LINK_SECURE` through the whole teardown); the stream callback on the loss edge runs one line AFTER
+the drop branch opened its window (Q6).  Either way the window rode through `DISCONNECTING` and `MANUAL` with
+the scans off: `pairingOpen()` true on a sink that is not discoverable (the LED would blink "pairing" in
+`MANUAL`), `enterPairing()` refused at the same time (`canPair()` false), and `resume()` re-entering
+`LISTENING` on a stale deadline with no PREPARE.  The first pass answered both shapes with *cancelled*, which
+made the END REASON a function of callback timing rather than of the wire: one and the same outcome (stranger
+paged, SSP completed, link `LINK_SECURE`, attempt `OK`) read *cancelled* from inside the callback and *paired*
+from `loop()` one tick later, and §5's `pairing=off reason=cancelled` would have printed on a successful
+pairing.  So the *paired* close moved INTO the transition, beside `links++`/`accepts++` and ahead of the
+callbacks -- a link reached `STREAMING`, so it paired, whatever the app did next -- and `tick()` keeps only the
+clock arm (nothing else can reach `STREAMING` with a window open: `openWindow()` opens one only in
+`LISTENING`).  *Cancelled* is then exactly the Q6 shape and the boot/commanded window torn down from
+`LISTENING` or `CONNECTING`, guarded so a `disconnect()` with nothing open leaves the last window's end alone.
+Q7 and the new P6 -- Q7's sequence with `disconnect()` called from OUTSIDE the callback -- pin that the two
+timings agree; P6 is green either way alone, which is why it only bites beside Q7.  And `resume()` opens **no**
+window: "every return to `LISTENING`" above enumerates the ends of ATTEMPTS -- loss, clean close, failed
+pairing -- while `resume()` is an app command; the app calls `enterPairing()` if it wants one.
 
 **Not a new `State`.**  A window is a deadline beside `LISTENING`, not a state of its own: `MANUAL` and
 `LISTENING` both compose with it, and every `m_state == LISTENING` test in `tick()` stays as it is.
@@ -172,7 +184,10 @@ and CLAUDE.md records what re-opening this VCOM does.
 * `enterPairing()` extends; is refused while a link is up; re-issues PREPARE **exactly once**, counted as
   `Write_Simple_Pairing_Mode` commands the fake controller receives, and NOT while the boot PREPARE is
   still in flight;
-* the window closes as *paired* on link-up;
+* the window closes as *paired* on reaching `STREAMING` -- at the transition, ahead of the callbacks, so the
+  reason is the same whether the app's `disconnect()` comes from inside the attempt callback or from `loop()`
+  a tick later (the second review's correction: those two read differently before it, and the pair of cases
+  that pins it is Q7 + P6 -- P6 alone is green either way);
 * `setPairingWindowMs(0)` disables the auto-windows and leaves `enterPairing()` working.
 
 Each demonstrated RED by name.  The sketch's parser is not unit-tested (approach A); the gate is what pins it.
