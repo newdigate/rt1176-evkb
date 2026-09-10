@@ -1,5 +1,6 @@
 DRIVER-CONNECTED
 DRIVER-SENT pair while-streaming
+DRIVER-SAW scan_enable=0x03 after-drop
 DRIVER-SENT pair after-drop
 DRIVER-SENT forget after-drop
 DRIVER-SENT status after-forget

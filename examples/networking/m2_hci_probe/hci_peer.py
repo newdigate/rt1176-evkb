@@ -122,17 +122,19 @@ LAST_OPCODE = {"full": OP_REMOTE_NAME_REQ, "drop-reset": OP_RESET, "garbage": OP
                                   # signalling; the real end of avdtp, media, reconnect, lifecycle and soak is checked
                                   # separately (peer.avdtp["started"] / peer.media / peer.lc / peer.sk, below)
 LAST_OPCODE_COUNT = {"baud": 2}   # phases whose terminal opcode must be seen N times (default 1)
-DEADLINE = {"reconnect": 50, "lifecycle": 55, "soak": 55, "source": 65}   # seconds from socket connect; default 45.  reconnect runs one inquiry + FOUR links + four disconnects
+DEADLINE = {"reconnect": 50, "lifecycle": 55, "soak": 55, "source": 55}   # seconds from socket connect; default 45.  reconnect runs one inquiry + FOUR links + four disconnects
                                    # (~17 s wall measured from socket connect) and must not share [media]'s budget; 50 keeps it BELOW tools/qrun's 60 s QRUN_TIMEOUT so the peer announces before QEMU is killed.
                                    # lifecycle runs three legs with a 3 s (M2_BT_RETRY_MS) gap before leg 3's re-page (~25 s wall measured); 55 keeps it below the same 60 s cap.
                                    # soak runs the reconnect flow N times over on a firmware-side timer (M2_BT_SOAK_PERIOD_MS); 55 is the gate's own qrun budget, not a real soak duration.
                                    # 55 s fits N=10 (measured 43.5 s idle); N > ~12 will not fit under tools/qrun's 60 s cap -- do not raise N on the command line without raising both.
                                    # source streams 150 packets at 100 ms (~17 s), then NEW-46 adds a 1 s settle, the drop, an 8 s
                                    # gap and the unbonded re-page's SSP -- ~10 s in all, and a healthy run ends at ~30 s (measured).
-                                   # 65 is ABOVE tools/qrun's 60 s cap on QEMU, and unlike the three phases above that costs nothing
-                                   # here: this phase's socket is the guest's, so when qrun kills QEMU the recv at the top of the run
-                                   # loop returns EOF and the peer breaks out and prints its tally at once.  It never sits past the
-                                   # death of the thing it is talking to.
+                                   # ★ 55, not the 65 this phase briefly carried, and the reason is DIAGNOSTIC rather than budgetary.
+                                   # 65 is ABOVE tools/qrun's 60 s cap on QEMU, so every unhealthy run reached EOF first and printed
+                                   # PEER-EOF (QEMU exited or was killed) -- which cannot separate "we outran the cap" from "QEMU
+                                   # crashed", and never printed PEER-DEADLINE ("the firmware lost its controller here"), the line that
+                                   # names the actual class.  55 is what lifecycle and soak use, leaves 25 s over the measured healthy
+                                   # ~30 s, and keeps the peer's own verdict the FIRST thing a red run shows.
 
 def phase_done(phase, peer):
     # avdtp's real end is signalling over ACL (an accepted START), not a
@@ -174,6 +176,12 @@ def phase_done(phase, peer):
         # did not wipe offers the stored key instead, authenticates with no SSP at all, and stops here.
         # ★ avctp_EVER, not avctp_open: src_reset_link() clears the live flag at the drop, and a channel
         # that has been torn down is not evidence that the sink never opened one.
+        # ★ AND `not peer.avdtp["error"]` IS WEAKER HERE THAN IT LOOKS, since NEW-46: the re-page's Accept
+        # calls reset_link(), which REBUILDS self.avdtp with error=False, so anything it recorded before the
+        # drop is wiped.  It is kept rather than dropped because it is not redundant -- the source phase's own
+        # writer (src_avdtp_response's except) also bumps s["errors"], which survives, but handle_acl's and
+        # handle_sdp's bump rc["errors"], which nothing in this clause reads.  So it still covers those two,
+        # and only up to the re-page.  A PEER-EXCEPTION line in the log is the durable witness either way.
         return (s["started"] and s["pkts"] >= SOURCE_PKTS and s["errors"] == 0 and not peer.avdtp["error"]
                 and s["avctp_ever"] and s["set_ok"] == 1
                 and s["dropped"] and s["repaged"] and peer.ssp_complete_count() >= 2)
@@ -288,8 +296,10 @@ class Peer:
                     "frames": None, "next_at": 0.0, "started_at": 0.0, "paged": False, "psm": {}, "cfg": {},
                     # --- NEW-46: the drop and the unbonded re-page.  `conns` counts links so a FRESH handle is
                     # issued per link (the reconnect/lifecycle idiom); `dropped`/`repaged` are the one-shot
-                    # latches, and `drop_at` is the wall-clock instant the next of the two is due.
-                    "conns": 0, "dropped": False, "drop_at": 0.0, "repaged": False,
+                    # latches; and the run loop's three stages get a deadline EACH -- `drop_at` (armed when
+                    # the stream completes) and `repage_at` (armed at the drop).  One shared field would work,
+                    # disambiguated by the latches, and would make a reader prove the chain rather than read it.
+                    "conns": 0, "dropped": False, "drop_at": 0.0, "repaged": False, "repage_at": 0.0,
                     # --- AVCTP/AVRCP, opened by the SINK (NEW-41 follow-up).  This phase models an iPhone,
                     # and an iPhone NEVER opens AVCTP at a sink -- it waits for the sink to initiate and then
                     # drives absolute volume over the sink's channel.  So we open nothing here: avctp_scid is
@@ -563,6 +573,12 @@ class Peer:
                 # bring-up would call AudioInputBluetooth::begin(), which clears m_primed, and the run
                 # sends no more media (src_pump() is spent at SOURCE_PKTS), so `primed=1` would read 0 on
                 # the last heartbeat and the [jit] pre-fill assertion would fail on a healthy run.
+                # ★ WHAT THAT LEAVES UNCOVERED, so nobody reads the gate as saying more: with no SDP, no
+                # AVDTP and no media after the re-page, this proves the sink is re-PAIRABLE and never that
+                # it is re-USABLE -- and, because the second link never reaches STREAMING, its window is
+                # still open at the end of the run, so `pairing=off reason=paired` is exercised on the BOOT
+                # window only.  Both gaps are named in run_qemu.sh's header and in the spec's section 6;
+                # a real phone re-pairing and playing again is the bench's claim, not this file's.
                 self.send(event(0x08, b"\x00" + struct.pack("<H", self.cur_handle()) + b"\x01"), 0.2)   # Encryption_Change on
             elif self.phase == "source":
                 # We are the MASTER here, so the sink never issues Set_Connection_Encryption -- it waits in
@@ -1254,14 +1270,16 @@ if __name__ == "__main__":
             # ★ AFTER pkts, not merely after the volume set: set_ok lands ~1 s into streaming (measured
             # -- PEER-SINK-AVRCP precedes PEER-SOURCE-PROGRESS pkts=50 in every baseline capture), so
             # dropping on it alone ends the run at ~20 of the 150 packets the whole gate is built on.
+            # Three stages, each with its OWN deadline field, so the chain reads rather than has to be proved:
+            #   ARM the drop (stream complete)  ->  DROP at drop_at  ->  RE-PAGE at repage_at.
             if s["set_ok"] == 1 and s["pkts"] >= SOURCE_PKTS and not s["dropped"] and s["drop_at"] == 0.0:
                 s["drop_at"] = time.time() + 1.0
             elif s["set_ok"] == 1 and not s["dropped"] and s["drop_at"] and time.time() >= s["drop_at"]:
                 peer.send(event(0x05, b"\x00" + struct.pack("<H", s["handle"]) + b"\x13"))       # Disconnection_Complete, reason 0x13
-                s["dropped"] = True; s["drop_at"] = time.time() + 8.0
+                s["dropped"] = True; s["repage_at"] = time.time() + 8.0
                 peer.log.append("PEER-SOURCE-DROP handle=0x%04x reason=0x13" % s["handle"])
                 peer.src_reset_link()                                                            # per-link state only; the handle and the CIDs go at the next Accept
-            elif s["dropped"] and not s["repaged"] and time.time() >= s["drop_at"]:
+            elif s["dropped"] and not s["repaged"] and s["repage_at"] and time.time() >= s["repage_at"]:
                 peer.src_page(0.0)                                                               # Connection_Request -> the sink accepts as slave
                 s["repaged"] = True; peer.log.append("PEER-SOURCE-REPAGE bd=%s" % DEVICES[0][0].hex())
             if phase_done("source", peer) and not peer.pending:

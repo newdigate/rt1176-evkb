@@ -903,6 +903,76 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 ```
 
+**Task 4 review corrections (2026-09-10).**  Two reviews, both passing on substance -- the spec review
+verified every claim independently and found no defect, the quality review found five Important issues and
+none of them makes the gate pass when it should not.  Everything below is diagnosis quality, recorded
+evidence and precision.  **THE FIVE RED DEMONSTRATIONS WERE RECORDED NOWHERE**: the header still described a
+NEW-41 gate with no pairing window and its `DEMONSTRATED RED` list stopped at NEW-42's (h), leaving eleven new
+assertions outside the tree's own rule that a regression gate never shown to fail is decoration.  A
+`DEMONSTRATED RED (2026-09-10)` block now carries one entry per mutation with its exact failure line -- five,
+not the four this task planned, because `forget`-that-reports-but-does-not-wipe is a separate and sharper arm
+than `forget`-that-does-neither: on it `bonds_forgotten=1` STILL PRINTS (the count is read before the wipe, so
+the one line a reader would trust is the one that lies) and the only visible change is on the far side of the
+link, the re-page degrading from `accept(slave, unbonded)` + `neg_reply` to `accept(slave)` +
+`reply(stored type=4)`.  **THE STATUS VERDICT'S STRUCTURAL HALF WAS WEAKER THAN ITS OWN DOCSTRING**: the lazy
+`(?:[^\n]*\n)+?` did not require the closing `bt_avrcp` to belong to the commanded block -- measured on a
+synthetic capture, a block truncated after its `hb ` line still matched by running through the five
+HCI-settings lines and borrowing the NEXT block's closer, 13 lines instead of 7.  Pinned to the block's exact
+shape (`hb` plus exactly four lines), which `printHeartbeat()` emits unconditionally.  **NOTHING GREPPED
+`DRIVER-FAIL` AND THE DRIVER'S EXIT CODE WAS DISCARDED**, so a driver that died mid-run was diagnosed by the
+firmware-shaped assertion it made unreachable -- kill it after its second command and the first failure reads
+`[pair] the commanded windows never opened`, blaming a sink nothing was ever typed at, which is the shape this
+file's header says the gate exists to prevent.  Both are now read at the TOP of the `[pair]` block, and a peer
+that failed fast reaps the driver instead of waiting out its 45 s budget.  **`transcript_console.txt` WAS
+COMMITTED AND READ BY NOTHING** while the vacuity suite carried a byte-identical heredoc copy: two copies that
+will drift, and the version-controlled one -- the run's evidence -- was the one nobody executed.
+`GATE_CONSOLE_FIXTURE` now replays the committed file, as case (b) already does for `transcript_qemu.txt`.
+**ONE `DRIVER-SENT` LINE OF FOUR WAS ASSERTED**, so the header's claim to rule out self-opening `reason=cmd`
+windows was false for two of them, and the "reason=cmd twice" count could not tell "pair opened one and forget
+opened one" from "forget opened two" -- which is exactly what its comment claimed.  All three post-drop sends
+are now read, and the capture's ORDER is pinned (`reason=cmd` -> `bonds_forgotten=1` -> `reason=cmd`) with the
+sequence idiom `m2_uap_lwip[uap]` uses for configure-before-BSS_START.
+
+**Two gaps are now NAMED rather than left to be read into the `PASS:` line** (the `[lifecycle]` `btout.end()`
+precedent), in the gate header, at the peer's `Encryption_Change`-only branch, and in spec §6.2: the peer's
+minimal re-page does no SDP/AVDTP/media, so the gate proves the sink re-**pairable** and never re-**usable**;
+and because that link never reaches `STREAMING`, `pairing=off reason=paired` is exercised on the BOOT window
+only.  Widening the peer was rejected -- the run is 39 s against qrun's 60 s cap and QEMU cannot carry A2DP at
+the audio rate (CLAUDE.md) -- so Task 6's bench owns both.
+
+**One judgement call went the strong way and cost a driver change.**  The review offered "say *a* window" or
+"move the assertion ahead of the driver's first post-drop send" for the `PEER-SCAN-ENABLE 0x03` check.
+`reconcileScan()` writes only on a CHANGE, so all three post-drop windows coalesce into one controller write
+and whichever opened first owns it -- and the pre-review capture had the COMMANDED window first
+(`pairing=on reason=cmd` twice, THEN `scan_enable=0x03`).  Rather than trim the claim, `sink_console.py` now
+waits for the sink's own `scan_enable=0x03` after the drop and logs `DRIVER-SAW` before typing; the gate
+asserts that line and that it precedes every post-drop `DRIVER-SENT`.  The capture inverted as intended
+(`reason=drop` -> `scan_enable=0x03` -> the two `reason=cmd`), so `transcript_qemu.txt` and
+`transcript_console.txt` were RE-CAPTURED -- the only non-counter change in the UART is those two scan lines
+moving.  The `[pair]` message for PREPARE was reworded in the same pass to stop claiming a localisation
+`grep -c ... -ge 2` cannot give (in the real capture the second `ssp_mode` lands after the FORGET window);
+mutants (i) and (iii) were re-run against the reworded file so both quoted lines are verbatim.
+
+Smaller, all taken: the `[jit]` message said "streaming heartbeat" of a variable that is now the final one; a
+`secs=1[0-9][0-9]` comment at first use; `BtLink::reconcileScan()` cited by FUNCTION rather than by a line
+number in a sibling repo at a moving pin; `tail -3` where `grep DRIVER-STATUS` prints nothing in the commonest
+failure; the wipe check moved AHEAD of the window-count check so a broken `forget` stops failing as "the
+commanded windows never opened"; the port probe's TOCTOU window stated (only EXHAUSTION is reported by name, a
+lost race still surfaces as `no UART capture`); `sendall()` with a guard, an argc guard, EOF distinguished
+from timeout, the unused `wait_for` return dropped, the one wait that re-used an older mark given a fresh one,
+`mark()`'s docstring told what the region includes, `time.sleep(0.5)` justified as a margin and not a
+synchronisation (`m_state = STREAMING` is assigned before the callback that prints the line), and
+`STATUS_BOUND = 0.9` recorded as an IDLE-only measurement with NEW-42's `[jit]` floor as the precedent for
+saying so.  In `hci_peer.py`: `DEADLINE["source"]` 65 -> 55, a DIAGNOSTIC change rather than a budgetary one
+(65 is above qrun's 60 s cap, so every unhealthy run printed `PEER-EOF` -- which cannot separate "we outran
+the cap" from "QEMU crashed" -- and never `PEER-DEADLINE`, the line that names the class; healthy is ~30 s);
+`not peer.avdtp["error"]` KEPT in `phase_done("source")` but documented, because dropping it is not free --
+the phase's own writer also bumps `s["errors"]`, but `handle_acl`'s and `handle_sdp`'s bump `rc["errors"]`,
+which that clause is the only reader of, and `reset_link()` at the re-page clears it; and the drop/re-page
+chain given a `repage_at` of its own so its three stages read instead of having to be proved from the
+latches.  DECLINED: a `gate_console_socket()` helper in `gate-lib.sh` -- one caller, noted in a comment
+citing `gate_console()`'s own warning instead.
+
 ---
 
 ### Task 5: Rebuild, freshness, fresh-user, sweep, audit, vacuity

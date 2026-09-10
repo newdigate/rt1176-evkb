@@ -702,15 +702,11 @@ PEERGREEN
     # NEW-46: the CONSOLE DRIVER's half of a good run, replayed for the same reason as the peer's --
     # no driver runs against this harness's fake QEMU either, so without it every DRIVER-* assertion
     # is unreachable and the green replay below could not pass.  Honoured ONLY under GATE_VACUITY=1.
-    cat > "$WORK/sink_console_green.txt" <<'CONGREEN'
-DRIVER-CONNECTED
-DRIVER-SENT pair while-streaming
-DRIVER-SENT pair after-drop
-DRIVER-SENT forget after-drop
-DRIVER-SENT status after-forget
-DRIVER-STATUS-OK block after cmd=status in 0.04s (bound 0.90s, host clock)
-DRIVER-DONE
-CONGREEN
+    # ★ It is the COMMITTED transcript, not a heredoc.  A heredoc here duplicated that file byte for
+    # byte, and the copy nobody executes is the one that goes stale: the version-controlled artefact
+    # is the run's evidence, so replaying IT is what keeps the two from drifting -- exactly what case
+    # (b) below already does with transcript_qemu.txt.
+    sink_con="$EVKB/$sink_rel/transcript_console.txt"
 
     # (a) the card-absent capture this example produces with no controller: the HCI Reset times out
     # by name, the session never begins, and both heartbeats are vacuous.  With a PERFECT peer
@@ -736,7 +732,7 @@ bt_link links=0 lost=0 closed=0 reason=0x00 state=idle
 bt_hci ncmd=0 timeouts=10 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
 ABSENT
     export GATE_VACUITY=1 GATE_PEER_FIXTURE="$WORK/sink_peer_green.txt" \
-           GATE_CONSOLE_FIXTURE="$WORK/sink_console_green.txt"
+           GATE_CONSOLE_FIXTURE="$sink_con"
     run_gate "$sink_rel" "run_qemu.sh" "$WORK/sink_absent.txt"; rc=$?
     result=0
     [ "$rc" -ne 0 ] || result=1                                                # must not pass
@@ -776,9 +772,9 @@ ABSENT
     # (d) NEW-46: the sink must open a PAIRING WINDOW when the peer drops the link, and a capture in
     # which it did not must fail BY NAME.  Delete only the `pairing=on reason=drop` line: everything
     # else about the run is untouched -- the tone still decoded, the golden still hits, the peer's
-    # fixture still shows its drop and its re-page, and the driver's fixture still shows all four
-    # commands sent -- so this is exactly the shape of a firmware that heard the disconnect and did
-    # nothing about it, which is the whole of NEW-46.  Nothing else in the gate can see it.
+    # fixture still shows its drop and its re-page, and the driver's fixture still shows the three
+    # post-drop commands the gate reads -- so this is exactly the shape of a firmware that heard the
+    # disconnect and did nothing about it, which is the whole of NEW-46.  Nothing else can see it.
     grep -v "^pairing=on reason=drop " "$EVKB/$sink_rel/transcript_qemu.txt" > "$WORK/sink_nodrop.txt"
     run_gate "$sink_rel" "run_qemu.sh" "$WORK/sink_nodrop.txt"; rc=$?
     result=0

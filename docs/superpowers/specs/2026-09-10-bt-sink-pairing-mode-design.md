@@ -238,6 +238,30 @@ Asserted, in order:
 (NEW-42, section 4.2).  Both new assertion classes DEMONSTRATED RED before trusted.  Vacuity: the fixture
 re-captured; a capture in which the drop window never opens must fail by name.
 
+**Two things the gate does NOT cover, named here because the review found them unnamed and this tree's
+convention is to state a gap rather than let a `PASS:` line be read as wider than it is** (the `[lifecycle]`
+`btout.end()` precedent):
+
+* **The post-`forget` MEDIA path.**  The peer's re-page is deliberately minimal -- it pairs, injects
+  `Encryption_Change` and stops; it does not redo SDP, AVDTP or media (a second A2DP bring-up would call
+  `AudioInputBluetooth::begin()`, clear `m_primed` with no media left to send, and redden the `[jit]`
+  pre-fill assertion on a healthy run).  So point 4 above proves the sink is re-**pairable**, never that it
+  is re-**usable**.  Widening the peer was considered and REJECTED: the run is already ~39 s against
+  `tools/qrun`'s 60 s cap, and CLAUDE.md records that QEMU cannot carry A2DP at the audio rate anyway.
+  Section 6.3's bench is where a real phone re-pairs and plays again -- and NEW-43, the defect this feature
+  answers, is a pairing defect, not a streaming one.
+* **`pairing=off reason=paired` on the SECOND window.**  Following from the first: the re-page never reaches
+  `STREAMING`, so the window `forget` opened is still open at the end of the run and point 5 is exercised
+  exactly once, on the boot window.  Per-window it is pinned by 6.1's host suite; on the wire, by every
+  bench reconnect.
+
+**And one attribution the gate had to buy with a driver change.**  `BtLink::reconcileScan()` writes only on a
+CHANGE, so the drop window's `Write_Scan_Enable 0x03` and the two commanded windows' coalesce into the single
+`PEER-SCAN-ENABLE 0x03` the peer logs -- and in the first capture the commanded window came FIRST, which left
+point 3's un-fakeable half proving only that *some* window opened.  `sink_console.py` now waits for the sink's
+own `scan_enable=0x03` after the drop and logs `DRIVER-SAW` before it types anything; the gate asserts that
+line and that it precedes every post-drop `DRIVER-SENT`.  The peer's 0x03 is therefore the DROP window's.
+
 ### 6.3 Bench
 
 First light: LED polarity, constant fixed.  Then one session: boot -> LED blinks two minutes -> stops;
