@@ -297,10 +297,7 @@ that -- the phone's delivery is then the limit -- not to grow `TARGET` until the
   `trimhi` from the change arm is the measurement that decides whether anything is left to fix.
 * **A fill histogram** beside the gap histogram.  `fillmin`/`fillmax` answer the headroom question; a
   distribution would answer a question nobody has asked yet.
-* **Threshold re-prime** -- rebuffer only after the ring has been dry for more than N consecutive blocks,
-  so a single missing packet stays a 2.9 ms tick and only a real dropout costs a `TARGET`-block silence.
-  Better behaviour, one more tunable to justify; `reprimes` and `gapmax_ms` from the bench are what say
-  whether it is worth adding.
+* **Threshold re-prime** -- PROMOTED OUT OF THIS LIST BY RUN 5; see section 9.
 * **A sample-domain ring** instead of a block ring, removing the 8-block arrival quantisation from the
   ring's accounting.  A redesign, not justified by the evidence: the block ring is fine once it is deep
   enough.
@@ -372,3 +369,60 @@ CMakeLists.txt,run_qemu.sh,tests/node_test.cpp,transcript_hw_evkb.txt,transcript
 `examples/networking/m2_hci_probe/hci_peer.py` (the scripted gap in the `source` phase),
 `tools/gate-vacuity.test.sh`, `evkb.cmake` (M2Radio pin), `CLAUDE.md`, memory, this spec.
 M2Radio: `bt/Avrcp.{h,cpp}`, `bt/test/avrcp_test.cpp`.
+
+
+## 9. Threshold re-prime (opened by RUN 5, 2026-09-10)
+
+RUN 5 met neither `over = 0` nor `fillmax <= RING - 4`, and the trace named the mechanism: **a re-prime
+refills the ring to `TARGET` from fresh packets, and THEN the backlog the source buffered during the gap
+lands on top of it** -- `TARGET + backlog > RING - 1`, and the surplus is dropped.  Boot 2 went
+`fillmax` 25 -> 31, `overev` 0 -> 3, `reprimes` 1 -> 2 inside one heartbeat window.
+
+Not raising `RING` -- that out-runs the mechanism rather than removing it.  The chosen fix is section 6's
+deferred **threshold re-prime**: rebuffer only after the ring has been dry for more than N consecutive
+blocks.  Below N the ring simply ticks 2.9 ms underruns and the source's catch-up burst refills it by
+itself, so the `TARGET` term never enters the sum.  The re-prime becomes what it should always have been --
+a safety net for a source that does NOT catch up and would otherwise leave the ring permanently short
+(section 1, fact 3) -- rather than a response to ordinary jitter.
+
+### 9.1 N is measured, not chosen -- and the current code cannot measure it
+
+Inference from the gap histogram puts every dry spell this phone produced at <= 25 blocks (the servo holds
+fill at ~`TARGET`, so a gap of G blocks leaves the ring dry for about G - 16; the worst gap, 97 ms = 33
+blocks, gives 17).  That is an inference, and `TARGET 16` was earned by measurement rather than inference,
+so N will be too.
+
+★ **The obstacle, and it is the whole reason this needs its own instrument: the re-prime TRUNCATES the
+quantity to be measured.**  The ring goes dry for exactly one block and then enters priming, so any
+counter that stops at "dry" reads 1 every time, forever, whatever the source did.
+
+What must be counted instead is **consecutive `update()` calls on an EMPTY ring, irrespective of priming
+state** -- during a re-prime the ring genuinely is empty until packets arrive, so counting through the
+priming window recovers the natural dry spell exactly, with no change to current behaviour.  Three
+exclusions, each for the same reason its sibling counter has it:
+
+* **not while HELD** -- an AVDTP SUSPEND is not a dropout, the same principle that keeps it out of `under`;
+* **not before the START prime has completed** (`m_primed` false) -- the START prime is a long empty
+  stretch by construction (87/89 ms measured, ~30 blocks) and would dominate the histogram with an
+  artefact of stream setup rather than of delivery;
+* **not while `!m_live`.**
+
+### 9.2 What ships in this increment
+
+`dryMax` (longest run of consecutive empty blocks) plus a small dry-spell histogram bucketed at
+<=4 / <=8 / <=16 / <=32 / >32 blocks, sampled when a spell ENDS, and `dryTotal`.  Cumulative for the run,
+like every other tally on the line.  Additive: no behavioural change, so RUN 6 is directly comparable with
+RUN 5, and the gate is untouched -- these are consume-side numbers and therefore silicon claims, exactly
+as `under` and `reprimes` already are.
+
+### 9.3 What RUN 6 decides, and what it predicts
+
+N is read off the histogram: above the bulk of self-healing spells, below a genuine stall.  If the
+distribution confirms the inference (everything <= 25), N = 32 makes the re-prime a pure safety net.
+
+**The trade to accept with open eyes, recorded before the run:** below the threshold `under` returns to
+counting BLOCKS rather than EVENTS, so it will RISE -- predicted from RUN 5's 10 events to roughly 60-100
+ticks over a comparable window, each an inaudible 2.9 ms -- while `over` should reach 0 and `reprimes`
+fall to ~0 for this phone.  Section 5's `under <= reprimes + 2` therefore stops being the right bound and
+must be restated as `over = 0` plus `under <= dryTotal`.  A criterion that no longer measures what it
+claims gets rewritten, not reinterpreted -- as `fillmin >= TARGET/4` already had to be (section 7.5).
