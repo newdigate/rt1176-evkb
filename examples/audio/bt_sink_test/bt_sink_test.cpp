@@ -36,6 +36,18 @@
 
 #define CONSOLE Serial1            // LPUART1 -> the MCU-Link VCOM
 
+// The green User LED (LED_BUILTIN = pin 3 = GPIO_AD_04, D3) blinks at 1 Hz while a pairing window is open
+// (pairingIndicator(), below); setup() drives it OFF at the top, card-absent included.  Here with the other
+// build-time configuration rather than beside its users, because it is a knob and not a graph object: the
+// matching cache variable lives in CMakeLists.txt (`-DBT_SINK_LED_ON=LOW`) and this #ifndef is only the
+// fallback for a build that does not go through it.
+// ** POLARITY: the RevC3 header audit names the pad but not its active level, and the only "active low" note
+// in the core is the 1060's D8 -- a different board.  BT_SINK_LED_ON is VERIFIED AT FIRST LIGHT on the bench
+// (plan Task 6) and corrected there if this default is wrong.  QEMU cannot see it: a silicon-only witness. **
+#ifndef BT_SINK_LED_ON
+#define BT_SINK_LED_ON HIGH
+#endif
+
 // --- the Bluetooth transport: same objects as m2_hci_probe -----------------
 static HciTransport hciIo(Serial2);
 static Hci hci(hciIo);
@@ -267,16 +279,6 @@ static AudioOutputI2S      i2sOut;
 static AudioConnection     c1(btin, 0, i2sOut, 0), c2(btin, 1, i2sOut, 1);
 static AudioControlWM8962  codec;
 
-// The green User LED (LED_BUILTIN = pin 3 = GPIO_AD_04, D3) blinks at 1 Hz while a pairing window is open
-// (pairingIndicator(), below); setup() drives it OFF once, card-absent included.  Defined up here because both
-// callers need it and setup() is the earlier one.
-// ** POLARITY: the RevC3 header audit names the pad but not its active level, and the only "active low" note
-// in the core is the 1060's D8 -- a different board.  BT_SINK_LED_ON is VERIFIED AT FIRST LIGHT on the bench
-// (plan Task 6) and corrected there if this default is wrong.  QEMU cannot see it: a silicon-only witness. **
-#ifndef BT_SINK_LED_ON
-#define BT_SINK_LED_ON HIGH
-#endif
-
 static void btLog(void *, const char *s) { CONSOLE.println(s); }
 // A2dpSink's media callback: main context (the L2cap RX path), NOT an ISR -- the decode happens here, out of the
 // SAI ISR, per the 2026-09-04 livelock lesson.
@@ -330,6 +332,11 @@ void setup() {
     static uint8_t s_consoleTx[4096]; CONSOLE.addMemoryForWrite(s_consoleTx, sizeof s_consoleTx);
     delay(50);
     CONSOLE.println("RT1176 BT sink test up");
+    // The pairing LED, driven OFF FIRST -- before anything that can block.  btFirmwareDownload() plus up to ten
+    // 500 ms HCI Reset attempts is ~20 s of setup(), and an unconfigured pad floats for all of it, which at the
+    // bench reads as a dim or random glow on the very indicator being watched.  This write is also the whole of
+    // the LED's card-absent behaviour: with no HCI the session never begins, so no window ever opens.
+    pinMode(LED_BUILTIN, OUTPUT); digitalWrite(LED_BUILTIN, !BT_SINK_LED_ON);
 
     hciIo.begin(115200);
     CONSOLE.println("serial2=up_115200");
@@ -422,9 +429,6 @@ void setup() {
 #if defined(M2_BT_SINK_ALWAYS_DISCOVERABLE)
     session.setAlwaysDiscoverable(true);
 #endif
-    // The pairing LED is driven from here on whether or not the card answered: with no HCI no window ever opens,
-    // so this OFF write is the whole of its card-absent behaviour and the pin is never left floating.
-    pinMode(LED_BUILTIN, OUTPUT); digitalWrite(LED_BUILTIN, !BT_SINK_LED_ON);
     // Begin the session only if HCI came up; with no card it never listens and the heartbeat stays vacuous.
     if (s_hciSt == Hci::OK) {
         session.begin(&bonds, s_aclNum, millis());
@@ -437,13 +441,19 @@ void setup() {
 // NEW-46: the pairing window's two enums as console words.  `off` covers PAIR_NONE, which is what
 // pairingReason() returns whenever the window is shut -- so the heartbeat field reads `pairing=off` with no
 // separate open/closed test at the call site.
+// Every enumerator is named and there is NO `default:`, deliberately: `default:` would suppress -Wswitch, and a
+// future PairingReason added to BtSinkSession.h would then print `pairing=off` for an OPEN window -- silently
+// breaking the `off` <-> shut equivalence the heartbeat comment and the edge prints below both rely on.  The
+// return after the switch is the unreachable-value fallback the compiler still needs.
 static const char *pairingReasonName(BtSinkSession::PairingReason r) {
-    switch (r) { case BtSinkSession::PAIR_BOOT: return "boot"; case BtSinkSession::PAIR_DROP: return "drop";
-                 case BtSinkSession::PAIR_CMD: return "cmd"; default: return "off"; }
+    switch (r) { case BtSinkSession::PAIR_NONE: return "off";  case BtSinkSession::PAIR_BOOT: return "boot";
+                 case BtSinkSession::PAIR_DROP: return "drop"; case BtSinkSession::PAIR_CMD:  return "cmd"; }
+    return "off";
 }
 static const char *pairingEndName(BtSinkSession::PairingEnd e) {
-    switch (e) { case BtSinkSession::PAIR_END_PAIRED: return "paired"; case BtSinkSession::PAIR_END_TIMEOUT: return "timeout";
-                 case BtSinkSession::PAIR_END_CANCELLED: return "cancelled"; default: return "none"; }
+    switch (e) { case BtSinkSession::PAIR_END_NONE:   return "none";   case BtSinkSession::PAIR_END_PAIRED: return "paired";
+                 case BtSinkSession::PAIR_END_TIMEOUT: return "timeout"; case BtSinkSession::PAIR_END_CANCELLED: return "cancelled"; }
+    return "none";
 }
 
 // The once-a-second heartbeat, and also what `status` prints on demand (Task 3): one body, two callers, so the
@@ -532,11 +542,19 @@ static void printHeartbeat() {
     CONSOLE.print(" reason=0x"); printHex8(st.lastReason);
     CONSOLE.print(" state="); CONSOLE.print(BtSinkSession::stateName(session.state()));
     // NEW-46: the pairing window, so a 1-in-30 sampled transcript still shows it.  reason names the OPEN window
-    // (boot|drop|cmd); off when closed; secs the time left on this heartbeat's clock.  MEASURED on the gate
-    // capture: the bt_link line goes 60 -> 82 characters and the whole six-line block 520 -> 539 (+22 worst
-    // case, `pairing=boot secs=119`), ~0.2 ms more at 115200 against the 4 KB console TX extension setup()
-    // installs -- NEW-41's print-stalls-loop() observer effect stays bought off.  pairingReason() reads
+    // (boot|drop|cmd); off when closed; secs the time left on this heartbeat's clock.  pairingReason() reads
     // PAIR_NONE whenever the window is shut, so `off` needs no separate open/closed test here.
+    // COST, measured on the gate's own capture (`./run_qemu.sh`, then
+    // `awk '{print length}'` over `grep '^bt_link ' build/sink.uart`) against the PRE-CHANGE shape, which ended
+    // at `state=`: this line goes 59 -> 81 chars listening and 60 -> 82 connecting -- +22, the worst case,
+    // ` pairing=boot secs=119` -- and 59 -> 78 streaming, +19 for ` pairing=off secs=0`.  The six-line block
+    // grows by exactly that same +22/+19, and is 520 BYTES on the wire at the first heartbeat rising to ~550
+    // by the last (line length + 2: println emits CR LF and run_qemu.sh strips the CR from the capture).  That
+    // spread is COUNTER DIGITS growing over the run -- two heartbeats of the same build differ by more than
+    // this field costs -- so take the deltas above as the before/after and never two block totals.
+    // 22 chars x 10 bits (8N1: start + 8 + stop) / 115200 = 1.9 ms of WIRE time, which is not loop() time: the
+    // 4 KB TX extension setup() installs holds seven whole ~550-byte blocks, so the print still returns without
+    // waiting and NEW-41's print-stalls-loop() observer effect stays bought off.
     CONSOLE.print(" pairing="); CONSOLE.print(pairingReasonName(session.pairingReason()));
     CONSOLE.print(" secs="); CONSOLE.println(session.pairingRemainingMs(millis()) / 1000u);
     CONSOLE.print("bt_hci ncmd="); CONSOLE.print(hci.ncmd());
@@ -586,7 +604,7 @@ void loop() {
     // -200 ppm clamp and `under` would climb at 344 Hz on a link doing exactly what it was asked.  suspended()
     // is a state read (Avdtp::state() == SUSPENDED), so this costs nothing to call every pass.
     btin.hold(sink.suspended());
-    pairingIndicator();
+    pairingIndicator();                // window edge prints + the User LED at 1 Hz
     sink.l2().tickClock(millis());     // ms reference for the credit-starve fingerprint
     static uint32_t last = 0;
     if (millis() - last >= 1000) { last = millis(); printHeartbeat(); }

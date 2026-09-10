@@ -176,10 +176,18 @@ else()
     set(BT_SINK_PREFILL_DEF 0)
 endif()
 
+# NEW-46: the level that LIGHTS the green User LED, and the one knob here QEMU can say nothing about -- the gate
+# never sees a pad.  It must be plumbed through target_compile_definitions like the four above and not left to
+# the #ifndef in bt_sink_test.cpp alone: a cache variable nothing reads still CONFIGURES AND BUILDS, and CMake
+# says so only in the easily-missed "Manually-specified variables were not used" line, so the bench would flash
+# an image at the OLD polarity, see no change, and conclude the default was right.  (The same CMake-cache trap
+# CLAUDE.md records under NEW-42: check what reached the compiler, not what the source says.)
+set(BT_SINK_LED_ON "HIGH" CACHE STRING "Level that lights the green User LED, HIGH or LOW (verify at first light -- QEMU cannot see it)")
+
 teensy_add_executable(bt_sink_test bt_sink_test.cpp AudioInputBluetooth.cpp ${M2_FW_SRC} ${M2_BT_FW_SRC})
 target_compile_definitions(bt_sink_test.elf PRIVATE
     BT_SINK_RING=${BT_SINK_RING} BT_SINK_TARGET=${BT_SINK_TARGET} BT_SINK_PREFILL=${BT_SINK_PREFILL_DEF}
-    BT_SINK_REPRIME_AFTER=${BT_SINK_REPRIME_AFTER})
+    BT_SINK_REPRIME_AFTER=${BT_SINK_REPRIME_AFTER} BT_SINK_LED_ON=${BT_SINK_LED_ON})
 # Wire covers Wire2 = LPI2C5, the WM8962's control bus: import_evkb_audio_full() creates the target but does
 # not link it, and unlike bt_tone_test this example drives the codec (AVRCP absolute volume).
 teensy_target_link_libraries(bt_sink_test cores M2Radio Audio Wire)
