@@ -314,7 +314,23 @@ that -- the phone's delivery is then the limit -- not to grow `TARGET` until the
 
 ## 7. Silicon: the bench
 
-**PARTIAL -- the CONTROL arm has run, the CHANGE arm has not.**  Transcript: `examples/audio/bt_sink_test/
+**COMPLETE -- ACCEPTANCE MET at RUN 8 (2026-09-10).**  Five bench runs; the sections below are kept in the
+order they happened, because three of them refuted something this spec asserted.  Final configuration:
+`RING 40 / TARGET 16 / pre-fill / REPRIME_AFTER 16`.
+
+| | control (RUN 4) | final (RUN 8) |
+|---|---:|---:|
+| `over` per min | 13.09 | **0** |
+| `under` per min | 16.08 | 0.69 |
+| `fillmax` | 15 = ceiling | 27, of 39 |
+| `reprimes` | n/a | 0 |
+
+Every criterion in section 5 as restated, plus section 10.1, is met.  The one exception across all four
+change-arm runs is `prime_ms ~ 46 ms` (measured 87 / 101 / 136 / 89): the pre-fill waits for `TARGET`
+blocks and the phone's first packets arrive slower than real time while its own pipeline fills, so the
+wait runs about 2x the block count.  ~90 ms of silence before the first note; recorded, not chased.
+
+**Originally written as PARTIAL after the control arm:**  Transcript: `examples/audio/bt_sink_test/
 transcript_hw_evkb.txt`, RUN 4 (2026-09-09 evening).  Section 5's acceptance is therefore still OPEN.
 
 ### 7.1 Control arm (RING 16 / TARGET 8 / no pre-fill + the instrument) -- DONE
