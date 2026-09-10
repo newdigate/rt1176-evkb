@@ -161,7 +161,7 @@ endif()
 # `-DBT_SINK_RING=16 -DBT_SINK_TARGET=8 -DBT_SINK_PREFILL=OFF` (the threshold is moot with the pre-fill off,
 # since that build never re-primes at all).  The DelayReport the sink sends follows
 # BT_SINK_TARGET automatically (bt_sink_test.cpp derives it), so a resized target is reported to the phone.
-set(BT_SINK_RING "32" CACHE STRING "PCM ring depth in audio blocks (AudioInputBluetooth::RING)")
+set(BT_SINK_RING "40" CACHE STRING "PCM ring depth in audio blocks (AudioInputBluetooth::RING)")
 set(BT_SINK_TARGET "16" CACHE STRING "Ring fill the servo holds and START pre-fills to, in blocks (TARGET)")
 option(BT_SINK_PREFILL "Pre-fill the ring to TARGET at START and re-prime it when it runs dry" ON)
 # 16 blocks = 46.4 ms, MEASURED by bench RUN 6 (three dry spells in 26.3 min, longest 9 blocks) and not

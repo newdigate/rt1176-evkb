@@ -23,7 +23,7 @@ static_assert(AUDIO_BLOCK_SAMPLES == 128,
     "AudioInputBluetooth assumes one SBC frame (16 blocks x 8 subbands) == one Audio-library block; "
     "AUDIO_BLOCK_SAMPLES has moved.");
 #ifndef BT_SINK_RING
-#define BT_SINK_RING 32
+#define BT_SINK_RING 40
 #endif
 #ifndef BT_SINK_TARGET
 #define BT_SINK_TARGET 16
@@ -82,6 +82,12 @@ public:
     // out below it (~16 blocks = 46 ms), and the servo's standing offset (+-2.5 blocks at +-100 ppm).  32 / 16
     // gives 16 above and 16 below; the old 16 / 8 held exactly two packets, and the servo's offset parked the
     // mean at the ceiling (iPhone bench 2026-09-09, run 3).  The gate always builds the defaults.
+    // ** RING 32 -> 40 (bench RUN 8, 2026-09-10); TARGET stays 16, so latency and the DelayReport do not
+    // move. **  RUN 7 met `over = 0` across 38.8 min with the threshold re-prime, but boot 1 reached
+    // fillmax=30 against a ceiling of 31 on its one 80-120 ms gap: a ONE-BLOCK margin.  The overflow
+    // mechanism survives the threshold, it is merely no longer AMPLIFIED -- the post-gap peak is the
+    // source's `backlog` rather than `TARGET + backlog`.  40 gives that backlog 23 blocks of headroom above
+    // the operating point instead of 15, for 8 KB of .bss and no added latency.
     static constexpr uint16_t RING = BT_SINK_RING, TARGET = BT_SINK_TARGET;
     static constexpr bool PREFILL = (BT_SINK_PREFILL) != 0;
     static_assert(RING >= 4 && RING <= 255 && TARGET >= 1 && TARGET <= RING - 2,

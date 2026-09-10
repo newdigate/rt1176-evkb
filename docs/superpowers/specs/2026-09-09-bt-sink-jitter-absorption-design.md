@@ -467,3 +467,33 @@ ticks over a comparable window, each an inaudible 2.9 ms -- while `over` should 
 fall to ~0 for this phone.  Section 5's `under <= reprimes + 2` therefore stops being the right bound and
 must be restated as `over = 0` plus `under <= dryTotal`.  A criterion that no longer measures what it
 claims gets rewritten, not reinterpreted -- as `fillmin >= TARGET/4` already had to be (section 7.5).
+
+
+## 10. RING 32 -> 40 (opened by RUN 7, 2026-09-10)
+
+RUN 7 met the criterion that matters -- **`over = 0` across 38.8 min and three boots, with
+`reprimes = 0`** -- but boot 1 reached `fillmax = 30` against a ceiling of 31, on its one gap in the
+80-120 ms band (`gapmax = 87 ms`).  A one-block margin.
+
+**The threshold removed the AMPLIFIER, not the mechanism.**  A post-gap catch-up burst still lands on
+whatever the ring already holds; what changed is that the ring is no longer refilled to `TARGET` first, so
+the peak is `backlog` instead of `TARGET + backlog`.  That is why 30 < 31 held rather than overflowing --
+and equally why a longer gap than this phone happened to produce would still overflow.
+
+`RING 32 -> 40`, `TARGET` unchanged at 16 so **latency and the DelayReport do not move**: the backlog gets
+23 blocks of headroom above the operating point instead of 15.  Cost is 8 KB of `.bss` (`btin`
+0x4a20 -> 0x5a20, measured -- exactly 8 slots x 512 B) and nothing else.  Raising `RING` alone was rejected
+in section 9 as a way to out-run the mechanism; it is the right move *after* the threshold has removed the
+amplification, as headroom for the residual rather than as a substitute for the fix.
+
+★ **A CMake trap met while making the change, worth knowing because the build lies convincingly.**
+Editing the `set(BT_SINK_RING "32" CACHE STRING ...)` default does NOT change an existing build directory:
+the cached value still reaches the compiler through `target_compile_definitions`, so the image rebuilds
+happily at the OLD depth.  `btin` read 0x4a20 after the edit and only moved once each directory was
+reconfigured with an explicit `-DBT_SINK_RING=40`.  Check the symbol size, not the source.
+
+### 10.1 Acceptance for RUN 8
+
+As section 5 (restated), plus `fillmax <= RING - 4 = 36` with real margin rather than one block.  `under`,
+`drytot` and `reprimes` are expected to be indistinguishable from RUN 7 -- the ring's LOW side is untouched,
+so if they move materially that is a finding, not a bonus.
