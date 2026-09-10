@@ -34,26 +34,36 @@ print(f"[console] {PORT} @ {BAUD} — Ctrl-C to quit. Press the board's RESET "
 # re-enumerates mid-attempt; with the wrong timing it has panicked the whole Mac).  So the reader owns the
 # port and stdin feeds it.
 _ser = None                       # the OPEN port, shared with the stdin pump; None while reconnecting
-_lock = threading.Lock()
+_lock = threading.Lock()          # held ACROSS the write and ACROSS the close, not just around reading _ser
 
 def _stdin_pump():
     """stdin -> port, one line at a time.  Under `nohup ... &` stdin is at EOF at once and this thread simply
     ends; reading is untouched.  Interactively, type `pair`, `forget`, `status` and press return."""
     for line in sys.stdin:
+        # line.strip(), not rstrip("\r\n"): the firmware matches EXACTLY, so a copy-pasted "  status  "
+        # would come back as cmd=? "  status  ".  Trimming surrounding whitespace is not the prefix or
+        # substring matching that side forbids -- the token still has to be the whole line.
+        cmd = line.strip()
+        # The lock covers the WRITE, not just the snapshot: the reader clears _ser and closes the port under
+        # the same lock, so without that a write already in flight could land on a closed -- and by then
+        # possibly reused -- fd.  It costs the reader nothing, because its hot path (ser.read) never takes
+        # the lock; the pump holds it only for the length of one short line.
         with _lock:
             s = _ser
-        if s is None:
-            print("[console] port not open, dropped: %r" % line.rstrip(), file=sys.stderr); continue
-        try:
-            s.write((line.rstrip("\r\n") + "\n").encode("ascii", "replace"))
-        except (OSError, serial.SerialException) as e:
-            print("[console] write failed: %s" % e, file=sys.stderr)
+            if s is None:
+                print(f"[console] port not open, dropped: {cmd!r}", file=sys.stderr); continue
+            try:
+                s.write((cmd + "\n").encode("ascii", "replace"))
+            except (OSError, serial.SerialException) as e:
+                # SerialTimeoutException subclasses SerialException, so the write_timeout below arrives here
+                # rather than hanging this thread forever on a stalled CDC endpoint with nothing printed.
+                print(f"[console] write failed: {e}", file=sys.stderr)
 
 threading.Thread(target=_stdin_pump, daemon=True).start()
 try:
     while True:
         try:
-            ser = serial.Serial(PORT, BAUD, timeout=0.2)
+            ser = serial.Serial(PORT, BAUD, timeout=0.2, write_timeout=1)
         except (OSError, serial.SerialException):
             time.sleep(0.5)          # port not present (e.g. mid power-cycle); retry
             continue
@@ -66,10 +76,12 @@ try:
                     sys.stdout.buffer.write(data)
                     sys.stdout.buffer.flush()
         except (OSError, serial.SerialException):
+            # Clear AND close under the one lock: the pump can be inside s.write() right now, and closing
+            # beside it rather than under it is what lets a write outlive the fd it was given.
             with _lock:
                 _ser = None          # the pump drops lines rather than writing to a closed port
-            try: ser.close()
-            except Exception: pass
+                try: ser.close()
+                except Exception: pass
             print("\n[console] port dropped, reconnecting…", file=sys.stderr)
             time.sleep(0.5)
 except KeyboardInterrupt:

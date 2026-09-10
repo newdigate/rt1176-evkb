@@ -588,19 +588,46 @@ Update the docstring's Usage block with one line: `Type pair / forget / status +
 
 - [ ] **Step 3: Build; smoke the reader in QEMU by hand**
 
-Build the gate image, then drive it manually with a socket console (the same mechanism Task 4 makes permanent):
+Build the gate image, then drive it manually with a socket console (the same mechanism Task 4 makes
+permanent).  **The send must land AFTER `setup()`**: card-absent, `setup()` runs ~20 s (the firmware
+download's attempts plus ten 500 ms HCI Resets), so a `sleep 6` lands inside it, before any timed heartbeat
+exists.  That earlier draft's "two `hb` lines close together" was therefore unreachable, and the diagnosis
+that `loop()` never ran at `QRUN_TIMEOUT=25` was also wrong -- it does, eight timed heartbeats by t=25.
+Sleep past `setup()` and give the sends room:
 
 ```bash
-cd /Users/nicholasnewdigate/Development/rt1170/evkb/examples/audio/bt_sink_test && cmake --build build 2>&1 | tail -1 && OUT=/tmp/pm-smoke.uart && rm -f $OUT && (QRUN_TIMEOUT=25 ../../../tools/qrun -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel build/bt_sink_test.elf -display none -chardev socket,id=c0,host=127.0.0.1,port=45480,server=on,wait=off,logfile=$OUT -serial chardev:c0 -serial null >/dev/null 2>&1 &) ; sleep 6; python3 - <<'PY'
+cd /Users/nicholasnewdigate/Development/rt1170/evkb/examples/audio/bt_sink_test && cmake --build build 2>&1 | tail -1 && OUT=/tmp/pm-smoke.uart && rm -f $OUT && (QRUN_TIMEOUT=45 ../../../tools/qrun -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -kernel build/bt_sink_test.elf -display none -chardev socket,id=c0,host=127.0.0.1,port=45495,server=on,wait=off,logfile=$OUT -serial chardev:c0 -serial null >/dev/null 2>&1 &) ; sleep 22; python3 - <<'PY'
 import socket, time
-s = socket.create_connection(("127.0.0.1", 45480), timeout=3)
-for cmd in [b"\x00", b"STATUS\r\n", b"pair\n", b"bogus\n", b"x"*40 + b"\n", b"forget\n"]:
-    s.send(cmd); time.sleep(0.4)
+s = socket.create_connection(("127.0.0.1", 45495), timeout=3)
+def send(b, gap=0.6): s.send(b); time.sleep(gap)
+send(b"STATUS\r\n")                              # case fold + CR LF -> ONE dispatch
+send(b"pair\n"); send(b"bogus\n")
+send(b"x"*40 + b"\n")                            # over-length
+send(b"for\x00get\n")                            # a NUL INSIDE forget must NOT fire it
+send(b"forget\n")
+send(b"pair\nstatus\nbogus\n", 1.5)              # three commands in ONE write: order, nothing lost
+send(b"status\nstatus\nstatus\nstatus\n", 2.0)   # four heartbeat blocks back to back: no livelock
 s.close()
 PY
-sleep 2; grep -E "^hb |^pairing=|^cmd=|^bonds_forgotten" $OUT | tail -8; pkill -f "port=45480"
+sleep 2; pkill -f "port=45495"; tr -d '\r\000' < $OUT | grep -nE "^(cmd=|pairing=|bonds_|hb )"
 ```
-Expected in the file, in order: the boot `pairing=on reason=boot`; **two** `hb` lines close together (the timer's and `status`'s); `pairing=on reason=cmd secs=120` (card-absent QEMU never gets a link, so `pair` is allowed — but note `hci_reset=timeout` means no session; check the actual behaviour: with `a2dp_sink=deferred` the session never began, `canPair()` is false, so `pair` prints `pairing=refused reason=link_up`. **Either reading is a valid smoke result; record which** — the gate in Task 4 tests the real thing against the peer); `cmd=? "bogus"`; `cmd=? "xxxxxxxxxxxxxxx..." (too long)`; and `forget` → `bonds_forgotten=0` or a refusal, per the same state. The point of this step is that the reader parses, ignores the NUL, folds case, and bounds the line.
+Expected: the boot `pairing=on reason=boot`; `cmd=status` then an `hb` block for the `STATUS` line (case
+folded, and CR LF costs two invocations, the second on an empty line, so there is exactly ONE dispatch);
+`pairing=refused reason=not_listening` for `pair` **and** for `forget` -- card-absent, `a2dp_sink=deferred`
+means the session never began, so `canPair()` is false for the `not_listening` reason and no
+`bonds_forgotten` line is printed; `cmd=? "bogus"`; `cmd=? "xxxxxxxxxxxxxxx..." (too long)`;
+`cmd=? "forget" (bad byte)` -- the destructive command visibly did not fire; then the burst answered in
+order (refusal, `cmd=status` + `hb`, `cmd=? "bogus"`) and four `cmd=status` blocks from the second burst.
+★ **A run at `sleep 6` is worth doing once, and not as the test**: the commands ARE answered from inside
+`setup()`, because every `delay()` there calls `yield()` and `yield()` dispatches this handler.  That is
+the cleanest proof of how the reader is driven -- and exactly why there is no heartbeat to pair it with.
+
+★ **The 2 s partial-line timeout needs its own run, and a WALL-clock gap will not do**: QEMU's guest clock
+ran ~0.67x wall here, so `sleep 2.5` between `for` and `get` was ~1.7 guest seconds, the timeout did not
+fire, the two fragments spliced into `forget` and it RAN (NEW-42's "time magnitudes are a fiction" wearing
+a new face).  Count HEARTBEATS, which are the guest's own second: send `for`, wait for six `hb` lines, then
+`get\n` -> `cmd=? "get"`.  The short-gap run is the control and should be kept: it shows the splice this
+timeout exists to prevent, live.
 
 - [ ] **Step 4: Commit**
 
@@ -619,6 +646,39 @@ stdin-to-port thread that ends harmlessly at EOF under nohup.
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 MSG
 ```
+
+**Task 3 review corrections (2026-09-10).**  Step 1's code block above is the PRE-REVIEW draft; the file is
+authoritative where they differ.  Five changes, each demonstrated by a QEMU smoke run (there is no host suite
+for the sketch), and each stated by the harm it prevents rather than by the rule it adds.  **A LIVELOCK
+BOUND**: the draft's `while (CONSOLE.available())` dispatched EVERY queued line per invocation, and
+`yield()` holds its `running` flag across the call -- so a blocking print's nested `yield()` is a no-op and
+`EventResponder::runFromYield()`, the HciPump and therefore the audio path, does not run until the handler
+RETURNS.  `status` is 7 bytes in and ~550 out, 80x, against an 11.5 KB/s console; a held Enter key (~30/s)
+already asks 16.5 KB/s, the 4 KB TX ring stays full and `HardwareSerialIMXRT::write()` spins on a `yield()`
+that cannot pump -- a board that looks alive and is dead on Bluetooth, NEW-41's observer effect with nothing
+bounding it.  It now dispatches ONE command per invocation and returns; the rest waits in the 64-byte RX
+ring.  Measured: three commands in one write are answered in order, and four `status` blocks back to back
+all land.  **A PARTIAL LINE EXPIRES (2 s)**: `s_cmdLen` is static and nothing in `loop()` cleared it, so
+`for` + a Ctrl-C + a restarted console + `get` ran `forget` and wiped the bond store.  Demonstrated BOTH
+ways in QEMU -- over the timeout, `cmd=? "get"`; under it, the splice fires -- which is also how the guest
+clock was caught running ~0.67x wall (see Step 3).  **A BOND-STORE READINESS FLAG**: `forget` was guarded
+only by an accident of `setup()`'s ordering, and this handler is reachable from the FIRST `delay(10)` in
+`m2ReleaseWifiReset()`, hundreds of lines before `BondStoreEeprom::load()`.  Move `session.begin()` earlier
+for any reason and `forget` goes live over an UNREAD table: `wipe()` is `t.clear(); save(t)` and
+`BondTable::clear()` dirties UNCONDITIONALLY, so the canonical empty image lands on top of real persisted
+bonds, the next `load()` returns empty, and `bonds_boot=0` reads perfectly normal -- silent and
+destructive.  `s_bondsLoaded` is set at each `load()` call site and required before the wipe.  **THE
+REFUSAL SPLIT** (spec §5): `reason=link_up` was printed for IDLE, MANUAL, CONNECTING and DISCONNECTING too,
+so the card-absent image printed a flatly untrue sentence twice under a heartbeat reading `state=idle
+links=0`.  `reason=not_listening` covers those; Task 4's two `pairing=refused reason=link_up` matches are
+the while-STREAMING case, a genuine link up, and are unaffected byte for byte.  **STEP 3's TIMING**: the
+send landed inside `setup()`, which the note there now explains along with what the t=6 s run is actually
+good for.  Three smaller ones: a non-printable byte now REFUSES the line (`cmd=? "..." (bad byte)`) instead
+of being deleted from it, because deleting turns `for<NUL>get` back into a firing `forget` -- the old
+comment's "safe against line noise" was true only of over-length; the NUL justification cited the wrong
+direction (CLAUDE.md's leading NUL is board->host, this filter is for a BREAK or DTR transition on RX); and
+`BondStoreEeprom::wipe()`'s return is now checked and reported on its own line rather than cast to void two
+lines under a comment insisting `enterPairing()`'s must not be dropped.
 
 ---
 
@@ -646,6 +706,8 @@ In `run_qemu.sh`, after the `[jit]` block and before the final `echo "PASS: ...`
 grep -q "^pairing=on reason=boot secs=1[0-9][0-9]$" "$OUT"          || fail "[pair] no boot window: $(grep -m1 '^pairing=' "$OUT")"
 grep -q "^pairing=off reason=paired$" "$OUT"                          || fail "[pair] the boot window did not close as PAIRED when the link came up"
 grep -q "^DRIVER-SENT pair while-streaming" "$CON"                    || fail "[pair] the driver never sent pair while streaming: $(tail -3 "$CON")"
+# `link_up` and not `not_listening`: Task 3's review split the refusal in two (spec 5), and THIS one is a
+# genuine link up, so the text is unchanged.  Anchored, so the other reason can never satisfy it.
 grep -q "^pairing=refused reason=link_up$" "$OUT"                     || fail "[pair] pair while streaming was not REFUSED"
 grep -q "^PEER-SOURCE-DROP " "$RES"                                   || fail "[pair] the peer did not inject its drop: $(grep -m1 PEER-SOURCE-DROP "$RES")"
 grep -q "^pairing=on reason=drop secs=1[0-9][0-9]$" "$OUT"            || fail "[pair] no drop window after the peer's disconnect"

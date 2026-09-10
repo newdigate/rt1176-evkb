@@ -274,6 +274,18 @@ static void btFirmwareDownload() {
 static A2dpSink      sink(hci, hciIo);
 static BtSinkSession session(sink);
 static BondTable bonds;                                // bonded devices, persisted in the EEPROM emulation (BondStoreEeprom, offset 4000)
+// Set immediately after EACH BondStoreEeprom::load(bonds) in setup(), and required by the `forget` command
+// (runCommand(), far below) before it is allowed to destroy the table.  It lives HERE, beside `bonds`,
+// rather than with its reader, because setup() sets it and setup() is ~120 lines above that block -- the
+// same placement lesson BT_SINK_LED_ON carries at the top of this file.
+// Not belt-and-braces: serialEvent1() is reachable from the FIRST delay(10) in m2ReleaseWifiReset(),
+// hundreds of lines before load() runs, because every delay() dispatches it.  `forget` is refused there
+// TODAY only by accident of ordering -- canPair() is false because session.begin() has not run -- and
+// moving begin() earlier for any reason would arm a wipe over bonds that were never READ:
+// BondStoreEeprom::wipe() is `t.clear(); save(t)`, and BondTable::clear() sets dirty UNCONDITIONALLY
+// (BondTable.cpp:28), so save() writes the canonical EMPTY image over the real persisted one.  A later
+// load() then returns empty, `bonds_boot=0` reads perfectly normal, and the loss leaves no trace in the log.
+static bool s_bondsLoaded = false;
 static AudioInputBluetooth btin;
 static AudioOutputI2S      i2sOut;
 static AudioConnection     c1(btin, 0, i2sOut, 0), c2(btin, 1, i2sOut, 1);
@@ -402,13 +414,16 @@ void setup() {
     sink.onMedia(onMediaCb, nullptr);
     Avrcp::setVolumeCallback(onVolumeCb, nullptr);     // file-scope hook: Avrcp::respond() is static by design
 
+    // s_bondsLoaded is set on BOTH arms, right where load() returns: the `forget` command reads it before it
+    // is allowed to destroy the table, and the flag is per CALL SITE rather than one line after the #if so
+    // that a future third arm cannot acquire the permission without doing the read.
 #if defined(M2_BT_FORGET_BONDS)
     // load() first so `before` reflects what was really persisted before the wipe (bt_tone_test's note).
-    BondStoreEeprom::load(bonds);
+    BondStoreEeprom::load(bonds); s_bondsLoaded = true;
     { uint8_t before = bonds.count(); (void)BondStoreEeprom::wipe(bonds);
       CONSOLE.print("bonds_forgotten="); CONSOLE.println(before); }
 #else
-    BondStoreEeprom::load(bonds);
+    BondStoreEeprom::load(bonds); s_bondsLoaded = true;
 #endif
     sink.setBonds(&bonds);
     CONSOLE.print("bonds_boot="); CONSOLE.println(bonds.count());
@@ -609,37 +624,91 @@ static void pairingIndicator() {
 
 // --- console commands (NEW-46) -----------------------------------------------------------------------------
 // Read from serialEvent1(), the weak hook the core's yield() dispatches whenever Serial1.available()
-// (yield.cpp:40) -- and loop() calls yield() every pass -- so there is no loop() change and no polling.  A
-// blocking CONSOLE.print() inside a handler cannot re-enter this: yield()'s `running` guard makes the nested
-// delay()->yield() a no-op.
-// A line is `\n` or `\r` terminated, case-insensitive, EXACT match: a NUL (the VCOM capture always starts with
-// one), a control byte or a non-ASCII char is never a command BYTE, and an over-long line is reported rather
-// than executed -- which is what makes `forget`, the one destructive command, safe against line noise.  Do not
-// "improve" this into a prefix or substring match; the whole safety argument is that a corrupted `forget`
-// misses rather than fires.
-static char    s_cmd[16];
-static uint8_t s_cmdLen = 0;
-static bool    s_cmdOver = false;
+// (yield.cpp:40) -- and loop() calls yield() every pass -- so there is no loop() change and no polling.
+// ★ ONE COMMAND PER INVOCATION, and that bound is the difference between a handler and a livelock.  yield()
+// sets a `running` flag around this call, so the nested delay()->yield() that a blocking print performs is a
+// NO-OP -- and the half of that worth knowing is not the re-entry it prevents but the cost it carries:
+// EventResponder::runFromYield(), which drives the HciPump and therefore IS the audio path here, does not
+// run again until this function RETURNS.  A drain loop that dispatched every queued line would stop
+// returning under sustained input: `status` is 7 bytes in and ~550 out, an 80x amplification against an
+// 11.5 KB/s console, and a held Enter key (~30 lines/s) already asks 16.5 KB/s of it -- the 4 KB TX ring
+// stays full and HardwareSerialIMXRT::write() spins on a yield() that cannot pump.  The board then looks
+// alive and is dead on Bluetooth: NEW-41's print-stalls-loop() effect with nothing bounding it.
+// Returning after ONE dispatch leaves the rest in the core's 64-byte RX ring and the next top-level yield()
+// takes them, with a pump pass in between; nothing is reordered or lost.  A flood that outruns 64 bytes has
+// its excess dropped in the RX ISR (HardwareSerial.cpp's head/tail check, silently, no counter), which
+// corrupts a line into a `cmd=?` rather than stalling the loop -- the trade this bound buys, and the safe
+// direction to fail in given what `forget` does.
+// ★ A PARTIAL LINE EXPIRES.  s_cmdLen is static and nothing in loop() clears it, so without a timeout an
+// abandoned session SPLICES onto the next one: type `for`, change your mind, Ctrl-C the console, restart it,
+// type `get` + Enter -- and the board runs `forget` and wipes the bond store.  A port dropped mid-word does
+// the same.  2 s is far longer than any typed or scripted line takes to arrive and far shorter than the gap
+// between two console sessions.
+// A line is `\n` or `\r` terminated, case-insensitive, EXACT match, at most 15 chars.  A byte outside
+// printable ASCII REFUSES THE WHOLE LINE rather than being deleted from it -- deleting was the first version
+// and it was not safe, because `for<NUL>get` deletes to `forget`, which still matches and still fires the one
+// destructive command.  Refusing REPORTS a dirty line instead of quietly cleaning it.  (The NUL this filter
+// is for is host->board: a serial BREAK, or a DTR/RTS transition when a console attaches, presents as a 0x00
+// on RX.  The NUL CLAUDE.md records at the head of a bench capture is the other direction, board->host, and
+// this filter never sees it.)  Do not "improve" any of this into a prefix or substring match: the whole
+// safety argument is that a corrupted `forget` misses rather than fires.
+static char     s_cmd[16];
+static uint8_t  s_cmdLen   = 0;
+static bool     s_cmdOver  = false;   // over-length; takes precedence over dirty, since its report shows the truncation
+static bool     s_cmdDirty = false;   // a non-printable byte arrived
+static uint32_t s_lastByte = 0;       // millis() of the last byte that touched the line state -- the splice timeout above
+// (s_bondsLoaded, the readiness flag `forget` requires, is declared beside `bonds` -- setup() sets it and
+// sits ~120 lines above here; the full account of what a wipe over an unread table destroys is there.)
+// ONE definition of the refusal line, and TWO reasons -- because canPair() is `LISTENING && !linkUp` and only
+// one half of that is a link.  A single `reason=link_up` printed a flatly untrue sentence in the card-absent
+// image (IDLE: the session never began), twice, directly under a heartbeat reading `state=idle links=0`, and
+// sends a person at a bench hunting a connection that does not exist; MANUAL, CONNECTING and DISCONNECTING
+// are the other three.  Two tokens and no trailing field, so the while-streaming case Task 4 greps -- a
+// genuine link up -- still matches byte for byte.
+static void printPairRefused() {
+    const BtLink::LinkState ls = sink.link().linkState();
+    CONSOLE.print("pairing=refused reason=");
+    CONSOLE.println(ls == BtLink::LINK_UP || ls == BtLink::LINK_SECURE ? "link_up" : "not_listening");
+}
+// Open or extend the commanded window and say which way it went: the whole of `pair`, and the last step of
+// `forget`.  void ON PURPOSE -- it prints both outcomes, so there is no return value for a caller to drop
+// and no second `if` whose condition a reader has to re-derive from the statement above it.
+static void openCommandedWindow(uint32_t now) {
+    if (session.enterPairing(now, BtSinkSession::PAIR_CMD)) printPairingOn(BtSinkSession::PAIR_CMD, now);
+    else printPairRefused();
+}
 static void runCommand(const char *c) {
-    uint32_t now = millis();
     if (!strcmp(c, "pair")) {
-        // One `now` for both calls, so the printed secs is the window this call just set and not one loop
-        // pass of drift below it.  A refusal is canPair() saying a link is up (or, card-absent, that the
-        // session never began) -- enterPairing() is the only judge; the sketch does not second-guess it.
-        if (session.enterPairing(now, BtSinkSession::PAIR_CMD)) printPairingOn(BtSinkSession::PAIR_CMD, now);
-        else CONSOLE.println("pairing=refused reason=link_up");
+        // ONE millis() for the open and the print (printPairingOn() takes the caller's instant), so the
+        // printed secs is the window this call just set and not one loop pass of drift below it.
+        openCommandedWindow(millis());
     } else if (!strcmp(c, "forget")) {
+        // The bond table must be the STORE'S before we are allowed to destroy it -- see s_bondsLoaded above.
+        if (!s_bondsLoaded) { CONSOLE.println("cmd=? \"forget\" (not ready)"); return; }
         // canPair() FIRST, and wipe ONLY if it holds: a refused forget must leave the bond table exactly as it
         // was.  The ordering is load-bearing, not stylistic -- wipe-then-check would destroy the bond that the
         // live link is using and report a refusal in the same breath.
-        if (!session.canPair()) { CONSOLE.println("pairing=refused reason=link_up"); return; }
+        if (!session.canPair()) { printPairRefused(); return; }
+        // The caller obligation BondStoreEeprom.h:12-23 states and this site had not discussed: the write is
+        // IRQ-MASKED once per changed byte, and a filled journal costs a whole 4 KB sector erase -- an erase
+        // CLUSTER of up to 59, seconds long, with the HciPump not running for any of it.  Tolerable HERE
+        // BECAUSE canPair() excludes STREAMING (indeed any link up), so there is no media to starve -- that is
+        // why it is tolerable, not merely why nobody has noticed it.
         // `bonds_forgotten=N` is the same line setup()'s M2_BT_FORGET_BONDS block prints, emitted again here
         // (that one is inside an #if and is not a shared printer); N is the count BEFORE the wipe, as there.
-        uint8_t before = bonds.count(); (void)BondStoreEeprom::wipe(bonds);
+        // wipe() returns TRUE when the empty image reached the store; false only if the table reported no
+        // change (impossible -- clear() dirties unconditionally) or the serialiser short-filled its buffer
+        // (unreachable by construction), so a false here means a BondTable invariant broke.  It is reported on
+        // its own line rather than dropped: the RAM table really is empty, so `bonds_forgotten=N` stays true,
+        // but the bonds come back at the next boot and a bench reader must be told which of those two it has.
+        const uint8_t before = bonds.count();
+        const bool wiped = BondStoreEeprom::wipe(bonds);
         CONSOLE.print("bonds_forgotten="); CONSOLE.println(before);
-        // canPair() held one statement ago and nothing between can have changed it, so this opens; the `if`
-        // is there because enterPairing() returns a value that must not be silently dropped.
-        if (session.enterPairing(now, BtSinkSession::PAIR_CMD)) printPairingOn(BtSinkSession::PAIR_CMD, now);
+        if (!wiped) CONSOLE.println("bonds_wipe=fail (RAM table cleared, store NOT written -- the bonds return at the next boot)");
+        // millis() RE-READ after the wipe, never carried across it: those masked writes and any erase cluster
+        // are tens of ms to seconds, and a `now` taken before them would set a deadline short by exactly that
+        // while printing secs=120.
+        openCommandedWindow(millis());
     } else if (!strcmp(c, "status")) {
         // `cmd=status` on its own line FIRST.  printHeartbeat() opens with the literal `hb `, so an on-demand
         // block is byte-indistinguishable from a timed one -- and NEW-42's bench derived `over 13.09/min` /
@@ -649,19 +718,44 @@ static void runCommand(const char *c) {
         CONSOLE.println("cmd=status");
         printHeartbeat();
     } else {
+        // The echo is UNESCAPED, and `"` survives the printable-ASCII filter: `cmd=? "a"b"` is ambiguous, and
+        // a 10-char line spelling `pairing=on` fits s_cmd and comes back inside one of these.  The 15-char
+        // buffer is what bounds the damage -- nothing longer can be quoted back -- so a grep over this
+        // capture should anchor on the tokens the sketch prints ITSELF (`^pairing=on reason=...`,
+        // `^bonds_forgotten=N$`) and never accept one that arrives inside a cmd=? echo.
         CONSOLE.print("cmd=? \""); CONSOLE.print(c); CONSOLE.println("\"");
     }
 }
 void serialEvent1() {
+    // ★ The name hard-codes Serial1 and so steps outside the CONSOLE alias the rest of this file uses.
+    // Correct HERE -- the example is rt1176-only and CONSOLE is Serial1 there -- but the header above says
+    // this file's preamble is kept in step across three sketches, and on the teensy4 core (rt1062) the VCOM
+    // is Serial6 (CLAUDE.md): copied across, the handler binds LPUART6 and simply never fires, with
+    // everything else in the sketch running perfectly.
+    const uint32_t now = millis();
+    // The splice timeout, tested BEFORE the drain so a line abandoned in a previous console session cannot
+    // have its tail completed by the bytes this call is about to read.  The two refusal flags are cleared
+    // with it: a lone stray byte (a DTR transition's NUL as a console attaches) must not go on to refuse a
+    // line typed seconds later.
+    if ((s_cmdLen || s_cmdOver || s_cmdDirty) && now - s_lastByte > 2000u) {
+        s_cmdLen = 0; s_cmdOver = false; s_cmdDirty = false;
+    }
     while (CONSOLE.available()) {
         int ch = CONSOLE.read(); if (ch < 0) break;
+        s_lastByte = now;
         if (ch == '\n' || ch == '\r') {
-            if (s_cmdOver) { s_cmd[s_cmdLen] = 0; CONSOLE.print("cmd=? \""); CONSOLE.print(s_cmd); CONSOLE.println("...\" (too long)"); }
-            else if (s_cmdLen) { s_cmd[s_cmdLen] = 0; runCommand(s_cmd); }
-            s_cmdLen = 0; s_cmdOver = false;                 // CR LF: the LF then dispatches an EMPTY line, which is ignored
-            continue;
+            s_cmd[s_cmdLen] = 0;
+            if (s_cmdOver)       { CONSOLE.print("cmd=? \""); CONSOLE.print(s_cmd); CONSOLE.println("...\" (too long)"); }
+            else if (s_cmdDirty) { CONSOLE.print("cmd=? \""); CONSOLE.print(s_cmd); CONSOLE.println("\" (bad byte)"); }
+            else if (s_cmdLen)   { runCommand(s_cmd); }
+            s_cmdLen = 0; s_cmdOver = false; s_cmdDirty = false;
+            // ONE command per invocation -- the livelock bound at the top of this block.  `return`, not
+            // `continue`: whatever else is queued stays in the RX ring and the next top-level yield()
+            // dispatches it with an EventResponder (HciPump) pass in between.  A CR LF pair therefore costs
+            // two calls, the second on an EMPTY line, which is ignored.
+            return;
         }
-        if (ch < 0x20 || ch > 0x7E) continue;                // NUL, control bytes, non-ASCII: dropped, never buffered
+        if (ch < 0x20 || ch > 0x7E) { s_cmdDirty = true; continue; }   // NUL, control bytes, non-ASCII: the LINE is refused, the byte is not deleted from it
         if (s_cmdLen < sizeof s_cmd - 1) s_cmd[s_cmdLen++] = (char)((ch >= 'A' && ch <= 'Z') ? ch + 32 : ch);
         else s_cmdOver = true;                               // sticky to the terminator: the whole line is refused, not its first 15 chars
     }

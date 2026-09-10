@@ -154,15 +154,23 @@ the call shape written throughout this spec stays valid.  `btsinksession_test` P
 
 ## 5. The sketch
 
-**Commands** via a `serialEvent1()` override: a 16-byte line buffer; `\n` or `\r` dispatches; NUL and
-non-printables are dropped; overflow discards the line and reports it.  Case-insensitive, exact match.
+**Commands** via a `serialEvent1()` override: a 16-byte line buffer; `\n` or `\r` dispatches; a NUL or any
+other non-printable REFUSES the whole line; overflow discards the line and reports it.  Case-insensitive,
+exact match.  **One command per invocation** and **a partial line expires after 2 s** -- both corrected
+during Task 3's review, and both in that task's corrections note with the harm each prevents.
 
-| line | link up | idle |
-|---|---|---|
-| `pair` | `pairing=refused reason=link_up` | `enterPairing(now, PAIR_CMD)` -> `pairing=on reason=cmd secs=120` |
-| `forget` | `pairing=refused reason=link_up` | `BondStoreEeprom::wipe()` -> `bonds_forgotten=N` (the existing line) -> `enterPairing(now, PAIR_CMD)` |
-| `status` | prints the heartbeat block now | same |
-| anything else | `cmd=? "..."` | same |
+| line | link up | LISTENING and idle | neither (IDLE / MANUAL / CONNECTING / DISCONNECTING) |
+|---|---|---|---|
+| `pair` | `pairing=refused reason=link_up` | `enterPairing(now, PAIR_CMD)` -> `pairing=on reason=cmd secs=120` | `pairing=refused reason=not_listening` |
+| `forget` | `pairing=refused reason=link_up` | `BondStoreEeprom::wipe()` -> `bonds_forgotten=N` (the existing line) -> `enterPairing(now, PAIR_CMD)` | `pairing=refused reason=not_listening` |
+| `status` | prints the heartbeat block now | same | same |
+| anything else | `cmd=? "..."` | same | same |
+
+**Two refusal reasons, not one**, because `canPair()` is `LISTENING && !linkUp` and only one half of that is
+a link.  A single `reason=link_up` printed a flatly untrue sentence in the card-absent image -- twice,
+directly under a heartbeat reading `state=idle links=0` -- which sends a bench reader hunting a connection
+that does not exist.  Two tokens, no trailing field: the while-streaming refusal §6.2 and §6.3 assert is a
+genuine link up and its text is unchanged.
 
 **The LED.**  `pinMode(LED_BUILTIN, OUTPUT)` in `setup()`; in `loop()`, while `pairingOpen()` the LED follows
 `(millis() / 500) & 1`, otherwise off.  The active level is a named constant the first bench step sets.
