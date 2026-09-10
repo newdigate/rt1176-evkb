@@ -647,6 +647,140 @@ int main() {
         CHECK(AudioInputBluetooth::RING == 16 && AudioInputBluetooth::TARGET == 8 && !AudioInputBluetooth::PREFILL);
 #endif
     }
+    {   // 15. THE DRY-SPELL INSTRUMENT (NEW-42, spec s9).  The threshold re-prime's N -- rebuffer only after
+        //     the ring has been dry for more than N consecutive blocks -- has to be MEASURED, the way TARGET 16
+        //     was, and ** the re-prime TRUNCATES the quantity to measure **: the ring goes dry for one block and
+        //     then enters priming, so a counter that stops at "dry" reads 1 for ever.  What is counted instead
+        //     is consecutive update()s on an EMPTY RING whatever branch they take, so a spell is recovered at
+        //     its true length THROUGH the re-prime's own window.  (a) is that claim and is the reason this case
+        //     exists; the rest pin the edges, the exclusions and the lifetime.
+        //     EVERY sub-case turns the pre-fill ON explicitly, like cases 12 and 13, so it runs in BOTH CMake
+        //     arms -- and with BT_SINK_PREFILL=0 there is no completed START prime and the instrument is silent
+        //     by construction, which is the very configuration (a) has to run under to mean anything.
+        std::vector<uint8_t> f = encodeFrame(11000);
+        const int T = AudioInputBluetooth::TARGET;
+        // Refill to TARGET (which completes any prime) and pop back to empty: leaves the node PRIMED, dry, and
+        // with no spell in progress -- the state each spell below starts from.  Neither loop can run away: the
+        // feed loop adds one block per packet against TARGET <= RING - 2, and the pop loop is BOUNDED for case
+        // 13's reason -- a node that stopped popping must FAIL this case by name, not hang the suite with the
+        // checks above it still sitting in stdout's pipe buffer.
+        auto rearm = [&](Node &nd, uint16_t &seq) {
+            while (nd->fill() < T) feed(nd, onePacket(seq++, f));
+            for (int i = 0; i <= T && nd->fill() > 0; i++) nd->update();   // never a dry block: fill is tested first
+        };
+        // k consecutive EMPTY blocks, then one arriving frame to END the spell.  With the pre-fill on the FIRST
+        // of those blocks arms the re-prime and every later one takes the PRIMING arm, which is exactly what an
+        // instrument sitting in the dry branch would fail to see.
+        auto spell = [&](Node &nd, uint16_t &seq, int k) {
+            for (int i = 0; i < k; i++) nd->update();
+            feed(nd, onePacket(seq++, f));
+            nd->update();                                                  // a block is there: the spell ENDS here
+        };
+        // (a) THE LOAD-BEARING CASE: 33 dry blocks read as 33, not as 1.  The re-prime is asserted to have
+        //     ENGAGED first -- without that this sub-case would be equally green on a build with no re-prime at
+        //     all, where nothing truncates anything and the claim is empty.
+        //     DEMONSTRATED RED against BOTH shapes of the defect, and they MEASURE IDENTICALLY here: the
+        //     obvious implementation (count in the dry branch, close the spell on the pop) and the same count
+        //     merely gated on `!m_priming`.  33 dry blocks read `dryMax=0 dryTotal=1 dbig=0` -- worse than the
+        //     "reads 1 every time" spec s9.1 predicts, because with the pre-fill on the block that ENDS the
+        //     spell is a priming block too, so a dry-branch instrument never closes the spell at all and it
+        //     reaches no bucket.  In (b) every one of the four spells reads 1 block (d4=3, dryTotal=4).
+        Node na; na->setPrefill(true); na->begin();
+        uint16_t sa = 1;
+        rearm(na, sa);
+        CHECK(na->fill() == 0);
+        CHECK(na->dryTotal() == 0); CHECK(na->dryMax() == 0);              // popped blocks are not dry blocks
+        CHECK(na->reprimes() == 0);
+        spell(na, sa, 33);
+        CHECK(na->reprimes() == 1);                                        // the re-prime engaged: 32 of the 33 primed
+        CHECK(na->underruns() == 1);                                       // ... booking the ONE underrun that truncates
+        CHECK(na->dryMax() == 33);                                         // RED in the dry branch: 1
+        CHECK(na->dryTotal() == 33);                                       // RED in the dry branch: 1
+        CHECK(na->dryBucket(4) == 1);                                      // > 32
+        CHECK(na->dryBucket(0) == 0);                                      // RED in the dry branch: 1
+        // (b) BUCKET TOPS, all four exercised exactly ON the inclusive top (the convention gapBucketOf's edges
+        //     are pinned by in case 11): turn any one `<=` into `<` and that spell alone moves up a bucket, so
+        //     two counters change.  The order is 4, 8, 32, 16 DELIBERATELY -- the longest spell is not the last
+        //     one, so `m_dryMax = m_dryRun` unconditional (a last-writer, which is the defect the gap histogram
+        //     actually had) reads 16 here instead of 32.
+        Node nb; nb->setPrefill(true); nb->begin();
+        uint16_t sb = 1;
+        rearm(nb, sb); spell(nb, sb, 4);
+        rearm(nb, sb); spell(nb, sb, 8);
+        rearm(nb, sb); spell(nb, sb, 32);
+        rearm(nb, sb); spell(nb, sb, 16);
+        CHECK(nb->dryBucket(0) == 1);                                      // 4, on the top of <=4
+        CHECK(nb->dryBucket(1) == 1);                                      // 8, on the top of <=8
+        CHECK(nb->dryBucket(2) == 1);                                      // 16, on the top of <=16
+        CHECK(nb->dryBucket(3) == 1);                                      // 32, on the top of <=32
+        CHECK(nb->dryBucket(4) == 0);
+        CHECK(nb->dryTotal() == 4 + 8 + 32 + 16);                          // every empty block, and only those
+        CHECK(nb->dryMax() == 32);                                         // RED as a last-writer: 16
+        CHECK(nb->dryBucket(AudioInputBluetooth::DRY_BUCKETS) == 0);       // the bounds guard: ASan reads m_dry[5] without it
+        // (c) A SUSPEND RECORDS NOTHING, and the spell it interrupts is DROPPED rather than bucketed.  Same
+        //     call this file already makes for the gap histogram (case 11: a 30 s pause is not a 30 s gap), and
+        //     it matters more here: a pause's dry TAIL runs until the SUSPEND signalling arrives and would land
+        //     in the long buckets -- which is the tail N is read off.  The blocks stay in dryTotal, so they are
+        //     dropped from the population rather than from the instrument.
+        //     RED with the counting hoisted out of `if (run)`: dryTotal() reads 16.  RED with the !run arm
+        //     RECORDING the spell instead of dropping it: dryMax() reads 6 and d8 reads 1.
+        Node nc; nc->setPrefill(true); nc->begin();
+        uint16_t sc = 1;
+        rearm(nc, sc);
+        for (int i = 0; i < 6; i++) nc->update();                          // six dry blocks: a spell IN PROGRESS
+        CHECK(nc->dryTotal() == 6);
+        CHECK(nc->dryMax() == 0);                                          // not recorded yet -- it has not ended
+        CHECK(nc->dryBucket(1) == 0);
+        nc->hold(true);
+        for (int i = 0; i < 10; i++) nc->update();                         // the SUSPEND: silence that is not a dropout
+        CHECK(nc->dryTotal() == 6);                                        // RED outside `if (run)`: 16
+        nc->hold(false);
+        feed(nc, onePacket(sc++, f)); nc->update();                        // a block arrives: nothing left to record
+        CHECK(nc->dryMax() == 0);                                          // RED if the held spell were recorded: 6
+        for (uint8_t i = 0; i < AudioInputBluetooth::DRY_BUCKETS; i++) CHECK(nc->dryBucket(i) == 0);
+        CHECK(nc->dryTotal() == 6);                                        // ... and the blocks are still in the total
+        // (d) THE START PRIME IS EXCLUDED -- it is a ~30-block empty stretch by construction (87/89 ms measured
+        //     on the bench) and would be the biggest thing in the histogram while saying nothing about the
+        //     source -- and the instrument WORKS the moment that prime completes.  The second half is not
+        //     decoration: an instrument silenced for the whole run reads exactly like a source that never
+        //     gapped, which is the one failure shape that looks like good news.
+        //     RED with the m_primed guard removed: dryTotal() reads 10 here, then 15 below, the ten prime
+        //     blocks land in d16, and dryMax() reads 10.
+        Node nd2; nd2->setPrefill(true); nd2->begin();
+        uint16_t sd = 1;
+        for (int i = 0; i < 10; i++) nd2->update();
+        CHECK(nd2->priming() && !nd2->primed());
+        CHECK(nd2->primeBlocks() == 10);                                   // they ARE empty blocks ...
+        CHECK(nd2->dryTotal() == 0);                                       // ... and none of them is counted: RED 10
+        CHECK(nd2->dryMax() == 0);
+        rearm(nd2, sd);
+        spell(nd2, sd, 5);
+        CHECK(nd2->dryTotal() == 5);                                       // RED with the guard removed: 15
+        CHECK(nd2->dryBucket(1) == 1);                                     // 5 -> the <=8 bucket
+        CHECK(nd2->dryBucket(2) == 0);                                     // RED with the guard removed: the prime lands here
+        CHECK(nd2->dryMax() == 5);                                         // RED with the guard removed: 10
+        // (e) LIFETIME.  begin() runs on EVERY stream start (bt_sink_test.cpp's onStreamCb) and these tallies
+        //     are printed beside m_over/m_under, which it has never reset -- so all three must survive it, and
+        //     the survivors checked here are NON-ZERO rather than "0 stayed 0".  The one thing that must NOT
+        //     survive is the spell in PROGRESS: it belonged to the stream that ended and this ring starts empty,
+        //     so a 3-block spell on the new stream must read 3 and not 6 + 3.
+        //     RED with begin()'s `m_dryRun = 0` removed: the stranded 6 is recorded by the first block of the
+        //     next stream, so d8 reads 2 and dryMax 6.
+        rearm(nd2, sd);
+        for (int i = 0; i < 6; i++) nd2->update();                         // a spell in progress across the reconnect
+        CHECK(nd2->dryTotal() == 11);
+        nd2->begin();
+        CHECK(nd2->dryMax() == 5);                                         // RED if the tallies reset in begin(): 0
+        CHECK(nd2->dryTotal() == 11);                                      // RED if the tallies reset in begin(): 0
+        CHECK(nd2->dryBucket(1) == 1);                                     // RED if the tallies reset in begin(): 0
+        rearm(nd2, sd);
+        spell(nd2, sd, 3);
+        CHECK(nd2->dryBucket(0) == 1);                                     // the new stream's 3
+        CHECK(nd2->dryBucket(1) == 1);                                     // RED without begin()'s m_dryRun reset: 2
+        CHECK(nd2->dryMax() == 5);                                         // RED without it: 6 -- and a max, not the last 3
+        CHECK(nd2->dryTotal() == 11 + 3);
+        CHECK(ShimAudio::outstanding() == 0);
+    }
     printf("node_test: %d checks, %d failures\n", g_checks, g_fails);
     return g_fails ? 1 : 0;
 }

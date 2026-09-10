@@ -19,7 +19,15 @@ void AudioInputBluetooth::begin() {
     // the ring is emptied two lines above, so the new stream cannot overrun until RING-1 frames have landed and
     // each landing frame clears the latch itself.  Resetting it keeps that invariant local to begin() instead of
     // resting on the ring reset, and there is deliberately no host case pinning it -- there is nothing to pin.
-    m_haveRx = false; m_inOverrun = false;
+    // ... and the dry-spell instrument's own working state, for the same reason and with one more: a spell
+    // still in progress belongs to the stream that is ending, and this stream's ring starts empty by
+    // construction, so carrying it over would splice two streams' silences into one reading.  It is DROPPED
+    // rather than recorded, exactly as update() drops a spell cut short by a SUSPEND or by end(): its length
+    // was decided by the stream ending, not by the source's delivery.  (In firmware the SAI ISR has almost
+    // always dropped it already -- onStreamCb calls end() first, and the very next block takes update()'s
+    // !run arm -- so this line is the belt to that braces, and it is what makes a begin() with no preceding
+    // end() behave the same way.)  The blocks themselves stay counted in m_dryTotal.
+    m_haveRx = false; m_inOverrun = false; m_dryRun = 0;
     servo_init(&m_servo, TARGET); m_applied = m_servo.trim_ppm; audioPllTrimPpm(m_servo.trim_ppm);
     // Arm the START pre-fill for THIS stream (NEW-42).  m_primeBlocks resets with it because it is a DURATION
     // and not a tally -- it measures one prime, and this is where a prime begins.  m_reprimes does NOT reset,
@@ -118,6 +126,36 @@ void AudioInputBluetooth::update(void) {
         // filter reading TARGET+5 against a ring holding TARGET-1 would drive a BOGUS trim for a full 72 s tau --
         // and it is why spec s5's trimlo/trimhi must be read beside reprimes rather than on their own.
         if (m_priming && fill() >= TARGET) { m_priming = false; m_primed = true; servo_recentre(&m_servo); }
+        // THE DRY SPELL (NEW-42, spec s9): consecutive blocks that found the ring EMPTY, counted here --
+        // BEFORE the branch dispatch and on the RING's state -- and deliberately NOT in the dry branch below.
+        // ** The dry branch would read 1 for ever. **  That branch ARMS the re-prime, so the second empty
+        // block takes the priming arm and so does the third and the fortieth: the re-prime truncates the very
+        // quantity N has to be sized against (spec s9.1).  During a re-prime the ring genuinely is empty until
+        // the source delivers, so counting through the priming window recovers the natural dry spell exactly.
+        // Excluded, each for the reason its sibling counter gives: HELD and !m_live, by the `if (run)` this
+        // sits inside (an AVDTP SUSPEND is not a dropout -- the same principle that keeps it out of `under`);
+        // and everything before the START prime COMPLETES, by m_primed, because that prime is a ~30-block
+        // empty stretch by construction (87/89 ms measured on the bench) and would otherwise be the largest
+        // thing in the histogram while saying nothing at all about delivery.
+        // ** With BT_SINK_PREFILL=0 (the bench's CONTROL arm) m_primed is never set, so this instrument reads
+        // all zeros BY CONSTRUCTION, not because the ring never ran dry.  `primed=0` on the same heartbeat
+        // line is what tells those two apart, and the print site says so. **
+        // The m_head read is the instrument's OWN and is deliberately not shared with the dry branch's:
+        // onMedia() can publish a frame between the two, and moving the branch onto this snapshot would be a
+        // behavioural change, however small, in an increment whose whole value is that RUN 6 stays comparable
+        // with RUN 5.  The disagreement can only run one way -- m_head only advances -- and costs at most a
+        // spell of ONE block, which is below every bucket edge N could be read at.
+        if (m_primed) {
+            if (m_head == tail) { m_dryRun++; m_dryTotal++; }
+            else if (m_dryRun) {
+                // A block arrived: the spell ENDED, and its length is a measurement of the source's absence.
+                // dryMax is raised HERE and not per block so that it and the buckets describe the SAME
+                // population -- the max of the spells that were bucketed, not of ones that were dropped.
+                m_dry[dryBucketOf(m_dryRun)]++;
+                if (m_dryRun > m_dryMax) m_dryMax = m_dryRun;
+                m_dryRun = 0;
+            }
+        }
         if (m_priming) {
             // primeBlocks() is the START prime's length and ONLY that: a mid-stream re-prime neither extends nor
             // re-times it, which is what `!m_primed` buys (m_primed latches at the first completed prime and is
@@ -142,6 +180,18 @@ void AudioInputBluetooth::update(void) {
             memcpy(l->data, m_ring[tail].l, sizeof l->data); memcpy(r->data, m_ring[tail].r, sizeof r->data); m_tail = (uint16_t)((tail + 1) % RING);
             popped = true;
         }
+    } else if (m_dryRun) {
+        // HELD, or the stream ended, MID-SPELL.  The spell is DROPPED -- not bucketed, and not allowed to
+        // raise dryMax -- because its length was decided by the SUSPEND or by the link going away, not by
+        // the source's delivery, and the buckets are what N is read off.  This is the same call the file
+        // already makes for the gap histogram (hold() clears m_haveRx so a 30 s pause is not a 30 s gap:
+        // "a suspended source is not a delivery failure, so the silence it left behind is not jitter"), and
+        // it matters more here, because a pause's dry TAIL runs until the SUSPEND signalling arrives and
+        // would land in the long buckets -- precisely the tail N is chosen against.
+        // What it costs, stated rather than hidden: a genuine long stall that ends in a link loss is not in
+        // the histogram either.  Those blocks are still in m_dryTotal, so a dryTotal far above what the
+        // buckets can account for is the witness that spells were dropped here.
+        m_dryRun = 0;
     }
     if (!popped) { memset(l->data, 0, sizeof l->data); memset(r->data, 0, sizeof r->data); }
     // The servo runs once per audio block -- this IS the block clock -- and only while the link is up and not

@@ -493,7 +493,28 @@ void loop() {
         CONSOLE.print(" overev="); CONSOLE.print(btin.overEvents());
         CONSOLE.print(" reprimes="); CONSOLE.print(btin.reprimes());
         CONSOLE.print(" primed="); CONSOLE.print(btin.primed() ? 1 : 0);
-        CONSOLE.print(" prime_ms="); CONSOLE.println((uint32_t)((uint64_t)btin.primeBlocks() * AUDIO_BLOCK_SAMPLES * 1000u / 44100u));
+        CONSOLE.print(" prime_ms="); CONSOLE.print((uint32_t)((uint64_t)btin.primeBlocks() * AUDIO_BLOCK_SAMPLES * 1000u / 44100u));
+        // dry*: the DRY-SPELL instrument (spec s9) -- consecutive update()s on an EMPTY ring, which is what
+        // sizes the threshold re-prime's N.  CONSUME SIDE, so like fillmin/fillmax/reprimes above these are
+        // SILICON claims and the gate asserts none of them: QEMU walks update() on its own schedule, not at
+        // 44100/128 Hz, so a dry spell measured there counts host scheduling and not the source.
+        // Three readings, TWO populations (the header has the full note): drytot is every empty block;
+        // d4..dbig and drymax are the spells that ENDED because a block arrived, which is the only ending
+        // whose length measures the source.  A spell cut short by a SUSPEND or a stream loss is in drytot
+        // alone, and a spell still running is in neither -- so drymax lags a dropout in progress.
+        // ★ `drymax=0 drytot=0` beside `primed=0` means NOT MEASURED, not "the ring never ran dry": the
+        // instrument starts at the END of the START prime, and a BT_SINK_PREFILL=0 build (the bench's
+        // CONTROL arm) never completes one.  Same shape as the fillmin=RING sentinel above.
+        // The seven fields are ~65 more characters on a heartbeat that already runs ~345 (~30 ms at 115200);
+        // they fit the 4 KB console TX extension setup() installs many times over, so the bench's
+        // print-stalls-loop() observer effect (NEW-41, fixed by that extension) does not come back.
+        CONSOLE.print(" drymax="); CONSOLE.print(btin.dryMax());
+        CONSOLE.print(" drytot="); CONSOLE.print(btin.dryTotal());
+        CONSOLE.print(" d4=");     CONSOLE.print(btin.dryBucket(0));
+        CONSOLE.print(" d8=");     CONSOLE.print(btin.dryBucket(1));
+        CONSOLE.print(" d16=");    CONSOLE.print(btin.dryBucket(2));
+        CONSOLE.print(" d32=");    CONSOLE.print(btin.dryBucket(3));
+        CONSOLE.print(" dbig=");   CONSOLE.println(btin.dryBucket(4));
         CONSOLE.print("bt_link links="); CONSOLE.print(st.links);
         CONSOLE.print(" lost="); CONSOLE.print(st.lost);
         CONSOLE.print(" closed="); CONSOLE.print(st.closed);

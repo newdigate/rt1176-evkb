@@ -157,11 +157,39 @@ public:
     bool     primed() const { return m_primed; }
     uint32_t primeBlocks() const { return m_primeBlocks; }
     uint32_t reprimes() const { return m_reprimes; }
+    // --- the DRY-SPELL instrument (NEW-42, spec s9): what N will be sized against --------------------------
+    // The threshold re-prime -- rebuffer only after the ring has been dry for more than N consecutive blocks --
+    // needs N MEASURED, the way TARGET 16 was.  ** And the re-prime TRUNCATES the quantity to be measured: the
+    // ring goes dry for exactly one block and then enters priming, so any counter that stops at "dry" reads 1
+    // every time, for ever, whatever the source did. **  What is counted here instead is consecutive update()
+    // calls on an EMPTY RING, irrespective of priming state -- during a re-prime the ring genuinely is empty
+    // until packets arrive, so counting through the priming window recovers the natural dry spell exactly.
+    // Additive: no behavioural change, so the next bench run stays directly comparable with RUN 5.
+    // TWO POPULATIONS, and reading one for the other is the way to misread this line:
+    //   * dryTotal() counts EVERY empty block, so spec s9.3's restated bound (`under <= dryTotal`) can be
+    //     checked whatever else happened;
+    //   * the BUCKETS and dryMax() describe the same smaller population -- spells that ENDED because a block
+    //     finally arrived, which is the only ending whose LENGTH is a measurement of the source's delivery.
+    //     A spell cut short by an AVDTP SUSPEND or by the stream ending is DROPPED from both (update()'s own
+    //     note says why); its blocks are still in dryTotal, so the difference is where dropped spells show up
+    //     rather than nowhere.  A spell IN PROGRESS is in neither yet -- dryMax() lags a running spell.
+    // Cumulative for the RUN, like every other tally on the bt_jit line: begin() resets only the in-progress
+    // spell (working state), for the LIFETIME reason spelled out above m_gap/m_overEv.
+    static constexpr uint8_t DRY_BUCKETS = 5;      // <=4 / <=8 / <=16 / <=32 / >32 consecutive empty blocks
+    uint32_t dryMax() const { return m_dryMax; }                           // the longest RECORDED spell, in blocks
+    uint32_t dryTotal() const { return m_dryTotal; }                       // every empty block, recorded spell or not
+    // The 0 for i >= DRY_BUCKETS is a BOUNDS GUARD, not a reading, exactly as gapBucket()'s is.
+    uint32_t dryBucket(uint8_t i) const { return i < DRY_BUCKETS ? m_dry[i] : 0; }
 private:
     // PRIVATE: one caller (onMedia).  The bucket edges are pinned END TO END through gapBucket() in node_test
     // case 11, by feeding intervals that sit exactly on each inclusive top -- asserting this function against
     // itself would pin nothing that the counters do not already pin, and would freeze an implementation detail.
     static uint8_t gapBucketOf(uint32_t us) { return us <= 30000u ? 0 : us <= 50000u ? 1 : us <= 80000u ? 2 : us <= 120000u ? 3 : 4; }
+    // Dry-spell LENGTHS in blocks, tops INCLUSIVE like gapBucketOf's, and pinned the same way: end to end
+    // through dryBucket() in node_test case 15, on the boundary value of each of the four tops.  The edges
+    // bracket the inference this instrument exists to replace -- spec s9.1 puts every dry spell this phone
+    // produced at <= 25 blocks, so <=16 / <=32 straddle it and >32 is "the inference was wrong".
+    static uint8_t dryBucketOf(uint32_t n) { return n <= 4u ? 0 : n <= 8u ? 1 : n <= 16u ? 2 : n <= 32u ? 3 : 4; }
     struct Blk { int16_t l[AUDIO_BLOCK_SAMPLES]; int16_t r[AUDIO_BLOCK_SAMPLES]; };
     Blk m_ring[RING]; volatile uint16_t m_head = 0, m_tail = 0;
     SbcDecoder m_dec;
@@ -201,6 +229,18 @@ private:
     // ever writes it (the re-prime), because it is a LIFETIME event count and begin() must not reset it.
     volatile bool m_priming = false, m_primed = false;
     volatile uint32_t m_primeBlocks = 0, m_reprimes = 0;
+    // The dry-spell instrument.  Written by update() (the SAI ISR) and read from main context, volatile for
+    // the reason the instrument block above gives; safe under the ISR's read-modify-write for that block's
+    // OTHER reason and no other -- no context outside update() writes the TALLIES.  m_dryRun is the spell in
+    // PROGRESS: working state, not a tally, so it is the one thing begin() resets -- and it is volatile for
+    // THAT, not because anything reads it (nothing outside update() does).  It has two writers in two
+    // contexts, the ISR and begin(), which is the same shape as m_priming/m_primeBlocks and the file's line
+    // for volatile; m_haveRx and m_inOverrun look like the same pattern and are not, since both of their
+    // writers are main context.
+    // uint32 cannot wrap here: m_dryRun climbs at the 344 Hz block rate, so 2^32 blocks is 145 days of an
+    // unbroken dry spell -- and the wrap would cost one mis-bucketed spell, not a corrupt counter, so it is
+    // stated rather than guarded with an ISR compare that could never fire.
+    volatile uint32_t m_dryMax = 0, m_dryTotal = 0, m_dry[DRY_BUCKETS] = {}, m_dryRun = 0;
     volatile int32_t m_applied = 0;                // last ppm handed to the PLL, so update() only writes on a change
     uint16_t m_lastSeq = 0; bool m_haveSeq = false;
     uint8_t m_frag[1100]; uint16_t m_fragLen = 0; bool m_fragging = false;  // a fragmented SBC frame being reassembled across packets
