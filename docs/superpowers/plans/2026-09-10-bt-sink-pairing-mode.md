@@ -987,6 +987,30 @@ Identical in shape to the NEW-42 close-out (`docs/superpowers/plans/2026-09-09-b
 - [ ] **Step 6:** vacuity alone → **47** PASS, re-derived.
 - [ ] **Step 7:** both host suites green.
 
+
+**Task 5 MEASURED 2026-09-10 (recorded here so the numbers are not carried from a report).**
+Sweep **139 discovered, 139 passed, 0 failed, 0 SKIP**, `-l` reports 139, 23m29s wall, alone.
+Every historically load-sensitive gate green IN THE SWEEP ITSELF -- including
+`display/synthui_slide_toggle_test`, the ONE red of the NEW-42 close-out hours earlier, which nothing in
+this branch touches: the third independent confirmation that the load-sensitive set is a property of
+machine load and not of those gates.  `LICENSE-AUDIT: PASS`, 118 manifests, `bt_sink_test` at 1177 dep
+paths -- identical to NEW-41's, consistent with no new COMPILED file (`sink_console.py` and
+`transcript_console.txt` need no `GATES` entry, as predicted).  Vacuity **47**, re-derived.  Host suites:
+M2Radio 14 binaries `BT-HOST-TESTS: PASS` with `btsinksession_test: 282 checks`; the sink example
+`servo_test: 113`, `node_test: 365` (default) and `337` (CONTROL arm).  Rebuild: 23 M2Radio-linking gate
+dirs built, 19 bench dirs skipped by their real blob path, `acid_box/build-bt` skipped BY NAME, 0
+failures, 0 dirs hitting the cached-toolchain trap.  Freshness: 12 dirs compile `BtSinkSession.cpp.obj`,
+12 checked by mtime, 0 stale.  Fresh-user: the configure log shows M2Radio cloned at
+`b90d52b8c5ca20c4e98658fec85181e584596a32` and the gate PASSED on that ELF under `GATE_VACUITY=1` with no
+fixture -- which is the invocation that skips the gate's own rebuild (it would otherwise recompile the
+fetched ELF from local-first sources and destroy the point) while still running the real peer and the
+real console driver.
+★ **`acid_box/build-bt` overflows ITCM by 140 bytes -- BIT-FOR-BIT the figure NEW-45 recorded against the
+OLD pin**, so this branch's library change provably did not move it, and no gate reads that directory.
+★ **A freshness check that measured NOTHING reported green.** The first attempt globbed
+`BtSinkSession.cpp.o` and printed `checked: 0 stale: 0`; the macros emit `.obj`.  A zero-denominator
+check is indistinguishable from a clean one in its own output -- print the denominator, and read it.
+
 ---
 
 ### Task 6: The bench
