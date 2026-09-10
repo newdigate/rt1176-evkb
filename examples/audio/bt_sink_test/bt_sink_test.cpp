@@ -579,20 +579,92 @@ static void printHeartbeat() {
     CONSOLE.print(" vol="); CONSOLE.println(sink.avrcp().volume());
 }
 
+// ONE definition of the `pairing=on` line, TWO callers.  Spec 5 splits WHO prints it deliberately -- the edge
+// detector below announces the AUTOMATIC windows, runCommand() announces a commanded one, because extending an
+// already-open window is not an edge and the person who typed `pair` deserves an answer either way -- but a
+// format spelled twice drifts, and Task 4's gate greps this line by shape.
+// `now` is the CALLER'S instant, not millis() taken here: the command handler passes the same `now` it passed
+// enterPairing(), so pairingRemainingMs(now) is exactly the window length and the line reads secs=120.  An
+// automatic window reads 119 instead -- measured in Task 2's run -- because the edge detector runs on a LATER
+// loop pass, leaving ~119,9xx ms, which /1000u truncates.
+static void printPairingOn(BtSinkSession::PairingReason r, uint32_t now) {
+    CONSOLE.print("pairing=on reason="); CONSOLE.print(pairingReasonName(r));
+    CONSOLE.print(" secs="); CONSOLE.println(session.pairingRemainingMs(now) / 1000u);
+}
+
 static void pairingIndicator() {
     // Edges are printed here, for the AUTOMATIC windows and for every close.  A commanded window prints its own
-    // `pairing=on reason=cmd` from the command (Task 3) -- an extension of an open window is not an edge, and
-    // the person who typed it deserves an answer either way -- so the rising edge is skipped for PAIR_CMD.
+    // `pairing=on reason=cmd` from the command (runCommand(), below) -- see printPairingOn() -- so the rising
+    // edge is skipped for PAIR_CMD.
     static bool wasOpen = false;
     bool open = session.pairingOpen();
     if (open && !wasOpen && session.pairingReason() != BtSinkSession::PAIR_CMD) {
-        CONSOLE.print("pairing=on reason="); CONSOLE.print(pairingReasonName(session.pairingReason()));
-        CONSOLE.print(" secs="); CONSOLE.println(session.pairingRemainingMs(millis()) / 1000u);
+        printPairingOn(session.pairingReason(), millis());
     }
     if (!open && wasOpen) { CONSOLE.print("pairing=off reason="); CONSOLE.println(pairingEndName(session.pairingEnd())); }
     wasOpen = open;
     bool lit = open && ((millis() / 500u) & 1u);
     digitalWrite(LED_BUILTIN, lit ? BT_SINK_LED_ON : !BT_SINK_LED_ON);
+}
+
+// --- console commands (NEW-46) -----------------------------------------------------------------------------
+// Read from serialEvent1(), the weak hook the core's yield() dispatches whenever Serial1.available()
+// (yield.cpp:40) -- and loop() calls yield() every pass -- so there is no loop() change and no polling.  A
+// blocking CONSOLE.print() inside a handler cannot re-enter this: yield()'s `running` guard makes the nested
+// delay()->yield() a no-op.
+// A line is `\n` or `\r` terminated, case-insensitive, EXACT match: a NUL (the VCOM capture always starts with
+// one), a control byte or a non-ASCII char is never a command BYTE, and an over-long line is reported rather
+// than executed -- which is what makes `forget`, the one destructive command, safe against line noise.  Do not
+// "improve" this into a prefix or substring match; the whole safety argument is that a corrupted `forget`
+// misses rather than fires.
+static char    s_cmd[16];
+static uint8_t s_cmdLen = 0;
+static bool    s_cmdOver = false;
+static void runCommand(const char *c) {
+    uint32_t now = millis();
+    if (!strcmp(c, "pair")) {
+        // One `now` for both calls, so the printed secs is the window this call just set and not one loop
+        // pass of drift below it.  A refusal is canPair() saying a link is up (or, card-absent, that the
+        // session never began) -- enterPairing() is the only judge; the sketch does not second-guess it.
+        if (session.enterPairing(now, BtSinkSession::PAIR_CMD)) printPairingOn(BtSinkSession::PAIR_CMD, now);
+        else CONSOLE.println("pairing=refused reason=link_up");
+    } else if (!strcmp(c, "forget")) {
+        // canPair() FIRST, and wipe ONLY if it holds: a refused forget must leave the bond table exactly as it
+        // was.  The ordering is load-bearing, not stylistic -- wipe-then-check would destroy the bond that the
+        // live link is using and report a refusal in the same breath.
+        if (!session.canPair()) { CONSOLE.println("pairing=refused reason=link_up"); return; }
+        // `bonds_forgotten=N` is the same line setup()'s M2_BT_FORGET_BONDS block prints, emitted again here
+        // (that one is inside an #if and is not a shared printer); N is the count BEFORE the wipe, as there.
+        uint8_t before = bonds.count(); (void)BondStoreEeprom::wipe(bonds);
+        CONSOLE.print("bonds_forgotten="); CONSOLE.println(before);
+        // canPair() held one statement ago and nothing between can have changed it, so this opens; the `if`
+        // is there because enterPairing() returns a value that must not be silently dropped.
+        if (session.enterPairing(now, BtSinkSession::PAIR_CMD)) printPairingOn(BtSinkSession::PAIR_CMD, now);
+    } else if (!strcmp(c, "status")) {
+        // `cmd=status` on its own line FIRST.  printHeartbeat() opens with the literal `hb `, so an on-demand
+        // block is byte-indistinguishable from a timed one -- and NEW-42's bench derived `over 13.09/min` /
+        // `under 16.08/min` by treating heartbeat blocks as a clock, which an untagged `status` would silently
+        // inflate.  It is also the token that proves the command landed.  (`last` is a loop() local static, so
+        // `status` does NOT re-phase the timer: the timed cadence stays a clock, deliberately.)
+        CONSOLE.println("cmd=status");
+        printHeartbeat();
+    } else {
+        CONSOLE.print("cmd=? \""); CONSOLE.print(c); CONSOLE.println("\"");
+    }
+}
+void serialEvent1() {
+    while (CONSOLE.available()) {
+        int ch = CONSOLE.read(); if (ch < 0) break;
+        if (ch == '\n' || ch == '\r') {
+            if (s_cmdOver) { s_cmd[s_cmdLen] = 0; CONSOLE.print("cmd=? \""); CONSOLE.print(s_cmd); CONSOLE.println("...\" (too long)"); }
+            else if (s_cmdLen) { s_cmd[s_cmdLen] = 0; runCommand(s_cmd); }
+            s_cmdLen = 0; s_cmdOver = false;                 // CR LF: the LF then dispatches an EMPTY line, which is ignored
+            continue;
+        }
+        if (ch < 0x20 || ch > 0x7E) continue;                // NUL, control bytes, non-ASCII: dropped, never buffered
+        if (s_cmdLen < sizeof s_cmd - 1) s_cmd[s_cmdLen++] = (char)((ch >= 'A' && ch <= 'Z') ? ch + 32 : ch);
+        else s_cmdOver = true;                               // sticky to the terminator: the whole line is refused, not its first 15 chars
+    }
 }
 
 // Every pass, no delay.  yield() drives the HciPump (attached to its EventResponder), which is what parses

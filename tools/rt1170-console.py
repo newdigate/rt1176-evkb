@@ -15,8 +15,9 @@ Works for both boards in this tree, but note they differ:
 
 Usage: rt1170-console.py [PORT] [BAUD]
 Defaults: /dev/cu.usbmodem5DQ2DDHVWO5EI3  115200  (the 1170's MCU-Link)
+Type pair / forget / status + return to send a console command to the sink (NEW-46).
 """
-import sys, time
+import sys, time, threading
 try:
     import serial
 except ImportError:
@@ -28,6 +29,27 @@ BAUD = int(sys.argv[2]) if len(sys.argv) > 2 else 115200
 print(f"[console] {PORT} @ {BAUD} — Ctrl-C to quit. Press the board's RESET "
       f"(SW4 on the 1170-EVKB; the 1060-EVKB has no SW4) to see the boot banner.\n",
       file=sys.stderr)
+# The write path (NEW-46).  There is deliberately NO separate one-shot sender script: it would have to open
+# this tty while the reader holds it, and CLAUDE.md records what re-opening this VCOM does (the port
+# re-enumerates mid-attempt; with the wrong timing it has panicked the whole Mac).  So the reader owns the
+# port and stdin feeds it.
+_ser = None                       # the OPEN port, shared with the stdin pump; None while reconnecting
+_lock = threading.Lock()
+
+def _stdin_pump():
+    """stdin -> port, one line at a time.  Under `nohup ... &` stdin is at EOF at once and this thread simply
+    ends; reading is untouched.  Interactively, type `pair`, `forget`, `status` and press return."""
+    for line in sys.stdin:
+        with _lock:
+            s = _ser
+        if s is None:
+            print("[console] port not open, dropped: %r" % line.rstrip(), file=sys.stderr); continue
+        try:
+            s.write((line.rstrip("\r\n") + "\n").encode("ascii", "replace"))
+        except (OSError, serial.SerialException) as e:
+            print("[console] write failed: %s" % e, file=sys.stderr)
+
+threading.Thread(target=_stdin_pump, daemon=True).start()
 try:
     while True:
         try:
@@ -35,6 +57,8 @@ try:
         except (OSError, serial.SerialException):
             time.sleep(0.5)          # port not present (e.g. mid power-cycle); retry
             continue
+        with _lock:
+            _ser = ser
         try:
             while True:
                 data = ser.read(256)
@@ -42,6 +66,8 @@ try:
                     sys.stdout.buffer.write(data)
                     sys.stdout.buffer.flush()
         except (OSError, serial.SerialException):
+            with _lock:
+                _ser = None          # the pump drops lines rather than writing to a closed port
             try: ser.close()
             except Exception: pass
             print("\n[console] port dropped, reconnecting…", file=sys.stderr)
