@@ -415,6 +415,21 @@ like every other tally on the line.  Additive: no behavioural change, so RUN 6 i
 RUN 5, and the gate is untouched -- these are consume-side numbers and therefore silicon claims, exactly
 as `under` and `reprimes` already are.
 
+### 9.2a A limitation of the `m_primed` exclusion, found while building it
+
+Gating on `m_primed` means the instrument reads **all zeros in the CONTROL arm** (`BT_SINK_PREFILL=0`),
+because nothing ever latches `m_primed` there.  That is the specified exclusion behaving as specified, and
+RUN 6 is a change-arm run by design, so it costs nothing here -- but it is precisely the "counter that
+stopped measuring while looking healthy" shape this tree fears, so it is called out in the header, at the
+print site and in the host case: `drymax=0 drytot=0` beside `primed=0` means NOT MEASURED, not "no dry
+spells".  If a control-arm dry distribution is ever wanted, the arm-independent predicate is "after the
+first successful pop", which excludes the same start-up stretch without depending on the pre-fill.
+
+★ Also measured while building it, and it sharpens 9.1: a counter placed in the dry BRANCH does not read
+1 as predicted -- it reads `dryMax=0`, never closing a spell at all, because with the pre-fill on the
+block that would end the spell is itself a priming block.  Two independently written dry-branch mutants
+gave the identical reading.  The truncation is worse than the spec assumed.
+
 ### 9.3 What RUN 6 decides, and what it predicts
 
 N is read off the histogram: above the bulk of self-healing spells, below a genuine stall.  If the
