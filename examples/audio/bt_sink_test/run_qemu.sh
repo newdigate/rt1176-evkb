@@ -155,7 +155,12 @@ else
 fi
 
 OUT="$BUILD_DIR/sink.uart"; DBG="$BUILD_DIR/sink.dbg"; RES="$BUILD_DIR/sink.peer"
-rm -f "$OUT" "$DBG" "$RES"
+# NEW-46: the CONSOLE DRIVER's own log.  It holds what only the driver knows -- that it typed the
+# commands at all, and when -- which no amount of firmware output can establish: a capture showing
+# `pairing=on reason=cmd` with nothing having been typed would be a firmware that opens windows by
+# itself, and that is the shape this file exists to rule out.
+CON="$BUILD_DIR/sink.console"
+rm -f "$OUT" "$DBG" "$RES" "$CON"
 
 # ★ VACUITY-ONLY peer stand-in.  This gate reads BOTH the UART capture and the peer's tally, and
 # the vacuity harness replaces QEMU with a script that opens no socket -- so a replay can never
@@ -169,15 +174,52 @@ if [ "${GATE_VACUITY:-}" = "1" ] && [ -n "${GATE_PEER_FIXTURE:-}" ]; then
         -d guest_errors -D "$DBG" &
     P=$!; gate_pid $P
     cp "$GATE_PEER_FIXTURE" "$RES"
+    # ... and, for the same reason, a stand-in for the CONSOLE DRIVER's log: no driver runs against a
+    # replay either, so without this every DRIVER-* assertion would fail on a perfectly good fixture.
+    # Same rule as the peer fixture -- honoured ONLY under GATE_VACUITY=1, and an unset variable leaves
+    # an EMPTY file rather than a missing one, so the assertions still fail by name rather than on
+    # `grep: no such file`.
+    if [ -n "${GATE_CONSOLE_FIXTURE:-}" ]; then cp "$GATE_CONSOLE_FIXTURE" "$CON"; else : > "$CON"; fi
     PEER_RC=0
     sleep 1
 else
     SOCK="/tmp/m2sink_$$.sock"; rm -f "$SOCK"; gate_tmp "$SOCK"
-    "$QEMU" $(gate_qemu_machine) -kernel "$ELF" -display none $(gate_console "$OUT") \
+    # NEW-46: the console is a SOCKET so the driver can type at it, with logfile= so every byte the
+    # sink prints still lands in $OUT for the assertions above and below (smoke-tested: the banner
+    # lands in the file).  The vacuity harness's fake QEMU recognises only `-serial file:`, which is
+    # why the GATE_VACUITY branch above keeps gate_console -- do not collapse the two.
+    # ★ The console is the FIRST -serial (LPUART1); the HCI socket stays the SECOND (LPUART2).  Swap
+    # them and the firmware runs perfectly with an empty capture, which is indistinguishable from
+    # firmware that never started (CLAUDE.md records that exact trap).
+    # ★ THE PORT IS PROBED, NOT ASSUMED.  A PID-derived constant alone collides with whatever else on
+    # this machine holds that port, and a QEMU that cannot bind exits at once -- surfacing as "no UART
+    # capture", the same text dead firmware produces.  The base is still PID-derived (so two runs
+    # started together differ); the probe walks up from it and the walk's failure is reported by name.
+    CPORT=$(python3 -c '
+import socket, sys
+base = int(sys.argv[1])
+for p in range(base, base + 64):
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", p)); s.close(); print(p); break
+    except OSError:
+        s.close()
+else:
+    sys.exit(1)
+' $((45500 + ($$ % 400)))) || fail "no free loopback port for the console chardev"
+    "$QEMU" $(gate_qemu_machine) -kernel "$ELF" -display none \
+        -chardev socket,id=con,host=127.0.0.1,port="$CPORT",server=on,wait=off,logfile="$OUT" \
+        -serial chardev:con \
         -serial unix:"$SOCK",server -d guest_errors -D "$DBG" &
     P=$!; gate_pid $P
+    # The driver runs in the BACKGROUND, beside the peer: it waits on UART milestones the peer's own
+    # traffic produces, so the two must be live at the same time.  Its budget is below tools/qrun's
+    # 60 s cap on QEMU, so a driver that hangs still leaves a capture to fail against.
+    python3 "$DIR/sink_console.py" "$CPORT" 45 > "$CON" 2>&1 &
+    CPID=$!; gate_pid $CPID
     PEER_RC=0
     python3 "$EVKB/examples/networking/m2_hci_probe/hci_peer.py" source "$SOCK" "$DIR/sine.sbc" > "$RES" 2>&1 || PEER_RC=$?
+    wait $CPID 2>/dev/null || true
 fi
 
 # The peer runs in the FOREGROUND and returns once it has streamed every packet (or given up), so
@@ -204,6 +246,7 @@ gate_require_capture "$OUT" "source phase"
 tr -d '\r' < "$OUT" > "$OUT.nocr" && mv "$OUT.nocr" "$OUT"
 echo "==== captured UART ===="; cat "$OUT"
 echo "==== peer ===="; cat "$RES"
+echo "==== console driver ===="; cat "$CON" 2>/dev/null || true
 
 # --- the sink's own account, from the UART -----------------------------------------------------
 grep -q "RT1176 BT sink test up" "$OUT"          || fail "[sink] banner missing"
@@ -250,8 +293,18 @@ grep -q "^PEER-SINK-AVRCP interim_vol=100 set_ok=1" "$RES" \
     || fail "[sink] absolute volume did not complete: $(grep -m1 '^PEER-SOURCE-STATE ' "$RES")"
 
 # --- what actually arrived in the audio graph --------------------------------------------------
-LASTHB=$(grep -E "^hb streaming=1 " "$OUT" | tail -1)
-[ -n "$LASTHB" ] || fail "[sink] no streaming heartbeat"
+# ★ THE COUNTERS ARE READ FROM THE FINAL HEARTBEAT, not from the last STREAMING one, and that changed
+# with NEW-46 rather than being loosened.  Every field on this line is a LIFETIME tally --
+# AudioInputBluetooth::begin() deliberately does not reset them, and its own comment says why -- so the
+# last reading of the run is the completest one.  Since the peer now DROPS the link one second after
+# its 150th packet, the last STREAMING heartbeat can land a few packets short of the total (measured:
+# `pkts=147` on a run that received all 150 and whose final line reads 150).  Reading the final line is
+# strictly STRONGER, not weaker: it also covers the post-drop window, where an `over` or a `bad` was
+# invisible before.  That the sink really streamed is a separate assertion, immediately below, and
+# `streaming by=incoming` above.
+LASTHB=$(grep -E "^hb " "$OUT" | tail -1)
+[ -n "$LASTHB" ] || fail "[sink] no heartbeat at all"
+grep -qE "^hb streaming=1 " "$OUT" || fail "[sink] no streaming heartbeat -- the node never played"
 echo "$LASTHB" | grep -qE "pkts=150 frames=750 seqgaps=0 " || fail "[sink] the node did not receive every packet/frame with no gap: $LASTHB"
 echo "$LASTHB" | grep -qE " bad=0$"                         || fail "[sink] the decoder refused frames: $LASTHB"
 # over= is the ring's OVERRUN count, and crc200 depends on it as much as on bad=: an overrun drops the NEW
@@ -271,7 +324,14 @@ echo "$LASTSINK" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^trim_ppm=/) { split($i,a,
 # the volume the phone wrote is the volume the target holds.
 LASTAVRCP=$(grep -E "^bt_avrcp " "$OUT" | tail -1)
 [ -n "$LASTAVRCP" ] || fail "[sink] no bt_avrcp line"
-echo "$LASTAVRCP" | grep -q "avctp=1" || fail "[sink] the sink does not report its AVCTP channel up: $LASTAVRCP"
+# ★ avctp= is LIVE state -- "is there an L2CAP channel on PSM 0x0017 right now" -- and NEW-46's peer
+# drops the link before the run ends, so it is read from the block belonging to the last STREAMING
+# heartbeat.  MEASURED: that selector returns byte-for-byte the SAME line `tail -1` returned on the
+# pre-NEW-46 committed transcript, so nothing here is relaxed; every OTHER field on the line is a
+# lifetime counter and stays on the final line, where it is completest.
+STREAMAVRCP=$(awk '/^hb /{s=($0 ~ /^hb streaming=1 /)} s && /^bt_avrcp /{l=$0} END{print l}' "$OUT")
+[ -n "$STREAMAVRCP" ] || fail "[sink] no bt_avrcp line inside a streaming heartbeat"
+echo "$STREAMAVRCP" | grep -q "avctp=1" || fail "[sink] the sink does not report its AVCTP channel up: $STREAMAVRCP"
 echo "$LASTAVRCP" | grep -q "vol=64"  || fail "[sink] the target did not keep the volume the phone set: $LASTAVRCP"
 # ★ notif=1 ans=1 unsup=0 pins NEW-42 item B ON THE WIRE.  The source phase sends exactly TWO AV/C
 # commands -- one RegisterNotification(VOLUME_CHANGED) and one SetAbsoluteVolume -- and both must be
@@ -341,4 +401,47 @@ echo "$LASTJIT" \
 echo "$LASTJIT" | grep -qE " primed=1( |$)" \
     || fail "[jit] the START pre-fill never completed (want primed=1): $LASTJIT"
 
-echo "PASS: A2DP SINK -- a paging source is accepted as an unbonded slave, paired and encrypted by the peer, reads our AudioSink record, configures 44.1/joint/16/8/loudness/53 with delay reporting and reaches START; 150 RTP packets / 750 SBC frames of the 1 kHz tone decoded into the graph (no gap, no refusal, level and PCM golden exact, one DelayReport); the SINK opens AVCTP itself at a peer that opens none (as an iPhone does not) and absolute volume completes over it -- VOLUME_CHANGED answered INTERIM vol=100, SetAbsoluteVolume(0x40) ACCEPTED and on the codec (volume=64, bt_avrcp avctp=1 vol=64) and BOTH AV/C commands counted as answered rather than unsupported (notif=1 ans=1 unsup=0 -- NEW-42 item B on the wire); the NEW-42 arrival instrument ran and bucketed at a pace only the peer knows -- the five gap buckets account for exactly pkts-1 intervals and the 50-120 ms band that straddles the peer's 100 ms pacing carries the bulk -- and the START pre-fill completed (primed=1); underruns, the servo's trim, every CONSUME-side field of bt_jit and every gap MAGNITUDE are SILICON claims -- QEMU has no audio clock, and its own clock invents a ~3.14 s inter-arrival on a peer that never pauses"
+# --- the pairing window (NEW-46), judged against what the PEER and the DRIVER know -----------------------------
+# The console driver sends `pair` while STREAMING (must be refused: a window is never open with a link up), and
+# after the peer's injected drop sends `pair`, `forget` and `status`.  What only the peer can see: its own
+# Write_Scan_Enable log -- the sink turning INQUIRY scan on after the drop is the window, and the firmware
+# cannot invent a controller write.  What only the driver can see: that it sent the commands at all.
+# ★ `forget` is exercised here ONLY because QEMU has no NVM behind the FlexSPI window (CLAUDE.md): the bond
+# store this wipes is a within-boot table.  On silicon it is destructive, by design.
+grep -q "^pairing=on reason=boot secs=1[0-9][0-9]$" "$OUT"           || fail "[pair] no boot window: $(grep -m1 '^pairing=' "$OUT")"
+grep -q "^pairing=off reason=paired$" "$OUT"                          || fail "[pair] the boot window did not close as PAIRED when the link came up"
+grep -q "^DRIVER-SENT pair while-streaming" "$CON"                    || fail "[pair] the driver never sent pair while streaming: $(tail -3 "$CON")"
+# `link_up` and not `not_listening`: Task 3's review split the refusal in two (spec 5), and THIS one is a
+# genuine link up, so the text is unchanged.  Anchored, so the other reason can never satisfy it.
+grep -q "^pairing=refused reason=link_up$" "$OUT"                     || fail "[pair] pair while streaming was not REFUSED"
+grep -q "^PEER-SOURCE-DROP " "$RES"                                   || fail "[pair] the peer did not inject its drop: $(tail -3 "$RES")"
+grep -q "^pairing=on reason=drop secs=1[0-9][0-9]$" "$OUT"            || fail "[pair] no drop window after the peer's disconnect"
+# The un-fakeable half: after the drop, the peer must see inquiry scan turned ON (bit 0 of Write_Scan_Enable).
+# ★ The comparison is against 0x00, not 0x02: with a link up BtLink.cpp:170 composes page|inquiry and BOTH go
+# off, which is the `PEER-SCAN-ENABLE 0x00` the baseline capture shows right after the page is accepted.  So a
+# windowless sink writes nothing at all after its drop, and this line is the whole difference.  Counted AFTER
+# the PEER-SOURCE-DROP line, not anywhere in the log -- the BOOT window already wrote 0x03 once.
+awk '/^PEER-SOURCE-DROP /{d=1} d && /^PEER-SCAN-ENABLE 0x03/{n++} END{exit !(n>=1)}' "$RES" \
+    || fail "[pair] the peer never saw inquiry scan re-enabled after its drop: $(grep PEER-SCAN-ENABLE "$RES" | tail -3)"
+[ "$(grep -c '^ssp_mode: st=ok status=0x00 mode=1' "$OUT")" -ge 2 ]   || fail "[pair] PREPARE was not re-issued for the drop window (want a second ssp_mode line): $(grep -c '^ssp_mode' "$OUT")"
+# TWO commanded windows, not one: the driver sends `pair` and then `forget`, and BOTH print this line
+# (forget re-opens one after the wipe).  Counting them is what stops the `pair` half being vacuous --
+# with a bare grep, `forget`'s own line satisfies it and a driver that never sent `pair` would pass.
+[ "$(grep -c '^pairing=on reason=cmd secs=1[0-9][0-9]$' "$OUT")" -ge 2 ] \
+    || fail "[pair] the commanded windows never opened (want one for pair and one for forget): $(grep -c '^pairing=on reason=cmd' "$OUT")"
+grep -q "^bonds_forgotten=1$" "$OUT"                                  || fail "[pair] forget did not wipe the one bond"
+grep -q "^PEER-SOURCE-REPAGE " "$RES"                                 || fail "[pair] the peer did not re-page after forget"
+[ "$(grep -c '^conn_req: bd=AA:BB:CC:DD:EE:01 -> accept(slave, unbonded)' "$OUT")" -ge 2 ] \
+    || fail "[pair] the re-page after forget was not accepted as UNBONDED (the bond survived, or no re-page)"
+[ "$(grep -c '^link_key_req: .* -> neg_reply (no stored key)' "$OUT")" -ge 2 ] \
+    || fail "[pair] the re-page after forget did not restart pairing from scratch"
+[ "$(grep -c '^pairing_complete: status=0x00' "$OUT")" -ge 2 ]        || fail "[pair] the re-page after forget did not pair Just Works again"
+# `status` prints a heartbeat NOW rather than at the next tick of the 1 s timer.  The driver judges it two
+# ways and reports OK only if both hold: STRUCTURALLY, the `cmd=status` token -- which the timer never emits --
+# must be followed IMMEDIATELY by the `hb ` line of a complete block (loop() prints them back to back, and
+# nothing else writes the console, so nothing can interleave); and by the HOST's clock, inside 0.9 s of the
+# send.  That second half is measured OUTSIDE the guest, on the driver's own wall clock, which is why it is
+# allowed at all -- CLAUDE.md's rule is that no gate may assert a duration the GUEST reports.
+grep -q "^DRIVER-STATUS-OK" "$CON"                                    || fail "[pair] status did not produce an immediate heartbeat: $(grep DRIVER-STATUS "$CON")"
+
+echo "PASS: A2DP SINK -- a paging source is accepted as an unbonded slave, paired and encrypted by the peer, reads our AudioSink record, configures 44.1/joint/16/8/loudness/53 with delay reporting and reaches START; 150 RTP packets / 750 SBC frames of the 1 kHz tone decoded into the graph (no gap, no refusal, level and PCM golden exact, one DelayReport); the SINK opens AVCTP itself at a peer that opens none (as an iPhone does not) and absolute volume completes over it -- VOLUME_CHANGED answered INTERIM vol=100, SetAbsoluteVolume(0x40) ACCEPTED and on the codec (volume=64, bt_avrcp avctp=1 vol=64) and BOTH AV/C commands counted as answered rather than unsupported (notif=1 ans=1 unsup=0 -- NEW-42 item B on the wire); the NEW-42 arrival instrument ran and bucketed at a pace only the peer knows -- the five gap buckets account for exactly pkts-1 intervals and the 50-120 ms band that straddles the peer's 100 ms pacing carries the bulk -- and the START pre-fill completed (primed=1); underruns, the servo's trim, every CONSUME-side field of bt_jit and every gap MAGNITUDE are SILICON claims -- QEMU has no audio clock, and its own clock invents a ~3.14 s inter-arrival on a peer that never pauses; the pairing window opens at boot and closes PAIRED on link-up, pair is REFUSED while streaming, the peer's injected drop opens a drop window it can SEE (inquiry scan 0x03 re-enabled) with PREPARE re-issued, and after forget the peer's re-page is accepted UNBONDED and pairs Just Works again -- the NEW-43 recovery without a reboot"

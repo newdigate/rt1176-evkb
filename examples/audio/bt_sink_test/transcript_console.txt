@@ -1,0 +1,7 @@
+DRIVER-CONNECTED
+DRIVER-SENT pair while-streaming
+DRIVER-SENT pair after-drop
+DRIVER-SENT forget after-drop
+DRIVER-SENT status after-forget
+DRIVER-STATUS-OK block after cmd=status in 0.04s (bound 0.90s, host clock)
+DRIVER-DONE

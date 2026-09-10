@@ -689,9 +689,28 @@ PEER-SINK-AVRCP interim_vol=100 set_ok=1
 PEER-SOURCE-PROGRESS pkts=50 frames=250 elapsed=5.2
 PEER-SOURCE-PROGRESS pkts=100 frames=500 elapsed=10.2
 PEER-SOURCE-PROGRESS pkts=150 frames=750 elapsed=15.2
+PEER-SOURCE-DROP handle=0x0001 reason=0x13
+PEER-SCAN-ENABLE 0x03
+PEER-PAGE-TIMEOUT slots=0x2000
+PEER-SOURCE-REPAGE bd=01eeddccbbaa
+PEER-SOURCE-ACCEPTED role=0x01 handle=0x0002
+PEER-SCAN-ENABLE 0x00
 PEER-SOURCE pkts=150 frames=750 delay_reports=1 sink_record=1 started=1 errors=0
-PEER-SOURCE-STATE state=streaming acp_seid=1 handle=0x0001 avctp=1 vol_state=done interim_vol=100 set_ok=1
+PEER-SOURCE-STATE state=linked acp_seid=None handle=0x0002 avctp=1 vol_state=done interim_vol=100 set_ok=1
 PEERGREEN
+
+    # NEW-46: the CONSOLE DRIVER's half of a good run, replayed for the same reason as the peer's --
+    # no driver runs against this harness's fake QEMU either, so without it every DRIVER-* assertion
+    # is unreachable and the green replay below could not pass.  Honoured ONLY under GATE_VACUITY=1.
+    cat > "$WORK/sink_console_green.txt" <<'CONGREEN'
+DRIVER-CONNECTED
+DRIVER-SENT pair while-streaming
+DRIVER-SENT pair after-drop
+DRIVER-SENT forget after-drop
+DRIVER-SENT status after-forget
+DRIVER-STATUS-OK block after cmd=status in 0.04s (bound 0.90s, host clock)
+DRIVER-DONE
+CONGREEN
 
     # (a) the card-absent capture this example produces with no controller: the HCI Reset times out
     # by name, the session never begins, and both heartbeats are vacuous.  With a PERFECT peer
@@ -716,7 +735,8 @@ bt_sink fill=0 trim_ppm=0 rms=0 rms_blocks=0 crc200=0xFFFFFFFF
 bt_link links=0 lost=0 closed=0 reason=0x00 state=idle
 bt_hci ncmd=0 timeouts=10 starved=0 l2drop=0 l2frag=0 l2fragdrop=0 credmin=0
 ABSENT
-    export GATE_VACUITY=1 GATE_PEER_FIXTURE="$WORK/sink_peer_green.txt"
+    export GATE_VACUITY=1 GATE_PEER_FIXTURE="$WORK/sink_peer_green.txt" \
+           GATE_CONSOLE_FIXTURE="$WORK/sink_console_green.txt"
     run_gate "$sink_rel" "run_qemu.sh" "$WORK/sink_absent.txt"; rc=$?
     result=0
     [ "$rc" -ne 0 ] || result=1                                                # must not pass
@@ -752,10 +772,23 @@ ABSENT
     [ "$rc" -ne 0 ] || result=1                                                        # must not pass
     echo "$OUT_TEXT" | grep -q "\[jit\] the 50-120 ms band does not carry the bulk" || result=1
     report "flat_gap_histogram_fails_bt_sink_gate" $result
-    unset GATE_VACUITY GATE_PEER_FIXTURE
+
+    # (d) NEW-46: the sink must open a PAIRING WINDOW when the peer drops the link, and a capture in
+    # which it did not must fail BY NAME.  Delete only the `pairing=on reason=drop` line: everything
+    # else about the run is untouched -- the tone still decoded, the golden still hits, the peer's
+    # fixture still shows its drop and its re-page, and the driver's fixture still shows all four
+    # commands sent -- so this is exactly the shape of a firmware that heard the disconnect and did
+    # nothing about it, which is the whole of NEW-46.  Nothing else in the gate can see it.
+    grep -v "^pairing=on reason=drop " "$EVKB/$sink_rel/transcript_qemu.txt" > "$WORK/sink_nodrop.txt"
+    run_gate "$sink_rel" "run_qemu.sh" "$WORK/sink_nodrop.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1                                                        # must not pass
+    echo "$OUT_TEXT" | grep -q "\[pair\] no drop window" || result=1
+    report "no_drop_window_fails_sink_gate" $result
+    unset GATE_VACUITY GATE_PEER_FIXTURE GATE_CONSOLE_FIXTURE
 
     rm -f "$EVKB/$sink_rel"/build/sink.uart "$EVKB/$sink_rel"/build/sink.peer \
-          "$EVKB/$sink_rel"/build/sink.dbg
+          "$EVKB/$sink_rel"/build/sink.dbg "$EVKB/$sink_rel"/build/sink.console
 fi
 
 exit $FAILED
