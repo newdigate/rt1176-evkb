@@ -41,9 +41,10 @@
 // build-time configuration rather than beside its users, because it is a knob and not a graph object: the
 // matching cache variable lives in CMakeLists.txt (`-DBT_SINK_LED_ON=LOW`) and this #ifndef is only the
 // fallback for a build that does not go through it.
-// ** POLARITY: the RevC3 header audit names the pad but not its active level, and the only "active low" note
-// in the core is the 1060's D8 -- a different board.  BT_SINK_LED_ON is VERIFIED AT FIRST LIGHT on the bench
-// (plan Task 6) and corrected there if this default is wrong.  QEMU cannot see it: a silicon-only witness. **
+// ** POLARITY: MEASURED on the bench 2026-09-11 (RUN 9) -- HIGH lights it.  The RevC3 header audit names the
+// pad but not its active level and the only "active low" note in the core is the 1060's D8, a different
+// board, so this was a GUESS until a person watched the LED blink through a boot window; it is no longer.
+// QEMU cannot see it -- a silicon-only witness, which is why it took a bench run and not a gate. **
 #ifndef BT_SINK_LED_ON
 #define BT_SINK_LED_ON HIGH
 #endif
