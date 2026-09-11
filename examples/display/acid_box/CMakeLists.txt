@@ -183,8 +183,52 @@ if(M2_BT_OUT)
     get_target_property(_acidbt_lf acid_box.elf LINK_FLAGS)
     string(REGEX MATCH "-T([^ ]*imxrt1176[.]ld)" _acidbt_ignore "${_acidbt_lf}")
     set(_acidbt_coreld "${CMAKE_MATCH_1}")
+    # NEW-45: make the ITCM margin legible instead of only fatal.  Two halves:
+    #   * --print-memory-usage prints region used/size/percent on EVERY link, so a shrinking margin shows up
+    #     in ordinary build output rather than only at the cliff;
+    #   * an ASSERT so the next NEW-41-sized library growth reports "ITCM headroom below 2048" instead of
+    #     "region ITCM overflowed by 140 bytes".  ld cannot interpolate a number into an ASSERT message, so
+    #     the literal is injected here at configure time along with the expression.
+    # WHAT THE REGION ACTUALLY HOLDS, measured rather than assumed: .text.itcm is 252336 B at VMA 0, so it
+    # ends at 252336, and .ARM.exidx is 8 B at VMA 252340 -- 4 B of alignment padding sits between them.  The
+    # region's true top is therefore 252348, and 252348 is the number --print-memory-usage reports.  The
+    # ASSERT sums SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) = 252344, so it does NOT see that padding and is
+    # still 4 B OPTIMISTIC.  It is not exact and is not claimed to be: a .text.itcm-only assert would have
+    # been 12 B optimistic, this one is 4, and 4 B cannot decide anything against a 2048 B floor.  Recorded
+    # here rather than hidden, because a guard whose slack is undocumented is a guard nobody can reason about.
+    # The exact expression is ADDR(.ARM.exidx) + SIZEOF(.ARM.exidx) - ORIGIN(ITCM), and it is DECLINED
+    # deliberately: this linker script already measures the region as SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx),
+    # in _itcm_block_count EIGHTEEN LINES ABOVE this assert (line 146 against 165 in the generated
+    # acid_box_bt.ld).  One convention that is 4 B loose beats two that disagree -- inventing a third way to
+    # measure ITCM in the same file is how the two get out of step later.
+    # Scoped to this target.  Putting either in the core imxrt1176.ld would change every example in the tree,
+    # including ones that legitimately run close -- a separate change with its own blast radius.
+    set(ACIDBOX_ITCM_MIN_HEADROOM "2048" CACHE STRING "Fail the M2_BT_OUT link when ITCM headroom drops below this many bytes.  2048 because measured headroom after the NEW-45 VGLite routing is ~9.8 KB: low enough that it never nags, high enough that a growth the size of the one that opened NEW-45 (+412 B from a library pin bump) reports a named headroom failure instead of a raw 'region ITCM overflowed' link error")
     if(_acidbt_coreld AND EXISTS "${_acidbt_coreld}")
         file(READ "${_acidbt_coreld}" _acidbt_ld)
+        string(REPLACE
+            "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")"
+            "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")
+	ASSERT(SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) <= LENGTH(ITCM) - ${ACIDBOX_ITCM_MIN_HEADROOM}, \"NEW-45: ITCM headroom below ${ACIDBOX_ITCM_MIN_HEADROOM} bytes -- see docs/superpowers/specs/2026-09-11-acid-box-itcm-headroom-design.md\")"
+            _acidbt_ld "${_acidbt_ld}")
+        # string(REPLACE) is a SILENT NO-OP when its anchor does not match, and the anchor above is a specific
+        # line of the CORE imxrt1176.ld -- which lives in ANOTHER REPOSITORY (teensy-cores, resolved via
+        # TEENSY_LIB_ROOT or fetched at the SHA evkb.cmake pins).  Reword that line upstream and the headroom
+        # ASSERT quietly stops being injected while every build keeps passing with no guard at all: precisely
+        # the silent-failure class this whole feature exists to close, relocated one level up.  So check it.
+        # ASYMMETRY, which is why only this one is checked: if the OTHER string(REPLACE) below (anchored on
+        # *libLVGL_flash.a:(.text*)) ever fails to match, every routing rule vanishes, ITCM overflows and the
+        # link fails loudly on its own -- that failure is self-announcing.  This one's failure is silence.
+        string(FIND "${_acidbt_ld}" "NEW-45: ITCM headroom" _acidbt_found)
+        if(_acidbt_found EQUAL -1)
+            message(FATAL_ERROR
+                "M2_BT_OUT: the NEW-45 ITCM headroom ASSERT was NOT injected into the derived linker script. "
+                "The EEPROM-assert line this rule anchors on has changed in the core script "
+                "(${_acidbt_coreld}), so string(REPLACE) matched nothing and did nothing.  Left unchecked "
+                "this build would link UNGUARDED and the next library growth would report a raw 'region ITCM "
+                "overflowed by N bytes' instead of a named headroom failure.  Re-anchor the string(REPLACE) "
+                "in examples/display/acid_box/CMakeLists.txt against that script's current ASSERT text.")
+        endif()
         string(REPLACE "*libLVGL_flash.a:(.text*)"
                        "*libLVGL_flash.a:(.text*)
 		*acid_box.cpp.obj(.text.setup .text._GLOBAL__sub* .text.startup._GLOBAL__sub*)
@@ -207,7 +251,8 @@ if(M2_BT_OUT)
         file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/acid_box_bt.ld" "${_acidbt_ld}")
         string(REPLACE "${_acidbt_coreld}"
                        "${CMAKE_CURRENT_BINARY_DIR}/acid_box_bt.ld" _acidbt_lf "${_acidbt_lf}")
-        set_target_properties(acid_box.elf PROPERTIES LINK_FLAGS "${_acidbt_lf}")
+        set_target_properties(acid_box.elf PROPERTIES
+            LINK_FLAGS "${_acidbt_lf} -Wl,--print-memory-usage")
     else()
         message(WARNING "M2_BT_OUT: could not find the core imxrt1176.ld in LINK_FLAGS to derive the BT linker script; ITCM may overflow")
     endif()
