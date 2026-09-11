@@ -1031,7 +1031,7 @@ check is indistinguishable from a clean one in its own output -- print the denom
 
 - [ ] **Step 6: Range loss.** Walk out of range → `stream_lost` → `pairing=on reason=drop`, LED blinks; walk back; iOS does not re-page after a range loss (NEW-41), so re-select the speaker on the phone → stored-key reconnect → `pairing=off reason=paired`.
 
-- [ ] **Step 7: `forget` — the NEW-43 recovery, the whole reason for this feature.** Stop the music, disconnect from the phone (so `canPair()` holds), type `forget` → `bonds_forgotten=1`, `pairing=on reason=cmd`. On the phone: Forget This Device. Pair fresh: **Just Works, no passcode prompt, no SW4.** `a2dp_sink=ok bonds=1 paired_by=peer`.
+- [ ] **Step 7: `forget` — the NEW-43 recovery, the whole reason for this feature.** Stop the music, disconnect from the phone (so `canPair()` holds), type `forget` → `bonds_forgotten=1`, `pairing=on reason=cmd`. On the phone: Forget This Device. Pair fresh: **Just Works, no passcode prompt, no SW4.** `a2dp_sink=ok bonds=1 paired_by=ssp` (MEASURED RUN 9 -- `paired_by` names the MECHANISM, not the initiator; the plan predicted `peer`, which the firmware never prints).
 
 - [ ] **Step 8: NEW-43, reproduced on purpose.** Disconnect; on the phone do NOT forget, on the board type `forget` (so the phone holds a stale key and the board none — the exact RUN 4 setup); connect from the phone → SSP fails (`pairing_complete: status=0x05`) → the attempt fails → **`pairing=on reason=drop`** with a fresh `ssp_mode: ... mode=1` → now Forget This Device on the phone and pair again: it must succeed **without SW4**. Before this branch that needed a reboot.
 
