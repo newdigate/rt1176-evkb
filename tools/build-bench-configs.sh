@@ -17,7 +17,8 @@
 #
 # ★ THE TOOL BUILDS INTO DIRECTORIES IT OWNS -- build-benchcheck-<name> -- and
 #   never touches a human's bench directory.  build-bench, -pre and -post carry
-#   M2RADIO_IW416_BT_FW pointing at a real 131,840-byte firmware blob; a tool
+#   M2RADIO_IW416_BT_FW pointing at the real firmware image (131,840 bytes,
+#   supplied as a .bin.inc C array); a tool
 #   that reconfigured one from the declared flags alone would silently strip it
 #   and the bench would run the 1 KB synthetic image instead.  That is the
 #   2026-08-27 red inverted (there, a bench-configured dir made its own gate
@@ -44,7 +45,16 @@ CMAKE=${BENCH_CMAKE:-cmake}          # the seam build-bench-configs.test.sh driv
 TOOLBIN=${ARM_TOOLCHAIN_BIN:-/Applications/ARM_10/bin}
 TOOLCHAIN="$REPO/toolchain/rt1170-evkb.toolchain.cmake"
 
-usage() { sed -n '5,12p' "$0" | sed 's/^# \{0,1\}//'; }
+# A here-doc, not sed on $0: a line-number range goes stale the moment the header
+# is edited, and it had -- `-h` printed the sidecar example and no option list.
+usage() {
+    cat <<'USAGE'
+Usage: build-bench-configs.sh [-n] [<pattern>]
+  -n         also nm-diff each owned dir's ITCM symbol set and .text.itcm size
+             against the human's build-<name>, where one exists
+  <pattern>  substring of the example path, e.g. acid_box
+USAGE
+}
 
 NMDIFF=0
 PATTERN=""
@@ -66,7 +76,15 @@ WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 : > "$WORK/fails"; n=0; found=0; selected=0
 
 IFS=$NL
-for sidecar in $(find "$REPO/examples" -name bench -not -path '*/build*' | sort); do
+# ★ PRUNE BY DIRECTORY, NOT BY PATH SUBSTRING.  `-not -path '*/build*'` matches the
+# WHOLE path, so a checkout living under any directory whose name starts with
+# "build" -- ~/buildfarm/evkb, ~/builds/evkb -- prunes EVERYTHING, finds no
+# sidecars and prints BENCH-BUILDS: PASS.  Measured 2026-09-11.  That is this
+# tool's own disease (green while measuring nothing) in the tool itself, and no
+# test arm could see it: every arm builds its throwaway tree under a path with no
+# "build" component.  This is the idiom the sibling runner already uses
+# (run-all-qemu-gates.sh) -- prune DIRECTORIES named build*, then print files.
+for sidecar in $(find "$REPO/examples" -type d -name 'build*' -prune -o -type f -name bench -print | sort); do
     IFS=$NL
     dir=$(dirname "$sidecar"); rel=${dir#"$REPO"/}
     found=$((found+1))
@@ -167,6 +185,10 @@ if [ "$NMDIFF" -eq 1 ]; then
         # different example, so a scoped invocation could go red for a
         # configuration it was told not to touch -- measured 2026-09-11.
         case "$rel_o" in *"$PATTERN"*) ;; *) continue ;; esac
+        # NOTE: pairs are discovered by glob, not from the declared set, so a
+        # RENAMED or DELETED bench entry leaves a gitignored build-benchcheck-<old>
+        # that keeps being diffed against a stale build-<old>.  The DIFFERS text
+        # names staleness as a cause; delete the orphan when a name changes.
         human=$(printf '%s' "$owned" | sed 's/build-benchcheck-/build-/')
         [ -d "$human" ] || continue
         a=$(find "$owned" -maxdepth 1 -name '*.elf' | head -1)
@@ -200,10 +222,16 @@ if [ "$NMDIFF" -eq 1 ]; then
         fi
     done
     echo "nm-diff: $pairs pair(s) compared"
-    # ★ Zero pairs is silence, and silence read as success is what this tool is for.
+    # ★ Zero pairs must be SAID, not merely implied -- silence read as success is
+    # what this tool is for.  But it must not FAIL: a machine that has never
+    # benched this example has no hand-made build-<name> to compare against, and
+    # every declared configuration may still have built perfectly.  Making it
+    # fatal made the root `bench_check` target red for everyone but the one bench
+    # machine, which is a guard that gets switched off.  An unreadable pair is a
+    # different claim and is still fatal, above (nm-diff BROKEN).
     if [ "$pairs" -eq 0 ]; then
-        echo "error: -n compared no pairs, so it proved nothing"
-        echo "nm:no-pairs" >> "$WORK/fails"
+        echo "  no hand-made build-<name> found beside any build-benchcheck-*, so -n verified nothing"
+        echo "  (normal on a machine that has never benched these examples)"
     fi
 fi
 

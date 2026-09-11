@@ -289,14 +289,19 @@ check   "broken nm is reported" "nm-diff BROKEN" "$out"
 nocheck "broken nm is not OK"   "nm-diff OK"     "$out"
 rc_is "broken nm exits non-zero" 1
 
-# 17. ★ -n THAT COMPARES NO PAIRS MUST NOT PASS.  Zero pairs is silence, and
-#     silence read as success is the disease this tool treats.
+# 17. ★ -n THAT COMPARES NO PAIRS MUST SAY SO -- silence read as success is the
+#     disease this tool treats -- but must NOT FAIL.  A machine that has never
+#     benched this example has no hand-made build-<name> to compare against, and
+#     every declared configuration may still have built perfectly.  Making it fatal
+#     made the root `bench_check` target red for everyone but one bench machine,
+#     which is a guard that gets switched off.  An UNREADABLE pair is a different
+#     claim and is still fatal -- arm 16.
 root=$(mktree nmnopairs)
 printf 'bt  -DM2_BT_OUT=ON\n' > "$root/examples/display/acid_box/bench"
 run_tool "$root" log17 -n
-check "no pairs is an error" "compared no pairs" "$out"
-check "no pairs counts zero" "nm-diff: 0 pair(s) compared" "$out"
-rc_is "no pairs exits non-zero" 1
+check "no pairs counts zero"     "nm-diff: 0 pair(s) compared" "$out"
+check "no pairs says why"        "verified nothing"            "$out"
+rc_is "no pairs does not fail the run" 0
 
 # 18. ★ -n MUST HONOUR THE PATTERN.  Without it the loop globs every owned dir in
 #     the tree, so a scoped invocation could go red for a configuration it was told
@@ -341,6 +346,35 @@ chmod +x "$WORK/arm/arm-none-eabi-nm"
 run_tool "$root" log19 -n
 check "absolute symbols are filtered" "nm-diff OK: build-benchcheck-bt" "$out"
 rc_is "absolute-symbol filter keeps the run green" 0
+
+# 20. ★ DISCOVERY MUST PRUNE DIRECTORIES, NOT PATH SUBSTRINGS.  `-not -path
+#     '*/build*'` matches the WHOLE path, so a checkout under ~/buildfarm or
+#     ~/builds prunes EVERYTHING, finds no sidecars and prints PASS -- this tool's
+#     own disease, in the tool itself.  Measured 2026-09-11.  No other arm can see
+#     it: they all build their throwaway tree under a path with no "build"
+#     component, so this arm deliberately puts one there.
+root=$(mktree buildfarm)
+printf 'bt  -DM2_BT_OUT=ON\n' > "$root/examples/display/acid_box/bench"
+run_tool "$root" log20
+check "sidecar found under a build* path" "display/acid_box[bt]" "$out"
+check "and is actually counted"           "1 configuration(s)"   "$out"
+# ...while a sidecar inside a build directory is still pruned, which is the point
+# of pruning at all.
+mkdir -p "$root/examples/display/acid_box/build-bt"
+printf 'ghost  -DSHOULD_NOT_BE_SEEN=ON\n' > "$root/examples/display/acid_box/build-bt/bench"
+run_tool "$root" log20b
+nocheck "sidecar inside a build dir is pruned" "ghost" "$out"
+check   "still exactly one configuration"      "1 configuration(s)" "$out"
+
+# 21. ★ A CRLF SIDECAR MUST NOT LEAK A CARRIAGE RETURN INTO THE LAST FLAG.  The
+#     sibling `boards` parser strips it for the same reason.  Without the strip
+#     cmake receives -DM2_BT_OUT=ON\r, which is a different flag.
+root=$(mktree crlf)
+printf 'bt  -DM2_BT_OUT=ON\r\n' > "$root/examples/display/acid_box/bench"
+run_tool "$root" log21
+check   "CRLF sidecar builds"        "display/acid_box[bt]" "$out"
+nocheck "no CR reaches cmake"        "$(printf 'ON\r')"    "$(cat "$WORK/log21")"
+check   "the flag itself is intact"  "-DM2_BT_OUT=ON"       "$(cat "$WORK/log21")"
 
 echo "-------------------------------------------------------------"
 if [ "$fails" -eq 0 ]; then echo "build-bench-configs tests PASS"

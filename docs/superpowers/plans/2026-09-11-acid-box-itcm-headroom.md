@@ -705,14 +705,19 @@ check   "broken nm is reported" "nm-diff BROKEN" "$out"
 nocheck "broken nm is not OK"   "nm-diff OK"     "$out"
 rc_is "broken nm exits non-zero" 1
 
-# 17. ★ -n THAT COMPARES NO PAIRS MUST NOT PASS.  Zero pairs is silence, and
-#     silence read as success is the disease this tool treats.
+# 17. ★ -n THAT COMPARES NO PAIRS MUST SAY SO -- silence read as success is the
+#     disease this tool treats -- but must NOT FAIL.  A machine that has never
+#     benched this example has no hand-made build-<name> to compare against, and
+#     every declared configuration may still have built perfectly.  Making it fatal
+#     made the root `bench_check` target red for everyone but one bench machine,
+#     which is a guard that gets switched off.  An UNREADABLE pair is a different
+#     claim and is still fatal -- arm 16.
 root=$(mktree nmnopairs)
 printf 'bt  -DM2_BT_OUT=ON\n' > "$root/examples/display/acid_box/bench"
 run_tool "$root" log17 -n
-check "no pairs is an error" "compared no pairs" "$out"
-check "no pairs counts zero" "nm-diff: 0 pair(s) compared" "$out"
-rc_is "no pairs exits non-zero" 1
+check "no pairs counts zero"     "nm-diff: 0 pair(s) compared" "$out"
+check "no pairs says why"        "verified nothing"            "$out"
+rc_is "no pairs does not fail the run" 0
 
 # 18. ★ -n MUST HONOUR THE PATTERN.  Without it the loop globs every owned dir in
 #     the tree, so a scoped invocation could go red for a configuration it was told
@@ -758,6 +763,35 @@ run_tool "$root" log19 -n
 check "absolute symbols are filtered" "nm-diff OK: build-benchcheck-bt" "$out"
 rc_is "absolute-symbol filter keeps the run green" 0
 
+# 20. ★ DISCOVERY MUST PRUNE DIRECTORIES, NOT PATH SUBSTRINGS.  `-not -path
+#     '*/build*'` matches the WHOLE path, so a checkout under ~/buildfarm or
+#     ~/builds prunes EVERYTHING, finds no sidecars and prints PASS -- this tool's
+#     own disease, in the tool itself.  Measured 2026-09-11.  No other arm can see
+#     it: they all build their throwaway tree under a path with no "build"
+#     component, so this arm deliberately puts one there.
+root=$(mktree buildfarm)
+printf 'bt  -DM2_BT_OUT=ON\n' > "$root/examples/display/acid_box/bench"
+run_tool "$root" log20
+check "sidecar found under a build* path" "display/acid_box[bt]" "$out"
+check "and is actually counted"           "1 configuration(s)"   "$out"
+# ...while a sidecar inside a build directory is still pruned, which is the point
+# of pruning at all.
+mkdir -p "$root/examples/display/acid_box/build-bt"
+printf 'ghost  -DSHOULD_NOT_BE_SEEN=ON\n' > "$root/examples/display/acid_box/build-bt/bench"
+run_tool "$root" log20b
+nocheck "sidecar inside a build dir is pruned" "ghost" "$out"
+check   "still exactly one configuration"      "1 configuration(s)" "$out"
+
+# 21. ★ A CRLF SIDECAR MUST NOT LEAK A CARRIAGE RETURN INTO THE LAST FLAG.  The
+#     sibling `boards` parser strips it for the same reason.  Without the strip
+#     cmake receives -DM2_BT_OUT=ON\r, which is a different flag.
+root=$(mktree crlf)
+printf 'bt  -DM2_BT_OUT=ON\r\n' > "$root/examples/display/acid_box/bench"
+run_tool "$root" log21
+check   "CRLF sidecar builds"        "display/acid_box[bt]" "$out"
+nocheck "no CR reaches cmake"        "$(printf 'ON\r')"    "$(cat "$WORK/log21")"
+check   "the flag itself is intact"  "-DM2_BT_OUT=ON"       "$(cat "$WORK/log21")"
+
 echo "-------------------------------------------------------------"
 if [ "$fails" -eq 0 ]; then echo "build-bench-configs tests PASS"
 else echo "$fails failure(s)"; exit 1; fi
@@ -796,7 +830,8 @@ Create `tools/build-bench-configs.sh`:
 #
 # ★ THE TOOL BUILDS INTO DIRECTORIES IT OWNS -- build-benchcheck-<name> -- and
 #   never touches a human's bench directory.  build-bench, -pre and -post carry
-#   M2RADIO_IW416_BT_FW pointing at a real 131,840-byte firmware blob; a tool
+#   M2RADIO_IW416_BT_FW pointing at the real firmware image (131,840 bytes,
+#   supplied as a .bin.inc C array); a tool
 #   that reconfigured one from the declared flags alone would silently strip it
 #   and the bench would run the 1 KB synthetic image instead.  That is the
 #   2026-08-27 red inverted (there, a bench-configured dir made its own gate
@@ -823,7 +858,16 @@ CMAKE=${BENCH_CMAKE:-cmake}          # the seam build-bench-configs.test.sh driv
 TOOLBIN=${ARM_TOOLCHAIN_BIN:-/Applications/ARM_10/bin}
 TOOLCHAIN="$REPO/toolchain/rt1170-evkb.toolchain.cmake"
 
-usage() { sed -n '5,12p' "$0" | sed 's/^# \{0,1\}//'; }
+# A here-doc, not sed on $0: a line-number range goes stale the moment the header
+# is edited, and it had -- `-h` printed the sidecar example and no option list.
+usage() {
+    cat <<'USAGE'
+Usage: build-bench-configs.sh [-n] [<pattern>]
+  -n         also nm-diff each owned dir's ITCM symbol set and .text.itcm size
+             against the human's build-<name>, where one exists
+  <pattern>  substring of the example path, e.g. acid_box
+USAGE
+}
 
 NMDIFF=0
 PATTERN=""
@@ -845,7 +889,15 @@ WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
 : > "$WORK/fails"; n=0; found=0; selected=0
 
 IFS=$NL
-for sidecar in $(find "$REPO/examples" -name bench -not -path '*/build*' | sort); do
+# ★ PRUNE BY DIRECTORY, NOT BY PATH SUBSTRING.  `-not -path '*/build*'` matches the
+# WHOLE path, so a checkout living under any directory whose name starts with
+# "build" -- ~/buildfarm/evkb, ~/builds/evkb -- prunes EVERYTHING, finds no
+# sidecars and prints BENCH-BUILDS: PASS.  Measured 2026-09-11.  That is this
+# tool's own disease (green while measuring nothing) in the tool itself, and no
+# test arm could see it: every arm builds its throwaway tree under a path with no
+# "build" component.  This is the idiom the sibling runner already uses
+# (run-all-qemu-gates.sh) -- prune DIRECTORIES named build*, then print files.
+for sidecar in $(find "$REPO/examples" -type d -name 'build*' -prune -o -type f -name bench -print | sort); do
     IFS=$NL
     dir=$(dirname "$sidecar"); rel=${dir#"$REPO"/}
     found=$((found+1))
@@ -946,6 +998,10 @@ if [ "$NMDIFF" -eq 1 ]; then
         # different example, so a scoped invocation could go red for a
         # configuration it was told not to touch -- measured 2026-09-11.
         case "$rel_o" in *"$PATTERN"*) ;; *) continue ;; esac
+        # NOTE: pairs are discovered by glob, not from the declared set, so a
+        # RENAMED or DELETED bench entry leaves a gitignored build-benchcheck-<old>
+        # that keeps being diffed against a stale build-<old>.  The DIFFERS text
+        # names staleness as a cause; delete the orphan when a name changes.
         human=$(printf '%s' "$owned" | sed 's/build-benchcheck-/build-/')
         [ -d "$human" ] || continue
         a=$(find "$owned" -maxdepth 1 -name '*.elf' | head -1)
@@ -979,10 +1035,16 @@ if [ "$NMDIFF" -eq 1 ]; then
         fi
     done
     echo "nm-diff: $pairs pair(s) compared"
-    # ★ Zero pairs is silence, and silence read as success is what this tool is for.
+    # ★ Zero pairs must be SAID, not merely implied -- silence read as success is
+    # what this tool is for.  But it must not FAIL: a machine that has never
+    # benched this example has no hand-made build-<name> to compare against, and
+    # every declared configuration may still have built perfectly.  Making it
+    # fatal made the root `bench_check` target red for everyone but the one bench
+    # machine, which is a guard that gets switched off.  An unreadable pair is a
+    # different claim and is still fatal, above (nm-diff BROKEN).
     if [ "$pairs" -eq 0 ]; then
-        echo "error: -n compared no pairs, so it proved nothing"
-        echo "nm:no-pairs" >> "$WORK/fails"
+        echo "  no hand-made build-<name> found beside any build-benchcheck-*, so -n verified nothing"
+        echo "  (normal on a machine that has never benched these examples)"
     fi
 fi
 
@@ -1003,7 +1065,7 @@ Expected: `build-bench-configs tests PASS`.
 
 - [ ] **Step 4b: Mutation-test the suite — a test never shown to fail is decoration**
 
-Green proves the tool passes its tests; it does not prove the tests *can* fail. Ten mutations, one per
+Green proves the tool passes its tests; it does not prove the tests *can* fail. Eleven mutations, one per
 guarantee the tool makes. Run them with the harness below rather than by hand: **it asserts each anchor is
 present**, so a recipe that has gone stale fails loudly instead of silently mutating nothing.
 
@@ -1014,6 +1076,13 @@ python3 - <<'EOF'
 import subprocess, os
 orig = open('/tmp/tool.orig').read()
 MUTANTS = [
+ ("prune by path substring again",
+    """find "$REPO/examples" -type d -name 'build*' -prune -o -type f -name bench -print""",
+    """find "$REPO/examples" -name bench -not -path '*/build*'"""),
+ ("zero pairs fatal again",
+    '''        echo "  no hand-made build-<name> found beside any build-benchcheck-*, so -n verified nothing"''',
+    '''        echo "nm:no-pairs" >> "$WORK/fails"'''),
+ ("drop the CRLF strip",              "| tr -d '\\r' ", ""),
  ("drop the pre-configure wipe",      '        rm -rf "$bdir"\n', ''),
  ("drop -S",                          '"$CMAKE" -S "$dir" -B "$bdir"', '"$CMAKE" -B "$bdir"'),
  ("parser back to ${line%% *}",
@@ -1053,8 +1122,16 @@ raise SystemExit(1 if bad else 0)
 EOF
 ```
 
-Expected: **`RED` on all ten**, then `RESTORED: build-bench-configs tests PASS`. A `!! STAYED GREEN !!` line
+Expected: **`RED` on all eleven**, then `RESTORED: build-bench-configs tests PASS`. A `!! STAYED GREEN !!` line
 means that guarantee has no working test — stop and report it.
+
+★★ **Three more guarantees were added after a second review round, and two of the three were invisible to
+every arm that existed.** `-not -path '*/build*'` matches the WHOLE path, so a checkout under `~/buildfarm`
+or `~/builds` pruned everything, found no sidecars and printed PASS — the tool's own disease, in the tool;
+no arm could see it because every arm builds its throwaway tree under a path with no `build` component, so
+arm 20 deliberately puts one there. And `-n` treating zero pairs as FATAL made the root `bench_check` target
+red on every machine without hand-made bench directories, which is a guard that gets switched off; zero
+pairs is now a loud notice that names the reason, while an *unreadable* pair stays fatal.
 
 ★★ **Two of these arms were vacuous when first written, and only a mutation run found either.** The `.elf`
 recipe went stale when the check moved into a nested `if` — `str.replace` matched nothing, changed nothing,
