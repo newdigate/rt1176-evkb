@@ -325,6 +325,20 @@ walking out of range, where `gapmax_ms=154`, two gaps pass 120 ms, and `l2fragdr
 dropped ACL fragments anywhere in this transcript (RUNs 1-8 read 0 across 605 sampled heartbeats).
 A lifetime counter read across a deliberate RF failure is not comparable to one read stationary.
 
+**A defect the bench surfaced, in the feature itself.**  The LED keeps blinking after the phone has
+connected and stops only when the music starts.  That is the specified behaviour -- the window closes
+`PAIRED` at the `CONNECTING` -> `STREAMING` transition -- but the specification is wrong, and 4 already
+half-admits it: `wantDiscoverable` is gated on `listening = (m_state == LISTENING && !linkUp)`, which
+goes false at link-up, so for the whole of pairing, encryption and AVDTP negotiation **the window is
+open while the sink is NOT discoverable**, and 5's LED follows `pairingOpen()` directly.  It is the same
+confusion the first Task 1 review found in the `MANUAL` case and fixed in `disconnect()`; this instance
+survived review because 4 says "closes on STREAMING" and the measured `CONNECTING: open=1 canPair=0
+link=LINK_UP` was accepted as by-design.  **`pairingOpen()` is not a discoverability predicate and must
+stop being used as one.**  The candidate fix is to close the window when the LINK comes up rather than
+when media starts -- `PAIR_END_PAIRED` at encryption is the truer reading of "paired" -- not to gate the
+LED, which hides the symptom and leaves the invariant false.  Filed as a follow-up rather than fixed
+here, because it changes a library edge the gate asserts.
+
 **Two things the bench gave that no gate could.**  The destructive command was mistyped twice in a
 row by a real human (`cmd=? "forgeet"`, `cmd=? "gorgeet"`) and the exact-match parser refused both,
 one second before the `forget` that landed.  And `paired_by` was measured at FOUR of its five values

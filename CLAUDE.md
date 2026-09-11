@@ -771,6 +771,21 @@ after its re-page, so the post-`forget` MEDIA path is NOT covered (the sink is s
 re-usable) and the second window never closes as `paired`; and a `PAIR_DROP` window opening while a
 commanded one is already open changes the reason with NO print, because the edge detector fires only on a
 rising edge — the heartbeat's `pairing=` field is the only place it shows.
+★★ **`pairingOpen()` IS NOT "DISCOVERABLE", AND THE LED TREATS IT AS IF IT WERE — one root cause, two
+symptoms, one of them still live.** The window closes `PAIRED` at the `CONNECTING`→`STREAMING`
+transition, i.e. at AVDTP START, while `wantDiscoverable` is gated on
+`listening = (m_state == LISTENING && !linkUp)`, which goes false the moment the link comes up. So
+through pairing, encryption and the whole AVDTP negotiation the window is open and the sink is NOT
+discoverable — and `pairingIndicator()` lights the LED straight off `pairingOpen()`. **Observed on the
+bench (RUN 9): the LED keeps blinking after the phone has connected and stops only when the music
+starts.** It is the SAME confusion the first Task 1 review found in the `MANUAL` case (a window riding on
+with the scans off, `enterPairing()` refused, the LED still blinking), where the fix was to close the
+window in `disconnect()`; this second instance survived because the spec says "closes on STREAMING" and
+the review accepted it as by-design after measuring `CONNECTING: open=1 canPair=0 link=LINK_UP`. The
+honest indicator is not `pairingOpen()` but whatever drives `wantDiscoverable`. **Filed as a follow-up**;
+the candidate fix is to close the window when the LINK comes up rather than when media starts —
+`PAIR_END_PAIRED` at encryption is the truer reading of "paired" anyway — rather than gating the LED,
+which would hide the symptom and leave the library's own invariant false.
 
 ✅ **Measured 2026-09-10: 139 gates discovered, 138 passed, 1 failed, 0 SKIP** (`-l` reports 139), on the
 **NEW-42 sink jitter-absorption** close-out. `LICENSE-AUDIT: PASS`; vacuity **46/46**; host suites 113 /
