@@ -693,27 +693,37 @@ guarantees Simple Pairing is on. Console commands `pair` / `forget` / `status` a
 `serialEvent1()` override (the core's `yield()` dispatches it; `loop()` yields every pass), the
 `LED_BUILTIN` blinks at 1 Hz while a window is open, and `tools/rt1170-console.py` grew a stdin→port thread
 so a human can type at the bench. M2Radio `b90d52b` pinned.
-★ **THE BENCH MET EVERY CRITERION BUT ONE, AND THE ONE IT MISSED IS THE ISSUE'S OWN PREMISE.**
-`transcript_hw_evkb.txt` RUN 9 (iPhone, 2026-09-11): boot window, honest 2-min timeout, `pair`, the drop
-window on a real range loss with PREPARE re-issued, and `forget` rescuing a phone that had already
-forgotten the sink — **Just Works, no passcode, no SW4**, which is the whole feature. **But NEW-43 DID NOT
-REPRODUCE**, deliberately attempted in both link-key directions: with the board wiped and the phone holding
-a stale key the phone terminates at once (`reason=0x13`) and the legacy-PIN ladder then runs on a DEAD
-handle (`auth_complete: status=0x02 handle=0x0000`), never issuing the SSP-off write; with the board
-holding the bond and the phone having forgotten, iOS sends **no `link_key_req` at all** — straight to
-IO-cap/SSP, `bond=updated` — so there is no mismatch to fail on. Ten `ssp_mode` writes in the run, every
-one `mode=1`; the user confirms no passcode prompt at any stage. **So NEW-43's trigger is not a link-key
-asymmetry with this iPhone, and what produced the RUN 4 prompt is unexplained.** The window is still the
-right mitigation — it re-issues PREPARE unconditionally, so a poisoned controller would be cleared
-whether or not we can provoke one — but the heal was NOT demonstrated against a real fault, and the issue
-says so rather than claiming a fix.
+★ **THE BENCH MET EVERY CRITERION BUT ONE — AND WHAT THE MISS ACTUALLY MEANS TOOK A SECOND LOOK AT THE
+SOURCE.** `transcript_hw_evkb.txt` RUN 9 (iPhone, 2026-09-11): boot window, the drop window on a real
+range loss with PREPARE re-issued, an honest 2-min timeout, `pair`, and `forget` rescuing a phone that had
+already forgotten the sink — **Just Works, no passcode, no SW4**, which is the whole feature.
+★ **NEW-43's FAULT was never OBSERVED, and it was very probably PROVOKED — TWICE — and healed.** The
+attempt ran twice (board wiped, phone holding a stale key). Both times the phone tore the ACL down at
+once (`reason=0x13`), the ladder ran on a dead handle (`auth_complete: status=0x02 handle=0x0000`), and
+**`pairing(pin)=incomplete` printed** — and THAT line is reachable only downstream of
+`BtLink.cpp:437-442`, the legacy-PIN rung, which issues `Write_Simple_Pairing_Mode=0` and **does not log
+it** (only PREPARE logs, `:216/:221`). That command is CONTROLLER-GLOBAL, so a dead ACL handle does not
+prevent it, and the code's own comment says its result is ignored. So the poisoning write was issued
+twice; each time the window's PREPARE then wrote `mode=1` (visible), and the NEXT pairing was Just Works
+SSP (visible) — which cannot happen with SSP off. **The absence of a passcode prompt is the mitigation
+WORKING, not evidence the fault did not occur.**
+★ **My first reading of this run said the opposite** — "the SSP-off write was never issued", inferred from
+ten `ssp_mode` lines all reading `mode=1`. That inference was wrong because the poisoning write has no log
+line at all; a grep over a log can only ever see the writes somebody chose to print. **The missing
+instrument is one line at `BtLink.cpp:441`** (or a `Read_Simple_Pairing_Mode` readback), and with it the
+next bench settles in one attempt what this one cannot. What remains genuinely unknown is whether the
+controller LATCHED mode 0 — and separately, the other asymmetry (board keyed, phone forgot) cannot
+provoke anything at all: iOS sends **no `link_key_req`**, going straight to IO-cap/SSP with
+`bond=updated`, so there is no mismatch to fail on.
 ★ **The counters looked like a NEW-42 regression and were the WALK.** The run ends `under=78 over=36`
-against NEW-42's accepted `over=0`. A 6.5-minute STATIONARY control inside the same run settles it:
-`over` +0, `overev` +0, `reprimes` +0, `seqgaps` +0, `under` +5 (**0.77/min**, against RUN 8's 0.69), and
-`under` equal to `dryTotal` again — every one of those 36 overruns was accumulated while walking out of
-range, where `gapmax_ms=154` and two gaps over 120 ms say the air link was already shedding packets.
-**A lifetime counter read across a deliberate RF failure is not comparable to one read stationary**; the
-control has to be inside the same run.
+against NEW-42's accepted `over=0`. A **7.45-minute** STATIONARY control inside the same run (447
+heartbeats, +19,180 packets) settles it: `over` +0, `overev` +0, `reprimes` +0, `seqgaps` +0, `under` +5
+(**0.67/min**, against RUN 8's 0.69), `under` equal to `dryTotal` again, and the gap buckets summing to
+the packet delta exactly — every one of those 36 overruns was accumulated while walking out of range,
+where `gapmax_ms=154`, two gaps pass 120 ms, and `l2fragdrop=4` (the ONLY dropped ACL fragments in the
+whole transcript — RUNs 1–8 read 0 across 605 sampled heartbeats). **A lifetime counter read across a
+deliberate RF failure is not comparable to one read stationary**; the control has to be inside the same
+run.
 ★ **`BT_SINK_LED_ON=HIGH` is MEASURED, not guessed.** The RevC3 header audit names GPIO_AD_04 but not its
 active level, and the only "active low" note in the core is the 1060's D8 — a different board. It shipped
 as a default plus a cache variable, and a person watching it blink through a boot window is the only
@@ -748,12 +758,14 @@ was correct only by ACCIDENT of `setup()`'s ordering — move `session.begin()` 
 an unread table, where `BondTable::clear()` dirties unconditionally, so the empty image overwrites real
 persisted bonds and `bonds_boot=0` reads perfectly normal (fixed: an explicit `s_bondsLoaded`).
 ★ **The exact-match parser earned itself on a human.** RUN 9 contains `cmd=? "forgeet"` and
-`cmd=? "gorgeet"` — the destructive command mistyped twice at the bench, refused both times. No gate could
-have shown that.
-★ `paired_by` has FIVE values (`BtLink.h:101`: `none|ssp|pin|stored|peer`) and RUN 9 measured two — `ssp`
-where the sink drives the exchange to completion, `peer` where encryption arrives without the sink having
-offered a key. A correction made mid-session asserting `peer` was never printed was WRONG and is withdrawn
-in place; the header said so in a comment that went unread.
+`cmd=? "gorgeet"` — the destructive command mistyped twice in a row at the bench, refused both times, one
+second before the `forget` that landed. No gate could have shown that.
+★ `paired_by` has FIVE values (`BtLink.h:101`: `none|ssp|pin|stored|peer`) and RUN 9 measured **four** —
+`stored` (the boot link), `ssp` (three links, where the sink drives the exchange to completion), `peer`
+(where encryption arrives without the sink having offered a key) and `none` (the two failed attempts).
+Only `pin` never appears, which is itself the NEW-43 evidence: the ladder reached the PIN rung but no
+pairing ever COMPLETED by PIN. A correction made mid-session asserting `peer` was never printed was WRONG
+and is withdrawn in place; the header said so in a comment that went unread.
 ★ Known gaps, named rather than left to be discovered: the gate's peer sends only `Encryption_Change`
 after its re-page, so the post-`forget` MEDIA path is NOT covered (the sink is shown re-pairable, not
 re-usable) and the second window never closes as `paired`; and a `PAIR_DROP` window opening while a
@@ -826,9 +838,9 @@ close-out. **Check the symbol size, not the source.**
 ★ Three issues were opened from findings made in passing, none of them NEW-42 defects: **NEW-43** (one
 failed SSP disables Simple Pairing for the whole session — `BtLink`'s legacy-PIN fallback writes
 `Write_Simple_Pairing_Mode=0` and only PREPARE re-enables it, so an iPhone gets a passcode prompt from a
-speaker until the board is rebooted — ★ **that MECHANISM is read from the code and the TRIGGER is
-UNREPRODUCED**: NEW-46's bench tried to provoke it deliberately in BOTH link-key directions and could
-not, ten `ssp_mode` writes in the run and every one `mode=1`; see the NEW-46 entry), **NEW-44** (`Avrcp` re-applies `SetAbsoluteVolume` on every TX-queue
+speaker until the board is rebooted — ★ **the fault has never been OBSERVED directly, because that write
+has no log line**: NEW-46's bench drove the legacy-PIN rung twice and the window healed it both times
+before a prompt could appear. One line at `BtLink.cpp:441` would settle it; see the NEW-46 entry), **NEW-44** (`Avrcp` re-applies `SetAbsoluteVolume` on every TX-queue
 retry), **NEW-45** (acid_box's `M2_BT_OUT` bench build overflows ITCM by 140 B — pre-existing, proven
 against the old pin, no gate affected).
 

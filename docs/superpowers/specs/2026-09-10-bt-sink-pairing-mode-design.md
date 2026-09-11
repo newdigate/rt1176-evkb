@@ -294,30 +294,41 @@ NEW-41's bench hit twice, where the only way back was a reflash with `M2_BT_FORG
 through both a boot and a drop window -- QEMU cannot see an LED, so a person watching is the only
 instrument.
 
-**NOT MET -- and it is this spec's own premise.**  **NEW-43 did not reproduce**, attempted
-deliberately in both link-key directions.  Board wiped / phone holding a stale key: the phone
-terminates at once (`reason=0x13`) and the legacy-PIN ladder then runs against a DEAD handle
-(`auth_complete: status=0x02 handle=0x0000`, `pairing(pin)=incomplete`), so the SSP-off write is
-never issued.  Board holding the bond / phone having forgotten: iOS sends **no `link_key_req` at
-all**, going straight to IO-cap/SSP with `bond=updated`, so there is no mismatch to fail on.  Ten
-`ssp_mode` writes across the run, **every one `mode=1`**; no passcode prompt at any stage.
-So the mechanism in SS2 is read from the code and its TRIGGER is unconfirmed: whatever produced the
-RUN 4 prompt is unexplained.  The window remains the right mitigation -- it re-issues PREPARE
-unconditionally, so a poisoned controller is cleared whether or not the fault can be provoked -- but
-**the heal has not been demonstrated against a real fault, and this spec does not claim it has.**
+**NOT MET as written -- and what the miss MEANS needed the source, not the log.**  The NEW-43 attempt
+ran TWICE (board wiped, phone holding a stale key).  Both times the phone tore the ACL down at once
+(`reason=0x13`), the ladder ran against a DEAD handle (`auth_complete: status=0x02 handle=0x0000`)
+and **`pairing(pin)=incomplete` printed**.  That line is reachable ONLY downstream of
+`BtLink.cpp:437-442`, the legacy-PIN rung -- which issues `Write_Simple_Pairing_Mode=0` and **does
+not log it** (only PREPARE logs, `:216/:221`), which is controller-GLOBAL so a dead handle does not
+prevent it, and whose result the code's own comment says is ignored.  So the poisoning write was
+issued twice; each time the window's PREPARE then wrote `mode=1` (visible) and the NEXT pairing was
+Just Works SSP (visible), which cannot happen with SSP off.  **The absence of a passcode prompt is
+the mitigation WORKING, not evidence the fault did not occur** -- and of the five `paired_by` values
+the one that never appears is `pin`, i.e. the ladder reached the PIN rung but no pairing ever
+COMPLETED by PIN.
+
+**This spec's first reading of the same run said the opposite** -- "the SSP-off write is never
+issued", inferred from ten `ssp_mode` lines all reading `mode=1`.  Wrong, and wrong in an
+instructive way: a grep over a log can only see the writes somebody chose to PRINT.  What stays
+genuinely undetermined is whether the controller LATCHED mode 0; **the missing instrument is one
+line at `BtLink.cpp:441`** (or a `Read_Simple_Pairing_Mode` readback), and with it the next bench
+settles in one attempt what this one could not.  The other asymmetry (board keyed, phone forgot)
+cannot provoke anything at all: iOS sends **no `link_key_req`**, going straight to IO-cap/SSP with
+`bond=updated`.
 
 **A control that had to be inside the same run.**  The run ends `under=78 over=36` against NEW-42's
-accepted `over=0`, which reads as a regression.  A 6.5-minute STATIONARY stretch inside the same run
-(387 heartbeats, 16,624 packets) reads `over` +0, `overev` +0, `reprimes` +0, `seqgaps` +0, `under`
-+5 (**0.77/min**, against RUN 8's 0.69) with `under` equal to `dryTotal` again.  Every one of those
-36 overruns was accumulated walking out of range, where `gapmax_ms=154` and two gaps past 120 ms say
-the air link was already shedding packets.  A lifetime counter read across a deliberate RF failure
-is not comparable to one read stationary.
+accepted `over=0`, which reads as a regression.  A **7.45-minute** STATIONARY stretch inside the
+same run (447 heartbeats, +19,180 packets) reads `over` +0, `overev` +0, `reprimes` +0, `seqgaps`
++0, `under` +5 (**0.67/min**, against RUN 8's 0.69), `under` equal to `dryTotal` again, and the five
+gap buckets summing to the packet delta exactly.  Every one of those 36 overruns was accumulated
+walking out of range, where `gapmax_ms=154`, two gaps pass 120 ms, and `l2fragdrop=4` -- the only
+dropped ACL fragments anywhere in this transcript (RUNs 1-8 read 0 across 605 sampled heartbeats).
+A lifetime counter read across a deliberate RF failure is not comparable to one read stationary.
 
-**Two things the bench gave that no gate could.**  The destructive command was mistyped twice by a
-real human (`cmd=? "forgeet"`, `cmd=? "gorgeet"`) and the exact-match parser refused both.  And
-`paired_by` was measured at two of its five values (`BtLink.h:101`) -- `ssp` where the sink drives
-the exchange, `peer` where encryption arrives without the sink having offered a key.
+**Two things the bench gave that no gate could.**  The destructive command was mistyped twice in a
+row by a real human (`cmd=? "forgeet"`, `cmd=? "gorgeet"`) and the exact-match parser refused both,
+one second before the `forget` that landed.  And `paired_by` was measured at FOUR of its five values
+(`BtLink.h:101`) -- `stored`, `ssp`, `peer` and `none`; only `pin` never appears.
 
 ## 8. Considered and deferred
 
