@@ -720,8 +720,8 @@ Create `examples/display/acid_box/bench`:
 #   so they are historical A/B directories from NEW-36, not configurations.
 #
 # <name>    <cmake flags>
-bt          -DM2_BT_OUT=ON
-loopstat    -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON
+bt      -DM2_BT_OUT=ON
+bench   -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON
 ```
 
 - [ ] **Step 6: Run the tool for real, and prove the proxy**
