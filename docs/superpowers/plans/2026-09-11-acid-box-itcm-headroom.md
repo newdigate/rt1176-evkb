@@ -547,8 +547,21 @@ root=$(mktree noelf)
 printf 'ghost  -DMAKENOTHING=ON\n' > "$root/examples/display/acid_box/bench"
 run_tool "$root" log9
 check "no .elf is a failure"        "BENCH-BUILDS: FAIL"    "$out"
-check "no .elf says why"            "no .elf produced"      "$out"
+check "no .elf says why"            "cmake exited 0 but produced no .elf" "$out"
 [ "$rc" -eq 1 ] || { echo "FAIL: exit status 0 when nothing was built"; fails=$((fails+1)); }
+
+# 10. ★ A STALE OWNED DIRECTORY MUST BE WIPED BEFORE CONFIGURING.  A CMake cache retains every -D ever
+#     passed to it, so a flag removed from a `bench` line would stay in effect forever and the tool would
+#     measure a configuration nobody declared.  Measured on the real tree 2026-09-11: a one-off
+#     -DACIDBOX_ITCM_MIN_HEADROOM=65536 survived into later runs and kept the build red on a clean tree.
+root=$(mktree stale)
+printf 'bt  -DM2_BT_OUT=ON\n' > "$root/examples/display/acid_box/bench"
+mkdir -p "$root/examples/display/acid_box/build-benchcheck-bt"
+: > "$root/examples/display/acid_box/build-benchcheck-bt/STALE-CACHE-MARKER"
+run_tool "$root" log10
+[ -e "$root/examples/display/acid_box/build-benchcheck-bt/STALE-CACHE-MARKER" ] \
+  && { echo "FAIL: stale owned dir was NOT wiped before configure"; fails=$((fails+1)); }
+check "still builds after the wipe" "BENCH-BUILDS: PASS" "$out"
 
 [ "$fails" -eq 0 ] && echo "build-bench-configs tests PASS" || { echo "$fails failure(s)"; exit 1; }
 ```
@@ -629,23 +642,36 @@ for sidecar in $(find "$REPO/examples" -name bench -not -path '*/build*' | sort)
         n=$((n+1))
         bdir="$dir/build-benchcheck-$name"
         printf '%-44s ' "$rel[$name]"
-        # ★ -S IS LOAD-BEARING.  Without it cmake takes the source directory from the CWD, and since
-        # 912c8d1 added a root CMakeLists.txt -- project(rt1170_evkb_root NONE), whose `all` target is
-        # empty -- a run from the repo root CONFIGURES THE ROOT PROJECT into this example's build dir,
-        # builds nothing, exits 0 and reports OK.  Measured 2026-09-11: the owned dirs came back holding
-        # a CMAKE_PROJECT_NAME of rt1170_evkb_root and not one .elf, and the tool said BENCH-BUILDS: PASS.
-        # Before 912c8d1 the same omission was LOUD (no root CMakeLists -> cmake errors), which is why it
-        # survived review: the failure mode is newer than the idiom.
+        # ★★ ALWAYS CONFIGURE FROM SCRATCH.  A CMake cache RETAINS every -D ever passed to it, so a flag
+        # REMOVED from a `bench` line stays in effect in this directory forever and the tool would then be
+        # measuring a configuration nobody declared -- which is the one thing it exists to rule out.  Same
+        # trap CLAUDE.md already records: "editing a set(... CACHE ...) DEFAULT does not change an existing
+        # build directory ... Check the symbol size, not the source."  Measured 2026-09-11: a one-off
+        # -DACIDBOX_ITCM_MIN_HEADROOM=65536, passed once to demonstrate the headroom assert going red,
+        # survived in the cache and kept the build FAILED on an otherwise unmodified tree.
+        # The directory is tool-owned, so wiping it costs nothing but time, and a full build every run is
+        # the honest price of the question this tool asks.
+        rm -rf "$bdir"
         if "$CMAKE" -S "$dir" -B "$bdir" -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" $flags > "$WORK/out" 2>&1 \
-           && "$CMAKE" --build "$bdir" >> "$WORK/out" 2>&1 \
-           && [ -n "$(find "$bdir" -maxdepth 1 -name '*.elf' -print -quit)" ]; then
-            echo OK
+           && "$CMAKE" --build "$bdir" >> "$WORK/out" 2>&1; then
+            # ★ -S IS LOAD-BEARING (above), and so is this .elf check: "cmake exited 0" and "a firmware
+            # image exists" are different claims, and this tool exists because a build that silently does
+            # nothing reads as green.
+            if [ -n "$(find "$bdir" -maxdepth 1 -name '*.elf' -print -quit)" ]; then
+                echo OK
+            else
+                echo FAILED
+                echo "    cmake exited 0 but produced no .elf -- the build claimed success and made nothing"
+                echo "$rel[$name]" >> "$WORK/fails"
+            fi
         else
             echo FAILED
-            if [ -z "$(find "$bdir" -maxdepth 1 -name '*.elf' -print -quit)" ]; then
-                echo "    no .elf produced -- the build claimed success and made nothing"
-            fi
-            sed -n '$p' "$WORK/out" | sed 's/^/    /'
+            # Show the lines that NAME the fault, not the last line.  make's generic "Error 2" sits nine
+            # lines below ld's actual diagnosis, so an operator shown only the tail has to go digging for
+            # the one line that says what broke -- measured on the headroom-assert RED demo.
+            _why=$(grep -E 'ld:|error:' "$WORK/out" | head -3)
+            [ -n "$_why" ] || _why=$(tail -3 "$WORK/out")
+            printf '%s\n' "$_why" | sed 's/^/    /'
             echo "$rel[$name]" >> "$WORK/fails"
         fi
     done <<EOF
@@ -769,6 +795,24 @@ open('tools/build-bench-configs.sh','w').write(s)"
 Expected: `FAIL: no .elf is a failure`, `FAIL: no .elf says why`, `FAIL: exit status 0 when nothing was
 built`, `3 failure(s)`, `exit=1`. Then restore `/tmp/tool.orig` and confirm the suite passes.
 
+```bash
+# Mutant 5 -- drop the pre-configure wipe.  A CMake cache retains every -D ever passed, so a flag removed
+# from a `bench` line stays in effect in the owned dir forever and the tool measures a configuration nobody
+# declared.
+python3 -c "
+s=open('/tmp/tool.orig').read(); s=s.replace('        rm -rf \"\$bdir\"\n','',1)
+open('tools/build-bench-configs.sh','w').write(s)"
+./tools/build-bench-configs.test.sh; echo "exit=$?"
+```
+
+Expected: `FAIL: stale owned dir was NOT wiped before configure`, `1 failure(s)`, `exit=1`. Restore after.
+
+★ **One fix in this task is deliberately NOT covered by a mutant, and that is recorded rather than papered
+over**: printing the `ld:`/`error:` lines instead of make's generic last line. The fake cmake emits a single
+line, so the suite cannot tell the two apart — it is a bench-ergonomics fix whose only evidence is Step 7 on
+the real tree, where the `NEW-45: ITCM headroom below 65536` line must appear under the FAILED row. A test
+that cannot fail would be worse than saying so.
+
 ★★ **Mutants 3 and 4 exist because the first version of this tool shipped with exactly that bug and the
 first version of this suite could not see it** — every arm inspected `-B` and `-D` only, so a tool that
 configured the wrong project entirely passed all seven. Found 2026-09-11 by the implementer running Step 6
@@ -844,8 +888,20 @@ sed -i.bak 's/^bt      -DM2_BT_OUT=ON$/bt      -DM2_BT_OUT=ON -DACIDBOX_ITCM_MIN
 mv examples/display/acid_box/bench.bak examples/display/acid_box/bench
 ```
 
-Expected: `examples/display/acid_box[bt]  FAILED`, the `NEW-45: ITCM headroom below 65536` line echoed
-beneath it, `BENCH-BUILDS: FAIL`, and `exit=1`.
+Expected: `examples/display/acid_box[bt]  FAILED`, **the `ld: NEW-45: ITCM headroom below 65536` line echoed
+directly beneath it** (not make's generic `Error 2` — that is the point of the diagnosis-line fix, and this
+step is its only evidence), `BENCH-BUILDS: FAIL`, and `exit=1`.
+
+★ **This demonstration used to poison the owned directory.** `-DACIDBOX_ITCM_MIN_HEADROOM=65536` was written
+into `build-benchcheck-bt`'s cache and survived every later run, keeping the build FAILED on an otherwise
+clean tree — measured 2026-09-11. The tool now wipes each owned directory before configuring, so a re-run
+after restoring the sidecar must come back `BENCH-BUILDS: PASS` **with no manual cleanup**. Verify that:
+
+```bash
+./tools/build-bench-configs.sh acid_box; echo "exit=$?"
+```
+
+Expected: both configurations `OK`, `BENCH-BUILDS: PASS`, `exit=0`.
 
 - [ ] **Step 8: Keep the owned directories out of git**
 
@@ -877,8 +933,9 @@ silently strip it.  A test asserts the tool never names one.  -n nm-diffs the
 owned dir against the human's to prove the ITCM footprint is equivalent rather
 than assuming it (the blob lands in .progmem, not ITCM).
 
-Seven negative arms via a fake cmake (BENCH_CMAKE, the qrun REAL_QEMU idiom),
-plus a real RED demonstrated against the tree with the headroom assert forced.
+Nine negative arms via a fake cmake (BENCH_CMAKE, the qrun REAL_QEMU idiom),
+five of them mutation-tested, plus a real RED demonstrated against the tree with
+the headroom assert forced.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
