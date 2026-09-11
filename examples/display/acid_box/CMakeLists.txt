@@ -172,9 +172,14 @@ if(M2_BT_OUT)
     # configure time from the current core
     # script, so it never drifts; scoped to this M2_BT_OUT build -- no core change,
     # no effect on any other example that links M2Radio.
-    # NB: the appended rule also captures *(.fastrun) from libM2Radio -- today M2Radio
-    # marks nothing FASTRUN, so this is inert; if a latency-sensitive M2Radio routine is
-    # ever marked FASTRUN for ITCM residency, drop `.fastrun` here so it is not sent to flash.
+    # TWO RULES FOR EVERY ROUTING LINE BELOW (NEW-45, spec 2026-09-11-acid-box-itcm-headroom-design.md §5):
+    #  1. Route a WHOLE ARCHIVE with EXCLUDE_FILE for named hot exceptions -- never an inclusion list of
+    #     objects.  An exclusion rule makes a newly added library file default to FLASH; an inclusion list
+    #     makes it default to ITCM, which is exactly how Avrcp.cpp overflowed ITCM for a day on 2026-09-07.
+    #  2. Do NOT capture `.fastrun` in a new rule, so FASTRUN keeps meaning "ITCM" and a library can pin one
+    #     hot function back without a linker-script change.  The libM2Radio line below predates this rule and
+    #     still captures .fastrun; it is inert only because M2Radio marks nothing FASTRUN.  If a
+    #     latency-sensitive M2Radio routine is ever marked FASTRUN, drop `.fastrun` from that line.
     get_target_property(_acidbt_lf acid_box.elf LINK_FLAGS)
     string(REGEX MATCH "-T([^ ]*imxrt1176[.]ld)" _acidbt_ignore "${_acidbt_lf}")
     set(_acidbt_coreld "${CMAKE_MATCH_1}")
@@ -188,7 +193,16 @@ if(M2_BT_OUT)
 		   Avrcp.cpp (added to the library 2026-09-07) was missing from it: the M2_BT_OUT bench builds overflowed
 		   ITCM by 316-652 B for a day before anyone rebuilt them.  A wildcard cannot drift when the library grows;
 		   the acceptance for the swap was an IDENTICAL ITCM symbol set and .text.itcm size in all four bench builds. */
-		*libM2Radio*.a:(EXCLUDE_FILE(*Sbc.cpp.obj) .text* EXCLUDE_FILE(*Sbc.cpp.obj) .fastrun)"
+		*libM2Radio*.a:(EXCLUDE_FILE(*Sbc.cpp.obj) .text* EXCLUDE_FILE(*Sbc.cpp.obj) .fastrun)
+		/* NEW-45 phase 0.  libVGLite is the largest non-LVGL ITCM consumer (9984 B, of which vg_lite.c is
+		   5640) and is coarse-grained BY CONSTRUCTION: on this build the GC355 does the pixels and VGLite is
+		   called per DRAW CALL -- the same shape as the SdpServer/L2cap service chain, which measured
+		   0.46 us/iter from flash after NEW-36 enabled the I-cache.  Note vg_lite_hal.c/vg_lite_os.c carry
+		   the GPU2D handler (attached at vg_lite_hal.c:248), so this puts an ISR in flash: the claim that
+		   this is a first-use miss, not a steady-state penalty, is PROVISIONAL -- unmeasured until the
+		   silicon arm runs -- and is the reason the bench watches ACIDBOX_VSYNC and max_us, not only fps.
+		   No `.fastrun` here, per rule 2 above. */
+		*libVGLite*.a:(.text*)"
                        _acidbt_ld "${_acidbt_ld}")
         file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/acid_box_bt.ld" "${_acidbt_ld}")
         string(REPLACE "${_acidbt_coreld}"
