@@ -287,11 +287,25 @@ that adds the routing lines — add a second replacement anchored on the script'
 ```
 
 ★ **The expression is `SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx)`, not `.text.itcm` alone** — corrected
-2026-09-11 after Task 2's implementer measured it. The ITCM region carries BOTH sections: `.text.itcm` is
-252,336 B and `.ARM.exidx` another 8 B at 252,340, which is why `--print-memory-usage` reports 252,348 B for
-the region. Asserting on `.text.itcm` alone guards a margin 12 B larger than the real one. The script's own
-`_itcm_block_count = (SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) + 0x7FFF) >> 15` a few lines below is the
-precedent: this file already knows the region is both sections, and the assert must agree with it.
+2026-09-11 after Task 2's implementer measured it. The ITCM region carries BOTH sections, and there is a
+**4-byte alignment gap between them**: `.text.itcm` is 252,336 B at VMA 0 so it ends at 252,336, while
+`.ARM.exidx` is 8 B at VMA 252,340. The region's true top is therefore **252,348**, which is what
+`--print-memory-usage` reports.
+
+★★ **So the assert is NOT exact, and must not be described as if it were.** The summed expression evaluates
+to 252,344 — it does not see the padding, and is **4 B optimistic**. A `.text.itcm`-only assert would have
+been 12 B optimistic; this is 4, and 4 B cannot decide anything against a 2,048 B floor. The exact form is
+`ADDR(.ARM.exidx) + SIZEOF(.ARM.exidx) - ORIGIN(ITCM)`, and it is **declined deliberately**: the same linker
+script already measures the region as `SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx)` in `_itcm_block_count`,
+**eighteen lines ABOVE** this assert (line 146 against 165 in the generated `acid_box_bt.ld`). One
+convention that is 4 B loose beats two that disagree. Record the slack; do not hide it.
+
+★ **`string(REPLACE)` is a silent no-op when its anchor does not match**, and this anchor is a line of the
+*core* `imxrt1176.ld` — a different repository. Reword it upstream and the guard quietly stops being
+injected while every build keeps passing unguarded: the exact failure class this feature exists to close,
+relocated one level up. So the injection is checked with `string(FIND)` + `message(FATAL_ERROR)`, and the
+check is demonstrated RED by breaking the anchor. The *routing* `string(REPLACE)` needs no such check —
+if its anchor fails, every routing rule vanishes, ITCM overflows, and the link fails loudly on its own.
 
 - [ ] **Step 3: Add `--print-memory-usage` to the target's link flags**
 
