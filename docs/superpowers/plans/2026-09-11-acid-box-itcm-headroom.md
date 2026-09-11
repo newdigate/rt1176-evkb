@@ -549,7 +549,7 @@ Create `tools/build-bench-configs.sh`:
 #
 #     # examples/display/acid_box/bench
 #     bt        -DM2_BT_OUT=ON
-#     loopstat  -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON
+#     bench     -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON
 #
 # ★ THE TOOL BUILDS INTO DIRECTORIES IT OWNS -- build-benchcheck-<name> -- and
 #   never touches a human's bench directory.  `build-bt` carries
@@ -719,6 +719,16 @@ Create `examples/display/acid_box/bench`:
 #   build-bench only by the CORE PIN (TEENSY_LIB_ROOT state, not a cmake flag),
 #   so they are historical A/B directories from NEW-36, not configurations.
 #
+# ★★ THE NAMES ARE NOT FREE.  The tool builds build-benchcheck-<name> and its -n
+#   check pairs that with build-<name>, so the second entry is `bench` and NOT
+#   `loopstat`: build-loopstat exists and is M2_BT_OUT=OFF, so a `loopstat` entry
+#   would pair a BT build against a non-BT one and report a spurious nm-diff
+#   DIFFERS on every run -- and a guard that cries wolf gets switched off.
+# ★ The `bench` pairing also EARNS the proxy check: build-bench carries the real
+#   131,840-byte blob and build-benchcheck-bench gets the 1 KB synthetic one, so
+#   an identical ITCM symbol set across that pair MEASURES the claim this tool
+#   rests on -- that the blob lands in .progmem and never touches ITCM.
+#
 # <name>    <cmake flags>
 bt      -DM2_BT_OUT=ON
 bench   -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON
@@ -726,7 +736,8 @@ bench   -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON
 
 - [ ] **Step 6: Run the tool for real, and prove the proxy**
 
-This is a genuine build of two configurations from scratch — expect several minutes.
+★ **This step does two full from-scratch builds** — LVGL, Audio, the core and the rest compile per build
+directory. Budget 10-20 minutes and do not interrupt it.
 
 ```bash
 cd ~/Development/rt1170/evkb && ./tools/build-bench-configs.sh -n acid_box
@@ -736,15 +747,17 @@ Expected:
 
 ```
 examples/display/acid_box[bt]                OK
-examples/display/acid_box[loopstat]          OK
+examples/display/acid_box[bench]             OK
+nm-diff OK: build-benchcheck-bench == build-bench (ITCM symbol sets)
 nm-diff OK: build-benchcheck-bt == build-bt (ITCM symbol sets)
 bench: 2 configuration(s)
 BENCH-BUILDS: PASS
 ```
 
-The `nm-diff OK` line is the claim that the tool's directory is a valid ITCM proxy for the human's, measured
-rather than asserted. (There is no `build-loopstat` with `M2_BT_OUT=ON` to pair with, so only `bt` is
-diffed — `build-loopstat` is `M2_BT_OUT=OFF`.)
+The two `nm-diff OK` lines are the claim that the tool's directories are valid ITCM proxies for the humans',
+measured rather than asserted — and the `bench` one proves the firmware blob (real in `build-bench`,
+synthetic in its proxy) never reaches ITCM. The `bt` pair is synthetic on both sides, so it proves only that
+the declared flags reproduce the hand-made directory.
 
 - [ ] **Step 7: Demonstrate the tool RED against the real tree**
 
@@ -752,7 +765,7 @@ The negative arms in Step 1 run against a fake cmake. Prove the tool also catche
 
 ```bash
 cd ~/Development/rt1170/evkb
-sed -i.bak 's/^bt          -DM2_BT_OUT=ON/bt          -DM2_BT_OUT=ON -DACIDBOX_ITCM_MIN_HEADROOM=65536/' \
+sed -i.bak 's/^bt      -DM2_BT_OUT=ON$/bt      -DM2_BT_OUT=ON -DACIDBOX_ITCM_MIN_HEADROOM=65536/' \
     examples/display/acid_box/bench
 ./tools/build-bench-configs.sh acid_box; echo "exit=$?"
 mv examples/display/acid_box/bench.bak examples/display/acid_box/bench
