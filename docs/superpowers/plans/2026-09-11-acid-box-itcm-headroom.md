@@ -282,9 +282,16 @@ that adds the routing lines — add a second replacement anchored on the script'
         string(REPLACE
             "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")"
             "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")
-	ASSERT(SIZEOF(.text.itcm) <= LENGTH(ITCM) - ${ACIDBOX_ITCM_MIN_HEADROOM}, \"NEW-45: ITCM headroom below ${ACIDBOX_ITCM_MIN_HEADROOM} bytes -- see docs/superpowers/specs/2026-09-11-acid-box-itcm-headroom-design.md\")"
+	ASSERT(SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) <= LENGTH(ITCM) - ${ACIDBOX_ITCM_MIN_HEADROOM}, \"NEW-45: ITCM headroom below ${ACIDBOX_ITCM_MIN_HEADROOM} bytes -- see docs/superpowers/specs/2026-09-11-acid-box-itcm-headroom-design.md\")"
             _acidbt_ld "${_acidbt_ld}")
 ```
+
+★ **The expression is `SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx)`, not `.text.itcm` alone** — corrected
+2026-09-11 after Task 2's implementer measured it. The ITCM region carries BOTH sections: `.text.itcm` is
+252,336 B and `.ARM.exidx` another 8 B at 252,340, which is why `--print-memory-usage` reports 252,348 B for
+the region. Asserting on `.text.itcm` alone guards a margin 12 B larger than the real one. The script's own
+`_itcm_block_count = (SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) + 0x7FFF) >> 15` a few lines below is the
+precedent: this file already knows the region is both sections, and the assert must agree with it.
 
 - [ ] **Step 3: Add `--print-memory-usage` to the target's link flags**
 
@@ -305,7 +312,9 @@ cd ~/Development/rt1170/evkb/examples/display/acid_box
 cmake -B build-bt >/dev/null && cmake --build build-bt 2>&1 | grep -A4 "Memory region"
 ```
 
-Expected: a memory-usage table naming `ITCM` at roughly 96.3 % used.
+Expected: a memory-usage table naming `ITCM` at roughly 96.26 % used — `252348 B` of `256 KB`. Note that
+figure is the **region**, so it exceeds `.text.itcm`'s 252,336 B by the 8 B of `.ARM.exidx` plus alignment;
+that is the reason the assert sums both sections.
 
 ★ Do the same for `build-bench`, and there **check the blob survived by its linked SIZE, not by grepping the
 cache line** — an empty `M2RADIO_IW416_BT_FW:FILEPATH=` still matches a `grep -c`:
