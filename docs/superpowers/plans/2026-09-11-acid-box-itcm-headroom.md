@@ -254,9 +254,12 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `examples/display/acid_box/CMakeLists.txt` (the `if(M2_BT_OUT)` block)
 
+★ **Locate every insertion point by its anchor TEXT, not by the line numbers below** — Task 1 added 18 lines
+to this file, so every line number in this task is stale by roughly that much. The anchors are unique.
+
 - [ ] **Step 1: Add the cache variable and the assert injection**
 
-Immediately after `set(_acidbt_coreld "${CMAKE_MATCH_1}")` (CMakeLists.txt:180), insert:
+Immediately after `set(_acidbt_coreld "${CMAKE_MATCH_1}")`, insert:
 
 ```cmake
     # NEW-45: make the ITCM margin legible instead of only fatal.  Two halves:
@@ -272,9 +275,8 @@ Immediately after `set(_acidbt_coreld "${CMAKE_MATCH_1}")` (CMakeLists.txt:180),
 
 - [ ] **Step 2: Inject the ASSERT into the derived script**
 
-Immediately after the existing `file(READ "${_acidbt_coreld}" _acidbt_ld)` (CMakeLists.txt:182) — i.e. before
-the `string(REPLACE)` that adds the routing lines — add a second replacement anchored on the script's
-existing EEPROM assert:
+Immediately after the existing `file(READ "${_acidbt_coreld}" _acidbt_ld)` — i.e. before the `string(REPLACE)`
+that adds the routing lines — add a second replacement anchored on the script's existing EEPROM assert:
 
 ```cmake
         string(REPLACE
@@ -286,8 +288,7 @@ existing EEPROM assert:
 
 - [ ] **Step 3: Add `--print-memory-usage` to the target's link flags**
 
-Immediately after `set_target_properties(acid_box.elf PROPERTIES LINK_FLAGS "${_acidbt_lf}")`
-(CMakeLists.txt:196), add:
+Replace the existing `set_target_properties(acid_box.elf PROPERTIES LINK_FLAGS "${_acidbt_lf}")` with:
 
 ```cmake
         set_target_properties(acid_box.elf PROPERTIES
@@ -295,9 +296,6 @@ Immediately after `set_target_properties(acid_box.elf PROPERTIES LINK_FLAGS "${_
 ```
 
 - [ ] **Step 4: Verify the print appears and the assert passes**
-
-`build-bt` must be reconfigured for the new cache variable to reach the generated script. It carries the
-firmware blob, so **reconfigure it in place with no `-D` at all** — CMake reuses every cached value:
 
 `build-bt` must be reconfigured for the new cache variable to reach the generated script. **Reconfigure it
 in place with no `-D` at all** — CMake reuses every cached value:
@@ -339,7 +337,20 @@ Expected: `RESTORED`.
 
 - [ ] **Step 6: Confirm the gate build is still untouched**
 
+★ Capture the baseline **before editing `CMakeLists.txt`**, if `/tmp/new45/gate-before.bin` is not still
+present from Task 1:
+
 ```bash
+cd ~/Development/rt1170/evkb/examples/display/acid_box
+mkdir -p /tmp/new45
+[ -f /tmp/new45/gate-before.bin ] || \
+  /Applications/ARM_10/bin/arm-none-eabi-objcopy -O binary build/acid_box.elf /tmp/new45/gate-before.bin
+```
+
+then, after the edit:
+
+```bash
+cmake --build build >/dev/null 2>&1
 /Applications/ARM_10/bin/arm-none-eabi-objcopy -O binary build/acid_box.elf /tmp/new45/gate-after2.bin
 cmp /tmp/new45/gate-before.bin /tmp/new45/gate-after2.bin && echo IDENTICAL
 ```
