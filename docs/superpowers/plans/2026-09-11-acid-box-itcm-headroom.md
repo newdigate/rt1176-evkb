@@ -737,9 +737,14 @@ Expected exactly:
 FAIL: never configures build-bt (found '/build-bt')
 FAIL: owns build-benchcheck-bt (wanted 'build-benchcheck-bt')
 FAIL: owns build-benchcheck-loopstat (wanted 'build-benchcheck-loopstat')
-3 failure(s)
+FAIL: stale owned dir was NOT wiped before configure
+4 failure(s)
 exit=1
 ```
+
+★ The fourth line is arm 10 catching the same mutant from the other side: a tool that wipes `build-bt`
+instead of `build-benchcheck-bt` leaves arm 10's marker alive. Measured 2026-09-11 — the arm was written for
+mutant 5 and turned out to strengthen mutant 1 too.
 
 ```bash
 # Mutant 2 -- a failing build is PRINTED but never recorded, so the run still exits 0
@@ -786,11 +791,17 @@ Expected: `FAIL: source dir reaches cmake (wanted '-S .../examples/display/acid_
 # accepted as OK.  -S could be right and the build still make nothing.
 python3 -c "
 s=open('/tmp/tool.orig').read()
-s=s.replace(''' \\
-           && [ -n \"\$(find \"\$bdir\" -maxdepth 1 -name '*.elf' -print -quit)\" ]''','',1)
-open('tools/build-bench-configs.sh','w').write(s)"
+old='''if [ -n \"\$(find \"\$bdir\" -maxdepth 1 -name '*.elf' -print -quit)\" ]; then'''
+assert old in s, 'anchor missing -- the tool has been restructured, re-derive the mutation'
+open('tools/build-bench-configs.sh','w').write(s.replace(old,'if true; then',1))"
 ./tools/build-bench-configs.test.sh; echo "exit=$?"
 ```
+
+★ **This recipe asserts its own anchor, deliberately.** The first version deleted the `.elf` test out of the
+`if` *condition*, which was the pre-fix shape; once fix 3 moved that test into a nested `if`, `str.replace`
+matched nothing, silently changed nothing, and the suite stayed **green** — a mutation test that proves
+nothing while looking like it passed. Found 2026-09-11. Any mutant recipe that can silently no-op must fail
+loudly instead, which is what the `assert` is for.
 
 Expected: `FAIL: no .elf is a failure`, `FAIL: no .elf says why`, `FAIL: exit status 0 when nothing was
 built`, `3 failure(s)`, `exit=1`. Then restore `/tmp/tool.orig` and confirm the suite passes.
@@ -828,9 +839,14 @@ Create `examples/display/acid_box/bench`:
 # Built by tools/build-bench-configs.sh into build-benchcheck-<name>; see
 # docs/superpowers/specs/2026-09-11-acid-box-itcm-headroom-design.md §7.
 #
-# ★ These are NOT the directories a human benches from.  build-bt carries a real
-#   131,840-byte M2RADIO_IW416_BT_FW blob in its CMakeCache; the tool owns
-#   build-benchcheck-* and never touches build-bt or build-bench*.
+# ★ These are NOT the directories a human benches from.  build-bench, -pre and
+#   -post carry a real 131,840-byte M2RADIO_IW416_BT_FW blob in their CMakeCache;
+#   the tool owns build-benchcheck-* and never touches any of them.
+#   (build-bt's M2RADIO_IW416_BT_FW is EMPTY and has been since 2026-09-06, so it
+#   links the 1 KB synthetic fallback -- measured by symbol size, 00000400 against
+#   build-bench's 00020300.  Check the VALUE, never the cache LINE: an empty
+#   FILEPATH entry still matches a grep, which is how the opposite claim got
+#   written here in the first place.)
 #
 # ★ build-bench-pre and build-bench-post are NOT declared: they differ from
 #   build-bench only by the CORE PIN (TEENSY_LIB_ROOT state, not a cmake flag),
