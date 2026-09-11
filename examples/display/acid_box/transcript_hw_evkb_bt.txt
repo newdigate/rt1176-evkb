@@ -428,3 +428,34 @@ bt_hb blocks=38601 packets=8329 drops=575 pcmdrops=0 hw=64 audiomax=1
 bt_hb blocks=38945 packets=8358 drops=837 pcmdrops=0 hw=64 audiomax=1
 bt_hb blocks=45837 packets=9764 drops=943 pcmdrops=0 hw=64 audiomax=1
 bt_hb blocks=49627 packets=10557 drops=967 pcmdrops=0 hw=64 audiomax=1
+
+================================================================================
+NEW-45 / NEW-37 ITCM ROUTING ARMS -- PREDICTIONS, written 2026-09-11 BEFORE the run
+================================================================================
+Spec: docs/superpowers/specs/2026-09-11-acid-box-itcm-headroom-design.md §6
+Baseline: the NEW-36 I-CACHE A/B section above (POST column), same protocol, one
+variable per arm, last four loopstat lines averaged in each window.
+Every arm carries ACIDBOX_UI_SUM == 0x1479CEE8.  A moved checksum voids the arm:
+placement changes no pixels.
+
+  arm  change                                    prediction
+  (a)  libVGLite -> flash                        no change.  VGLite is called per draw call --
+                                                 the shape of the svc chain, 0.46 us/iter from flash
+  (b)  + MipiDisplay, Wire, TouchPanel           ACIDBOX_VSYNC timeouts=0 holds; touch p95 no worse
+                                                 than 78 ms (the worse NEW-36 reading; that sample
+                                                 wanders 78->43 with no cause, so nothing more is
+                                                 claimed from it)
+  (c)  + Sbc.cpp  (NEW-37 option 1)              enc 125 -> ~190 us/block.  At 344 blocks/s that is
+                                                 +22 ms/s of CPU against 63k iterations/s -- free in
+                                                 aggregate, 15x real time vs the 2.902 ms block period.
+                                                 JUDGED ON pcmdrops=0 and drops no worse, NOT on
+                                                 NEW-37's "within 50 %" line, which lands at 187 us
+                                                 against a predicted 190 -- a coin toss, not a threshold
+  (d)  LVGL -> flash, PLACEMENT ONLY             30 fps -> 20 fps.  The lvgl slot costs 844 ms/s at
+                                                 30 fps (~28 ms of a 33.3 ms budget); x1.5 is ~42 ms,
+                                                 past the next vsync multiple.  Run anyway: one linker
+                                                 line, 203 KB if the prediction is wrong
+
+Arms are CUMULATIVE and ordered by confidence, so a regression names its own cause.
+Arm (d) is run LAST and stands alone against (a): a 20 fps result makes anything
+stacked on it unreadable.
