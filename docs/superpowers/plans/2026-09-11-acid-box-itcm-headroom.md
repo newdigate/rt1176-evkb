@@ -442,6 +442,18 @@ cat > "$WORK/bin/fakecmake" <<'FAKE'
 #!/bin/sh
 echo "$@" >> "$FAKE_LOG"
 case "$*" in *BREAKME*) echo "ld: region \`ITCM' overflowed by 140 bytes" >&2; exit 1 ;; esac
+# Emulate a real build: on --build, drop an .elf in the build dir unless this
+# configuration is marked MAKENOTHING.  A cmake that exits 0 having produced no
+# .elf is the tool's own historical bug (a missing -S configured the root
+# project, which builds nothing and succeeds), so the suite has to model it.
+case "$1" in
+  --build) [ -d "$2" ] && [ ! -f "$2/.makenothing" ] && : > "$2/fake.elf" ;;
+  *) for a in "$@"; do case "$a" in -B) nextb=1 ;; MARKER_UNUSED) ;; *)
+        if [ "${nextb:-}" = 1 ]; then mkdir -p "$a"
+           case "$*" in *MAKENOTHING*) : > "$a/.makenothing" ;; esac
+           nextb=0
+        fi ;; esac; done ;;
+esac
 exit 0
 FAKE
 chmod +x "$WORK/bin/fakecmake"
@@ -480,6 +492,12 @@ check "config count"     "2 configuration(s)" "$out"
 log=$(cat "$WORK/log2")
 check "flags reach cmake (bt)"       "-DM2_BT_OUT=ON"        "$log"
 check "flags reach cmake (loopstat)" "-DACIDBOX_LOOPSTAT=ON" "$log"
+# ★ THE SOURCE DIRECTORY MUST REACH CMAKE.  Without -S, cmake takes the source dir from the CWD; since
+#   912c8d1 the repo root holds a CMakeLists.txt -- project(rt1170_evkb_root NONE) with an empty `all`
+#   target -- so a run from the repo root configured THE ROOT PROJECT into the example's build dir, built
+#   nothing, exited 0 and reported OK.  Measured on the real tree 2026-09-11, and NO other arm could see
+#   it: they all inspect -B and -D only.  Checked HERE, where $log and $root still refer to the same tree.
+check "source dir reaches cmake" "-S $root/examples/display/acid_box" "$log"
 
 # 3. ★ THE LOAD-BEARING ARM.  build-bt carries M2RADIO_IW416_BT_FW pointing at a real 131,840-byte blob;
 #    a tool that reconfigured it from the declared flags alone would silently strip it.  The tool must only
@@ -522,6 +540,16 @@ run_tool "$root" log7 acid_box
 check   "pattern selects"        "display/acid_box[bt]" "$out"
 nocheck "pattern excludes other" "bt_tone_test"         "$out"
 
+# 9. ★ AND THE STRUCTURAL VERSION OF THE SAME BUG: a cmake that exits 0 having produced no .elf must be a
+#    FAILURE, not an OK.  This is the one that catches the class rather than the instance -- -S could be
+#    right and the build still make nothing.
+root=$(mktree noelf)
+printf 'ghost  -DMAKENOTHING=ON\n' > "$root/examples/display/acid_box/bench"
+run_tool "$root" log9
+check "no .elf is a failure"        "BENCH-BUILDS: FAIL"    "$out"
+check "no .elf says why"            "no .elf produced"      "$out"
+[ "$rc" -eq 1 ] || { echo "FAIL: exit status 0 when nothing was built"; fails=$((fails+1)); }
+
 [ "$fails" -eq 0 ] && echo "build-bench-configs tests PASS" || { echo "$fails failure(s)"; exit 1; }
 ```
 
@@ -563,6 +591,9 @@ Create `tools/build-bench-configs.sh`:
 #   build-benchcheck-bt has the same ITCM footprint as build-bt.  Prove it
 #   rather than assume it -- `-n` nm-diffs the two ITCM symbol sets.
 #
+# ★ A configuration counts as built only if an .elf actually appeared.  "cmake said 0" is not the same
+#   claim, and this tool exists precisely because a build that silently does nothing reads as green.
+#
 # Exit 0 = BENCH-BUILDS: PASS.  Run from anywhere.  NEVER concurrently with the
 # QEMU sweep: CLAUDE.md records a sweep invalidated by a concurrent licence
 # audit, and this is heavier than that.
@@ -598,11 +629,22 @@ for sidecar in $(find "$REPO/examples" -name bench -not -path '*/build*' | sort)
         n=$((n+1))
         bdir="$dir/build-benchcheck-$name"
         printf '%-44s ' "$rel[$name]"
-        if "$CMAKE" -B "$bdir" -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" $flags > "$WORK/out" 2>&1 \
-           && "$CMAKE" --build "$bdir" >> "$WORK/out" 2>&1; then
+        # ★ -S IS LOAD-BEARING.  Without it cmake takes the source directory from the CWD, and since
+        # 912c8d1 added a root CMakeLists.txt -- project(rt1170_evkb_root NONE), whose `all` target is
+        # empty -- a run from the repo root CONFIGURES THE ROOT PROJECT into this example's build dir,
+        # builds nothing, exits 0 and reports OK.  Measured 2026-09-11: the owned dirs came back holding
+        # a CMAKE_PROJECT_NAME of rt1170_evkb_root and not one .elf, and the tool said BENCH-BUILDS: PASS.
+        # Before 912c8d1 the same omission was LOUD (no root CMakeLists -> cmake errors), which is why it
+        # survived review: the failure mode is newer than the idiom.
+        if "$CMAKE" -S "$dir" -B "$bdir" -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" $flags > "$WORK/out" 2>&1 \
+           && "$CMAKE" --build "$bdir" >> "$WORK/out" 2>&1 \
+           && [ -n "$(find "$bdir" -maxdepth 1 -name '*.elf' -print -quit)" ]; then
             echo OK
         else
             echo FAILED
+            if [ -z "$(find "$bdir" -maxdepth 1 -name '*.elf' -print -quit)" ]; then
+                echo "    no .elf produced -- the build claimed success and made nothing"
+            fi
             sed -n '$p' "$WORK/out" | sed 's/^/    /'
             echo "$rel[$name]" >> "$WORK/fails"
         fi
@@ -701,6 +743,37 @@ Expected: `build-bench-configs tests PASS`.
 ★ Mutant 2 is the one worth understanding: a tool that reports every failure to the screen and still exits 0
 is exactly how a close-out step gets read as green. That is the same class as the 2026-08-19 sweep bug where
 two gates wrote one `.result` file and a FAIL printed above a `gates: 2 passed` summary.
+
+```bash
+# Mutant 3 -- THE BUG THIS TOOL ACTUALLY SHIPPED WITH.  Drop -S: cmake then takes the source directory from
+# the CWD, configures the ROOT project (project(rt1170_evkb_root NONE), empty `all`) into the example's
+# build dir, builds nothing and exits 0.
+sed 's#"$CMAKE" -S "$dir" -B "$bdir"#"$CMAKE" -B "$bdir"#' /tmp/tool.orig > tools/build-bench-configs.sh
+./tools/build-bench-configs.test.sh; echo "exit=$?"
+```
+
+Expected: `FAIL: source dir reaches cmake (wanted '-S .../examples/display/acid_box')`, `1 failure(s)`,
+`exit=1`.
+
+```bash
+# Mutant 4 -- the STRUCTURAL version of the same class: a cmake that exits 0 having produced no .elf is
+# accepted as OK.  -S could be right and the build still make nothing.
+python3 -c "
+s=open('/tmp/tool.orig').read()
+s=s.replace(''' \\
+           && [ -n \"\$(find \"\$bdir\" -maxdepth 1 -name '*.elf' -print -quit)\" ]''','',1)
+open('tools/build-bench-configs.sh','w').write(s)"
+./tools/build-bench-configs.test.sh; echo "exit=$?"
+```
+
+Expected: `FAIL: no .elf is a failure`, `FAIL: no .elf says why`, `FAIL: exit status 0 when nothing was
+built`, `3 failure(s)`, `exit=1`. Then restore `/tmp/tool.orig` and confirm the suite passes.
+
+★★ **Mutants 3 and 4 exist because the first version of this tool shipped with exactly that bug and the
+first version of this suite could not see it** — every arm inspected `-B` and `-D` only, so a tool that
+configured the wrong project entirely passed all seven. Found 2026-09-11 by the implementer running Step 6
+for real and noticing it finished in seconds instead of the budgeted ten minutes. **Speed was the only
+symptom**; every printed line said `OK`.
 
 - [ ] **Step 5: Create acid_box's sidecar**
 
