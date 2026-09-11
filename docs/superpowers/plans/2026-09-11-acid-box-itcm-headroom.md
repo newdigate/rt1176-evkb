@@ -415,61 +415,106 @@ minutes. `BENCH_CMAKE` is the seam, the same idiom as `qrun`'s `REAL_QEMU` hook.
 
 ```sh
 #!/bin/sh
+# Usage: tools/build-bench-configs.test.sh
+#
 # Negative tests for build-bench-configs.sh.  A tool that only ever reports PASS
 # is indistinguishable from one that looks at nothing, so every check here is a
 # case where the tool MUST fail, skip, or stay out of a directory.
 #
-# Drives the real tool against throwaway trees with a FAKE cmake (BENCH_CMAKE),
-# so it needs no toolchain, no network and no gate builds -- the license-audit
-# and gate-vacuity suites use the same technique.
+# Drives the real tool against throwaway trees with a FAKE cmake (BENCH_CMAKE)
+# and a FAKE arm-none-eabi-nm/size (ARM_TOOLCHAIN_BIN), so it needs no toolchain,
+# no network and no gate builds -- the license-audit and gate-vacuity suites use
+# the same technique.
 set -e
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 TOOL="$REPO/tools/build-bench-configs.sh"
 fails=0
 check() { # check <description> <expected-substring> <actual>
-    case "$3" in *"$2"*) ;; *) echo "FAIL: $1 (wanted '$2')"; fails=$((fails+1)) ;; esac
+    case "$3" in *"$2"*) echo "PASS: $1" ;;
+                 *) echo "FAIL: $1 (wanted '$2')"; fails=$((fails+1)) ;; esac
 }
 nocheck() { # nocheck <description> <forbidden-substring> <actual>
-    case "$3" in *"$2"*) echo "FAIL: $1 (found '$2')"; fails=$((fails+1)) ;; *) ;; esac
+    case "$3" in *"$2"*) echo "FAIL: $1 (found '$2')"; fails=$((fails+1)) ;;
+                 *) echo "PASS: $1" ;; esac
+}
+rc_is() { # rc_is <description> <expected-rc>
+    [ "$rc" -eq "$2" ] && echo "PASS: $1" || { echo "FAIL: $1 (rc=$rc, wanted $2)"; fails=$((fails+1)); }
 }
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# A fake cmake that logs its argv and fails only for a configuration we mark.
+# A fake cmake that logs its argv, fails for a configuration we mark, and
+# otherwise EMULATES A REAL BUILD by dropping an .elf -- unless the configuration
+# is marked MAKENOTHING, which models the tool's own historical bug (a missing -S
+# configured the root project, which builds nothing and succeeds).
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/fakecmake" <<'FAKE'
 #!/bin/sh
 echo "$@" >> "$FAKE_LOG"
 case "$*" in *BREAKME*) echo "ld: region \`ITCM' overflowed by 140 bytes" >&2; exit 1 ;; esac
-# Emulate a real build: on --build, drop an .elf in the build dir unless this
-# configuration is marked MAKENOTHING.  A cmake that exits 0 having produced no
-# .elf is the tool's own historical bug (a missing -S configured the root
-# project, which builds nothing and succeeds), so the suite has to model it.
 case "$1" in
-  --build) [ -d "$2" ] && [ ! -f "$2/.makenothing" ] && : > "$2/fake.elf" ;;
-  *) for a in "$@"; do case "$a" in -B) nextb=1 ;; MARKER_UNUSED) ;; *)
-        if [ "${nextb:-}" = 1 ]; then mkdir -p "$a"
+  --build) d=$2; ex=$(dirname "$d")
+     [ -d "$d" ] && [ ! -f "$d/.makenothing" ] && : > "$d/fake.elf"
+     # The tool wipes its owned dir before configuring (by design), so a test
+     # cannot seed the dir directly -- the fake build plants what the fake nm
+     # will read, exactly as a real build produces the symbols nm reads.
+     [ -f "$ex/OWNED_SYMS" ] && cp "$ex/OWNED_SYMS" "$d/ITCM_SYMS"
+     [ -f "$ex/OWNED_SIZE" ] && cp "$ex/OWNED_SIZE" "$d/ITCM_SIZE"
+     : ;;
+  *) nextb=0
+     for a in "$@"; do
+        if [ "$nextb" = 1 ]; then mkdir -p "$a"
            case "$*" in *MAKENOTHING*) : > "$a/.makenothing" ;; esac
            nextb=0
-        fi ;; esac; done ;;
+        fi
+        [ "$a" = "-B" ] && nextb=1
+     done ;;
 esac
 exit 0
 FAKE
 chmod +x "$WORK/bin/fakecmake"
+
+# Fake nm/size.  Both read a sidecar file dropped beside the .elf so a test can
+# say what each build "contains" -- ITCM_SYMS and ITCM_SIZE.  A missing tool is
+# modelled by pointing ARM_TOOLCHAIN_BIN somewhere empty.
+mkdir -p "$WORK/arm"
+cat > "$WORK/arm/arm-none-eabi-nm" <<'FAKENM'
+#!/bin/sh
+elf=$3; [ -n "$elf" ] || elf=$2
+d=$(dirname "$elf")
+[ -f "$d/ITCM_SYMS" ] || exit 0
+i=0
+while IFS= read -r s; do
+    printf '000%05x T %s\n' "$i" "$s"; i=$((i+1))
+done < "$d/ITCM_SYMS"
+# an absolute symbol inside the ITCM window, which must be filtered out
+printf '00051800 A _flashimagelen\n'
+FAKENM
+cat > "$WORK/arm/arm-none-eabi-size" <<'FAKESIZE'
+#!/bin/sh
+d=$(dirname "$2"); s=252336
+[ -f "$d/ITCM_SIZE" ] && s=$(cat "$d/ITCM_SIZE")
+echo "section size addr"
+echo ".text.itcm $s 0"
+FAKESIZE
+chmod +x "$WORK/arm/arm-none-eabi-nm" "$WORK/arm/arm-none-eabi-size"
 
 mktree() { # mktree <name> ; echoes a REPO-shaped root with a toolchain file
     root="$WORK/$1"; mkdir -p "$root/tools" "$root/toolchain" "$root/examples/display/acid_box"
     cp "$TOOL" "$root/tools/"; : > "$root/toolchain/rt1170-evkb.toolchain.cmake"; echo "$root"
 }
 
-# ★ BENCH_CMAKE and FAKE_LOG must be EXPORTED, not merely assigned.  The tool is a
-# separate process; `FOO=1 out=$(cmd)` is a simple command with no command word, so
-# POSIX applies both as ordinary shell assignments and FOO never reaches the child.
+# ★ BENCH_CMAKE and ARM_TOOLCHAIN_BIN must be EXPORTED, not merely assigned.  The
+# tool is a separate process; `FOO=1 out=$(cmd)` is a simple command with no
+# command word, so POSIX applies both as ordinary shell assignments and FOO never
+# reaches the child.
 export BENCH_CMAKE="$WORK/bin/fakecmake"
-run_tool() { # run_tool <root> <logfile> [pattern] ; sets $out and $rc
-    FAKE_LOG="$WORK/$2"; export FAKE_LOG; : > "$FAKE_LOG"
-    out=$("$1/tools/build-bench-configs.sh" ${3:-} 2>&1) && rc=0 || rc=1
+export ARM_TOOLCHAIN_BIN="$WORK/arm"
+run_tool() { # run_tool <root> <logfile> [args...] ; sets $out and $rc
+    _r=$1; _l=$2; shift 2
+    FAKE_LOG="$WORK/$_l"; export FAKE_LOG; : > "$FAKE_LOG"
+    out=$("$_r/tools/build-bench-configs.sh" "$@" 2>&1) && rc=0 || rc=1
 }
 
 # 1. A configuration that does not build must fail BY NAME, and the run must be non-zero.
@@ -478,8 +523,10 @@ printf 'bt        -DM2_BT_OUT=ON\nbroken    -DBREAKME=ON\n' > "$root/examples/di
 run_tool "$root" log1
 check "failing config is named"      "display/acid_box[broken]" "$out"
 check "failing config reports FAIL"  "BENCH-BUILDS: FAIL"       "$out"
-[ "$rc" -eq 1 ] || { echo "FAIL: exit status 0 on a broken config"; fails=$((fails+1)); }
+rc_is "broken config exits non-zero" 1
 nocheck "a good config is not blamed" "display/acid_box[bt] FAILED" "$out"
+# ★ The operator must be shown the line that NAMES the fault, not make's tail.
+check "failure names the fault"      "overflowed by 140 bytes"  "$out"
 
 # 2. All-good must PASS, exit 0, and build BOTH declared configurations.
 root=$(mktree ok)
@@ -488,48 +535,54 @@ printf '# a comment\nbt        -DM2_BT_OUT=ON\nloopstat  -DM2_BT_OUT=ON -DACIDBO
 run_tool "$root" log2
 check "clean run passes" "BENCH-BUILDS: PASS" "$out"
 check "config count"     "2 configuration(s)" "$out"
-[ "$rc" -eq 0 ] || { echo "FAIL: non-zero exit on a clean run"; fails=$((fails+1)); }
+rc_is "clean run exits zero" 0
 log=$(cat "$WORK/log2")
 check "flags reach cmake (bt)"       "-DM2_BT_OUT=ON"        "$log"
 check "flags reach cmake (loopstat)" "-DACIDBOX_LOOPSTAT=ON" "$log"
-# ★ THE SOURCE DIRECTORY MUST REACH CMAKE.  Without -S, cmake takes the source dir from the CWD; since
-#   912c8d1 the repo root holds a CMakeLists.txt -- project(rt1170_evkb_root NONE) with an empty `all`
-#   target -- so a run from the repo root configured THE ROOT PROJECT into the example's build dir, built
-#   nothing, exited 0 and reported OK.  Measured on the real tree 2026-09-11, and NO other arm could see
-#   it: they all inspect -B and -D only.  Checked HERE, where $log and $root still refer to the same tree.
+# ★ THE SOURCE DIRECTORY MUST REACH CMAKE.  Without -S, cmake takes the source dir
+#   from the CWD; since 912c8d1 the repo root holds a CMakeLists.txt --
+#   project(rt1170_evkb_root NONE) with an empty `all` target -- so a run from the
+#   repo root configured THE ROOT PROJECT into the example's build dir, built
+#   nothing, exited 0 and reported OK.  Measured on the real tree 2026-09-11, and
+#   no other arm could see it: they all inspect -B and -D only.  Checked HERE,
+#   where $log and $root still refer to the same tree.
 check "source dir reaches cmake" "-S $root/examples/display/acid_box" "$log"
 
-# 3. ★ THE LOAD-BEARING ARM.  build-bt carries M2RADIO_IW416_BT_FW pointing at a real 131,840-byte blob;
-#    a tool that reconfigured it from the declared flags alone would silently strip it.  The tool must only
-#    ever name directories it owns.  Both patterns are PATH-ANCHORED: "/build-bench" would be satisfied by
-#    the legitimate "/build-benchcheck-..." and prove nothing, and an unanchored " build-bt" would also be
-#    satisfied by a tool that named no directory at all.
+# 3. ★ THE LOAD-BEARING ARM.  build-bench and its -pre/-post siblings carry
+#    M2RADIO_IW416_BT_FW pointing at a real 131,840-byte blob; a tool that
+#    reconfigured one from the declared flags alone would silently strip it.  The
+#    tool must only ever name directories it owns.  Both patterns are
+#    PATH-ANCHORED: "/build-bench" would be satisfied by the legitimate
+#    "/build-benchcheck-..." and prove nothing, and an unanchored " build-bt"
+#    would also be satisfied by a tool that named no directory at all.
 nocheck "never configures build-bt"     "/build-bt"     "$log"
 nocheck "never configures build-bench-" "/build-bench-" "$log"
 check   "owns build-benchcheck-bt"       "build-benchcheck-bt"       "$log"
 check   "owns build-benchcheck-loopstat" "build-benchcheck-loopstat" "$log"
 
-# 4. A sidecar that is empty after comments is an error, not a silent pass -- the same rule the `boards`
-#    parser applies, and for the same reason: a declaration nobody reads hides in a count.
+# 4. A sidecar that is empty after comments is an error, not a silent pass -- the
+#    same rule the `boards` parser applies, and for the same reason: a declaration
+#    nobody reads hides in a count.
 root=$(mktree empty)
 printf '# nothing here\n\n' > "$root/examples/display/acid_box/bench"
 run_tool "$root" log4
 check "empty sidecar is an error" "declares no configuration" "$out"
-[ "$rc" -eq 1 ] || { echo "FAIL: exit status 0 on an empty sidecar"; fails=$((fails+1)); }
+rc_is "empty sidecar exits non-zero" 1
 
-# 5. A declared name with no flags is an error -- it would configure a DEFAULT build under a bench name,
-#    which links fine and proves nothing about the configuration that was meant.
+# 5. A declared name with no flags is an error -- it would configure a DEFAULT
+#    build under a bench name, which links fine and proves nothing.
 root=$(mktree noflags)
 printf 'bt\n' > "$root/examples/display/acid_box/bench"
 run_tool "$root" log5
 check "name with no flags is an error" "no cmake flags" "$out"
-[ "$rc" -eq 1 ] || { echo "FAIL: exit status 0 on a flagless declaration"; fails=$((fails+1)); }
+rc_is "flagless declaration exits non-zero" 1
 
 # 6. No sidecar anywhere is a clean no-op, not a failure -- most examples have none.
 root=$(mktree none)
 run_tool "$root" log6
 check "no sidecars passes"   "BENCH-BUILDS: PASS"  "$out"
 check "no sidecars counts 0" "0 configuration(s)"  "$out"
+rc_is "no sidecars exits zero" 0
 
 # 7. A pattern argument selects a subset.
 root=$(mktree pattern)
@@ -540,30 +593,174 @@ run_tool "$root" log7 acid_box
 check   "pattern selects"        "display/acid_box[bt]" "$out"
 nocheck "pattern excludes other" "bt_tone_test"         "$out"
 
-# 9. ★ AND THE STRUCTURAL VERSION OF THE SAME BUG: a cmake that exits 0 having produced no .elf must be a
-#    FAILURE, not an OK.  This is the one that catches the class rather than the instance -- -S could be
-#    right and the build still make nothing.
+# 8. ★ A pattern that selects NOTHING is not the same claim as "nothing declared",
+#    and only the second deserves a pass.  A typo'd pattern printing PASS is the
+#    exact disease this tool treats.
+run_tool "$root" log8 typo_nonexistent
+check "unmatched pattern is an error" "selected none of the" "$out"
+rc_is "unmatched pattern exits non-zero" 1
+
+# 9. ★ An unknown option must be rejected, not swallowed as a pattern -- a
+#    mistyped flag becoming a filter that matches nothing would print PASS.
+run_tool "$root" log9 -z
+check "unknown option rejected" "unknown option" "$out"
+rc_is "unknown option exits non-zero" 1
+
+# 10. ★ A cmake that exits 0 having produced no .elf must be a FAILURE, not an OK.
+#     This catches the class rather than the instance -- -S could be right and the
+#     build still make nothing.
 root=$(mktree noelf)
 printf 'ghost  -DMAKENOTHING=ON\n' > "$root/examples/display/acid_box/bench"
-run_tool "$root" log9
-check "no .elf is a failure"        "BENCH-BUILDS: FAIL"    "$out"
-check "no .elf says why"            "cmake exited 0 but produced no .elf" "$out"
-[ "$rc" -eq 1 ] || { echo "FAIL: exit status 0 when nothing was built"; fails=$((fails+1)); }
+run_tool "$root" log10
+check "no .elf is a failure" "BENCH-BUILDS: FAIL" "$out"
+check "no .elf says why"     "cmake exited 0 but produced no .elf" "$out"
+rc_is "no .elf exits non-zero" 1
 
-# 10. ★ A STALE OWNED DIRECTORY MUST BE WIPED BEFORE CONFIGURING.  A CMake cache retains every -D ever
-#     passed to it, so a flag removed from a `bench` line would stay in effect forever and the tool would
-#     measure a configuration nobody declared.  Measured on the real tree 2026-09-11: a one-off
-#     -DACIDBOX_ITCM_MIN_HEADROOM=65536 survived into later runs and kept the build red on a clean tree.
+# 11. ★ A STALE OWNED DIRECTORY MUST BE WIPED BEFORE CONFIGURING.  A CMake cache
+#     retains every -D ever passed, so a flag removed from a `bench` line would
+#     stay in effect forever and the tool would measure a configuration nobody
+#     declared.  Measured on the real tree 2026-09-11: a one-off
+#     -DACIDBOX_ITCM_MIN_HEADROOM=65536 survived into later runs and kept the
+#     build red on a clean tree.
 root=$(mktree stale)
 printf 'bt  -DM2_BT_OUT=ON\n' > "$root/examples/display/acid_box/bench"
 mkdir -p "$root/examples/display/acid_box/build-benchcheck-bt"
 : > "$root/examples/display/acid_box/build-benchcheck-bt/STALE-CACHE-MARKER"
-run_tool "$root" log10
+run_tool "$root" log11
 [ -e "$root/examples/display/acid_box/build-benchcheck-bt/STALE-CACHE-MARKER" ] \
-  && { echo "FAIL: stale owned dir was NOT wiped before configure"; fails=$((fails+1)); }
+  && { echo "FAIL: stale owned dir was NOT wiped before configure"; fails=$((fails+1)); } \
+  || echo "PASS: stale owned dir wiped before configure"
 check "still builds after the wipe" "BENCH-BUILDS: PASS" "$out"
 
-[ "$fails" -eq 0 ] && echo "build-bench-configs tests PASS" || { echo "$fails failure(s)"; exit 1; }
+# 12. ★ AN INDENTED SIDECAR LINE MUST NOT BECOME AN UNNAMED CONFIGURATION.
+#     `name=${line%% *}` yields an EMPTY name for a leading-space line, then
+#     builds `build-benchcheck-` and hands cmake the real name as a bare
+#     positional argument -- measured, and it reported OK.  Tabs must separate too.
+root=$(mktree indent)
+printf '   bt\t-DM2_BT_OUT=ON\n' > "$root/examples/display/acid_box/bench"
+run_tool "$root" log12
+check   "indented line keeps its name" "display/acid_box[bt]" "$out"
+nocheck "no unnamed configuration"     "acid_box[] "          "$out"
+check   "tab separates name from flags" "-DM2_BT_OUT=ON" "$(cat "$WORK/log12")"
+nocheck "no build-benchcheck- dir"     "build-benchcheck- "   "$(cat "$WORK/log12")"
+
+# --- the -n nm-diff path -------------------------------------------------------
+# Every arm below drives -n, which until 2026-09-11 had NO coverage at all -- and
+# it is the path that certifies the tool's central soundness claim, that an owned
+# directory is a valid ITCM proxy for the hand-made one.
+nmtree() { # nmtree <name> <owned-syms> <owned-size> <human-syms> <human-size>
+    root=$(mktree "$1"); ex="$root/examples/display/acid_box"
+    printf 'bt  -DM2_BT_OUT=ON\n' > "$ex/bench"
+    # what the fake BUILD will plant in the owned dir (it survives the tool's wipe)
+    printf '%s\n' "$2" > "$ex/OWNED_SYMS"; printf '%s\n' "$3" > "$ex/OWNED_SIZE"
+    # the hand-made directory, which the tool must never touch
+    mkdir -p "$ex/build-bt"; : > "$ex/build-bt/acid_box.elf"
+    printf '%s\n' "$4" > "$ex/build-bt/ITCM_SYMS"; printf '%s\n' "$5" > "$ex/build-bt/ITCM_SIZE"
+    echo "$root"
+}
+
+# 13. Matching symbol sets and sizes -> OK, and the pair is COUNTED.
+root=$(nmtree nmok "alpha
+beta" 252336 "alpha
+beta" 252336)
+run_tool "$root" log13 -n
+check "nm-diff reports OK"        "nm-diff OK: build-benchcheck-bt == build-bt" "$out"
+check "nm-diff counts its pairs"  "nm-diff: 1 pair(s) compared" "$out"
+check "nm-diff OK passes overall" "BENCH-BUILDS: PASS" "$out"
+rc_is "nm-diff OK exits zero" 0
+# ★ The fake nm also emits an ABSOLUTE symbol (_flashimagelen) inside the ITCM
+#   address window.  It appears on both sides, so this arm would pass either way;
+#   arm 19 is what actually pins the filter.
+
+# 14. Differing symbol sets -> DIFFERS, named, and the run fails.
+root=$(nmtree nmdiff "alpha
+gamma" 252336 "alpha
+beta" 252336)
+run_tool "$root" log14 -n
+check "nm-diff reports DIFFERS"   "nm-diff DIFFERS" "$out"
+check "DIFFERS names both causes" "OR the hand-configured" "$out"
+check "DIFFERS fails the run"     "BENCH-BUILDS: FAIL" "$out"
+rc_is "DIFFERS exits non-zero" 1
+
+# 15. ★ Same symbol NAMES, different .text.itcm SIZE -> must still be DIFFERS.
+#     CLAUDE.md's precedent for this check (2026-09-08, the acid_box ITCM wildcard
+#     swap) is "an IDENTICAL ITCM symbol set AND .text.itcm size"; names alone
+#     would accept two builds whose ITCM footprints differ.
+root=$(nmtree nmsize "alpha
+beta" 999999 "alpha
+beta" 252336)
+run_tool "$root" log15 -n
+check "size difference is caught" "nm-diff DIFFERS" "$out"
+check "size difference is shown"  "999999 vs 252336" "$out"
+rc_is "size difference exits non-zero" 1
+
+# 16. ★ A BROKEN nm MUST NOT READ AS OK.  itcm_syms is a pipeline, so its exit
+#     status is sort's -- always 0 -- and two EMPTY files compare EQUAL.  Measured
+#     2026-09-11 with ARM_TOOLCHAIN_BIN pointed at a nonexistent directory: the
+#     tool printed nm-diff OK and BENCH-BUILDS: PASS having read nothing at all.
+root=$(nmtree nmbroken "alpha" 252336 "alpha" 252336)
+ARM_TOOLCHAIN_BIN="$WORK/no-such-toolchain" run_tool "$root" log16 -n
+export ARM_TOOLCHAIN_BIN="$WORK/arm"
+check   "broken nm is reported" "nm-diff BROKEN" "$out"
+nocheck "broken nm is not OK"   "nm-diff OK"     "$out"
+rc_is "broken nm exits non-zero" 1
+
+# 17. ★ -n THAT COMPARES NO PAIRS MUST NOT PASS.  Zero pairs is silence, and
+#     silence read as success is the disease this tool treats.
+root=$(mktree nmnopairs)
+printf 'bt  -DM2_BT_OUT=ON\n' > "$root/examples/display/acid_box/bench"
+run_tool "$root" log17 -n
+check "no pairs is an error" "compared no pairs" "$out"
+check "no pairs counts zero" "nm-diff: 0 pair(s) compared" "$out"
+rc_is "no pairs exits non-zero" 1
+
+# 18. ★ -n MUST HONOUR THE PATTERN.  Without it the loop globs every owned dir in
+#     the tree, so a scoped invocation could go red for a configuration it was told
+#     not to touch -- measured 2026-09-11 against a leftover from an earlier run.
+root=$(nmtree nmpattern "alpha" 252336 "alpha" 252336)
+other="$root/examples/audio/bt_tone_test"
+mkdir -p "$other/build-benchcheck-soak" "$other/build-soak"
+printf 'soak  -DM2_BT_SOAK=ON\n' > "$other/bench"
+: > "$other/build-benchcheck-soak/x.elf"; : > "$other/build-soak/x.elf"
+printf 'zzz\n' > "$other/build-benchcheck-soak/ITCM_SYMS"; echo 1 > "$other/build-benchcheck-soak/ITCM_SIZE"
+printf 'yyy\n' > "$other/build-soak/ITCM_SYMS";            echo 2 > "$other/build-soak/ITCM_SIZE"
+run_tool "$root" log18 -n acid_box
+nocheck "-n ignores dirs outside the pattern" "build-benchcheck-soak" "$out"
+check   "-n still compares the selected pair" "nm-diff OK: build-benchcheck-bt" "$out"
+
+# 19. ★ ABSOLUTE SYMBOLS MUST BE FILTERED.  nm type A carries a VALUE, not an
+#     address: _flashimagelen's value is the image length, and it drifts into the
+#     0x000xxxxx window as an image grows.  So the two sides must STRADDLE the
+#     window -- one image under 1 MB (value 0x00051800, which the address regex
+#     accepts) and one over (0x00151800, which it rejects) -- and then an unfiltered
+#     nm puts the symbol in ONE set only and reports a spurious DIFFERS pointing at
+#     entirely the wrong cause.
+#     ★★ The first version of this arm gave the two sides DIFFERENT absolute VALUES
+#     but both inside the window.  awk prints the symbol NAME, so both sets
+#     contained _flashimagelen either way and the arm passed with the filter
+#     removed -- vacuous, and only the mutation run exposed it.  An arm that cannot
+#     fail is worse than no arm.
+root=$(nmtree nmabs "alpha" 252336 "alpha" 252336)
+cat > "$WORK/arm/arm-none-eabi-nm" <<'FAKENM2'
+#!/bin/sh
+elf=$3; [ -n "$elf" ] || elf=$2
+d=$(dirname "$elf")
+[ -f "$d/ITCM_SYMS" ] || exit 0
+i=0
+while IFS= read -r s; do printf '000%05x T %s\n' "$i" "$s"; i=$((i+1)); done < "$d/ITCM_SYMS"
+# the owned build is small, so its _flashimagelen VALUE lands inside the ITCM
+# address window; the human build is over 1 MB, so its value lands outside it
+case "$d" in *benchcheck*) printf '00051800 A _flashimagelen\n' ;;
+             *)            printf '00151800 A _flashimagelen\n' ;; esac
+FAKENM2
+chmod +x "$WORK/arm/arm-none-eabi-nm"
+run_tool "$root" log19 -n
+check "absolute symbols are filtered" "nm-diff OK: build-benchcheck-bt" "$out"
+rc_is "absolute-symbol filter keeps the run green" 0
+
+echo "-------------------------------------------------------------"
+if [ "$fails" -eq 0 ]; then echo "build-bench-configs tests PASS"
+else echo "$fails failure(s)"; exit 1; fi
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -589,42 +786,74 @@ Create `tools/build-bench-configs.sh`:
 # its bench configurations in a `bench` sidecar, one per line, `<name> <flags>`:
 #
 #     # examples/display/acid_box/bench
-#     bt        -DM2_BT_OUT=ON
-#     bench     -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON
+#     bt      -DM2_BT_OUT=ON
+#     bench   -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON
+#
+# Usage: build-bench-configs.sh [-n] [<pattern>]
+#   -n         also nm-diff each owned dir's ITCM symbol set and .text.itcm size
+#              against the human's build-<name>, where one exists
+#   <pattern>  substring of the example path, e.g. acid_box
 #
 # ★ THE TOOL BUILDS INTO DIRECTORIES IT OWNS -- build-benchcheck-<name> -- and
-#   never touches a human's bench directory.  `build-bt` carries
+#   never touches a human's bench directory.  build-bench, -pre and -post carry
 #   M2RADIO_IW416_BT_FW pointing at a real 131,840-byte firmware blob; a tool
-#   that reconfigured it from the declared flags alone would silently strip it
+#   that reconfigured one from the declared flags alone would silently strip it
 #   and the bench would run the 1 KB synthetic image instead.  That is the
 #   2026-08-27 red inverted (there, a bench-configured dir made its own gate
 #   fail).  build-bench-configs.test.sh asserts the tool never names one.
 #
-# ★ The proxy is sound: the firmware blob lands in .progmem, not ITCM, so
-#   build-benchcheck-bt has the same ITCM footprint as build-bt.  Prove it
-#   rather than assume it -- `-n` nm-diffs the two ITCM symbol sets.
-#
-# ★ A configuration counts as built only if an .elf actually appeared.  "cmake said 0" is not the same
-#   claim, and this tool exists precisely because a build that silently does nothing reads as green.
+# ★ A configuration counts as built only if an .elf actually appeared.  "cmake
+#   said 0" is not the same claim, and this tool exists precisely because a
+#   build that silently does nothing reads as green.  Every "measured nothing"
+#   path below is therefore a FAILURE, not a quiet pass: no pairs compared, no
+#   symbols read, a pattern that selected nothing.
 #
 # Exit 0 = BENCH-BUILDS: PASS.  Run from anywhere.  NEVER concurrently with the
 # QEMU sweep: CLAUDE.md records a sweep invalidated by a concurrent licence
 # audit, and this is heavier than that.
 set -e
+# ★ set -f for the whole script: `set -- $line` below splits a sidecar line into
+# words, and without it a flag containing * or ? would glob against the cwd.
+# Nothing here wants pathname expansion.
+set -f
+NL='
+'
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 CMAKE=${BENCH_CMAKE:-cmake}          # the seam build-bench-configs.test.sh drives
+TOOLBIN=${ARM_TOOLCHAIN_BIN:-/Applications/ARM_10/bin}
 TOOLCHAIN="$REPO/toolchain/rt1170-evkb.toolchain.cmake"
+
+usage() { sed -n '5,12p' "$0" | sed 's/^# \{0,1\}//'; }
+
 NMDIFF=0
-case "$1" in -n) NMDIFF=1; shift ;; esac
-PATTERN=${1:-}
+PATTERN=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -n)        NMDIFF=1 ;;
+        -h|--help) usage; exit 0 ;;
+        # ★ Reject unknown options rather than treating them as a pattern: a
+        # mistyped flag that silently becomes a filter matching nothing would
+        # print PASS, which is the failure mode this whole tool is about.
+        -*)        echo "error: unknown option '$1'" >&2; usage >&2; exit 2 ;;
+        *)         [ -z "$PATTERN" ] || { echo "error: only one pattern allowed" >&2; exit 2; }
+                   PATTERN=$1 ;;
+    esac
+    shift
+done
 
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
-: > "$WORK/fails"; n=0
+: > "$WORK/fails"; n=0; found=0; selected=0
 
+IFS=$NL
 for sidecar in $(find "$REPO/examples" -name bench -not -path '*/build*' | sort); do
+    IFS=$NL
     dir=$(dirname "$sidecar"); rel=${dir#"$REPO"/}
+    found=$((found+1))
     case "$rel" in *"$PATTERN"*) ;; *) continue ;; esac
-    body=$(grep -v '^[[:space:]]*#' "$sidecar" | grep -v '^[[:space:]]*$' || true)
+    selected=$((selected+1))
+    # tr -d '\r' so a CRLF sidecar does not leak a carriage return into the last
+    # flag -- the sibling `boards` parser strips it for the same reason.
+    body=$(grep -v '^[[:space:]]*#' "$sidecar" | tr -d '\r' | grep -v '^[[:space:]]*$' || true)
     if [ -z "$body" ]; then
         echo "error: $rel/bench declares no configuration (empty after stripping comments)"
         echo "$rel/bench" >> "$WORK/fails"; continue
@@ -633,30 +862,39 @@ for sidecar in $(find "$REPO/examples" -name bench -not -path '*/build*' | sort)
     # subshell -- otherwise every failure recorded below would be discarded.
     while IFS= read -r line; do
         [ -n "$line" ] || continue
-        name=${line%% *}; flags=${line#"$name"}
-        flags=$(printf '%s' "$flags" | sed 's/^[[:space:]]*//')
-        if [ -z "$flags" ]; then
+        # ★ Split on whitespace into positional parameters rather than with
+        # ${line%% *}: that idiom yields an EMPTY name for an indented line and
+        # then builds `build-benchcheck-` while handing cmake the real name as a
+        # bare positional argument -- measured, and it reported OK.  This form
+        # also takes tabs as separators, which the sibling `boards` parser does.
+        IFS=' 	'; set -- $line; IFS=$NL
+        name=$1; shift
+        if [ $# -eq 0 ]; then
             echo "error: $rel/bench: '$name' declares no cmake flags"
             echo "$rel[$name]" >> "$WORK/fails"; continue
         fi
         n=$((n+1))
         bdir="$dir/build-benchcheck-$name"
         printf '%-44s ' "$rel[$name]"
-        # ★★ ALWAYS CONFIGURE FROM SCRATCH.  A CMake cache RETAINS every -D ever passed to it, so a flag
-        # REMOVED from a `bench` line stays in effect in this directory forever and the tool would then be
-        # measuring a configuration nobody declared -- which is the one thing it exists to rule out.  Same
-        # trap CLAUDE.md already records: "editing a set(... CACHE ...) DEFAULT does not change an existing
-        # build directory ... Check the symbol size, not the source."  Measured 2026-09-11: a one-off
-        # -DACIDBOX_ITCM_MIN_HEADROOM=65536, passed once to demonstrate the headroom assert going red,
-        # survived in the cache and kept the build FAILED on an otherwise unmodified tree.
-        # The directory is tool-owned, so wiping it costs nothing but time, and a full build every run is
-        # the honest price of the question this tool asks.
+        # ★★ ALWAYS CONFIGURE FROM SCRATCH.  A CMake cache RETAINS every -D ever
+        # passed, so a flag REMOVED from a `bench` line would stay in effect in
+        # this directory forever and the tool would be measuring a configuration
+        # nobody declared -- the one thing it exists to rule out.  Same trap
+        # CLAUDE.md records: "editing a set(... CACHE ...) DEFAULT does not change
+        # an existing build directory ... Check the symbol size, not the source."
+        # Measured 2026-09-11: a one-off -DACIDBOX_ITCM_MIN_HEADROOM=65536, passed
+        # once to demonstrate the headroom assert going red, survived in the cache
+        # and kept the build FAILED on an otherwise unmodified tree.
         rm -rf "$bdir"
-        if "$CMAKE" -S "$dir" -B "$bdir" -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" $flags > "$WORK/out" 2>&1 \
+        # ★ -S IS LOAD-BEARING.  Without it cmake takes the source directory from
+        # the CWD, and since 912c8d1 the repo root holds a CMakeLists.txt --
+        # project(rt1170_evkb_root NONE), whose `all` target is empty -- so a run
+        # from the repo root CONFIGURES THE ROOT PROJECT into this example's build
+        # dir, builds nothing, exits 0 and reports OK.  Measured 2026-09-11.
+        # Before 912c8d1 the same omission was LOUD, which is why it survived
+        # review: the failure mode is newer than the idiom.
+        if "$CMAKE" -S "$dir" -B "$bdir" -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" "$@" > "$WORK/out" 2>&1 \
            && "$CMAKE" --build "$bdir" >> "$WORK/out" 2>&1; then
-            # ★ -S IS LOAD-BEARING (above), and so is this .elf check: "cmake exited 0" and "a firmware
-            # image exists" are different claims, and this tool exists because a build that silently does
-            # nothing reads as green.
             if [ -n "$(find "$bdir" -maxdepth 1 -name '*.elf' -print -quit)" ]; then
                 echo OK
             else
@@ -666,10 +904,11 @@ for sidecar in $(find "$REPO/examples" -name bench -not -path '*/build*' | sort)
             fi
         else
             echo FAILED
-            # Show the lines that NAME the fault, not the last line.  make's generic "Error 2" sits nine
-            # lines below ld's actual diagnosis, so an operator shown only the tail has to go digging for
-            # the one line that says what broke -- measured on the headroom-assert RED demo.
-            _why=$(grep -E 'ld:|error:' "$WORK/out" | head -3)
+            # Show the lines that NAME the fault, not the last line.  make's
+            # generic "Error 2" sits nine lines below ld's actual diagnosis, and
+            # CMake's own failures say "CMake Error at", which matches neither
+            # ld: nor error: -- measured on the headroom-assert RED demo.
+            _why=$(grep -E 'ld:|error:|CMake Error' "$WORK/out" | head -3)
             [ -n "$_why" ] || _why=$(tail -3 "$WORK/out")
             printf '%s\n' "$_why" | sed 's/^/    /'
             echo "$rel[$name]" >> "$WORK/fails"
@@ -678,28 +917,73 @@ for sidecar in $(find "$REPO/examples" -name bench -not -path '*/build*' | sort)
 $body
 EOF
 done
+IFS=$NL
 
-itcm_syms() { # itcm_syms <elf> -- ITCM is 0x00000000-0x000FFFFF; flash is 0x30000000+, RAM 0x20000000+
-    "${ARM_TOOLCHAIN_BIN:-/Applications/ARM_10/bin}/arm-none-eabi-nm" --defined-only "$1" \
-      | awk '$1 ~ /^000[0-9a-f]{5}$/ {print $3}' | sort
+# ★ A pattern that selects nothing is NOT the same claim as "nothing is declared
+# anywhere", and only the second deserves a pass.  A typo'd pattern printing
+# BENCH-BUILDS: PASS is the exact disease this tool treats.
+if [ -n "$PATTERN" ] && [ "$selected" -eq 0 ] && [ "$found" -gt 0 ]; then
+    echo "error: pattern '$PATTERN' selected none of the $found example(s) with a bench sidecar"
+    echo "pattern:$PATTERN" >> "$WORK/fails"
+fi
+
+# ITCM is 0x00000000-0x000FFFFF; flash is 0x30000000+, RAM 0x20000000+.  Absolute
+# symbols (nm type A) carry a VALUE, not an address -- _flashimagelen's value is
+# the image length and drifts into this window once an image reaches 1 MB, which
+# would read as a spurious symbol-set difference pointing at the wrong cause.
+itcm_syms() {
+    "$TOOLBIN/arm-none-eabi-nm" --defined-only "$1" \
+      | awk '$2 != "A" && $2 != "a" && $1 ~ /^000[0-9a-f]{5}$/ {print $3}' | sort
 }
+itcm_size() { "$TOOLBIN/arm-none-eabi-size" -A "$1" | awk '/^\.text\.itcm/ {print $2}'; }
 
 if [ "$NMDIFF" -eq 1 ]; then
+    pairs=0
     for owned in $(find "$REPO/examples" -maxdepth 3 -type d -name 'build-benchcheck-*' | sort); do
+        rel_o=${owned#"$REPO"/}
+        # ★ Honour the pattern here too.  Without this the loop globs EVERY owned
+        # directory in the tree, including leftovers from an earlier run of a
+        # different example, so a scoped invocation could go red for a
+        # configuration it was told not to touch -- measured 2026-09-11.
+        case "$rel_o" in *"$PATTERN"*) ;; *) continue ;; esac
         human=$(printf '%s' "$owned" | sed 's/build-benchcheck-/build-/')
         [ -d "$human" ] || continue
         a=$(find "$owned" -maxdepth 1 -name '*.elf' | head -1)
         b=$(find "$human" -maxdepth 1 -name '*.elf' | head -1)
         [ -n "$a" ] && [ -n "$b" ] || continue
-        itcm_syms "$a" > "$WORK/owned.syms"; itcm_syms "$b" > "$WORK/human.syms"
-        if cmp -s "$WORK/owned.syms" "$WORK/human.syms"; then
-            echo "nm-diff OK: ${owned##*/} == ${human##*/} (ITCM symbol sets)"
+        pairs=$((pairs+1))
+        itcm_syms "$a" > "$WORK/owned.syms" 2>/dev/null || true
+        itcm_syms "$b" > "$WORK/human.syms" 2>/dev/null || true
+        # ★ Two empty files compare EQUAL.  A missing arm-none-eabi-nm, an
+        # unreadable ELF or a stripped image would otherwise print nm-diff OK
+        # having read nothing at all -- measured with ARM_TOOLCHAIN_BIN pointed
+        # at a nonexistent directory, which reported OK and PASS.
+        if [ ! -s "$WORK/owned.syms" ] || [ ! -s "$WORK/human.syms" ]; then
+            echo "nm-diff BROKEN: read no ITCM symbols from ${owned##*/} or ${human##*/}"
+            echo "  (is $TOOLBIN/arm-none-eabi-nm present and are both ELFs readable?)"
+            echo "${owned##*/}:nm-unreadable" >> "$WORK/fails"; continue
+        fi
+        sa=$(itcm_size "$a"); sb=$(itcm_size "$b")
+        # ★ Size as well as names.  CLAUDE.md's own precedent for this check
+        # (2026-09-08, the acid_box ITCM wildcard swap) is "an IDENTICAL ITCM
+        # symbol set AND .text.itcm size, nm-diffed, not eyeballed" -- names
+        # alone would accept two builds whose ITCM footprints differ.
+        if cmp -s "$WORK/owned.syms" "$WORK/human.syms" && [ -n "$sa" ] && [ "$sa" = "$sb" ]; then
+            echo "nm-diff OK: ${owned##*/} == ${human##*/} (ITCM symbol set + .text.itcm $sa)"
         else
-            echo "nm-diff DIFFERS: ${owned##*/} vs ${human##*/} -- the proxy is not equivalent"
+            echo "nm-diff DIFFERS: ${owned##*/} vs ${human##*/} (.text.itcm $sa vs $sb)"
+            echo "  EITHER the proxy is not equivalent, OR the hand-configured ${human##*/} is stale:"
+            echo "  the tool wipes its own directory every run and never touches that one."
             diff "$WORK/human.syms" "$WORK/owned.syms" | head -20 | sed 's/^/    /'
             echo "${owned##*/}:nm" >> "$WORK/fails"
         fi
     done
+    echo "nm-diff: $pairs pair(s) compared"
+    # ★ Zero pairs is silence, and silence read as success is what this tool is for.
+    if [ "$pairs" -eq 0 ]; then
+        echo "error: -n compared no pairs, so it proved nothing"
+        echo "nm:no-pairs" >> "$WORK/fails"
+    fi
 fi
 
 echo "bench: $n configuration(s)"
@@ -719,116 +1003,71 @@ Expected: `build-bench-configs tests PASS`.
 
 - [ ] **Step 4b: Mutation-test the suite — a test never shown to fail is decoration**
 
-Green proves the tool passes its tests; it does not prove the tests can fail. Both mutants below were run
-during planning and both redden **by name**; reproduce them, then restore.
+Green proves the tool passes its tests; it does not prove the tests *can* fail. Ten mutations, one per
+guarantee the tool makes. Run them with the harness below rather than by hand: **it asserts each anchor is
+present**, so a recipe that has gone stale fails loudly instead of silently mutating nothing.
 
 ```bash
 cd ~/Development/rt1170/evkb
 cp tools/build-bench-configs.sh /tmp/tool.orig
-
-# Mutant 1 -- the tool writes into the HUMAN's directory (the failure this tool exists to avoid)
-sed 's#bdir="$dir/build-benchcheck-$name"#bdir="$dir/build-$name"#' /tmp/tool.orig > tools/build-bench-configs.sh
-./tools/build-bench-configs.test.sh; echo "exit=$?"
+python3 - <<'EOF'
+import subprocess, os
+orig = open('/tmp/tool.orig').read()
+MUTANTS = [
+ ("drop the pre-configure wipe",      '        rm -rf "$bdir"\n', ''),
+ ("drop -S",                          '"$CMAKE" -S "$dir" -B "$bdir"', '"$CMAKE" -B "$bdir"'),
+ ("parser back to ${line%% *}",
+    '        IFS=\' \t\'; set -- $line; IFS=$NL\n        name=$1; shift\n        if [ $# -eq 0 ]; then',
+    '        name=${line%% *}; set -- ${line#"$name"}\n        if [ $# -eq 0 ]; then'),
+ ("accept empty symbol reads",
+    '        if [ ! -s "$WORK/owned.syms" ] || [ ! -s "$WORK/human.syms" ]; then', '        if false; then'),
+ ("compare names only, not size",
+    'if cmp -s "$WORK/owned.syms" "$WORK/human.syms" && [ -n "$sa" ] && [ "$sa" = "$sb" ]; then',
+    'if cmp -s "$WORK/owned.syms" "$WORK/human.syms"; then'),
+ ("-n ignores the pattern",
+    '        case "$rel_o" in *"$PATTERN"*) ;; *) continue ;; esac\n', ''),
+ ("zero pairs passes",
+    '    if [ "$pairs" -eq 0 ]; then\n        echo "error: -n compared no pairs, so it proved nothing"\n        echo "nm:no-pairs" >> "$WORK/fails"\n    fi', '    :'),
+ ("absolute symbols not filtered",     '$2 != "A" && $2 != "a" && ', ''),
+ ("unmatched pattern passes",
+    'if [ -n "$PATTERN" ] && [ "$selected" -eq 0 ] && [ "$found" -gt 0 ]; then', 'if false; then'),
+ ("unknown option becomes a pattern",
+    "        -*)        echo \"error: unknown option '$1'\" >&2; usage >&2; exit 2 ;;\n", ''),
+]
+bad = 0
+for label, old, new in MUTANTS:
+    assert old in orig, f"STALE MUTANT RECIPE -- anchor missing for: {label}"
+    open('tools/build-bench-configs.sh','w').write(orig.replace(old, new, 1))
+    os.chmod('tools/build-bench-configs.sh', 0o755)
+    r = subprocess.run(['./tools/build-bench-configs.test.sh'], capture_output=True, text=True)
+    if r.returncode == 0:
+        print(f"!! STAYED GREEN !!   {label}"); bad += 1
+    else:
+        print(f"RED                  {label}")
+        for l in r.stdout.split("\n"):
+            if l.startswith("FAIL:"): print("      ", l)
+open('tools/build-bench-configs.sh','w').write(orig); os.chmod('tools/build-bench-configs.sh', 0o755)
+r = subprocess.run(['./tools/build-bench-configs.test.sh'], capture_output=True, text=True)
+print("\nRESTORED:", r.stdout.strip().split("\n")[-1])
+raise SystemExit(1 if bad else 0)
+EOF
 ```
 
-Expected exactly:
+Expected: **`RED` on all ten**, then `RESTORED: build-bench-configs tests PASS`. A `!! STAYED GREEN !!` line
+means that guarantee has no working test — stop and report it.
 
-```
-FAIL: never configures build-bt (found '/build-bt')
-FAIL: owns build-benchcheck-bt (wanted 'build-benchcheck-bt')
-FAIL: owns build-benchcheck-loopstat (wanted 'build-benchcheck-loopstat')
-FAIL: stale owned dir was NOT wiped before configure
-4 failure(s)
-exit=1
-```
-
-★ The fourth line is arm 10 catching the same mutant from the other side: a tool that wipes `build-bt`
-instead of `build-benchcheck-bt` leaves arm 10's marker alive. Measured 2026-09-11 — the arm was written for
-mutant 5 and turned out to strengthen mutant 1 too.
-
-```bash
-# Mutant 2 -- a failing build is PRINTED but never recorded, so the run still exits 0
-python3 -c "
-s=open('/tmp/tool.orig').read()
-s=s.replace('            echo \"\$rel[\$name]\" >> \"\$WORK/fails\"\n        fi','        fi',1)
-open('tools/build-bench-configs.sh','w').write(s)"
-./tools/build-bench-configs.test.sh; echo "exit=$?"
-```
-
-Expected exactly:
-
-```
-FAIL: failing config reports FAIL (wanted 'BENCH-BUILDS: FAIL')
-FAIL: exit status 0 on a broken config
-2 failure(s)
-exit=1
-```
-
-```bash
-cp /tmp/tool.orig tools/build-bench-configs.sh && chmod +x tools/build-bench-configs.sh
-./tools/build-bench-configs.test.sh
-```
-
-Expected: `build-bench-configs tests PASS`.
-
-★ Mutant 2 is the one worth understanding: a tool that reports every failure to the screen and still exits 0
-is exactly how a close-out step gets read as green. That is the same class as the 2026-08-19 sweep bug where
-two gates wrote one `.result` file and a FAIL printed above a `gates: 2 passed` summary.
-
-```bash
-# Mutant 3 -- THE BUG THIS TOOL ACTUALLY SHIPPED WITH.  Drop -S: cmake then takes the source directory from
-# the CWD, configures the ROOT project (project(rt1170_evkb_root NONE), empty `all`) into the example's
-# build dir, builds nothing and exits 0.
-sed 's#"$CMAKE" -S "$dir" -B "$bdir"#"$CMAKE" -B "$bdir"#' /tmp/tool.orig > tools/build-bench-configs.sh
-./tools/build-bench-configs.test.sh; echo "exit=$?"
-```
-
-Expected: `FAIL: source dir reaches cmake (wanted '-S .../examples/display/acid_box')`, `1 failure(s)`,
-`exit=1`.
-
-```bash
-# Mutant 4 -- the STRUCTURAL version of the same class: a cmake that exits 0 having produced no .elf is
-# accepted as OK.  -S could be right and the build still make nothing.
-python3 -c "
-s=open('/tmp/tool.orig').read()
-old='''if [ -n \"\$(find \"\$bdir\" -maxdepth 1 -name '*.elf' -print -quit)\" ]; then'''
-assert old in s, 'anchor missing -- the tool has been restructured, re-derive the mutation'
-open('tools/build-bench-configs.sh','w').write(s.replace(old,'if true; then',1))"
-./tools/build-bench-configs.test.sh; echo "exit=$?"
-```
-
-★ **This recipe asserts its own anchor, deliberately.** The first version deleted the `.elf` test out of the
-`if` *condition*, which was the pre-fix shape; once fix 3 moved that test into a nested `if`, `str.replace`
-matched nothing, silently changed nothing, and the suite stayed **green** — a mutation test that proves
-nothing while looking like it passed. Found 2026-09-11. Any mutant recipe that can silently no-op must fail
-loudly instead, which is what the `assert` is for.
-
-Expected: `FAIL: no .elf is a failure`, `FAIL: no .elf says why`, `FAIL: exit status 0 when nothing was
-built`, `3 failure(s)`, `exit=1`. Then restore `/tmp/tool.orig` and confirm the suite passes.
-
-```bash
-# Mutant 5 -- drop the pre-configure wipe.  A CMake cache retains every -D ever passed, so a flag removed
-# from a `bench` line stays in effect in the owned dir forever and the tool measures a configuration nobody
-# declared.
-python3 -c "
-s=open('/tmp/tool.orig').read(); s=s.replace('        rm -rf \"\$bdir\"\n','',1)
-open('tools/build-bench-configs.sh','w').write(s)"
-./tools/build-bench-configs.test.sh; echo "exit=$?"
-```
-
-Expected: `FAIL: stale owned dir was NOT wiped before configure`, `1 failure(s)`, `exit=1`. Restore after.
+★★ **Two of these arms were vacuous when first written, and only a mutation run found either.** The `.elf`
+recipe went stale when the check moved into a nested `if` — `str.replace` matched nothing, changed nothing,
+and the suite stayed green, which is why the harness now asserts its anchors. And the absolute-symbol arm
+gave the two sides different absolute *values* but both inside the ITCM address window; `awk` prints the
+symbol *name*, so both sets contained `_flashimagelen` either way and the arm passed with the filter
+removed. It now makes the two sides **straddle** the window, which is the only configuration that
+discriminates. An arm that cannot fail is worse than no arm, because it is counted.
 
 ★ **One fix in this task is deliberately NOT covered by a mutant, and that is recorded rather than papered
-over**: printing the `ld:`/`error:` lines instead of make's generic last line. The fake cmake emits a single
-line, so the suite cannot tell the two apart — it is a bench-ergonomics fix whose only evidence is Step 7 on
-the real tree, where the `NEW-45: ITCM headroom below 65536` line must appear under the FAILED row. A test
-that cannot fail would be worse than saying so.
-
-★★ **Mutants 3 and 4 exist because the first version of this tool shipped with exactly that bug and the
-first version of this suite could not see it** — every arm inspected `-B` and `-D` only, so a tool that
-configured the wrong project entirely passed all seven. Found 2026-09-11 by the implementer running Step 6
-for real and noticing it finished in seconds instead of the budgeted ten minutes. **Speed was the only
-symptom**; every printed line said `OK`.
+over**: printing the `ld:`/`error:`/`CMake Error` lines instead of make's generic last line. The fake cmake
+emits a single line, so the suite cannot tell the two apart — it is a bench-ergonomics fix whose only
+evidence is Step 7 on the real tree.
 
 - [ ] **Step 5: Create acid_box's sidecar**
 
@@ -918,6 +1157,44 @@ after restoring the sidecar must come back `BENCH-BUILDS: PASS` **with no manual
 ```
 
 Expected: both configurations `OK`, `BENCH-BUILDS: PASS`, `exit=0`.
+
+- [ ] **Step 7b: Give the tool something that runs it**
+
+★★ **A tool nobody is told to run does not close a discovery gap** — it documents one. The failure this
+whole task exists to prevent went unnoticed for two days precisely because no script, target or checklist
+named the thing that would have caught it. So wire it in, the same way the repo's other whole-tree checks
+are wired.
+
+Add to the root `CMakeLists.txt`, after the `build_all_examples` target and in the same idiom:
+
+```cmake
+# Build every BENCH configuration declared in an example's `bench` sidecar.
+# Gates never build, and until NEW-45 nothing built a bench directory either:
+# display/acid_box's M2_BT_OUT builds sat broken for two days before an unrelated
+# workstream happened to rebuild them.  Run at close-out, NEVER concurrently with
+# the QEMU sweep -- CLAUDE.md records a sweep invalidated by a concurrent licence
+# audit, and this is heavier than that.
+add_custom_target(bench_check
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/build-bench-configs.sh" -n
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Building every declared bench configuration..."
+)
+```
+
+Verify it resolves (this does **not** run the builds):
+
+```bash
+cd ~/Development/rt1170/evkb
+cmake -B /tmp/new45-roottgt -S . >/dev/null && cmake --build /tmp/new45-roottgt --target help 2>/dev/null | grep bench_check
+rm -rf /tmp/new45-roottgt
+```
+
+Expected: `... bench_check`.
+
+★ The CLAUDE.md half of this is Task 7's job — the close-out narrative is where every other repo-wide check
+(`license-audit.sh`, the vacuity suite) is recorded with its measured result, and a check absent from that
+narrative is a check nobody runs.
 
 - [ ] **Step 8: Keep the owned directories out of git**
 
