@@ -36,3 +36,4 @@ docs/*.pdf
 tools/esp32c6-benchap/ap_creds.h
 tools/esp8266-benchap/ap_creds.h
 tools/esp8266-uapclient/client_creds.h
+build-benchcheck-*/

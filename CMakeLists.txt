@@ -28,6 +28,19 @@ add_custom_target(build_all_examples
     COMMENT "Building all example ELFs across boards..."
 )
 
+# Build every BENCH configuration declared in an example's `bench` sidecar.
+# Gates never build, and until NEW-45 nothing built a bench directory either:
+# display/acid_box's M2_BT_OUT builds sat broken for two days before an unrelated
+# workstream happened to rebuild them.  Run at close-out, NEVER concurrently with
+# the QEMU sweep -- CLAUDE.md records a sweep invalidated by a concurrent licence
+# audit, and this is heavier than that.
+add_custom_target(bench_check
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/tools/build-bench-configs.sh" -n
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    USES_TERMINAL
+    COMMENT "Building every declared bench configuration..."
+)
+
 # CTest integration
 include(CTest)
 if(BUILD_TESTING)
