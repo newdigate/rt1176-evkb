@@ -19,10 +19,18 @@ Facts you need that are not obvious from the files:
 * **A gate never builds anything, and neither does anything else build a bench directory.** That is why this
   broke silently. `examples/display/acid_box/build-bt` and `build-bench{,-pre,-post}` are hand-configured
   directories whose settings live in untracked `CMakeCache.txt` state.
-* **`build-bt` carries a real firmware blob.** Its cache sets `M2RADIO_IW416_BT_FW` to a 131,840-byte file
-  from an NXP SDK. **Never reconfigure that directory with a partial `-D` set** — you would silently strip the
-  blob and the bench would run the 1 KB synthetic image instead. Build it with `cmake --build`, never
-  `cmake -B`.
+* **`build-bench`, `build-bench-pre` and `build-bench-post` carry the real firmware blob** —
+  `M2RADIO_IW416_BT_FW` = `~/Development/mcuxsdk-ws/.../IW416/uartIW416_bt.bin.inc`, 131,840 bytes. **Never
+  reconfigure those with a partial `-D` set** — you would silently strip the blob and the board would try to
+  boot the radio from the 1 KB synthetic fallback. Build them with `cmake --build`, never `cmake -B`.
+  ★ **`build-bt` does NOT carry it** — its `M2RADIO_IW416_BT_FW` is empty and has been since 2026-09-06.
+  Corrected 2026-09-11 after Task 1 measured it; the original plan said the opposite and had Task 4 source
+  the blob path from `build-bt`, which would have given every silicon arm a synthetic image and voided the
+  bench session.
+  ★ **Check the VALUE, never the line.** `grep -c M2RADIO_IW416_BT_FW:FILEPATH` returns 1 for an *empty*
+  cache entry, which is how the wrong claim survived into the plan. The honest check is the size of the
+  linked symbol: `nm --print-size <elf> | grep ' iw416_bt_fw$'` reads `00000400` for the synthetic image and
+  `00020300` for the real one.
 * **The linker script is generated at configure time.** `examples/display/acid_box/CMakeLists.txt:178-199`
   reads the core's `imxrt1176.ld` out of `LINK_FLAGS`, does a `string(REPLACE)` on the
   `*libLVGL_flash.a:(.text*)` line, and writes `build-*/acid_box_bt.ld`. Editing a generated `acid_box_bt.ld`
@@ -174,8 +182,22 @@ wc -l < $S/left.syms; wc -l < $S/joined.syms
 comm -23 $S/left.syms $S/vglite.syms   # symbols that left ITCM but are NOT VGLite's -- must print nothing
 ```
 
-Expected: `joined.syms` is **0 lines**, and the final `comm` prints **nothing**. Anything else means the rule
-moved code it does not name, which is a failed acceptance, not a curiosity — stop and find out why.
+Expected: the final `comm` prints **nothing** — that is the load-bearing check, and anything it prints means
+the rule moved code it does not name, which is a failed acceptance, not a curiosity: stop and find out why.
+
+★ **`joined.syms` is NOT empty, and should not be.** Measured 2026-09-11: **nine** `__vg_lite_*_veneer`
+symbols join ITCM at `0x0003d8e0`-`0x0003d9a0`. They are ld long-branch trampolines, synthesised precisely
+*because* the ITCM callers now reach `vg_lite` across the `0x30000000` boundary, and they exist in no input
+object — `nm --defined-only build-bt/libVGLite.a | grep -c veneer` is `0`. The ELF already carries the same
+class for the flash-routed M2Radio (`___ZN5L2cap*_veneer`), and CLAUDE.md records it for the 2026-09-08
+wildcard swap. The acceptance is therefore: **every symbol that joins ITCM must be an ld-synthesised
+`*_veneer`, proven absent from the input archives** — not that none joins. Check it:
+
+```bash
+grep -v '_veneer$' $S/joined.syms    # must print nothing
+```
+
+Net ITCM freed is `9984 - 48 = 9936 B`: libVGLite's `.text` less the veneers it costs.
 
 - [ ] **Step 7: Prove the default (gate) build is byte-identical**
 
@@ -277,14 +299,26 @@ Immediately after `set_target_properties(acid_box.elf PROPERTIES LINK_FLAGS "${_
 `build-bt` must be reconfigured for the new cache variable to reach the generated script. It carries the
 firmware blob, so **reconfigure it in place with no `-D` at all** — CMake reuses every cached value:
 
+`build-bt` must be reconfigured for the new cache variable to reach the generated script. **Reconfigure it
+in place with no `-D` at all** — CMake reuses every cached value:
+
 ```bash
 cd ~/Development/rt1170/evkb/examples/display/acid_box
-grep -c M2RADIO_IW416_BT_FW:FILEPATH build-bt/CMakeCache.txt          # note this is 1, and re-check after
 cmake -B build-bt >/dev/null && cmake --build build-bt 2>&1 | grep -A4 "Memory region"
-grep M2RADIO_IW416_BT_FW:FILEPATH build-bt/CMakeCache.txt             # must still name the real .bin.inc
 ```
 
-Expected: a memory-usage table naming `ITCM` at roughly 96.2 % used, and the blob path unchanged.
+Expected: a memory-usage table naming `ITCM` at roughly 96.3 % used.
+
+★ Do the same for `build-bench`, and there **check the blob survived by its linked SIZE, not by grepping the
+cache line** — an empty `M2RADIO_IW416_BT_FW:FILEPATH=` still matches a `grep -c`:
+
+```bash
+cmake -B build-bench >/dev/null && cmake --build build-bench >/dev/null
+/Applications/ARM_10/bin/arm-none-eabi-nm --print-size build-bench/acid_box.elf | grep ' iw416_bt_fw$'
+```
+
+Expected: `00020300` (131,840 B, the real image). `00000400` means the blob was stripped — stop and restore
+it from `build-bench-pre`'s cache before doing anything else.
 
 - [ ] **Step 5: Demonstrate the assert RED**
 
@@ -797,13 +831,22 @@ Arm (a) is Task 1's committed state. Build it into its own directory so all four
 ```bash
 cd ~/Development/rt1170/evkb/examples/display/acid_box
 cmake -B build-arm-a -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON \
-      -DM2RADIO_IW416_BT_FW=$(grep M2RADIO_IW416_BT_FW:FILEPATH build-bt/CMakeCache.txt | cut -d= -f2) \
+      -DM2RADIO_IW416_BT_FW=$(grep M2RADIO_IW416_BT_FW:FILEPATH build-bench/CMakeCache.txt | cut -d= -f2) \
       -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake
 cmake --build build-arm-a 2>&1 | grep -A4 "Memory region"
 ```
 
-Expected: links, ITCM ~96 % used. The `M2RADIO_IW416_BT_FW` value is copied out of `build-bt`'s cache so the
-arm downloads the real firmware — a synthetic image never brings the radio up.
+Expected: links, ITCM ~96 % used.
+
+★ The `M2RADIO_IW416_BT_FW` value is copied out of **`build-bench`**, not `build-bt` — `build-bt`'s is EMPTY
+(measured 2026-09-11). Verify the arm actually got the real image before flashing anything, by size:
+
+```bash
+/Applications/ARM_10/bin/arm-none-eabi-nm --print-size build-arm-a/acid_box.elf | grep ' iw416_bt_fw$'
+```
+
+Expected `00020300`. If it reads `00000400` the arm carries the 1 KB synthetic image, the radio will never
+come up, and every measurement taken from it is void. **Run this check on all four arms.**
 
 - [ ] **Step 4: Add the arm (b) rule, build arm (b)**
 
@@ -825,7 +868,7 @@ Then:
 ```bash
 cd ~/Development/rt1170/evkb/examples/display/acid_box
 cmake -B build-arm-b -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON \
-      -DM2RADIO_IW416_BT_FW=$(grep M2RADIO_IW416_BT_FW:FILEPATH build-bt/CMakeCache.txt | cut -d= -f2) \
+      -DM2RADIO_IW416_BT_FW=$(grep M2RADIO_IW416_BT_FW:FILEPATH build-bench/CMakeCache.txt | cut -d= -f2) \
       -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake
 cmake --build build-arm-b 2>&1 | grep -A4 "Memory region"
 ```
@@ -850,7 +893,7 @@ Then:
 
 ```bash
 cmake -B build-arm-c -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON \
-      -DM2RADIO_IW416_BT_FW=$(grep M2RADIO_IW416_BT_FW:FILEPATH build-bt/CMakeCache.txt | cut -d= -f2) \
+      -DM2RADIO_IW416_BT_FW=$(grep M2RADIO_IW416_BT_FW:FILEPATH build-bench/CMakeCache.txt | cut -d= -f2) \
       -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake
 cmake --build build-arm-c 2>&1 | grep -A4 "Memory region"
 /Applications/ARM_10/bin/arm-none-eabi-nm --defined-only -C build-arm-c/acid_box.elf \
@@ -873,7 +916,7 @@ VGLite rule. Then add ONE line after it:
 
 ```bash
 cmake -B build-arm-d -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON \
-      -DM2RADIO_IW416_BT_FW=$(grep M2RADIO_IW416_BT_FW:FILEPATH build-bt/CMakeCache.txt | cut -d= -f2) \
+      -DM2RADIO_IW416_BT_FW=$(grep M2RADIO_IW416_BT_FW:FILEPATH build-bench/CMakeCache.txt | cut -d= -f2) \
       -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake
 cmake --build build-arm-d 2>&1 | grep -A4 "Memory region"
 ```
