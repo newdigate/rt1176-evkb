@@ -782,7 +782,7 @@ starts.** It is the SAME confusion the first Task 1 review found in the `MANUAL`
 with the scans off, `enterPairing()` refused, the LED still blinking), where the fix was to close the
 window in `disconnect()`; this second instance survived because the spec says "closes on STREAMING" and
 the review accepted it as by-design after measuring `CONNECTING: open=1 canPair=0 link=LINK_UP`. The
-honest indicator is not `pairingOpen()` but whatever drives `wantDiscoverable`. **Filed as a follow-up**;
+honest indicator is not `pairingOpen()` but whatever drives `wantDiscoverable`. **Filed as NEW-47**;
 the candidate fix is to close the window when the LINK comes up rather than when media starts —
 `PAIR_END_PAIRED` at encryption is the truer reading of "paired" anyway — rather than gating the LED,
 which would hide the symptom and leave the library's own invariant false.

@@ -336,8 +336,8 @@ survived review because 4 says "closes on STREAMING" and the measured `CONNECTIN
 link=LINK_UP` was accepted as by-design.  **`pairingOpen()` is not a discoverability predicate and must
 stop being used as one.**  The candidate fix is to close the window when the LINK comes up rather than
 when media starts -- `PAIR_END_PAIRED` at encryption is the truer reading of "paired" -- not to gate the
-LED, which hides the symptom and leaves the invariant false.  Filed as a follow-up rather than fixed
-here, because it changes a library edge the gate asserts.
+LED, which hides the symptom and leaves the invariant false.  **Filed as NEW-47** rather than fixed
+here, because it moves a library edge the gate asserts.
 
 **Two things the bench gave that no gate could.**  The destructive command was mistyped twice in a
 row by a real human (`cmd=? "forgeet"`, `cmd=? "gorgeet"`) and the exact-match parser refused both,
