@@ -665,6 +665,101 @@ walk does not spend 30 s paging stale bonds before it inquires.
   or LE-only), `M2_BT_INQUIRY_LIAC` exists because of it. The board "Wire not
   connected" that looked like the DAP wedge was the board being switched OFF.
 
+✅ **Measured 2026-09-10: 139 gates discovered, 139 passed, 0 failed, 0 SKIP** (`gates: 139 passed`,
+exit 0; `-l` reports 139; 23m29s wall), on the **NEW-46 runtime pairing mode** close-out — fully clean, and
+every member of the load-sensitivity class green IN THE SWEEP ITSELF, including
+`display/synthui_slide_toggle_test`, the single red of the NEW-42 close-out hours earlier, which nothing in
+this branch touches: the THIRD independent confirmation that that set is a property of machine load and not
+of those gates. `LICENSE-AUDIT: PASS` (after the sweep), 118 manifests, `audio/bt_sink_test` at 1177 dep
+paths — identical to NEW-41's, consistent with no new COMPILED file. Vacuity **47** (one new negative,
+`no_drop_window_fails_sink_gate`). Host suites: M2Radio 14 binaries `BT-HOST-TESTS: PASS` with
+`btsinksession_test` **149 → 282 checks**; the sink example `servo_test: 113`, `node_test: 365` default and
+`337` CONTROL. Fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the gate on the GitHub-fetched ELF
+(clone at `b90d52b`). **No new gate** — 139 unchanged, gate 139 extended in place.
+★ The fresh-user invocation for this gate is `GATE_VACUITY=1` with NO fixture, and the reason is subtle:
+that skips the gate's own rebuild — which would otherwise recompile the fetched ELF from local-first
+sources and destroy the whole point — while still running the real peer and the real console driver.
+
+★ **NEW-46 (2026-09-10/11): a runtime PAIRING MODE, so a phone that forgets the sink can get back to it.**
+Spec `docs/superpowers/specs/2026-09-10-bt-sink-pairing-mode-design.md`, plan
+`.../plans/2026-09-10-bt-sink-pairing-mode.md`. A bonded sink is not discoverable BY DESIGN (a phone that
+knows us pages), so NEW-41's bench recorded the dead end twice: once the phone forgets, the only way back
+was a reflash with `M2_BT_FORGET_BONDS=ON`. The answer is a **pairing WINDOW** — a deadline beside
+`LISTENING`, deliberately NOT a `State`, so `MANUAL` composes with it and every `m_state == LISTENING` test
+is untouched. It opens for 2 min at `begin()` (`PAIR_BOOT`), on EVERY return to `LISTENING` (`PAIR_DROP`:
+loss, clean close, AND a failed attempt) and on demand (`PAIR_CMD`); every opening calls
+`link().startPrepare()` — never `BtLink::begin()`, which would clear an in-flight op — so a window
+guarantees Simple Pairing is on. Console commands `pair` / `forget` / `status` arrive through a
+`serialEvent1()` override (the core's `yield()` dispatches it; `loop()` yields every pass), the
+`LED_BUILTIN` blinks at 1 Hz while a window is open, and `tools/rt1170-console.py` grew a stdin→port thread
+so a human can type at the bench. M2Radio `b90d52b` pinned.
+★ **THE BENCH MET EVERY CRITERION BUT ONE, AND THE ONE IT MISSED IS THE ISSUE'S OWN PREMISE.**
+`transcript_hw_evkb.txt` RUN 9 (iPhone, 2026-09-11): boot window, honest 2-min timeout, `pair`, the drop
+window on a real range loss with PREPARE re-issued, and `forget` rescuing a phone that had already
+forgotten the sink — **Just Works, no passcode, no SW4**, which is the whole feature. **But NEW-43 DID NOT
+REPRODUCE**, deliberately attempted in both link-key directions: with the board wiped and the phone holding
+a stale key the phone terminates at once (`reason=0x13`) and the legacy-PIN ladder then runs on a DEAD
+handle (`auth_complete: status=0x02 handle=0x0000`), never issuing the SSP-off write; with the board
+holding the bond and the phone having forgotten, iOS sends **no `link_key_req` at all** — straight to
+IO-cap/SSP, `bond=updated` — so there is no mismatch to fail on. Ten `ssp_mode` writes in the run, every
+one `mode=1`; the user confirms no passcode prompt at any stage. **So NEW-43's trigger is not a link-key
+asymmetry with this iPhone, and what produced the RUN 4 prompt is unexplained.** The window is still the
+right mitigation — it re-issues PREPARE unconditionally, so a poisoned controller would be cleared
+whether or not we can provoke one — but the heal was NOT demonstrated against a real fault, and the issue
+says so rather than claiming a fix.
+★ **The counters looked like a NEW-42 regression and were the WALK.** The run ends `under=78 over=36`
+against NEW-42's accepted `over=0`. A 6.5-minute STATIONARY control inside the same run settles it:
+`over` +0, `overev` +0, `reprimes` +0, `seqgaps` +0, `under` +5 (**0.77/min**, against RUN 8's 0.69), and
+`under` equal to `dryTotal` again — every one of those 36 overruns was accumulated while walking out of
+range, where `gapmax_ms=154` and two gaps over 120 ms say the air link was already shedding packets.
+**A lifetime counter read across a deliberate RF failure is not comparable to one read stationary**; the
+control has to be inside the same run.
+★ **`BT_SINK_LED_ON=HIGH` is MEASURED, not guessed.** The RevC3 header audit names GPIO_AD_04 but not its
+active level, and the only "active low" note in the core is the 1060's D8 — a different board. It shipped
+as a default plus a cache variable, and a person watching it blink through a boot window is the only
+instrument that could settle it: **QEMU cannot see an LED.** The cache variable was itself a review
+finding — it was `#ifndef`-only at first, so `-DBT_SINK_LED_ON=LOW` would have set a variable nothing read,
+configured cleanly, and left the bench concluding the default was right.
+★ **The gate drives the feature over a SOCKET console** (`sink_console.py`): the chardev carries
+`logfile=`, so every byte still lands in the capture the assertions read, while the driver types `pair`
+while STREAMING (refused), then after the peer's injected drop `pair`, `forget`, `status`. The
+`GATE_VACUITY` branch keeps `-serial file:` because the vacuity harness's fake QEMU knows only that form —
+do not collapse the two. The peer's `source` phase now drops the ACL after the 150th packet and re-pages
+~8 s later, so the post-`forget` page finds NO bond and must pair from scratch: a second
+`accept(slave, unbonded)`, `neg_reply`, `pairing_complete`. **DEMONSTRATED RED five ways by name**, and the
+sharpest is a `forget` that REPORTS the wipe without doing it — `bonds_forgotten=1` still prints (it is the
+pre-wipe count, so it lies) and the gate catches it anyway, on the re-page arriving as `accept(slave)` with
+a stored key. The firmware's claim about itself is not what the gate believes.
+★ **Three review rounds on the library task, each finding what the last had not**, which is the argument
+for the two-stage review rather than one: a window that rode through `MANUAL` with the scans off; then the
+FIX for that making `pairingEnd()` a function of CALLBACK TIMING rather than of the wire (the same
+successful pairing read `cancelled` or `paired` depending on whether the app called `disconnect()` inside
+`onAttempt` or one tick later) — corrected by closing PAIRED at the `CONNECTING`→`STREAMING` transition,
+ahead of the callbacks; then `enterPairing(now, PAIR_NONE)` opening a window that `pairingReason()`
+reported as CLOSED, and a test sampling the tick that ASSIGNS `CONNECTING` rather than one inside it,
+against which a mutant closing the window there passed the whole suite.
+★ **Three defects the sketch's review found, none visible to any gate**: `serialEvent1()` drained and
+dispatched EVERY queued line per call, and `yield()` holds its `running` flag across the call, so a
+blocking print's nested `yield()` is a no-op and the HciPump does not run until the handler RETURNS — a
+held Enter key asks 16.5 KB/s of an 11.5 KB/s console and the board goes silent on Bluetooth while looking
+alive (fixed: one command per invocation). A partial line never expired, so `for` + a restarted console +
+`get` ran `forget` and wiped the bond store (fixed: a 2 s idle timeout). And `forget`'s `canPair()` guard
+was correct only by ACCIDENT of `setup()`'s ordering — move `session.begin()` earlier and a wipe lands on
+an unread table, where `BondTable::clear()` dirties unconditionally, so the empty image overwrites real
+persisted bonds and `bonds_boot=0` reads perfectly normal (fixed: an explicit `s_bondsLoaded`).
+★ **The exact-match parser earned itself on a human.** RUN 9 contains `cmd=? "forgeet"` and
+`cmd=? "gorgeet"` — the destructive command mistyped twice at the bench, refused both times. No gate could
+have shown that.
+★ `paired_by` has FIVE values (`BtLink.h:101`: `none|ssp|pin|stored|peer`) and RUN 9 measured two — `ssp`
+where the sink drives the exchange to completion, `peer` where encryption arrives without the sink having
+offered a key. A correction made mid-session asserting `peer` was never printed was WRONG and is withdrawn
+in place; the header said so in a comment that went unread.
+★ Known gaps, named rather than left to be discovered: the gate's peer sends only `Encryption_Change`
+after its re-page, so the post-`forget` MEDIA path is NOT covered (the sink is shown re-pairable, not
+re-usable) and the second window never closes as `paired`; and a `PAIR_DROP` window opening while a
+commanded one is already open changes the reason with NO print, because the edge detector fires only on a
+rising edge — the heartbeat's `pairing=` field is the only place it shows.
+
 ✅ **Measured 2026-09-10: 139 gates discovered, 138 passed, 1 failed, 0 SKIP** (`-l` reports 139), on the
 **NEW-42 sink jitter-absorption** close-out. `LICENSE-AUDIT: PASS`; vacuity **46/46**; host suites 113 /
 365 / 337 (the sink example now builds its node_test in TWO arms, default and the bench's CONTROL);
@@ -731,7 +826,9 @@ close-out. **Check the symbol size, not the source.**
 ★ Three issues were opened from findings made in passing, none of them NEW-42 defects: **NEW-43** (one
 failed SSP disables Simple Pairing for the whole session — `BtLink`'s legacy-PIN fallback writes
 `Write_Simple_Pairing_Mode=0` and only PREPARE re-enables it, so an iPhone gets a passcode prompt from a
-speaker until the board is rebooted), **NEW-44** (`Avrcp` re-applies `SetAbsoluteVolume` on every TX-queue
+speaker until the board is rebooted — ★ **that MECHANISM is read from the code and the TRIGGER is
+UNREPRODUCED**: NEW-46's bench tried to provoke it deliberately in BOTH link-key directions and could
+not, ten `ssp_mode` writes in the run and every one `mode=1`; see the NEW-46 entry), **NEW-44** (`Avrcp` re-applies `SetAbsoluteVolume` on every TX-queue
 retry), **NEW-45** (acid_box's `M2_BT_OUT` bench build overflows ITCM by 140 B — pre-existing, proven
 against the old pin, no gate affected).
 

@@ -279,7 +279,45 @@ mode 0 and should stop) -> merge.
 
 ## 7. Silicon: the bench
 
-Written from the capture after 6.3 runs.
+**RUN 9, 2026-09-11, iPhone `44:F2:1B:8D:03:94`, `build-bench-change` at evkb `41da44b` / M2Radio
+`b90d52b`** (`RING 40 / TARGET 16 / PREFILL / REPRIME_AFTER 16`, real IW416 blob,
+`M2_BT_FORGET_BONDS=OFF`).  The transcript is
+`examples/audio/bt_sink_test/transcript_hw_evkb.txt`, RUN 9.
+
+**MET.**  The boot window opens and expires honestly (`pairing=on reason=boot` ->
+`pairing=off reason=timeout` -> `scan_enable=0x02`).  A real range loss opens a drop window,
+re-enables inquiry scan and re-issues PREPARE (`ssp_mode ... mode=1`).  `pair` opens a commanded
+window on demand.  **`forget` recovers a phone that has already forgotten the sink** -- the dead end
+NEW-41's bench hit twice, where the only way back was a reflash with `M2_BT_FORGET_BONDS=ON`:
+`bonds_forgotten=1`, a window, then `accept(slave, unbonded)` / `neg_reply` / Just Works /
+`pairing_complete: status=0x00`, **no passcode, no SW4**.  `BT_SINK_LED_ON=HIGH` verified by eye
+through both a boot and a drop window -- QEMU cannot see an LED, so a person watching is the only
+instrument.
+
+**NOT MET -- and it is this spec's own premise.**  **NEW-43 did not reproduce**, attempted
+deliberately in both link-key directions.  Board wiped / phone holding a stale key: the phone
+terminates at once (`reason=0x13`) and the legacy-PIN ladder then runs against a DEAD handle
+(`auth_complete: status=0x02 handle=0x0000`, `pairing(pin)=incomplete`), so the SSP-off write is
+never issued.  Board holding the bond / phone having forgotten: iOS sends **no `link_key_req` at
+all**, going straight to IO-cap/SSP with `bond=updated`, so there is no mismatch to fail on.  Ten
+`ssp_mode` writes across the run, **every one `mode=1`**; no passcode prompt at any stage.
+So the mechanism in SS2 is read from the code and its TRIGGER is unconfirmed: whatever produced the
+RUN 4 prompt is unexplained.  The window remains the right mitigation -- it re-issues PREPARE
+unconditionally, so a poisoned controller is cleared whether or not the fault can be provoked -- but
+**the heal has not been demonstrated against a real fault, and this spec does not claim it has.**
+
+**A control that had to be inside the same run.**  The run ends `under=78 over=36` against NEW-42's
+accepted `over=0`, which reads as a regression.  A 6.5-minute STATIONARY stretch inside the same run
+(387 heartbeats, 16,624 packets) reads `over` +0, `overev` +0, `reprimes` +0, `seqgaps` +0, `under`
++5 (**0.77/min**, against RUN 8's 0.69) with `under` equal to `dryTotal` again.  Every one of those
+36 overruns was accumulated walking out of range, where `gapmax_ms=154` and two gaps past 120 ms say
+the air link was already shedding packets.  A lifetime counter read across a deliberate RF failure
+is not comparable to one read stationary.
+
+**Two things the bench gave that no gate could.**  The destructive command was mistyped twice by a
+real human (`cmd=? "forgeet"`, `cmd=? "gorgeet"`) and the exact-match parser refused both.  And
+`paired_by` was measured at two of its five values (`BtLink.h:101`) -- `ssp` where the sink drives
+the exchange, `peer` where encryption arrives without the sink having offered a key.
 
 ## 8. Considered and deferred
 
