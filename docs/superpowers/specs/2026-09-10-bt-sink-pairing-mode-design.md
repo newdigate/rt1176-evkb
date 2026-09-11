@@ -228,7 +228,7 @@ Asserted, in order:
    inquiry-scan write is something only the controller side can see, so the firmware cannot invent it; and
    a SECOND `ssp_mode: st=ok status=0x00 mode=1` on the UART -- PREPARE re-issued.
 4. `forget` -> `bonds_forgotten=1`, then the peer's re-page is accepted **unbonded** and pairs Just Works
-   again (`link_key_req: ... -> neg_reply (no stored key)`, `paired_by=ssp` -- the mechanism, not the initiator; `peer` is not a value this firmware prints) -- the NEW-43 recovery, with
+   again (`link_key_req: ... -> neg_reply (no stored key)`, `paired_by=ssp` where WE drive SSP to completion, `paired_by=peer` where encryption arrives without our having offered a key -- both measured in RUN 9; `BtLink.h:101` has all five) -- the NEW-43 recovery, with
    no reboot.  ★ Safe to exercise in the gate ONLY because QEMU has no NVM behind the FlexSPI window
    (CLAUDE.md); the gate says so where it sends it.
 5. Link up -> `pairing=off reason=paired`.
