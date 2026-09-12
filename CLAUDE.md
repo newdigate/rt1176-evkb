@@ -856,7 +856,7 @@ failed SSP disables Simple Pairing for the whole session — `BtLink`'s legacy-P
 speaker until the board is rebooted — ★ **the fault has never been OBSERVED directly, because that write
 has no log line**: NEW-46's bench drove the legacy-PIN rung twice and the window healed it both times
 before a prompt could appear. One line at `BtLink.cpp:441` would settle it; see the NEW-46 entry), **NEW-44** (`Avrcp` re-applies `SetAbsoluteVolume` on every TX-queue
-retry), **NEW-45** (acid_box's `M2_BT_OUT` bench build overflows ITCM by 140 B — pre-existing, proven
+retry), **NEW-45** (DONE 2026-09-11, see the acid_box ITCM entry below — acid_box's `M2_BT_OUT` bench build overflowed ITCM by 140 B — pre-existing, proven
 against the old pin, no gate affected).
 
 ✅ **Measured 2026-09-09 (afternoon): 139 gates discovered, 139 passed, 0 failed, 0 SKIP** (`gates: 139
@@ -1038,13 +1038,89 @@ list, overflowing ITCM by 316–652 B; the three `ACIDBOX_LOOPSTAT` bench dirs
 had a SECOND, independent 60 B overflow from three inline helpers in
 `loopstat_pct.h` that defaulted to ITCM. Both fixed (placement only; the gate
 build takes neither branch). Headroom now: `build-bt` **272 B**, the loopstat
-bench dirs **96 B**, of 262144. **DONE 2026-09-08**: the list is now one wildcard,
+bench dirs **96 B**, of 262144 (superseded 2026-09-11 by NEW-45 below: **13,968 B** and **13,776 B**).
+**DONE 2026-09-08**: the list is now one wildcard,
 `*libM2Radio*.a:(EXCLUDE_FILE(*Sbc.cpp.obj) .text* …)`, so the next file added
 to `M2Radio/bt/` cannot reproduce it. Accepted by an IDENTICAL ITCM symbol set
 and `.text.itcm` size in all four bench builds (nm-diffed, not eyeballed;
 `EXCLUDE_FILE` matches the archive MEMBER name under ld 2.35) and a
 byte-identical gate ELF. The M2Radio-named symbols that remain in ITCM are
 long-branch veneers and one inlined constructor — the same before and after.
+
+★★ **AND IT OVERFLOWED AGAIN ON 2026-09-11 (NEW-45), by +412 B that acid_box did
+not cause — the wildcard held.** `build-bt` was 140 B over and the three
+`ACIDBOX_LOOPSTAT` dirs 316 B, **both exactly +412 B past the headroom recorded
+on 2026-09-08**, and that identical delta across two builds sharing only their
+libraries IS the diagnosis: library growth. The only pins that had moved were
+`cores` `a9b0de5` and `Audio` `ff610a2` (NEW-41's `audioPllTrimPpm`,
+`headphoneVolume`). M2Radio still contributed `Sbc.cpp` alone.
+★ **The recorded `272 B` is the only reason it was attributable.** Without a
+headroom number written down, the reading is just "it overflows" and the +412 B
+is invisible. Every `M2_BT_OUT` link now prints `--print-memory-usage` and
+asserts a 2 KB floor, so the next growth reports `ITCM headroom below 2048` by
+name instead of a raw overflow.
+★ **Where the 256 K goes** (measured by relinking against a 1 MB ITCM for a map —
+the section does not fit, so no ELF exists to `nm`; that recipe is the reusable
+instrument): **libLVGL 203,050 B, 77.4 %**, then VGLite 9,984 / cores 9,300 /
+libm 6,856 / SynthUI 5,926 / libc_nano 5,470 / Audio 5,242 / acid_box.cpp 4,928 /
+M2Radio 2,260. So ITCM is LVGL on evidence plus 53 KB there by default. ★ Note
+`libc_nano` holds `memcpy`/`memset` and `libm` is pulled by the acid-bass
+`tanhf`/`powf` — neither is a wholesale candidate, checked not assumed.
+★ **FIXED by routing VGLite + MipiDisplay + Wire + TouchPanel to flash** (headroom
+**13,968 B** on `build-bt`, **13,776 B** on the loopstat dirs — 33× the growth that
+broke it), chosen on a four-arm SILICON bench, not by argument. Every arm held
+`ACIDBOX_UI_SUM=0x1479CEE8` and `timeouts=0`.
+★★ **The bench's best result is an arm that PASSED and was DECLINED.** Routing
+`Sbc.cpp` to flash (NEW-37 option 1) measured **704 µs/block against 125.6 in
+ITCM — 5.6×**, where `timing/icache_bench_hw` measured **1.5×** for the same
+transition. The extra is ~9× what that micro-benchmark implied, and **NEW-36's own
+README predicted exactly this and was not weighted**: the benchmark's working set
+was ~3 KB inside a 32 KB I-cache, while this build has VGLite, MipiDisplay, Wire,
+TouchPanel and all of M2Radio competing for it. **A micro-benchmark measures the
+cache, not the application.** It still passed its acceptance over 8.8 h
+(`pcmdrops=0`, `drops=0`, 4.1× real time), so it is declined on COST — 200 ms/s of
+CPU for 2,240 B the headroom makes unnecessary. **NEW-37 option 1: answered.**
+★ Routing **LVGL** to flash frees 212,400 B and measured **27 fps at 39,275 µs**
+with its LVGL slot at 95 % of wall time — and that is a LOWER BOUND, because that
+arm never connected and so carried no audio load while every other arm streamed.
+203 KB stays unavailable.
+★★ **TWO RULES now in the script, both earned here.** (1) Route WHOLE ARCHIVES
+with `EXCLUDE_FILE` for named hot exceptions — never an inclusion list of objects,
+because an exclusion rule makes a NEW library file default to FLASH while an
+inclusion list defaults it to ITCM, which is exactly the `Avrcp.cpp` bug above.
+(2) Never capture `.fastrun` in a new rule, so `FASTRUN` keeps meaning ITCM.
+★ **ITCM cannot grow**: the FlexRAM split is 8 DTCM + 8 ITCM banks and a
+non-power-of-2 count leaves the window unbacked. 256 K is the ceiling.
+★★ **NOTHING BUILT A BENCH DIR, which is why this sat broken for two days** until
+an unrelated workstream rebuilt one. `tools/build-bench-configs.sh` now builds
+every configuration declared in an example's `bench` sidecar, and the root
+`bench_check` target runs it. **Run it at close-out, NEVER concurrently with the
+sweep.** ★ It builds into `build-benchcheck-*` directories IT OWNS and never
+touches a human's: `build-bench`/`-pre`/`-post` carry a real 131,840-byte
+`M2RADIO_IW416_BT_FW`, and reconfiguring one from the declared flags alone would
+silently strip it. `-n` nm-diffs the pair to prove the proxy (the blob lands in
+`.progmem`, never ITCM) rather than asserting it.
+★★ **The tool shipped with the exact defect it exists to prevent — four times.**
+(1) `cmake -B` with no `-S` configured the ROOT project (`project(rt1170_evkb_root
+NONE)`, empty `all`), built nothing and printed OK — **the only symptom was
+SPEED**, seconds instead of ten minutes. (2) Its RED demo poisoned the owned cache,
+which retains every `-D` ever passed, so a flag REMOVED from a `bench` line would
+stay in effect forever; it now wipes before configuring. (3) `-n` could print
+`nm-diff OK` having read no symbols (a pipeline's status is `sort`'s, and two
+EMPTY files compare equal). (4) `-not -path '*/build*'` matches the WHOLE path, so
+a checkout under `~/buildfarm` pruned everything and printed PASS. **Two of the
+mutation arms were themselves vacuous** and only a mutation run found them.
+★ **Bench traps met this session.** A stale bond to a PHONE (`cod=0x7A020C`) paged
+a device that can never be an A2DP sink — 20× `avdtp_failed`; **decode the class of
+device before chasing a "missing" sink**. With our bond wiped the Shokz was NOT
+discoverable until put into pairing mode, because it still remembered US — the
+NEW-46 asymmetry from the source side. And a flash failing `Wire not connected` on
+every transfer while the MCU-Link still enumerated its VCOM was **the POWER
+SWITCH**, not a DAP wedge — the console being silent at the same time is what
+separates the two.
+★ **A tiny sample makes a catastrophic-looking number.** An arm-(b) boot with
+`n=6` touches reported p95 = **1.44 s**; the same arm's full boot reads 71.5 ms on
+n=273. Split a multi-boot capture by boot and analyse the most complete one.
 
 ✅ **Measured 2026-09-07: 132 gates discovered, 132 passed, 0 failed, 0 SKIP**
 (`gates: 132 passed`, exit 0; `-l` reports 132), on the **NEW-34 piece 3 Shokz

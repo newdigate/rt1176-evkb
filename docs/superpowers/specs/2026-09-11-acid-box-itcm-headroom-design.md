@@ -136,12 +136,46 @@ no pixels.  A moved checksum means the arm changed behaviour and voids it howeve
 **Pre-registered predictions.**  Written before the boot; each may be refuted in writing, and a refutation is
 recorded with its number rather than quietly re-fitted.
 
-| arm | change | what moves | prediction |
-| -- | -- | -- | -- |
-| (a) | `libVGLite` → flash (Phase 0) | `lvgl` slot, fps | no change.  VGLite is called per draw call — the same shape as the `svc` chain, which measured 0.46 µs/iter from flash after NEW-36 |
-| (b) | + `libMipiDisplay`, `libWire`, `libTouchPanel` | `touchstat` p95, vsync fence | `ACIDBOX_VSYNC timeouts=0` holds; touch p95 no worse than the worse of the two recorded runs (78 ms).  That sample wanders (78 → 43 ms across the NEW-36 arms with no cause), so it is a weak instrument and nothing more is claimed from it |
-| (c) | + `Sbc.cpp` (NEW-37 option 1) | `enc` µs/block | 125 → ~190.  At 344 blocks/s that is +22 ms per second of CPU against a loop running 63 k iterations/s — free in aggregate, and 15× real time against the 2.902 ms block period |
-| (d) | LVGL → flash, **placement only** | fps | **30 → 20** (§3).  Run regardless: one linker line, and 203 KB if the prediction is wrong |
+| arm | change | prediction | **measured 2026-09-11/12** | verdict |
+| -- | -- | -- | -- | -- |
+| (a) | `libVGLite` → flash | no change | 29 fps @ 33,321 µs; `enc` 125.6 µs/block; `timeouts=0` | **HELD** |
+| (b) | + `libMipiDisplay`, `libWire`, `libTouchPanel` | `timeouts=0`; touch p95 ≤ 78 ms | `timeouts=0` on 801 fence lines; touch p95 **71.5 ms** (n=273) | **HELD** |
+| (c) | + `Sbc.cpp` | `enc` 125 → ~190 µs/block | **704 µs/block — 5.6×, not 1.5×** | **REFUTED** |
+| (d) | LVGL → flash, placement only | 30 → 20 fps at ~50,000 µs | **27 fps at 39,275 µs**, a *mix* of 2- and 3-vsync frames | **PART** |
+
+Every arm held `ACIDBOX_UI_SUM = 0x1479CEE8` and `gpu_err=0`, so all four are valid: placement changed no
+pixels anywhere. **Shipped: arm (b)** — headroom 9,728 → 13,776 B. **Declined: (c) on cost, (d) on frame
+rate.**
+
+★★ **Arm (c) is the result worth keeping, and it refutes this spec's own reasoning.** §6 predicted ~190 µs
+by extrapolating NEW-36's `icache_bench_hw` (flash+I-cache 187 µs vs ITCM 125). The real cost is 704 µs —
+the extra is ~9× what that benchmark implied. **The reason was already written down in NEW-36's README and
+this spec did not weight it**: *"that is a best case — acid_box's `M2_BT_OUT` build routes 17 M2Radio
+objects (tens of KB) to FLASH, where set conflicts are real, so the application number must be MEASURED, not
+extrapolated."* The benchmark's working set was ~3 KB inside a 32 KB I-cache; this build has VGLite,
+MipiDisplay, Wire, TouchPanel and all of M2Radio competing for it. **The general lesson: a micro-benchmark
+measures the cache, not the application.**
+
+★ **Arm (c) passed its acceptance anyway** — 8.8 hours, 31,667 streaming heartbeats, `pcmdrops=0` and
+`drops=0` throughout, 345 blocks/s, 4.1× real-time headroom — so it is declined on **cost** (200 ms/s of CPU
+for 2,240 B) and not on failure. That is NEW-37 option 1, answered.
+
+★★ **Arm (d)'s number is a LOWER BOUND, which is why no re-run is needed.** It never connected
+(`blocks=0`), so 27 fps was measured with no audio encode and no BT service competing, while arms (a)–(c)
+were all measured *while streaming*. Its LVGL slot was already 951,346 µs/s — 95 % of wall time — and its
+loop ran at 352 it/s against arm (a)'s 2,689. Adding the load it did not carry cannot improve it.
+
+★★ **Two limitations of this bench, recorded rather than left to be discovered.**
+**(1) A control for arm (a) is not buildable.** "Same source, VGLite in ITCM" *is* the image that overflows
+by 140 B — the reason arm (a) exists. The nearest substitutes (MipiDisplay+Wire+TouchPanel+Sbc = 6,698 B)
+cannot free the 10,124 B required, so arm (a) is judged on internal evidence: the frame interval is
+vsync-locked at 33,321 µs = 2 × 16.67 ms exactly, and the fence never timed out.
+**(2) §6's stated baseline was invalid and this was a defect in the plan.** The NEW-36 POST column was
+measured on a firmware whose heartbeat has since grown three lines (`bt_cred`, `bt_link`, `bt_mem`), so
+`print` costs 495 ms/s here against that column's 72 — a 6.8× observer effect that halves the loop rate on
+its own. **Every comparison above is therefore within-session, arm against arm.** The per-iteration figures
+do survive the change (`svc` 0.44–0.46 µs/iter across NEW-36 POST and arms (a)/(b)), which is what a
+print-insensitive metric looks like.
 
 ★ **Arm (c) is not judged by NEW-37's stated criterion.**  That issue asked for `enc` "within 50 % of the
 ITCM figure", which lands at 187 µs against a predicted ~190 — a coin toss dressed as a threshold.  It is
