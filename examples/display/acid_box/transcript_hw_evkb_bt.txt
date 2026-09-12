@@ -459,3 +459,97 @@ placement changes no pixels.
 Arms are CUMULATIVE and ordered by confidence, so a regression names its own cause.
 Arm (d) is run LAST and stands alone against (a): a 20 fps result makes anything
 stacked on it unreadable.
+
+================================================================================
+NEW-45 / NEW-37 ITCM ROUTING ARMS -- MEASURED, 2026-09-11/12
+================================================================================
+Board: MIMXRT1170-EVKB, Shokz OpenMove (C0:86:B3:31:29:2F, cod=0x240418).
+All arms: -DM2_BT_TARGET_NAME=OpenMove, real uartIW416_bt.bin.inc (131,840 B,
+verified per arm by symbol size 00020300 -- the 1 KB synthetic fallback would
+have voided every measurement).  Arm (a) additionally -DM2_BT_FORGET_BONDS=ON
+(a stale bond to a PHONE, cod=0x7A020C, was paging a device that can never be an
+A2DP sink); arms (b)/(c)/(d) reuse the stored bond.
+
+  arm  routing added (cumulative)        itcm     headroom
+  (a)  libVGLite -> flash              252,416      9,728
+  (b)  + MipiDisplay, Wire, TouchPanel 248,368     13,776
+  (c)  + Sbc.cpp  (NEW-37 option 1)    246,128     16,016
+  (d)  (a) + libLVGL, placement only    49,744    212,400
+
+PREDICTIONS (registered in the block above, BEFORE any arm was built) -> VERDICT
+  (a) no change                        HELD
+  (b) timeouts=0, touch p95 <= 78 ms   HELD      71.5 ms (n=273)
+  (c) enc 125 -> ~190 us/block         REFUTED   704 us/block -- 5.6x, not 1.5x
+  (d) 30 -> 20 fps at ~50,000 us       PART      27 fps at 39,275 us; direction
+                                                 held, magnitude and mechanism
+                                                 did not (a MIX of 2- and
+                                                 3-vsync frames, not a clean
+                                                 slip to the next multiple)
+
+                              arm (a)     arm (b)     arm (c)     arm (d)
+  ACIDBOX_UI_SUM           0x1479CEE8  0x1479CEE8  0x1479CEE8  0x1479CEE8
+  ACIDBOX_GPU_ERR                   0           0           0           0
+  vsync lines                     372         801      25,874       (many)
+  vsync NON-zero timeouts           0           0           0           0
+  fps (wiggle, median)             29          30          30          27
+  frame med_us                 33,321      33,511      33,396      39,275
+  max_us (wiggle)              69,831      42,410      40,462      46,211
+  loops/s (idle)               30,358      30,701      45,965           -
+  enc us/block (idle)           125.6       125.8       704.0         n/a
+  blocks/s                      344.8       344.5         345           0
+  drops                             0         572*          0         n/a
+  pcmdrops                          0           0           0         n/a
+  touch p95 us                 46,469      71,537      38,067           -
+  touch n                         230         273       5,663           -
+
+  * arm (b)'s 572 drops rose in 9 seconds of a 1,215 s run, all inside one 69 s
+    window, with pcmdrops=0 on EVERY heartbeat -- the loop never stalled.  RF
+    backpressure, the class CLAUDE.md already dispositions in the NEW-36 A/B
+    ("discrete bursts unrelated to loop timing").  Not a routing effect.
+
+★★ ARM (c) IS THE RESULT WORTH KEEPING, AND IT REFUTES NEW-37's PREMISE.
+A flash-resident SBC encode costs 704 us/block here against 125.6 in ITCM --
+5.6x, where NEW-36's icache_bench_hw measured 187 vs 125 (1.5x) for the same
+transition.  The extra is ~9x what that micro-benchmark implied, and NEW-36's
+own README predicted exactly this and was not weighted: "that is a best case --
+acid_box's M2_BT_OUT build routes 17 M2Radio objects (tens of KB) to FLASH,
+where set conflicts are real, so the application number must be MEASURED, not
+extrapolated."  The benchmark's working set was ~3 KB inside a 32 KB I-cache;
+this build has VGLite, MipiDisplay, Wire, TouchPanel and all of M2Radio
+competing for it.  ★ The arm nonetheless PASSED its stated acceptance over
+8.8 HOURS of streaming -- 31,667 streaming heartbeats, pcmdrops=0 and drops=0
+throughout, 345 blocks/s, 4.1x real-time headroom -- so it is declined on COST
+(200 ms/s of CPU for 2,240 B) and not on failure.  Headroom is what this change
+needs, and arm (b) already gives 33x the growth that broke the build.
+
+★★ ARM (d)'s NUMBER IS A LOWER BOUND, WHICH IS WHY NO RE-RUN IS NEEDED.
+It never connected (blocks=0, a2dp=connect_failed), so 27 fps was measured with
+NO audio encode and NO BT service competing, while arms (a)-(c) were all
+measured WHILE STREAMING.  Its LVGL slot was already 951,346 us/s -- 95% of wall
+time -- and its loop ran at 352 it/s against arm (a)'s 2,689.  Adding the load
+it did not carry cannot improve it, so the lower bound already misses 30 fps.
+
+★ A CONTROL FOR ARM (a) IS NOT BUILDABLE, and that is a real limitation of this
+bench rather than an oversight to fix later.  "Same source, VGLite in ITCM" IS
+the image that overflows by 140 B -- the reason arm (a) exists.  The nearest
+substitutes (MipiDisplay+Wire+TouchPanel+Sbc = 6,698 B) cannot free the 10,124 B
+required.  So arm (a) is judged on internal evidence: the frame interval is
+vsync-locked at 33,321 us = 2 x 16.67 ms exactly, and the fence never timed out.
+
+★ THE NEW-36 "POST" COLUMN ABOVE IS NOT A VALID BASELINE FOR THESE ARMS, and
+treating it as one was a defect in the NEW-45 plan.  The heartbeat has grown
+three lines since (bt_cred, bt_link, bt_mem), so `print` costs 495 ms/s here
+against that column's 72 ms/s -- a 6.8x observer effect that halves the loop
+rate on its own.  Every comparison in the table above is therefore WITHIN THIS
+SESSION, arm against arm, which is the only clean control available.  (The
+per-iteration figures do survive the change: svc 0.44-0.46 us/iter across
+NEW-36 POST and arms (a)/(b).)
+
+★ Bench notes.  A stale bond to a phone paged a device that could never answer
+(20x avdtp_failed, 2x connect_failed) -- decode the class of device before
+chasing a "missing" sink, exactly as the NEW-41 notes say.  With our bond wiped
+the Shokz was NOT discoverable until put into pairing mode, because it still
+remembered US -- the NEW-46 asymmetry seen from the source side.  And a flash
+that failed with "Wire not connected" on every transfer, while the MCU-Link
+still enumerated its VCOM, was THE POWER SWITCH, not a DAP wedge; the console
+being silent at the same time is what separates the two.
