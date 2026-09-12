@@ -246,7 +246,27 @@ if(M2_BT_OUT)
 		   this is a first-use miss, not a steady-state penalty, is PROVISIONAL -- unmeasured until the
 		   silicon arm runs -- and is the reason the bench watches ACIDBOX_VSYNC and max_us, not only fps.
 		   No `.fastrun` here, per rule 2 above. */
-		*libVGLite*.a:(.text*)"
+		*libVGLite*.a:(.text*)
+		/* NEW-45 arm (b), MEASURED on silicon 2026-09-11 and kept.  Three more archives that are cold or
+		   coarse BY CONSTRUCTION: I2C to the codec and touch controller at UI rate, and the DSI bring-up
+		   plus flip path.  Takes headroom 9,728 -> 13,776 B, which is 33x the +412 B of library growth
+		   that broke this build in the first place.  Cost, arm (b) against arm (a) in the same session:
+		   fps and frame interval unchanged (30 @ 33,511 us vs 29 @ 33,321), enc 125.8 vs 125.6 us/block,
+		   touch p95 71.5 ms (inside the 78 ms bound), pcmdrops 0.
+		   ★ libMipiDisplay's lcdifv2.cpp carries the LCDIFv2 VSYNC ISR, so this puts a display interrupt
+		   in flash.  That was the named risk and it is answered: ACIDBOX_VSYNC timeouts=0 across 801
+		   fence lines, flips == isrs.  A first-use miss, not a steady-state penalty.
+		   ★ Sbc.cpp stays ITCM-exempt above.  Arm (c) moved it and MEASURED 704 us/block against 125.6 --
+		   5.6x, where NEW-36's icache_bench_hw measured 1.5x for the same transition on a ~3 KB working
+		   set.  This build's flash working set does not fit the 32 KB I-cache.  It passed its acceptance
+		   over 8.8 h (pcmdrops=0, 4.1x real time) and is declined on COST: 200 ms/s of CPU for 2,240 B
+		   that the headroom above makes unnecessary.  That is NEW-37 option 1, answered.
+		   ★ libLVGL stays in ITCM.  Arm (d) routed it to flash -- 212,400 B free -- and measured 27 fps
+		   at 39,275 us with the LVGL slot at 95%% of wall time, WITHOUT the audio load every other arm
+		   carried.  A lower bound that already misses 30 fps.  No `.fastrun` in any rule here. */
+		*libMipiDisplay*.a:(.text*)
+		*libWire*.a:(.text*)
+		*libTouchPanel*.a:(.text*)"
                        _acidbt_ld "${_acidbt_ld}")
         file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/acid_box_bt.ld" "${_acidbt_ld}")
         string(REPLACE "${_acidbt_coreld}"
