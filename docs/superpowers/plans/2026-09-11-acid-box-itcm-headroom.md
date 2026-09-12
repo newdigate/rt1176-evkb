@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-11-acid-box-itcm-headroom-design.md`
 
+**Findings:** `docs/superpowers/specs/2026-09-12-acid-box-itcm-headroom-findings.md` — the decision record, written after execution: what shipped, what was measured, and which predictions were refuted.
+
 ---
 
 ## Orientation — read before Task 1

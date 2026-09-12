@@ -5,6 +5,10 @@ could be optimised".  They are the same file and the same decision, and this spe
 overflow is repaired by answering NEW-37's question — what still belongs in ITCM now the CM7 has an
 instruction cache — rather than by shaving bytes until it fits again.
 
+★ **Session findings and decision record:** `2026-09-12-acid-box-itcm-headroom-findings.md` — what was
+decided and why, the two predictions this spec's own reasoning got wrong, and the bench traps. Read that
+for the narrative; this file is the design.
+
 ## 1. The problem, measured
 
 Four build directories do not link.  Reproduced 2026-09-11 against `master`:
