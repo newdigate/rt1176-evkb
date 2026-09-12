@@ -1,0 +1,30 @@
+# Bench configurations for this example -- configurations that no gate builds.
+# Built by tools/build-bench-configs.sh into build-benchcheck-<name>; see
+# docs/superpowers/specs/2026-09-11-acid-box-itcm-headroom-design.md §7.
+#
+# ★ These are NOT the directories a human benches from.  build-bench, -pre and
+#   -post carry a real 131,840-byte M2RADIO_IW416_BT_FW blob in their CMakeCache;
+#   the tool owns build-benchcheck-* and never touches any of them.
+#   (build-bt's M2RADIO_IW416_BT_FW is EMPTY and has been since 2026-09-06, so it
+#   links the 1 KB synthetic fallback -- measured by symbol size, 00000400 against
+#   build-bench's 00020300.  Check the VALUE, never the cache LINE: an empty
+#   FILEPATH entry still matches a grep, which is how the opposite claim got
+#   written here in the first place.)
+#
+# ★ build-bench-pre and build-bench-post are NOT declared: they differ from
+#   build-bench only by the CORE PIN (TEENSY_LIB_ROOT state, not a cmake flag),
+#   so they are historical A/B directories from NEW-36, not configurations.
+#
+# ★★ THE NAMES ARE NOT FREE.  The tool builds build-benchcheck-<name> and its -n
+#   check pairs that with build-<name>, so the second entry is `bench` and NOT
+#   `loopstat`: build-loopstat exists and is M2_BT_OUT=OFF, so a `loopstat` entry
+#   would pair a BT build against a non-BT one and report a spurious nm-diff
+#   DIFFERS on every run -- and a guard that cries wolf gets switched off.
+# ★ The `bench` pairing also EARNS the proxy check: build-bench carries the real
+#   131,840-byte blob and build-benchcheck-bench gets the 1 KB synthetic one, so
+#   an identical ITCM symbol set across that pair MEASURES the claim this tool
+#   rests on -- that the blob lands in .progmem and never touches ITCM.
+#
+# <name>    <cmake flags>
+bt      -DM2_BT_OUT=ON
+bench   -DM2_BT_OUT=ON -DACIDBOX_LOOPSTAT=ON

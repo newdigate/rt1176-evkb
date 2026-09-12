@@ -172,14 +172,63 @@ if(M2_BT_OUT)
     # configure time from the current core
     # script, so it never drifts; scoped to this M2_BT_OUT build -- no core change,
     # no effect on any other example that links M2Radio.
-    # NB: the appended rule also captures *(.fastrun) from libM2Radio -- today M2Radio
-    # marks nothing FASTRUN, so this is inert; if a latency-sensitive M2Radio routine is
-    # ever marked FASTRUN for ITCM residency, drop `.fastrun` here so it is not sent to flash.
+    # TWO RULES FOR EVERY ROUTING LINE BELOW (NEW-45, spec 2026-09-11-acid-box-itcm-headroom-design.md §5):
+    #  1. Route a WHOLE ARCHIVE with EXCLUDE_FILE for named hot exceptions -- never an inclusion list of
+    #     objects.  An exclusion rule makes a newly added library file default to FLASH; an inclusion list
+    #     makes it default to ITCM, which is exactly how Avrcp.cpp overflowed ITCM for a day on 2026-09-07.
+    #  2. Do NOT capture `.fastrun` in a new rule, so FASTRUN keeps meaning "ITCM" and a library can pin one
+    #     hot function back without a linker-script change.  The libM2Radio line below predates this rule and
+    #     still captures .fastrun; it is inert only because M2Radio marks nothing FASTRUN.  If a
+    #     latency-sensitive M2Radio routine is ever marked FASTRUN, drop `.fastrun` from that line.
     get_target_property(_acidbt_lf acid_box.elf LINK_FLAGS)
     string(REGEX MATCH "-T([^ ]*imxrt1176[.]ld)" _acidbt_ignore "${_acidbt_lf}")
     set(_acidbt_coreld "${CMAKE_MATCH_1}")
+    # NEW-45: make the ITCM margin legible instead of only fatal.  Two halves:
+    #   * --print-memory-usage prints region used/size/percent on EVERY link, so a shrinking margin shows up
+    #     in ordinary build output rather than only at the cliff;
+    #   * an ASSERT so the next NEW-41-sized library growth reports "ITCM headroom below 2048" instead of
+    #     "region ITCM overflowed by 140 bytes".  ld cannot interpolate a number into an ASSERT message, so
+    #     the literal is injected here at configure time along with the expression.
+    # WHAT THE REGION ACTUALLY HOLDS, measured rather than assumed: .text.itcm is 252336 B at VMA 0, so it
+    # ends at 252336, and .ARM.exidx is 8 B at VMA 252340 -- 4 B of alignment padding sits between them.  The
+    # region's true top is therefore 252348, and 252348 is the number --print-memory-usage reports.  The
+    # ASSERT sums SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) = 252344, so it does NOT see that padding and is
+    # still 4 B OPTIMISTIC.  It is not exact and is not claimed to be: a .text.itcm-only assert would have
+    # been 12 B optimistic, this one is 4, and 4 B cannot decide anything against a 2048 B floor.  Recorded
+    # here rather than hidden, because a guard whose slack is undocumented is a guard nobody can reason about.
+    # The exact expression is ADDR(.ARM.exidx) + SIZEOF(.ARM.exidx) - ORIGIN(ITCM), and it is DECLINED
+    # deliberately: this linker script already measures the region as SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx),
+    # in _itcm_block_count EIGHTEEN LINES ABOVE this assert (line 146 against 165 in the generated
+    # acid_box_bt.ld).  One convention that is 4 B loose beats two that disagree -- inventing a third way to
+    # measure ITCM in the same file is how the two get out of step later.
+    # Scoped to this target.  Putting either in the core imxrt1176.ld would change every example in the tree,
+    # including ones that legitimately run close -- a separate change with its own blast radius.
+    set(ACIDBOX_ITCM_MIN_HEADROOM "2048" CACHE STRING "Fail the M2_BT_OUT link when ITCM headroom drops below this many bytes.  2048 because measured headroom after the NEW-45 VGLite routing is ~9.8 KB: low enough that it never nags, high enough that a growth the size of the one that opened NEW-45 (+412 B from a library pin bump) reports a named headroom failure instead of a raw 'region ITCM overflowed' link error")
     if(_acidbt_coreld AND EXISTS "${_acidbt_coreld}")
         file(READ "${_acidbt_coreld}" _acidbt_ld)
+        string(REPLACE
+            "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")"
+            "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")
+	ASSERT(SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) <= LENGTH(ITCM) - ${ACIDBOX_ITCM_MIN_HEADROOM}, \"NEW-45: ITCM headroom below ${ACIDBOX_ITCM_MIN_HEADROOM} bytes -- see docs/superpowers/specs/2026-09-11-acid-box-itcm-headroom-design.md\")"
+            _acidbt_ld "${_acidbt_ld}")
+        # string(REPLACE) is a SILENT NO-OP when its anchor does not match, and the anchor above is a specific
+        # line of the CORE imxrt1176.ld -- which lives in ANOTHER REPOSITORY (teensy-cores, resolved via
+        # TEENSY_LIB_ROOT or fetched at the SHA evkb.cmake pins).  Reword that line upstream and the headroom
+        # ASSERT quietly stops being injected while every build keeps passing with no guard at all: precisely
+        # the silent-failure class this whole feature exists to close, relocated one level up.  So check it.
+        # ASYMMETRY, which is why only this one is checked: if the OTHER string(REPLACE) below (anchored on
+        # *libLVGL_flash.a:(.text*)) ever fails to match, every routing rule vanishes, ITCM overflows and the
+        # link fails loudly on its own -- that failure is self-announcing.  This one's failure is silence.
+        string(FIND "${_acidbt_ld}" "NEW-45: ITCM headroom" _acidbt_found)
+        if(_acidbt_found EQUAL -1)
+            message(FATAL_ERROR
+                "M2_BT_OUT: the NEW-45 ITCM headroom ASSERT was NOT injected into the derived linker script. "
+                "The EEPROM-assert line this rule anchors on has changed in the core script "
+                "(${_acidbt_coreld}), so string(REPLACE) matched nothing and did nothing.  Left unchecked "
+                "this build would link UNGUARDED and the next library growth would report a raw 'region ITCM "
+                "overflowed by N bytes' instead of a named headroom failure.  Re-anchor the string(REPLACE) "
+                "in examples/display/acid_box/CMakeLists.txt against that script's current ASSERT text.")
+        endif()
         string(REPLACE "*libLVGL_flash.a:(.text*)"
                        "*libLVGL_flash.a:(.text*)
 		*acid_box.cpp.obj(.text.setup .text._GLOBAL__sub* .text.startup._GLOBAL__sub*)
@@ -188,12 +237,42 @@ if(M2_BT_OUT)
 		   Avrcp.cpp (added to the library 2026-09-07) was missing from it: the M2_BT_OUT bench builds overflowed
 		   ITCM by 316-652 B for a day before anyone rebuilt them.  A wildcard cannot drift when the library grows;
 		   the acceptance for the swap was an IDENTICAL ITCM symbol set and .text.itcm size in all four bench builds. */
-		*libM2Radio*.a:(EXCLUDE_FILE(*Sbc.cpp.obj) .text* EXCLUDE_FILE(*Sbc.cpp.obj) .fastrun)"
+		*libM2Radio*.a:(EXCLUDE_FILE(*Sbc.cpp.obj) .text* EXCLUDE_FILE(*Sbc.cpp.obj) .fastrun)
+		/* NEW-45 phase 0.  libVGLite is the largest non-LVGL ITCM consumer (9984 B, of which vg_lite.c is
+		   5640) and is coarse-grained BY CONSTRUCTION: on this build the GC355 does the pixels and VGLite is
+		   called per DRAW CALL -- the same shape as the SdpServer/L2cap service chain, which measured
+		   0.46 us/iter from flash after NEW-36 enabled the I-cache.  Note vg_lite_hal.c/vg_lite_os.c carry
+		   the GPU2D handler (attached at vg_lite_hal.c:248), so this puts an ISR in flash: the claim that
+		   this is a first-use miss, not a steady-state penalty, is PROVISIONAL -- unmeasured until the
+		   silicon arm runs -- and is the reason the bench watches ACIDBOX_VSYNC and max_us, not only fps.
+		   No `.fastrun` here, per rule 2 above. */
+		*libVGLite*.a:(.text*)
+		/* NEW-45 arm (b), MEASURED on silicon 2026-09-11 and kept.  Three more archives that are cold or
+		   coarse BY CONSTRUCTION: I2C to the codec and touch controller at UI rate, and the DSI bring-up
+		   plus flip path.  Takes headroom 9,728 -> 13,776 B, which is 33x the +412 B of library growth
+		   that broke this build in the first place.  Cost, arm (b) against arm (a) in the same session:
+		   fps and frame interval unchanged (30 @ 33,511 us vs 29 @ 33,321), enc 125.8 vs 125.6 us/block,
+		   touch p95 71.5 ms (inside the 78 ms bound), pcmdrops 0.
+		   ★ libMipiDisplay's lcdifv2.cpp carries the LCDIFv2 VSYNC ISR, so this puts a display interrupt
+		   in flash.  That was the named risk and it is answered: ACIDBOX_VSYNC timeouts=0 across 801
+		   fence lines, flips == isrs.  A first-use miss, not a steady-state penalty.
+		   ★ Sbc.cpp stays ITCM-exempt above.  Arm (c) moved it and MEASURED 704 us/block against 125.6 --
+		   5.6x, where NEW-36's icache_bench_hw measured 1.5x for the same transition on a ~3 KB working
+		   set.  This build's flash working set does not fit the 32 KB I-cache.  It passed its acceptance
+		   over 8.8 h (pcmdrops=0, 4.1x real time) and is declined on COST: 200 ms/s of CPU for 2,240 B
+		   that the headroom above makes unnecessary.  That is NEW-37 option 1, answered.
+		   ★ libLVGL stays in ITCM.  Arm (d) routed it to flash -- 212,400 B free -- and measured 27 fps
+		   at 39,275 us with the LVGL slot at 95%% of wall time, WITHOUT the audio load every other arm
+		   carried.  A lower bound that already misses 30 fps.  No `.fastrun` in any rule here. */
+		*libMipiDisplay*.a:(.text*)
+		*libWire*.a:(.text*)
+		*libTouchPanel*.a:(.text*)"
                        _acidbt_ld "${_acidbt_ld}")
         file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/acid_box_bt.ld" "${_acidbt_ld}")
         string(REPLACE "${_acidbt_coreld}"
                        "${CMAKE_CURRENT_BINARY_DIR}/acid_box_bt.ld" _acidbt_lf "${_acidbt_lf}")
-        set_target_properties(acid_box.elf PROPERTIES LINK_FLAGS "${_acidbt_lf}")
+        set_target_properties(acid_box.elf PROPERTIES
+            LINK_FLAGS "${_acidbt_lf} -Wl,--print-memory-usage")
     else()
         message(WARNING "M2_BT_OUT: could not find the core imxrt1176.ld in LINK_FLAGS to derive the BT linker script; ITCM may overflow")
     endif()
