@@ -99,7 +99,9 @@ static PXPError run_pipeline(void)
 void setup()
 {
     Serial1.begin(115200);
-    delay(150);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "camera_preview_synth", 1, __DATE__, __TIME__);
     Serial1.println("CAM_SYNTH_BEGIN");
 
     Serial1.printf("PXP_BEGIN=%s\n", PXP.begin() ? "PASS" : "FAIL");

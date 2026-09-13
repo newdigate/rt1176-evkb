@@ -115,7 +115,9 @@ static const char *pxp_err_name(PXPError e) {
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "lvgl_pxp_copy_bench", 1, __DATE__, __TIME__);
     Serial1.println("PXP_COPY_BENCH_BEGIN");
 
     s_src = alloc_buf(); s_dst = alloc_buf();

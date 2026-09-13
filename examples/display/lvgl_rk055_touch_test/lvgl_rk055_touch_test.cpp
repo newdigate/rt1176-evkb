@@ -279,7 +279,9 @@ static void drainQuiet()
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "lvgl_rk055_touch_test", 1, __DATE__, __TIME__);
     Serial1.println("LVGL_RK055_TOUCH_BEGIN");
 
     const bool disp_ok = Display.begin();

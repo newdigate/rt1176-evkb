@@ -606,7 +606,9 @@ static void run_comp_case(const Rect &r, const char *name)
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "pxp_draw_bench", 1, __DATE__, __TIME__);
     Serial1.println("PXP_DRAW_BENCH_BEGIN");
     /* printf, not println: the gate $-anchors these tokens and println's
      * \r\n would defeat the anchor. */

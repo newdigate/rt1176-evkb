@@ -148,7 +148,9 @@ static int fb_text(int x, int y, const char *s, int scale) {
 
 void setup() {
 	Serial1.begin(115200);
-	while (!Serial1) { }
+	while (!Serial1 && millis() < 2000) {}
+	Serial1.println("=== BOOT ===");
+	Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "ssd1306_display", 1, __DATE__, __TIME__);
 	Serial1.println("SSD1306 display test (EVKB master on LPI2C1)");
 
 	Wire.begin();

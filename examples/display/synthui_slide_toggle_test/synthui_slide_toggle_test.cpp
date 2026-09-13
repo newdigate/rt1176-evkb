@@ -61,7 +61,9 @@ static lv_obj_t *g_dyn_toggles[4];
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "synthui_slide_toggle_test", 1, __DATE__, __TIME__);
 
     Serial1.println("SYNTHUI_SLIDE_TOGGLE_BEGIN");
 

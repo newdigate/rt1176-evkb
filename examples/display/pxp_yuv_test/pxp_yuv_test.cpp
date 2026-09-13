@@ -90,7 +90,9 @@ static void fill_source(void)
 void setup()
 {
     Serial1.begin(115200);
-    delay(150);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "pxp_yuv_test", 1, __DATE__, __TIME__);
     Serial1.println("PXP_YUV_BEGIN");
 
     Serial1.printf("PXP_BEGIN=%s\n", PXP.begin() ? "PASS" : "FAIL");

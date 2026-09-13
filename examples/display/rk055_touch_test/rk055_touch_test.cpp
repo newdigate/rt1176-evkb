@@ -691,7 +691,9 @@ static bool reportInt() {
 
 void setup() {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "rk055_touch_test", 1, __DATE__, __TIME__);
     Serial1.println("RK055_TOUCH_BEGIN");
 
     Display.begin();

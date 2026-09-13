@@ -80,7 +80,9 @@ static bool check(const char *token, const uint16_t *got, const uint16_t *want,
 
 void setup() {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "pxp_blit_test", 1, __DATE__, __TIME__);
     Serial1.println("PXP_GATE_START");
 
     /* Emit CTRL unconditionally, BEFORE branching, so the token is a live

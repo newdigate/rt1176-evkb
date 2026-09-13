@@ -109,7 +109,9 @@ static uint32_t fnv1a_pattern() {
 
 void setup() {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "rk055_panel_test", 1, __DATE__, __TIME__);
     Serial1.println("RK055_PANEL_BEGIN");
     Serial1.printf("PANEL=%s\n", PANEL_NAME);
     Serial1.printf("GEOM=%ux%u PIXCLK=%lu LANES=%lu\n",

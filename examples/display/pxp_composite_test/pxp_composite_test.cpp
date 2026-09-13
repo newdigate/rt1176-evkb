@@ -712,7 +712,9 @@ static void frame_xor_rop(void)
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "pxp_composite_test", 1, __DATE__, __TIME__);
     Serial1.println("PXP_COMPOSITE_BEGIN");
 
     if (!Display.begin()) {

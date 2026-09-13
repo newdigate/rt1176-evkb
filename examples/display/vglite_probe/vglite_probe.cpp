@@ -171,7 +171,9 @@ static uint32_t fb_sum(void)
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "vglite_probe", 1, __DATE__, __TIME__);
     Serial1.println("VGLITE_PROBE_BEGIN");
 
     const bool ok = Display.begin();

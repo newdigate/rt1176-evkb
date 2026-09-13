@@ -275,7 +275,9 @@ static lv_obj_t *build_grid(void)
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "vglite_lvgl_test", 1, __DATE__, __TIME__);
     Serial1.println("VGLITE_LVGL_BEGIN");
 
     const bool ok = Display.begin();

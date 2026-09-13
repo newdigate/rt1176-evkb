@@ -33,7 +33,9 @@ static void test(const TC &t)
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "pxp_csc_color", 1, __DATE__, __TIME__);
     Serial1.println("PXP_CSC_COLOR_BEGIN");
     Serial1.printf("PXP_BEGIN=%s\n", PXP.begin() ? "PASS" : "FAIL");
 

@@ -361,7 +361,9 @@ static const char *const s_dangerous = "off";
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "vglite_conformance", 1, __DATE__, __TIME__);
     Serial1.println("VGC_BEGIN");
 
     vg_lite_init_mem(VGLITE_RT1176_REGISTER_BASE, 0u, vgc_pool, VGC_POOL_BYTES);
