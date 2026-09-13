@@ -15,6 +15,9 @@ serial.dbg
 serial.uart
 tap.raw
 
+# Local environment configuration
+.env
+
 # superpowers brainstorming companion (transient mockups)
 .superpowers/
 

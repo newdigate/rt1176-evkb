@@ -8,14 +8,43 @@
 # "board uninit" and leaves the external NOR stuck. LinkServer is reliable.
 set -euo pipefail
 
-LINKSERVER="${LINKSERVER:-/Applications/LinkServer_26.6.137/LinkServer}"
-DEVICE="MIMXRT1176:MIMXRT1170-EVKB"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${RT1170_ENV_FILE:-$HERE/../.env}"
+if [ -f "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  set -a; source "$ENV_FILE"; set +a
+fi
+
+# Auto-discovery if variables are not set
+if [ -z "${LINKSERVER:-}" ]; then
+  for cand in /Applications/LinkServer_*/LinkServer; do
+    if [ -x "$cand" ]; then LINKSERVER="$cand"; break; fi
+  done
+  LINKSERVER="${LINKSERVER:-$(command -v LinkServer 2>/dev/null || true)}"
+fi
+
+if [ -z "${RT1170_PORT:-}" ]; then
+  for cand in /dev/cu.usbmodem*; do
+    if [ -e "$cand" ]; then RT1170_PORT="$cand"; break; fi
+  done
+fi
+
+DEVICE="${EVKB_DEVICE:-${DEVICE:-MIMXRT1176:MIMXRT1170-EVKB}}"
 PORT="${RT1170_PORT:-/dev/cu.usbmodem5DQ2DDHVWO5EI3}"
 PY="${PY:-/usr/local/Caskroom/miniconda/base/bin/python3}"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -x "$PY" ] || PY="$(command -v python3 2>/dev/null || true)"
+
+if [ "${1:-}" = "--env-check" ]; then
+  echo "LINKSERVER=$LINKSERVER"
+  echo "RT1170_PORT=$PORT"
+  echo "EVKB_DEVICE=$DEVICE"
+  echo "PY=$PY"
+  exit 0
+fi
+
 IMG="${1:-$HOME/Development/zephyr/projects/zepherproject/build-hello/zephyr/zephyr.elf}"
 
-[ -x "$LINKSERVER" ] || { echo "LinkServer not found at $LINKSERVER (set \$LINKSERVER)"; exit 1; }
+[ -x "$LINKSERVER" ] || { echo "LinkServer not found at $LINKSERVER (set \$LINKSERVER or configure in .env)"; exit 1; }
 [ -f "$IMG" ]        || { echo "Image not found: $IMG"; exit 1; }
 
 # ★ A reader holding the VCOM while LinkServer programs the board doesn't just
