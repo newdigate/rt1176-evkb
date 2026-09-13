@@ -111,6 +111,76 @@ if [ "${1:-}" = "--check-lock" ]; then
   exit 0
 fi
 
+check_board_power() {
+  if [ ! -c "$PORT" ] && [ ! -e "$PORT" ]; then
+    echo "ERROR: MCU-Link VCOM port $PORT not found." >&2
+    echo "Please connect the EVKB debug USB cable (J17)." >&2
+    exit 1
+  fi
+
+  local attempts=0
+  while [ $attempts -lt 3 ]; do
+    attempts=$((attempts + 1))
+    local probe_out
+    probe_out="$("$LINKSERVER" probe '#0' dapinfo 2>&1 || true)"
+    if echo "$probe_out" | grep -q "Wire not connected"; then
+      echo "==> WARNING: MCU-Link detected on USB, but RT1170 target is unpowered." >&2
+      echo "==> Please switch ON the board power switch (SW1) or check the 5V DC barrel jack." >&2
+      if [ -t 0 ]; then
+        read -r -p "Press [Enter] to re-check power (attempt $attempts/3) or Ctrl-C to abort..."
+      else
+        sleep 0.5
+      fi
+    else
+      return 0
+    fi
+  done
+  echo "ERROR: Target unpowered after 3 checks. Aborting flash." >&2
+  exit 1
+}
+
+if [ "${1:-}" = "--check-power" ]; then
+  check_board_power
+  echo "POWER_OK"
+  exit 0
+fi
+
+flash_image() {
+  local target_img="$1"
+  local flash_log="$LOCK_DIR/flash.log"
+  mkdir -p "$LOCK_DIR"
+  echo "==> Flashing $DEVICE with $target_img"
+  echo "==> Tail debugger output in another window with:"
+  echo "    tail -f $flash_log"
+  echo
+
+  set +e
+  "$LINKSERVER" flash "$DEVICE" load "$target_img" --erase-all > "$flash_log" 2>&1
+  local rc=$?
+  set -e
+
+  if [ $rc -ne 0 ]; then
+    if [[ "$target_img" == *.elf ]]; then
+      local hex_alt="${target_img%.elf}.hex"
+      if [ -f "$hex_alt" ] && grep -q -E "code -11|LOAD_EXIT=245" "$flash_log"; then
+        echo "==> LinkServer ELF parser failed (exit -11). Falling back to .hex image: $hex_alt"
+        "$LINKSERVER" flash "$DEVICE" load "$hex_alt" --erase-all >> "$flash_log" 2>&1
+        echo "==> Flash OK (via HEX fallback)."
+        return 0
+      fi
+    fi
+    echo "ERROR: LinkServer flash failed (exit code $rc). Check $flash_log" >&2
+    tail -n 20 "$flash_log" >&2
+    exit $rc
+  fi
+  echo "==> Flash OK."
+}
+
+if [ "${1:-}" = "--test-flash" ]; then
+  flash_image "${2:-}"
+  exit 0
+fi
+
 IMG="${1:-$HOME/Development/zephyr/projects/zepherproject/build-hello/zephyr/zephyr.elf}"
 
 [ -x "$LINKSERVER" ] || { echo "LinkServer not found at $LINKSERVER (set \$LINKSERVER or configure in .env)"; exit 1; }
