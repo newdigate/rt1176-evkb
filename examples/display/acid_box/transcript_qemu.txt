@@ -50,6 +50,8 @@ working, not a regression.
 THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-08-28)
 ================================================================================
 ==== captured UART ====
+=== BOOT ===
+[APP: acid_box] [VER: v1] [BUILD: Sep 13 2026 12:00:00]
 ACIDBOX_BEGIN
 CODEC_OK
 PANEL_OK

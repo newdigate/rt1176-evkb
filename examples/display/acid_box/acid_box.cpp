@@ -61,6 +61,7 @@ extern "C" {
 
 // rt1176-only example: LPUART1 console, which the imxrt1176 core names Serial1.
 #define CONSOLE Serial1
+#define ACIDBOX_VERSION 1
 
 #if defined(M2_BT_OUT)
 // =============================================================================
@@ -1202,9 +1203,14 @@ static GT911 touch(Wire2, TOUCH_RST_PIN, TOUCH_INT_PIN);
 void setup()
 {
     CONSOLE.begin(115200);
-    delay(200);
+    while (!CONSOLE && millis() < 2000) {}
+
+    // [APP:<name>] [VER:<gate_version>] [BUILD:<timestamp>]
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "acid_box", ACIDBOX_VERSION, __DATE__, __TIME__);
     CONSOLE.println("ACIDBOX_BEGIN");
-    diag_mark();               /* after CONSOLE.begin + delay(200) */
+    diag_mark();               /* after CONSOLE.begin + boot banner */
 
     AudioMemory(24);
     diag_mark();               /* after AudioMemory(24) */
