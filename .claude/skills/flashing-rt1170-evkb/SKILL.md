@@ -62,6 +62,9 @@ tools/rt1170-screenshot.py /tmp/display.png
 ### 5. Corroborate Liveness with Dual Clocks
 A quiet serial port or frozen counter does not necessarily mean dead silicon. Compare `systick_millis_count` with an audio sample counter or hardware timer before assuming a crash.
 
+### 6. Avoid Mass Erase (Sector Erase Only)
+Do **NOT** run a standalone full-chip mass erase (`LinkServer flash erase`). The EVKB carries a 64 MB external Octal/FlexSPI NOR flash; a full-chip mass erase takes minutes of complete silence with no progress telemetry. This silence frequently confuses developers and AI agents into assuming the MCU or probe has hung, tempting an abort or `kill -9` (which mid-flash wedges the wire interface and requires a physical board power cycle). `tools/rt1170-flash.sh` uses `flash load`, which automatically erases only the sectors occupied by the target image.
+
 ---
 
 ## 2. Flashing & Execution Workflow
@@ -131,3 +134,4 @@ tools/rt1170-flash.sh --unlock
 | **`Ep(03). Invalid ID for processor`** | CM7 core parked in WFI (e.g. during dual-core CM4 tests) and cannot be halted by SWD. | Loop `flash` while tapping SW4 every ~3 seconds, or boot into SDP mode (SW1-3 OFF / SW1-4 ON). |
 | **Probe daemons wedged** | Stale `redlinkserv` or `crt_emu_cm_redlink` left behind. | Run `pkill LinkServer; pkill redlinkserv; pkill crt_emu_cm_redlink` (never `kill -9` mid-flash!). |
 | **Silent console after flash** | Probe-latched debug halt survived reset. | Tap SW4 on the EVKB board to trigger clean reset and free-run. |
+| **LinkServer silent / perceived hang during flash** | Standalone mass erase (`flash erase`) of the 64 MB NOR flash takes minutes of silent execution. | Avoid mass erase. Use `tools/rt1170-flash.sh` which uses sector-based `flash load`. Remember: LinkServer is silent while programming; silent is not hung. |

@@ -89,7 +89,11 @@ check_lock_and_conflicts() {
   local readers=""
   readers="$(lsof -t -- "$PORT" 2>/dev/null || true)"
   local console_pids=""
-  console_pids="$(pgrep -f 'rt1170-console\.py' 2>/dev/null || true)"
+  if [ "$PORT" = "/dev/cu.usbmodem5DQ2DDHVWO5EI3" ]; then
+    console_pids="$(pgrep -f 'rt1170-console\.py' 2>/dev/null || true)"
+  else
+    console_pids="$(pgrep -f "rt1170-console\.py.*$PORT" 2>/dev/null || true)"
+  fi
   local active_sessions=""
   active_sessions="$(pgrep -f 'LinkServer[[:space:]]+(flash|run|gdbserver)|arm-none-eabi-gdb' 2>/dev/null || true)"
 
@@ -145,6 +149,12 @@ if [ "${1:-}" = "--check-power" ]; then
   exit 0
 fi
 
+# ★ AVOID MASS ERASE: Do not run standalone `LinkServer flash erase`.
+# Erasing the entire 64 MB external Octal/FlexSPI NOR flash takes minutes of
+# complete silence, easily mistaken for an MCU/debugger freeze. Killing the
+# process mid-erase wedges the SWD interface. `flash load ... --erase-all`
+# safely erases ONLY the sectors mapped by the target image. Note: LinkServer
+# is silent while programming; silent is not hung.
 flash_image() {
   local target_img="$1"
   local flash_log="$LOCK_DIR/flash.log"

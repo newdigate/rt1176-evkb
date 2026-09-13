@@ -134,6 +134,8 @@ To avoid unnecessary flash write cycles and debug latency:
    - For graphical / LVGL / panel tests, dump the framebuffer over SWD directly into a PNG.
 4. **Corroborate Liveness with Dual Clocks**:
    - Never declare firmware frozen based on one counter alone; cross-verify `systick_millis_count` with audio sample counts or peripheral timers.
+5. **Avoid Mass Erase (Sector Erase Only)**:
+   - Standalone mass erase (`flash erase`) of the 64 MB external Octal/FlexSPI NOR takes minutes of complete silence without progress telemetry, easily mistaken for a wedged MCU/debugger. Killing the process mid-erase corrupts flash and wedges the SWD interface. Only perform sector-based erasing via `flash load`.
 
 ---
 
