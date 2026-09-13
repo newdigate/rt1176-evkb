@@ -42,6 +42,75 @@ if [ "${1:-}" = "--env-check" ]; then
   exit 0
 fi
 
+LOCK_DIR="${RT1170_LOCK_DIR:-/tmp/rt1170}"
+LOCK_FILE="$LOCK_DIR/evkb.lock"
+SERIAL_PID_FILE="$LOCK_DIR/serial.pid"
+
+unlock_board() {
+  local spid=""
+  if [ -f "$SERIAL_PID_FILE" ]; then
+    spid="$(cat "$SERIAL_PID_FILE" 2>/dev/null || true)"
+  fi
+  if [ -n "$spid" ] && kill -0 "$spid" 2>/dev/null; then
+    echo "==> Terminating background serial reader (PID: $spid)..."
+    kill -TERM "$spid" 2>/dev/null || true
+    for _ in {1..10}; do
+      if ! kill -0 "$spid" 2>/dev/null; then break; fi
+      sleep 0.2
+    done
+  fi
+  rm -f "$LOCK_FILE" "$SERIAL_PID_FILE"
+  echo "==> Board lock released and serial console stopped safely."
+}
+
+if [ "${1:-}" = "--unlock" ] || [ "${1:-}" = "--stop-console" ]; then
+  unlock_board
+  exit 0
+fi
+
+check_lock_and_conflicts() {
+  mkdir -p "$LOCK_DIR"
+  if [ -f "$LOCK_FILE" ]; then
+    local lpid
+    lpid="$(grep '^PID=' "$LOCK_FILE" 2>/dev/null | cut -d= -f2 || true)"
+    if [ -n "$lpid" ] && kill -0 "$lpid" 2>/dev/null; then
+      echo "ERROR: Board or serial port is currently busy!" >&2
+      echo "Active lock held by PID $lpid:" >&2
+      cat "$LOCK_FILE" >&2
+      echo "To prevent a macOS IOSerialFamily kernel panic, aborting." >&2
+      echo "Release the board with: tools/rt1170-flash.sh --unlock" >&2
+      exit 1
+    else
+      rm -f "$LOCK_FILE"
+    fi
+  fi
+
+  # Check active readers or active debug sessions (Option C: strict abort without auto-killing)
+  local readers=""
+  readers="$(lsof -t -- "$PORT" 2>/dev/null || true)"
+  local console_pids=""
+  console_pids="$(pgrep -f 'rt1170-console\.py' 2>/dev/null || true)"
+  local active_sessions=""
+  active_sessions="$(pgrep -f 'LinkServer[[:space:]]+(flash|run|gdbserver)|arm-none-eabi-gdb' 2>/dev/null || true)"
+
+  local conflicting_pids=""
+  conflicting_pids="$( { echo "$readers $console_pids $active_sessions" | tr ' ' '\n' | grep -v "^$$$" | grep -v "^$" || true; } | sort -un | tr '\n' ' ' )"
+  if [ -n "${conflicting_pids// /}" ]; then
+    echo "ERROR: Board or serial port is currently busy!" >&2
+    echo "Conflicting process(es) detected (PID: $conflicting_pids):" >&2
+    ps -p $conflicting_pids -o pid,comm,args >&2 2>/dev/null || true
+    echo "To avoid a macOS kernel panic, aborting." >&2
+    echo "Please terminate conflicting processes or run: tools/rt1170-flash.sh --unlock" >&2
+    exit 1
+  fi
+}
+
+if [ "${1:-}" = "--check-lock" ]; then
+  check_lock_and_conflicts
+  echo "LOCK_OK"
+  exit 0
+fi
+
 IMG="${1:-$HOME/Development/zephyr/projects/zepherproject/build-hello/zephyr/zephyr.elf}"
 
 [ -x "$LINKSERVER" ] || { echo "LinkServer not found at $LINKSERVER (set \$LINKSERVER or configure in .env)"; exit 1; }
