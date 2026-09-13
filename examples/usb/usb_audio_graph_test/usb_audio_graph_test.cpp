@@ -188,7 +188,9 @@ static void announce_bias(void)
 
 void setup() {
     Serial1.begin(115200);
-    while (!Serial1) {}
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "usb_audio_graph_test", 1, __DATE__, __TIME__);
     Serial1.println("GRAPH-TEST: start");
 #ifdef BIAS_MODE_LOCKED
     // Locked-bias drift measurement: open the loop, or the feedback servo

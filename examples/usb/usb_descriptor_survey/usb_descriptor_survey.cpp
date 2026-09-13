@@ -217,7 +217,9 @@ static uint32_t beat_seq;
 
 void setup() {
 	CONSOLE.begin(115200);
-	while (!CONSOLE) {}
+	while (!CONSOLE && millis() < 2000) {}
+	CONSOLE.println("=== BOOT ===");
+	CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "usb_descriptor_survey", 1, __DATE__, __TIME__);
 #ifdef USBHOST_PRINT_DEBUG
 	// Bench diagnosis only. USBHost_t36's debug narration happens almost
 	// entirely INSIDE myusb.begin(), which on a flash-and-run lands seconds

@@ -117,7 +117,9 @@ static bool     announced_ready;
 
 void setup() {
     CONSOLE.begin(115200);
-    while (!CONSOLE) {}
+    while (!CONSOLE && millis() < 2000) {}
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "usb_audio_capstone_test", 1, __DATE__, __TIME__);
     CONSOLE.println("CAPSTONE: start");
 
     // Both legs plus the peak analyser; the IN leg allocates two blocks per

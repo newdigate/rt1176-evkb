@@ -99,7 +99,9 @@ static void report_topology(void) {
 
 void setup() {
     CONSOLE.begin(115200);
-    while (!CONSOLE) {}
+    while (!CONSOLE && millis() < 2000) {}
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "usb_audio_uac1_test", 1, __DATE__, __TIME__);
     CONSOLE.println("UAC1-TEST: start");
     audioOut.format(UAC1_RATE_HZ, 2, 16);   // see UAC1_RATE_HZ above
     myusb.begin();

@@ -11,6 +11,9 @@ extern volatile uint8_t usb_configuration;
 
 void setup() {
     Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "usb_joystick_hw", 1, __DATE__, __TIME__);
     uint32_t t0 = millis();
     while (usb_configuration == 0 && (millis() - t0) < 5000) { /* wait for host */ }
     Serial1.println(usb_configuration ? "USB=CONFIGURED" : "USB=TIMEOUT");

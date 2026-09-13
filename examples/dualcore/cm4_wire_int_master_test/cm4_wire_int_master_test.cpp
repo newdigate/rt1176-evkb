@@ -48,6 +48,9 @@ static bool wait_recv(uint8_t ch, uint32_t *out)
 void setup()
 {
     Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "cm4_wire_int_master_test", 1, __DATE__, __TIME__);
     Serial1.println("CM4WIREINT-GATE v1");
 
     MU.begin();

@@ -28,7 +28,9 @@ void onPress(int u) { Serial1.printf("KEY=%d\n", u); }
 
 void setup() {
   Serial1.begin(115200);
-  delay(10);
+  while (!Serial1 && millis() < 2000) {}
+  Serial1.println("=== BOOT ===");
+  Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "usb_host_hid_test", 1, __DATE__, __TIME__);
   myusb.begin();
   keyboard1.attachPress(onPress);
   Serial1.println("USB_HOST_BEGIN");

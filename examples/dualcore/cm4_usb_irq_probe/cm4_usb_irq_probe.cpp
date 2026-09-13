@@ -106,6 +106,9 @@ static bool recv_show(const char *k, uint32_t *out) {
 
 void setup() {
     Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "cm4_usb_irq_probe", 1, __DATE__, __TIME__);
     Serial1.println("CM4USBIRQ-GATE v1");
 
     MU.begin();

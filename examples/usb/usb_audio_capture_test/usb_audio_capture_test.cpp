@@ -178,7 +178,9 @@ static void dumpWindow()
 
 void setup() {
 	Serial1.begin(115200);
-	while (!Serial1) {}
+	while (!Serial1 && millis() < 2000) {}
+	Serial1.println("=== BOOT ===");
+	Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "usb_audio_capture_test", 1, __DATE__, __TIME__);
 	// Versioned banner so a gate cannot pass against some other image that
 	// happens to be on the board.
 	Serial1.println("CAPTURE-GATE v1");

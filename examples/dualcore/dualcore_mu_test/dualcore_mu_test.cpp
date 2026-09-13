@@ -114,6 +114,9 @@ static void mu_isr(void)
 void setup()
 {
     Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "dualcore_mu_test", 1, __DATE__, __TIME__);
     Serial1.println("DUALMU-PROBE v1");
 
     /* --- MU state with the CM4 held in reset --- */

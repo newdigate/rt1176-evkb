@@ -6,7 +6,10 @@
 extern volatile uint8_t usb_configuration;
 
 void setup() {
-    Serial1.begin(115200);          // debug VCOM (LPUART1)
+    Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "usb_data_test", 1, __DATE__, __TIME__);
     // usb_init() is auto-called in main() before setup().
     uint32_t t0 = millis();
     while (usb_configuration == 0 && (millis() - t0) < 3000) { /* wait for host */ }

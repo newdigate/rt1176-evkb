@@ -21,7 +21,9 @@ void onCC     (uint8_t ch, uint8_t ctl,  uint8_t val) { Serial1.printf("CC=%u,%u
 
 void setup() {
   Serial1.begin(115200);
-  delay(10);
+  while (!Serial1 && millis() < 2000) {}
+  Serial1.println("=== BOOT ===");
+  Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "usb_midi_test", 1, __DATE__, __TIME__);
   myusb.begin();
   midi1.setHandleNoteOn(onNoteOn);
   midi1.setHandleNoteOff(onNoteOff);
