@@ -89,5 +89,15 @@ set -e
 echo "$PWR_ERR" | grep -q "RT1170 target is unpowered" || { echo "FAIL: unpowered message not found: $PWR_ERR"; exit 1; }
 echo "PASS: test_power_off_detection"
 
+# Test 6: Verify background serial launch and lock tracking
+RT1170_LOCK_DIR="$TEST_LOCK_DIR" "$FLASH_SH" --unlock
+RT1170_LOCK_DIR="$TEST_LOCK_DIR" "$FLASH_SH" --start-console-bg "$TEST_TMP/mock_port"
+[ -f "$TEST_LOCK_DIR/serial.pid" ] || { echo "FAIL: serial.pid not created"; exit 1; }
+[ -f "$TEST_LOCK_DIR/evkb.lock" ] || { echo "FAIL: evkb.lock not updated with console pid"; exit 1; }
+RT1170_LOCK_DIR="$TEST_LOCK_DIR" "$FLASH_SH" --unlock
+[ ! -f "$TEST_LOCK_DIR/serial.pid" ] || { echo "FAIL: serial.pid not cleaned up"; exit 1; }
+echo "PASS: test_background_console"
+
+
 
 

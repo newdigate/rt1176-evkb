@@ -181,39 +181,59 @@ if [ "${1:-}" = "--test-flash" ]; then
   exit 0
 fi
 
+start_console_bg() {
+  local port="${1:-$PORT}"
+  local serial_log="$LOCK_DIR/serial.log"
+  mkdir -p "$LOCK_DIR"
+  echo "" > "$serial_log"
+
+  nohup "$PY" "$HERE/rt1170-console.py" "$port" 115200 >> "$serial_log" 2>&1 &
+  local cpid=$!
+  echo "$cpid" > "$SERIAL_PID_FILE"
+
+  echo "PID=$cpid
+COMMAND=rt1170-console.py
+OWNER=serial-console
+PORT=$port
+LOG=$serial_log
+START=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$LOCK_FILE"
+
+  echo "==> Background serial console started (PID: $cpid)."
+  echo "==> Tail live serial output with:"
+  echo "    tail -f $serial_log"
+  echo
+  echo "==> Press SW4 (RESET) on the EVKB board to boot the new image."
+  echo "==> When finished, release the board with:"
+  echo "    tools/rt1170-flash.sh --unlock"
+}
+
+if [ "${1:-}" = "--start-console-bg" ]; then
+  start_console_bg "${2:-$PORT}"
+  exit 0
+fi
+
 IMG="${1:-$HOME/Development/zephyr/projects/zepherproject/build-hello/zephyr/zephyr.elf}"
 
 [ -x "$LINKSERVER" ] || { echo "LinkServer not found at $LINKSERVER (set \$LINKSERVER or configure in .env)"; exit 1; }
 [ -f "$IMG" ]        || { echo "Image not found: $IMG"; exit 1; }
 
-# ★ A reader holding the VCOM while LinkServer programs the board doesn't just
-# fail the load (DAP status 131): the VCOM re-enumerates mid-flash, and macOS's
-# IOSerialFamily can hit a use-after-free tearing down the open tty — a full
-# kernel panic (three identical panics, 2026-07-28..31, all with python3.12 on
-# the port). The console's reconnect loop reopens the port every 0.5 s, so an
-# lsof check alone is a race — kill the reader *processes*, then confirm the
-# port is free.
-kill_vcom_readers() {
-  local pids sig
-  for sig in TERM KILL; do
-    pids="$( { pgrep -f 'rt1170-console\.py' || true; lsof -t -- "$PORT" 2>/dev/null || true; } | sort -un )"
-    [ -z "$pids" ] && return 0
-    echo "==> VCOM reader(s) on $PORT (pid $(echo $pids | tr '\n' ' ')) — sending SIG$sig"
-    kill -"$sig" $pids 2>/dev/null || true
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-      sleep 0.2
-      pids="$( { pgrep -f 'rt1170-console\.py' || true; lsof -t -- "$PORT" 2>/dev/null || true; } | sort -un )"
-      [ -z "$pids" ] && return 0
-    done
-  done
-  echo "ERROR: could not free $PORT (pid $(echo $pids | tr '\n' ' ')) — aborting flash to avoid a kernel panic." >&2
-  return 1
-}
-kill_vcom_readers
+# Pre-flight check: ensure no active sessions / readers are open
+check_lock_and_conflicts
+check_board_power
 
-echo "==> Flashing $IMG"
-"$LINKSERVER" flash "$DEVICE" load "$IMG" --erase-all
-echo "==> Flash OK."
-echo "==> Opening console. Press SW4/RESET on the board to boot and see output."
-echo
-exec "$PY" "$HERE/rt1170-console.py" "$PORT" 115200
+# Acquire lock for flash
+mkdir -p "$LOCK_DIR"
+echo "PID=$$
+COMMAND=rt1170-flash.sh
+OWNER=flash-script
+IMAGE=$IMG
+START=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$LOCK_FILE"
+
+# Clean stale daemons safely (no SIGKILL)
+pkill LinkServer 2>/dev/null || true
+pkill redlinkserv 2>/dev/null || true
+pkill crt_emu_cm_redlink 2>/dev/null || true
+sleep 0.5
+
+flash_image "$IMG"
+start_console_bg "$PORT"
