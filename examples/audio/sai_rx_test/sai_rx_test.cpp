@@ -18,7 +18,10 @@ static void build_sine() {
 
 void setup() {
     Serial1.begin(115200);
-    delay(50);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "sai_rx_test", 1, __DATE__, __TIME__);
     build_sine();
     I2S.begin(48000);
     I2S.read(got, 96);

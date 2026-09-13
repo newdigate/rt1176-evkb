@@ -89,7 +89,10 @@ static void build_sine() {
 
 void setup() {
     Serial1.begin(115200);
-    delay(50);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "i2s_audio_test", 1, __DATE__, __TIME__);
     I2S.begin(48000);
     // Stage A: verify SAI1 configured as 48k/16-bit I2S master.
     uint32_t tcsr = SAI1_TCSR, tcr2 = SAI1_TCR2, tcr4 = SAI1_TCR4, tcr5 = SAI1_TCR5;

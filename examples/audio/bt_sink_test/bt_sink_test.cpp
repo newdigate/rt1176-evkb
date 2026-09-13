@@ -343,7 +343,10 @@ void setup() {
     // underrun (+ a paired overrun from the queued burst) every ~10 s -- the same observer effect the Bose session hit in
     // the source's self-clock.  A 4 KB TX extension lets a whole heartbeat leave without waiting for the wire.
     static uint8_t s_consoleTx[4096]; CONSOLE.addMemoryForWrite(s_consoleTx, sizeof s_consoleTx);
-    delay(50);
+    while (!CONSOLE && millis() < 2000) {}
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "bt_sink_test", 1, __DATE__, __TIME__);
     CONSOLE.println("RT1176 BT sink test up");
     // The pairing LED, driven OFF FIRST -- before anything that can block.  btFirmwareDownload() plus up to ten
     // 500 ms HCI Reset attempts is ~20 s of setup(), and an unconfigured pad floats for all of it, which at the

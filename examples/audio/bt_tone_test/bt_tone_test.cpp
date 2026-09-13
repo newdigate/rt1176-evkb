@@ -438,7 +438,10 @@ static void onAclThunk(void *, uint16_t h, uint8_t pb, const uint8_t *d, uint16_
 
 void setup() {
     CONSOLE.begin(115200);
-    delay(50);
+    while (!CONSOLE && millis() < 2000) {}
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "bt_tone_test", 1, __DATE__, __TIME__);
     CONSOLE.println("RT1176 BT tone test up");
 
     hciIo.begin(115200);

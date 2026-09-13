@@ -43,7 +43,10 @@ BOARD_CODEC_T      wm;
 
 void setup() {
     CONSOLE.begin(115200);
-    while (!CONSOLE) {}
+    while (!CONSOLE && millis() < 2000) {}
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "audioinput_i2s_test", 1, __DATE__, __TIME__);
     AudioMemory(24);
     wm.enable();
     // AudioInputI2S ctor auto-calls begin()

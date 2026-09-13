@@ -51,7 +51,10 @@ static float measure(float freq, int bin) {
 
 void setup() {
     Serial1.begin(115200);
-    while (!Serial1) {}
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "filter_fir_test", 1, __DATE__, __TIME__);
     AudioMemory(30);
     sine1.amplitude(0.9f);
     fir1.begin(lp_coeffs, 8);

@@ -40,7 +40,10 @@ BOARD_CODEC_T          wm;
 
 void setup() {
     CONSOLE.begin(115200);
-    while (!CONSOLE) {}
+    while (!CONSOLE && millis() < 2000) {}
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "audiooutput_i2s_test", 1, __DATE__, __TIME__);
     AudioMemory(12);
     wm.enable();
     sine.frequency(1000.0f);

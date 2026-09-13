@@ -18,7 +18,10 @@ AudioConnection    cR(playWav, 1, out, 1);      // right
 
 void setup() {
   Serial1.begin(115200);
-  while (!Serial1) {}
+  while (!Serial1 && millis() < 2000) {}
+  Serial1.println("=== BOOT ===");
+  Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                 "sd_wav_play_test", 1, __DATE__, __TIME__);
   AudioMemory(30);
   wm.enable();
 

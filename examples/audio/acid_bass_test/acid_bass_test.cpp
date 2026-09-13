@@ -157,7 +157,10 @@ static int waitBlocks(int n) {
 
 void setup() {
     CONSOLE.begin(115200);
-    while (!CONSOLE) {}
+    while (!CONSOLE && millis() < 2000) {}
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "acid_bass_test", 1, __DATE__, __TIME__);
     CONSOLE.println("ACID-GATE v1");
     AudioMemory(16);
     wm.enable();

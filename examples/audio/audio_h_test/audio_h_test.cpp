@@ -31,7 +31,10 @@ static void pump(int n) {
 
 void setup() {
     Serial1.begin(115200);
-    while (!Serial1) {}
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "audio_h_test", 1, __DATE__, __TIME__);
     Serial1.println("AUDIOH-GATE v1");
     AudioMemory(30);
     sine1.amplitude(0.9f);

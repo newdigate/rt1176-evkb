@@ -114,7 +114,10 @@ static int  countType(uint8_t t) {
 
 void setup() {
     CONSOLE.begin(115200);
-    while (!CONSOLE) {}
+    while (!CONSOLE && millis() < 2000) {}
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "step_seq_test", 1, __DATE__, __TIME__);
     CONSOLE.println("STEPSEQ-GATE v1");
     AudioMemory(16);
     wm.enable();

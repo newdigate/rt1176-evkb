@@ -21,7 +21,10 @@ static uint32_t count_edges(uint32_t ms) {
 
 void setup() {
     Serial1.begin(115200);
-    while (!Serial1) {}
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "tone_test", 1, __DATE__, __TIME__);
     bool ok = true;
 
     // Check 1: frequency — tone 1000 Hz -> 2 edges/ms -> ~200 edges / 100 ms

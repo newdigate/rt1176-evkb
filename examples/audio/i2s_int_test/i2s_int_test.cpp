@@ -46,7 +46,10 @@ AudioControlWM8962     wm;
 
 void setup() {
     Serial1.begin(115200);
-    while (!Serial1) {}
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "i2s_int_test", 1, __DATE__, __TIME__);
     Serial1.println("I2SINT-GATE v1");
 
     AudioMemory(16);

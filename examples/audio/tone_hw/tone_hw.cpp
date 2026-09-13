@@ -8,6 +8,10 @@
 
 void setup() {
     Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n",
+                   "tone_hw", 1, __DATE__, __TIME__);
     tone(TONE_PIN, 1000);        // steady 1000 Hz on D9
     Serial1.println("TONE-HW: D9 = 1000 Hz tone");
 }
