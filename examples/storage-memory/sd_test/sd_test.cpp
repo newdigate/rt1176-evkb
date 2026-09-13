@@ -11,7 +11,9 @@ static const char *g_result = "RESULT: (running)";
 
 void setup() {
     Serial1.begin(115200);
-    delay(300);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "sd_test", 1, __DATE__, __TIME__);
     Serial1.println();
     Serial1.println("==== SD re-verify (RT1176 / USDHC) ====");
 

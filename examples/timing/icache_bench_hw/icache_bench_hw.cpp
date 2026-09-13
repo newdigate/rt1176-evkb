@@ -216,7 +216,9 @@ static void icb_header(void)
 void setup()
 {
     CONSOLE.begin(115200);
-    delay(50);
+    while (!CONSOLE && millis() < 2000) {}
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "icache_bench_hw", 1, __DATE__, __TIME__);
     CONSOLE.println("ICACHE-BENCH v1");
     icb_header();
 

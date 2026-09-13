@@ -5,6 +5,10 @@ static uint32_t last = 0;
 static bool on = false;
 
 void setup() {
+    Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "blink", 1, __DATE__, __TIME__);
     pinMode(LED_BUILTIN, OUTPUT);
 }
 

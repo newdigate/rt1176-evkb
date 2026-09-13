@@ -81,7 +81,10 @@ static void enet_poll(void) {
 }
 
 void setup() {
-    Serial1.begin(115200); delay(50);
+    Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "enet_test", 1, __DATE__, __TIME__);
     Serial1.println("ENET_BOOT");
     enet_init(ENET_MAC);           /* clock (incl. SysPll1 bring-up) + pins + PHY reset + rings */
     Serial1.println("ENET_INIT_DONE");

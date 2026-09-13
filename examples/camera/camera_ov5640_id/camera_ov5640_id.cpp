@@ -81,7 +81,9 @@ static uint8_t sccb_read16(uint16_t reg, bool *ok)
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "camera_ov5640_id", 1, __DATE__, __TIME__);
     Serial1.println("OV5640_ID_BEGIN");
 
     control_pins_init();

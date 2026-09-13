@@ -23,6 +23,9 @@ static void onTick() {
 
 void setup() {
     Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "interval_timer_hw", 1, __DATE__, __TIME__);
     pinMode(SCOPE_PIN, OUTPUT);
     digitalWrite(SCOPE_PIN, LOW);
     bool ok = itimer.begin(onTick, 1000);

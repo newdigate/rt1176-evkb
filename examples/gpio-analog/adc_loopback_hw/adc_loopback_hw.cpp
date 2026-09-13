@@ -14,6 +14,9 @@
 
 void setup() {
     Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "adc_loopback_hw", 1, __DATE__, __TIME__);
     pinMode(DRIVE_PIN, OUTPUT);
     pinMode(A0, INPUT);          /* non-driving mux; digitalRead cross-check */
     Serial1.println("ADC-LOOPBACK-HW: D4 (J9.10) -> A0 (J26.2, ADC1 CH2A)");

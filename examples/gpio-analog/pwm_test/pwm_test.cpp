@@ -4,7 +4,10 @@
 // 1 kHz so a Saleae on D9 can measure duty% + frequency. The green LED (D3)
 // brightness tracks the sweep via analogWrite -> exercises the new pin table.
 void setup() {
-	Serial1.begin(115200); while (!Serial1) {}
+	Serial1.begin(115200);
+	while (!Serial1 && millis() < 2000) {}
+	Serial1.println("=== BOOT ===");
+	Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "pwm_test", 1, __DATE__, __TIME__);
 	analogWriteFrequency(9, 1000.0f);
 	Serial1.println("pwm: D9 duty sweep @1kHz (0,64,128,192,255)");
 }

@@ -48,7 +48,10 @@ static bool ipaddr_checks() {
 }
 
 void setup() {
-    Serial1.begin(115200); delay(50);
+    Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "ethernet_test", 1, __DATE__, __TIME__);
     Serial1.println("ETH_BOOT");
     Serial1.println(ipaddr_checks() ? "IPADDR=OK" : "IPADDR=FAIL");
     int ok = Ethernet.begin(mac, 15000);          /* DHCP */

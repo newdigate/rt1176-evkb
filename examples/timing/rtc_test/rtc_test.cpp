@@ -60,7 +60,9 @@ static bool time_checks() {
 // preserves the LP RTC). Run under -icount for deterministic delay()/RTC coupling.
 void setup() {
     Serial1.begin(115200);
-    while (!Serial1) {}
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "rtc_test", 1, __DATE__, __TIME__);
 
     // Civil-time conversion vectors run on every boot (both phases).
     Serial1.println(time_checks() ? "TIME_ALL=PASS" : "TIME_ALL=FAIL");

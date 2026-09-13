@@ -115,7 +115,9 @@ static bool retention_test(void)
 void setup()
 {
 	Serial1.begin(115200);
-	while (!Serial1) {}
+	while (!Serial1 && millis() < 2000) {}
+	Serial1.println("=== BOOT ===");
+	Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "sdram_test", 1, __DATE__, __TIME__);
 
 	Serial1.println("SDRAM_INIT");
 	dump_semc_clock();

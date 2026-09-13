@@ -295,7 +295,9 @@ static void csi_start_capture(uint32_t *fbA, uint32_t *fbB)
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "camera_capture", 1, __DATE__, __TIME__);
     Serial1.println("CAM_CAP_BEGIN");
 
     csi2_clocks_init();

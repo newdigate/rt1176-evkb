@@ -23,7 +23,9 @@ static void build_sine() {
 
 void setup() {
     Serial1.begin(115200);
-    delay(50);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "edma_test", 1, __DATE__, __TIME__);
 
     for (int i = 0; i < 16; i++) { a_src[i] = 0xA5A50000u + i; a_dst[i] = 0; }
     a_dma.begin();                        // allocate a channel, init TCD

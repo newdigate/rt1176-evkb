@@ -32,6 +32,9 @@ static void check(bool ok, const char *tag)
 void setup()
 {
 	Serial1.begin(115200);
+	while (!Serial1 && millis() < 2000) {}
+	Serial1.println("=== BOOT ===");
+	Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "wprogram_parity_test", 1, __DATE__, __TIME__);
 	Serial1.println("WPROGRAM PARITY GATE");
 
 	// WCharacter.h

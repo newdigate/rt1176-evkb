@@ -15,7 +15,9 @@ static void cb(EventResponderRef e) {
 
 void setup() {
     Serial1.begin(115200);
-    while (!Serial1) {}
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "eventresponder_test", 1, __DATE__, __TIME__);
     bool ok = true;
 
     // STAGE_IMMEDIATE: attachImmediate -> callback runs synchronously in triggerEvent()

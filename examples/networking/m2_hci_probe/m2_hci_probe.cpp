@@ -1249,7 +1249,9 @@ static void btBaudSweep() {
 
 void setup() {
     CONSOLE.begin(115200);
-    delay(50);
+    while (!CONSOLE && millis() < 2000) {}
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "m2_hci_probe", 1, __DATE__, __TIME__);
     #if defined(ARDUINO_MIMXRT1060_EVKB)
     CONSOLE.println("RT1062 M.2 HCI probe up (MIMXRT1060-EVKB, LPUART3)");
 #else

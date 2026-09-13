@@ -26,6 +26,9 @@ static void check(const char *name, uint32_t got, uint32_t want) {
 
 void setup() {
     Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "dac_test", 1, __DATE__, __TIME__);
     Serial1.println("RT1176 DAC12 test");
 
     // --- Phase 1: analogWriteDAC0 path ---

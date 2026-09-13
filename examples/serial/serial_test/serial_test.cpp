@@ -16,6 +16,9 @@
 
 void setup() {
     CONSOLE.begin(115200);
+    while (!CONSOLE && millis() < 2000) {}
+    CONSOLE.println("=== BOOT ===");
+    CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "serial_test", 1, __DATE__, __TIME__);
 #if defined(__IMXRT1176__)
     CONSOLE.println("RT1176 Serial1 up");
 #elif defined(__IMXRT1062__)

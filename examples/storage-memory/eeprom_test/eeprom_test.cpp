@@ -24,7 +24,9 @@ static const uint32_t BOOT_PAYLOAD = 0xCAFEF00D;
 
 void setup() {
 	Serial1.begin(115200);
-	while (!Serial1) {}
+	while (!Serial1 && millis() < 2000) {}
+	Serial1.println("=== BOOT ===");
+	Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "eeprom_test", 1, __DATE__, __TIME__);
 
 	// --- Stage BOOT: persistence marker, read BEFORE anything else writes ---
 	// QEMU boots from -kernel with no backing store behind the FlexSPI window,

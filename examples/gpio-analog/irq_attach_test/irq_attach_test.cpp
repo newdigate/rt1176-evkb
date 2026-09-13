@@ -12,7 +12,10 @@ static void pulse(int n) {                 // n high/low toggles on D13 (wired t
 }
 
 void setup() {
-	Serial1.begin(115200); while (!Serial1) {}
+	Serial1.begin(115200);
+	while (!Serial1 && millis() < 2000) {}
+	Serial1.println("=== BOOT ===");
+	Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "irq_attach_test", 1, __DATE__, __TIME__);
 	pinMode(13, OUTPUT); pinMode(9, INPUT); digitalWrite(13, LOW);
 	bool ok = true;
 

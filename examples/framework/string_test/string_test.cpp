@@ -25,6 +25,9 @@ static String make_rvo() { String r("rv"); r += "o"; return r; }
 
 void setup() {
 	CONSOLE.begin(115200);
+	while (!CONSOLE && millis() < 2000) {}
+	CONSOLE.println("=== BOOT ===");
+	CONSOLE.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "string_test", 1, __DATE__, __TIME__);
 	CONSOLE.println("STRING GATE");
 	bool all = true; bool ok;
 

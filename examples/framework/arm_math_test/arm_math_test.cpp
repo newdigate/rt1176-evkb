@@ -74,7 +74,9 @@ static bool stage_sin(void) {
 
 void setup() {
     Serial1.begin(115200);
-    while (!Serial1) {}
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "arm_math_test", 1, __DATE__, __TIME__);
     bool fft = stage_fft();
     bool fir = stage_fir();
     bool sn  = stage_sin();

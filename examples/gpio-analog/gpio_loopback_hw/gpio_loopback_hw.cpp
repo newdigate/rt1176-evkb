@@ -27,6 +27,9 @@ static int drive_and_read(uint8_t out, uint8_t in, int level) {
 
 void setup() {
     Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "gpio_loopback_hw", 1, __DATE__, __TIME__);
     Serial1.println("GPIO-LOOPBACK-HW: D4 (J9.10) <-> D5 (J9.12)");
 }
 

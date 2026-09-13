@@ -13,6 +13,9 @@ static void adc_cb(uint16_t v) { async_val = v; async_fired = 1; }
 
 void setup() {
     Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "analog_test", 1, __DATE__, __TIME__);
     Serial1.println("RT1176 LPADC test");
     // Hardware: mux A0 (GPIO_AD_10) to a non-driving ALT so LPADC1 CH2A can tap
     // the pad (SDK lpadc example: ALT5 GPIO_MUX, pad 0x02). No-op under QEMU.

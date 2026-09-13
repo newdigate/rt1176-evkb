@@ -61,7 +61,9 @@ static bool report(const char *tag, uint32_t got, uint32_t want)
 void setup()
 {
     Serial1.begin(115200);
-    delay(200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "camera_csi2_clocks", 1, __DATE__, __TIME__);
     Serial1.println("CSI2_CLK_BEGIN");
 
     /* 1. SYS_PLL3 must be locked @ 480 MHz (the CSI2 root source). */
