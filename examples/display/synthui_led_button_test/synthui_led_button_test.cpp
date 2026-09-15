@@ -1,0 +1,345 @@
+/* synthui_led_button_test - synthui_led_button (NEW-25) on the RK055
+ * (720x1280 XRGB8888, db pipeline), checksummed.
+ * Copyright (c) 2026 Nicholas Newdigate
+ * SPDX-License-Identifier: MIT
+ *
+ * Scene: a 4x4 bank of 16 keys, row-major index i = row*4 + col:
+ *    0 off red 100        1 lit red 100         2 lit amber 100       3 lit green 100
+ *    4 lit blue 100       5 latched off red 100 6 lit+latched red 100 7 cue off red 100
+ *    8 cue+lit red 100    9 disabled off 100   10 disabled+lit 100   11 32 px lit (no dots)
+ *   12 34 px lit (dots)  13 150 px lit         14 120x80 lit (centred) 15 100 lit + LV_STATE_PRESSED
+ *
+ * Phase A (gated): led_button_crc golden -> 64-step LCG delta sequence over
+ * lit/pressed/cue/color on keys 0..12 -> led_button_delta_crc vs
+ * led_button_fresh_crc, led_button_damage engagement, led_button_vsync,
+ * crc_done, PASS token.  Keys 13..15 are excluded from the LCG so the
+ * engagement bound (10000 px) is exactly the largest legitimate box of a
+ * 100 px key (a cue change repaints the whole key); a 150 px key's cue
+ * would be 22500 and say nothing about engagement.
+ * Phase B (after crc_done, ungated): a playhead cue sweep + LED chaser
+ * across all 16 keys, measuring frame time (led_button_fps). */
+#include <Arduino.h>
+#include <string.h>
+#include <math.h>
+#include "Display.h"
+#include "lvgl_rt1176.h"
+#include "lvgl_mipi_panel.h"
+#include "synthui_led_button.h"
+
+#ifdef LED_BUTTON_EYEBALL_HOLD
+static void eyeball_hold(int n)
+{
+    if (n != LED_BUTTON_EYEBALL_HOLD) return;
+    Serial1.printf("LED_BUTTON_EYEBALL_HOLD=%d\n", n);
+    for (;;) { }
+}
+#else
+#define eyeball_hold(n) ((void)0)
+#endif
+
+struct KeyConfig {
+    int32_t w, h;
+    bool lit, pressed, cue, disabled;
+    bool lv_state;            /* also lv_obj_add_state(LV_STATE_PRESSED) -- draws as pressed */
+    synthui_led_button_color_t color;
+};
+
+static const KeyConfig kKeys[16] = {
+    { 100, 100, false, false, false, false, false, SYNTHUI_LED_BUTTON_RED   },   /*  0 */
+    { 100, 100, true,  false, false, false, false, SYNTHUI_LED_BUTTON_RED   },   /*  1 */
+    { 100, 100, true,  false, false, false, false, SYNTHUI_LED_BUTTON_AMBER },   /*  2 */
+    { 100, 100, true,  false, false, false, false, SYNTHUI_LED_BUTTON_GREEN },   /*  3 */
+    { 100, 100, true,  false, false, false, false, SYNTHUI_LED_BUTTON_BLUE  },   /*  4 */
+    { 100, 100, false, true,  false, false, false, SYNTHUI_LED_BUTTON_RED   },   /*  5 latched */
+    { 100, 100, true,  true,  false, false, false, SYNTHUI_LED_BUTTON_RED   },   /*  6 lit + latched */
+    { 100, 100, false, false, true,  false, false, SYNTHUI_LED_BUTTON_RED   },   /*  7 cue */
+    { 100, 100, true,  false, true,  false, false, SYNTHUI_LED_BUTTON_RED   },   /*  8 cue + lit */
+    { 100, 100, false, false, false, true,  false, SYNTHUI_LED_BUTTON_RED   },   /*  9 disabled */
+    { 100, 100, true,  false, false, true,  false, SYNTHUI_LED_BUTTON_RED   },   /* 10 disabled + lit: no halo */
+    {  32,  32, true,  false, false, false, false, SYNTHUI_LED_BUTTON_RED   },   /* 11 no dots */
+    {  34,  34, true,  false, false, false, false, SYNTHUI_LED_BUTTON_RED   },   /* 12 dots */
+    { 150, 150, true,  false, false, false, false, SYNTHUI_LED_BUTTON_RED   },   /* 13 large */
+    { 120,  80, true,  false, false, false, false, SYNTHUI_LED_BUTTON_RED   },   /* 14 non-square */
+    { 100, 100, true,  false, false, false, true,  SYNTHUI_LED_BUTTON_RED   },   /* 15 LV_STATE_PRESSED */
+};
+
+#define LCG_KEYS 13   /* keys 0..12 take part in the delta sequence */
+
+static lv_obj_t *g_key[16];
+static bool g_lit[16], g_pressed[16], g_cue[16];
+static synthui_led_button_color_t g_color[16];
+
+static void opaque_bg(lv_obj_t *scr)
+{
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x101820), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
+}
+
+/* Build the bank from the mutable state arrays. Both the golden and the fresh
+ * reference pass use this, so the object hierarchy is identical. */
+static lv_obj_t *build_bank(void)
+{
+    lv_obj_t *scr = lv_obj_create(NULL);
+    opaque_bg(scr);
+
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, "SynthUI LedButton");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
+
+    for (int i = 0; i < 16; i++) {
+        const int row = i / 4, col = i % 4;
+        const KeyConfig *k = &kKeys[i];
+        lv_obj_t *b = synthui_led_button_create(scr);
+        lv_obj_set_size(b, k->w, k->h);
+        const int32_t cx = 90 + col * 180;
+        const int32_t cy = 200 + row * 180;
+        lv_obj_set_pos(b, cx - k->w / 2, cy - k->h / 2);
+        synthui_led_button_set_color(b, g_color[i]);
+        synthui_led_button_set_lit(b, g_lit[i]);
+        synthui_led_button_set_pressed(b, g_pressed[i]);
+        synthui_led_button_set_cue(b, g_cue[i]);
+        synthui_led_button_set_disabled(b, k->disabled);
+        if (k->lv_state) lv_obj_add_state(b, LV_STATE_PRESSED);
+        g_key[i] = b;
+    }
+    return scr;
+}
+
+/* Checksum the PRESENTED buffer: flip_sync() first, then scanned_fb(). */
+static uint32_t sum_active_screen(void)
+{
+    lvgl_mipi_panel_flip_sync();
+    lvgl_sum_reset();
+    lvgl_sum_feed(lvgl_mipi_panel_scanned_fb(), PANEL_FB_BYTES);
+    return lvgl_sum_value();
+}
+
+static uint32_t sum_screen(lv_obj_t *scr)
+{
+    lv_screen_load(scr);
+    lv_obj_invalidate(scr);
+    lv_refr_now(NULL);
+    return sum_active_screen();
+}
+
+/* --- delta guards: per-invalidate area recorder --- */
+static int32_t s_delta_maxarea = 0;
+static long    s_delta_total = 0;
+static bool    s_delta_record = false;
+
+static void delta_inv_cb(lv_event_t *e)
+{
+    if (!s_delta_record) return;
+    const lv_area_t *a = (const lv_area_t *)lv_event_get_param(e);
+    const int32_t px = lv_area_get_width(a) * lv_area_get_height(a);
+    s_delta_total += px;
+    if (px > s_delta_maxarea) s_delta_maxarea = px;
+}
+
+#define LED_BUTTON_DELTA_STEPS 64
+static uint32_t s_lcg;
+static uint32_t lcg_next(void)
+{
+    s_lcg = s_lcg * 1664525u + 1013904223u;
+    return s_lcg;
+}
+
+/* Runs ON the already-rendered golden bank; evolves the state arrays in place. */
+static uint32_t delta_run_sequence(void)
+{
+    lv_display_add_event_cb(lv_display_get_default(), delta_inv_cb,
+                            LV_EVENT_INVALIDATE_AREA, NULL);
+    s_lcg = 0x5EEDF00Du;
+    s_delta_maxarea = 0;
+    s_delta_total = 0;
+    s_delta_record = true;
+
+    for (int step = 0; step < LED_BUTTON_DELTA_STEPS; step++) {
+        const uint32_t r = lcg_next();
+        const int idx = (int)((r >> 16) % LCG_KEYS);
+        switch ((r >> 24) & 3) {
+        case 0:
+            g_lit[idx] = !g_lit[idx];
+            synthui_led_button_set_lit(g_key[idx], g_lit[idx]);
+            break;
+        case 1:
+            g_pressed[idx] = !g_pressed[idx];
+            synthui_led_button_set_pressed(g_key[idx], g_pressed[idx]);
+            break;
+        case 2:
+            g_cue[idx] = !g_cue[idx];
+            synthui_led_button_set_cue(g_key[idx], g_cue[idx]);
+            break;
+        default:
+            g_color[idx] = (synthui_led_button_color_t)(((int)g_color[idx] + 1) & 3);
+            synthui_led_button_set_color(g_key[idx], g_color[idx]);
+            break;
+        }
+        lv_refr_now(NULL);
+    }
+    s_delta_record = false;
+    return sum_active_screen();
+}
+
+/* --- Phase B: fps measurement and a continuous cue sweep + LED chaser --- */
+#define LED_BUTTON_FPS_MAX 512
+static uint32_t g_fps_us[LED_BUTTON_FPS_MAX];
+static volatile uint32_t g_fps_n = 0, g_fps_frames = 0;
+static volatile bool g_fps_timing = false, g_fps_skip = false;
+static volatile bool g_fps_rendered = false;
+static volatile uint32_t g_fps_t0 = 0;
+static uint32_t g_anim_step = 0;
+
+static void fps_refr_cb(lv_event_t *e)
+{
+    switch (lv_event_get_code(e)) {
+    case LV_EVENT_REFR_START:   g_fps_t0 = micros(); break;
+    case LV_EVENT_RENDER_READY: g_fps_rendered = true; break;
+    case LV_EVENT_REFR_READY:
+        if (g_fps_rendered && g_fps_timing) {
+            if (g_fps_skip) g_fps_skip = false;
+            else {
+                g_fps_frames++;
+                if (g_fps_n < LED_BUTTON_FPS_MAX)
+                    g_fps_us[g_fps_n++] = micros() - g_fps_t0;
+            }
+        }
+        g_fps_rendered = false;
+        break;
+    default: break;
+    }
+}
+
+static void key_anim_cb(lv_timer_t *t)
+{
+    (void)t;
+    g_anim_step++;
+    const uint32_t head = g_anim_step % 16;
+    for (int i = 0; i < 16; i++) {
+        synthui_led_button_set_cue(g_key[i], i == (int)head);
+        synthui_led_button_set_lit(g_key[i], ((g_anim_step / 4) + i) % 3 == 0);
+    }
+}
+
+static void key_fps_phase(const char *tag, uint32_t target_frames)
+{
+    static bool cbs_added = false;
+    if (!cbs_added) {
+        lv_display_t *disp = lv_display_get_default();
+        lv_display_add_event_cb(disp, fps_refr_cb, LV_EVENT_REFR_START, NULL);
+        lv_display_add_event_cb(disp, fps_refr_cb, LV_EVENT_RENDER_READY, NULL);
+        lv_display_add_event_cb(disp, fps_refr_cb, LV_EVENT_REFR_READY, NULL);
+        cbs_added = true;
+    }
+    g_fps_n = 0;
+    g_fps_frames = 0;
+    g_fps_skip = true;
+    g_fps_timing = true;
+
+    lv_timer_t *anim = lv_timer_create(key_anim_cb, 15, NULL);
+    const uint32_t t0 = millis();
+    while (g_fps_n < target_frames && (millis() - t0) < 10000u) {
+        lvgl_rt1176_loop();
+    }
+    g_fps_timing = false;
+    lv_timer_delete(anim);
+
+    uint32_t s[LED_BUTTON_FPS_MAX];
+    const uint32_t n = g_fps_n ? g_fps_n : 1;
+    memcpy(s, (const void *)g_fps_us, n * sizeof(uint32_t));
+    for (uint32_t i = 1; i < n; i++) {
+        const uint32_t v = s[i];
+        int32_t j = (int32_t)i - 1;
+        while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; j--; }
+        s[j + 1] = v;
+    }
+    Serial1.printf("%s frames=%lu mfps_med=%lu us_med=%lu us_min=%lu us_max=%lu\n",
+                   tag,
+                   (unsigned long)g_fps_n,
+                   (unsigned long)(1000000000ull / (s[n / 2] ? s[n / 2] : 1)),
+                   (unsigned long)s[n / 2],
+                   (unsigned long)s[0],
+                   (unsigned long)s[n - 1]);
+}
+
+void setup()
+{
+    Serial1.begin(115200);
+    while (!Serial1 && millis() < 2000) {}
+    Serial1.println("=== BOOT ===");
+    Serial1.printf("[APP: %s] [VER: v%u] [BUILD: %s %s]\n", "synthui_led_button_test", 1, __DATE__, __TIME__);
+    Serial1.println("SYNTHUI_LED_BUTTON_BEGIN");
+
+    const bool ok = Display.begin();
+    Serial1.println(ok ? "PANEL_OK" : "PANEL_FAIL");
+    if (!ok) {
+        Serial1.println("crc_done");
+        return;
+    }
+    Display.fillScreen(0x0000);
+
+    lvgl_rt1176_begin();
+    lvgl_mipi_panel_create_db(Display);
+
+    Serial1.println("led_button_scene=16 grid=4x4");
+
+    /* Phase A1: full initial render -> golden led_button_crc */
+    for (int i = 0; i < 16; i++) {
+        g_lit[i] = kKeys[i].lit;
+        g_pressed[i] = kKeys[i].pressed;
+        g_cue[i] = kKeys[i].cue;
+        g_color[i] = kKeys[i].color;
+    }
+    lv_screen_load(build_bank());
+    uint32_t t0 = millis();
+    while (!lvgl_mipi_panel_frame_done() && (millis() - t0) < 5000) {
+        lvgl_rt1176_loop();
+    }
+    Serial1.printf("LVGL_FLUSHED=%s\n",
+                   lvgl_mipi_panel_frame_done() ? "PASS" : "FAIL");
+    Serial1.printf("LVGL_BYTES=%lu\n",
+                   (unsigned long)(lvgl_mipi_panel_flushed_px()
+                                   * PANEL_BYTES_PER_PIXEL));
+    const uint32_t led_button_crc = sum_active_screen();
+    Serial1.printf("led_button_crc=0x%08lX\n", (unsigned long)led_button_crc);
+    eyeball_hold(1);
+
+    /* Phase A2: 64-step deterministic delta sequence vs a fresh full render */
+    const uint32_t d_seq = delta_run_sequence();
+    eyeball_hold(2);
+    const uint32_t d_full = sum_screen(build_bank());
+    eyeball_hold(3);
+
+    Serial1.printf("led_button_delta_crc=0x%08lX\n", (unsigned long)d_seq);
+    Serial1.printf("led_button_fresh_crc=0x%08lX\n", (unsigned long)d_full);
+    Serial1.printf("led_button_delta_eq=%s\n", (d_seq == d_full) ? "PASS" : "FAIL");
+    Serial1.printf("led_button_damage max=%ld total=%ld steps=%d\n",
+                   (long)s_delta_maxarea, s_delta_total, LED_BUTTON_DELTA_STEPS);
+    Serial1.printf("led_button_vsync flips=%lu isrs=%lu timeouts=%lu\n",
+                   (unsigned long)lvgl_mipi_panel_flips(),
+                   (unsigned long)lvgl_mipi_panel_vsync_isrs(),
+                   (unsigned long)lvgl_mipi_panel_vsync_timeouts());
+    Serial1.println("crc_done");
+    Serial1.println("PASS: SynthUI led_button render verified");
+
+    /* Phase B: cue sweep + LED chaser, fps measured (silicon is the answer) */
+    key_fps_phase("led_button_fps", 64);
+
+    {
+        lv_mem_monitor_t mm;
+        lv_mem_monitor(&mm);
+        Serial1.printf("led_button_mem total=%lu used_pct=%u max_used=%lu frag_pct=%u\n",
+                       (unsigned long)mm.total_size, (unsigned)mm.used_pct,
+                       (unsigned long)mm.max_used, (unsigned)mm.frag_pct);
+    }
+
+    /* keep animating for an eyes/camera pass */
+    lv_timer_create(key_anim_cb, 15, NULL);
+}
+
+void loop()
+{
+    lvgl_rt1176_loop();
+}
