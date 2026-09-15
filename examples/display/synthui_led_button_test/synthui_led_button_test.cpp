@@ -10,12 +10,28 @@
  *   12 34 px lit (dots)  13 150 px lit         14 120x80 lit (centred) 15 100 lit + LV_STATE_PRESSED
  *
  * Phase A (gated): led_button_crc golden -> 64-step LCG delta sequence over
- * lit/pressed/cue/color on keys 0..12 -> led_button_delta_crc vs
- * led_button_fresh_crc, led_button_damage engagement, led_button_vsync,
- * crc_done, PASS token.  Keys 13..15 are excluded from the LCG so the
- * engagement bound (10000 px) is exactly the largest legitimate box of a
- * 100 px key (a cue change repaints the whole key); a 150 px key's cue
- * would be 22500 and say nothing about engagement.
+ * lit/pressed/cue/color on keys 0..12 -> a 4-step SCRIPTED TAIL on keys 14/15
+ * -> led_button_delta_crc vs led_button_fresh_crc, per-op damage maxima
+ * (led_button_damage_op), led_button_damage engagement, led_button_vsync,
+ * crc_done, and a PASS/FAIL token gated on delta equality.  Keys 13..15 are
+ * excluded from the LCG so the engagement bound (10000 px) is exactly the
+ * largest legitimate box of a 100 px key (a cue change repaints the whole
+ * key); a 150 px key's cue would be 22500 and say nothing about engagement.
+ * The LCG alone cannot exercise every damage box: keys 0..12 are all square
+ * and none is held by LV_STATE_PRESSED, so a centring-offset error in a
+ * non-square key's damage box, or in the lit box at the LV_STATE_PRESSED
+ * offset, would never move a single LCG-driven pixel.  The scripted tail
+ * covers exactly those: (a) press the non-square 120x80 key 14 (press box at
+ * ox=20), (b) un-light it while pressed (lit box at ox=20, pressed offset),
+ * (c) change the colour of key 15, which is held pressed via
+ * lv_obj_add_state(LV_STATE_PRESSED) (lit box at the LV_STATE_PRESSED
+ * offset), (d) un-light key 15 (halo removed at that same offset).  The tail
+ * also closes a hole a whole-key-invalidate regression could hide behind:
+ * with square, unpressed keys only, set_lit/set_color/set_pressed falling
+ * back to lv_obj_invalidate(obj) still measures max=10000 (a cue change
+ * already reaches that) and still passes delta equality -- per-op damage
+ * maxima (led_button_damage_op) are what catch it, since lit/press/color
+ * would then read 10000 too instead of their small legitimate boxes.
  * Phase B (after crc_done, ungated): a playhead cue sweep + LED chaser
  * across all 16 keys, measuring frame time (led_button_fps). */
 #include <Arduino.h>
@@ -125,9 +141,19 @@ static uint32_t sum_screen(lv_obj_t *scr)
 }
 
 /* --- delta guards: per-invalidate area recorder --- */
+enum {
+    LED_OP_LIT = 0,
+    LED_OP_PRESSED,
+    LED_OP_CUE,
+    LED_OP_COLOR,
+    LED_OP_COUNT
+};
+
 static int32_t s_delta_maxarea = 0;
 static long    s_delta_total = 0;
 static bool    s_delta_record = false;
+static int     s_delta_op = 0;
+static int32_t s_op_max[LED_OP_COUNT];
 
 static void delta_inv_cb(lv_event_t *e)
 {
@@ -136,9 +162,11 @@ static void delta_inv_cb(lv_event_t *e)
     const int32_t px = lv_area_get_width(a) * lv_area_get_height(a);
     s_delta_total += px;
     if (px > s_delta_maxarea) s_delta_maxarea = px;
+    if (px > s_op_max[s_delta_op]) s_op_max[s_delta_op] = px;
 }
 
 #define LED_BUTTON_DELTA_STEPS 64
+#define LED_BUTTON_TAIL_STEPS  4
 static uint32_t s_lcg;
 static uint32_t lcg_next(void)
 {
@@ -146,7 +174,10 @@ static uint32_t lcg_next(void)
     return s_lcg;
 }
 
-/* Runs ON the already-rendered golden bank; evolves the state arrays in place. */
+/* Runs ON the already-rendered golden bank; evolves the state arrays in place.
+ * After the 64 LCG steps (keys 0..12 only, all square and unpressed), a
+ * 4-step SCRIPTED TAIL exercises damage boxes the LCG cannot reach -- see
+ * the file-top comment for why each step exists. */
 static uint32_t delta_run_sequence(void)
 {
     lv_display_add_event_cb(lv_display_get_default(), delta_inv_cb,
@@ -154,31 +185,59 @@ static uint32_t delta_run_sequence(void)
     s_lcg = 0x5EEDF00Du;
     s_delta_maxarea = 0;
     s_delta_total = 0;
+    for (int i = 0; i < LED_OP_COUNT; i++) s_op_max[i] = 0;
     s_delta_record = true;
 
     for (int step = 0; step < LED_BUTTON_DELTA_STEPS; step++) {
         const uint32_t r = lcg_next();
         const int idx = (int)((r >> 16) % LCG_KEYS);
         switch ((r >> 24) & 3) {
-        case 0:
+        case LED_OP_LIT:
+            s_delta_op = LED_OP_LIT;
             g_lit[idx] = !g_lit[idx];
             synthui_led_button_set_lit(g_key[idx], g_lit[idx]);
             break;
-        case 1:
+        case LED_OP_PRESSED:
+            s_delta_op = LED_OP_PRESSED;
             g_pressed[idx] = !g_pressed[idx];
             synthui_led_button_set_pressed(g_key[idx], g_pressed[idx]);
             break;
-        case 2:
+        case LED_OP_CUE:
+            s_delta_op = LED_OP_CUE;
             g_cue[idx] = !g_cue[idx];
             synthui_led_button_set_cue(g_key[idx], g_cue[idx]);
             break;
         default:
+            s_delta_op = LED_OP_COLOR;
             g_color[idx] = (synthui_led_button_color_t)(((int)g_color[idx] + 1) & 3);
             synthui_led_button_set_color(g_key[idx], g_color[idx]);
             break;
         }
         lv_refr_now(NULL);
     }
+
+    /* Scripted tail: keys 14 (non-square, unpressed) and 15 (held pressed via
+     * LV_STATE_PRESSED) are never touched by the LCG above. */
+    s_delta_op = LED_OP_PRESSED;                    /* (a) non-square press box, ox=20 */
+    g_pressed[14] = true;
+    synthui_led_button_set_pressed(g_key[14], true);
+    lv_refr_now(NULL);
+
+    s_delta_op = LED_OP_LIT;                         /* (b) lit box at the pressed offset */
+    g_lit[14] = false;
+    synthui_led_button_set_lit(g_key[14], false);
+    lv_refr_now(NULL);
+
+    s_delta_op = LED_OP_COLOR;                       /* (c) LV_STATE_PRESSED key's lit box */
+    g_color[15] = SYNTHUI_LED_BUTTON_AMBER;
+    synthui_led_button_set_color(g_key[15], SYNTHUI_LED_BUTTON_AMBER);
+    lv_refr_now(NULL);
+
+    s_delta_op = LED_OP_LIT;                         /* (d) halo removed, LV_STATE_PRESSED offset */
+    g_lit[15] = false;
+    synthui_led_button_set_lit(g_key[15], false);
+    lv_refr_now(NULL);
+
     s_delta_record = false;
     return sum_active_screen();
 }
@@ -312,17 +371,26 @@ void setup()
     const uint32_t d_full = sum_screen(build_bank());
     eyeball_hold(3);
 
+    const bool delta_eq = (d_seq == d_full);
     Serial1.printf("led_button_delta_crc=0x%08lX\n", (unsigned long)d_seq);
     Serial1.printf("led_button_fresh_crc=0x%08lX\n", (unsigned long)d_full);
-    Serial1.printf("led_button_delta_eq=%s\n", (d_seq == d_full) ? "PASS" : "FAIL");
-    Serial1.printf("led_button_damage max=%ld total=%ld steps=%d\n",
-                   (long)s_delta_maxarea, s_delta_total, LED_BUTTON_DELTA_STEPS);
+    Serial1.printf("led_button_delta_eq=%s\n", delta_eq ? "PASS" : "FAIL");
+    Serial1.printf("led_button_damage max=%ld total=%ld steps=%d tail=%d\n",
+                   (long)s_delta_maxarea, s_delta_total, LED_BUTTON_DELTA_STEPS,
+                   LED_BUTTON_TAIL_STEPS);
+    Serial1.printf("led_button_damage_op lit=%ld press=%ld cue=%ld color=%ld\n",
+                   (long)s_op_max[LED_OP_LIT], (long)s_op_max[LED_OP_PRESSED],
+                   (long)s_op_max[LED_OP_CUE], (long)s_op_max[LED_OP_COLOR]);
     Serial1.printf("led_button_vsync flips=%lu isrs=%lu timeouts=%lu\n",
                    (unsigned long)lvgl_mipi_panel_flips(),
                    (unsigned long)lvgl_mipi_panel_vsync_isrs(),
                    (unsigned long)lvgl_mipi_panel_vsync_timeouts());
     Serial1.println("crc_done");
-    Serial1.println("PASS: SynthUI led_button render verified");
+    if (delta_eq) {
+        Serial1.println("PASS: SynthUI led_button render verified");
+    } else {
+        Serial1.println("FAIL: SynthUI led_button delta equality");
+    }
 
     /* Phase B: cue sweep + LED chaser, fps measured (silicon is the answer) */
     key_fps_phase("led_button_fps", 64);
