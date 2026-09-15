@@ -1544,6 +1544,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ### Task 6: Push SynthUI, bump the pin, fresh-user verification, sweep (rt1176-evkb)
 
+> **As executed 2026-09-15.** Work ran on `new-25-led-button` branches in both repos; the SynthUI push was a fast-forward of SynthUI master to that branch (`b599ae1`), done by the controller. Two additions to the steps below, both from this tree's recorded traps: the SELF-BUILDING gates' dirs (`bt_sink_test/build`, `bt_tone_test/build-{soak,lifecycle,media}`, `m2_hci_probe/build-{avdtp,baud,reconnect}`) are rebuilt with the SynthUI-linking dirs, because a pin change makes them reconfigure inside their 120 s gate budget; and the vacuity total after Task 5's review is **61** (six led_button cases), not 58/59.
+
 **Files:**
 - Modify: `$EVKB/evkb.cmake:131` (the SynthUI pin)
 
@@ -1588,12 +1590,12 @@ Expected: `LICENSE-AUDIT: PASS`, 120 manifests.
 
 - [ ] **Step 7: Commit the pin and the close-out note (evkb)**
 
-Add a `✅ **Measured <date>: 141 gates discovered, 141 passed, 0 failed, 0 SKIP**` block at the top of the measurement history in `CLAUDE.md` (above the 2026-09-15 landscape block) recording: the sweep line, audit PASS + manifest count, vacuity 59/59, fresh-user verified by RUNNING the gate on the fetched ELF, and the SynthUI SHA.
+Add a `✅ **Measured <date>: 141 gates discovered, 141 passed, 0 failed, 0 SKIP**` block at the top of the measurement history in `CLAUDE.md` (above the 2026-09-15 landscape block) recording: the sweep line, audit PASS + manifest count, vacuity 61/61, fresh-user verified by RUNNING the gate on the fetched ELF, and the SynthUI SHA.
 
 ```bash
 cd $EVKB
 git add evkb.cmake CLAUDE.md
-git commit -m "evkb.cmake: SynthUI pin -> <sha> (synthui_led_button, NEW-25); close-out: sweep 141/141/0, audit PASS, vacuity 59/59, fresh-user gate run on the fetched ELF
+git commit -m "evkb.cmake: SynthUI pin -> <sha> (synthui_led_button, NEW-25); close-out: sweep 141/141/0, audit PASS, vacuity 61/61, fresh-user gate run on the fetched ELF
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
