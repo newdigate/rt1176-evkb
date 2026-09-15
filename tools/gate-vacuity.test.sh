@@ -912,6 +912,25 @@ if [ -d "$EVKB/$LBT" ] && [ -f "$EVKB/$LBT/transcript_qemu.txt" ]; then
     [ "$rc" -ne 0 ] || result=1
     echo "$OUT_TEXT" | grep -q "^FAIL: per-op damage line missing" || result=1
     report "led_button_missing_op_damage_fails" $result
+
+    # Both crcs rewritten identically: delta equality still holds (they still
+    # match each other), so only the final-state golden can catch it.
+    sed 's|^led_button_delta_crc=0x........|led_button_delta_crc=0xBADBADBA|; s|^led_button_fresh_crc=0x........|led_button_fresh_crc=0xBADBADBA|' \
+        "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_badfinal.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_badfinal.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: led_button final-state checksum" || result=1
+    report "led_button_bad_final_golden_fails_by_name" $result
+
+    # One op one unit past its bound must fail by name, not merely by exit code.
+    sed 's|^led_button_damage_op lit=1450 |led_button_damage_op lit=1451 |' \
+        "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_opover.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_opover.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: lit damage above its box" || result=1
+    report "led_button_op_over_bound_fails_by_name" $result
 else
     echo "SKIP: synthui_led_button_test vacuity (example or fixture missing)"
 fi
