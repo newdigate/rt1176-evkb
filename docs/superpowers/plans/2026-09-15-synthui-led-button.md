@@ -1386,9 +1386,13 @@ grep -qE "led_button_delta_eq=PASS\r?$" "$OUT" || { echo "FAIL: delta equality";
 # 100 px key (10000).  So each op has its own bound, equal to its box on the
 # largest key the sequence touches: lit and colour = the halo, 58x25 = 1450;
 # pressed = the cap group at both offsets, 80x83 = 6640; cue = the key, 10000.
+# These are EXACT measured boxes, re-derived from synthui_led_button_math.h:
+# a deliberate layout change trips them loudly and they must then be
+# re-derived from the math, never loosened to whatever the run printed.
 DAREA=$(grep -a -oE "led_button_damage max=[0-9]+" "$OUT" | head -1 | cut -d= -f2)
 [ -n "$DAREA" ] && [ "$DAREA" -gt 0 ] || { echo "FAIL: delta damage guard missing or zero"; exit 1; }
 [ "$DAREA" -le 10000 ] || { echo "FAIL: delta damage not engaged (max=$DAREA)"; exit 1; }
+grep -qE "led_button_damage max=[0-9]+ total=[0-9]+ steps=64 tail=4\r?$" "$OUT" || { echo "FAIL: delta sequence length changed (expected steps=64 tail=4)"; exit 1; }
 OPLINE=$(grep -a -oE "led_button_damage_op lit=[0-9]+ press=[0-9]+ cue=[0-9]+ color=[0-9]+" "$OUT" | head -1)
 [ -n "$OPLINE" ] || { echo "FAIL: per-op damage line missing"; exit 1; }
 op() { echo "$OPLINE" | grep -oE "$1=[0-9]+" | cut -d= -f2; }
@@ -1420,7 +1424,7 @@ Run: `./run_qemu.sh` → last line `PASS: SynthUI led_button render verified`, e
 
 - [ ] **Step 4: Demonstrate the four RED arms by name, then restore**
 
-Mutations to SynthUI are made in `$SYNTHUI` and MUST be reverted with `git -C $SYNTHUI checkout -- src/` followed by `git -C $SYNTHUI diff --quiet && echo clean` before the next arm. Rebuild with `cmake --build build` after each SynthUI change and after each revert.
+Before the first SynthUI mutation confirm `git -C $SYNTHUI diff --quiet && echo clean` prints `clean`; if it does not, stop and report (a blanket revert would discard someone's work). Revert each mutation with `git -C $SYNTHUI checkout -- <the one file you changed>` and confirm `clean` again before the next arm. Rebuild with `cmake --build build` after each SynthUI change and after each revert.
 1. Initial golden altered to `0xDEADBEEF` in `run_qemu.sh` → `FAIL: led_button checksum`. Restore.
 2. Final-state golden altered to `0xDEADBEEF` → `FAIL: led_button final-state checksum (...)`. Restore.
 3. `synthui_led_button_set_lit`: `led_invalidate_lit_box(obj);` → `lv_obj_invalidate(obj);` → `FAIL: lit damage above its box (lit=10000 > 1450)`. Also record from the capture that `led_button_delta_eq=PASS` (the guard it proves necessary). Revert.
