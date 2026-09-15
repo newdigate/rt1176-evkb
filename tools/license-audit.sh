@@ -355,6 +355,7 @@ examples/display/synthui_fader_test:synthui_fader_test \
 examples/display/synthui_knob_test:synthui_knob_test \
 examples/display/synthui_step_test:synthui_step_test \
 examples/display/synthui_lamp_test:synthui_lamp_test \
+examples/display/synthui_led_button_test:synthui_led_button_test \
 examples/display/synthui_level_meter_test:synthui_level_meter_test \
 examples/display/synthui_panel_button_test:synthui_panel_button_test \
 examples/display/synthui_piano_key_test:synthui_piano_key_test \

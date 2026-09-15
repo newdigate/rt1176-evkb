@@ -106,7 +106,7 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **140 gates** — the acid_box LANDSCAPE work added ONE on 2026-09-14/15 (`display/pxp_rotate_probe`: the Phase 0 PXP CW90 rotation probe, eleven pointer-offset sub-rect sums pinned and matched bit-for-bit on silicon; 139 before it), and before that NEW-41 added ONE on 2026-09-09 (`audio/bt_sink_test`: the EVKB as an A2DP SINK, driven by `hci_peer.py`'s new `source` phase; 138 before it), and before that the SynthUI widget line added SIX on 2026-09-07/08 (`display/synthui_{lamp,level_meter,panel_button,piano_key,seven_segment,slide_toggle}_test`, NEW-24/26/27/28/29/30, one render golden each; 132 before them), and before that NEW-34 piece 5's ONE new gate is
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **141 gates** — NEW-25 added ONE on 2026-09-15 (`display/synthui_led_button_test`: the DC 909 step key with a pressed latch; 140 before it), and before that the acid_box LANDSCAPE work added ONE on 2026-09-14/15 (`display/pxp_rotate_probe`: the Phase 0 PXP CW90 rotation probe, eleven pointer-offset sub-rect sums pinned and matched bit-for-bit on silicon; 139 before it), and before that NEW-41 added ONE on 2026-09-09 (`audio/bt_sink_test`: the EVKB as an A2DP SINK, driven by `hci_peer.py`'s new `source` phase; 138 before it), and before that the SynthUI widget line added SIX on 2026-09-07/08 (`display/synthui_{lamp,level_meter,panel_button,piano_key,seven_segment,slide_toggle}_test`, NEW-24/26/27/28/29/30, one render golden each; 132 before them), and before that NEW-34 piece 5's ONE new gate is
 `audio/bt_tone_test[soak]` (the unattended connection-resilience soak: ten
 forced drops by a RAW HCI_Disconnect, ten auto-reconnects with the stored key on
 fresh handles, the LOSS-time teardown witness `l2_free_loss_min=5`, clean media
@@ -587,8 +587,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **140 passed, 0 failed, 0 SKIP**, or
-**139 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
+`usb/usb_descriptor_survey`). The target is **141 passed, 0 failed, 0 SKIP**, or
+**140 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
 (`cm4_audio_test`) is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing

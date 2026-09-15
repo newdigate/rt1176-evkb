@@ -87,6 +87,9 @@ LIT=$(op lit); PRS=$(op press); CUE=$(op cue); COL=$(op color)
 [ "$CUE" -le 10000 ] || { echo "FAIL: cue damage above its box (cue=$CUE > 10000)"; exit 1; }
 # vsync-fence health (db pipeline): a timeout means the tear-free property
 # silently degraded with every golden still green.
+# A vsync-fence red during a full sweep is the documented load-sensitivity class
+# (docs/KNOWN-BROKEN-GATES.md): re-run this gate idle before treating it as a
+# regression.
 grep -qE "led_button_vsync flips=[0-9]+ isrs=[0-9]+ timeouts=0\r?$" "$OUT" || { echo "FAIL: vsync fence unhealthy or missing"; exit 1; }
 grep -q "crc_done" "$OUT" || { echo "FAIL: no completion token"; exit 1; }
 grep -q "PASS: SynthUI led_button render verified" "$OUT" || { echo "FAIL: render verification token missing"; exit 1; }

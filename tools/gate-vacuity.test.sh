@@ -880,4 +880,40 @@ else
     echo "SKIP: acid_box vacuity (example or fixture missing)"
 fi
 
+# --- 16. synthui_led_button_test: green fixture passes; bad golden and a
+# missing damage counter fail by name (NEW-25).  Same shape as the fader's
+# section 8: an absent counter must never read as the good outcome.
+LBT="examples/display/synthui_led_button_test"
+if [ -d "$EVKB/$LBT" ] && [ -f "$EVKB/$LBT/transcript_qemu.txt" ]; then
+    run_gate "$LBT" "run_qemu.sh" "$EVKB/$LBT/transcript_qemu.txt"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_synthui_led_button_test" $result
+
+    sed 's|^led_button_crc=0x........|led_button_crc=0xBADBADBA|' \
+        "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_badcrc.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_badcrc.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: led_button checksum" || result=1
+    report "led_button_bad_golden_fails_by_name" $result
+
+    grep -v "^led_button_damage " "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_nodmg.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_nodmg.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: delta damage guard missing" || result=1
+    report "led_button_missing_damage_counter_fails" $result
+
+    # Without the per-op line the gate must fail by name: the single max
+    # cannot see a whole-key regression, so an absent per-op line is not a pass.
+    grep -v "^led_button_damage_op " "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_noop.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_noop.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: per-op damage line missing" || result=1
+    report "led_button_missing_op_damage_fails" $result
+else
+    echo "SKIP: synthui_led_button_test vacuity (example or fixture missing)"
+fi
+
 exit $FAILED
