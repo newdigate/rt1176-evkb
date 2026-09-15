@@ -162,6 +162,12 @@ teensy_add_executable(acid_box
 # which stay in ITCM because they run every frame).  The NON-BT builds are now
 # the tight ones -- the BT builds route more archives to flash -- and they carry
 # no floor: read this line in their build output.
+# ★ RE-MEASURED 2026-09-15, after the equality guard went incremental: -32 B on
+# all four -- default 2,724 B, LOOPSTAT 2,580 B, build-bt 11,364 B, build-bench
+# 11,188 B.  The guard's functions are all in flash; nm-diffed against the
+# previous default ELF, ITCM gained two long-branch veneers (+16 B) and loop()
+# grew 20 B (the inlined per-pass active test and the step-8 arm), net of
+# alignment.
 target_link_options(acid_box.elf PRIVATE -Wl,--print-memory-usage)
 # Audio's own dependency set (Wire/SPI/SdFat/SD/SerialFlash) is named exactly as
 # acid_bass_test names it -- import_evkb_audio_full() creates those targets but

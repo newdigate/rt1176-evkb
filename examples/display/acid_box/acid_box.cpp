@@ -806,34 +806,93 @@ static_assert((uint32_t)UI_W == PANEL_HEIGHT && (uint32_t)UI_H == PANEL_WIDTH,
  * calling the port's helper -- a guard that shares the code it checks is not
  * a check.
  *
- * WHY NO RENDER CAN INTERVENE: the guard is called only from setup() (after
- * the boot frame) and from audio_probe_poll(), which loop() and idleUi() run
- * AFTER lvgl_rt1176_loop() has returned -- never from inside an LVGL
- * callback -- so LVGL cannot start a refresh into the canvas between the
- * flip_sync() below and the last compare.
+ * WHY NO RENDER CAN INTERVENE: every compare runs from setup() (after the
+ * boot frame) or from audio_probe_poll(), which loop() and idleUi() run AFTER
+ * lvgl_rt1176_loop() has returned -- never from inside an LVGL callback -- so
+ * LVGL cannot start a refresh into the canvas between a flip_sync() below and
+ * the last compare that follows it.
  *
- * ITS COST IS A STALL, AND IT IS REPORTED: flip_sync() can wait up to a frame,
- * then ~57.6 K word reads from each of two SDRAM buffers (~115 K in all), then
- * a blocking print -- estimated 30-55 ms on silicon, once per bar.  The guard
- * times itself (us= on the ROT_EQ line: the flip_sync() wait plus the
- * compares; the print that follows is not inside it) so the stall is visible
- * in every bench log.  us= is INFORMATIONAL and never gated: QEMU time is
- * fiction.  The guard is not compiled out anywhere -- the gate ELF is the
+ * TWO SHAPES, ONE COMPARE.
+ *   * BOOT: rot_equality_check_boot(), synchronous -- flip_sync() (which may
+ *     wait up to a frame) and all 80 sampled rows in one call.  The stall is
+ *     irrelevant in setup(), and it is the first ACIDBOX_ROT_EQ line (pass=1).
+ *   * PER BAR: INCREMENTAL.  rot_equality_begin() arms a check when the
+ *     sequencer enters step 8 (mid-bar), and rot_equality_step() runs from
+ *     every audio_probe_poll() pass while the transport plays, comparing
+ *     ROT_EQ_CHUNK sampled rows per pass until all 80 are done; the 15->0 seam
+ *     then prints the finished verdict.  MEASURED ON THE EVKB before this
+ *     shape existed: the synchronous per-bar guard cost a median 31.4 ms
+ *     (max 38.8 ms) inside the seam pass, the loopstat probe slot read 59 ms
+ *     in seam seconds against ~18 ms otherwise, touch p95 read 52-96 ms while
+ *     dragging, and a frame was skipped once per bar -- with the M2_BT_OUT PCM
+ *     ring covering only ~93 ms.
+ *
+ * WHY EACH CHUNK IS VALID ON ITS OWN.  With no flip pending, the presented
+ * buffer holds the rotated canvas: the rotated flush_cb renders, PXP-presents
+ * into the back buffer and requests the flip in one call, and the vsync ISR
+ * retires it into scanned_fb().  (Unless that present failed or its flip
+ * timed out -- then scanned_fb() is stale and the compare fails, which is the
+ * verdict those faults deserve; the gate names both separately too.)  So a
+ * step pass with a flip PENDING is SKIPPED -- flip_sync() would block up to a
+ * frame and serialise the loop to vsync, the stall this shape exists to
+ * remove -- and a pass with none pending calls flip_sync() (non-blocking in
+ * that state: it only consumes the retire count) and compares.  No render or
+ * present can run between that test and the end of the chunk (single thread;
+ * outside LVGL), and the ISR cannot CREATE a pending flip, only retire one.
+ * Chunks of one check may compare different frames; each is a true statement
+ * about the frame it read.
+ *
+ * THE NO-PENDING PREDICATE is isrs + timeouts >= flips, from the port's public
+ * counters (lvgl_mipi_panel.cpp's ownership table): flips counts at the
+ * request, and a pending flip ends EITHER by an ISR retire (isrs) OR by
+ * flip_sync()'s 40 ms thread-side abandon (timeouts), which clears the
+ * pending pointer with no retire.  So isrs + timeouts == flips - pending,
+ * exactly.  ★ NOT flips == isrs: that is exact only while timeouts == 0 --
+ * after ONE true abandon it reads "pending" FOREVER, every later check would
+ * starve and be counted a FAIL, and a fence timeout would masquerade as an
+ * image inequality for the rest of the run.  The port's one documented
+ * double-count (an ISR retire landing inside the abandon, both counters
+ * ticking for one flip) can only make this predicate say "go" while a flip
+ * is pending -- flip_sync() then waits, a bounded stall and a still-valid
+ * compare -- never "skip" while none is, so it cannot starve a check.
+ *
+ * ITS COST IS REPORTED: us= on the ROT_EQ line is the LARGEST SINGLE-PASS
+ * STALL of the last check to reach a verdict -- the flip_sync() call plus one
+ * pass's compares, the print excluded.  For the boot check that pass is the
+ * whole check (its flip_sync() may wait); per bar it is one chunk, the number
+ * that bounds loop latency.  us= is INFORMATIONAL and never gated: QEMU time
+ * is fiction.  The guard is not compiled out anywhere -- the gate ELF is the
  * silicon ELF.
  *
- * ROTWIT_FN puts both functions in FLASH (.progmem, XIP): they run once per
- * bar and their cost is SDRAM reads, not instruction fetches, and the default
- * build's ITCM headroom had fallen to 836 B. */
+ * ROTWIT_FN puts these functions in FLASH (.progmem, XIP): their cost is
+ * SDRAM reads, not instruction fetches, and the default build's ITCM headroom
+ * had fallen to 836 B.  The per-pass "is a check active" test is inlined at
+ * the call site in audio_probe_poll(), so a pass with no check in progress
+ * pays one load and a branch in ITCM and never makes the flash call. */
 #define ROTWIT_FN __attribute__((section(".progmem.acid_rotwit"), noinline))
+#define ROT_EQ_STRIDE 16u                              /* every 16th physical row */
+#define ROT_EQ_ROWS   (PANEL_HEIGHT / ROT_EQ_STRIDE)   /* 80 sampled rows */
+#define ROT_EQ_CHUNK  8u                               /* sampled rows per loop pass */
+static_assert(PANEL_HEIGHT % ROT_EQ_STRIDE == 0,
+              "the sampled rows must cover the panel to its last stride");
 static uint32_t s_rotEqPass = 0, s_rotEqFail = 0, s_rotEqUs = 0;
-ROTWIT_FN static void rot_equality_check(void)
+/* The incremental check in progress (touched from the loop thread only). */
+static bool     s_rotEqActive = false;   /* armed, no verdict yet */
+static bool     s_rotEqOk     = true;    /* every chunk so far matched */
+static uint32_t s_rotEqRow    = 0;       /* next SAMPLED row index, 0..ROT_EQ_ROWS */
+static uint32_t s_rotEqMaxUs  = 0;       /* its largest single-pass cost so far */
+
+/* Sampled rows [from, to): sampled row k is physical row k*ROT_EQ_STRIDE.
+ * False at the first mismatch, or if either buffer does not exist.  ROTWIT_FN
+ * rather than inline: an out-of-line copy the compiler chose to emit would
+ * otherwise land in ITCM. */
+ROTWIT_FN static bool rot_eq_rows(uint32_t from, uint32_t to)
 {
-    const uint32_t t0 = micros();            /* the flip_sync() wait is part of the cost */
-    lvgl_mipi_panel_flip_sync();
     const uint32_t *fb = (const uint32_t *)lvgl_mipi_panel_scanned_fb();
     const uint32_t *cv = (const uint32_t *)lvgl_mipi_panel_canvas();
-    bool ok = (fb != nullptr) && (cv != nullptr);
-    for (uint32_t py = 0; py < PANEL_HEIGHT && ok; py += 16) {
+    if (fb == nullptr || cv == nullptr) return false;
+    for (uint32_t k = from; k < to; k++) {
+        const uint32_t py = k * ROT_EQ_STRIDE;
         const uint32_t *row = fb + (size_t)py * PANEL_WIDTH;
         for (uint32_t px = 0; px < PANEL_WIDTH; px++) {
             /* physical (px,py) reads logical (py, PANEL_WIDTH-1-px).  The
@@ -842,12 +901,67 @@ ROTWIT_FN static void rot_equality_check(void)
              * reference is masked to RGB and the presented byte 3 is PINNED
              * to 0 -- pxp_rotate_probe's ref_px makes the same decision. */
             const uint32_t want = cv[(size_t)(PANEL_WIDTH - 1 - px) * (size_t)UI_W + py] & 0x00FFFFFFu;
-            if (row[px] != want) { ok = false; break; }
+            if (row[px] != want) return false;
         }
     }
-    if (ok) s_rotEqPass++; else s_rotEqFail++;
-    s_rotEqUs = micros() - t0;
+    return true;
 }
+
+/* BOOT ONLY -- synchronous, and it may wait up to a frame in flip_sync().
+ * Never call it from loop(): that is the per-bar stall the incremental pair
+ * below replaced. */
+ROTWIT_FN static void rot_equality_check_boot(void)
+{
+    const uint32_t t0 = micros();            /* the flip_sync() wait is part of the cost */
+    lvgl_mipi_panel_flip_sync();
+    if (rot_eq_rows(0, ROT_EQ_ROWS)) s_rotEqPass++; else s_rotEqFail++;
+    s_rotEqUs = micros() - t0;               /* one pass: the whole check */
+}
+
+/* Arms a per-bar check.  A check STILL ACTIVE when the next is armed never
+ * reached a verdict -- a flip was pending on every pass it was given, or the
+ * transport stopped under it -- and it is counted as a FAIL here, never
+ * silently dropped: a guard that quietly stops finishing would otherwise read
+ * exactly like a guard that keeps passing.  Its largest pass so far becomes
+ * us=, so the line's us always belongs to the last verdict counted. */
+ROTWIT_FN static void rot_equality_begin(void)
+{
+    if (s_rotEqActive) {
+        s_rotEqFail++;
+        s_rotEqUs = s_rotEqMaxUs;
+    }
+    s_rotEqActive = true;
+    s_rotEqOk     = true;
+    s_rotEqRow    = 0;
+    s_rotEqMaxUs  = 0;
+}
+
+/* One loop pass of the armed check: skip if a flip is pending (never wait),
+ * else compare the next ROT_EQ_CHUNK sampled rows; at the last row -- or the
+ * first mismatch -- count the verdict and disarm. */
+ROTWIT_FN static void rot_equality_step(void)
+{
+    if (!s_rotEqActive) return;
+    /* isrs is read last-or-first indifferently: it only ever INCREASES under
+     * us, so a stale read can only skip a pass that could have run. */
+    if (lvgl_mipi_panel_vsync_isrs() + lvgl_mipi_panel_vsync_timeouts()
+            < lvgl_mipi_panel_flips())
+        return;                              /* a flip is pending: try next pass */
+    const uint32_t t0 = micros();
+    lvgl_mipi_panel_flip_sync();             /* nothing pending: returns at once */
+    uint32_t to = s_rotEqRow + ROT_EQ_CHUNK;
+    if (to > ROT_EQ_ROWS) to = ROT_EQ_ROWS;
+    if (!rot_eq_rows(s_rotEqRow, to)) s_rotEqOk = false;
+    s_rotEqRow = to;
+    const uint32_t us = micros() - t0;
+    if (us > s_rotEqMaxUs) s_rotEqMaxUs = us;
+    if (!s_rotEqOk || s_rotEqRow >= ROT_EQ_ROWS) {
+        if (s_rotEqOk) s_rotEqPass++; else s_rotEqFail++;
+        s_rotEqUs     = s_rotEqMaxUs;
+        s_rotEqActive = false;
+    }
+}
+
 ROTWIT_FN static void print_rot_lines(void)
 {
     CONSOLE.printf("ACIDBOX_ROT ops=%lu full=%lu px=%lu us=%lu errors=%lu\n",
@@ -856,6 +970,9 @@ ROTWIT_FN static void print_rot_lines(void)
                    (unsigned long)lvgl_mipi_panel_rot_px(),
                    (unsigned long)lvgl_mipi_panel_rot_us(),
                    (unsigned long)lvgl_mipi_panel_rot_errors());
+    /* us= here is the largest SINGLE-PASS stall of the last check to reach a
+     * verdict (the boot check: its whole cost; per bar: its costliest chunk),
+     * never the check's total -- see the witnesses' header above. */
     CONSOLE.printf("ACIDBOX_ROT_EQ pass=%lu fail=%lu us=%lu\n",
                    (unsigned long)s_rotEqPass, (unsigned long)s_rotEqFail,
                    (unsigned long)s_rotEqUs);
@@ -897,7 +1014,17 @@ static void audio_probe_poll(void)
         if (v > g_diag_rms[s]) g_diag_rms[s] = v;
 #endif
     }
+    /* The per-bar equality check, one chunk per pass while the transport plays
+     * (armed at step 8 below).  The active test is inlined HERE so a pass with
+     * no check in progress never makes the flash call. */
+    if (s_rotEqActive) rot_equality_step();
     if (s != lastSeenStep) {
+        /* Mid-bar: arm this bar's equality check, so it has the second half
+         * of the bar (~0.94 s at 128 BPM) to finish before the seam below
+         * prints its verdict -- the gate's pass >= bars+1 needs every bar's
+         * check COMPLETE by that bar's seam line.  An unfinished one is
+         * counted a FAIL by the next arm. */
+        if (s == 8) rot_equality_begin();
         /* 15 -> 0 is the loop seam.  Anchoring on the seam rather than on
          * "s == 0" means a bar is only reported once the whole 16-step table
          * has been filled, so no line can carry a half-measured window. */
@@ -934,7 +1061,8 @@ static void audio_probe_poll(void)
                            (unsigned long)lvgl_mipi_panel_flips(),
                            (unsigned long)lvgl_mipi_panel_vsync_isrs(),
                            (unsigned long)lvgl_mipi_panel_vsync_timeouts());
-            rot_equality_check();
+            /* The verdict of the check armed at step 8 -- no compare runs
+             * here any more (it was the ~31 ms seam stall). */
             print_rot_lines();
         }
         lastSeenStep = s;
@@ -1434,7 +1562,7 @@ void setup()
     diag_mark();               /* after the 3.6 MB checksum   == :591 pre-diag */
     CONSOLE.printf("ACIDBOX_UI_SUM=0x%08lX\n", (unsigned long)lvgl_sum_value());
     CONSOLE.printf("PLAYING=%d\n", transport.playing() ? 1 : 0);
-    rot_equality_check();      /* the boot present: the forced full-frame path */
+    rot_equality_check_boot(); /* the boot present: the forced full-frame path, synchronous */
     print_rot_lines();
     diag_mark();               /* after the two console printfs + the boot rotation witnesses */
 

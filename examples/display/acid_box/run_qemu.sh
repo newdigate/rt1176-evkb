@@ -179,10 +179,15 @@ ROT_FULL=$(printf '%s\n' "$ROT_LAST" | sed 's/.* full=\([0-9]*\).*/\1/')
 [ "$ROT_FULL" -ge 2 ] || { echo "FAIL: fewer than 2 full-frame presents (start-up forces two)"; exit 1; }
 [ "$ROT_OPS" -gt "$ROT_FULL" ] || { echo "FAIL: the damage path never ran (ops == full)"; exit 1; }
 # The EQUALITY GUARD: the presented buffer must equal the rotated canvas on
-# every sampled row -- at boot (full-frame path) and after every bar (damage
-# path).  fail=0 on every line, and the last pass count must cover boot + every
-# bar that has a guard line after it.  us= is the guard's own cost, printed for
-# the silicon bench and never gated (QEMU time is a fiction).
+# every sampled row -- at boot (full-frame path, one synchronous check) and once
+# per bar (damage path: an INCREMENTAL check armed at step 8, 8 sampled rows per
+# loop pass, passes with a flip pending skipped, its verdict printed at the
+# seam).  fail=0 on every line, and the last pass count must cover boot + every
+# bar that has a guard line after it -- so each bar's check must FINISH before
+# its seam; one that does not is counted a fail by the next arm.  us= is the
+# largest SINGLE-PASS stall of the last check (the boot check's whole cost; a
+# per-bar check's costliest chunk), printed for the silicon bench and never
+# gated (QEMU time is a fiction).
 grep -qE "^ACIDBOX_ROT_EQ pass=[1-9][0-9]* fail=0 us=[0-9]+\r?$" "$OUT" \
     || { echo "FAIL: rotation equality guard line missing"; exit 1; }
 grep -E "^ACIDBOX_ROT_EQ " "$OUT" | grep -vqE " fail=0 us=[0-9]+\r?$" \
@@ -287,10 +292,11 @@ NPOST=$(awk -v s="$STEP_LN" -v c="$CUT_LN" 'NR>s && NR<c && /^ACIDBOX_BAR=/ { n+
 # ★ BAR 1 IS NOT A VALID WINDOW.  The transport records boundaries strictly
 # inside (from, to], so it never emits tick 0 at phase 0: step 0 first fires at
 # the loop seam and reads 0.1843 in bar 1 in every run, idle or loaded.  Later
-# bars read 0.40+ on an idle host but only 0.25+ on a loaded one, because step 0
-# is also the cell right after the bar seam's polling stall (see MARGINS below)
-# -- the tick-0 shortfall is structural, the stall is not.  Asserting bar 1 would either fail honestly or invite someone to lower the
-# margin until it passed, which is how a real threshold gets destroyed.
+# bars read 0.41+ in almost every reading, idle or loaded, with an occasional
+# dip (as low as 0.3205 under load -- see MARGINS below): the tick-0 shortfall
+# is structural, the dips are not.  Asserting bar 1 would either fail honestly
+# or invite someone to lower the margin until it passed, which is how a real
+# threshold gets destroyed.
 PRE_N=$(printf '%s\n' "$PRE" | sed 's/^ACIDBOX_BAR=//; s/ .*//')
 [ "$PRE_N" -ge 2 ] || { echo "FAIL: pre-edit window is bar $PRE_N -- bar 1 is the transport's tick-0 outlier, pad 2 too short"; exit 1; }
 
@@ -301,16 +307,25 @@ echo "post-edit window: $POST"
 
 # MARGINS: sounding > 0.02, rest < 0.005 -- a 4x separation between the two
 # thresholds, the acid_bass_test convention for float DSP (windows with margin,
-# never bit-goldens).  Measured room either side is far larger: gated steps read
-# 0.25..0.43 (12x the sounding floor) and rests read 0.0001..0.0006 (8x under the
-# rest ceiling).  ★ THE LOW END IS STEP 0 ON A LOADED HOST, and it moves: each
-# cell is the PEAK of RMS reads polled from loop(), and at the 15->0 seam the
-# table is cleared, then the BAR/VSYNC prints and the equality guard run before
-# polling resumes -- so step 0 loses however many reads that stall covers.  Idle
-# it read 0.40+ in every run; under 6 spinners it read 0.2556, 0.3205 and, in
-# the PRE-EDIT window (an asserted cell), 0.2578.  Every other gated step read
-# 0.35+.  (Numbers and runs: transcript_qemu.txt.)  Neither threshold may be
-# moved to make a run pass.
+# never bit-goldens).  Measured room either side is far larger.  Re-measured
+# 2026-09-15 after the equality guard went incremental (four idle runs, two
+# under 6 spinners on 8 CPUs): in the gate's pre/post windows every gated step
+# read 0.3438..0.4297 -- 17x the sounding floor -- and every rest 0.0001..0.0005
+# (10x under the rest ceiling).  Each cell is the PEAK of RMS reads polled from
+# loop(), so anything that stalls polling at a note's onset lowers that one
+# cell.  ★ STEP 0 WAS THE CELL AFTER A ~31 ms (silicon) SEAM STALL until the
+# guard stopped running at the seam, and an A/B under the same 6 spinners shows
+# it: with the old seam guard step 0 fell below 0.36 in all three runs (0.3205
+# at bar 4 every time, 0.3188 in the PRE-EDIT window of one); with the
+# incremental guard it held 0.40+ in all three.  Not every dip was the guard's:
+# across the six runs above, step 0 of bars 2+ read 0.4147..0.4298 in all but
+# two readings, both at bar 4 -- 0.3765 idle and 0.3205 loaded, the old build's
+# exact value, so something else still stalls polling at that seam at times
+# (unidentified).  The window minimum, 0.3438, was step 8 -- where the check is
+# now armed -- in one loaded pre-edit window; step 8 also read 0.3735 and 0.3751
+# in old-build runs, so these runs do not settle whether the chunks lower it.
+# (Numbers and runs: transcript_qemu.txt.)  Neither threshold may be moved to
+# make a run pass.
 
 # The untouched preset, in the pre-edit window: every gated step sounds, every
 # rest is silent.  Twelve gated indices and four rests -- a stuck voice, a
