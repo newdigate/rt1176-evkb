@@ -102,8 +102,10 @@ bool synthui_led_button_get_pressed(const lv_obj_t *obj);
 void synthui_led_button_set_cue(lv_obj_t *obj, bool cue);
 bool synthui_led_button_get_cue(const lv_obj_t *obj);
 
-/* Greys the cap and LED, suppresses the halo, and clears
- * LV_OBJ_FLAG_CLICKABLE (restored on re-enable). */
+/* Greys the cap and LED, suppresses the halo, sets LV_STATE_DISABLED
+ * (clearing any press) and clears LV_OBJ_FLAG_CLICKABLE; restored on
+ * re-enable.  A key disabled by lv_obj_add_state(LV_STATE_DISABLED) also
+ * draws grey, like the sibling widgets. */
 void synthui_led_button_set_disabled(lv_obj_t *obj, bool disabled);
 bool synthui_led_button_get_disabled(const lv_obj_t *obj);
 
@@ -116,9 +118,13 @@ red colour, all four booleans false. The constructor removes
 `LV_OBJ_FLAG_SCROLLABLE` (taps are the whole input story; a scrollable key
 swallows taps as drags — `synthui_step`'s reasoning verbatim).
 
-Input: the widget registers for `LV_EVENT_PRESSED` and `LV_EVENT_RELEASED`
-(and `PRESS_LOST`) only to invalidate the press box when the drawn pressed
-state changes; it adds no gesture logic. `LV_EVENT_CLICKED` reaches the
+Input: the class event handler reacts to `LV_EVENT_PRESSED`, `RELEASED`,
+`PRESS_LOST` and `INDEV_RESET` only to invalidate the press box (when the
+latch is not holding the key down); it adds no gesture logic. The drawn
+pressed and disabled states are read from the object's LVGL state at draw
+time, so `lv_obj_add_state` draws correctly; a programmatic state change after
+the first render is the caller's to invalidate, because LVGL does not repaint
+a style-less widget on a state change. `LV_EVENT_CLICKED` reaches the
 application's handler from the base class as it does today for `synthui_step`.
 
 ## 4. Geometry — Written Description of DC Reference
@@ -146,8 +152,11 @@ Draw order (back to front):
    top → mid (at 62 %) → low. The vendored `lv_conf.h` sets
    `LV_GRADIENT_MAX_STOPS 2`, so the cap is drawn as TWO stacked two-stop
    rects meeting at 62 % of the height: rows 0..49.6 top→mid, rows 49.6..80
-   mid→low, with the radius applied to the outer corners of each half only.
-   The math header exposes the split so the host test pins it.
+   mid→low, over a solid mid fill. LVGL rounds all four corners of a rect,
+   so each half's inner corners show the mid fill beneath (within a few
+   levels of the gradient there) and the cap's outer antialiased edge is
+   composited slightly heavier: deterministic, visually negligible, pinned by
+   the golden. The math header exposes the split so the host test pins it.
 4. **Highlight** — rounded rect (14, 12+dy, 72×11), radius 5.5, white at
    55 % (28 % when pressed).
 5. **Halo** (lit and not disabled only) — the LED rect grown by 5 units on

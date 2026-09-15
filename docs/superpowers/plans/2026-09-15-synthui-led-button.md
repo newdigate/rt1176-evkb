@@ -876,8 +876,8 @@ synthui_led_button_color_t synthui_led_button_get_color(const lv_obj_t *obj)
 
 - [ ] **Step 3: Host-compile the TU for syntax only** (no LVGL on the host, so a quick include check is all that is available here)
 
-Run: `cd $SYNTHUI && cc -fsyntax-only -Wall -Wextra -Werror -x c src/synthui_led_button_math.h && echo math-ok`
-Expected: `math-ok`. The `.cpp` compiles in Task 3 Step 3 against the real LVGL.
+Run: `cd /Users/nicholasnewdigate/Development/rt1170/evkb/examples/display/synthui_panel_button_test && cmake --build build 2>&1 | grep -E "synthui_led_button|warning|error"`
+Expected: a compile line for `synthui_led_button.cpp.obj` and no warnings or errors (SynthUI globs `src/*.cpp`, so any SynthUI-linking example compiles the new file with the real ARM toolchain and LVGL). Do not run that example's gate. (A host `cc -fsyntax-only` of the math header alone fails on unused `static inline` functions under `-Werror`; it is not a useful check.)
 
 - [ ] **Step 4: Commit (SynthUI)**
 
