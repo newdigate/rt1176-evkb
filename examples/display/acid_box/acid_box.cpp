@@ -3,9 +3,9 @@
  * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT
  *
- * Audio core (previous commit) + layout-A UI and the glue between them.  The
- * glue is deliberately THIN: every callback reads the widget, maps it, and
- * writes the engine; no UI state mirrors engine state except the three
+ * Audio core (previous commit) + layout-C (landscape) UI and the glue between
+ * them.  The glue is deliberately THIN: every callback reads the widget, maps
+ * it, and writes the engine; no UI state mirrors engine state except the three
  * `shown*` caches, which exist only to stop LVGL repainting unchanged text.
  *
  * BOOT STATE IS STOPPED AND SILENT, AND THAT IS A CONTRACT, NOT AN OMISSION.
@@ -777,6 +777,66 @@ static void pump_isr(void)
     }
 }
 
+/* --- the logical frame ------------------------------------------------------
+ * The 1280x720 frame LVGL renders -- the port's landscape canvas.  Declared
+ * here rather than in the UI section's geometry block (which is placed from
+ * it) because the rotation witnesses below read the canvas at this size.  The
+ * canvas is the panel turned on its side (lvgl_mipi_panel.h), and the guard's
+ * index arithmetic is only right if the two agree, so that is asserted rather
+ * than assumed. */
+static constexpr int UI_W = 1280, UI_H = 720;
+static_assert((uint32_t)UI_W == PANEL_HEIGHT && (uint32_t)UI_H == PANEL_WIDTH,
+              "the logical frame must be the RK055 panel turned on its side");
+
+/* --- rotation witnesses (spec section 7) ------------------------------------
+ * ACIDBOX_ROT: the port's PXP present counters.  An image that fell back to
+ * the portrait create_db path never prints this line, so the gate fails it BY
+ * NAME rather than passing on everything else.
+ *
+ * ACIDBOX_ROT_EQ: the EQUALITY GUARD -- gate-compared, never re-goldened, in
+ * the spirit of the knob's delta guard.  After flip_sync() the presented
+ * buffer and the canvas hold the same frame (single thread: no render can
+ * intervene between the present and this check), so every 16th PHYSICAL row
+ * -- which is every 16th LOGICAL column -- is compared against a CPU rotation
+ * of the canvas.  Sampled, not exhaustive: it catches any stale region >= 16
+ * logical columns wide at ~230 KB of reads; the port's host property test is
+ * the exhaustive one.  The formula here is written out on purpose rather than
+ * calling the port's helper -- a guard that shares the code it checks is not
+ * a check. */
+static uint32_t s_rotEqPass = 0, s_rotEqFail = 0;
+static void rot_equality_check(void)
+{
+    lvgl_mipi_panel_flip_sync();
+    const uint32_t *fb = (const uint32_t *)lvgl_mipi_panel_scanned_fb();
+    const uint32_t *cv = (const uint32_t *)lvgl_mipi_panel_canvas();
+    if (!fb || !cv) { s_rotEqFail++; return; }
+    bool ok = true;
+    for (uint32_t py = 0; py < PANEL_HEIGHT && ok; py += 16) {
+        const uint32_t *row = fb + (size_t)py * PANEL_WIDTH;
+        for (uint32_t px = 0; px < PANEL_WIDTH; px++) {
+            /* physical (px,py) reads logical (py, PANEL_WIDTH-1-px).  The
+             * PXP writes the X byte of a 32-bit output as 0 (silicon,
+             * lvgl_pxp_copy_bench transcript; modelled in QEMU), so the
+             * reference is masked to RGB and the presented byte 3 is PINNED
+             * to 0 -- pxp_rotate_probe's ref_px makes the same decision. */
+            const uint32_t want = cv[(size_t)(PANEL_WIDTH - 1 - px) * (size_t)UI_W + py] & 0x00FFFFFFu;
+            if (row[px] != want) { ok = false; break; }
+        }
+    }
+    if (ok) s_rotEqPass++; else s_rotEqFail++;
+}
+static void print_rot_lines(void)
+{
+    CONSOLE.printf("ACIDBOX_ROT ops=%lu full=%lu px=%lu us=%lu errors=%lu\n",
+                   (unsigned long)lvgl_mipi_panel_rot_ops(),
+                   (unsigned long)lvgl_mipi_panel_rot_full(),
+                   (unsigned long)lvgl_mipi_panel_rot_px(),
+                   (unsigned long)lvgl_mipi_panel_rot_us(),
+                   (unsigned long)lvgl_mipi_panel_rot_errors());
+    CONSOLE.printf("ACIDBOX_ROT_EQ pass=%lu fail=%lu\n",
+                   (unsigned long)s_rotEqPass, (unsigned long)s_rotEqFail);
+}
+
 /* --- per-step RMS windows, referenced to the SEQUENCER's own position ----- *
  *
  * Float DSP is asserted by measured windows with margin, never by bit-goldens
@@ -850,6 +910,8 @@ static void audio_probe_poll(void)
                            (unsigned long)lvgl_mipi_panel_flips(),
                            (unsigned long)lvgl_mipi_panel_vsync_isrs(),
                            (unsigned long)lvgl_mipi_panel_vsync_timeouts());
+            rot_equality_check();
+            print_rot_lines();
         }
         lastSeenStep = s;
     }
@@ -873,18 +935,49 @@ static void idleUi()
 
 /* --- UI ------------------------------------------------------------------- *
  *
- * Layout A (spec §3.2) on the RK055's 720x1280 portrait frame: a transport bar,
- * a 2x4 grid of sound knobs, the selected-step editor strip, and the 2x8 step
- * lane.  Everything is placed with absolute coordinates, and those coordinates
- * are the GATE's geometry as well as the picture's -- the touch script's tap
- * percentages are derived from the constants below, so moving a widget moves a
- * tap point.  Re-derive the three percentages in run_qemu.sh if any of the
- * placement arithmetic here changes.
+ * Layout C (spec 2026-09-14-acid-box-landscape-design.md section 6) on a
+ * LOGICAL 1280x720 frame: the transport bar, the 2x8 step lane with the
+ * selected-step editor beside it, an EMPTY band reserved for later work, and
+ * the eight sound knobs along the bottom edge -- nearest the player once the
+ * board lies flat, turned counter-clockwise.  The panel is still the RK055's
+ * 720x1280 glass: the port presents this frame rotated 90 degrees clockwise
+ * (lvgl_mipi_panel_create_rotated) and the touch binding inverts the same map,
+ * so nothing here knows about rotation.
+ *
+ * Everything is placed from the constants below, and those constants are the
+ * GATE's geometry as well as the picture's -- the touch script's raw GT911
+ * percentages are derived from them through the CW90 map (run_qemu.sh's
+ * GEOMETRY block), so moving a widget moves a tap point.  Regenerate the
+ * script if any of these change.
  *
  * The screen still paints an OPAQUE ground, for the reason the stub did: it is
  * what makes every pixel of the frame defined, and therefore makes
  * ACIDBOX_UI_SUM a checksum of the scene rather than of whatever the allocator
  * left behind. */
+/* UI_W, UI_H (the logical frame) are declared above the rotation witnesses,
+ * which read the canvas at that size before this section begins. */
+/* top bar */
+static constexpr int TITLE_X = 24,  TITLE_Y = 36;
+static constexpr int BAR_Y = 20,    BAR_BTN_H = 48;
+static constexpr int TEMPO_DN_X = 560, TEMPO_UP_X = 690, TEMPO_BTN_W = 50;
+static constexpr int BPM_X = 624,   BPM_Y = 35;
+static constexpr int PLAY_X = 1040, STOP_X = 1156, TRANSPORT_BTN_W = 100;   /* PLAY 1040..1139 x 20..67; the gate's tap lands at (1088,43) */
+/* pattern band */
+static constexpr int LANE_X0 = 16,  LANE_Y0 = 96, LANE_CELL = 100, LANE_PITCH_X = 108, LANE_PITCH_Y = 112;
+/* cell 2 is 232..331 x 96..195 -- the gate's edit target; its tap lands at (281,143) */
+static constexpr int PITCH_X = 912, PITCH_Y = 96, PITCH_SIZE = 150;
+static constexpr int NOTE_X = 1080, NOTE_Y = 110;
+static constexpr int ACC_X = 1080,  SLD_X = 1176, TOG_Y = 148, TOG_W = 88, TOG_H = 56;
+static constexpr int WAVE_X = 1080, WAVE_Y = 222, WAVE_W = 184, WAVE_H = 56;
+/* y 308..520 is RESERVED: empty on purpose (spec section 6), not centred away */
+/* sound knobs */
+static constexpr int KNOB_X0 = 16,  KNOB_Y0 = 520, KNOB_SIZE = 150, KNOB_PITCH = 158;   /* CUTOFF: 16..165 x 520..669; the drag lands at x 89, y 583..647 */
+static constexpr int KNOB_LABEL_DX = 50, KNOB_LABEL_DY = 152;
+/* The present strategy, measured on silicon by display/pxp_rotate_probe
+ * (spec section 4.1): a full-frame rotate costs 13.06 ms and a 160x160 rect
+ * 366 us with ~5 us per op, so per-rect ops win until the damage union is
+ * 915456 logical px -- 99.33 % of the frame.  At or above it, ONE full-frame op. */
+static constexpr uint32_t ACIDBOX_ROT_FULL_THRESHOLD_PX = 915456u;
 static lv_obj_t *stepCell[16];
 static lv_obj_t *playBtnLabel, *bpmLabel, *noteLabel, *accBtn, *sldBtn, *waveBtnLabel;
 static lv_obj_t *pitchKnob;
@@ -1076,12 +1169,12 @@ static lv_obj_t *mkbtn(lv_obj_t *par, const char *txt, lv_event_cb_t cb,
     if (labelOut) *labelOut = l;
     return b;
 }
-static lv_obj_t *mkknob(lv_obj_t *scr, int col, int row, const char *name,
+static lv_obj_t *mkknob(lv_obj_t *scr, int i, const char *name,
                         float boot01, lv_event_cb_t cb)
 {
     lv_obj_t *k = synthui_rotary_knob_create(scr);
-    lv_obj_set_size(k, 150, 150);
-    lv_obj_set_pos(k, 15 + col * 175, 90 + row * 185);
+    lv_obj_set_size(k, KNOB_SIZE, KNOB_SIZE);
+    lv_obj_set_pos(k, KNOB_X0 + i * KNOB_PITCH, KNOB_Y0);
     synthui_rotary_knob_set_mode(k, SYNTHUI_ROTARY_MODE_BOUNDED);
     /* The DC default range is ±150; every angle<->param map in this file
      * hardcodes ±140, so the range is stated here instead of inherited. */
@@ -1091,7 +1184,7 @@ static lv_obj_t *mkknob(lv_obj_t *scr, int col, int row, const char *name,
     lv_obj_t *l = lv_label_create(scr);
     lv_label_set_text(l, name);
     lv_obj_set_style_text_color(l, lv_color_hex(0x9aa0b8), LV_PART_MAIN);
-    lv_obj_set_pos(l, 15 + col * 175 + 50, 90 + row * 185 + 152);
+    lv_obj_set_pos(l, KNOB_X0 + i * KNOB_PITCH + KNOB_LABEL_DX, KNOB_Y0 + KNOB_LABEL_DY);
     return k;
 }
 
@@ -1118,39 +1211,40 @@ static lv_obj_t *build_ui(void)
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text(title, "ACID BOX");
     lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_pos(title, 15, 24);
+    lv_obj_set_pos(title, TITLE_X, TITLE_Y);
 #if defined(ACIDBOX_LOOPSTAT)
     ls_attach_title(title);        /* tap = synthetic knob wiggle on/off (bench) */
 #endif
-    lv_obj_set_pos(mkbtn(scr, "-", cbTempoDn, NULL), 300, 16);
+    lv_obj_t *dn = mkbtn(scr, "-", cbTempoDn, NULL);
+    lv_obj_set_pos(dn, TEMPO_DN_X, BAR_Y);
+    lv_obj_set_size(dn, TEMPO_BTN_W, BAR_BTN_H);
     bpmLabel = lv_label_create(scr);
     lv_obj_set_style_text_color(bpmLabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_pos(bpmLabel, 356, 24);
-    lv_obj_set_pos(mkbtn(scr, "+", cbTempoUp, NULL), 420, 16);
+    lv_obj_set_pos(bpmLabel, BPM_X, BPM_Y);
+    lv_obj_t *up = mkbtn(scr, "+", cbTempoUp, NULL);
+    lv_obj_set_pos(up, TEMPO_UP_X, BAR_Y);
+    lv_obj_set_size(up, TEMPO_BTN_W, BAR_BTN_H);
     lv_obj_t *play = mkbtn(scr, LV_SYMBOL_PLAY, cbPlay, &playBtnLabel);
-    lv_obj_set_pos(play, 540, 16);          /* centre (575,40) = the gate's ▶ */
-    lv_obj_set_size(play, 70, 48);
+    lv_obj_set_pos(play, PLAY_X, BAR_Y);
+    lv_obj_set_size(play, TRANSPORT_BTN_W, BAR_BTN_H);
     lv_obj_t *stop = mkbtn(scr, LV_SYMBOL_STOP, cbStop, NULL);
-    lv_obj_set_pos(stop, 626, 16);
-    lv_obj_set_size(stop, 70, 48);
+    lv_obj_set_pos(stop, STOP_X, BAR_Y);
+    lv_obj_set_size(stop, TRANSPORT_BTN_W, BAR_BTN_H);
 
-    /* Sound knobs.  Boot angles are the INVERSE of each map applied to
-     * default_patch()'s values, so the first frame shows the patch the engine
-     * is actually holding -- a knob drawn at a position its parameter is not at
-     * would make the very first drag jump. */
-    LS_KNOB(mkknob(scr, 0, 0, "CUTOFF",  logf(800.0f / 20.0f) / logf(12000.0f / 20.0f), cbCut));
-    LS_KNOB(mkknob(scr, 1, 0, "RESO",    0.55f, cbRes));
-    LS_KNOB(mkknob(scr, 2, 0, "ENV MOD", 0.60f, cbEnv));
-    LS_KNOB(mkknob(scr, 3, 0, "DECAY",   logf(0.28f / 0.03f) / logf(2.0f / 0.03f), cbDec));
-    LS_KNOB(mkknob(scr, 0, 1, "ACCENT",  0.70f, cbAcc));
-    LS_KNOB(mkknob(scr, 1, 1, "DIST",    0.15f, cbDst));
-    LS_KNOB(mkknob(scr, 2, 1, "SUB",     0.20f, cbSub));
-    LS_KNOB(mkknob(scr, 3, 1, "SLIDE T", logf(0.06f / 0.01f) / logf(0.3f / 0.01f), cbSld));
+    /* step lane: 2x8 of LANE_CELL px cells at LANE_PITCH_X/Y */
+    for (int i = 0; i < 16; i++) {
+        lv_obj_t *c = synthui_step_create(scr);
+        lv_obj_set_size(c, LANE_CELL, LANE_CELL);
+        lv_obj_set_pos(c, LANE_X0 + (i % 8) * LANE_PITCH_X, LANE_Y0 + (i / 8) * LANE_PITCH_Y);
+        synthui_step_set(c, kPreset[i].gate, kPreset[i].accent, kPreset[i].slide);
+        lv_obj_add_event_cb(c, cbStepTap, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        stepCell[i] = c;
+    }
 
-    /* editor strip: pitch detent knob + note name + ACC/SLD toggles + SAW/SQR */
+    /* editor: pitch detent knob + note name + ACC/SLD toggles + SAW/SQR */
     pitchKnob = synthui_rotary_knob_create(scr);
-    lv_obj_set_size(pitchKnob, 120, 120);
-    lv_obj_set_pos(pitchKnob, 15, 470);
+    lv_obj_set_size(pitchKnob, PITCH_SIZE, PITCH_SIZE);
+    lv_obj_set_pos(pitchKnob, PITCH_X, PITCH_Y);
     /* detents are input behavior on the rotary widget (no visual mode):
      * bounded well + 24 semitone stops on the ±140 lattice the pitch maps
      * above assume. */
@@ -1160,24 +1254,29 @@ static lv_obj_t *build_ui(void)
     lv_obj_add_event_cb(pitchKnob, cbPitch, LV_EVENT_VALUE_CHANGED, NULL);
     noteLabel = lv_label_create(scr);
     lv_obj_set_style_text_color(noteLabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_pos(noteLabel, 150, 515);
+    lv_obj_set_pos(noteLabel, NOTE_X, NOTE_Y);
     accBtn = mkbtn(scr, "ACC", cbAccBtn, NULL);
-    lv_obj_set_pos(accBtn, 230, 505);
+    lv_obj_set_pos(accBtn, ACC_X, TOG_Y);
+    lv_obj_set_size(accBtn, TOG_W, TOG_H);
     sldBtn = mkbtn(scr, "SLD", cbSldBtn, NULL);
-    lv_obj_set_pos(sldBtn, 340, 505);
+    lv_obj_set_pos(sldBtn, SLD_X, TOG_Y);
+    lv_obj_set_size(sldBtn, TOG_W, TOG_H);
     lv_obj_t *wave = mkbtn(scr, "SAW", cbWave, &waveBtnLabel);
-    lv_obj_set_pos(wave, 560, 505);
+    lv_obj_set_pos(wave, WAVE_X, WAVE_Y);
+    lv_obj_set_size(wave, WAVE_W, WAVE_H);
 
-    /* step lane: 2x8 of 82 px cells at 88 pitch, y = 640/736.  Cell 2's centre
-     * is (225,681) -- the gate's edit target. */
-    for (int i = 0; i < 16; i++) {
-        lv_obj_t *c = synthui_step_create(scr);
-        lv_obj_set_size(c, 82, 82);
-        lv_obj_set_pos(c, 8 + (i % 8) * 88, 640 + (i / 8) * 96);
-        synthui_step_set(c, kPreset[i].gate, kPreset[i].accent, kPreset[i].slide);
-        lv_obj_add_event_cb(c, cbStepTap, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-        stepCell[i] = c;
-    }
+    /* Sound knobs, one row along the bottom edge.  Boot angles are the INVERSE
+     * of each map applied to default_patch()'s values, so the first frame
+     * shows the patch the engine is actually holding -- a knob drawn at a
+     * position its parameter is not at would make the very first drag jump. */
+    LS_KNOB(mkknob(scr, 0, "CUTOFF",  logf(800.0f / 20.0f) / logf(12000.0f / 20.0f), cbCut));
+    LS_KNOB(mkknob(scr, 1, "RESO",    0.55f, cbRes));
+    LS_KNOB(mkknob(scr, 2, "ENV MOD", 0.60f, cbEnv));
+    LS_KNOB(mkknob(scr, 3, "DECAY",   logf(0.28f / 0.03f) / logf(2.0f / 0.03f), cbDec));
+    LS_KNOB(mkknob(scr, 4, "ACCENT",  0.70f, cbAcc));
+    LS_KNOB(mkknob(scr, 5, "DIST",    0.15f, cbDst));
+    LS_KNOB(mkknob(scr, 6, "SUB",     0.20f, cbSub));
+    LS_KNOB(mkknob(scr, 7, "SLIDE T", logf(0.06f / 0.01f) / logf(0.3f / 0.01f), cbSld));
     select_step(0);
 
     /* ★ RUN THE POLLER ONCE BEFORE ARMING THE TIMER, or the boot golden is a
@@ -1243,22 +1342,29 @@ void setup()
     const bool vg_up = (vg_lite_hal_probe_chip_id() != 0u) &&
                        (vg_lite_init(TESS_W, TESS_H) == VG_LITE_SUCCESS);
 
-    /* v4/v5 double-buffered create + the pre-flip compose hook: LVGL renders
-     * off-screen and the LCDIFv2 flips at vsync, and when the GC355 is up the
-     * knob compositor draws into that off-screen buffer right before the flip
-     * is requested -- tear-free BY CONSTRUCTION (the scanout-flash finding,
+    /* Rotated create + the pre-flip compose hook: when the GC355 is up the
+     * knob compositor draws into the off-screen CANVAS (never scanned out)
+     * right before the port rotates it into the off-screen scanout buffer and
+     * requests the flip -- still tear-free BY CONSTRUCTION, as the v4/v5
+     * double-buffered create this replaces was (the scanout-flash finding,
      * gpu-well spec section 5c; the single-buffer begin() can flash a
      * damage-box-sized square when the scanline crosses mid-composite).  In
-     * QEMU vg_up is false, every knob stays fully software, and the only
-     * behavioural change is the fenced flip. */
-    lv_display_t *disp = lvgl_mipi_panel_create_db(Display);
-    diag_mark();               /* after lvgl_mipi_panel_create_db() */
+     * QEMU vg_up is false and every knob stays fully software.
+     *
+     * Landscape: LVGL renders a 1280x720 canvas and the port presents it
+     * rotated 90 degrees clockwise through the PXP into the off-screen scanout
+     * buffer, then flips -- the same fenced, tear-free pipeline as create_db,
+     * with the rotation confined to the present (spec section 5.B). */
+    lvgl_mipi_panel_set_rot_threshold(ACIDBOX_ROT_FULL_THRESHOLD_PX);
+    lv_display_t *disp = lvgl_mipi_panel_create_rotated(Display, LVGL_PANEL_PRESENT_CW90);
+    diag_mark();               /* after lvgl_mipi_panel_create_rotated() */
 #if defined(ACIDBOX_LOOPSTAT)
     ls_attach_display(disp);
 #endif
+    /* The compositor draws into the CANVAS (the pre-flip hook hands it the
+     * canvas), so it is told the canvas's geometry, not the panel's. */
     if (vg_up && synthui_rotary_gpu_begin_deferred(
-                     Display.width(), Display.height(),
-                     Display.width() * PANEL_BYTES_PER_PIXEL)) {
+                     UI_W, UI_H, UI_W * PANEL_BYTES_PER_PIXEL)) {
         s_gpu = true;
         /* the app owns the wiring: compositor <- pre-flip hook -> panel */
         lvgl_mipi_panel_set_preflip_cb(synthui_rotary_gpu_compose_into);
@@ -1284,9 +1390,11 @@ void setup()
     uint32_t t0 = millis();
     while (!lvgl_mipi_panel_frame_done() && (millis() - t0) < 5000)
         lvgl_rt1176_loop();
-    /* db mode: checksum the PRESENTED buffer, never Display.framebuffer() --
-     * flip_sync() first so the pending flip has retired and scanned_fb()
-     * names the front buffer (synthui_knob_test's sum contract). */
+    /* db/rotated mode: checksum the PRESENTED buffer, never
+     * Display.framebuffer() -- flip_sync() first so the pending flip has
+     * retired and scanned_fb() names the front buffer (synthui_knob_test's sum
+     * contract).  The checksum reads lvgl_mipi_panel_scanned_fb() over
+     * PANEL_FB_BYTES, which now covers the PRESENTED, rotated portrait frame. */
     lvgl_mipi_panel_flip_sync();
     lvgl_sum_reset();
     diag_mark();               /* after the frame_done wait loop */
@@ -1294,7 +1402,9 @@ void setup()
     diag_mark();               /* after the 3.6 MB checksum   == :591 pre-diag */
     CONSOLE.printf("ACIDBOX_UI_SUM=0x%08lX\n", (unsigned long)lvgl_sum_value());
     CONSOLE.printf("PLAYING=%d\n", transport.playing() ? 1 : 0);
-    diag_mark();               /* after the two console printfs */
+    rot_equality_check();      /* the boot present: the forced full-frame path */
+    print_rot_lines();
+    diag_mark();               /* after the two console printfs + the boot rotation witnesses */
 
     /* Touch bring-up AFTER the golden, which is what keeps the golden a
      * statement about the scene alone: no indev exists yet, so no contact can
@@ -1311,7 +1421,7 @@ void setup()
         CONSOLE.println("I2C_OK");
         /* From here LVGL polls the part every 10 ms; in QEMU the model replays
          * a script, on the bench a finger drives it. */
-        lv_indev_t *indev = lvgl_gt911_indev_create(disp, touch);
+        lv_indev_t *indev = lvgl_gt911_indev_create_rotated(disp, touch, LVGL_PANEL_PRESENT_CW90);
         (void)indev;
 #if defined(ACIDBOX_LOOPSTAT)
         ls_attach_touch(indev);
@@ -1330,9 +1440,10 @@ void setup()
     if (s_gpu)
         CONSOLE.printf("ACIDBOX_GPU_ERR=%lu\n",
                        (unsigned long)synthui_rotary_gpu_errors());
-    /* vsync-fence health (db mode, both engines): a timeout means the
-     * pipeline silently degraded to unfenced v1 rendering (tearing possible)
-     * and must fail by name, not by eye -- gated in QEMU. */
+    /* vsync-fence health (the rotated present keeps the db fence, both
+     * engines): a timeout means the pipeline silently degraded to unfenced
+     * presents (tearing possible) and must fail by name, not by eye -- gated
+     * in QEMU. */
     CONSOLE.printf("ACIDBOX_VSYNC flips=%lu isrs=%lu timeouts=%lu\n",
                    (unsigned long)lvgl_mipi_panel_flips(),
                    (unsigned long)lvgl_mipi_panel_vsync_isrs(),
