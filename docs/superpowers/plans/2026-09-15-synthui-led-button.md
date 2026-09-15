@@ -1312,13 +1312,15 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: The QEMU gate, golden, RED demonstrations, fixture (rt1176-evkb)
+### Task 4: The QEMU gate, goldens, RED demonstrations, fixture (rt1176-evkb)
+
+> **Rewritten after Task 3's quality review.** Review showed in QEMU that a single `damage max <= 10000` bound cannot see a lit/colour/press setter falling back to whole-key invalidation (a cue change already reaches 10000), and that the LCG never exercised centring offsets or the `LV_STATE_PRESSED` offset. The example now prints per-op damage maxima and runs a four-step scripted tail on keys 14 and 15; this gate asserts per-op bounds and pins the FINAL-STATE checksum as a second golden, because the final state draws combinations the initial golden never does (disabled+pressed, cue+pressed, pressed small keys).
 
 **Files:**
 - Create: `$EVKB/examples/display/synthui_led_button_test/run_qemu.sh` (mode 755)
 - Create: `$EVKB/examples/display/synthui_led_button_test/transcript_qemu.txt`
 
-- [ ] **Step 1: Create `run_qemu.sh`** with a placeholder golden `0x00000000` that Step 2 replaces
+- [ ] **Step 1: Create `run_qemu.sh`** with placeholder goldens `0x00000000` that Step 2 replaces
 
 ```sh
 #!/bin/sh
@@ -1327,9 +1329,12 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 # docs/superpowers/specs/2026-09-15-synthui-led-button-design.md section 8.
 #
 # Demonstrated RED (dates filled in when done):
-#   - golden altered to 0xDEADBEEF          -> "FAIL: led_button checksum"
-#   - set_lit reverted to lv_obj_invalidate -> "FAIL: delta damage not engaged"
-#   - lit box shrunk to the bare LED        -> "FAIL: delta equality"
+#   - initial golden altered                    -> "FAIL: led_button checksum"
+#   - final-state golden altered                -> "FAIL: led_button final-state checksum"
+#   - set_lit invalidating the whole KEY        -> "FAIL: lit damage above its box"
+#     (delta equality stays GREEN for this one -- a bigger box is still a
+#      correct box -- so only the per-op bound can see it)
+#   - lit box shrunk to the bare LED            -> "FAIL: delta render differs from full render"
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
@@ -1343,7 +1348,7 @@ rm -f "$OUT"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
     -display none -serial file:"$OUT" -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
-# 20s: bring-up margin plus headroom for the 64 delta steps and 64 fps loop frames.
+# 20s: bring-up margin plus headroom for the 64 delta steps, the tail and 64 fps frames.
 sleep 20; gate_reap $P
 gate_require_capture "$OUT"
 echo "==== captured UART ===="; cat "$OUT"
@@ -1351,33 +1356,49 @@ echo "==== captured UART ===="; cat "$OUT"
 grep -q "PANEL_OK"          "$OUT" || { echo "FAIL: panel bring-up"; exit 1; }
 grep -q "led_button_scene=16 grid=4x4" "$OUT" || { echo "FAIL: scene line missing"; exit 1; }
 grep -q "LVGL_FLUSHED=PASS" "$OUT" || { echo "FAIL: no full refresh"; exit 1; }
-# Flushed AREA of the first refresh -- 720*1280*4 at XRGB8888, anchored.
 grep -qE "LVGL_BYTES=3686400\r?$" "$OUT" || { echo "FAIL: wrong byte count"; exit 1; }
-# GOLDEN CHECKSUM -- FNV-1a over the whole 720x1280 PRESENTED buffer, the
+# INITIAL GOLDEN -- FNV-1a over the whole 720x1280 PRESENTED buffer: the
 # 16-key bank (off; lit red/amber/green/blue; latched; lit+latched; cue;
 # cue+lit; disabled; disabled+lit; 32 px; 34 px; 150 px; 120x80; LV pressed).
-# Recorded across two consecutive bit-identical QEMU runs (2026-09-.., NEW-25,
+# Recorded across two consecutive bit-identical QEMU runs (<date>, NEW-25,
 # vendored LVGL 9.4.0, XRGB8888).  On a mismatch work out WHICH of {SynthUI
 # pin, LVGL pin, lv_conf.h, fonts, scene} changed; do NOT paste in whatever
 # the board printed.
 grep -qE "led_button_crc=0x00000000\r?$" "$OUT" || { echo "FAIL: led_button checksum"; exit 1; }
 # DELTA EQUALITY: the 64-step LCG sequence (lit / pressed latch / cue / colour
-# on keys 0..12) rendered through the widget's delta damage must be
-# PIXEL-IDENTICAL to a fresh full render of the final state.
+# on keys 0..12) plus the scripted tail (key 14 pressed then unlit at its
+# centring offset; key 15 recoloured then unlit at the LV_STATE_PRESSED
+# offset), rendered through the widget's delta damage, must be PIXEL-IDENTICAL
+# to a fresh full render of the final state.
 DSEQ=$(grep -a -oE "led_button_delta_crc=0x[0-9A-F]{8}" "$OUT" | head -1 | cut -d= -f2)
 DFUL=$(grep -a -oE "led_button_fresh_crc=0x[0-9A-F]{8}" "$OUT" | head -1 | cut -d= -f2)
 [ -n "$DSEQ" ] && [ -n "$DFUL" ] || { echo "FAIL: delta guard tokens missing"; exit 1; }
 [ "$DSEQ" = "$DFUL" ] || { echo "FAIL: delta render differs from full render ($DSEQ vs $DFUL)"; exit 1; }
 grep -qE "led_button_delta_eq=PASS\r?$" "$OUT" || { echo "FAIL: delta equality"; exit 1; }
-# ENGAGEMENT: the largest single invalidated area during the 64-step segment
-# must stay key-sized.  Bound 10000 px = a whole 100 px key, which a cue
-# change legitimately repaints; a latch change is 80x83 = 6640, a lit change 58x25 = 1450.
-# Keys 13..15 (150 px, 120x80, LV-pressed) are outside the LCG on purpose.
-# A change that quietly reverts a setter to full-screen invalidation fails
-# HERE and nowhere else (a full 720x1280 screen is 921600 px).
+# FINAL-STATE GOLDEN: equality proves delta == fresh, not that either is right.
+# The final state draws combinations the initial golden never does
+# (disabled+pressed, cue+pressed, pressed 32/34 px keys, amber LED off), so a
+# palette wiring bug for those would pass both of the checks above.
+[ "$DFUL" = "0x00000000" ] || { echo "FAIL: led_button final-state checksum ($DFUL)"; exit 1; }
+# ENGAGEMENT, PER OP. The single max catches a setter reverting to FULL-SCREEN
+# invalidation (921600 px); it cannot see a lit/colour/press setter reverting
+# to WHOLE-KEY invalidation, because a cue change legitimately repaints a whole
+# 100 px key (10000).  So each op has its own bound, equal to its box on the
+# largest key the sequence touches: lit and colour = the halo, 58x25 = 1450;
+# pressed = the cap group at both offsets, 80x83 = 6640; cue = the key, 10000.
 DAREA=$(grep -a -oE "led_button_damage max=[0-9]+" "$OUT" | head -1 | cut -d= -f2)
 [ -n "$DAREA" ] && [ "$DAREA" -gt 0 ] || { echo "FAIL: delta damage guard missing or zero"; exit 1; }
 [ "$DAREA" -le 10000 ] || { echo "FAIL: delta damage not engaged (max=$DAREA)"; exit 1; }
+OPLINE=$(grep -a -oE "led_button_damage_op lit=[0-9]+ press=[0-9]+ cue=[0-9]+ color=[0-9]+" "$OUT" | head -1)
+[ -n "$OPLINE" ] || { echo "FAIL: per-op damage line missing"; exit 1; }
+op() { echo "$OPLINE" | grep -oE "$1=[0-9]+" | cut -d= -f2; }
+LIT=$(op lit); PRS=$(op press); CUE=$(op cue); COL=$(op color)
+[ "$LIT" -gt 0 ] && [ "$PRS" -gt 0 ] && [ "$CUE" -gt 0 ] && [ "$COL" -gt 0 ] \
+    || { echo "FAIL: an op was never exercised ($OPLINE)"; exit 1; }
+[ "$LIT" -le 1450 ]  || { echo "FAIL: lit damage above its box (lit=$LIT > 1450)"; exit 1; }
+[ "$COL" -le 1450 ]  || { echo "FAIL: colour damage above its box (color=$COL > 1450)"; exit 1; }
+[ "$PRS" -le 6640 ]  || { echo "FAIL: press damage above its box (press=$PRS > 6640)"; exit 1; }
+[ "$CUE" -le 10000 ] || { echo "FAIL: cue damage above its box (cue=$CUE > 10000)"; exit 1; }
 # vsync-fence health (db pipeline): a timeout means the tear-free property
 # silently degraded with every golden still green.
 grep -qE "led_button_vsync flips=[0-9]+ isrs=[0-9]+ timeouts=0\r?$" "$OUT" || { echo "FAIL: vsync fence unhealthy or missing"; exit 1; }
@@ -1388,39 +1409,35 @@ echo "PASS: SynthUI led_button render verified"
 
 Run: `chmod +x $EVKB/examples/display/synthui_led_button_test/run_qemu.sh`
 
-- [ ] **Step 2: Record the golden from two consecutive runs**
+- [ ] **Step 2: Record both goldens from two consecutive runs**
 
-Run twice:
-```bash
-cd $EVKB/examples/display/synthui_led_button_test && ./run_qemu.sh; grep -a "led_button_crc=" build/synthui_led_button.uart
-```
-Expected: the script FAILS on `FAIL: led_button checksum` both times (placeholder golden) and both captures print the SAME `led_button_crc=0x........`. If they differ, the render is nondeterministic — stop and diagnose (the candidates are an uninitialised palette field or the LCG touching a key outside 0..12); do NOT pick one.
-
-Then replace `0x00000000` in `run_qemu.sh` with the recorded value and fill in the date in the header comment.
+Run twice: `cd $EVKB/examples/display/synthui_led_button_test && ./run_qemu.sh; grep -aE "led_button_(crc|fresh_crc)=" build/synthui_led_button.uart`
+Expected: FAIL on `FAIL: led_button checksum` both times (placeholder) and both captures print the SAME `led_button_crc` and the SAME `led_button_fresh_crc`. If either differs between runs, stop: the render is nondeterministic. Replace the two `0x00000000` placeholders with the recorded values, fill in the date.
 
 - [ ] **Step 3: Verify GREEN**
 
-Run: `./run_qemu.sh`
-Expected: last line `PASS: SynthUI led_button render verified`, exit 0.
+Run: `./run_qemu.sh` → last line `PASS: SynthUI led_button render verified`, exit 0.
 
-- [ ] **Step 4: Demonstrate the three RED arms by name, then restore**
+- [ ] **Step 4: Demonstrate the four RED arms by name, then restore**
 
-1. In `run_qemu.sh` change the golden to `0xDEADBEEF` → `./run_qemu.sh` → expected `FAIL: led_button checksum`. Restore.
-2. In `$SYNTHUI/src/synthui_led_button.cpp`, in `synthui_led_button_set_lit` replace `led_invalidate_lit_box(obj);` with `lv_obj_invalidate(lv_obj_get_screen(obj));` → rebuild (`cmake --build build`) → `./run_qemu.sh` → expected `FAIL: delta damage not engaged (max=921600)`. Restore.
-3. In `synthui_led_button_math.h`, in `synthui_led_button_lit_box` replace `rect_px(&L.halo, L.dy_px)` with `rect_px(&L.led, L.dy_px)` → rebuild → `./run_qemu.sh` → expected `FAIL: delta render differs from full render (...)` (stale halo pixels when a lit LED goes off). Restore, rebuild, `./run_qemu.sh` GREEN again.
+Mutations to SynthUI are made in `$SYNTHUI` and MUST be reverted with `git -C $SYNTHUI checkout -- src/` followed by `git -C $SYNTHUI diff --quiet && echo clean` before the next arm. Rebuild with `cmake --build build` after each SynthUI change and after each revert.
+1. Initial golden altered to `0xDEADBEEF` in `run_qemu.sh` → `FAIL: led_button checksum`. Restore.
+2. Final-state golden altered to `0xDEADBEEF` → `FAIL: led_button final-state checksum (...)`. Restore.
+3. `synthui_led_button_set_lit`: `led_invalidate_lit_box(obj);` → `lv_obj_invalidate(obj);` → `FAIL: lit damage above its box (lit=10000 > 1450)`. Also record from the capture that `led_button_delta_eq=PASS` (the guard it proves necessary). Revert.
+4. `synthui_led_button_lit_box` in the math header: `rect_px(&L.halo, L.dy_px)` → `rect_px(&L.led, L.dy_px)` → `FAIL: delta render differs from full render (...)`. Revert, rebuild, `./run_qemu.sh` GREEN.
 
-Record the dates against the three arms in the script header.
+Record the date and the exact failing line of each arm in the script header.
 
 - [ ] **Step 5: Capture the fixture**
 
-Run: `cp build/synthui_led_button.uart transcript_qemu.txt` (after a GREEN run). Prepend nothing; the vacuity suite replays it verbatim.
+After a GREEN run: `cp build/synthui_led_button.uart transcript_qemu.txt`.
 
 - [ ] **Step 6: Commit (evkb)**
 
 ```bash
 cd $EVKB
 git add examples/display/synthui_led_button_test/run_qemu.sh examples/display/synthui_led_button_test/transcript_qemu.txt
-git commit -m "synthui_led_button_test: QEMU gate -- golden recorded over two runs, delta equality, engagement bound 10000, vsync witness; RED three ways by name (NEW-25)
+git commit -m "synthui_led_button_test: QEMU gate -- initial and final-state goldens over two runs, delta equality, per-op damage bounds, vsync witness; RED four ways by name (NEW-25)
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
@@ -1454,15 +1471,24 @@ if [ -d "$EVKB/$LBT" ] && [ -f "$EVKB/$LBT/transcript_qemu.txt" ]; then
     run_gate "$LBT" "run_qemu.sh" "$WORK/lb_badcrc.txt"; rc=$?
     result=0
     [ "$rc" -ne 0 ] || result=1
-    echo "$OUT_TEXT" | grep -q "FAIL: led_button checksum" || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: led_button checksum" || result=1
     report "led_button_bad_golden_fails_by_name" $result
 
     grep -v "^led_button_damage " "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_nodmg.txt"
     run_gate "$LBT" "run_qemu.sh" "$WORK/lb_nodmg.txt"; rc=$?
     result=0
     [ "$rc" -ne 0 ] || result=1
-    echo "$OUT_TEXT" | grep -q "delta damage guard missing" || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: delta damage guard missing" || result=1
     report "led_button_missing_damage_counter_fails" $result
+
+    # Without the per-op line the gate must fail by name: the single max
+    # cannot see a whole-key regression, so an absent per-op line is not a pass.
+    grep -v "^led_button_damage_op " "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_noop.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_noop.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: per-op damage line missing" || result=1
+    report "led_button_missing_op_damage_fails" $result
 else
     echo "SKIP: synthui_led_button_test vacuity (example or fixture missing)"
 fi
@@ -1471,7 +1497,7 @@ fi
 - [ ] **Step 2: Run the vacuity suite**
 
 Run: `cd $EVKB && ./tools/gate-vacuity.test.sh 2>&1 | tail -8`
-Expected: three new `PASS:` lines (`green_still_passes_synthui_led_button_test`, `led_button_bad_golden_fails_by_name`, `led_button_missing_damage_counter_fails`) and a total of **58** (55 + 3). Re-derive the count from `grep -c "^PASS:"` on the run, never from memory.
+Expected: four new `PASS:` lines (`green_still_passes_synthui_led_button_test`, `led_button_bad_golden_fails_by_name`, `led_button_missing_damage_counter_fails`, `led_button_missing_op_damage_fails`) and a total of **59** (55 + 4). Re-derive the count from `grep -c "^PASS:"` on the run, never from memory.
 
 - [ ] **Step 3: Add the GATES entry**
 
@@ -1505,7 +1531,7 @@ Expected: `142` lines (141 gates + the trailing summary line) and `rt1176:displa
 ```bash
 cd $EVKB
 git add tools/gate-vacuity.test.sh tools/license-audit.sh examples/README.md CLAUDE.md
-git commit -m "synthui_led_button_test: vacuity section 15 (3 cases), GATES entry, README row, gate count 140 -> 141 (NEW-25)
+git commit -m "synthui_led_button_test: vacuity section 15 (4 cases), GATES entry, README row, gate count 140 -> 141 (NEW-25)
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
@@ -1558,12 +1584,12 @@ Expected: `LICENSE-AUDIT: PASS`, 120 manifests.
 
 - [ ] **Step 7: Commit the pin and the close-out note (evkb)**
 
-Add a `✅ **Measured <date>: 141 gates discovered, 141 passed, 0 failed, 0 SKIP**` block at the top of the measurement history in `CLAUDE.md` (above the 2026-09-15 landscape block) recording: the sweep line, audit PASS + manifest count, vacuity 58/58, fresh-user verified by RUNNING the gate on the fetched ELF, and the SynthUI SHA.
+Add a `✅ **Measured <date>: 141 gates discovered, 141 passed, 0 failed, 0 SKIP**` block at the top of the measurement history in `CLAUDE.md` (above the 2026-09-15 landscape block) recording: the sweep line, audit PASS + manifest count, vacuity 59/59, fresh-user verified by RUNNING the gate on the fetched ELF, and the SynthUI SHA.
 
 ```bash
 cd $EVKB
 git add evkb.cmake CLAUDE.md
-git commit -m "evkb.cmake: SynthUI pin -> <sha> (synthui_led_button, NEW-25); close-out: sweep 141/141/0, audit PASS, vacuity 58/58, fresh-user gate run on the fetched ELF
+git commit -m "evkb.cmake: SynthUI pin -> <sha> (synthui_led_button, NEW-25); close-out: sweep 141/141/0, audit PASS, vacuity 59/59, fresh-user gate run on the fetched ELF
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```

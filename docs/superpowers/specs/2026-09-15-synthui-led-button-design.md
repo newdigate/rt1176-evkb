@@ -255,18 +255,26 @@ the latch.
 
 **Gate `run_qemu.sh` asserts, in order**: `PANEL_OK`;
 `led_button_scene=16 grid=4x4`; `LVGL_FLUSHED=PASS`; `LVGL_BYTES=3686400`
-(anchored); the render golden `led_button_crc=0x........` (FNV-1a over the
-presented buffer, recorded from consecutive QEMU runs, altered-CRC
-demonstrated RED); the **delta-equality guard** — a 64-step LCG sequence
-toggling `lit`/`pressed`/`cue`/`color` across the bank rendered through the
-widget's delta damage must equal a fresh full render of the final state
-(`led_button_delta_crc` == `led_button_fresh_crc`, `led_button_delta_eq=PASS`);
-the **engagement bound** — `led_button_damage max=N` with `N <= 10000` px
-(a latch change on a 100 px key is 80×83 = 6,640 px; a `cue` change is the whole
-key, 10,000 — the bound is therefore exactly the widget's largest legitimate
-box, and a reversion to full-screen invalidation fails here and nowhere
-else); the vsync witness `led_button_vsync flips=N isrs=N timeouts=0`;
-`crc_done`; `PASS: SynthUI led_button render verified`.
+(anchored); the initial render golden `led_button_crc` (FNV-1a over the
+presented buffer, recorded from two consecutive QEMU runs); the
+**delta-equality guard** over a 64-step LCG sequence toggling
+`lit`/`pressed`/`cue`/`color` on keys 0..12 plus a four-step scripted tail
+(key 14 pressed then unlit, exercising the centring offset of both damage
+boxes; key 15 recoloured then unlit, exercising the lit box at the
+`LV_STATE_PRESSED` offset): `led_button_delta_crc` == `led_button_fresh_crc`,
+`led_button_delta_eq=PASS`; the **final-state golden** pinning
+`led_button_fresh_crc` itself, because the final state draws combinations the
+initial golden never does (disabled+pressed, cue+pressed, pressed small keys);
+the **engagement bounds, per op**: `led_button_damage max=N` with
+`N <= 10000` catches full-screen invalidation, and
+`led_button_damage_op lit= press= cue= color=` bounds each op by its own box
+on a 100 px key (lit and colour 1450 = the 58×25 halo; press 6640 = the 80×83
+cap group; cue 10000 = the key). The per-op line exists because Task 3 review
+measured that a lit, colour or press setter falling back to whole-key
+invalidation leaves the single max at exactly 10000 and delta equality green.
+Then the vsync witness `led_button_vsync flips=N isrs=N timeouts=0`;
+`crc_done`; `PASS: SynthUI led_button render verified` (printed only when
+delta equality holds).
 
 **Phase B** (after `crc_done`, NOT gated): a loop animating all 16 keys
 (playhead cue sweeping, LEDs toggling) prints `led_button_fps`. QEMU timing
@@ -275,8 +283,9 @@ is meaningless; silicon is where the ≥30 fps criterion is answered. Below
 
 **Close-out**: `GATES` entry in `tools/license-audit.sh`, README rows
 (root and `examples/README.md`), `transcript_qemu.txt` fixture, a
-`gate-vacuity.test.sh` case (green fixture replays; corrupted golden fails
-by name; a missing damage counter fails by name), SynthUI pushed and the
+`gate-vacuity.test.sh` section (green fixture replays; corrupted golden fails
+by name; a missing damage counter and a missing per-op damage line each fail
+by name), SynthUI pushed and the
 `evkb.cmake` pin bumped, fresh-user `-DEVKB_FORCE_FETCH=ON` verified by
 RUNNING the gate on the fetched ELF, sweep 140 → **141**, `LICENSE-AUDIT:
 PASS` after (never during) the sweep, `transcript_hw_evkb.txt` with the
