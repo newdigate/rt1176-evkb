@@ -1,0 +1,36 @@
+# examples/display/pxp_rotate_probe -- QEMU fixture. Recorded 2026-09-15.
+# Machine: mimxrt1170-evk.
+# Every graded case read pixel=ok on two identical QEMU runs of this image;
+# the eleven sums below are pinned verbatim in run_qemu.sh.
+# The Phase B timing lines this example prints after its case table are QEMU
+# fiction, not gated here -- silicon numbers belong in transcript_hw_evkb.txt.
+=== BOOT ===
+[APP: pxp_rotate_probe] [VER: v1] [BUILD: Sep 15 2026 07:32:19]
+pxp_rotate_probe up
+PXP_BEGIN=PASS
+case_begin=full
+case=full api=ok pixel=ok sum=0xDF61D3C5
+case_begin=corner-tl
+case=corner-tl api=ok pixel=ok sum=0xD087F7C5
+case_begin=corner-tr
+case=corner-tr api=ok pixel=ok sum=0x0FFA55C5
+case_begin=corner-bl
+case=corner-bl api=ok pixel=ok sum=0xBD3661C5
+case_begin=corner-br
+case=corner-br api=ok pixel=ok sum=0x22537BC5
+case_begin=knob
+case=knob api=ok pixel=ok sum=0x07E8D7C5
+case_begin=cell
+case=cell api=ok pixel=ok sum=0x040B7FC5
+case_begin=strip-top
+case=strip-top api=ok pixel=ok sum=0xC5B563C5
+case_begin=strip-left
+case=strip-left api=ok pixel=ok sum=0x3A4C71C5
+case_begin=centre
+case=centre api=ok pixel=ok sum=0x8CB3A5C5
+case_begin=tall
+case=tall api=ok pixel=ok sum=0x19431BC5
+case_begin=offgrid
+case=offgrid api=ok pixel=ok sum=0x1AFD19C5
+cases=12 ok=11 broken=0
+crc_done

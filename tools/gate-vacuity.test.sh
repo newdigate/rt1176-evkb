@@ -787,4 +787,36 @@ ABSENT
           "$EVKB/$sink_rel"/build/sink.dbg "$EVKB/$sink_rel"/build/sink.console
 fi
 
+# --- 14. pxp_rotate_probe (acid_box landscape, Phase 0) ---------------------
+# The sum pins are individually meaningless unless each can be shown to FAIL,
+# and the count guards exist because every pin is satisfied vacuously by a
+# truncated table.  Fixture is the gate's own committed transcript_qemu.txt.
+PRP="examples/display/pxp_rotate_probe"
+if [ -d "$EVKB/$PRP" ] && [ -f "$EVKB/$PRP/transcript_qemu.txt" ]; then
+    run_gate "$PRP" "run_qemu.sh" "$EVKB/$PRP/transcript_qemu.txt"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_pxp_rotate_probe" $result
+
+    # A corrupted sum must fail naming the case.
+    sed 's|^case=knob api=ok pixel=ok sum=0x........|case=knob api=ok pixel=ok sum=0xBADBADBA|' \
+        "$EVKB/$PRP/transcript_qemu.txt" > "$WORK/prp_badsum.txt"
+    run_gate "$PRP" "run_qemu.sh" "$WORK/prp_badsum.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "missing/wrong: case=knob" || result=1
+    report "prp_bad_sum_fails_by_name" $result
+
+    # A truncated case table (a hung op) must fail on the COUNT, not pass on
+    # the cases that did finish.  crc_done is kept so the wait loop returns.
+    awk '/^case_begin=cell/ { skip=1 } /^crc_done/ { skip=0 } !skip' \
+        "$EVKB/$PRP/transcript_qemu.txt" > "$WORK/prp_trunc.txt"
+    run_gate "$PRP" "run_qemu.sh" "$WORK/prp_trunc.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "expected 12 case_begin lines" || result=1
+    report "prp_truncated_table_fails_by_count" $result
+else
+    echo "SKIP: pxp_rotate_probe vacuity (example or fixture missing)"
+fi
+
 exit $FAILED
