@@ -125,9 +125,14 @@ application's handler from the base class as it does today for `synthui_step`.
 
 All coordinates are in the reference's 100-unit box. The widget scales by
 `s = min(w, h) / 100` and centres the 100×100 box in its area, so a
-non-square widget draws a square key with equal side margins. `dy` is the
-press offset: `2.5` units when the drawn pressed state is on, else `0`.
-Every layer except the bezel and the well moves by `dy`.
+non-square widget draws a square key with equal side margins. The press
+offset is `dy_px = lroundf(2.5 · s)` whole pixels when the drawn pressed state
+is on, else `0`, added to each layer AFTER that layer is rounded to pixels.
+Every layer except the bezel and the well moves by `dy_px`, so a press is a
+pure pixel translation and never resizes a layer. (Adding 2.5 units before
+rounding was the first design; review measured the LED slipping a pixel
+against the cap and shrinking 15 → 14 px at the 96 px default.) Below, `+dy`
+in a coordinate names the layers that move.
 
 Draw order (back to front):
 
@@ -208,8 +213,12 @@ Pure-C tests over `synthui_led_button_math.h` and the types header, run by
 
 - every layout box scales linearly with `s` and is centred for a non-square
   widget;
-- `dy` is 0 unpressed and 2.5·s pressed, and moves exactly the layers listed
-  in §4 (bezel and well do not move);
+- `dy_px` is 0 unpressed and `lroundf(2.5·s)` pressed, and the layout's
+  rects are identical in both states (the offset is applied after rounding,
+  to exactly the layers listed in §4);
+- a pixel-space containment sweep over squares 8..400 and four non-square
+  sizes, both press states, through the same `rect_px`/`circle_px` conversion
+  the widget uses;
 - damage boxes: the lit box contains the LED and the halo at both offsets;
   the press box contains every moving layer at BOTH offsets; both lie inside
   the widget;

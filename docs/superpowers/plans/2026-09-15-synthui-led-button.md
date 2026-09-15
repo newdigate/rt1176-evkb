@@ -34,6 +34,8 @@ rt1176-evkb:
 
 ### Task 1: Types, layout math, palette + host unit test (SynthUI)
 
+> **Executed 2026-09-15; the code below is SUPERSEDED by review.** Quality review found that adding the 2.5-unit press offset before rounding resized and slipped layers by a pixel (the LED shrank 15 -> 14 px at 96 px). The committed header (SynthUI `0fcffa2`) stores every rect at dy 0, carries `int32_t dy_px` added after rounding, converts through `synthui_led_button_rect_px` / `_circle_px`, returns `synthui_led_button_px_t` damage boxes, and puts `bezel_bw_px` / `cue_bw_px` / `halo_bw_px` in the layout; its test adds a pixel-space containment sweep. The repo is authoritative for Task 1; Task 2's code below is written against the committed API.
+
 **Files:**
 - Create: `$SYNTHUI/src/synthui_led_button_types.h`
 - Create: `$SYNTHUI/src/synthui_led_button_math.h`
@@ -594,34 +596,40 @@ static bool led_drawn_pressed(const synthui_led_button_t *b)
     return b->pressed || lv_obj_has_state((const lv_obj_t *)b, LV_STATE_PRESSED);
 }
 
-/* --- geometry helpers: unit-space float rect -> LVGL inclusive area --- */
-static void led_area(lv_area_t *out, const lv_area_t *c, const synthui_led_button_rect_t *r)
+/* --- pixel helpers.  ALL float->pixel rounding goes through the math
+ * header's rect_px / circle_px (the conversion the host sweep tests); this
+ * file only offsets the widget-relative result by the object's coords. --- */
+static void led_px_to_area(lv_area_t *out, const lv_area_t *c, const synthui_led_button_px_t *px)
 {
-    out->x1 = c->x1 + (int32_t)lroundf(r->x);
-    out->y1 = c->y1 + (int32_t)lroundf(r->y);
-    out->x2 = c->x1 + (int32_t)lroundf(r->x + r->w) - 1;
-    out->y2 = c->y1 + (int32_t)lroundf(r->y + r->h) - 1;
+    out->x1 = c->x1 + px->x1;
+    out->y1 = c->y1 + px->y1;
+    out->x2 = c->x1 + px->x2;
+    out->y2 = c->y1 + px->y2;
 }
 
-static void led_circle_area(lv_area_t *out, const lv_area_t *c, const synthui_led_button_circle_t *k)
+static void led_area(lv_area_t *out, const lv_area_t *c, const synthui_led_button_rect_t *r, int32_t dy_px)
 {
-    out->x1 = c->x1 + (int32_t)lroundf(k->cx - k->r);
-    out->y1 = c->y1 + (int32_t)lroundf(k->cy - k->r);
-    out->x2 = c->x1 + (int32_t)lroundf(k->cx + k->r) - 1;
-    out->y2 = c->y1 + (int32_t)lroundf(k->cy + k->r) - 1;
+    const synthui_led_button_px_t px = synthui_led_button_rect_px(r, dy_px);
+    led_px_to_area(out, c, &px);
 }
 
-static int32_t led_px1(float v)   /* radii and border widths: at least 1 px */
+static void led_circle_area(lv_area_t *out, const lv_area_t *c, const synthui_led_button_circle_t *k, int32_t dy_px)
+{
+    const synthui_led_button_px_t px = synthui_led_button_circle_px(k, dy_px);
+    led_px_to_area(out, c, &px);
+}
+
+static int32_t led_radius(float v)   /* radii: at least 1 px */
 {
     const int32_t p = (int32_t)lroundf(v);
     return p < 1 ? 1 : p;
 }
 
-static void led_invalidate_rect(lv_obj_t *obj, const synthui_led_button_rect_t *r)
+static void led_invalidate_px(lv_obj_t *obj, const synthui_led_button_px_t *px)
 {
     lv_area_t c, a;
     lv_obj_get_coords(obj, &c);
-    led_area(&a, &c, r);
+    led_px_to_area(&a, &c, px);
     lv_obj_invalidate_area(obj, &a);
 }
 
@@ -630,19 +638,19 @@ static void led_invalidate_lit_box(lv_obj_t *obj)
     synthui_led_button_t *b = (synthui_led_button_t *)obj;
     lv_area_t c;
     lv_obj_get_coords(obj, &c);
-    synthui_led_button_rect_t r;
+    synthui_led_button_px_t px;
     synthui_led_button_lit_box((float)lv_area_get_width(&c), (float)lv_area_get_height(&c),
-                               led_drawn_pressed(b), &r);
-    led_invalidate_rect(obj, &r);
+                               led_drawn_pressed(b), &px);
+    led_invalidate_px(obj, &px);
 }
 
 static void led_invalidate_press_box(lv_obj_t *obj)
 {
     lv_area_t c;
     lv_obj_get_coords(obj, &c);
-    synthui_led_button_rect_t r;
-    synthui_led_button_press_box((float)lv_area_get_width(&c), (float)lv_area_get_height(&c), &r);
-    led_invalidate_rect(obj, &r);
+    synthui_led_button_px_t px;
+    synthui_led_button_press_box((float)lv_area_get_width(&c), (float)lv_area_get_height(&c), &px);
+    led_invalidate_px(obj, &px);
 }
 
 /* A finger went down or came up.  The press box does not depend on the press
@@ -718,70 +726,71 @@ static void led_draw(synthui_led_button_t *b, lv_layer_t *layer)
     synthui_led_button_palette(b->color, b->lit, pressed, b->cue, b->disabled, &P);
 
     lv_area_t a;
+    const int32_t dy = L.dy_px;   /* whole pixels, added AFTER rounding: a press never resizes a layer */
 
-    /* 1. bezel: fill + border (the SVG stroke, drawn inside the outer extent) */
-    led_area(&a, &c, &L.bezel);
+    /* 1. bezel (never moves): fill + border, the SVG stroke drawn inside the extent */
+    led_area(&a, &c, &L.bezel, 0);
     {
         lv_draw_rect_dsc_t d;
         lv_draw_rect_dsc_init(&d);
         d.bg_color = lv_color_hex(SYNTHUI_LED_BUTTON_BEZEL);
         d.bg_opa = LV_OPA_COVER;
-        d.radius = led_px1(L.bezel_r);
+        d.radius = led_radius(L.bezel_r);
         d.border_color = lv_color_hex(P.bezel_color);
-        d.border_width = led_px1(P.bezel_w_units * L.s);
+        d.border_width = b->cue ? L.cue_bw_px : L.bezel_bw_px;
         d.border_opa = LV_OPA_COVER;
         d.border_side = LV_BORDER_SIDE_FULL;
         lv_draw_rect(layer, &d, &a);
     }
 
-    /* 2. well */
-    led_area(&a, &c, &L.well);
-    led_fill(layer, &a, SYNTHUI_LED_BUTTON_WELL, SYNTHUI_LED_BUTTON_WELL_OPA, led_px1(L.well_r));
+    /* 2. well (never moves) */
+    led_area(&a, &c, &L.well, 0);
+    led_fill(layer, &a, SYNTHUI_LED_BUTTON_WELL, SYNTHUI_LED_BUTTON_WELL_OPA, led_radius(L.well_r));
 
     /* 3. cap: solid mid under two 2-stop halves (LV_GRADIENT_MAX_STOPS is 2).
      * Each half's inner corners are rounded too, but they meet the solid mid
      * at exactly the mid colour, so the rounding is invisible. */
-    led_area(&a, &c, &L.cap);
-    led_fill(layer, &a, P.cap_mid, LV_OPA_COVER, led_px1(L.cap_r));
-    led_area(&a, &c, &L.cap_top);
-    led_grad(layer, &a, P.cap_top, P.cap_mid, led_px1(L.cap_r));
-    led_area(&a, &c, &L.cap_low);
-    led_grad(layer, &a, P.cap_mid, P.cap_low, led_px1(L.cap_r));
+    led_area(&a, &c, &L.cap, dy);
+    led_fill(layer, &a, P.cap_mid, LV_OPA_COVER, led_radius(L.cap_r));
+    led_area(&a, &c, &L.cap_top, dy);
+    led_grad(layer, &a, P.cap_top, P.cap_mid, led_radius(L.cap_r));
+    led_area(&a, &c, &L.cap_low, dy);
+    led_grad(layer, &a, P.cap_mid, P.cap_low, led_radius(L.cap_r));
 
     /* 4. highlight */
-    led_area(&a, &c, &L.highlight);
-    led_fill(layer, &a, 0xFFFFFFu, P.highlight_opa, led_px1(L.highlight_r));
+    led_area(&a, &c, &L.highlight, dy);
+    led_fill(layer, &a, 0xFFFFFFu, P.highlight_opa, led_radius(L.highlight_r));
 
     /* 5. halo: a 10-unit border on the LED grown by 5; the LED fill covers
      * the inner half, which is what SVG's stroke-over-fill produces */
     if (P.halo_on) {
-        led_area(&a, &c, &L.halo);
+        led_area(&a, &c, &L.halo, dy);
         lv_draw_rect_dsc_t d;
         lv_draw_rect_dsc_init(&d);
         d.bg_opa = LV_OPA_TRANSP;
-        d.radius = led_px1(L.halo_r);
+        d.radius = led_radius(L.halo_r);
         d.border_color = lv_color_hex(P.halo_color);
-        d.border_width = led_px1(2.0f * SYNTHUI_LED_BUTTON_HALO_REACH * L.s);
+        d.border_width = L.halo_bw_px;
         d.border_opa = SYNTHUI_LED_BUTTON_HALO_OPA;
         d.border_side = LV_BORDER_SIDE_FULL;
         lv_draw_rect(layer, &d, &a);
     }
 
     /* 6. LED */
-    led_area(&a, &c, &L.led);
-    led_fill(layer, &a, P.led_fill, LV_OPA_COVER, led_px1(L.led_r));
+    led_area(&a, &c, &L.led, dy);
+    led_fill(layer, &a, P.led_fill, LV_OPA_COVER, led_radius(L.led_r));
 
     /* 7. moulding dots (dropped below 34 px) */
     if (L.dots_visible) {
-        led_circle_area(&a, &c, &L.dot1);
+        led_circle_area(&a, &c, &L.dot1, dy);
         led_fill(layer, &a, 0x000000u, SYNTHUI_LED_BUTTON_DOT_OPA, LV_RADIUS_CIRCLE);
-        led_circle_area(&a, &c, &L.dot2);
+        led_circle_area(&a, &c, &L.dot2, dy);
         led_fill(layer, &a, 0x000000u, SYNTHUI_LED_BUTTON_DOT_OPA, LV_RADIUS_CIRCLE);
     }
 
     /* 8. base */
-    led_area(&a, &c, &L.base);
-    led_fill(layer, &a, SYNTHUI_LED_BUTTON_BASE, P.base_opa, led_px1(L.base_r));
+    led_area(&a, &c, &L.base, dy);
+    led_fill(layer, &a, SYNTHUI_LED_BUTTON_BASE, P.base_opa, led_radius(L.base_r));
 }
 
 /* --- setters: early-return on no change, invalidate only the box painted --- */
@@ -1362,7 +1371,7 @@ DFUL=$(grep -a -oE "led_button_fresh_crc=0x[0-9A-F]{8}" "$OUT" | head -1 | cut -
 grep -qE "led_button_delta_eq=PASS\r?$" "$OUT" || { echo "FAIL: delta equality"; exit 1; }
 # ENGAGEMENT: the largest single invalidated area during the 64-step segment
 # must stay key-sized.  Bound 10000 px = a whole 100 px key, which a cue
-# change legitimately repaints; a latch change is ~6900, a lit change ~1450.
+# change legitimately repaints; a latch change is 80x83 = 6640, a lit change 58x25 = 1450.
 # Keys 13..15 (150 px, 120x80, LV-pressed) are outside the LCG on purpose.
 # A change that quietly reverts a setter to full-screen invalidation fails
 # HERE and nowhere else (a full 720x1280 screen is 921600 px).
@@ -1398,7 +1407,7 @@ Expected: last line `PASS: SynthUI led_button render verified`, exit 0.
 
 1. In `run_qemu.sh` change the golden to `0xDEADBEEF` → `./run_qemu.sh` → expected `FAIL: led_button checksum`. Restore.
 2. In `$SYNTHUI/src/synthui_led_button.cpp`, in `synthui_led_button_set_lit` replace `led_invalidate_lit_box(obj);` with `lv_obj_invalidate(lv_obj_get_screen(obj));` → rebuild (`cmake --build build`) → `./run_qemu.sh` → expected `FAIL: delta damage not engaged (max=921600)`. Restore.
-3. In `synthui_led_button_math.h`, in `synthui_led_button_lit_box` replace `*out = L.halo;` with `*out = L.led;` → rebuild → `./run_qemu.sh` → expected `FAIL: delta render differs from full render (...)` (stale halo pixels when a lit LED goes off). Restore, rebuild, `./run_qemu.sh` GREEN again.
+3. In `synthui_led_button_math.h`, in `synthui_led_button_lit_box` replace `rect_px(&L.halo, L.dy_px)` with `rect_px(&L.led, L.dy_px)` → rebuild → `./run_qemu.sh` → expected `FAIL: delta render differs from full render (...)` (stale halo pixels when a lit LED goes off). Restore, rebuild, `./run_qemu.sh` GREEN again.
 
 Record the dates against the three arms in the script header.
 
