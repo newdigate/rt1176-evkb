@@ -96,6 +96,26 @@ Predictions, registered here before the bench runs:
 * P4 fails on silicon: stop, and switch the SILICON present to the GC355 blit.  The QEMU model is not
   changed to paper over a divergence -- that rule is the tree's, not this spec's.
 
+### 4.1 Measured on silicon, 2026-09-15
+
+`examples/display/pxp_rotate_probe/transcript_hw_evkb.txt`: two complete SW4 boots, `errs=0` on every
+timing line, every sum bit-identical between the boots AND to the QEMU pins.
+
+| # | predicted | measured | verdict |
+|---|-----------|----------|---------|
+| P1 | ~25 ms (15–40) | **13 060 µs** (13 061) | missed, FASTER -- 0.0142 µs/px, ~70 MB/s of XRGB8888; the v6 copy extrapolation was 2× pessimistic |
+| P2 | ≤ 1 ms | **366 µs** (367) | held |
+| P3 | "tens of µs" | **5 µs** | missed as worded -- the cited v6 figure (4 µs) was right, the prediction's words were not |
+| P4 | bit-exact, QEMU = silicon | all 11 graded `pixel=ok`, sums identical to QEMU | **held** |
+| P5 | observation | `case=offgrid api=ok pixel=ok` | silicon rotates correctly 32 B off the 64-B grid too; not relied on -- the port still snaps |
+
+**Decision: damage-grid present, threshold 915 456 logical px** (99.33 % of the 921 600-px frame), from
+`c = (366 − 5) / (160² − 16²) = 0.014244 µs/px` and `floor((13060 − 4·5) / c / 256) · 256`.  The rotate cost
+is linear in pixels and the per-op overhead is ~5 µs, so rects win until the union is essentially the whole
+screen -- a full present costs 13 ms of a 33 ms frame, a knob's damage (cur ∪ prev) well under 1 ms.  The
+two start-up presents and PXP error recovery stay forced full.  The minimum over both boots is used (the
+first boot's 367 µs would give 912 896).
+
 ## 5. The port and the touch binding
 
 Four pieces, one per repo.  Nothing that exists today changes behaviour: every piece is a new function or a

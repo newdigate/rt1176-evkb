@@ -1,0 +1,179 @@
+pxp_rotate_probe -- SILICON transcript (MIMXRT1170-EVKB)
+Recorded 2026-09-15.  Image: build/pxp_rotate_probe.elf, [BUILD: Sep 15 2026 07:32:19]
+(commit 07b9eb1).  Flashed with tools/rt1170-flash.sh (LinkServer flash load +
+verify), console on the MCU-Link VCOM at 115200, two SW4 presses.  The capture
+below is the two COMPLETE boots, CR/NUL stripped; an earlier partial boot (the
+reader attached mid-table after the flash) is omitted and agreed line for line.
+
+================================================================================
+VERDICTS (spec 2026-09-14-acid-box-landscape-design.md section 4)
+================================================================================
+P4  HELD.  All eleven graded cases api=ok pixel=ok on BOTH boots, cases=12 ok=11
+    broken=0, and every sum is BIT-IDENTICAL to the QEMU pins in run_qemu.sh
+    (diffed against transcript_qemu.txt, not eyeballed).  Pointer-offset
+    surfaces on the 16-px grid rotate correctly at the origin, all four corners,
+    both strips, and the unequal-sided `tall` rect.
+P5  OBSERVED: case=offgrid api=ok pixel=ok -- silicon rotates correctly from
+    pointers 32 B off the 64-B grid too (rotate-alone), consistent with
+    pxp_blit_test's PXP_ALIGN=off2:ok.  Not relied on: the port still snaps to 16.
+P1  MISSED, FASTER: time=full 13060 / 13061 us (predicted ~25 ms, range 15-40).
+    0.01417 us per logical pixel over the whole frame, ~70 MB/s of XRGB8888.
+P2  HELD: time=rect160 366 / 367 us (predicted <= 1 ms).
+P3  MISSED, as worded: time=rect16 5 us on both boots.  The prediction said
+    "tens of us" while citing v6's 4 us for 16x16 -- the citation was right and
+    the words were not.  Per-op fixed cost is ~5 us.
+errs=0 on every timing line, both boots, so every minimum is a real op.
+
+================================================================================
+DECISION (plan Task 3 Step 3)
+================================================================================
+t_full = 13060 us > 5000, so NOT every-present-full: damage-grid present.
+  c         = (t160 - t16) / (160*160 - 16*16) = 361 / 25344 = 0.014244 us/px
+  threshold = floor((t_full - 4*t16) / c / 256) * 256 = 915456 logical px
+            = 99.33 % of the 921600-px frame.
+Reading: the rotate cost is linear in pixels and the per-op overhead is ~5 us,
+so rects are cheaper than one full-frame op until the damage union is
+essentially the whole screen.  A full present still costs 13 ms of a 33 ms
+frame, which is exactly why the damage path is worth having; a knob's damage
+(~160x160, cur+prev) costs well under 1 ms.  The start-up presents and PXP
+error recovery remain forced full by design.
+(The first boot's rect160 of 367 us would give 912896; the minimum over both
+boots -- t_full 13060 from the first, rect160 366 from the second -- is used, as
+min-of-8 is used within a boot.)
+
+================================================================================
+CAPTURE -- two complete boots
+================================================================================
+=== BOOT ===
+[APP: pxp_rotate_probe] [VER: v1] [BUILD: Sep 15 2026 07:32:19]
+pxp_rotate_probe up
+PXP_BEGIN=PASS
+case_begin=full
+case=full api=ok pixel=ok sum=0xDF61D3C5
+case_begin=corner-tl
+case=corner-tl api=ok pixel=ok sum=0xD087F7C5
+case_begin=corner-tr
+case=corner-tr api=ok pixel=ok sum=0x0FFA55C5
+case_begin=corner-bl
+case=corner-bl api=ok pixel=ok sum=0xBD3661C5
+case_begin=corner-br
+case=corner-br api=ok pixel=ok sum=0x22537BC5
+case_begin=knob
+case=knob api=ok pixel=ok sum=0x07E8D7C5
+case_begin=cell
+case=cell api=ok pixel=ok sum=0x040B7FC5
+case_begin=strip-top
+case=strip-top api=ok pixel=ok sum=0xC5B563C5
+case_begin=strip-left
+case=strip-left api=ok pixel=ok sum=0x3A4C71C5
+case_begin=centre
+case=centre api=ok pixel=ok sum=0x8CB3A5C5
+case_begin=tall
+case=tall api=ok pixel=ok sum=0x19431BC5
+case_begin=offgrid
+case=offgrid api=ok pixel=ok sum=0x1AFD19C5
+cases=12 ok=11 broken=0
+crc_done
+time=full min_us=13060 errs=0
+time=rect160 min_us=367 errs=0
+time=rect16 min_us=5 errs=0
+probe_done
+hb=1
+hb=2
+hb=3
+hb=4
+hb=5
+hb=6
+hb=7
+hb=8
+hb=9
+hb=10
+hb=11
+hb=12
+hb=13
+hb=14
+hb=15
+hb=16
+hb=17
+hb=18
+hb=19
+hb=20
+hb=21
+hb=22
+hb=23
+hb=24
+hb=25
+=== BOOT ===
+[APP: pxp_rotate_probe] [VER: v1] [BUILD: Sep 15 2026 07:32:19]
+pxp_rotate_probe up
+PXP_BEGIN=PASS
+case_begin=full
+case=full api=ok pixel=ok sum=0xDF61D3C5
+case_begin=corner-tl
+case=corner-tl api=ok pixel=ok sum=0xD087F7C5
+case_begin=corner-tr
+case=corner-tr api=ok pixel=ok sum=0x0FFA55C5
+case_begin=corner-bl
+case=corner-bl api=ok pixel=ok sum=0xBD3661C5
+case_begin=corner-br
+case=corner-br api=ok pixel=ok sum=0x22537BC5
+case_begin=knob
+case=knob api=ok pixel=ok sum=0x07E8D7C5
+case_begin=cell
+case=cell api=ok pixel=ok sum=0x040B7FC5
+case_begin=strip-top
+case=strip-top api=ok pixel=ok sum=0xC5B563C5
+case_begin=strip-left
+case=strip-left api=ok pixel=ok sum=0x3A4C71C5
+case_begin=centre
+case=centre api=ok pixel=ok sum=0x8CB3A5C5
+case_begin=tall
+case=tall api=ok pixel=ok sum=0x19431BC5
+case_begin=offgrid
+case=offgrid api=ok pixel=ok sum=0x1AFD19C5
+cases=12 ok=11 broken=0
+crc_done
+time=full min_us=13061 errs=0
+time=rect160 min_us=366 errs=0
+time=rect16 min_us=5 errs=0
+probe_done
+hb=1
+hb=2
+hb=3
+hb=4
+hb=5
+hb=6
+hb=7
+hb=8
+hb=9
+hb=10
+hb=11
+hb=12
+hb=13
+hb=14
+hb=15
+hb=16
+hb=17
+hb=18
+hb=19
+hb=20
+hb=21
+hb=22
+hb=23
+hb=24
+hb=25
+hb=26
+hb=27
+hb=28
+hb=29
+hb=30
+hb=31
+hb=32
+hb=33
+hb=34
+hb=35
+hb=36
+hb=37
+hb=38
+hb=39
+hb=40
