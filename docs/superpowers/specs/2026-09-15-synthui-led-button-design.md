@@ -194,12 +194,12 @@ per-draw state.
 The instance holds `lit, pressed(latch), cue, disabled, color` and a cached
 `drawn_pressed` (latch || `LV_STATE_PRESSED`). Every setter early-returns
 when the value is unchanged, then invalidates ONLY the box its state paints,
-scaled to the widget:
+in pixels, computed by the math header through the same rounding the draw uses:
 
 | Change | Invalidated box (100-unit coords, before scaling) |
 |---|---|
-| `lit`, `color` | LED grown by the halo: (21, 14+dy, 58×25) |
-| drawn pressed (latch or LV state) | union of the cap group at both offsets: (10, 9, 80×82.5) — cap, highlight, halo, LED, dots and base all move |
+| `lit`, `color` | the halo's pixel area at the current `dy_px` (at 100 px: x 21..78, y 14..38 unpressed, 17..41 pressed) |
+| drawn pressed (latch or LV state) | union of the moving layers' pixel areas at `dy_px` 0 and pressed (at 100 px: x 10..89, y 9..91) — cap, highlight, halo, LED, dots and base all move |
 | `cue` | the bezel ring: the whole widget (the ring is the outer 3.5 units on four sides; four strips would save little and complicate the guard) |
 | `disabled` | the whole widget |
 
@@ -253,7 +253,7 @@ toggling `lit`/`pressed`/`cue`/`color` across the bank rendered through the
 widget's delta damage must equal a fresh full render of the final state
 (`led_button_delta_crc` == `led_button_fresh_crc`, `led_button_delta_eq=PASS`);
 the **engagement bound** — `led_button_damage max=N` with `N <= 10000` px
-(a latch change on a 100 px key is ~6,900 px; a `cue` change is the whole
+(a latch change on a 100 px key is 80×83 = 6,640 px; a `cue` change is the whole
 key, 10,000 — the bound is therefore exactly the widget's largest legitimate
 box, and a reversion to full-screen invalidation fails here and nowhere
 else); the vsync witness `led_button_vsync flips=N isrs=N timeouts=0`;
