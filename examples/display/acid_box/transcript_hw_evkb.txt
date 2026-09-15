@@ -1,5 +1,101 @@
 acid_box -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
 ================================================================================
+2026-09-15, LANDSCAPE (spec docs/superpowers/specs/2026-09-14-acid-box-landscape-design.md
+section 8; plan Task 12).  Layout C on a logical 1280x720 canvas presented
+rotated 90 degrees CLOCKWISE on the glass through the PXP
+(lvgl_mipi_panel_create_rotated, LVGL 3037281; damage-grid present at the
+silicon-measured threshold 915456 px).  Board turned counter-clockwise on the
+bench.  All flashing via tools/rt1170-flash.sh (load -> verify), console on the
+MCU-Link VCOM; raw captures kept out of the tree, key lines quoted.
+
+--- 8.2  GPU GOLDEN -------------------------------------------------------------
+  ACIDBOX_ENGINE=gpu
+  ACIDBOX_UI_SUM=0x2231070B      <- THREE boots, BIT-IDENTICAL (post-flash + 2 SW4)
+  ACIDBOX_GPU_ERR=0
+  ★ The PORTRAIT silicon golden 0x1479CEE8 (four boots, 2026-08-28; confirmed
+    again 2026-09-05 below) is RETIRED as of this entry -- the presented frame
+    is now the rotated landscape scene.  The records below keep it as history.
+    QEMU/sw golden is 0xE871BF09 (run_qemu.sh); the two sets are never reconciled.
+
+--- 8.1  ORIENTATION AND TOUCH -------------------------------------------------
+Picture upright with the board turned CCW (operator, by eye): title top-left,
+lane top-left, knobs along the bottom, nothing mirrored.  Taps in order:
+  cell 0 (top-left)      -> STEP[0]=note33 gate0 acc1 sld0     (gate toggled off)
+  cell 7 (top-right)     -> STEP[7]=note40 gate0 acc1 sld0
+  cell 8 (bottom-left)   -> STEP[8]=note33 gate0 acc0 sld0
+  cell 15 (bottom-right) -> STEP[15]=note33 gate0 acc0 sld1
+  ACC                    -> STEP[15]=note33 gate0 acc1 sld1     (selected step)
+  SLD                    -> STEP[15]=note33 gate0 acc1 sld0
+  SAW                    -> label SAW -> SQR (operator; prints nothing)
+  PLAY / STOP            -> PLAYING=1 / PLAYING=0
+The next bar's RMS table read 0.0000 at steps 0, 7, 8 and 15 -- the edits reached
+the sound.  All four lane corners correct is what rules out a transposed or
+mirrored touch axis (spec section 10).
+
+--- 8.3  COUNTERS, default build, one boot playing ~7 min -----------------------
+  232 bars; ACIDBOX_VSYNC flips=5221 isrs=5221 timeouts=0 (no line non-zero)
+  ACIDBOX_ROT ops=12538 full=2 px=162271744 us=3185734 errors=0 (no line non-zero)
+  ACIDBOX_ROT_EQ pass=233 fail=0  (no line non-zero)
+  3442 CUTOFF samples from finger drags during the run.
+  PXP present cost: 3.19 s over 5221 presents = 0.61 ms per present (per-rect
+  after start-up; the boot full-frame op read us=17471).
+  The equality guard as first built cost 31.4 ms median / 38.8 ms max per bar.
+
+--- 8.4  PERFORMANCE, ACIDBOX_LOOPSTAT, finger drag on CUTOFF + knob taps -------
+Portrait baseline (NEW-33, default build): 30 fps, 32.6 ms median frame, touch
+p95 46.5 ms.  Acceptance: median frame within +/-15 % (27.7..37.5 ms), touch p95
+<= 53.5 ms.  "Drag seconds" = framestat seconds with >= 20 frames.
+
+                                   guard at bar seam   guard incremental (22216d8)
+  drag seconds                            115                  344
+  mean fps in drag seconds                25.3                 27.9
+  per-second median frame  p10/p50/p90   32.6/32.9/37.1 ms    32.7/32.9/35.9 ms
+                           max            38.9 ms              41.3 ms
+  touch p95 (1 s snapshots of the 256-sample ring)
+                           p10/p50/p90   38.9/43.4/80.3 ms    39.4/49.1/112.3 ms
+  loopstat probe slot      p50 / max      59.0 / 65.8 ms/s     40.1 / 69.6 ms/s
+  equality guard (per call / per pass)    31.3 ms p50          3.25 ms p50, 3.35 max
+  fences                                  timeouts=0 errors=0 fail=0 in both runs
+
+VERDICT, stated as measured rather than rounded up:
+  * Frame interval MET: the median of per-second medians is 32.9 ms in both runs
+    (baseline 32.6).  The p90 second sits inside the bound; the worst single
+    seconds (38.9 / 41.3 ms) are drag start/stop.
+  * Touch p95 NOT CLEANLY MET: the median 1 s window is within +15 % in both runs
+    (43.4 and 49.1 ms against 53.5), but the tail windows reach 80-112 ms while
+    dragging.  A controlled comparison is owed: the two runs are two different
+    finger drags, and the drag prints a CUTOFF= line per sample (10431 in the
+    second run) that blocks the console inside the LVGL slot in BOTH the
+    portrait baseline and here.  Use the title-tap synthetic wiggle for frame
+    cost and a scripted tap pattern for touch before calling this either way.
+  * The guard stall WAS real and is FIXED: 31 ms once per bar -> 3.3 ms per loop
+    pass (22216d8), found by this bench, not by QEMU.  It did not, on its own,
+    move the touch tail.
+
+--- 8.5  NO SCANOUT FLASH --------------------------------------------------------
+Phone video at 60 fps while dragging a knob, stepped frame by frame by the
+operator: no tearing, no partial knob, no damage-box square in more than 600
+frames.  (Checksums cannot see this; the camera is the instrument.)
+
+--- 8.6  M2_BT_OUT (build-bench: real 131,840-byte IW416 image, LOOPSTAT on) ----
+  bt_fw_download=ok chip_id=0x7201 start_inds=3 sent=131856/131840
+  bt_hci_reset=ok
+  a2dp=connect_failed paired_by=none   (x4 -- the stored Shokz bond was refused)
+  a2dp=ok paired_by=ssp
+  bt_streaming by=inquiry bitpool=53 media_mtu=895
+Stream 264 s, 344-345 blocks/s (real time), operator: "clean audio on the Shokz
+while dragging knobs".
+  pcmdrops=0 for the whole stream                      <- the CPU kept up
+  drops=2389 -- ALL in ONE 7.4 s burst ~245 s in, every block of those seconds,
+    coinciding with bt_cred starve_max_ms=7368 (no ACL credits returned); then
+    sent=returned=18529, bt_link lost=0 (no disconnect).  The air link stalled
+    and recovered; the local pipeline did not drop a block (NEW-34 piece 4's
+    fingerprint for RF backpressure, not a host credit leak).
+  ACIDBOX_VSYNC flips=4908 isrs=4908 timeouts=0; ACIDBOX_ROT ops=11415 errors=0;
+  ACIDBOX_ROT_EQ pass=177 fail=0, guard 3.3 ms per pass.
+  ITCM on this link: 250,956 B (11,188 B headroom).
+
+================================================================================
 2026-09-05, NEW-36 I-CACHE REGRESSION (teensy-cores 2304743: the CM7 L1
 INSTRUCTION cache is now enabled in ResetHandler; this image rebuilt against it,
 nm carries startup_ccr_at_reset).  Default build, flashed (load -> verify), TWO

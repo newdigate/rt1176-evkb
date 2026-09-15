@@ -119,9 +119,10 @@ WHAT IT DOES NOT PROVE.  QEMU renders LVGL in software and models the WM8962
 rather than driving one, so nothing here is a statement about the RK055 panel,
 the codec's analogue path, or the GT911 on real glass.  The PXP rotation is
 QEMU's model too: display/pxp_rotate_probe measured that model bit-exact
-against silicon, but the landscape acid_box itself has not yet run on the
-board.  Silicon confirmation is owed (capstone plan Task 8 for the portrait
-build; landscape plan Task 12 for this one).
+against silicon, and the landscape acid_box itself ran on the board on
+2026-09-15 (transcript_hw_evkb.txt, LANDSCAPE: upright, touch-correct at all four
+lane corners, gpu golden 0x2231070B on three boots, fences clean, no scanout
+flash on 60 fps video, Bluetooth streaming with pcmdrops=0).
 
 ★ LOCAL-ONLY QEMU DEPENDENCY.  The gestures are injected through qemu2's
 `imxrt.gt911` `touch-script` property, which is not upstream.  A fresh clone

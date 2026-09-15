@@ -220,8 +220,10 @@ NBARS_ALL=$(grep -c "^ACIDBOX_BAR=" "$OUT" || true)
 # checked: layout, all 8 knob boot angles, the lane matching the preset
 # cell-for-cell).  This tree does not record a golden for a frame nobody has
 # seen; the knob pilot's clamped arc and the VGLite GPU frame were both perfectly
-# reproducible AND visibly wrong.  Silicon confirmation is owed (capstone plan
-# Task 8; for the landscape frame, landscape plan Task 12).
+# reproducible AND visibly wrong.  Silicon confirmed the landscape frame on
+# 2026-09-15 (transcript_hw_evkb.txt, LANDSCAPE): upright by eye, all four lane
+# corners touch-correct, gpu golden 0x2231070B on three boots -- a separate
+# golden set from this sw one, never reconciled.
 #
 # ★ ANCHORED WITH \r?$, AND THE ANCHOR IS LOAD-BEARING.  Measured in Task 4:
 # FNV-1a converges in its low bits over a repeating 4-byte pattern, so the blank
