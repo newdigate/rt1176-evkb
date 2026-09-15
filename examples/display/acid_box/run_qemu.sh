@@ -30,18 +30,25 @@
 # time, which this tree's QEMU audio clock delivers at ~0.81x wall ≈ 2.31 s
 # ≈ 116 instants.  Both pads are 300 instants ≈ 2.6 bars.
 #
-# GEOMETRY.  The three tap points are percentages of the 720x1280 panel and are
-# derived from acid_box.cpp's absolute placement — move a widget and the tap
-# moves with it:
-#   ▶            lv_obj_set_pos(play,540,16) + set_size(70,48) -> 540..610 x 16..64
-#                (80%, 3%)  = pixel (576, 38)                          ✔ inside
-#   step cell 2  pos(8 + 2*88, 640) + size(82,82)              -> 184..266 x 640..722
-#                (31%, 53%) = pixel (223, 678)                         ✔ inside
-#   CUTOFF knob  pos(15, 90) + size(150,150)                   -> 15..165 x 90..240
-#                (12%, 13%) = pixel (86, 166)                          ✔ inside
-# The knob drag stops at 18% = y 230, still inside 90..240 on purpose: the widget
-# does not set LV_OBJ_FLAG_PRESS_LOCK, so a sample past its edge would hand LVGL
-# a different object and end the drag as PRESS_LOST with no further CUTOFF lines.
+# GEOMETRY.  The UI is a LOGICAL 1280x720 frame presented rotated 90 degrees
+# CLOCKWISE on the 720x1280 panel (lvgl_mipi_panel_create_rotated): logical
+# (lx,ly) sits at physical (719-ly, lx).  The GT911 model takes percentages of
+# the PHYSICAL panel and computes raw = res*pct/100 in integers, so each tap
+# below is a logical target from acid_box.cpp's geometry block, mapped, then
+# rounded to a whole percent -- move a widget and the tap moves:
+#   ▶            PLAY_X=1040, BAR_Y=20, 100x48 -> logical 1040..1139 x 20..67
+#                P 94 85 -> raw (676,1088) -> logical (1088,43)       ✔ inside
+#   step cell 2  LANE_X0+2*108=232, LANE_Y0=96, 100x100 -> 232..331 x 96..195
+#                P 80 22 -> raw (576,281)  -> logical (281,143)       ✔ inside
+#   CUTOFF knob  KNOB_X0=16, KNOB_Y0=520, 150x150 -> 16..165 x 520..669
+#                P 19 7 ... P 10 7, ten samples at 1 % (7.2 px) steps
+#                -> raw (136..72, 89) -> logical (89, 583..647)       ✔ inside
+# The drag is a DOWNWARD logical drag (cutoff strictly decreasing, the same
+# assertion as the portrait build); rotated, it is a leftward raw drag.  It
+# stops at logical y 647, 22 px inside the knob's bottom edge, on purpose: the
+# widget does not set LV_OBJ_FLAG_PRESS_LOCK, so a sample past its edge would
+# hand LVGL a different object and end the drag as PRESS_LOST with no further
+# CUTOFF lines.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 # Tools come from THIS checkout, derived from the gate's own location (a
@@ -69,7 +76,7 @@ SCRIPT="$DIR/touch_script.txt"
 }
 
 rm -f "$OUT" "$DBG"
-# Room for boot + ~8 bars at 128 BPM + the 636-instant script; a healthy run is
+# Room for boot + ~8 bars at 128 BPM + the 640-instant script; a healthy run is
 # reaped by the poll below at ~20 s, so this only bounds a hang.
 QRUN_TIMEOUT=${QRUN_TIMEOUT:-150}
 export QRUN_TIMEOUT
@@ -131,9 +138,47 @@ grep -qE "^ACIDBOX_VSYNC flips=[0-9]+ isrs=[0-9]+ timeouts=0\r?$" "$OUT" \
 grep -E "^ACIDBOX_VSYNC " "$OUT" | grep -vqE "timeouts=0\r?$" \
     && { echo "FAIL: vsync fence timed out during the run"; exit 1; }
 
+# --- the rotated present -----------------------------------------------------
+# ACIDBOX_ROT is printed only by the rotated pipeline: an image that fell back
+# to the portrait create_db path has NO such line and must fail BY NAME.
+# errors must be 0 on EVERY witness (boot + per bar).  The LAST line must show
+# ops>0, full>=2 (the two forced start-up presents -- the boot line shows only
+# the first; the second lands on the next refresh), and ops>full: the threshold
+# is 915456 px (display/pxp_rotate_probe on silicon, spec section 4.1), so
+# after start-up every present is per-rect and the damage path MUST have run.
+# ops/px/us are never pinned: they vary by a present or two between runs.
+grep -qE "^ACIDBOX_ROT ops=[0-9]+ full=[0-9]+ px=[0-9]+ us=[0-9]+ errors=0\r?$" "$OUT" \
+    || { echo "FAIL: rotation present line missing or errors!=0"; exit 1; }
+grep -E "^ACIDBOX_ROT " "$OUT" | grep -vqE "errors=0\r?$" \
+    && { echo "FAIL: rotation errors during the run"; exit 1; }
+ROT_LAST=$(grep -E "^ACIDBOX_ROT " "$OUT" | tail -1 | tr -d '\r')
+ROT_OPS=$( printf '%s\n' "$ROT_LAST" | sed 's/.* ops=\([0-9]*\).*/\1/')
+ROT_FULL=$(printf '%s\n' "$ROT_LAST" | sed 's/.* full=\([0-9]*\).*/\1/')
+[ "$ROT_OPS" -gt 0 ] || { echo "FAIL: no PXP present ops counted"; exit 1; }
+[ "$ROT_FULL" -ge 2 ] || { echo "FAIL: fewer than 2 full-frame presents (start-up forces two)"; exit 1; }
+[ "$ROT_OPS" -gt "$ROT_FULL" ] || { echo "FAIL: the damage path never ran (ops == full)"; exit 1; }
+# The EQUALITY GUARD: the presented buffer must equal the rotated canvas on
+# every sampled row -- at boot (full-frame path) and after every bar (damage
+# path).  fail=0 on every line, and the last pass count must cover boot + every
+# bar that has a guard line after it.  us= is the guard's own cost, printed for
+# the silicon bench and never gated (QEMU time is a fiction).
+grep -qE "^ACIDBOX_ROT_EQ pass=[1-9][0-9]* fail=0 us=[0-9]+\r?$" "$OUT" \
+    || { echo "FAIL: rotation equality guard line missing"; exit 1; }
+grep -E "^ACIDBOX_ROT_EQ " "$OUT" | grep -vqE " fail=0 us=[0-9]+\r?$" \
+    && { echo "FAIL: rotation equality guard failed during the run"; exit 1; }
+EQ_PASS=$(grep -E "^ACIDBOX_ROT_EQ " "$OUT" | tail -1 | tr -d '\r' | sed 's/.*pass=\([0-9]*\).*/\1/')
+# Bars counted only up to the LAST equality line: the reap can land between a
+# bar line and the guard line that follows it, and that bar is not evidence
+# either way.
+NBARS=$(awk '/^ACIDBOX_BAR=/ { b++ } /^ACIDBOX_ROT_EQ / { n = b } END { print n + 0 }' "$OUT")
+[ "$EQ_PASS" -ge $((NBARS + 1)) ] \
+    || { echo "FAIL: equality guard ran $EQ_PASS times for $NBARS bars + boot"; exit 1; }
+
 # --- the boot frame ----------------------------------------------------------
 # GOLDEN — FNV-1a over the whole 720x1280 XRGB8888 framebuffer, taken before the
 # indev exists, so it is a statement about the SCENE and nothing about touch.
+# Since the landscape build that framebuffer is the PRESENTED one: the logical
+# 1280x720 scene after the CW90 PXP present, still 3686400 bytes.
 #
 # ★ THE FRAME BEHIND THIS GOLDEN WAS LOOKED AT, not merely reproduced: dumped
 # out of QEMU's monitor with pmemsave and eyeballed (capstone Task 5, and
@@ -141,7 +186,8 @@ grep -E "^ACIDBOX_VSYNC " "$OUT" | grep -vqE "timeouts=0\r?$" \
 # checked: layout, all 8 knob boot angles, the lane matching the preset
 # cell-for-cell).  This tree does not record a golden for a frame nobody has
 # seen; the knob pilot's clamped arc and the VGLite GPU frame were both perfectly
-# reproducible AND visibly wrong.  Silicon confirmation is owed (plan Task 8).
+# reproducible AND visibly wrong.  Silicon confirmation is owed (capstone plan
+# Task 8; for the landscape frame, landscape plan Task 12).
 #
 # ★ ANCHORED WITH \r?$, AND THE ANCHOR IS LOAD-BEARING.  Measured in Task 4:
 # FNV-1a converges in its low bits over a repeating 4-byte pattern, so the blank
@@ -153,7 +199,16 @@ grep -E "^ACIDBOX_VSYNC " "$OUT" | grep -vqE "timeouts=0\r?$" \
 # The new frame was dumped (pmemsave recipe in transcript_qemu.txt) and LOOKED
 # AT: notch rotors, bounded track arcs, boot angles verified against the
 # preset (CUTOFF +21.5deg, pitch A1 at -35deg). Bit-identical across two runs.
-grep -qE "ACIDBOX_UI_SUM=0x25B30A96\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
+# Re-goldened 2026-09-15 (LANDSCAPE, spec 2026-09-14): layout C presented CW90
+# through the PXP; the golden now checksums the PRESENTED, rotated portrait
+# buffer. The scanned buffer was pmemsaved from a no-touch boot, its FNV
+# recomputed to the same value, and viewed upright: "ACID BOX" top-left,
+# -/128.0/+ centred, PLAY/STOP top-right; the 2x8 lane top-left matching the
+# preset (accent dots 0,7,12; slide bars 3,10,15; rests 2,5,9,14 dark; cell 0
+# selected); pitch knob at A1, ACC lit, SLD dark, SAW; the empty band; the
+# eight knobs CUTOFF..SLIDE T along the bottom at their boot angles; nothing
+# mirrored. Bit-identical across two runs.
+grep -qE "ACIDBOX_UI_SUM=0xE871BF09\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
 # The all-zero framebuffer, rejected BY NAME: 0x9BC99DC5 is the FNV of 3686400
 # zero bytes.  A blank frame is a real failure mode in this tree
 # (vglite_lvgl_test) and is otherwise indistinguishable from any other mismatch.
@@ -202,7 +257,7 @@ NPOST=$(awk -v s="$STEP_LN" -v c="$CUT_LN" 'NR>s && NR<c && /^ACIDBOX_BAR=/ { n+
 
 # ★ BAR 1 IS NOT A VALID WINDOW.  The transport records boundaries strictly
 # inside (from, to], so it never emits tick 0 at phase 0: step 0 first fires at
-# the loop seam and reads ~0.18 in bar 1 against 0.42+ in every bar after it.
+# the loop seam and reads ~0.18 in bar 1 against 0.40+ in every bar after it.
 # Asserting bar 1 would either fail honestly or invite someone to lower the
 # margin until it passed, which is how a real threshold gets destroyed.
 PRE_N=$(printf '%s\n' "$PRE" | sed 's/^ACIDBOX_BAR=//; s/ .*//')
@@ -247,4 +302,4 @@ grep 'CUTOFF=' "$OUT" | sed 's/.*CUTOFF=//' | awk '
       if (v[i] >= v[i-1]) { printf "FAIL: cutoff not strictly decreasing at sample %d (%.1f >= %.1f)\n", i, v[i], v[i-1]; exit 1 }
   }' || exit 1
 
-echo "PASS: acid box -- boot golden, injected play/edit/drag, step 2 silent before the tap and sounding after"
+echo "PASS: acid box -- boot golden, rotated present + equality guard, injected play/edit/drag, step 2 silent before the tap and sounding after"

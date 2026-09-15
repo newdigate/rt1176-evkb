@@ -17,6 +17,36 @@ gpu-claim tripwired), ACIDBOX_GPU_ERR (gpu-only — its appearance in QEMU is a
 tripwire), and per-bar ACIDBOX_VSYNC fence witnesses (any timeouts!=0 fails by
 name).  The checksum now reads the PRESENTED buffer (flip_sync + scanned_fb),
 never Display.framebuffer() — in db mode that names only one of two buffers.
+RE-RECORDED 2026-09-15 (LANDSCAPE; spec
+docs/superpowers/specs/2026-09-14-acid-box-landscape-design.md, plan Task 10):
+layout C on a LOGICAL 1280x720 frame, presented rotated 90 degrees clockwise on
+the 720x1280 panel through the PXP (lvgl_mipi_panel_create_rotated, a
+damage-grid present whose full-frame threshold is 915456 px, measured on
+silicon by display/pxp_rotate_probe), the GT911 bound through the matching
+rotated indev, and the touch script regenerated for the new geometry (640
+instants).  The boot golden moved 0x25B30A96 → 0xE871BF09 — the checksum still
+reads the PRESENTED buffer, which is now the rotated portrait frame — and the
+frame was dumped and LOOKED AT upright before it was pinned (THE BOOT GOLDEN,
+below).  Two new tokens.  The per-refresh ACIDBOX_ROT witness (boot + per bar):
+the gate trips on errors!=0 on ANY line, and on the LAST line requires full>=2
+(the two forced start-up presents; the boot line shows only the first) and
+ops>full (after start-up every present is per-rect, so the damage path MUST
+have run).  The ACIDBOX_ROT_EQ equality guard: every 16th physical row of the
+presented buffer compared against a CPU rotation of the canvas, at boot and
+after every bar; fail=0 on every line and pass >= bars+1, where us= is the
+guard's own cost and is informational only.  ops/px/us are never pinned — ops
+moved by a present between the runs taken that day (263, 263, 264).
+AUDIO: bars 1, 2 and 4 of the capture below are bit-identical to the
+2026-08-28 capture; bar 3's step 0 reads 0.4147 against 0.4275; the old bar 5
+straddled the drag and is not comparable.  Across three landscape runs a
+handful of SOUNDING cells moved run to run by up to 0.013 (bar 1 step 1
+0.3907/0.3843, bar 4 step 8 0.3883/0.3750), rests moved by at most 0.0001, and
+the whole step-2 column was identical in all three.  That is consistent with
+how the table is built rather than with the DSP: each cell is the PEAK of the
+rms.read() values polled from loop(), credited to whatever step currentStep()
+shows at the poll, so a loop pass delayed by rendering (the rotated present
+and the guard add work per refresh) changes which reads a cell sees.  Every
+movement is far inside the 0.02 / 0.005 margins.
 
 ================================================================================
 WHAT THIS GATE PROVES
@@ -24,7 +54,11 @@ WHAT THIS GATE PROVES
 Touch -> pattern -> SOUND, end to end, in one run:
 
   * the box boots with the right picture (FNV-1a golden over the whole 720x1280
-    XRGB8888 framebuffer, taken before the input device exists),
+    XRGB8888 PRESENTED framebuffer — the logical 1280x720 scene after the CW90
+    PXP present — taken before the input device exists),
+  * every present is right: the rotated pipeline counts no PXP errors, the
+    damage path demonstrably ran, and the equality guard finds the presented
+    buffer equal to the rotated canvas at boot and after every bar,
   * it boots SILENT (no bar line ahead of the play tap),
   * an injected finger presses PLAY and the sequencer starts,
   * an injected finger taps step cell 2 -- a REST in the preset -- and the
@@ -37,8 +71,11 @@ Touch -> pattern -> SOUND, end to end, in one run:
 
 WHAT IT DOES NOT PROVE.  QEMU renders LVGL in software and models the WM8962
 rather than driving one, so nothing here is a statement about the RK055 panel,
-the codec's analogue path, or the GT911 on real glass.  Silicon confirmation is
-owed and is the capstone plan's Task 8.
+the codec's analogue path, or the GT911 on real glass.  The PXP rotation is
+QEMU's model too: display/pxp_rotate_probe measured that model bit-exact
+against silicon, but the landscape acid_box itself has not yet run on the
+board.  Silicon confirmation is owed (capstone plan Task 8 for the portrait
+build; landscape plan Task 12 for this one).
 
 ★ LOCAL-ONLY QEMU DEPENDENCY.  The gestures are injected through qemu2's
 `imxrt.gt911` `touch-script` property, which is not upstream.  A fresh clone
@@ -47,47 +84,74 @@ and the rt1062 half of `usb_descriptor_survey`.  That is the GPL firewall
 working, not a regression.
 
 ================================================================================
-THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-08-28)
+THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-09-15)
 ================================================================================
 ==== captured UART ====
 === BOOT ===
-[APP: acid_box] [VER: v1] [BUILD: Sep 13 2026 12:00:00]
+[APP: acid_box] [VER: v1] [BUILD: Sep 15 2026 11:09:10]
 ACIDBOX_BEGIN
 CODEC_OK
 PANEL_OK
 ACIDBOX_ENGINE=sw
-ACIDBOX_UI_SUM=0x25B30A96
+ACIDBOX_UI_SUM=0xE871BF09
 PLAYING=0
+ACIDBOX_ROT ops=1 full=1 px=921600 us=119252 errors=0
+ACIDBOX_ROT_EQ pass=1 fail=0 us=10905
 I2C_OK
 ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
 ACIDBOX_DONE
 PLAYING=1
 ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3732,0.0001,0.3851,0.4102,0.3934,0.0002,0.3808,0.3704,0.4201,0.3924,0.0002,0.3916]
 ACIDBOX_VSYNC flips=22 isrs=22 timeouts=0
+ACIDBOX_ROT ops=46 full=2 px=2437376 us=316447 errors=0
+ACIDBOX_ROT_EQ pass=2 fail=0 us=11434
 ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3646,0.4297,0.3885,0.0002,0.3876]
 ACIDBOX_VSYNC flips=38 isrs=38 timeouts=0
+ACIDBOX_ROT ops=86 full=2 px=3025152 us=394590 errors=0
+ACIDBOX_ROT_EQ pass=3 fail=0 us=10236
 STEP[2]=note33 gate1 acc0 sld0
-ACIDBOX_BAR=3 RMS=[0.4275,0.3866,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3677,0.3708,0.4237,0.3894,0.0005,0.3879]
+ACIDBOX_BAR=3 RMS=[0.4147,0.3866,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3677,0.3708,0.4237,0.3894,0.0005,0.3879]
 ACIDBOX_VSYNC flips=55 isrs=55 timeouts=0
+ACIDBOX_ROT ops=135 full=2 px=3705344 us=490399 errors=0
+ACIDBOX_ROT_EQ pass=4 fail=0 us=11185
 ACIDBOX_BAR=4 RMS=[0.4292,0.3813,0.3928,0.3753,0.3739,0.0003,0.3823,0.4175,0.3883,0.0002,0.3804,0.3704,0.4288,0.3916,0.0001,0.3879]
 ACIDBOX_VSYNC flips=71 isrs=71 timeouts=0
-CUTOFF=527.8
-CUTOFF=348.3
-CUTOFF=237.3
-CUTOFF=156.6
+ACIDBOX_ROT ops=175 full=2 px=4293120 us=566820 errors=0
+ACIDBOX_ROT_EQ pass=5 fail=0 us=11112
+ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3727,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3887]
+ACIDBOX_VSYNC flips=87 isrs=87 timeouts=0
+ACIDBOX_ROT ops=215 full=2 px=4880896 us=644694 errors=0
+ACIDBOX_ROT_EQ pass=6 fail=0 us=10884
+CUTOFF=639.5
+CUTOFF=511.2
+CUTOFF=408.7
+CUTOFF=326.7
+CUTOFF=252.9
+CUTOFF=202.2
+CUTOFF=161.6
+CUTOFF=129.2
 CUTOFF=103.3
-ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3727,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3877]
-ACIDBOX_VSYNC flips=91 isrs=90 timeouts=0
+ACIDBOX_BAR=6 RMS=[0.4025,0.3893,0.3854,0.3726,0.3738,0.0002,0.3659,0.3860,0.3926,0.0001,0.3975,0.3730,0.3937,0.4018,0.0002,0.3784]
+ACIDBOX_VSYNC flips=107 isrs=107 timeouts=0
+ACIDBOX_ROT ops=263 full=2 px=5606400 us=737822 errors=0
+ACIDBOX_ROT_EQ pass=7 fail=0 us=11196
 
-(Bars 1–4 RMS are bit-identical to the 2026-08-27 capture: the db pipeline and
-the VGLITE-flavor link changed no audio.  Bar 5 straddles the drag, whose
-landing instant moves with render timing between runs — the gate selects its
-pre/post windows dynamically for exactly that reason.  The final vsync witness
-reads flips=91 isrs=90: one flip legitimately in flight at the instant the
-line printed; the gate asserts timeouts=0, never flips==isrs.)
-pre-edit  window: ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,...]
-post-edit window: ACIDBOX_BAR=4 RMS=[0.4292,0.3813,0.3928,...]
-PASS: acid box -- boot golden, injected play/edit/drag, step 2 silent before the tap and sounding after
+(Bar 6 straddles the drag, whose landing instant moves with render timing
+between runs -- the gate selects its pre/post windows dynamically for exactly
+that reason.  The boot rotation witness reads full=1 because the second forced
+full-frame present lands on the next refresh; every per-bar witness reads
+full=2, and ops climbs by ~40-50 a bar, all of them per-rect presents.  The
+guard's pass count is boot + one per bar, 7 after six bars.  Nine drag prints
+from ten samples: the first sample is the press itself and carries no
+movement.  The gate asserts timeouts=0, errors=0 and fail=0 -- never
+flips==isrs, and never a pinned ops, px or us.)
+
+The gate's verdict, printed after the capture (indented here, so that a replay
+of this file as a capture never shows a verdict line of its own):
+
+  pre-edit  window: ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3646,0.4297,0.3885,0.0002,0.3876]
+  post-edit window: ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3727,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3887]
+  PASS: acid box -- boot golden, rotated present + equality guard, injected play/edit/drag, step 2 silent before the tap and sounding after
 
 READ THE THIRD COLUMN, which is step 2:
 
@@ -95,15 +159,18 @@ READ THE THIRD COLUMN, which is step 2:
     bar 2  0.0001   preset rest        <- the gate's pre-edit window
     -------------------------------- STEP[2]=note33 gate1 (the injected tap)
     bar 3  0.0003   the bar the tap landed INSIDE: step 2 had already played
-    bar 4  0.3928   sounding           <- the gate's post-edit window
+    bar 4  0.3928   sounding
+    bar 5  0.3925   sounding           <- the gate's post-edit window
     -------------------------------- the cutoff drag
-    bar 5  0.3925   still sounding at a ~100 Hz filter
+    bar 6  0.3854   still sounding as the filter closes to ~100 Hz
 
 Bar 3 is the reason the gate takes the LAST bar before the drag rather than the
 first bar after the tap, and the reason it insists on seeing at least two of
 them: a bar whose window was already open when the finger landed is not evidence
 either way, and treating it as evidence would make the gate fail intermittently
-for a reason that has nothing to do with the firmware.
+for a reason that has nothing to do with the firmware.  (In the 2026-08-28
+portrait capture the drag landed one bar earlier and the post-edit window was
+bar 4; the gate does not care which.)
 
 MARGINS: sounding > 0.02, rest < 0.005 -- 4x separation between the two
 thresholds, the acid_bass_test convention for float DSP (measured windows with
@@ -113,7 +180,7 @@ steps read 0.36..0.44, which is 18x the sounding floor, and rests read
 to make a run pass.
 
 ★ BAR 1 IS NOT A VALID WINDOW and the capture above shows why: step 0 reads
-0.1843 in bar 1 against 0.42+ in every bar after it.  The transport records
+0.1843 in bar 1 against 0.40+ in every bar after it.  The transport records
 boundaries strictly inside (from, to], so it never emits tick 0 at phase 0 and
 step 0 first fires at the loop seam.  The gate refuses a bar-1 pre-edit window by
 name ("pad 2 too short") instead of lowering the 0.02 floor to accommodate it.
@@ -122,24 +189,33 @@ name ("pad 2 too short") instead of lowering the 0.02 floor to accommodate it.
 THE TOUCH SCRIPT — generated, never hand-counted
 ================================================================================
 Regenerate with exactly this, run from the example directory (this is the block
-that produced the committed touch_script.txt; 636 instants):
+that produced the committed touch_script.txt; 640 instants):
 
   {
     echo "# acid_box gate script -- GENERATED, never hand-counted.  Regenerate with"
-    echo "# the block quoted in run_qemu.sh's header (and in transcript_qemu.txt)."
-    ... header comment lines ...
+    echo "# the block quoted in transcript_qemu.txt (run_qemu.sh's header points there)."
+    echo "#"
+    echo "# One instant per line, IMXRT_GT911_STEP_MS = 20 ms apart.  Percentages are"
+    echo "# of the PHYSICAL 720x1280 panel; each is the CW90 map of a logical target"
+    echo "# in acid_box.cpp's geometry block: physical (px,py) = (719-ly, lx), then"
+    echo "# px*100/720 and py*100/1280, rounded.  The model computes"
+    echo "# res*pct/100 in integers, so P 94 85 -> (676,1088) -> logical (1088,43)."
+    echo "#"
+    echo "# pad 1: 25 instants (~0.5 s); pads 2/3: 300 instants (~2.6 bars at 128 BPM"
+    echo "# under this tree's ~0.81x QEMU audio clock)."
     for i in $(seq 25);  do echo R; done     # pad 1
-    echo "P 80 3"; echo R                    # tap PLAY
+    echo "P 94 85"; echo R                    # tap PLAY        (logical 1090,44)
     for i in $(seq 300); do echo R; done     # pad 2
-    echo "P 31 53"; echo R                   # tap STEP CELL 2
+    echo "P 80 22"; echo R                    # tap STEP CELL 2 (logical 282,146)
     for i in $(seq 300); do echo R; done     # pad 3
-    echo "P 12 13"; echo "P 12 14"; echo "P 12 15"
-    echo "P 12 16"; echo "P 12 17"; echo "P 12 18"
-    echo R                                   # drag CUTOFF down
+    for x in 19 18 17 16 15 14 13 12 11 10; do echo "P $x 7"; done   # drag CUTOFF: logical (91, 583->647), downward
+    echo R
   } > touch_script.txt
 
-(The committed file carries the full header comments; the instants are exactly
-the ones above.  `grep -cE '^(P|R|\.)' touch_script.txt` == 636.)
+(This block reproduces the committed file BYTE FOR BYTE -- cmp'd 2026-09-15,
+header included.  `grep -cE '^(P|R|\.)' touch_script.txt` == 640.  The trailing
+comments name the TARGET centres; the model's integer truncation lands the taps
+at logical (1088,43) and (281,143) and the drag at x 89 -- see GEOMETRY.)
 
 ★ THE CADENCE IS 20 ms, NOT THE 40 ms THE PLAN SAYS.  Read out of the model, not
 assumed: IMXRT_GT911_STEP_MS == 20 in
@@ -157,8 +233,8 @@ that and one audio constant:
     pad 3 = 300 instants ~ 6.0 s   ~ 2.6 bars between the edit and the drag
 
 Confirmed against the run above: the play tap lands, bars 1 and 2 complete, the
-edit lands during bar 3, bars 4 and 5 complete, the drag lands.  Exactly the
-2.6-bar spacing the arithmetic predicts.
+edit lands during bar 3, bars 4 and 5 complete, the drag lands during bar 6.
+Exactly the 2.6-bar spacing the arithmetic predicts.
 
 20 ms is a FLOOR, not a period: imxrt_gt911_tick() refuses to advance while the
 previous instant is unread, so a guest busy with a full-screen software render
@@ -166,41 +242,70 @@ stretches an instant instead of dropping it.  Load can therefore only make the
 pads LONGER in audio time -- more bars in each window -- which is the safe
 direction for every assertion here.  Measured (see "under load" below).
 
-GEOMETRY.  The three tap points are percentages of the 720x1280 panel, derived
-from acid_box.cpp's absolute placement:
+GEOMETRY.  The UI is a LOGICAL 1280x720 frame presented rotated 90 degrees
+clockwise on the 720x1280 panel: logical (lx,ly) sits at physical (719-ly, lx).
+The GT911 model takes percentages of the PHYSICAL panel and computes
+raw = res*pct/100 in integers (res 720x1280), so each tap is a logical target
+from acid_box.cpp's geometry block, mapped to physical and rounded to a whole
+percent -- and then truncated by the model, which is why the landing point is
+not quite the target centre:
 
-    PLAY         pos(540,16) size(70,48)     -> 540..610 x  16..64
-                 (80%, 3%)  = pixel (576, 38)                    inside
-    step cell 2  pos(8+2*88, 640) size(82,82)-> 184..266 x 640..722
-                 (31%, 53%) = pixel (223,678)                    inside
-    CUTOFF knob  pos(15,90) size(150,150)    ->  15..165 x  90..240
-                 (12%, 13%) = pixel ( 86,166)                    inside
+    PLAY         PLAY_X=1040, BAR_Y=20, 100x48           -> 1040..1139 x  20..67
+                 P 94 85 -> raw (676,1088) -> logical (1088, 43)       inside
+    step cell 2  LANE_X0+2*108=232, LANE_Y0=96, 100x100  ->  232..331 x  96..195
+                 P 80 22 -> raw (576, 281) -> logical ( 281,143)       inside
+    CUTOFF knob  KNOB_X0=16, KNOB_Y0=520, 150x150        ->   16..165 x 520..669
+                 P 19 7 .. P 10 7 -> raw (136..72, 89)
+                                  -> logical (89, 583..647)            inside
 
-★ THE DRAG STOPS AT 18% (y=230) ON PURPOSE.  synthui_knob does not set
-LV_OBJ_FLAG_PRESS_LOCK, so LVGL re-runs its hit test on every read while the
-press is held: a sample past the knob's bottom edge (y=240) would hand the press
-to a different object and end the drag as PRESS_LOST with no further CUTOFF
-lines.  1% of the panel is 12.8 px and the widget turns 280 deg per 200 px
-(SYNTHUI_KNOB_DRAG_FULL_PX), so each 1% sample is ~18 deg: five prints, and the
-knob does not reach its end stop, which is what keeps them strictly decreasing
-rather than flattening onto a clamp.
+★ THE DRAG STOPS AT LOGICAL y 647 ON PURPOSE, 22 px inside the knob's bottom
+edge (669).  The knob does not set LV_OBJ_FLAG_PRESS_LOCK, so LVGL re-runs its
+hit test on every read while the press is held: a sample past that edge would
+hand the press to a different object and end the drag as PRESS_LOST with no
+further cutoff prints.  It is a DOWNWARD logical drag (cutoff strictly
+decreasing, the portrait build's assertion unchanged); rotated, it is a
+LEFTWARD raw drag, and the rotated indev makes that invisible to LVGL.  1 % of
+the panel's 720 px short axis is 7.2 raw px, so each sample moves 7 or 8
+logical px; the widget turns 280 deg per 200 px (SYNTHUI_KNOB_DRAG_FULL_PX over
+its explicit ±140 range), ~10 deg a sample and 64 px ~ 90 deg in all -- from
++21.5 deg to about -68 deg, well clear of the -140 end stop, which is what
+keeps the prints strictly decreasing rather than flattening onto a clamp.  The
+portrait build's six 1 % samples of the 1280 px axis covered the same 64 px,
+which is why both drags finish at 103.3 Hz.
 
 ================================================================================
 THE BOOT GOLDEN — the frame was LOOKED AT
 ================================================================================
-ACIDBOX_UI_SUM=0x25B30A96, FNV-1a over the whole 3686400-byte framebuffer
-(re-goldened 2026-08-27 for the synthui_rotary_knob swap; 0xD3BC88D7 was the
-old knob's frame). The 2026-08-27 re-inspection used the same recipe below
-(monitor socket /tmp/rkmon.sock — short, same 104-byte cap) and checked: all
-9 knobs render the notch design (body/inner discs + index wedge) with the
-bounded track arc spanning ±140 with round caps and its gap at 6 o'clock; the
-same boot angles as before (CUTOFF +21.5, RESO +14, ENV MOD +28, DECAY +9,
-ACCENT +56, DIST -98, SUB -84, SLIDE T +7.5; pitch A1 = -35 — verified at 2x
-on CUTOFF and the pitch knob); the well rim (r36..39) light against the dark
-ground with the r39..43 gap showing background, per the DC bounded layout;
-transport bar, editor strip and the 2x8 lane unchanged from the list below.
-The dump's own FNV-1a equals the printed sum (verified again), so the
-inspected image IS this golden's frame.
+The golden is 0xE871BF09 (the boot sum line), FNV-1a over the whole
+3686400-byte PRESENTED framebuffer, re-goldened 2026-09-15 for the landscape
+build: the logical 1280x720 scene after the CW90 PXP present, dumped from a
+no-touch boot with the recipe below (scanned buffer at 0x80684080) and viewed
+upright.  Its FNV-1a equals the printed sum, and that was recomputed two
+independent ways -- over the raw dump, and by mapping the upright PNG back to
+the portrait buffer with X=0 -- so the inspected image IS this golden's frame.
+What the eye checked: "ACID BOX" top-left; -, "128.0", + centred; a PLAY glyph
+(not PAUSE: the box is stopped) and STOP top-right; the 2x8 lane top-left
+matching kPreset cell for cell (bright 0,1,3,4,6,7 / 8,10,11,12,13,15; dark
+rests 2,5,9,14; accent dots on 0,7,12; slide bars on 3,10,15; the white
+selection border on cell 0); the editor beside it -- pitch knob at A1 (-35 deg),
+ACC lit, SLD dark, SAW; the empty reserved band (logical y 308..520); the eight
+sound knobs CUTOFF, RESO, ENV MOD, DECAY, ACCENT, DIST, SUB, SLIDE T along the
+bottom at their boot angles (CUTOFF +21.5, RESO +14, ENV MOD +28, DECAY +9,
+ACCENT +56, DIST -98, SUB -84, SLIDE T +7.5); nothing mirrored -- every label
+reads left to right.  Bit-identical across two gate runs.
+
+History: 0xD3BC88D7 (2026-08-18, the old knob), 0x25B30A96 (2026-08-27, the
+synthui_rotary_knob swap, portrait; it HELD through the 2026-08-28 db
+pipeline).  The 2026-08-27 re-inspection used the same recipe below (monitor
+socket /tmp/rkmon.sock — short, same 104-byte cap) and checked: all 9 knobs
+render the notch design (body/inner discs + index wedge) with the bounded track
+arc spanning ±140 with round caps and its gap at 6 o'clock; the same boot
+angles as before (CUTOFF +21.5, RESO +14, ENV MOD +28, DECAY +9, ACCENT +56,
+DIST -98, SUB -84, SLIDE T +7.5; pitch A1 = -35 — verified at 2x on CUTOFF and
+the pitch knob); the well rim (r36..39) light against the dark ground with the
+r39..43 gap showing background, per the DC bounded layout; transport bar,
+editor strip and the 2x8 lane unchanged from the portrait list below.  The
+dump's own FNV-1a equalled the printed sum then too.
 
 This tree does not record a golden for a frame nobody has seen (the knob pilot's
 clamped arc and the VGLite GPU frame were both perfectly reproducible AND visibly
@@ -211,11 +316,20 @@ wrong), so the frame was dumped out of QEMU's monitor and inspected:
       -global driver=imxrt.gt911,property=touch-script,value=/tmp/notouch.txt \
       -monitor unix:/tmp/acidmon.sock,server,nowait &
   sleep 12
-  printf 'xp/1wx 0x4080820c\n' | nc -U /tmp/acidmon.sock     # -> 0x80100040
-  printf 'pmemsave 0x80100040 0x384000 "/tmp/fb.raw"\n' | nc -U /tmp/acidmon.sock
-  python3 -c "from PIL import Image; \
-    Image.frombytes('RGB',(720,1280),open('/tmp/fb.raw','rb').read(), \
-                    'raw','BGRX',2880).save('/tmp/fb.png')"
+  printf 'xp/1wx 0x4080820c\n' | nc -U /tmp/acidmon.sock     # -> the scanned buffer:
+                                                             #    0x80684080 (2026-09-15);
+                                                             #    0x80100040 (2026-08-18)
+  printf 'pmemsave 0x80684080 0x384000 "/tmp/fb.raw"\n' | nc -U /tmp/acidmon.sock
+  convert -size 720x1280 -depth 8 bgra:/tmp/fb.raw -alpha off -rotate -90 /tmp/fb.png
+
+★ `-rotate -90` UNDOES THE CW90 PRESENT, so the PNG is the upright landscape UI
+(1280x720); without it the picture lies on its side.  ★ `-alpha off` IS
+LOAD-BEARING: the X byte is 0 in the presented buffer, so read as BGRA every
+pixel is fully transparent -- measured, the PNG came out with mean alpha 0 and
+looks blank in a viewer, which is a false "blank frame" scare.  The PIL form of
+the same image: Image.frombytes('RGB',(720,1280),raw,'raw','BGRX',2880)
+.transpose(Image.Transpose.ROTATE_90) -- byte-identical to the convert output,
+checked.
 
 ★ DUMP IT WITH A NO-TOUCH SCRIPT (/tmp/notouch.txt = a comment plus 40 `R`
 lines), and this is not a detail.  With NO touch-script property the model
@@ -231,13 +345,15 @@ bytes; a session scratchpad path blew it and QEMU exited 1 with the whole
 diagnosis in the -D log ("UNIX socket path ... is too long") and nothing on the
 console.  /tmp/acidmon.sock.
 
-VERIFIED (2026-08-18 golden 0xD3BC88D7, and again 2026-08-27 for 0x25B30A96):
-the dump's own FNV-1a equals what the firmware printed, so the inspected image
-IS this golden's frame.  (The same script also reproduces the anti-golden as a
-control: FNV-1a over 3686400 zero bytes is 0x9BC99DC5, the value the gate
-rejects by name.)
+VERIFIED (2026-08-18 golden 0xD3BC88D7, 2026-08-27 for 0x25B30A96, and
+2026-09-15 for 0xE871BF09): the dump's own FNV-1a equals what the firmware
+printed, so the inspected image IS this golden's frame.  (The same script also
+reproduces the anti-golden as a control: FNV-1a over 3686400 zero bytes is
+0x9BC99DC5, the value the gate rejects by name -- recomputed 2026-09-15; the
+buffer size did not change with the rotation.)
 
-WHAT THE EYE CHECKED, at 1x and at 2x on the two knob rows:
+WHAT THE EYE CHECKED in the PORTRAIT frame (2026-08-18 and 2026-08-27), at 1x
+and at 2x on the two knob rows -- kept as history; the landscape list is above:
   * transport bar: "ACID BOX", -, "128.0", +, a PLAY glyph (not PAUSE: the box
     is stopped), STOP.
   * all 8 sound knobs at the boot angles default_patch() implies, in the right
@@ -304,21 +420,46 @@ re-golden repeated case (b) against 0x25B30A96 -> 0x25B30A97: FAIL: UI golden.)
 (d) everything restored:
         PASS: acid box -- boot golden, injected play/edit/drag, step 2 silent before the tap and sounding after
 
+(f) LANDSCAPE, 2026-09-15 -- the rotation guards, each shown to FAIL before it
+    was trusted.  Four replays of THIS file as the capture, through the vacuity
+    suite's fake QEMU (tools/gate-vacuity.test.sh section 15, which runs the
+    same four); the quoted line is the gate's own verdict:
+
+    f1, the file untouched:
+        PASS: acid box -- boot golden, rotated present + equality guard, injected play/edit/drag, step 2 silent before the tap and sounding after
+    f2, every rotation-witness line deleted (what an image that fell back to
+    the portrait create_db path prints):
+        FAIL: rotation present line missing or errors!=0
+    f3, fail=0 -> fail=1 on the FIRST PER-BAR guard line only (pass=2, the
+    damage path; the boot line untouched):
+        FAIL: rotation equality guard failed during the run
+    f4, the boot sum replaced by 0xBADBADBA:
+        FAIL: UI golden
+
+    f3 is the one that matters most: a port that forgets the previous
+    present's damage keeps the boot golden and fails ONLY on the guard
+    (demonstrated in the landscape plan's Task 9 review).
+
 UNDER LOAD.  Re-run with 6 spinners on an 8-core host: PASS, pre-edit window
 bar 2, post-edit window bar 4 (bar 5 idle).  The windows MOVE and the gate does
 not care, which is the point of selecting them by position relative to the
 STEP token rather than by a pinned bar number.  The guards that would fire if a
 pad ever became too short name the pad ("pad 2 too short", "pad 3 too short",
 "the post-edit window is not provably post-edit") rather than failing as a
-mysterious RMS mismatch.
+mysterious RMS mismatch.  (Portrait build, 2026-08-18; not repeated for the
+landscape build.)
 
 ================================================================================
 TIMING BUDGET
 ================================================================================
-Idle wall time 18 s: ~4.5 s boot (panel bring-up + one 720x1280 software render
-+ touch bring-up), then ~13 s of script.  The runner does not sleep a fixed
-window -- it polls for the third CUTOFF line, which is the last scripted
-gesture, then waits 2 s for the tail of the drag.  Ceiling 120 s (240 x 0.5 s),
-QRUN_TIMEOUT 150 s, gate_init's default 600 s backstop above that.  The poll
-also breaks on `kill -0` failing, so a fatal model error costs 0.5 s rather than
-the whole ceiling -- which is what makes proof (c2) above quick.
+Idle wall time 18 s, re-measured 2026-09-15 on the landscape build (host load
+~3.4): boot (panel bring-up, one 1280x720 software render and its full-frame
+rotated present, the equality guard, touch bring-up), then the script; the
+split was not re-measured.  (The portrait build also measured 18 s, ~4.5 s of
+it boot and ~13 s of script.)  The runner
+does not sleep a fixed window -- it polls for the third cutoff print, which is
+in the last scripted gesture, then waits 2 s for the tail of the drag.  Ceiling
+120 s (240 x 0.5 s), QRUN_TIMEOUT 150 s, gate_init's default 600 s backstop
+above that.  The poll also breaks on `kill -0` failing, so a fatal model error
+costs 0.5 s rather than the whole ceiling -- which is what makes proof (c2)
+above quick.

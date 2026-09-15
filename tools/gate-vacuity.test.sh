@@ -822,4 +822,50 @@ else
     echo "SKIP: pxp_rotate_probe vacuity (example or fixture missing)"
 fi
 
+# --- 15. acid_box (landscape present + rotation guards) ----------------------
+# The rotation witnesses are individually meaningless unless each can be shown
+# to FAIL: an image on the portrait create_db path prints no ACIDBOX_ROT line,
+# and a stale region shows up only as a non-zero equality-guard fail count (a
+# port that forgets the previous present's damage -- demonstrated in Task 9's
+# review -- keeps the boot golden and fails ONLY here).
+# ★ The by-name greps are anchored on "^FAIL: ", and that is load-bearing: the
+# gate cats its capture, the capture IS transcript_qemu.txt, and that file's
+# prose quotes all three verdicts (indented) -- so an unanchored grep for
+# "UI golden" matches the GREEN fixture's output and proves nothing.
+ACB="examples/display/acid_box"
+if [ -d "$EVKB/$ACB" ] && [ -f "$EVKB/$ACB/transcript_qemu.txt" ]; then
+    run_gate "$ACB" "run_qemu.sh" "$EVKB/$ACB/transcript_qemu.txt"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_acid_box" $result
+
+    grep -v "^ACIDBOX_ROT " "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_norot.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_norot.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: rotation present line missing" || result=1
+    report "acb_missing_rot_line_fails_by_name" $result
+
+    # ONE failed equality sample on a PER-BAR line (the damage path), not the
+    # boot line.  awk, not `sed 0,/re/` (GNU-only).  cmp guards the mutation
+    # itself: an awk that matched nothing would replay the green fixture.
+    awk '/^ACIDBOX_ROT_EQ pass=2 / && !done { sub(/fail=0/, "fail=1"); done=1 } { print }' \
+        "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_eqfail.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_eqfail.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$ACB/transcript_qemu.txt" "$WORK/acb_eqfail.txt" && result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: rotation equality guard failed during the run" || result=1
+    report "acb_equality_guard_fires" $result
+
+    sed 's|^ACIDBOX_UI_SUM=0x........|ACIDBOX_UI_SUM=0xBADBADBA|' \
+        "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_badsum.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_badsum.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: UI golden" || result=1
+    report "acb_bad_golden_fails_by_name" $result
+else
+    echo "SKIP: acid_box vacuity (example or fixture missing)"
+fi
+
 exit $FAILED

@@ -1,5 +1,5 @@
 # acid_box gate script -- GENERATED, never hand-counted.  Regenerate with
-# the block quoted in run_qemu.sh's header (and in transcript_qemu.txt).
+# the block quoted in transcript_qemu.txt (run_qemu.sh's header points there).
 #
 # One instant per line, IMXRT_GT911_STEP_MS = 20 ms apart.  Percentages are
 # of the PHYSICAL 720x1280 panel; each is the CW90 map of a logical target
