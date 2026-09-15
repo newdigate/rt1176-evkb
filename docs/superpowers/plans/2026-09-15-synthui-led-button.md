@@ -453,7 +453,7 @@ cd $SYNTHUI
 git add src/synthui_led_button_types.h src/synthui_led_button_math.h tests/led_button_test.c tests/run.sh
 git commit -m "synthui_led_button: types, pure layout/damage/palette math and host unit tests (NEW-25)
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -541,7 +541,6 @@ typedef struct {
     bool pressed;      /* the latch */
     bool cue;
     bool disabled;
-    bool lv_pressed;   /* LV_EVENT_PRESSED seen, not yet RELEASED / PRESS_LOST */
 } synthui_led_button_t;
 
 static void led_constructor(const lv_obj_class_t *cls, lv_obj_t *obj);
@@ -574,7 +573,7 @@ static void led_constructor(const lv_obj_class_t *cls, lv_obj_t *obj)
     LV_UNUSED(cls);
     synthui_led_button_t *b = (synthui_led_button_t *)obj;
     b->color = SYNTHUI_LED_BUTTON_RED;
-    b->lit = b->pressed = b->cue = b->disabled = b->lv_pressed = false;
+    b->lit = b->pressed = b->cue = b->disabled = false;
     /* CLICKABLE is the base default and taps are the whole input story;
      * a scrollable key would swallow taps as drags (synthui_step's reasoning). */
     lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
@@ -586,9 +585,13 @@ static void led_destructor(const lv_obj_class_t *cls, lv_obj_t *obj)
     LV_UNUSED(obj);
 }
 
+/* The DRAWN pressed state reads LV_STATE_PRESSED directly, not a flag kept
+ * from events: lv_obj_add_state(obj, LV_STATE_PRESSED) sends no
+ * LV_EVENT_PRESSED, and the spec requires that state to draw exactly like the
+ * latch (the gate scene pins it with key 15). */
 static bool led_drawn_pressed(const synthui_led_button_t *b)
 {
-    return b->pressed || b->lv_pressed;
+    return b->pressed || lv_obj_has_state((const lv_obj_t *)b, LV_STATE_PRESSED);
 }
 
 /* --- geometry helpers: unit-space float rect -> LVGL inclusive area --- */
@@ -642,12 +645,14 @@ static void led_invalidate_press_box(lv_obj_t *obj)
     led_invalidate_rect(obj, &r);
 }
 
-static void led_set_lv_pressed(lv_obj_t *obj, bool v)
+/* A finger went down or came up.  The press box does not depend on the press
+ * state, so the invalidation is correct whether or not the indev has already
+ * flipped LV_STATE_PRESSED when this event arrives; the draw that follows reads
+ * the settled state.  A latched key does not move, so nothing is invalidated. */
+static void led_on_press_edge(lv_obj_t *obj)
 {
-    synthui_led_button_t *b = (synthui_led_button_t *)obj;
-    const bool before = led_drawn_pressed(b);
-    b->lv_pressed = v;
-    if (led_drawn_pressed(b) == before) return;   /* the latch already holds it down */
+    const synthui_led_button_t *b = (const synthui_led_button_t *)obj;
+    if (b->pressed) return;
     led_invalidate_press_box(obj);
 }
 
@@ -660,15 +665,11 @@ static void led_event(const lv_obj_class_t *cls, lv_event_t *e)
     case LV_EVENT_DRAW_MAIN:
         led_draw((synthui_led_button_t *)obj, lv_event_get_layer(e));
         break;
-    /* Transient press: drawn as pressed while the finger is down.  Decided
-     * from the EVENT, not lv_obj_get_state(), so the invalidation does not
-     * depend on whether the base handler has already flipped LV_STATE_PRESSED. */
+    /* Transient press: the key sinks while a finger is down. */
     case LV_EVENT_PRESSED:
-        led_set_lv_pressed(obj, true);
-        break;
     case LV_EVENT_RELEASED:
     case LV_EVENT_PRESS_LOST:
-        led_set_lv_pressed(obj, false);
+        led_on_press_edge(obj);
         break;
     default:
         break;
@@ -805,9 +806,8 @@ void synthui_led_button_set_pressed(lv_obj_t *obj, bool pressed)
     LV_ASSERT_OBJ(obj, MY_CLASS);
     synthui_led_button_t *b = (synthui_led_button_t *)obj;
     if (b->pressed == pressed) return;
-    const bool before = led_drawn_pressed(b);
     b->pressed = pressed;
-    if (led_drawn_pressed(b) == before) return;   /* finger still down: nothing moves */
+    if (lv_obj_has_state(obj, LV_STATE_PRESSED)) return;   /* finger still down: nothing moves */
     led_invalidate_press_box(obj);
 }
 
@@ -877,7 +877,7 @@ cd $SYNTHUI
 git add src/synthui_led_button.h src/synthui_led_button.cpp
 git commit -m "synthui_led_button: LVGL 9 custom widget -- eight-layer sw draw, pressed latch OR'd with LV press, per-box delta invalidation (NEW-25)
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -1298,7 +1298,7 @@ cd $EVKB
 git add examples/display/synthui_led_button_test/CMakeLists.txt examples/display/synthui_led_button_test/synthui_led_button_test.cpp
 git commit -m "synthui_led_button_test: 16-key bank on the db pipeline -- golden, LCG delta sequence over lit/pressed/cue/color, damage engagement, vsync witness, fps phase (NEW-25)
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -1413,7 +1413,7 @@ cd $EVKB
 git add examples/display/synthui_led_button_test/run_qemu.sh examples/display/synthui_led_button_test/transcript_qemu.txt
 git commit -m "synthui_led_button_test: QEMU gate -- golden recorded over two runs, delta equality, engagement bound 10000, vsync witness; RED three ways by name (NEW-25)
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -1498,7 +1498,7 @@ cd $EVKB
 git add tools/gate-vacuity.test.sh tools/license-audit.sh examples/README.md CLAUDE.md
 git commit -m "synthui_led_button_test: vacuity section 15 (3 cases), GATES entry, README row, gate count 140 -> 141 (NEW-25)
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -1556,7 +1556,7 @@ cd $EVKB
 git add evkb.cmake CLAUDE.md
 git commit -m "evkb.cmake: SynthUI pin -> <sha> (synthui_led_button, NEW-25); close-out: sweep 141/141/0, audit PASS, vacuity 58/58, fresh-user gate run on the fetched ELF
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -1598,7 +1598,7 @@ cd $EVKB
 git add examples/display/synthui_led_button_test/transcript_hw_evkb.txt
 git commit -m "synthui_led_button_test: silicon acceptance -- golden 0x........ on three boots, mfps_med=....., fences clean, eyes on glass (NEW-25)
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 Then move NEW-25 to Done in Linear with the transcript's summary as the closing comment.
