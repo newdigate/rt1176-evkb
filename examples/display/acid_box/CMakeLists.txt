@@ -149,6 +149,13 @@ teensy_add_executable(acid_box
     ${_lvgl_dir}/port/lvgl_mipi_panel.cpp
     ${_lvgl_dir}/port/lvgl_gt911_indev.cpp
     ${M2_BT_OUT_SRCS})
+# ITCM margin on EVERY link, not only M2_BT_OUT.  The landscape rework (spec
+# 2026-09-14-acid-box-landscape-design.md) took the DEFAULT build's ITCM headroom
+# from 4,276 B to 836 B in one commit -- the port's rotated present compiles into
+# this executable (no archive routing applies to it) -- and nothing printed it:
+# the NEW-45 floor ASSERT below exists only for M2_BT_OUT links.  A linker flag
+# that only reports; the loadable image is unchanged.
+target_link_options(acid_box.elf PRIVATE -Wl,--print-memory-usage)
 # Audio's own dependency set (Wire/SPI/SdFat/SD/SerialFlash) is named exactly as
 # acid_bass_test names it -- import_evkb_audio_full() creates those targets but
 # does not link them.  Wire covers Wire2 = LPI2C5, shared by the codec and the

@@ -1,5 +1,6 @@
 /* acid_box - the audio+display integration capstone.
  * Spec: docs/superpowers/specs/2026-08-17-acid-box-capstone-design.md
+ * Landscape (layout C): docs/superpowers/specs/2026-09-14-acid-box-landscape-design.md
  * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT
  *
@@ -799,18 +800,39 @@ static_assert((uint32_t)UI_W == PANEL_HEIGHT && (uint32_t)UI_H == PANEL_WIDTH,
  * intervene between the present and this check), so every 16th PHYSICAL row
  * -- which is every 16th LOGICAL column -- is compared against a CPU rotation
  * of the canvas.  Sampled, not exhaustive: it catches any stale region >= 16
- * logical columns wide at ~230 KB of reads; the port's host property test is
- * the exhaustive one.  The formula here is written out on purpose rather than
+ * logical columns wide at ~230 KB of reads per buffer (~460 KB in all, the
+ * presented buffer and the canvas); the port's host property test is the
+ * exhaustive one.  The formula here is written out on purpose rather than
  * calling the port's helper -- a guard that shares the code it checks is not
- * a check. */
-static uint32_t s_rotEqPass = 0, s_rotEqFail = 0;
-static void rot_equality_check(void)
+ * a check.
+ *
+ * WHY NO RENDER CAN INTERVENE: the guard is called only from setup() (after
+ * the boot frame) and from audio_probe_poll(), which loop() and idleUi() run
+ * AFTER lvgl_rt1176_loop() has returned -- never from inside an LVGL
+ * callback -- so LVGL cannot start a refresh into the canvas between the
+ * flip_sync() below and the last compare.
+ *
+ * ITS COST IS A STALL, AND IT IS REPORTED: flip_sync() can wait up to a frame,
+ * then ~57.6 K word reads from each of two SDRAM buffers (~115 K in all), then
+ * a blocking print -- estimated 30-55 ms on silicon, once per bar.  The guard
+ * times itself (us= on the ROT_EQ line: the flip_sync() wait plus the
+ * compares; the print that follows is not inside it) so the stall is visible
+ * in every bench log.  us= is INFORMATIONAL and never gated: QEMU time is
+ * fiction.  The guard is not compiled out anywhere -- the gate ELF is the
+ * silicon ELF.
+ *
+ * ROTWIT_FN puts both functions in FLASH (.progmem, XIP): they run once per
+ * bar and their cost is SDRAM reads, not instruction fetches, and the default
+ * build's ITCM headroom had fallen to 836 B. */
+#define ROTWIT_FN __attribute__((section(".progmem.acid_rotwit"), noinline))
+static uint32_t s_rotEqPass = 0, s_rotEqFail = 0, s_rotEqUs = 0;
+ROTWIT_FN static void rot_equality_check(void)
 {
+    const uint32_t t0 = micros();            /* the flip_sync() wait is part of the cost */
     lvgl_mipi_panel_flip_sync();
     const uint32_t *fb = (const uint32_t *)lvgl_mipi_panel_scanned_fb();
     const uint32_t *cv = (const uint32_t *)lvgl_mipi_panel_canvas();
-    if (!fb || !cv) { s_rotEqFail++; return; }
-    bool ok = true;
+    bool ok = (fb != nullptr) && (cv != nullptr);
     for (uint32_t py = 0; py < PANEL_HEIGHT && ok; py += 16) {
         const uint32_t *row = fb + (size_t)py * PANEL_WIDTH;
         for (uint32_t px = 0; px < PANEL_WIDTH; px++) {
@@ -824,8 +846,9 @@ static void rot_equality_check(void)
         }
     }
     if (ok) s_rotEqPass++; else s_rotEqFail++;
+    s_rotEqUs = micros() - t0;
 }
-static void print_rot_lines(void)
+ROTWIT_FN static void print_rot_lines(void)
 {
     CONSOLE.printf("ACIDBOX_ROT ops=%lu full=%lu px=%lu us=%lu errors=%lu\n",
                    (unsigned long)lvgl_mipi_panel_rot_ops(),
@@ -833,8 +856,9 @@ static void print_rot_lines(void)
                    (unsigned long)lvgl_mipi_panel_rot_px(),
                    (unsigned long)lvgl_mipi_panel_rot_us(),
                    (unsigned long)lvgl_mipi_panel_rot_errors());
-    CONSOLE.printf("ACIDBOX_ROT_EQ pass=%lu fail=%lu\n",
-                   (unsigned long)s_rotEqPass, (unsigned long)s_rotEqFail);
+    CONSOLE.printf("ACIDBOX_ROT_EQ pass=%lu fail=%lu us=%lu\n",
+                   (unsigned long)s_rotEqPass, (unsigned long)s_rotEqFail,
+                   (unsigned long)s_rotEqUs);
 }
 
 /* --- per-step RMS windows, referenced to the SEQUENCER's own position ----- *
@@ -1058,7 +1082,7 @@ static void commit_selected(uint8_t note, bool gate, bool accent, bool slide)
                    gate ? 1 : 0, accent ? 1 : 0, slide ? 1 : 0);
 }
 
-/* Pure VIEW change: moves the editor strip onto step i without touching the
+/* Pure VIEW change: moves the editor onto step i without touching the
  * pattern, so it emits no STEP token.  A rest has note 0 in the preset, which
  * is not a pitch the knob can show -- park it on A1 so the first pitch edit
  * after un-resting starts somewhere musical. */
@@ -1157,8 +1181,16 @@ static void ui_poll(lv_timer_t *t)
     }
 }
 
-static lv_obj_t *mkbtn(lv_obj_t *par, const char *txt, lv_event_cb_t cb,
-                       lv_obj_t **labelOut)
+/* UIBUILD_FN puts the ONE-SHOT scene construction in FLASH (.progmem, XIP):
+ * build_ui() runs once from setup(), and mkbtn()/mkknob() only from build_ui().
+ * noinline is load-bearing -- without it build_ui() inlines into setup(),
+ * which the default build leaves in ITCM.  Nothing touch, the poller or the
+ * audio path drives at run time carries it (the callbacks, ui_poll(),
+ * select_step(), commit_selected() stay in ITCM); the default build's ITCM
+ * headroom had fallen to 836 B with the landscape rework. */
+#define UIBUILD_FN __attribute__((section(".progmem.acid_uibuild"), noinline))
+UIBUILD_FN static lv_obj_t *mkbtn(lv_obj_t *par, const char *txt, lv_event_cb_t cb,
+                                  lv_obj_t **labelOut)
 {
     lv_obj_t *b = lv_button_create(par);
     lv_obj_set_style_bg_color(b, lv_color_hex(0x232b3a), LV_PART_MAIN);
@@ -1169,8 +1201,8 @@ static lv_obj_t *mkbtn(lv_obj_t *par, const char *txt, lv_event_cb_t cb,
     if (labelOut) *labelOut = l;
     return b;
 }
-static lv_obj_t *mkknob(lv_obj_t *scr, int i, const char *name,
-                        float boot01, lv_event_cb_t cb)
+UIBUILD_FN static lv_obj_t *mkknob(lv_obj_t *scr, int i, const char *name,
+                                   float boot01, lv_event_cb_t cb)
 {
     lv_obj_t *k = synthui_rotary_knob_create(scr);
     lv_obj_set_size(k, KNOB_SIZE, KNOB_SIZE);
@@ -1188,7 +1220,7 @@ static lv_obj_t *mkknob(lv_obj_t *scr, int i, const char *name,
     return k;
 }
 
-static lv_obj_t *build_ui(void)
+UIBUILD_FN static lv_obj_t *build_ui(void)
 {
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x101820), LV_PART_MAIN);
