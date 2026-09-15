@@ -270,3 +270,25 @@ unchanged unless the probe reveals a model divergence, which is then documented 
 * **Touch scaling uses the physical panel**; a binding that scaled by the landscape display would put every
   contact ~44 % off along one axis and still "work" for taps near the centre -- the four-corner check in §8.1
   is there to catch exactly that.
+
+## 11. Close-out, measured 2026-09-15
+
+* **Sweep 140 passed, 0 failed, 0 SKIP**, one run, exit 0.  (A first sweep read 136/4: the four self-building
+  Bluetooth gates timed out rebuilding dirs made stale by the `evkb.cmake` pin bump; each passed once rebuilt.)
+* **`LICENSE-AUDIT: PASS`**, 119 manifests.  **Vacuity 55/55.**  Fresh-user: the acid_box gate PASSED on a
+  `-DEVKB_FORCE_FETCH=ON` ELF (LVGL `3037281`), golden `0xE871BF09`.
+* **Silicon, §8** (`examples/display/acid_box/transcript_hw_evkb.txt`, LANDSCAPE):
+  - 8.1 met: upright; all four lane corners, ACC/SLD/SAW/▶/■ correct.
+  - 8.2 met: gpu golden `0x2231070B`, three boots bit-identical; portrait `0x1479CEE8` retired.
+  - 8.3 met: 232 bars, `timeouts=0`, `errors=0`, 233 equality checks `fail=0`.
+  - 8.4 **partly met**: frame interval median 32.9 ms (baseline 32.6); touch p95 median windows 43–49 ms
+    (bound 53.5) but tails 80–112 ms while dragging — a controlled A/B is owed.  PXP present 0.61 ms each.
+  - 8.5 met: no scanout flash in 600+ frames at 60 fps.
+  - 8.6 met: Shokz stream `pcmdrops=0` over 264 s; one 7.4 s air-link credit stall dropped link blocks and
+    recovered.
+* **Deviations from this design, found by review or the bench:** the equality guard (§7) runs INCREMENTALLY
+  (8 rows per loop pass, skipping passes with a flip pending, armed at step 8) because the per-bar version
+  stalled `loop()` 31 ms on silicon; `us=` is its largest single-pass stall.  A PXP error is NOT presented
+  (§5.B said "still flips"); the back buffer alternates unconditionally rather than following
+  `s_db_scanned_fb`.  The planner filters off-frame input before snapping.  Setup-only UI construction, the
+  witnesses and `create_rotated` live in flash to keep ITCM headroom (default build 2,724 B).

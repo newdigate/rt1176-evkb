@@ -106,7 +106,7 @@ There is a dedicated **`cm4-bringup` skill** — use it for any dual-core/CM4
 work in this tree.
 
 **★ Before running `./tools/run-all-qemu-gates.sh`, read
-`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **139 gates** — NEW-41 added ONE on 2026-09-09 (`audio/bt_sink_test`: the EVKB as an A2DP SINK, driven by `hci_peer.py`'s new `source` phase; 138 before it), and before that the SynthUI widget line added SIX on 2026-09-07/08 (`display/synthui_{lamp,level_meter,panel_button,piano_key,seven_segment,slide_toggle}_test`, NEW-24/26/27/28/29/30, one render golden each; 132 before them), and before that NEW-34 piece 5's ONE new gate is
+`docs/KNOWN-BROKEN-GATES.md`.** The sweep covers **140 gates** — the acid_box LANDSCAPE work added ONE on 2026-09-14/15 (`display/pxp_rotate_probe`: the Phase 0 PXP CW90 rotation probe, eleven pointer-offset sub-rect sums pinned and matched bit-for-bit on silicon; 139 before it), and before that NEW-41 added ONE on 2026-09-09 (`audio/bt_sink_test`: the EVKB as an A2DP SINK, driven by `hci_peer.py`'s new `source` phase; 138 before it), and before that the SynthUI widget line added SIX on 2026-09-07/08 (`display/synthui_{lamp,level_meter,panel_button,piano_key,seven_segment,slide_toggle}_test`, NEW-24/26/27/28/29/30, one render golden each; 132 before them), and before that NEW-34 piece 5's ONE new gate is
 `audio/bt_tone_test[soak]` (the unattended connection-resilience soak: ten
 forced drops by a RAW HCI_Disconnect, ten auto-reconnects with the stored key on
 fresh handles, the LOSS-time teardown witness `l2_free_loss_min=5`, clean media
@@ -585,8 +585,8 @@ RT1060 board axis gated `serial/serial_test` on a second board; 80 before Phase
 7.2c added `dualcore/cm4_usb_enum_probe`; 77 before Phase 7.1 added
 `dualcore/cm4_usb_irq_probe`; 75 before Stage C added
 `usb/usb_audio_duplex_test` and the emulated-device gate on
-`usb/usb_descriptor_survey`). The target is **139 passed, 0 failed, 0 SKIP**, or
-**138 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
+`usb/usb_descriptor_survey`). The target is **140 passed, 0 failed, 0 SKIP**, or
+**139 passed, 1 failed, 0 SKIP** when the nondeterministic dual-core gate
 (`cm4_audio_test`) is red.
 
 ★ **That target is for THIS machine.** `display/acid_box` joins the standing
@@ -664,6 +664,55 @@ walk does not spend 30 s paging stale bonds before it inquires.
   limited inquiry from this radio while the phone listed it — unresolved (range
   or LE-only), `M2_BT_INQUIRY_LIAC` exists because of it. The board "Wire not
   connected" that looked like the DAP wedge was the board being switched OFF.
+
+✅ **Measured 2026-09-15: 140 gates discovered, 140 passed, 0 failed, 0 SKIP** (`gates: 140 passed`, exit 0,
+one run), on the **acid_box LANDSCAPE** close-out. `LICENSE-AUDIT: PASS` (119 manifests, `display/pxp_rotate_probe`
+at 106 dep paths, `acid_box` at 25755); vacuity **55/55** (three probe negatives + five acid_box rotation
+negatives); fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the acid_box gate on the GitHub-fetched ELF
+(LVGL `3037281`, golden `0xE871BF09`). Spec `docs/superpowers/specs/2026-09-14-acid-box-landscape-design.md`,
+plan `docs/superpowers/plans/2026-09-14-acid-box-landscape.md`.
+★ **The FIRST sweep read 136/4 and all four reds were a HARNESS state, not a regression** —
+`bt_sink_test` and `bt_tone_test[lifecycle|media|soak]` timed out at exactly 120 s. Those gates BUILD their own
+dirs at gate start, and two things had changed under them (the LVGL pin in `evkb.cmake`, which every build
+includes, and the 09-13 banner commit), so the reconfigure + rebuild ate the budget. Each passed in 13–50 s
+once rebuilt, and the single-run sweep above followed. **Rebuild the self-building gates' dirs before a sweep
+that follows an `evkb.cmake` change**, or read a wall of `exit status 124` for what it is.
+★★ **A sweep through a SHORT-PATH SYMLINK poisons every SELF-BUILDING gate's build dir**, and it surfaced as a
+licence-audit FAIL: `bt_sink_test/build` (and six `build-*` dirs in `bt_tone_test`/`m2_hci_probe`) were
+configured by their gates with `$DIR` = `/tmp/lsx/…`, so the depfiles recorded symlink paths and the audit
+reported them `OUTSIDE SWEPT ROOTS`; the next run from the REAL path would also fail CMake's
+cache-directory check. Fix: `rm -rf` the gate-owned dir and run its gate from the real path (all seven PASS,
+zero symlink caches left, audit PASS). `grep -rl /tmp/<link> examples/*/*/build*/CMakeCache.txt` finds them.
+★ **The landscape present, in one paragraph.** LVGL renders a 1280×720 canvas (DIRECT, one buffer, never
+scanned out) and `lvgl_mipi_panel_create_rotated()` PXP-rotates it CW90 into the off-screen portrait buffer,
+then flips at vsync — the damage of this refresh ∪ the previous present's, 16-px snapped
+(`port/lvgl_panel_rotation.h`, pure, host-tested with a property test and six mutant arms). Rotated ops use
+POINTER-OFFSET surfaces, never `outputAt()`, because **qemu2's PXP model writes a rotated op from the output
+origin and ignores OUT_PS** — the probe made that path identical in QEMU and silicon by construction. Silicon:
+full frame 13.06 ms, 160×160 366 µs, ~5 µs per op → threshold 915,456 px (99.33 % of the frame), 0.61 ms per
+present in practice. **The PXP writes the X byte of a 32-bit output as 0** — every CPU comparison masks the
+canvas to `0x00FFFFFF` and pins byte 3 rather than ignoring it. Reviews caught three real port defects before
+silicon: an off-frame rect snapping inverted (wrapping the uint32 area to 0 beside a 16×16 rect, then reaching
+the port as w = 65520); a back buffer derived from `s_db_scanned_fb` (stale after a flip_sync timeout, it names
+the buffer on the glass AND breaks the two-presents-stale invariant `plan()` depends on — alternate
+unconditionally); and a PXP error still flipping a half-written buffer. Each was shown RED (mutant or
+simulation) before the fix was trusted.
+★ **The bench found what QEMU could not: the equality guard stalled `loop()` 31 ms per bar** (touch p95 tail,
+skipped frames, a risk to BT `pcmdrops`). Now incremental — 8 rows per pass, skipping passes with a flip
+pending via `isrs + timeouts >= flips` (NOT `flips == isrs`, which a flip_sync timeout leaves unequal
+forever; validated against the port's real pending pointer over 5.3 M samples) — 3.3 ms per pass. Silicon
+acceptance (`acid_box/transcript_hw_evkb.txt`, LANDSCAPE): upright, all four lane corners touch-correct, gpu
+golden `0x2231070B` on three boots (portrait `0x1479CEE8` RETIRED), fences clean over 232 bars, no scanout
+flash in 600+ frames at 60 fps, Shokz stream `pcmdrops=0`. **Touch p95 is NOT cleanly met**: median 1 s
+windows 43–49 ms against a 53.5 ms bound, tails 80–112 ms while dragging; the drag prints a `CUTOFF=` line per
+sample in both builds, so a controlled A/B (synthetic wiggle, scripted taps) is owed before calling it.
+★ **ITCM: the NON-BT acid_box builds are now the tight ones** — default 2,724 B, LOOPSTAT 2,580 B, with no
+floor (the NEW-45 2 KB ASSERT exists only for `M2_BT_OUT`), against 11,364 / 11,188 B for the BT builds. Every
+acid_box link now prints `--print-memory-usage`; read it.
+★ **A vacuity negative must match `^FAIL: <message>`, not the bare message**: gates `cat` the whole capture
+into their output and a fixture's prose may quote the verdict text — the green acid_box output contains "UI
+golden" five times, so a bare-text negative could never fail. Sections 7/8/9/14 are not vacuous today, but
+only because their fixtures happen not to quote their messages.
 
 ✅ **Measured 2026-09-10: 139 gates discovered, 139 passed, 0 failed, 0 SKIP** (`gates: 139 passed`,
 exit 0; `-l` reports 139; 23m29s wall), on the **NEW-46 runtime pairing mode** close-out — fully clean, and
