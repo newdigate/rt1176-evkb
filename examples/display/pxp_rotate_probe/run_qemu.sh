@@ -12,9 +12,12 @@
 # waited for -- QEMU time is a fiction; transcript_hw_evkb.txt has the numbers.
 #
 # VACUITY GUARDS COME FIRST.  Every pin below is satisfied VACUOUSLY by an
-# empty or truncated case table, and an unfinished case is exactly how a
-# hung PXP op presents -- so the case_begin count, the case count and the
-# tally line are asserted before any sum is looked at.
+# empty or truncated case table, so the case_begin count, the case count and
+# the tally line are asserted before any sum is looked at.  How a HUNG op
+# actually presents, checked against the driver: a PXP timeout returns
+# PXP_ERR_TIMEOUT, prints pixel=skip and fails the tally; an op that never
+# returns never reaches crc_done, which fails first.  The counts are what catch
+# a case ADDED to the firmware's table without a pin here (12 -> 13).
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
@@ -29,8 +32,10 @@ rm -f "$OUT"
     -display none $(gate_console "$OUT") -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
 # Wait for the LAST line this gate parses (crc_done), never an earlier token
-# -- the m2_rx_demo mid-line-reap lesson.
+# -- the m2_rx_demo mid-line-reap lesson.  `kill -0` leaves the loop as soon as
+# QEMU has died, so an early exit costs 0.25 s instead of the full 50 s.
 for _ in $(seq 1 200); do
+    kill -0 $P 2>/dev/null || break
     [ -f "$OUT" ] && grep -q "^crc_done" "$OUT" 2>/dev/null && break
     sleep 0.25
 done
@@ -41,13 +46,13 @@ echo "==== captured UART ===="; cat "$OUT"
 fail() { echo "FAIL: $1"; exit 1; }
 grep -q "pxp_rotate_probe up" "$OUT" || fail "banner missing"
 grep -q "^PXP_BEGIN=PASS"     "$OUT" || fail "PXP begin"
-grep -q "^crc_done"           "$OUT" || fail "case table never finished (crc_done missing) -- a hung op presents exactly like this"
+grep -q "^crc_done"           "$OUT" || fail "case table never finished (crc_done missing) -- an op that never returned presents exactly like this"
 
 # --- vacuity guards ---------------------------------------------------------
 NB=$(grep -c "^case_begin=" "$OUT" || true)
 NC=$(grep -c "^case="       "$OUT" || true)
 [ "$NB" -eq 12 ] || fail "expected 12 case_begin lines, got $NB"
-[ "$NC" -eq 12 ] || fail "expected 12 case lines, got $NC (an unfinished case is how a hang presents)"
+[ "$NC" -eq 12 ] || fail "expected 12 case lines, got $NC"
 grep -qE "^cases=12 ok=11 broken=0\r?$" "$OUT" || fail "tally line missing or not cases=12 ok=11 broken=0"
 # No GRADED case may be broken; offgrid is an observation and is excluded by name.
 if grep "pixel=broken" "$OUT" | grep -qv "^case=offgrid "; then

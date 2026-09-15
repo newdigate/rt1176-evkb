@@ -806,8 +806,11 @@ if [ -d "$EVKB/$PRP" ] && [ -f "$EVKB/$PRP/transcript_qemu.txt" ]; then
     echo "$OUT_TEXT" | grep -q "missing/wrong: case=knob" || result=1
     report "prp_bad_sum_fails_by_name" $result
 
-    # A truncated case table (a hung op) must fail on the COUNT, not pass on
-    # the cases that did finish.  crc_done is kept so the wait loop returns.
+    # A truncated case table must fail on the COUNT, not pass on the cases
+    # that did finish.  crc_done is kept so the wait loop returns.  (This
+    # proves the case_begin count fires; the awk also drops the case= lines
+    # and the tally, so those two guards are masked here -- the tally is
+    # exercised by the skip/broken replays recorded in Task 2's review.)
     awk '/^case_begin=cell/ { skip=1 } /^crc_done/ { skip=0 } !skip' \
         "$EVKB/$PRP/transcript_qemu.txt" > "$WORK/prp_trunc.txt"
     run_gate "$PRP" "run_qemu.sh" "$WORK/prp_trunc.txt"; rc=$?
