@@ -857,6 +857,18 @@ if [ -d "$EVKB/$ACB" ] && [ -f "$EVKB/$ACB/transcript_qemu.txt" ]; then
     echo "$OUT_TEXT" | grep -q "^FAIL: rotation equality guard failed during the run" || result=1
     report "acb_equality_guard_fires" $result
 
+    # A guard that STOPS after boot: every guard line but the boot one (pass=1)
+    # removed.  The pass-count check alone accepted this (NBARS=0, 1 >= 1); the
+    # one-reaped-bar bound is what must name it.
+    awk '/^ACIDBOX_ROT_EQ / && !/^ACIDBOX_ROT_EQ pass=1 / { next } { print }' \
+        "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_guardstop.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_guardstop.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    [ "$(grep -c '^ACIDBOX_ROT_EQ ' "$WORK/acb_guardstop.txt")" -eq 1 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: equality guard stopped reporting after bar" || result=1
+    report "acb_guard_stops_after_boot_fails_by_name" $result
+
     sed 's|^ACIDBOX_UI_SUM=0x........|ACIDBOX_UI_SUM=0xBADBADBA|' \
         "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_badsum.txt"
     run_gate "$ACB" "run_qemu.sh" "$WORK/acb_badsum.txt"; rc=$?

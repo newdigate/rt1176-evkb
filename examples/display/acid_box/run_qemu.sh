@@ -34,15 +34,20 @@
 # CLOCKWISE on the 720x1280 panel (lvgl_mipi_panel_create_rotated): logical
 # (lx,ly) sits at physical (719-ly, lx).  The GT911 model takes percentages of
 # the PHYSICAL panel and computes raw = res*pct/100 in integers, so each tap
-# below is a logical target from acid_box.cpp's geometry block, mapped, then
-# rounded to a whole percent -- move a widget and the tap moves:
+# below is a logical target from acid_box.cpp's geometry block: its centre,
+# mapped to physical, divided by 7.2 (x) and 12.8 (y), rounded to a whole
+# percent, then truncated by the model -- move a widget and redo ONE line:
 #   ▶            PLAY_X=1040, BAR_Y=20, 100x48 -> logical 1040..1139 x 20..67
-#                P 94 85 -> raw (676,1088) -> logical (1088,43)       ✔ inside
+#                centre (1090,44) -> physical (675,1090) -> 93.75%,85.2%
+#                -> P 94 85 -> raw (676,1088) -> logical (1088,43)    ✔ inside
 #   step cell 2  LANE_X0+2*108=232, LANE_Y0=96, 100x100 -> 232..331 x 96..195
-#                P 80 22 -> raw (576,281)  -> logical (281,143)       ✔ inside
+#                centre (282,146) -> physical (573,282)  -> 79.6%,22.0%
+#                -> P 80 22 -> raw (576,281)  -> logical (281,143)    ✔ inside
 #   CUTOFF knob  KNOB_X0=16, KNOB_Y0=520, 150x150 -> 16..165 x 520..669
-#                P 19 7 ... P 10 7, ten samples at 1 % (7.2 px) steps
-#                -> raw (136..72, 89) -> logical (89, 583..647)       ✔ inside
+#                drag logical (91, 582..647) -> physical (137..72, 91)
+#                -> 19.0%..10.0%, 7.1% -> P 19 7 ... P 10 7, ten samples
+#                at 1 % (7.2 px) steps -> raw (136..72, 89)
+#                -> logical (89, 583..647)                            ✔ inside
 # The drag is a DOWNWARD logical drag (cutoff strictly decreasing, the same
 # assertion as the portrait build); rotated, it is a leftward raw drag.  It
 # stops at logical y 647, 22 px inside the knob's bottom edge, on purpose: the
@@ -111,6 +116,21 @@ fi
 gate_require_capture "$OUT"
 echo "==== captured UART ===="; cat "$OUT"
 
+# THE CAPTURE THE ASSERTIONS PARSE.  The reap can cut the FINAL line mid-token
+# -- a last "ACIDBOX_ROT_EQ pass=7 fail=0 us=" with no digits, or a vsync line
+# ending "timeouts=" -- and every per-line witness check below would then report
+# a named failure the firmware never had.  A final line with no terminator is
+# not evidence either way, so it is dropped here (the $(...) strips a trailing
+# \n, so a complete capture compares empty and is copied whole).  The existence
+# check and the printed capture above used the raw capture; from here on EVERY
+# assertion reads $OUT, which names the parsed copy.  The bare `echo` ends the
+# printed capture's cut line, or the verdict below would be glued onto it
+# (measured: "...fail=0 us=FAIL: ...", which no ^FAIL: reader can see).
+OUTP=$(gate_capture_path "$DIR" acid_box.parse)
+gate_tmp "$OUTP"
+if [ -n "$(tail -c1 "$OUT")" ]; then echo; sed '$d' "$OUT" > "$OUTP"; else cp "$OUT" "$OUTP"; fi
+OUT="$OUTP"
+
 # --- boot: the three subsystems, in the order the firmware brings them up ----
 grep -q "CODEC_OK" "$OUT" || { echo "FAIL: WM8962 codec"; exit 1; }
 grep -q "PANEL_OK" "$OUT" || { echo "FAIL: panel bring-up"; exit 1; }
@@ -146,7 +166,8 @@ grep -E "^ACIDBOX_VSYNC " "$OUT" | grep -vqE "timeouts=0\r?$" \
 # the first; the second lands on the next refresh), and ops>full: the threshold
 # is 915456 px (display/pxp_rotate_probe on silicon, spec section 4.1), so
 # after start-up every present is per-rect and the damage path MUST have run.
-# ops/px/us are never pinned: they vary by a present or two between runs.
+# ops/px/us are never pinned: ops varies by a few presents between runs
+# (263-265 observed).
 grep -qE "^ACIDBOX_ROT ops=[0-9]+ full=[0-9]+ px=[0-9]+ us=[0-9]+ errors=0\r?$" "$OUT" \
     || { echo "FAIL: rotation present line missing or errors!=0"; exit 1; }
 grep -E "^ACIDBOX_ROT " "$OUT" | grep -vqE "errors=0\r?$" \
@@ -173,12 +194,20 @@ EQ_PASS=$(grep -E "^ACIDBOX_ROT_EQ " "$OUT" | tail -1 | tr -d '\r' | sed 's/.*pa
 NBARS=$(awk '/^ACIDBOX_BAR=/ { b++ } /^ACIDBOX_ROT_EQ / { n = b } END { print n + 0 }' "$OUT")
 [ "$EQ_PASS" -ge $((NBARS + 1)) ] \
     || { echo "FAIL: equality guard ran $EQ_PASS times for $NBARS bars + boot"; exit 1; }
+# ...but the reap may cut between ONE bar line and its guard line, never more.
+# Without this bound the check above is satisfied by a guard that STOPS: a
+# capture whose only guard line is the boot one gives NBARS=0 and 1 >= 1, and a
+# guard that stops after bar 2 passes the same way (both replayed in review).
+NBARS_ALL=$(grep -c "^ACIDBOX_BAR=" "$OUT" || true)
+[ "$NBARS" -ge $((NBARS_ALL - 1)) ] \
+    || { echo "FAIL: equality guard stopped reporting after bar $NBARS of $NBARS_ALL"; exit 1; }
 
 # --- the boot frame ----------------------------------------------------------
 # GOLDEN — FNV-1a over the whole 720x1280 XRGB8888 framebuffer, taken before the
 # indev exists, so it is a statement about the SCENE and nothing about touch.
-# Since the landscape build that framebuffer is the PRESENTED one: the logical
-# 1280x720 scene after the CW90 PXP present, still 3686400 bytes.
+# It has read the PRESENTED buffer since the 2026-08-28 db pipeline; what the
+# landscape build changed is that the presented buffer is ROTATED -- the
+# logical 1280x720 scene after the CW90 PXP present, still 3686400 bytes.
 #
 # ★ THE FRAME BEHIND THIS GOLDEN WAS LOOKED AT, not merely reproduced: dumped
 # out of QEMU's monitor with pmemsave and eyeballed (capstone Task 5, and
@@ -200,8 +229,8 @@ NBARS=$(awk '/^ACIDBOX_BAR=/ { b++ } /^ACIDBOX_ROT_EQ / { n = b } END { print n 
 # AT: notch rotors, bounded track arcs, boot angles verified against the
 # preset (CUTOFF +21.5deg, pitch A1 at -35deg). Bit-identical across two runs.
 # Re-goldened 2026-09-15 (LANDSCAPE, spec 2026-09-14): layout C presented CW90
-# through the PXP; the golden now checksums the PRESENTED, rotated portrait
-# buffer. The scanned buffer was pmemsaved from a no-touch boot, its FNV
+# through the PXP; the golden still checksums the presented buffer, which is
+# now the rotated portrait frame. The scanned buffer was pmemsaved from a no-touch boot, its FNV
 # recomputed to the same value, and viewed upright: "ACID BOX" top-left,
 # -/128.0/+ centred, PLAY/STOP top-right; the 2x8 lane top-left matching the
 # preset (accent dots 0,7,12; slide bars 3,10,15; rests 2,5,9,14 dark; cell 0
@@ -257,8 +286,10 @@ NPOST=$(awk -v s="$STEP_LN" -v c="$CUT_LN" 'NR>s && NR<c && /^ACIDBOX_BAR=/ { n+
 
 # ★ BAR 1 IS NOT A VALID WINDOW.  The transport records boundaries strictly
 # inside (from, to], so it never emits tick 0 at phase 0: step 0 first fires at
-# the loop seam and reads ~0.18 in bar 1 against 0.40+ in every bar after it.
-# Asserting bar 1 would either fail honestly or invite someone to lower the
+# the loop seam and reads 0.1843 in bar 1 in every run, idle or loaded.  Later
+# bars read 0.40+ on an idle host but only 0.25+ on a loaded one, because step 0
+# is also the cell right after the bar seam's polling stall (see MARGINS below)
+# -- the tick-0 shortfall is structural, the stall is not.  Asserting bar 1 would either fail honestly or invite someone to lower the
 # margin until it passed, which is how a real threshold gets destroyed.
 PRE_N=$(printf '%s\n' "$PRE" | sed 's/^ACIDBOX_BAR=//; s/ .*//')
 [ "$PRE_N" -ge 2 ] || { echo "FAIL: pre-edit window is bar $PRE_N -- bar 1 is the transport's tick-0 outlier, pad 2 too short"; exit 1; }
@@ -271,8 +302,15 @@ echo "post-edit window: $POST"
 # MARGINS: sounding > 0.02, rest < 0.005 -- a 4x separation between the two
 # thresholds, the acid_bass_test convention for float DSP (windows with margin,
 # never bit-goldens).  Measured room either side is far larger: gated steps read
-# 0.36..0.44 (18x the sounding floor) and rests read 0.0001..0.0006 (8x under the
-# rest ceiling).  Neither number may be moved to make a run pass.
+# 0.25..0.43 (12x the sounding floor) and rests read 0.0001..0.0006 (8x under the
+# rest ceiling).  ★ THE LOW END IS STEP 0 ON A LOADED HOST, and it moves: each
+# cell is the PEAK of RMS reads polled from loop(), and at the 15->0 seam the
+# table is cleared, then the BAR/VSYNC prints and the equality guard run before
+# polling resumes -- so step 0 loses however many reads that stall covers.  Idle
+# it read 0.40+ in every run; under 6 spinners it read 0.2556, 0.3205 and, in
+# the PRE-EDIT window (an asserted cell), 0.2578.  Every other gated step read
+# 0.35+.  (Numbers and runs: transcript_qemu.txt.)  Neither threshold may be
+# moved to make a run pass.
 
 # The untouched preset, in the pre-edit window: every gated step sounds, every
 # rest is silent.  Twelve gated indices and four rests -- a stuck voice, a

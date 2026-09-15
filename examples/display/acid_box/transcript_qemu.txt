@@ -27,26 +27,43 @@ rotated indev, and the touch script regenerated for the new geometry (640
 instants).  The boot golden moved 0x25B30A96 → 0xE871BF09 — the checksum still
 reads the PRESENTED buffer, which is now the rotated portrait frame — and the
 frame was dumped and LOOKED AT upright before it was pinned (THE BOOT GOLDEN,
-below).  Two new tokens.  The per-refresh ACIDBOX_ROT witness (boot + per bar):
+below).  Two new tokens.  The ACIDBOX_ROT witness, printed at boot and per bar:
 the gate trips on errors!=0 on ANY line, and on the LAST line requires full>=2
 (the two forced start-up presents; the boot line shows only the first) and
 ops>full (after start-up every present is per-rect, so the damage path MUST
 have run).  The ACIDBOX_ROT_EQ equality guard: every 16th physical row of the
 presented buffer compared against a CPU rotation of the canvas, at boot and
-after every bar; fail=0 on every line and pass >= bars+1, where us= is the
-guard's own cost and is informational only.  ops/px/us are never pinned — ops
-moved by a present between the runs taken that day (263, 263, 264).
-AUDIO: bars 1, 2 and 4 of the capture below are bit-identical to the
-2026-08-28 capture; bar 3's step 0 reads 0.4147 against 0.4275; the old bar 5
-straddled the drag and is not comparable.  Across three landscape runs a
-handful of SOUNDING cells moved run to run by up to 0.013 (bar 1 step 1
-0.3907/0.3843, bar 4 step 8 0.3883/0.3750), rests moved by at most 0.0001, and
-the whole step-2 column was identical in all three.  That is consistent with
-how the table is built rather than with the DSP: each cell is the PEAK of the
-rms.read() values polled from loop(), credited to whatever step currentStep()
-shows at the poll, so a loop pass delayed by rendering (the rotated present
-and the guard add work per refresh) changes which reads a cell sees.  Every
-movement is far inside the 0.02 / 0.005 margins.
+after every bar; fail=0 on every line, pass >= bars+1, and the guard lines may
+stop short of the bar lines by ONE bar (the reap) and never more — a guard that
+stopped after boot passed the pass count alone; us= is the guard's own cost and
+is informational only.  ops/px/us are never pinned — ops varies by a few
+presents between runs (263–265 observed).
+AUDIO — THE RMS TABLE IS NOT RUN-TO-RUN STABLE AT STEP 0, and the first account
+of this recording ("up to 0.013") was wrong.  Measured:
+  * idle host, five runs: step 0 of bars 2–5 read 0.4244 / 0.4147 / 0.4292 /
+    0.4182 in all five, bit-identical; bars 1, 2 and 4 of the capture below are
+    bit-identical to the 2026-08-28 capture (bar 3 step 0 reads 0.4147 against
+    0.4275; the old bar 5 straddled the drag).  Away from step 0 a few cells
+    moved by up to 0.013 between those runs (bar 4 step 8 0.3883/0.3750).
+  * the Task 10 review, four runs: bar 4 step 0 read 0.3205 in three of them
+    and 0.4292 otherwise, and bar 5 step 0 0.4182 / 0.3850 — a ~0.11 swing.
+  * 6 spinners on 8 CPUs, three runs: bar 4 step 0 read 0.2556 / 0.3205 /
+    0.3205, bar 5 step 0 0.4182 / 0.2885 / 0.4182, and bar 2 step 0 — the
+    PRE-EDIT WINDOW, an ASSERTED cell (every gated step there must exceed 0.02)
+    — read 0.4244 / 0.2578 / 0.3188.  Step 1 dipped too, as low as 0.3524.
+The mechanism the code supports: each cell is the PEAK of the rms.read() values
+polled from loop(), credited to whatever step currentStep() shows at the poll.
+At the 15->0 seam the table is cleared and then the bar and vsync lines are
+printed and the equality guard runs (flip_sync + ~115 K SDRAM reads) before
+polling resumes, so step 0 — the accented cell right after that stall — loses
+however many reads the stall covers, and step 1 when it runs long.  The
+guard's own us= does NOT predict the reading on its own: in the first loaded
+run, 23.7 ms and 22.0 ms guards preceded normal step-0 readings and a 24.1 ms
+guard preceded the 0.2556; the stall also includes the pass that detected the
+seam and the prints.  What does not move: step 2 in the post-edit window read
+0.3928 (bar 4) or 0.3925 (bar 5) in every run, and every rest in these eight
+runs stayed at or under 0.0005.  The lowest gated reading anywhere is 0.2556,
+12x the 0.02 sounding floor; neither threshold was moved.
 
 ================================================================================
 WHAT THIS GATE PROVES
@@ -175,12 +192,17 @@ bar 4; the gate does not care which.)
 MARGINS: sounding > 0.02, rest < 0.005 -- 4x separation between the two
 thresholds, the acid_bass_test convention for float DSP (measured windows with
 margin, never bit-goldens).  The measured room either side is far larger: gated
-steps read 0.36..0.44, which is 18x the sounding floor, and rests read
-0.0001..0.0006, which is 8x under the rest ceiling.  Neither number may be moved
-to make a run pass.
+steps read 0.25..0.43, which is 12x the sounding floor, and rests read
+0.0001..0.0006, which is 8x under the rest ceiling.  The low end is STEP 0 on a
+loaded host (0.2556; the header's AUDIO note has every reading and the seam
+stall behind it) -- idle, step 0 reads 0.40+ and every other gated step 0.35+
+under any load measured.  Neither number may be moved to make a run pass.
 
 ★ BAR 1 IS NOT A VALID WINDOW and the capture above shows why: step 0 reads
-0.1843 in bar 1 against 0.40+ in every bar after it.  The transport records
+0.1843 in bar 1 -- in every run, idle or loaded -- against 0.40+ in every later
+bar on an idle host and 0.25+ on a loaded one (step 0 is also the cell the bar
+seam's polling stall lands on; the tick-0 shortfall is structural, the stall is
+not).  The transport records
 boundaries strictly inside (from, to], so it never emits tick 0 at phase 0 and
 step 0 first fires at the loop seam.  The gate refuses a bar-1 pre-edit window by
 name ("pad 2 too short") instead of lowering the 0.02 floor to accommodate it.
@@ -251,12 +273,19 @@ percent -- and then truncated by the model, which is why the landing point is
 not quite the target centre:
 
     PLAY         PLAY_X=1040, BAR_Y=20, 100x48           -> 1040..1139 x  20..67
-                 P 94 85 -> raw (676,1088) -> logical (1088, 43)       inside
+                 centre (1090,44) -> physical (675,1090) -> 93.75%, 85.2%
+                 -> P 94 85 -> raw (676,1088) -> logical (1088, 43)    inside
     step cell 2  LANE_X0+2*108=232, LANE_Y0=96, 100x100  ->  232..331 x  96..195
-                 P 80 22 -> raw (576, 281) -> logical ( 281,143)       inside
+                 centre (282,146) -> physical (573, 282) -> 79.6%, 22.0%
+                 -> P 80 22 -> raw (576, 281) -> logical ( 281,143)    inside
     CUTOFF knob  KNOB_X0=16, KNOB_Y0=520, 150x150        ->   16..165 x 520..669
-                 P 19 7 .. P 10 7 -> raw (136..72, 89)
-                                  -> logical (89, 583..647)            inside
+                 drag logical (91, 582..647) -> physical (137..72, 91)
+                 -> 19.0%..10.0%, 7.1% -> P 19 7 .. P 10 7
+                 -> raw (136..72, 89) -> logical (89, 583..647)        inside
+
+(physical (px,py) = (719-ly, lx); percent = px/7.2 and py/12.8, rounded; the
+model's raw = res*pct/100 truncates, and logical = (raw_y, 719-raw_x).  Move a
+widget and only its line changes.)
 
 ★ THE DRAG STOPS AT LOGICAL y 647 ON PURPOSE, 22 px inside the knob's bottom
 edge (669).  The knob does not set LV_OBJ_FLAG_PRESS_LOCK, so LVGL re-runs its
@@ -435,10 +464,22 @@ re-golden repeated case (b) against 0x25B30A96 -> 0x25B30A97: FAIL: UI golden.)
         FAIL: rotation equality guard failed during the run
     f4, the boot sum replaced by 0xBADBADBA:
         FAIL: UI golden
+    f5, every guard line removed except the boot one (pass=1) -- a guard that
+    STOPS.  The first version of the pass-count check PASSED this (no bar sat
+    before the last guard line, so it asked for 1 >= 1); the one-reaped-bar
+    bound added in review is what names it:
+        FAIL: equality guard stopped reporting after bar 0 of 6
 
     f3 is the one that matters most: a port that forgets the previous
     present's damage keeps the boot golden and fails ONLY on the guard
     (demonstrated in the landscape plan's Task 9 review).
+
+    f6, the other direction -- a reap that cuts the FINAL line mid-token must
+    NOT fail.  The bare capture with its last guard line cut to "pass=7 fail=0
+    us=" and no newline, and separately cut inside the last vsync line at
+    "timeouts=": both PASS.  The gate before this fix failed both, by the wrong
+    name ("rotation equality guard failed during the run", "vsync fence timed
+    out during the run"), glued onto the cut line itself.
 
 UNDER LOAD.  Re-run with 6 spinners on an 8-core host: PASS, pre-edit window
 bar 2, post-edit window bar 4 (bar 5 idle).  The windows MOVE and the gate does
@@ -446,8 +487,11 @@ not care, which is the point of selecting them by position relative to the
 STEP token rather than by a pinned bar number.  The guards that would fire if a
 pad ever became too short name the pad ("pad 2 too short", "pad 3 too short",
 "the post-edit window is not provably post-edit") rather than failing as a
-mysterious RMS mismatch.  (Portrait build, 2026-08-18; not repeated for the
-landscape build.)
+mysterious RMS mismatch.  (Portrait build, 2026-08-18.)  LANDSCAPE, 2026-09-15:
+the Task 10 review ran it twice under 6 spinners on 8 CPUs, PASS both times;
+three more loaded runs the same day also PASSED, with pre-edit window bar 2
+every time and post-edit window bar 5, bar 4 and bar 5 -- and those runs are
+where the step-0 readings in the header's AUDIO note come from.
 
 ================================================================================
 TIMING BUDGET
