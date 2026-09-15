@@ -667,11 +667,16 @@ walk does not spend 30 s paging stale bonds before it inquires.
   or LE-only), `M2_BT_INQUIRY_LIAC` exists because of it. The board "Wire not
   connected" that looked like the DAP wedge was the board being switched OFF.
 
-✅ **Measured 2026-09-15 (evening): 141 gates discovered, 141 passed, 0 failed, 0 SKIP** (`gates: 141 passed`,
-exit 0; `-l` reports 141; 23m45s wall), on the **NEW-25 SynthUI LedButton** close-out -- fully clean, no red to
+✅ **Measured 2026-09-16: 141 gates discovered, 141 passed, 0 failed, 0 SKIP** (`gates: 141 passed`,
+exit 0; `-l` reports 141; 23m42s wall -- re-measured after the final-review fixes moved the example; an
+identical 141/141/0 ran hours earlier on the pre-fix tree), on the **NEW-25 SynthUI LedButton** close-out -- fully clean, no red to
 disposition, the new `display/synthui_led_button_test` green in 20 s on its first sweep. `LICENSE-AUDIT: PASS`
-after the sweep (120 manifests; the new example walked at 24703 dep paths); vacuity **61/61** (six led_button
-cases). SynthUI pushed (`b599ae1`) and pinned; fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the gate
+after the sweep (120 manifests; the new example walked at 24703 dep paths); vacuity **62/62** (SEVEN led_button
+cases).
+★ **A vacuity run that ABORTS mid-suite reads like a regression and is not one.** One run died at 21 PASS with
+`absent_capture_fails_reconnect_gate` red and then `$WORK/recon_noreload.txt: No such file or directory` -- two
+suite runs overlapping, each mktemp'ing its own dir and one cleaning up under the other. The same case is green
+alone. One suite at a time, like the sweep. SynthUI pushed (`b599ae1`) and pinned; fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the gate
 on the GitHub-fetched ELF (the configure log shows the clone at `b599ae1`). Every SynthUI-linking build dir and
 every SELF-BUILDING gate dir was rebuilt before the sweep, because a pin change makes those reconfigure inside
 their 120 s gate budget.
@@ -705,6 +710,16 @@ and the FINAL state, which draws combinations the first never does (disabled+pre
 events draws such a key unpressed; the draw reads the live LVGL state instead. `disabled` follows
 `LV_STATE_DISABLED` like the sibling widgets (the indev gates input on that state, not on `CLICKABLE`, so a key
 disabled mid-press would otherwise still deliver CLICKED). `LV_EVENT_INDEV_RESET` repaints a held key.
+★★ **THE WIDGET'S PRESS-EDGE REPAINT HAD NO COVERAGE ANYWHERE, and it is the part the acid_box selection model
+leans on hardest.** LVGL does NOT repaint a style-less widget when its state changes (`update_obj_state` returns
+early on `LV_STYLE_STATE_CMP_SAME`), so the class's own `LV_EVENT_RELEASED`/`PRESS_LOST` invalidation is the ONLY
+thing that raises a key when the finger lifts -- and deleting that branch left every host test, the golden, the
+delta guard and the sweep green. No `synthui_*_test` example in this tree creates an indev at all. The example now
+scripts its own `lv_indev_t` (no qemu2 dependency) and presses then releases key 12 in the tail; the mutant with
+that branch deleted now fails `delta_eq` by name. ★ The key must be UNLATCHED first: `led_on_press_edge` returns
+early when the latch is set, so a press on a latched key is a no-op for the right reason and proves nothing --
+clearing key 12's latch is what makes the step a real test, and it is why the final-state golden moved to
+`0x463C3371` (the mutant's checksum comes back as the OLD golden, which is the cleanest possible confirmation).
 ★ **Consumer next**: `docs/superpowers/specs/2026-09-15-acid-box-synthui-editor-design.md` -- the acid_box step
 lane, ACC/SLD keys, a seven-segment step readout and prev/next panel buttons, which is why the widget has a
 `pressed` LATCH at all (the edit cursor is a held key).
