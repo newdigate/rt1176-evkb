@@ -31,7 +31,6 @@
  * The CPU reference below is DELIBERATELY independent of the port's
  * lvgl_panel_rotation.h: the two are cross-checks, not one function twice. */
 #include <Arduino.h>
-#include <string.h>
 #include <PXP.h>
 
 #define CONSOLE Serial1
@@ -136,13 +135,20 @@ static const Case kCases[] = {
 };
 #define NCASES ((int)(sizeof(kCases) / sizeof(kCases[0])))
 
-static uint32_t time_rect(int x, int y, int w, int h, int reps)
+/* min-of-N, EXCLUDING failed reps: a timed-out rep leaves CTRL.ENABLE set, so
+ * the next rep's run() returns PXP_ERR_BUSY in single-digit microseconds --
+ * folding that into the min would report a fast FAILURE as the measurement.
+ * *errs counts the excluded reps; if every rep fails, best stays 0xFFFFFFFF
+ * and errs names why. */
+static uint32_t time_rect(int x, int y, int w, int h, int reps, uint32_t *errs)
 {
     uint32_t best = 0xFFFFFFFFu;
+    *errs = 0;
     for (int r = 0; r < reps; r++) {
         const uint32_t t0 = micros();
-        (void)rot_rect(x, y, w, h);
+        const PXPError e = rot_rect(x, y, w, h);
         const uint32_t dt = micros() - t0;
+        if (e != PXP_OK) { (*errs)++; continue; }
         if (dt < best) best = dt;
     }
     return best;
@@ -169,20 +175,33 @@ void setup()
         CONSOLE.printf("case_begin=%s\n", c.id);
         fill_dst();
         const PXPError e = rot_rect(c.x, c.y, c.w, c.h);
-        const bool pix = (e == PXP_OK) && check_rect(c.x, c.y, c.w, c.h);
+        /* skip: the driver errored, so the predicate never ran -- distinct
+         * from broken (predicate ran and found the wrong picture).  Printing
+         * broken here would read as "the rotation is wrong" when the truth
+         * is "the op never happened". */
+        const bool skip = (e != PXP_OK);
+        const bool pix = !skip && check_rect(c.x, c.y, c.w, c.h);
         const uint32_t sum = fnv1a(dst, (size_t)PHYS_W * PHYS_H * BPP);
         CONSOLE.printf("case=%s api=", c.id);
         if (e == PXP_OK) CONSOLE.print("ok"); else { CONSOLE.print("err"); CONSOLE.print((int)e); }
-        CONSOLE.printf(" pixel=%s sum=0x%08lX\n", pix ? "ok" : "broken", (unsigned long)sum);
+        CONSOLE.printf(" pixel=%s sum=0x%08lX\n",
+                       skip ? "skip" : (pix ? "ok" : "broken"), (unsigned long)sum);
+        /* Tally: a graded skip counts as broken here (pix is false for both
+         * skip and a failed predicate), never as ok -- a driver error must
+         * not silently pass the case it prevented from being checked. */
         if (c.graded) { if (pix) ok++; else broken++; }
     }
     CONSOLE.printf("cases=%d ok=%d broken=%d\n", NCASES, ok, broken);
     CONSOLE.println("crc_done");
 
     /* Phase B -- silicon only.  Min of 8, icache_bench_hw's convention. */
-    CONSOLE.printf("time=full min_us=%lu\n",    (unsigned long)time_rect(0, 0, LOG_W, LOG_H, 8));
-    CONSOLE.printf("time=rect160 min_us=%lu\n", (unsigned long)time_rect(16, 512, 160, 160, 8));
-    CONSOLE.printf("time=rect16 min_us=%lu\n",  (unsigned long)time_rect(640, 352, 16, 16, 8));
+    uint32_t errs;
+    uint32_t us = time_rect(0, 0, LOG_W, LOG_H, 8, &errs);
+    CONSOLE.printf("time=full min_us=%lu errs=%lu\n", (unsigned long)us, (unsigned long)errs);
+    us = time_rect(16, 512, 160, 160, 8, &errs);
+    CONSOLE.printf("time=rect160 min_us=%lu errs=%lu\n", (unsigned long)us, (unsigned long)errs);
+    us = time_rect(640, 352, 16, 16, 8, &errs);
+    CONSOLE.printf("time=rect16 min_us=%lu errs=%lu\n", (unsigned long)us, (unsigned long)errs);
     CONSOLE.println("probe_done");
 }
 
