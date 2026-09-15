@@ -368,6 +368,9 @@ fi
 # pixel= predicate above.  Recorded from the first QEMU run after every graded
 # case read pixel=ok; on a mismatch work out which of {probe geometry, PXP
 # driver, QEMU model} moved -- never paste in whatever the run printed.
+# ★ EVERY SUM ENDS IN C5, and that is FNV-1a, not a bug: the low k bits of the
+# hash depend only on the low k bits of each input byte, and the offset basis
+# ends in 0xC5.  The pins carry ~24 bits; do not chase the shared suffix.
 for want in \
   "case=full api=ok pixel=ok sum=0xFULLSUM" \
   "case=corner-tl api=ok pixel=ok sum=0xTLSUM" \
@@ -383,7 +386,7 @@ for want in \
     grep -qF "$want" "$OUT" || fail "missing/wrong: $want"
 done
 # P5 is an observation: the line must exist with a legal shape, any verdict.
-grep -qE "^case=offgrid api=(ok|err[0-9]+) pixel=(ok|broken) sum=0x[0-9A-F]{8}\r?$" "$OUT" \
+grep -qE "^case=offgrid api=(ok|err[0-9]+) pixel=(ok|broken|skip) sum=0x[0-9A-F]{8}\r?$" "$OUT" \
     || fail "offgrid observation line missing"
 
 echo "PASS: pxp_rotate_probe -- 11 graded rotations pixel-exact, offgrid observed"
@@ -512,9 +515,9 @@ Stop after `probe_done` plus a few `hb=` lines. Press SW4 once more with the rea
 tr -d '\r\000' < transcript_hw_evkb.txt | grep -E "^case=|^cases=|^time="
 ```
 Record in the transcript header, one line each:
-* P4: every graded case `pixel=ok` on both boots, sums identical between boots, and each sum IDENTICAL to the QEMU pin in `run_qemu.sh` (the pattern is deterministic, so they must be). Any `pixel=broken` on a graded case = **P4 FAILS: stop here, go to spec §4's third branch** (the GC355 blit); do not continue to Task 9.
+* P4: every graded case `pixel=ok` on both boots, sums identical between boots, and each sum IDENTICAL to the QEMU pin in `run_qemu.sh` (the pattern is deterministic, so they must be). Any `pixel=broken` on a graded case = **P4 FAILS: stop here, go to spec §4's third branch** (the GC355 blit); do not continue to Task 9. A `pixel=skip` is NOT a P4 verdict — it means the driver returned an error (`api=errN`) and the pixels were never judged: diagnose the error (`PXPError` enum in `~/Development/PXP/PXP.h`) and re-run before deciding anything.
 * P5: what `case=offgrid` reported (`api=`, `pixel=`).
-* P1/P2/P3: `time=full`, `time=rect160`, `time=rect16` in µs (min of 8), from both boots.
+* P1/P2/P3: `time=full`, `time=rect160`, `time=rect16` in µs (min of the reps that returned `PXP_OK`), from both boots. **Refuse any `time=` line with `errs=` non-zero** — a failed rep returns in microseconds and would otherwise be reported as the fastest measurement.
 
 - [ ] **Step 3: Decide the threshold — write the arithmetic into the spec's new §4.1**
 
@@ -1626,8 +1629,12 @@ static void rot_equality_check(void)
     for (uint32_t py = 0; py < PANEL_HEIGHT && ok; py += 16) {
         const uint32_t *row = fb + (size_t)py * PANEL_WIDTH;
         for (uint32_t px = 0; px < PANEL_WIDTH; px++) {
-            /* physical (px,py) reads logical (py, PANEL_WIDTH-1-px) */
-            const uint32_t want = cv[(size_t)(PANEL_WIDTH - 1 - px) * (size_t)UI_W + py];
+            /* physical (px,py) reads logical (py, PANEL_WIDTH-1-px).  The
+             * PXP writes the X byte of a 32-bit output as 0 (silicon,
+             * lvgl_pxp_copy_bench transcript; modelled in QEMU), so the
+             * reference is masked to RGB and the presented byte 3 is PINNED
+             * to 0 -- pxp_rotate_probe's ref_px makes the same decision. */
+            const uint32_t want = cv[(size_t)(PANEL_WIDTH - 1 - px) * (size_t)UI_W + py] & 0x00FFFFFFu;
             if (row[px] != want) { ok = false; break; }
         }
     }
