@@ -1,18 +1,18 @@
 === BOOT ===
-[APP: synthui_led_button_test] [VER: v1] [BUILD: Sep 15 2026 20:15:23]
+[APP: synthui_led_button_test] [VER: v1] [BUILD: Sep 15 2026 23:57:58]
 SYNTHUI_LED_BUTTON_BEGIN
 PANEL_OK
 led_button_scene=16 grid=4x4
 LVGL_FLUSHED=PASS
 LVGL_BYTES=3686400
 led_button_crc=0xD474F06D
-led_button_delta_crc=0xB34EDF19
-led_button_fresh_crc=0xB34EDF19
+led_button_delta_crc=0x463C3371
+led_button_fresh_crc=0x463C3371
 led_button_delta_eq=PASS
-led_button_damage max=10000 total=274924 steps=64 tail=4
+led_button_damage max=10000 total=276492 steps=64 tail=6
 led_button_damage_op lit=1450 press=6640 cue=10000 color=1450
-led_button_vsync flips=70 isrs=70 timeouts=0
+led_button_vsync flips=73 isrs=73 timeouts=0
 crc_done
 PASS: SynthUI led_button render verified
-led_button_fps frames=64 mfps_med=100321 us_med=9968 us_min=6412 us_max=21302
-led_button_mem total=1045684 used_pct=1 max_used=11424 frag_pct=1
+led_button_fps frames=64 mfps_med=100381 us_med=9962 us_min=6386 us_max=17278
+led_button_mem total=1045676 used_pct=2 max_used=11772 frag_pct=1

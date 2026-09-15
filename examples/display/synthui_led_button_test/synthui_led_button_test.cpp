@@ -10,28 +10,42 @@
  *   12 34 px lit (dots)  13 150 px lit         14 120x80 lit (centred) 15 100 lit + LV_STATE_PRESSED
  *
  * Phase A (gated): led_button_crc golden -> 64-step LCG delta sequence over
- * lit/pressed/cue/color on keys 0..12 -> a 4-step SCRIPTED TAIL on keys 14/15
- * -> led_button_delta_crc vs led_button_fresh_crc, per-op damage maxima
- * (led_button_damage_op), led_button_damage engagement, led_button_vsync,
- * crc_done, and a PASS/FAIL token gated on delta equality.  Keys 13..15 are
- * excluded from the LCG so the engagement bound (10000 px) is exactly the
- * largest legitimate box of a 100 px key (a cue change repaints the whole
- * key); a 150 px key's cue would be 22500 and say nothing about engagement.
+ * lit/pressed/cue/color on keys 0..12 -> a 6-step SCRIPTED TAIL on keys
+ * 12/14/15 -> led_button_delta_crc vs led_button_fresh_crc, per-op damage
+ * maxima (led_button_damage_op), led_button_damage engagement,
+ * led_button_vsync, crc_done, and a PASS/FAIL token gated on delta equality.
+ * Keys 13..15 are excluded from the LCG so the engagement bound (10000 px)
+ * is exactly the largest legitimate box of a 100 px key (a cue change
+ * repaints the whole key); a 150 px key's cue would be 22500 and say
+ * nothing about engagement.
  * The LCG alone cannot exercise every damage box: keys 0..12 are all square
  * and none is held by LV_STATE_PRESSED, so a centring-offset error in a
  * non-square key's damage box, or in the lit box at the LV_STATE_PRESSED
- * offset, would never move a single LCG-driven pixel.  The scripted tail
- * covers exactly those: (a) press the non-square 120x80 key 14 (press box at
+ * offset, would never move a single LCG-driven pixel.  It also never
+ * touches led_on_press_edge() (SynthUI src/synthui_led_button.cpp), because
+ * the LCG's LED_OP_PRESSED steps all go through
+ * synthui_led_button_set_pressed() -- the LATCH setter, a different code
+ * path from a real finger's PRESSED/RELEASED events.  The scripted tail
+ * covers all of that: (a) press the non-square 120x80 key 14 (press box at
  * ox=20), (b) un-light it while pressed (lit box at ox=20, pressed offset),
  * (c) change the colour of key 15, which is held pressed via
  * lv_obj_add_state(LV_STATE_PRESSED) (lit box at the LV_STATE_PRESSED
- * offset), (d) un-light key 15 (halo removed at that same offset).  The tail
- * also closes a hole a whole-key-invalidate regression could hide behind:
- * with square, unpressed keys only, set_lit/set_color/set_pressed falling
- * back to lv_obj_invalidate(obj) still measures max=10000 (a cue change
- * already reaches that) and still passes delta equality -- per-op damage
- * maxima (led_button_damage_op) are what catch it, since lit/press/color
- * would then read 10000 too instead of their small legitimate boxes.
+ * offset), (d) un-light key 15 (halo removed at that same offset), (e) drive
+ * a SCRIPTED lv_indev_t onto key 12's centre and press it -- the real
+ * PRESSED event, reaching led_on_press_edge() for the first time in this
+ * suite -- (f) release at the same point.  A press followed by a release
+ * leaves the drawn state UNCHANGED (key 12 was never latched or given
+ * LV_STATE_PRESSED), so steps (e)+(f) must NOT move led_button_fresh_crc;
+ * if the RELEASED/PRESS_LOST branch of led_on_press_edge() were ever
+ * deleted, the key would stay drawn sunk and only delta equality -- not any
+ * golden -- would catch it, which is why that branch had no coverage before.
+ * The tail also closes a hole a whole-key-invalidate regression could hide
+ * behind: with square, unpressed keys only, set_lit/set_color/set_pressed
+ * falling back to lv_obj_invalidate(obj) still measures max=10000 (a cue
+ * change already reaches that) and still passes delta equality -- per-op
+ * damage maxima (led_button_damage_op) are what catch it, since
+ * lit/press/color would then read 10000 too instead of their small
+ * legitimate boxes.
  * Phase B (after crc_done, ungated): a playhead cue sweep + LED chaser
  * across all 16 keys, measuring frame time (led_button_fps). */
 #include <Arduino.h>
@@ -165,8 +179,37 @@ static void delta_inv_cb(lv_event_t *e)
     if (px > s_op_max[s_delta_op]) s_op_max[s_delta_op] = px;
 }
 
+/* --- scripted pointer indev: drives led_on_press_edge() for real, through
+ * LVGL's own PRESSED/RELEASED events, rather than the widget's setters.
+ * No qemu2 touch model needed -- the read_cb is fed from two file-scope
+ * variables the tail sets directly, and lv_indev_read() is called to force
+ * an immediate synchronous read+process instead of waiting on the read
+ * timer's period. */
+static int32_t s_touch_x = 0, s_touch_y = 0;
+static bool    s_touch_down = false;
+static lv_indev_t *g_touch_indev = NULL;
+
+static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    (void)indev;
+    data->point.x = s_touch_x;
+    data->point.y = s_touch_y;
+    data->state = s_touch_down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
+/* Aim the scripted indev at obj's centre and force one synchronous read. */
+static void touch_drive(lv_obj_t *obj, bool down)
+{
+    lv_area_t c;
+    lv_obj_get_coords(obj, &c);
+    s_touch_x = (c.x1 + c.x2) / 2;
+    s_touch_y = (c.y1 + c.y2) / 2;
+    s_touch_down = down;
+    lv_indev_read(g_touch_indev);
+}
+
 #define LED_BUTTON_DELTA_STEPS 64
-#define LED_BUTTON_TAIL_STEPS  4
+#define LED_BUTTON_TAIL_STEPS  6
 static uint32_t s_lcg;
 static uint32_t lcg_next(void)
 {
@@ -176,8 +219,9 @@ static uint32_t lcg_next(void)
 
 /* Runs ON the already-rendered golden bank; evolves the state arrays in place.
  * After the 64 LCG steps (keys 0..12 only, all square and unpressed), a
- * 4-step SCRIPTED TAIL exercises damage boxes the LCG cannot reach -- see
- * the file-top comment for why each step exists. */
+ * 6-step SCRIPTED TAIL exercises damage boxes -- and, for its last two
+ * steps, an EVENT PATH -- the LCG cannot reach.  See the file-top comment
+ * for why each step exists. */
 static uint32_t delta_run_sequence(void)
 {
     lv_display_add_event_cb(lv_display_get_default(), delta_inv_cb,
@@ -236,6 +280,39 @@ static uint32_t delta_run_sequence(void)
     s_delta_op = LED_OP_LIT;                         /* (d) halo removed, LV_STATE_PRESSED offset */
     g_lit[15] = false;
     synthui_led_button_set_lit(g_key[15], false);
+    lv_refr_now(NULL);
+
+    /* Key 12 takes part in the LCG above (LCG_KEYS=13 is keys 0..12), and
+     * with this file's fixed seed it deterministically ends the 64 steps
+     * LATCHED (g_pressed[12]==true) -- verified by replaying the exact LCG.
+     * led_on_press_edge() early-returns whenever the latch is already set
+     * (a latched key does not move for a finger, correctly), so scripting a
+     * press+release on it AS LATCHED would prove nothing.  Restore key 12 to
+     * unlatched first, UNTRACKED (not one of the tail's six recorded steps,
+     * just a precondition -- like (a)-(d) setting their own keys' state
+     * directly): a small, legitimate invalidate of its own, then the real
+     * scripted press can exercise led_on_press_edge() on an object that
+     * actually changes appearance. */
+    s_delta_record = false;
+    g_pressed[12] = false;
+    synthui_led_button_set_pressed(g_key[12], false);
+    lv_refr_now(NULL);
+    s_delta_record = true;
+
+    /* (e)/(f): a real finger on key 12 (the 34 px key -- its 28x28 press box
+     * is 784 px, well under the 6640 press bound; key 13's 150 px press box
+     * would be 14880 and blow it).  Now unlatched and not given
+     * LV_STATE_PRESSED, so press-then-release must leave it drawn exactly as
+     * it started: these two steps are what makes delta equality FAIL if
+     * led_on_press_edge()'s RELEASED/PRESS_LOST branch is ever lost -- the
+     * PRESSED event alone would still draw it sunk, and with no RELEASED
+     * handling nothing ever un-sinks it back to match a fresh render. */
+    s_delta_op = LED_OP_PRESSED;                     /* (e) key 12 pressed via the scripted indev */
+    touch_drive(g_key[12], true);
+    lv_refr_now(NULL);
+
+    s_delta_op = LED_OP_PRESSED;                     /* (f) key 12 released at the same point */
+    touch_drive(g_key[12], false);
     lv_refr_now(NULL);
 
     s_delta_record = false;
@@ -305,8 +382,17 @@ static void key_fps_phase(const char *tag, uint32_t target_frames)
     g_fps_timing = false;
     lv_timer_delete(anim);
 
+    if (g_fps_n == 0) {
+        /* No frame was ever timed (target_frames==0, or the 10 s bound hit
+         * first): the array is zeroed, and dividing 1e9 by a zero median
+         * printed a fictitious mfps_med=1000000000.  Say what happened
+         * instead of deriving stats from nothing. */
+        Serial1.printf("%s frames=0\n", tag);
+        return;
+    }
+
     uint32_t s[LED_BUTTON_FPS_MAX];
-    const uint32_t n = g_fps_n ? g_fps_n : 1;
+    const uint32_t n = g_fps_n;
     memcpy(s, (const void *)g_fps_us, n * sizeof(uint32_t));
     for (uint32_t i = 1; i < n; i++) {
         const uint32_t v = s[i];
@@ -341,6 +427,14 @@ void setup()
 
     lvgl_rt1176_begin();
     lvgl_mipi_panel_create_db(Display);
+
+    /* Scripted pointer indev, created before ANY render: proves its mere
+     * existence does not perturb led_button_crc (checked below, against the
+     * golden, not merely asserted here). */
+    g_touch_indev = lv_indev_create();
+    lv_indev_set_type(g_touch_indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(g_touch_indev, touch_read_cb);
+    lv_indev_set_display(g_touch_indev, lv_display_get_default());
 
     Serial1.println("led_button_scene=16 grid=4x4");
 

@@ -931,6 +931,18 @@ if [ -d "$EVKB/$LBT" ] && [ -f "$EVKB/$LBT/transcript_qemu.txt" ]; then
     [ "$rc" -ne 0 ] || result=1
     echo "$OUT_TEXT" | grep -q "^FAIL: lit damage above its box" || result=1
     report "led_button_op_over_bound_fails_by_name" $result
+
+    # The gate's STRONGEST assertion (delta == fresh) had no negative of its
+    # own: every case above rewrites BOTH crcs identically (still equal to
+    # each other) or leaves them alone.  Break only the delta side and the
+    # gate must fail by its OWN name, not merely by exit code.
+    sed 's|^led_button_delta_crc=0x........|led_button_delta_crc=0xBADBADBA|' \
+        "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_deltamismatch.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_deltamismatch.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: delta render differs from full render" || result=1
+    report "led_button_delta_mismatch_fails_by_name" $result
 else
     echo "SKIP: synthui_led_button_test vacuity (example or fixture missing)"
 fi
