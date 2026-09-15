@@ -212,6 +212,8 @@ grew engine/GPU tripwires and per-bar `ACIDBOX_VSYNC timeouts=0` witnesses,
 all demonstrated RED), but its famous QEMU↔silicon bit-identity is GONE BY
 DESIGN: silicon now composites knobs on the GC355 and owns a separate gpu
 golden (0x1479CEE8, four boots bit-identical). Gate count unchanged.
+(Superseded 2026-09-15 by the LANDSCAPE present: sw `0xE871BF09`, gpu `0x2231070B`; see the
+`✅ Measured 2026-09-15` block.)
 
 NEW-23 added ONE — `display/synthui_fader_test`, the SynthUI Fader's
 sw-delta gate (spec 2026-08-29): ONE bank golden with every config axis
@@ -667,8 +669,8 @@ walk does not spend 30 s paging stale bonds before it inquires.
 
 ✅ **Measured 2026-09-15: 140 gates discovered, 140 passed, 0 failed, 0 SKIP** (`gates: 140 passed`, exit 0,
 one run), on the **acid_box LANDSCAPE** close-out. `LICENSE-AUDIT: PASS` (119 manifests, `display/pxp_rotate_probe`
-at 106 dep paths, `acid_box` at 25755); vacuity **55/55** (three probe negatives + five acid_box rotation
-negatives); fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the acid_box gate on the GitHub-fetched ELF
+at 106 dep paths, `acid_box` at 25755); vacuity **55/55** (three pxp_rotate_probe cases -- green + 2 negatives -- and
+five acid_box cases -- green, 3 rotation negatives, bad golden); fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the acid_box gate on the GitHub-fetched ELF
 (LVGL `3037281`, golden `0xE871BF09`). Spec `docs/superpowers/specs/2026-09-14-acid-box-landscape-design.md`,
 plan `docs/superpowers/plans/2026-09-14-acid-box-landscape.md`.
 ★ **The FIRST sweep read 136/4 and all four reds were a HARNESS state, not a regression** —
@@ -706,7 +708,7 @@ golden `0x2231070B` on three boots (portrait `0x1479CEE8` RETIRED), fences clean
 flash in 600+ frames at 60 fps, Shokz stream `pcmdrops=0`. **Touch p95 is NOT cleanly met**: median 1 s
 windows 43–49 ms against a 53.5 ms bound, tails 80–112 ms while dragging; the drag prints a `CUTOFF=` line per
 sample in both builds, so a controlled A/B (synthetic wiggle, scripted taps) is owed before calling it.
-★ **ITCM: the NON-BT acid_box builds are now the tight ones** — default 2,724 B, LOOPSTAT 2,580 B, with no
+★ **ITCM: the NON-BT acid_box builds are now the tight ones** — default 2,708 B, LOOPSTAT 2,564 B (measured), with no
 floor (the NEW-45 2 KB ASSERT exists only for `M2_BT_OUT`), against 11,364 / 11,188 B for the BT builds. Every
 acid_box link now prints `--print-memory-usage`; read it.
 ★ **A vacuity negative must match `^FAIL: <message>`, not the bare message**: gates `cat` the whole capture
@@ -1117,7 +1119,7 @@ M2Radio 2,260. So ITCM is LVGL on evidence plus 53 KB there by default. ★ Note
 `tanhf`/`powf` — neither is a wholesale candidate, checked not assumed.
 ★ **FIXED by routing VGLite + MipiDisplay + Wire + TouchPanel to flash** (headroom
 **13,968 B** on `build-bt`, **13,776 B** on the loopstat dirs — 33× the growth that
-broke it), chosen on a four-arm SILICON bench, not by argument. Every arm held
+broke it; landscape 2026-09-15: 11,364 / 11,188 B), chosen on a four-arm SILICON bench, not by argument. Every arm held
 `ACIDBOX_UI_SUM=0x1479CEE8` and `timeouts=0`.
 ★★ **The bench's best result is an arm that PASSED and was DECLINED.** Routing
 `Sbc.cpp` to flash (NEW-37 option 1) measured **704 µs/block against 125.6 in

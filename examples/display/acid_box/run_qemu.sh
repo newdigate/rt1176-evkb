@@ -149,8 +149,9 @@ grep -q "ACIDBOX_DONE" "$OUT" || { echo "FAIL: setup() never completed"; exit 1;
 grep -qE "^ACIDBOX_ENGINE=sw\r?$" "$OUT" || { echo "FAIL: engine line missing or not sw"; exit 1; }
 grep -q "ACIDBOX_ENGINE=gpu" "$OUT" && { echo "FAIL: TRIPWIRE gpu engine claimed in QEMU"; exit 1; }
 grep -q "ACIDBOX_GPU_ERR="   "$OUT" && { echo "FAIL: TRIPWIRE gpu error counter in QEMU"; exit 1; }
-# vsync-fence health (db pipeline): a timeout silently degrades rendering to the
-# unfenced v1 path (tearing possible, the scanout-flash class), so it must fail
+# vsync-fence health (the rotated present, which shares the db fence): a timeout
+# silently degrades presentation to unfenced flips (tearing possible, the
+# scanout-flash class), so it must fail
 # BY NAME -- and on ANY witness line, because the per-bar lines are what cover
 # the play/tap/drag portion of the run rather than only boot.
 grep -qE "^ACIDBOX_VSYNC flips=[0-9]+ isrs=[0-9]+ timeouts=0\r?$" "$OUT" \

@@ -818,7 +818,8 @@ static_assert((uint32_t)UI_W == PANEL_HEIGHT && (uint32_t)UI_H == PANEL_WIDTH,
  *     irrelevant in setup(), and it is the first ACIDBOX_ROT_EQ line (pass=1).
  *   * PER BAR: INCREMENTAL.  rot_equality_begin() arms a check when the
  *     sequencer enters step 8 (mid-bar), and rot_equality_step() runs from
- *     every audio_probe_poll() pass while the transport plays, comparing
+ *     every audio_probe_poll() pass once the transport has played
+ *     (currentStep() stays >= 0 after STOP -- only seq.clear() resets it), comparing
  *     ROT_EQ_CHUNK sampled rows per pass until all 80 are done; the 15->0 seam
  *     then prints the finished verdict.  MEASURED ON THE EVKB before this
  *     shape existed: the synchronous per-bar guard cost a median 31.4 ms
@@ -828,8 +829,8 @@ static_assert((uint32_t)UI_W == PANEL_HEIGHT && (uint32_t)UI_H == PANEL_WIDTH,
  *     ring covering only ~93 ms.
  *
  * WHY EACH CHUNK IS VALID ON ITS OWN.  With no flip pending, the presented
- * buffer holds the rotated canvas: the rotated flush_cb renders, PXP-presents
- * into the back buffer and requests the flip in one call, and the vsync ISR
+ * buffer holds the rotated canvas: LVGL renders the canvas, and the rotated
+ * flush_cb's last flush PXP-presents into the back buffer and requests the flip, and the vsync ISR
  * retires it into scanned_fb().  (Unless that present failed or its flip
  * timed out -- then scanned_fb() is stale and the compare fails, which is the
  * verdict those faults deserve; the gate names both separately too.)  So a
@@ -919,8 +920,8 @@ ROTWIT_FN static void rot_equality_check_boot(void)
 }
 
 /* Arms a per-bar check.  A check STILL ACTIVE when the next is armed never
- * reached a verdict -- a flip was pending on every pass it was given, or the
- * transport stopped under it -- and it is counted as a FAIL here, never
+ * reached a verdict -- a flip was pending on every pass it was given -- and it
+ * is counted as a FAIL here, never
  * silently dropped: a guard that quietly stops finishing would otherwise read
  * exactly like a guard that keeps passing.  Its largest pass so far becomes
  * us=, so the line's us always belongs to the last verdict counted. */
@@ -1014,8 +1015,8 @@ static void audio_probe_poll(void)
         if (v > g_diag_rms[s]) g_diag_rms[s] = v;
 #endif
     }
-    /* The per-bar equality check, one chunk per pass while the transport plays
-     * (armed at step 8 below).  The active test is inlined HERE so a pass with
+    /* The per-bar equality check, one chunk per pass once the transport has
+     * played (armed at step 8 below).  The active test is inlined HERE so a pass with
      * no check in progress never makes the flash call. */
     if (s_rotEqActive) rot_equality_step();
     if (s != lastSeenStep) {
@@ -1558,9 +1559,15 @@ void setup()
     lvgl_mipi_panel_flip_sync();
     lvgl_sum_reset();
     diag_mark();               /* after the frame_done wait loop */
-    lvgl_sum_feed(lvgl_mipi_panel_scanned_fb(), PANEL_FB_BYTES);
+    /* scanned_fb() is nullptr if no flip has EVER retired -- reachable only if
+     * the very first rotated present hit a PXP error (the port then skips the
+     * flip).  Feeding nullptr would fault; print a named non-hex token instead,
+     * which the gate's anchored golden grep rejects BY NAME. */
+    const uint16_t *sumFb = lvgl_mipi_panel_scanned_fb();
+    if (sumFb) lvgl_sum_feed(sumFb, PANEL_FB_BYTES);
     diag_mark();               /* after the 3.6 MB checksum   == :591 pre-diag */
-    CONSOLE.printf("ACIDBOX_UI_SUM=0x%08lX\n", (unsigned long)lvgl_sum_value());
+    if (sumFb) CONSOLE.printf("ACIDBOX_UI_SUM=0x%08lX\n", (unsigned long)lvgl_sum_value());
+    else       CONSOLE.println("ACIDBOX_UI_SUM=NOFRAME");
     CONSOLE.printf("PLAYING=%d\n", transport.playing() ? 1 : 0);
     rot_equality_check_boot(); /* the boot present: the forced full-frame path, synchronous */
     print_rot_lines();

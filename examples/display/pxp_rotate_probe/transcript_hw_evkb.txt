@@ -17,7 +17,7 @@ P5  OBSERVED: case=offgrid api=ok pixel=ok -- silicon rotates correctly from
     pointers 32 B off the 64-B grid too (rotate-alone), consistent with
     pxp_blit_test's PXP_ALIGN=off2:ok.  Not relied on: the port still snaps to 16.
 P1  MISSED, FASTER: time=full 13060 / 13061 us (predicted ~25 ms, range 15-40).
-    0.01417 us per logical pixel over the whole frame, ~70 MB/s of XRGB8888.
+    0.01417 us per logical pixel over the whole frame, ~70 Mpx/s (~280 MB/s of XRGB8888).
 P2  HELD: time=rect160 366 / 367 us (predicted <= 1 ms).
 P3  MISSED, as worded: time=rect16 5 us on both boots.  The prediction said
     "tens of us" while citing v6's 4 us for 16x16 -- the citation was right and

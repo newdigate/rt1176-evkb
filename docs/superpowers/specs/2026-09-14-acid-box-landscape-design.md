@@ -103,7 +103,7 @@ timing line, every sum bit-identical between the boots AND to the QEMU pins.
 
 | # | predicted | measured | verdict |
 |---|-----------|----------|---------|
-| P1 | ~25 ms (15–40) | **13 060 µs** (13 061) | missed, FASTER -- 0.0142 µs/px, ~70 MB/s of XRGB8888; the v6 copy extrapolation was 2× pessimistic |
+| P1 | ~25 ms (15–40) | **13 060 µs** (13 061) | missed, FASTER -- 0.0142 µs/px, ~70 Mpx/s (~280 MB/s of XRGB8888); the v6 copy extrapolation was 2× pessimistic |
 | P2 | ≤ 1 ms | **366 µs** (367) | held |
 | P3 | "tens of µs" | **5 µs** | missed as worded -- the cited v6 figure (4 µs) was right, the prediction's words were not |
 | P4 | bit-exact, QEMU = silicon | all 11 graded `pixel=ok`, sums identical to QEMU | **held** |
@@ -291,4 +291,10 @@ unchanged unless the probe reveals a model divergence, which is then documented 
   stalled `loop()` 31 ms on silicon; `us=` is its largest single-pass stall.  A PXP error is NOT presented
   (§5.B said "still flips"); the back buffer alternates unconditionally rather than following
   `s_db_scanned_fb`.  The planner filters off-frame input before snapping.  Setup-only UI construction, the
-  witnesses and `create_rotated` live in flash to keep ITCM headroom (default build 2,724 B).
+  witnesses and `create_rotated` live in flash to keep ITCM headroom (default build 2,708 B after the close-out null guard; 2,724 B before it).
+  Also: a PXP error forces the next TWO presents full, not one (§5.B).  The host suite has six mutant arms,
+  not three (§5.A, §7).  The port's .cpp compiles into the executable, not libLVGL, so `rot_flush_cb` /
+  `rot_present` sit in ITCM in every build and cost the BT builds ~2.6 KB (13,968 / 13,776 → 11,364 /
+  11,188 B, §5.E).  The §6 taps land where the GT911 model's integer truncation puts them: ▶ at (1088, 43),
+  cell 2 at (281, 143), the drag at x 89, y 583..647, with inclusive extents (▶ 1040..1139 × 20..67).  §8.4's
+  portrait baseline is 32.6 ms / 46.5 ms (NEW-33), not 32.4 / 46.
