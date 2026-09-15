@@ -667,6 +667,48 @@ walk does not spend 30 s paging stale bonds before it inquires.
   or LE-only), `M2_BT_INQUIRY_LIAC` exists because of it. The board "Wire not
   connected" that looked like the DAP wedge was the board being switched OFF.
 
+✅ **Measured 2026-09-15 (evening): 141 gates discovered, 141 passed, 0 failed, 0 SKIP** (`gates: 141 passed`,
+exit 0; `-l` reports 141; 23m45s wall), on the **NEW-25 SynthUI LedButton** close-out -- fully clean, no red to
+disposition, the new `display/synthui_led_button_test` green in 20 s on its first sweep. `LICENSE-AUDIT: PASS`
+after the sweep (120 manifests; the new example walked at 24703 dep paths); vacuity **61/61** (six led_button
+cases). SynthUI pushed (`b599ae1`) and pinned; fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING the gate
+on the GitHub-fetched ELF (the configure log shows the clone at `b599ae1`). Every SynthUI-linking build dir and
+every SELF-BUILDING gate dir was rebuilt before the sweep, because a pin change makes those reconfigure inside
+their 120 s gate budget.
+★ **The widget is the DC "909" step key** (`reference/dc/LedButton.dc.html`): one LED, four colours, and four
+boolean states -- `lit`, a `pressed` LATCH OR'd with `LV_STATE_PRESSED`, `cue`, `disabled` -- drawn as eight
+flat layers with per-box delta damage. It is LVGL-software only; the >= 30 fps criterion is a SILICON claim
+(Phase B prints `led_button_fps`; QEMU timing is meaningless).
+★★ **A PRESS MUST TRANSLATE BY WHOLE PIXELS, and the obvious implementation does not.** Adding the DC's 2.5-unit
+press offset to each layer's float rect BEFORE rounding lets every layer round to a DIFFERENT pixel offset:
+measured at the 96 px default, the cap moved 2 px while the LED moved 3, and the LED's height rounded 15 -> 14 --
+a RESIZE, which the reference's own rule ("state change is colour and one offset; nothing resizes") forbids. The
+layout now stores every rect unpressed and carries `dy_px` added AFTER rounding, through one shared conversion
+(`synthui_led_button_rect_px`) that the host sweep and the widget both use. Found in review, before any golden
+existed; a golden would simply have pinned the defect.
+★★ **A SINGLE "largest invalidated area" BOUND IS NEARLY VACUOUS for a widget whose largest legitimate damage
+is the whole widget.** A `cue` change repaints the whole 100 px key (10000 px), so a `lit`, `colour` or `press`
+setter falling back to `lv_obj_invalidate(obj)` leaves `max` at exactly 10000 AND keeps delta equality green (a
+bigger box is still a CORRECT box) -- demonstrated in QEMU, gate fully green against that regression. The gate
+therefore bounds each op SEPARATELY (`led_button_damage_op lit= press= cue= color=`, bounds 1450 / 6640 / 10000 /
+1450, each the op's own box on a 100 px key). NEW-23's single-bound pattern is the one this replaces; check any
+future widget's bound against its own cue-sized damage before trusting it.
+★ **A random delta sequence only tests what it happens to reach.** The 64-step LCG runs on keys 0..12, all of
+them square and none held by `LV_STATE_PRESSED`, so damage-box CENTRING errors (a non-square key) and the lit box
+at the LV-pressed offset were unreachable -- both mutants passed the gate. A four-step scripted TAIL on keys 14
+(120x80) and 15 (LV-pressed) closes it, and both mutants now fail by name. `steps=64 tail=4` is anchored so a
+dropped tail is named rather than silently reducing coverage.
+★ **Equality proves delta == fresh, not that either is right**, so the gate pins TWO goldens: the initial bank
+and the FINAL state, which draws combinations the first never does (disabled+pressed, cue+pressed, pressed
+32/34 px keys, amber LED off).
+★ `lv_obj_add_state(obj, LV_STATE_PRESSED)` sends NO event, so a widget that keeps its own press flag from
+events draws such a key unpressed; the draw reads the live LVGL state instead. `disabled` follows
+`LV_STATE_DISABLED` like the sibling widgets (the indev gates input on that state, not on `CLICKABLE`, so a key
+disabled mid-press would otherwise still deliver CLICKED). `LV_EVENT_INDEV_RESET` repaints a held key.
+★ **Consumer next**: `docs/superpowers/specs/2026-09-15-acid-box-synthui-editor-design.md` -- the acid_box step
+lane, ACC/SLD keys, a seven-segment step readout and prev/next panel buttons, which is why the widget has a
+`pressed` LATCH at all (the edit cursor is a held key).
+
 ✅ **Measured 2026-09-15: 140 gates discovered, 140 passed, 0 failed, 0 SKIP** (`gates: 140 passed`, exit 0,
 one run), on the **acid_box LANDSCAPE** close-out. `LICENSE-AUDIT: PASS` (119 manifests, `display/pxp_rotate_probe`
 at 106 dep paths, `acid_box` at 25755); vacuity **55/55** (three pxp_rotate_probe cases -- green + 2 negatives -- and
