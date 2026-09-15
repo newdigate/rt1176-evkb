@@ -462,6 +462,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ### Task 2: The LVGL widget (SynthUI)
 
+> **Executed 2026-09-15; the code below is SUPERSEDED by review.** The shipped widget (SynthUI `7246068`, then `075c137`) differs in three ways review required: `set_disabled` sets `LV_STATE_DISABLED` and clears `LV_STATE_PRESSED` (the input layer gates on that state, not on `CLICKABLE`, so a key disabled mid-press would still deliver CLICKED), the draw reads `b->disabled || LV_STATE_DISABLED` through `led_drawn_disabled()`, `led_event` also handles `LV_EVENT_INDEV_RESET` (LVGL clears the press there with no repaint), and the bezel's cue border WIDTH comes from the palette rather than the instance. The repo is authoritative.
+
 **Files:**
 - Create: `$SYNTHUI/src/synthui_led_button.h`
 - Create: `$SYNTHUI/src/synthui_led_button.cpp`
@@ -892,6 +894,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ---
 
 ### Task 3: The consumer example `examples/display/synthui_led_button_test` (rt1176-evkb)
+
+> **Executed 2026-09-15; the code below is SUPERSEDED by review.** The shipped example (evkb `b191ba6`, then `ab5b96a`) adds what two review rounds required: per-op damage maxima (`LED_OP_*`, printed as `led_button_damage_op`), a six-step scripted tail (keys 14 and 15, then a scripted `lv_indev_t` pressing and releasing key 12 after clearing its latch -- the only coverage anywhere of the widget's press-edge repaint), `PASS` printed only on delta equality, and an honest `frames=0` fps line. The final-state golden is `0x463C3371`. The repo is authoritative.
 
 **Files:**
 - Create: `$EVKB/examples/display/synthui_led_button_test/CMakeLists.txt`

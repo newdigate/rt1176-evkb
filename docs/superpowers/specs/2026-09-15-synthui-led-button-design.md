@@ -281,8 +281,8 @@ delta equality holds).
 is meaningless; silicon is where the ≥30 fps criterion is answered. Below
 30 fps on the bench, a GPU compositor is filed as a separate issue.
 
-**Close-out**: `GATES` entry in `tools/license-audit.sh`, README rows
-(root and `examples/README.md`), `transcript_qemu.txt` fixture, a
+**Close-out**: `GATES` entry in `tools/license-audit.sh`, a README row
+(`examples/README.md`; the root README carries no example list), `transcript_qemu.txt` fixture, a
 `gate-vacuity.test.sh` section (green fixture replays; corrupted golden fails
 by name; a missing damage counter and a missing per-op damage line each fail
 by name), SynthUI pushed and the
