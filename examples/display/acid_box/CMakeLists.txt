@@ -155,6 +155,13 @@ teensy_add_executable(acid_box
 # this executable (no archive routing applies to it) -- and nothing printed it:
 # the NEW-45 floor ASSERT below exists only for M2_BT_OUT links.  A linker flag
 # that only reports; the loadable image is unchanged.
+# ★ MEASURED 2026-09-15, after moving the witnesses, build_ui/mkknob/mkbtn and
+# create_rotated to flash: headroom default 2,756 B, ACIDBOX_LOOPSTAT (BT off)
+# 2,612 B, build-bt 11,396 B, build-bench 11,220 B (both were 13,968/13,776
+# before the landscape present; the ~2.5 KB spent is rot_flush_cb + rot_present,
+# which stay in ITCM because they run every frame).  The NON-BT builds are now
+# the tight ones -- the BT builds route more archives to flash -- and they carry
+# no floor: read this line in their build output.
 target_link_options(acid_box.elf PRIVATE -Wl,--print-memory-usage)
 # Audio's own dependency set (Wire/SPI/SdFat/SD/SerialFlash) is named exactly as
 # acid_bass_test names it -- import_evkb_audio_full() creates those targets but
