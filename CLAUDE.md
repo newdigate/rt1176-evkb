@@ -667,6 +667,39 @@ walk does not spend 30 s paging stale bonds before it inquires.
   or LE-only), `M2_BT_INQUIRY_LIAC` exists because of it. The board "Wire not
   connected" that looked like the DAP wedge was the board being switched OFF.
 
+★★ **SILICON, 2026-09-16 (bench): both halves ACCEPTED, and the one criterion that MISSED is
+now a measured number rather than an argument.** acid_box: `ACIDBOX_ENGINE=gpu`, gpu golden
+**`0xEA5AB843`** on THREE boots bit-identical (the landscape `0x2231070B` retired),
+`ACIDBOX_GPU_ERR=0`, `ACIDBOX_VSYNC flips=2745 isrs=2745 timeouts=0` and `ROT_EQ ... fail=0`
+across 219 bars. Touch correctness by hand: taps select AND toggle; a tap on the
+ALREADY-selected key stays selected and only moves its gate (three consecutive `SELECT=2`
+with gate1/gate0/gate1); prev/next print `SELECT=` with NO `STEP[...]` line -- the
+selection-only path the QEMU gate cannot reach, because the touch script's instants are
+fixed and cannot press those buttons. Prev/next light while held and clear on a SLIDE-OFF
+release, a drag across the lane does not snag on the 32 lamps, no scanout flash: four things
+no checksum can see. `M2_BT_OUT` (build-bench, the real IW416 image): ITCM headroom 11,412 B
+with the NEW-45 ASSERT green, link stable, credits balanced, **ZERO ongoing drops** --
+`drops` last moved at blocks=33,082 during bring-up, then held for 1,582 consecutive
+heartbeats (~26 min, ~545,000 blocks). Reading the lifetime total (455) as a failure repeats
+NEW-42's error: a counter read across a start-up transient is not comparable to a stationary
+one.
+★★ **TOUCH p95 DOUBLES WITH THE PLAYHEAD RUNNING -- NEW-50's number.** Two separate boots
+(percentiles cannot be differenced, so the phases are RUNS, not windows): **p50 29.3 / p95
+37.8 ms STOPPED** against **p50 29.1 / p95 66.8 ms PLAYING**. The median does not move.
+`synthui_led_button_set_cue` repaints the WHOLE 100 px key to change a 3.5-unit bezel ring,
+and the poller moves the cue twice per 33 ms tick: ~600,000 px/s to move a ring. QEMU is
+blind to it -- vsync-locked at 30 fps makes flip counts a CEILING, and the present path's
+damage AREA grew only +0.08 %. ★ Not a regression: the landscape baseline this replaced read
+a 43-49 ms median with 80-112 ms tails.
+★ **`synthui_led_button_test` on silicon: goldens BIT-IDENTICAL to QEMU's** (`0xD474F06D`,
+`0x463C3371`, four boots) -- a property none of the tree's other display examples has,
+because it links no VGLite and every pixel is the software renderer's. Its **>= 30 fps
+criterion MISSED at 20.6 fps** (median frame 48.6 ms; four boots agree to 0.07 %) on a
+deliberately worst-case animation: the cue swept across all 16 keys every 15 ms -- the same
+whole-key-repaint mechanism. ★ So the first lever is NEW-50, NOT the GC355-compositor reflex
+NEW-23's fader earned: that fader animated a cap that really moves; this repaints 10,000 px
+to change a ring.
+
 ✅ **Measured 2026-09-16: 141 gates discovered, 141 passed, 0 failed, 0 SKIP** (`gates: 141 passed`,
 exit 0; 141 PASS lines; 23m40s wall, 10:13:34-10:37:14 BST), on the **acid_box SynthUI step editor**
 close-out (spec `docs/superpowers/specs/2026-09-15-acid-box-synthui-editor-design.md`) --
