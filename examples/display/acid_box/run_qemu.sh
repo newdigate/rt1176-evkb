@@ -179,6 +179,21 @@ ROT_FULL=$(printf '%s\n' "$ROT_LAST" | sed 's/.* full=\([0-9]*\).*/\1/')
 [ "$ROT_OPS" -gt 0 ] || { echo "FAIL: no PXP present ops counted"; exit 1; }
 [ "$ROT_FULL" -ge 2 ] || { echo "FAIL: fewer than 2 full-frame presents (start-up forces two)"; exit 1; }
 [ "$ROT_OPS" -gt "$ROT_FULL" ] || { echo "FAIL: the damage path never ran (ops == full)"; exit 1; }
+# NEW-50: full-frame presents are bounded ABOVE as well.  LVGL's inv-area
+# buffer holds LV_INV_BUF_SIZE=32 rects and on overflow invalidates the WHOLE
+# SCREEN (lv_refr.c) -- every golden stays green and every frame becomes a
+# full present.  The playhead now damages eight strips per step (two cue
+# changes x four bezel-ring boxes), so that overflow is the regression this
+# change could introduce, and `full` is the only witness that names it: the
+# two start-up presents are the only legitimate full-frame presents in a run
+# (full=2 on every fixture line and on silicon at ops=12538).
+# Demonstrated RED 2026-09-16: lv_obj_invalidate(lv_screen_active()) added to
+# ui_poll (intermittently, so ops>full still held and this bound -- not the
+# ops==full one above -- is what fired) -> full=82 ->
+# "FAIL: full-frame presents above start-up's two (full=82)". An UNCONDITIONAL
+# per-tick invalidate makes every present full-frame (ops==full identically)
+# and is instead caught by the ops>full check above it.
+[ "$ROT_FULL" -le 2 ] || { echo "FAIL: full-frame presents above start-up's two (full=$ROT_FULL)"; exit 1; }
 # The EQUALITY GUARD: the presented buffer must equal the rotated canvas on
 # every sampled row -- at boot (full-frame path, one synchronous check) and once
 # per bar (damage path: an INCREMENTAL check armed at step 8, 8 sampled rows per

@@ -869,6 +869,19 @@ if [ -d "$EVKB/$ACB" ] && [ -f "$EVKB/$ACB/transcript_qemu.txt" ]; then
     echo "$OUT_TEXT" | grep -q "^FAIL: equality guard stopped reporting after bar" || result=1
     report "acb_guard_stops_after_boot_fails_by_name" $result
 
+    # NEW-50: full-frame presents above start-up's two must fail by name --
+    # the inv-buffer-overflow signature is every golden green and every frame
+    # a full present.  Every ROT line is rewritten so the LAST one (the one
+    # the gate reads) carries full=3; cmp guards the mutation.
+    sed 's|^\(ACIDBOX_ROT ops=[0-9]*\) full=2 |\1 full=3 |' \
+        "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_fullover.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_fullover.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$ACB/transcript_qemu.txt" "$WORK/acb_fullover.txt" && result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: full-frame presents above start-up" || result=1
+    report "acb_full_presents_over_bound_fails_by_name" $result
+
     sed 's|^ACIDBOX_UI_SUM=0x........|ACIDBOX_UI_SUM=0xBADBADBA|' \
         "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_badsum.txt"
     run_gate "$ACB" "run_qemu.sh" "$WORK/acb_badsum.txt"; rc=$?
