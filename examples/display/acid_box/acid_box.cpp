@@ -52,6 +52,8 @@
 #include "synthui_rotary_knob_gpu.h"
 #include "synthui_led_button.h"
 #include "synthui_lamp.h"
+#include "synthui_seven_segment.h"
+#include "synthui_panel_button.h"
 #if defined(ACIDBOX_LOOPSTAT)
 #include "loopstat_pct.h"
 #endif
@@ -1136,8 +1138,14 @@ static constexpr int NUM_DY = 118;
 /* cell 2 is 232..331 x 96..195 -- the gate's edit target; its tap lands at (281,143) */
 static constexpr int PITCH_X = 912, PITCH_Y = 96, PITCH_SIZE = 150;
 static constexpr int NOTE_X = 1080, NOTE_Y = 110;
-static constexpr int ACC_X = 1080,  SLD_X = 1176, TOG_Y = 148, TOG_W = 88, TOG_H = 56;
+static constexpr int ACC_X = 1080,  SLD_X = 1176, TOG_Y = 148, TOG_KEY = 56;
+static constexpr int ACC_LABEL_X = 1142, SLD_LABEL_X = 1238, TOG_LABEL_Y = 168;
 static constexpr int WAVE_X = 1080, WAVE_Y = 222, WAVE_W = 184, WAVE_H = 56;
+static constexpr int STEP_Y = 300,  STEP_H = 56;
+static constexpr int PREV_X = 1080, PREV_W = 44;
+static constexpr int SEG_X  = 1130, SEG_W  = 84;
+static constexpr int NEXT_X = 1220, NEXT_W = 44;
+static constexpr int STEP_LABEL_X = 1152, STEP_LABEL_Y = 366;
 /* y 308..520 is RESERVED: empty on purpose (spec section 6), not centred away */
 /* sound knobs */
 static constexpr int KNOB_X0 = 16,  KNOB_Y0 = 520, KNOB_SIZE = 150, KNOB_PITCH = 158;   /* CUTOFF: 16..165 x 520..669; the drag lands at x 89, y 583..647 */
@@ -1149,7 +1157,8 @@ static constexpr int KNOB_LABEL_DX = 50, KNOB_LABEL_DY = 152;
 static constexpr uint32_t ACIDBOX_ROT_FULL_THRESHOLD_PX = 915456u;
 static lv_obj_t *stepCell[16];          /* synthui_led_button: lit = gate, cue = playhead, latched pressed = selected */
 static lv_obj_t *accLamp[16], *sldLamp[16], *numLabel[16];
-static lv_obj_t *playBtnLabel, *bpmLabel, *noteLabel, *accBtn, *sldBtn, *waveBtnLabel;
+static lv_obj_t *playBtnLabel, *bpmLabel, *noteLabel, *waveBtnLabel;
+static lv_obj_t *accKey, *sldKey, *stepSeg;
 static lv_obj_t *pitchKnob;
 static int selectedStep = 0;
 
@@ -1223,8 +1232,8 @@ static void commit_selected(uint8_t note, bool gate, bool accent, bool slide)
     synthui_lamp_set_on(accLamp[selectedStep], accent);
     synthui_lamp_set_on(sldLamp[selectedStep], slide);
     lv_label_set_text(noteLabel, gate ? noteName(note) : "--");
-    lv_obj_set_style_bg_color(accBtn, accent ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(sldBtn, slide  ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
+    synthui_led_button_set_lit(accKey, accent);
+    synthui_led_button_set_lit(sldKey, slide);
     CONSOLE.printf("STEP[%d]=note%u gate%d acc%d sld%d\n",
                    selectedStep, (unsigned)note,
                    gate ? 1 : 0, accent ? 1 : 0, slide ? 1 : 0);
@@ -1244,8 +1253,11 @@ static void select_step(int i)
     const AcidStep st = seq.step(i);
     synthui_rotary_knob_set_angle(pitchKnob, noteToAngle(st.note ? st.note : 33));
     lv_label_set_text(noteLabel, st.gate ? noteName(st.note) : "--");
-    lv_obj_set_style_bg_color(accBtn, st.accent ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
-    lv_obj_set_style_bg_color(sldBtn, st.slide  ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
+    synthui_led_button_set_lit(accKey, st.accent);
+    synthui_led_button_set_lit(sldKey, st.slide);
+    char sb[4];
+    snprintf(sb, sizeof sb, "%02d", i + 1);
+    synthui_seven_segment_set_text(stepSeg, sb);
     CONSOLE.printf("SELECT=%d\n", i);
 }
 
@@ -1269,6 +1281,12 @@ static void cbAccBtn(lv_event_t *e)
 { (void)e; const AcidStep st = seq.step(selectedStep); commit_selected(st.note, st.gate, !st.accent, st.slide); }
 static void cbSldBtn(lv_event_t *e)
 { (void)e; const AcidStep st = seq.step(selectedStep); commit_selected(st.note, st.gate, st.accent, !st.slide); }
+/* Selection only -- prev/next never change the pattern, which is what makes
+ * them safe to hold down while auditioning a bar. */
+static void cbPrevStep(lv_event_t *e)
+{ (void)e; select_step((selectedStep + 15) % 16); }
+static void cbNextStep(lv_event_t *e)
+{ (void)e; select_step((selectedStep + 1) % 16); }
 
 static void cbPlay(lv_event_t *e)
 {
@@ -1477,15 +1495,54 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
     noteLabel = lv_label_create(scr);
     lv_obj_set_style_text_color(noteLabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_pos(noteLabel, NOTE_X, NOTE_Y);
-    accBtn = mkbtn(scr, "ACC", cbAccBtn, NULL);
-    lv_obj_set_pos(accBtn, ACC_X, TOG_Y);
-    lv_obj_set_size(accBtn, TOG_W, TOG_H);
-    sldBtn = mkbtn(scr, "SLD", cbSldBtn, NULL);
-    lv_obj_set_pos(sldBtn, SLD_X, TOG_Y);
-    lv_obj_set_size(sldBtn, TOG_W, TOG_H);
+    accKey = synthui_led_button_create(scr);
+    lv_obj_set_size(accKey, TOG_KEY, TOG_KEY);
+    lv_obj_set_pos(accKey, ACC_X, TOG_Y);
+    synthui_led_button_set_color(accKey, SYNTHUI_LED_BUTTON_AMBER);
+    lv_obj_add_event_cb(accKey, cbAccBtn, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *accLbl = lv_label_create(scr);
+    lv_label_set_text(accLbl, "ACC");
+    lv_obj_set_style_text_color(accLbl, lv_color_hex(0x9aa0b8), LV_PART_MAIN);
+    lv_obj_set_pos(accLbl, ACC_LABEL_X, TOG_LABEL_Y);
+
+    sldKey = synthui_led_button_create(scr);
+    lv_obj_set_size(sldKey, TOG_KEY, TOG_KEY);
+    lv_obj_set_pos(sldKey, SLD_X, TOG_Y);
+    synthui_led_button_set_color(sldKey, SYNTHUI_LED_BUTTON_BLUE);
+    lv_obj_add_event_cb(sldKey, cbSldBtn, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *sldLbl = lv_label_create(scr);
+    lv_label_set_text(sldLbl, "SLD");
+    lv_obj_set_style_text_color(sldLbl, lv_color_hex(0x9aa0b8), LV_PART_MAIN);
+    lv_obj_set_pos(sldLbl, SLD_LABEL_X, TOG_LABEL_Y);
+
     lv_obj_t *wave = mkbtn(scr, "SAW", cbWave, &waveBtnLabel);
     lv_obj_set_pos(wave, WAVE_X, WAVE_Y);
     lv_obj_set_size(wave, WAVE_W, WAVE_H);
+
+    /* step readout: < [NN] > .  Momentary panel buttons -- `on` is never set. */
+    lv_obj_t *prev = synthui_panel_button_create(scr);
+    lv_obj_set_size(prev, PREV_W, STEP_H);
+    lv_obj_set_pos(prev, PREV_X, STEP_Y);
+    synthui_panel_button_set_glyph(prev, SYNTHUI_PANEL_BUTTON_GLYPH_REWIND);
+    synthui_panel_button_set_accent(prev, SYNTHUI_PANEL_BUTTON_ACCENT_PALE);
+    lv_obj_add_event_cb(prev, cbPrevStep, LV_EVENT_CLICKED, NULL);
+
+    stepSeg = synthui_seven_segment_create(scr);
+    lv_obj_set_size(stepSeg, SEG_W, STEP_H);
+    lv_obj_set_pos(stepSeg, SEG_X, STEP_Y);
+    synthui_seven_segment_set_text(stepSeg, "01");
+
+    lv_obj_t *next = synthui_panel_button_create(scr);
+    lv_obj_set_size(next, NEXT_W, STEP_H);
+    lv_obj_set_pos(next, NEXT_X, STEP_Y);
+    synthui_panel_button_set_glyph(next, SYNTHUI_PANEL_BUTTON_GLYPH_FORWARD);
+    synthui_panel_button_set_accent(next, SYNTHUI_PANEL_BUTTON_ACCENT_PALE);
+    lv_obj_add_event_cb(next, cbNextStep, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *stepLbl = lv_label_create(scr);
+    lv_label_set_text(stepLbl, "STEP");
+    lv_obj_set_style_text_color(stepLbl, lv_color_hex(0x5f6a7c), LV_PART_MAIN);
+    lv_obj_set_pos(stepLbl, STEP_LABEL_X, STEP_LABEL_Y);
 
     /* Sound knobs, one row along the bottom edge.  Boot angles are the INVERSE
      * of each map applied to default_patch()'s values, so the first frame
