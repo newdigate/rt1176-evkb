@@ -1541,7 +1541,7 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
 
     lv_obj_t *stepLbl = lv_label_create(scr);
     lv_label_set_text(stepLbl, "STEP");
-    lv_obj_set_style_text_color(stepLbl, lv_color_hex(0x5f6a7c), LV_PART_MAIN);
+    lv_obj_set_style_text_color(stepLbl, lv_color_hex(0x9aa0b8), LV_PART_MAIN);
     lv_obj_set_pos(stepLbl, STEP_LABEL_X, STEP_LABEL_Y);
 
     /* Sound knobs, one row along the bottom edge.  Boot angles are the INVERSE
