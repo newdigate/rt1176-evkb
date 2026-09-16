@@ -745,8 +745,11 @@ fps there is meaningless. The bench must re-run both measurements as RUNS, not w
 touch p95 STOPPED vs PLAYING against 37.8 / 66.8 ms, and `synthui_led_button_test` Phase B against
 20.6 fps, plus the gpu golden `0xEA5AB843`. **Prediction on record:** the gain is bounded by however
 much of that 48.6 ms median frame is fill rather than per-task churn. If it does not clear 30 fps, a
-GC355 compositor for `led_button` is the honest next step and gets its own issue -- noting NEW-23's
-fader earned one by animating a cap that genuinely MOVES, while this widget repaints to move a ring.
+GC355 compositor for `led_button` is the honest next step -- **filed as NEW-52, blocked by NEW-50**,
+noting NEW-23's fader earned one by animating a cap that genuinely MOVES while this widget repaints
+to move a ring, and that acid_box's 2,884 B of ITCM headroom may not fit one (`synthui_rotary_knob_gpu`
+is ~3,188 B). ★ The bench should report WHERE THE FRAME GOES, not just fps: NEW-50's win was pixel
+work, so if the residue is per-task churn a GPU compositor moves the fill and leaves the churn.
 
 ★★ **SILICON, 2026-09-16 (bench): both halves ACCEPTED, and the one criterion that MISSED is
 now a measured number rather than an argument.** acid_box: `ACIDBOX_ENGINE=gpu`, gpu golden

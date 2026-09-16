@@ -407,7 +407,11 @@ likewise fell as predicted. **What is left for the bench is only whether that
 buys 30 fps**, which QEMU cannot answer at all.
 
 **If it does not clear 30 fps**, a GC355 compositor for `led_button` becomes
-the honest answer and gets its own issue. NEW-23's fader is the precedent, but
+the honest answer. **Filed 2026-09-16 as NEW-52**, blocked by NEW-50 so it
+cannot be picked up before the bench reports, and carrying the argument
+against building it, the GC355 hazards, and the ITCM constraint that may
+decide it outright (acid_box has 2,884 B of headroom against a 2,048 B floor;
+`synthui_rotary_knob_gpu` is ~3,188 B for comparison). NEW-23's fader is the precedent, but
 it argues for one less strongly than it looks: that fader animates a cap that
 genuinely moves, while this widget repaints to move a ring.
 
