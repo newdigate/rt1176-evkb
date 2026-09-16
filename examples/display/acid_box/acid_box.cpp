@@ -1124,21 +1124,24 @@ static constexpr int LANE_X0 = 16,  LANE_Y0 = 96, LANE_CELL = 100, LANE_PITCH_X 
  * + 12 px lamps + a 16 px number (LV_SIZE_CONTENT default-font line_height,
  * not 11) + spacing.  ROW 0 DOES NOT MOVE, which is what keeps
  * touch_script.txt valid -- cell 2 is still 232..331 x 96..195 and the gate's
- * tap still lands at (281,143).  Row 1 therefore sits at y 230, its number at
- * y 348..364, and the lane's last ink row is 96 + 134 + 118 + 16 = 364, clear
- * of the knob row at 520. */
+ * tap still lands at (281,143).  Row 1 therefore sits at y 230, its number's
+ * 16 px label box at y 348..363; measured from the golden's own frame, the
+ * last INK row is 360 (the box's bottom rows are padding, not glyph pixels),
+ * clear of the knob row at 520. */
 static constexpr int LANE_PITCH_Y = 134;
 static constexpr int LAMP_DY = 105, LAMP_W = 40, LAMP_H = 12;
 static constexpr int LAMP_ACC_DX = 8, LAMP_SLD_DX = 52;
 /* step-number label top: 118, not 122 -- at 122 row 0's label (16 px tall,
  * default font) occupies y 218..234, which row 1's key (created after, so it
  * paints on top) already covers from y 230.  At 118 row 0's label is
- * 214..230, clear of row 1's y 230 top edge. */
+ * 214..229, clear of row 1's y 230 top edge. */
 static constexpr int NUM_DY = 118;
 /* cell 2 is 232..331 x 96..195 -- the gate's edit target; its tap lands at (281,143) */
 static constexpr int PITCH_X = 912, PITCH_Y = 96, PITCH_SIZE = 150;
 static constexpr int NOTE_X = 1080, NOTE_Y = 110;
 static constexpr int ACC_X = 1080,  SLD_X = 1176, TOG_Y = 148, TOG_KEY = 56;
+/* Tightest clearance on the panel: from these two hand-tuned literals the ACC
+ * caption's ink ends at x 1171 and the SLD key starts at x 1176 -- 4 px. */
 static constexpr int ACC_LABEL_X = 1142, SLD_LABEL_X = 1238, TOG_LABEL_Y = 168;
 static constexpr int WAVE_X = 1080, WAVE_Y = 222, WAVE_W = 184, WAVE_H = 56;
 static constexpr int STEP_Y = 300,  STEP_H = 56;
@@ -1147,7 +1150,7 @@ static constexpr int SEG_X  = 1130, SEG_W  = 84;
 static constexpr int NEXT_X = 1220, NEXT_W = 44;
 static constexpr int STEP_LABEL_X = 1152, STEP_LABEL_Y = 366;
 /* y 379..519 is RESERVED: empty on purpose, not centred away -- the step row
- * (300..355 + the 366..378 caption) and row 1's step numbers (reaching 364)
+ * (300..355 + the 366..378 caption) and row 1's step numbers (ink to 360)
  * both sit above it. */
 /* sound knobs */
 static constexpr int KNOB_X0 = 16,  KNOB_Y0 = 520, KNOB_SIZE = 150, KNOB_PITCH = 158;   /* CUTOFF: 16..165 x 520..669; the drag lands at x 89, y 583..647 */
@@ -1297,9 +1300,13 @@ static void cbNextStep(lv_event_t *e)
 /* synthui_panel_button's own draw reads only `on` and DISABLED -- it never
  * looks at LV_STATE_PRESSED -- so a bare CLICKED handler paints no feedback
  * on the way down.  Drive `on` momentarily from here instead of touching
- * SynthUI: lit for the press, dark again on release OR on PRESS_LOST (a
+ * SynthUI: lit for the press, dark again on RELEASED, on PRESS_LOST (a
  * finger sliding off the button with no RELEASED event, which would
- * otherwise leave it lit forever). */
+ * otherwise leave it lit forever), or on INDEV_RESET (sent INSTEAD of either
+ * when an indev is reset out from under a held press -- unreachable today,
+ * acid_box deletes no objects, but the LedButton widget next door handles
+ * this exact case for the same reason, and a momentary button left lit is
+ * the same class of bug either way). */
 static void cbPanelDown(lv_event_t *e){ synthui_panel_button_set_on(lv_event_get_target_obj(e), true); }
 static void cbPanelUp  (lv_event_t *e){ synthui_panel_button_set_on(lv_event_get_target_obj(e), false); }
 
@@ -1405,6 +1412,7 @@ UIBUILD_FN static lv_obj_t *mkpanelbtn(lv_obj_t *scr, int x, int w,
     lv_obj_add_event_cb(b, cbPanelDown, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_RELEASED, NULL);
     lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_PRESS_LOST, NULL);
+    lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_INDEV_RESET, NULL);
     return b;
 }
 UIBUILD_FN static lv_obj_t *mkknob(lv_obj_t *scr, int i, const char *name,

@@ -168,24 +168,28 @@ teensy_add_executable(acid_box
 # previous default ELF, ITCM gained two long-branch veneers (+16 B) and loop()
 # grew 20 B (the inlined per-pass active test and the step-8 arm), net of
 # alignment.
-# ★ RE-MEASURED 2026-09-16, NEW-25 Task 4: only TWO of libSynthUI's widgets are
-# actually linked yet -- led_button and lamp (seven_segment and panel_button
-# compile into libSynthUI.a but are gc-sectioned away until a later task
-# references them).  Those two alone overflowed the DEFAULT build's ITCM:
+# ★ RE-MEASURED 2026-09-16, NEW-25 Task 4: two more SynthUI widgets landed with
+# the editor -- led_button and lamp -- and overflowed the DEFAULT build's ITCM:
 # led_button 2952 + lamp 1424 B, against a 646 B saving elsewhere (the step
 # lane reusing led_button geometry rather than adding its own), net +3730 B
 # on a 2708 B headroom -- the 988 B `region ITCM overflowed` this task started
 # from.  Fixed by moving the libSynthUI routing rule (excluding only the
 # rotary knob and its GC355 compositor) from M2_BT_OUT-only to EVERY
-# configuration -- see the ITCM relief block below.  Headroom now: default
-# 3,156 B, LOOPSTAT 3,012 B, build-bt 11,812 B, build-bench 11,652 B (+448 B
-# on the two non-BT builds, +448/+464 B on the two BT builds -- the non-rotary
-# SynthUI archive moving to flash more than pays for led_button+lamp's own
-# code).  seven_segment (2878 B) and panel_button (2958 B) land in FLASH under
-# this same rule the moment a later task references them, so their ITCM cost
-# then is ~0 -- already paid for.  QEMU golden ACIDBOX_UI_SUM=0xC03F022E
-# unchanged (still FAIL: UI golden, pending the re-record in a later task) --
-# routing code to flash did not move a pixel.
+# configuration -- see the ITCM relief block below.
+# ★ RE-MEASURED 2026-09-16 AT MERGE: all FOUR SynthUI widgets are linked now --
+# `nm` shows `synthui_seven_segment_create` and `synthui_panel_button_create`
+# in flash beside led_button and lamp, referenced by the editor's step readout
+# and its REWIND/FORWARD panel buttons.  They land in FLASH under the same
+# whole-archive routing rule, so their ITCM cost is ~0, already paid for.
+# Headroom: default 2,884 B (259,260 B used), LOOPSTAT 2,756 B (259,388 B
+# used), build-bt 11,604 B (250,540 B used), build-bench 11,412 B (250,732 B
+# used).  QEMU golden ACIDBOX_UI_SUM=0xBB2AEE59 -- the re-record for the
+# editor's own frame happened in a later task; routing code to flash did not
+# move a pixel by itself.
+# ★ One 2,048 B floor (the NEW-45 ASSERT below) guards all four builds, but
+# their headroom differs by about 4x -- in practice it guards the non-BT
+# builds, which is the right call: they are the tight ones, while the BT
+# builds carry ~9.5 KB of unguarded room above the floor.
 # ★ NEXT LEVER IF A LATER TASK OVERFLOWS AGAIN (review note, 2026-09-16):
 # synthui_rotary_knob_gpu.cpp.obj is ~3188 B of .text sitting in ITCM and
 # NEVER EXECUTES in the default/QEMU build -- the GC355 path is silicon-only,
@@ -206,7 +210,7 @@ if(M2_BT_OUT)
 endif()
 
 # ITCM relief, on EVERY configuration since the NEW-25 SynthUI-editor consumer
-# rework (docs/superpowers/plans/2026-09-15-acid-box-synthui-editor.md, Task 4,
+# rework (docs/superpowers/plans/2026-09-16-acid-box-synthui-editor.md, Task 4,
 # pulled forward from Task order because Task 1 proved the tree does not link
 # without it): the editor links two more SynthUI widgets today (led_button,
 # lamp -- see the widget-count note below), and the DEFAULT build overflowed
@@ -268,7 +272,7 @@ if(_acidbt_coreld AND EXISTS "${_acidbt_coreld}")
     string(REPLACE
         "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")"
         "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")
-	ASSERT(SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) <= LENGTH(ITCM) - ${ACIDBOX_ITCM_MIN_HEADROOM}, \"NEW-45: ITCM headroom below ${ACIDBOX_ITCM_MIN_HEADROOM} bytes -- see docs/superpowers/specs/2026-09-11-acid-box-itcm-headroom-design.md\")"
+	ASSERT(SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) <= LENGTH(ITCM) - ${ACIDBOX_ITCM_MIN_HEADROOM}, \"NEW-45: ITCM headroom below ${ACIDBOX_ITCM_MIN_HEADROOM} bytes -- see docs/superpowers/specs/2026-09-11-acid-box-itcm-headroom-design.md; see the NEXT LEVER note in examples/display/acid_box/CMakeLists.txt\")"
         _acidbt_ld "${_acidbt_ld}")
     # string(REPLACE) is a SILENT NO-OP when its anchor does not match, and the anchor above is a specific
     # line of the CORE imxrt1176.ld -- which lives in ANOTHER REPOSITORY (teensy-cores, resolved via
@@ -292,9 +296,9 @@ if(_acidbt_coreld AND EXISTS "${_acidbt_coreld}")
     # SynthUI routing -- applies to EVERY configuration; anchored the same place
     # the BT-only rules anchor (right after the core's own libLVGL_flash.a rule).
     set(_acidbt_routing "*libLVGL_flash.a:(.text*)
-	/* NEW-25 consumer rework: the editor links two more SynthUI widgets today
-	   (led_button, lamp -- seven_segment and panel_button compile into the
-	   archive but are gc-sectioned out until a later task references them)
+	/* NEW-25 consumer rework: the editor links FOUR SynthUI widgets --
+	   led_button, lamp, seven_segment and panel_button, the last two
+	   referenced by the step readout and the REWIND/FORWARD panel buttons --
 	   and ITCM is the binding constraint -- the default build had 2,708 B of
 	   headroom before led_button+lamp (net +3730 B) overflowed it by 988 B.
 	   These widgets are called per DRAW CALL at UI rate, the same shape as

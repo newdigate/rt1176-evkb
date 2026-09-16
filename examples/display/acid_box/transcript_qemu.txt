@@ -386,10 +386,11 @@ square-cornered objects on a panel of rounded ones.  Accepted as-is.
 Measured extents: prev 1080..1123, seven-segment ink 1130..1212 of an 84 px
 box (column 1213 is background, not a clipping bug), next 1220..1263, all
 y 300..355; the STEP caption 1152..1187, centred on the readout, at
-y 369..378; the lane's row-1 ink (the step numbers) reaches y 360; the
-reserved empty band is y 379..519, NOT the "308..520" earlier comments
-claimed -- the step row and its caption occupy 300..378 and row 1's step
-numbers reach y 364.  Bit-identical across two gate runs.
+y 369..378; row 1's step numbers sit in a 16 px label box at y 348..363,
+with the last INK row measured at y 360; the reserved empty band is
+y 379..519, NOT the "308..520" earlier comments claimed -- the step row and
+its caption occupy 300..378 and row 1's step numbers clear of it above.
+Bit-identical across two gate runs.
 
 History: 0xE871BF09 (2026-09-15, LANDSCAPE: layout C presented CW90 through
 the PXP; checked "ACID BOX" top-left, -/128.0/+ centred, PLAY/STOP top-right,
