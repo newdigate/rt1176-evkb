@@ -323,7 +323,7 @@ and add, after the WAVE button:
 
     lv_obj_t *stepLbl = lv_label_create(scr);
     lv_label_set_text(stepLbl, "STEP");
-    lv_obj_set_style_text_color(stepLbl, lv_color_hex(0x5f6a7c), LV_PART_MAIN);
+    lv_obj_set_style_text_color(stepLbl, lv_color_hex(0x9aa0b8), LV_PART_MAIN);   /* the editor caption grey, as ACC and SLD use (spec section 3) */
     lv_obj_set_pos(stepLbl, STEP_LABEL_X, STEP_LABEL_Y);
 ```
 
