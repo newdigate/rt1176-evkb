@@ -129,6 +129,33 @@ tk() { echo "$TLINE" | grep -oE "$1=[0-9]+" | cut -d= -f2; }
 TLIT=$(tk lit); TPRS=$(tk press); TCUE=$(tk cue); TCOL=$(tk color)
 [ "$TLIT" -gt 0 ] && [ "$TPRS" -gt 0 ] && [ "$TCUE" -gt 0 ] && [ "$TCOL" -gt 0 ] \
     || { echo "FAIL: an op created no draw task ($TLINE)"; exit 1; }
+# Pinned 2026-09-16 from the measured run, derivation in the comment above
+# each: a layout change trips these loudly; re-derive, never loosen.
+#   cue=23: key 12 (the 34 px key) at LCG step 62, cued while LATCHED
+#     pressed (dy_px=1 there).  Unpressed the four strips are top=5
+#     bottom=3 left=7 right=7 (band=4, cap.x1=3 -- the cap group IS
+#     reached, unlike the 100 px keys where band=9 stops short of
+#     cap.x1=10); pressed, cap/highlight/halo/led/dots/base shift down 1 px
+#     off the CUE box (which is always computed unpressed -- the bezel
+#     never moves) so top loses its cap_top hit (5->3) and base's rect
+#     (unpressed y=26..27, just short of the bottom strip's y=28..31) slides
+#     into it (bottom 3->6): 3+6+7+7=23.  The 32 px key (key 11) has the
+#     identical unpressed/pressed totals (22/23) by the same mechanism but
+#     the LCG never latches it before cueing it, so 23 is what prints.
+#   lit=10, color=10: the halo box on a 100 px OR the 34 px key hits
+#     bezel_fill+bezel_border+well+cap+cap_top+highlight+halo+led+dot1+dot2
+#     (cap_low and base fall outside it) = 10; the 32 px key gives only 8
+#     (no dots below 34 px).  Translation-invariant with dy, so pressed and
+#     unpressed agree.
+#   press=12: the press box (the union of cap/highlight/halo at dy=0 and
+#     cap/base at the pressed dy, per synthui_led_button_press_box()) spans
+#     every layer on a 100 px OR the 34 px key -- all twelve hit, unlike
+#     lit/color's ten, because its y-range reaches down to base and up past
+#     highlight; the 32 px key gives 10 (no dots).
+[ "$TCUE" -le 23 ] || { echo "FAIL: cue draw tasks above its bound (cue=$TCUE > 23)"; exit 1; }   # key 12 (34 px) latched, LCG step 62: 3+6+7+7
+[ "$TLIT" -le 10 ] || { echo "FAIL: lit draw tasks above its bound (lit=$TLIT > 10)"; exit 1; }
+[ "$TCOL" -le 10 ] || { echo "FAIL: colour draw tasks above its bound (color=$TCOL > 10)"; exit 1; }
+[ "$TPRS" -le 12 ] || { echo "FAIL: press draw tasks above its bound (press=$TPRS > 12)"; exit 1; }
 # vsync-fence health (db pipeline): a timeout means the tear-free property
 # silently degraded with every golden still green.
 # A vsync-fence red during a full sweep is the documented load-sensitivity class
