@@ -505,11 +505,13 @@ Confirm `grep -a ACIDBOX_UI_SUM= $S/fb.uart` equals Step 1's value — the dump 
 
 Open `$S/fb.png` (send it to the user with SendUserFile) and confirm, item by item:
 - "ACID BOX" top-left; `-` / `128.0` / `+` centred; PLAY and STOP top-right (unchanged bar);
-- the 2x8 lane: ivory keys with a red LED lit on the gated steps and dark on rests 2, 5, 9, 14;
+- the 2x8 lane: ivory keys with a red LED lit on the gated steps and dark on rests 2, 5, 9, 14, and no key showing the square-cornered look of a mis-scaled bezel;
 - amber accent lamps under steps 0, 7, 12 and blue slide lamps under 3, 10, 15, matching `kPreset`;
 - step numbers 01..16 under the lamps, with 01 brighter than the rest;
 - key 1 visibly SUNK (the selection latch) and no key showing a red cue bezel (the transport is stopped);
-- the editor column: pitch knob at A1, ACC lit amber, SLD dark, SAW, and `01` on the seven-segment between the two pale panel buttons;
+- the editor column: pitch knob at A1, ACC lit amber, SLD dark, SAW, and `01` on the seven-segment between the two panel buttons (their blue-grey body with its pale sheen band is the widget's default; the accent only paints while a button is pressed, so neither shows it in a boot frame);
+- the step row's measured extents, to be recorded in the transcript: prev 1080..1123, seven-segment ink 1130..1212 (the readout is 84 px wide and paints 83 of them — column 1213 is background, not a clipping bug), next 1220..1263, all y 300..355; the STEP caption 1154..1186, centred on the readout;
+- the reserved empty band is now y 379..519, NOT the "308..520" the old comments claimed: the step row and its caption occupy 300..378 and row 1's step numbers reach y 364. Correct that phrase wherever it appears in `run_qemu.sh` and in the transcript's own description while you are re-recording them;
 - the eight sound knobs along the bottom at their boot angles; nothing mirrored or lying on its side.
 
 If anything is wrong, fix the code and return to Step 1. Do not proceed with a golden for a frame that fails this list.
