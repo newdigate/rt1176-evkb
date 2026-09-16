@@ -892,10 +892,39 @@ cd ~/Development/rt1170/evkb/examples/display/acid_box && cmake --build build 2>
 
 Expected: `ACIDBOX_UI_SUM=0xBB2AEE59` (goldens green — that is the point), last `ACIDBOX_ROT ... full=<hundreds>`, `FAIL: full-frame presents above start-up's two (full=<F>)`. Revert `acid_box.cpp` (`git checkout examples/display/acid_box/acid_box.cpp`), rebuild, fill `<F>` into the gate comment, re-run: `PASS`.
 
+★ **CORRECTED 2026-09-16, found in execution: the mutation above does NOT
+exercise the new check.** An *unconditional* per-tick full-screen invalidate
+makes every present full-frame, so `ops == full` and the PRE-EXISTING
+`FAIL: the damage path never ran (ops == full)` fires first — the new bound is
+never reached, and a demo that never runs the assertion proves nothing about
+it. Fire the invalidate INTERMITTENTLY instead (e.g. 1 tick in 7, behind a
+`static int n; if (++n % 7 == 0)`), which keeps `ops > full` true while `full`
+climbs past 2. Measured that way: `ops=252 full=82`, golden still
+`0xBB2AEE59`, `FAIL: full-frame presents above start-up's two (full=82)`.
+**A RED demo must be checked for which assertion actually caught it.**
+
 - [ ] **Step 4: Re-capture the fixture and add the vacuity case.**
 
+★ **CORRECTED 2026-09-16, found in execution — the `cp` below is WRONG for
+this example and would have destroyed ~550 lines.** Unlike
+`synthui_led_button_test`'s, acid_box's `transcript_qemu.txt` is **a
+hand-maintained narrative document** — a changelog, prose analysis and
+cross-referenced measurements, with the raw UART embedded in only ONE section.
+A blind `cp` overwrites all of it. **Splice the new capture into its section
+instead**, add a changelog entry, and reconcile the numeric cross-references
+elsewhere in the document (boot golden, per-bar RMS windows, guard timings, the
+`ops` progression) so it stays internally consistent. The real change was 81
+insertions / 32 deletions, not a 581-line wipe. ★ Afterwards, PROVE the spliced
+fixture still replays green — extract the suite's `fake-qemu` stub and run the
+gate against the file:
+`REAL_QEMU=<stub> FAKE_CAPTURE=$PWD/transcript_qemu.txt ./run_qemu.sh` must
+exit 0. **Check before you overwrite any fixture whether it is a capture or a
+document.**
+
 ```bash
-cd ~/Development/rt1170/evkb/examples/display/acid_box && ./run_qemu.sh >/dev/null 2>&1; cp build/acid_box.uart transcript_qemu.txt && grep -c "^ACIDBOX_ROT ops" transcript_qemu.txt
+cd ~/Development/rt1170/evkb/examples/display/acid_box && ./run_qemu.sh >/dev/null 2>&1
+# then SPLICE build/acid_box.uart into the UART section -- do NOT cp over the file
+grep -c "^ACIDBOX_ROT ops" transcript_qemu.txt
 ```
 
 In `tools/gate-vacuity.test.sh` section 15, before `acb_bad_golden_fails_by_name`'s block, add:
