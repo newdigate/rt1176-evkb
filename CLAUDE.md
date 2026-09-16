@@ -667,6 +667,14 @@ walk does not spend 30 s paging stale bonds before it inquires.
   or LE-only), `M2_BT_INQUIRY_LIAC` exists because of it. The board "Wire not
   connected" that looked like the DAP wedge was the board being switched OFF.
 
+★ **SynthUI pin bumped to `075c137` the same day** (the final-review commit: the bezel cue
+width moved into the palette, plus comment corrections). Pixel-neutral BY MEASUREMENT, not by
+argument -- a `-DEVKB_FORCE_FETCH=ON` build that CLONED that SHA from GitHub reproduced both
+LedButton goldens (`0xD474F06D`, `0x463C3371`) and its gate passed on the fetched ELF; sweep
+re-run 141/141/0 and `LICENSE-AUDIT: PASS` after it. The seven SELF-BUILDING gate dirs and the
+twelve SynthUI-linking ones were rebuilt BEFORE that sweep, because an `evkb.cmake` edit makes
+the self-building gates reconfigure inside their 120 s budget and read as `exit status 124`.
+
 ★★ **SILICON, 2026-09-16 (bench): both halves ACCEPTED, and the one criterion that MISSED is
 now a measured number rather than an argument.** acid_box: `ACIDBOX_ENGINE=gpu`, gpu golden
 **`0xEA5AB843`** on THREE boots bit-identical (the landscape `0x2231070B` retired),
