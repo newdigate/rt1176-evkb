@@ -1,0 +1,65 @@
+synthui_led_button_test — SILICON transcript (MIMXRT1170-EVKB, RK055 panel)
+Recorded 2026-09-16, NEW-25 Task 7. Image [BUILD: Sep 16 2026 12:00:29],
+flashed with tools/rt1170-flash.sh (the .hex), console on the MCU-Link VCOM.
+
+=== SUMMARY ===
+
+PASS, except the >= 30 fps criterion, which is MISSED and is why NEW-50 now
+carries a measured number rather than an argument.
+
+  golden        led_button_crc=0xD474F06D        FOUR boots, bit-identical
+  final state   led_button_fresh_crc=0x463C3371  FOUR boots, bit-identical
+  delta guard   led_button_delta_eq=PASS         every boot
+  damage        max=10000 total=276492 steps=64 tail=6
+  per op        lit=1450 press=6640 cue=10000 color=1450
+  fences        led_button_vsync flips=73 isrs=73 timeouts=0
+  Phase B       led_button_fps frames=64 mfps_med=20587  (20.6 fps)
+                us_med=48574 us_min=22137 us_max=97100
+                (four boots: 20587, 20587, 20601, 20587 — spread 0.07 %)
+  pool          led_button_mem total=1045676 used_pct=2 max_used=11776 frag_pct=1
+
+★★ THE SILICON GOLDEN EQUALS THE QEMU GOLDEN, BIT FOR BIT — both 0xD474F06D,
+and the post-sequence state matches too. That is expected for a widget whose
+every pixel comes from the LVGL SOFTWARE renderer (this example links no
+VGLite and takes no GPU path), and it is worth stating because the tree's other
+display examples do NOT have this property: vglite_lvgl_test, synthui_fader_test
+and acid_box each keep two golden sets that are never reconciled, because their
+silicon frames are composited on the GC355 where hardware antialiasing is not
+LVGL's mask arithmetic. Here there is one number and it holds on both machines.
+
+★ The delta-equality guard and the per-op damage bounds reproduce EXACTLY on
+silicon, including the scripted indev tail: the release edge really does repaint
+key 12 on hardware, not just under QEMU's fake pointer.
+
+=== THE FPS MISS, AND WHAT IT IS EVIDENCE FOR ===
+
+Criterion (Linear NEW-25): "sustained >= 30 fps while animating". Measured
+20.6 fps, median frame 48.6 ms. Four boots agree to 0.07 %, so this is a
+property of the code and not of the sample.
+
+★ WHAT PHASE B ACTUALLY ANIMATES, which is the whole reading of the number:
+every 15 ms timer tick it moves the cue to the next key and re-lits a third of
+the bank. `set_cue` invalidates the WHOLE key (the widget's spec chose that:
+"the ring is the outer 3.5 units on four sides; four strips would save little"),
+so one tick dirties TWO whole keys for the cue plus up to sixteen halo boxes —
+about 20,000 px of cue damage that only ever changes a 3.5-unit bezel ring.
+This is the worst case the widget can be put in, and it is exactly the case
+NEW-50 (narrow set_cue to the bezel band) addresses.
+
+★ SO THE FIRST LEVER IS NEW-50, NOT A GPU COMPOSITOR. NEW-23's fader missed the
+same criterion on software and went to the GC355, and that is the reflex this
+measurement should NOT trigger: the fader animates a CAP that really does move,
+while this widget is repainting 10,000 px to change a ring. Measure NEW-50
+first; if a bezel-band invalidation does not clear 30 fps, then a compositor is
+the honest answer and NEW-25's plan says to file it as its own issue.
+
+★ acid_box, the widget's real consumer, is NOT this case: it moves the cue once
+per 33 ms poller tick, not sixteen times per 15 ms. Its own bench numbers are in
+examples/display/acid_box/transcript_hw_evkb.txt.
+
+=== WHAT WAS NOT DONE HERE ===
+
+The eyes-on-glass pass (ivory caps, the four LED colours, the sunk latch, the
+red cue bezel, the grey disabled keys, dots present at 34 px and absent at 32)
+belongs to the same bench session as acid_box's and is recorded there; this
+example's own scene was confirmed only through the checksums above.
