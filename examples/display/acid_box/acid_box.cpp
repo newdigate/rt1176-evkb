@@ -1255,7 +1255,7 @@ static void select_step(int i)
     lv_label_set_text(noteLabel, st.gate ? noteName(st.note) : "--");
     synthui_led_button_set_lit(accKey, st.accent);
     synthui_led_button_set_lit(sldKey, st.slide);
-    char sb[4];
+    char sb[16];
     snprintf(sb, sizeof sb, "%02d", i + 1);
     synthui_seven_segment_set_text(stepSeg, sb);
     CONSOLE.printf("SELECT=%d\n", i);
