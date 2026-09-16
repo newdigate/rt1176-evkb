@@ -1119,15 +1119,20 @@ static constexpr int PLAY_X = 1040, STOP_X = 1156, TRANSPORT_BTN_W = 100;   /* P
 /* pattern band */
 static constexpr int LANE_X0 = 16,  LANE_Y0 = 96, LANE_CELL = 100, LANE_PITCH_X = 108;
 /* Row pitch grew 112 -> 134 for the lamp strip and the step number: 100 px key
- * + 12 px lamps + an 11 px number + spacing.  ROW 0 DOES NOT MOVE, which is
- * what keeps touch_script.txt valid -- cell 2 is still 232..331 x 96..195 and
- * the gate's tap still lands at (281,143).  Row 1 therefore sits at y 230 and
- * the lane's last pixel row is 96 + 134 + 100 + 33 = 363, clear of the knob
- * row at 520. */
+ * + 12 px lamps + a 16 px number (LV_SIZE_CONTENT default-font line_height,
+ * not 11) + spacing.  ROW 0 DOES NOT MOVE, which is what keeps
+ * touch_script.txt valid -- cell 2 is still 232..331 x 96..195 and the gate's
+ * tap still lands at (281,143).  Row 1 therefore sits at y 230, its number at
+ * y 348..364, and the lane's last ink row is 96 + 134 + 118 + 16 = 364, clear
+ * of the knob row at 520. */
 static constexpr int LANE_PITCH_Y = 134;
 static constexpr int LAMP_DY = 105, LAMP_W = 40, LAMP_H = 12;
 static constexpr int LAMP_ACC_DX = 8, LAMP_SLD_DX = 52;
-static constexpr int NUM_DY = 122;      /* step-number label top, centred on the key */
+/* step-number label top: 118, not 122 -- at 122 row 0's label (16 px tall,
+ * default font) occupies y 218..234, which row 1's key (created after, so it
+ * paints on top) already covers from y 230.  At 118 row 0's label is
+ * 214..230, clear of row 1's y 230 top edge. */
+static constexpr int NUM_DY = 118;
 /* cell 2 is 232..331 x 96..195 -- the gate's edit target; its tap lands at (281,143) */
 static constexpr int PITCH_X = 912, PITCH_Y = 96, PITCH_SIZE = 150;
 static constexpr int NOTE_X = 1080, NOTE_Y = 110;
@@ -1427,6 +1432,12 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
         synthui_lamp_set_shape(al, SYNTHUI_LAMP_SHAPE_PILL);
         synthui_lamp_set_color(al, SYNTHUI_LAMP_COLOR_AMBER);
         synthui_lamp_set_on(al, kPreset[i].accent);
+        /* A lamp is a read-out, not a touch target: the constructor removes
+         * only LV_OBJ_FLAG_SCROLLABLE, so it still inherits CLICKABLE from the
+         * lv_obj base and would otherwise swallow presses landing in its
+         * 40x12 band under the key -- 32 invisible targets a future
+         * drag-across-the-lane gesture would snag on. */
+        lv_obj_remove_flag(al, LV_OBJ_FLAG_CLICKABLE);
         accLamp[i] = al;
 
         lv_obj_t *sl = synthui_lamp_create(scr);
@@ -1435,6 +1446,7 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
         synthui_lamp_set_shape(sl, SYNTHUI_LAMP_SHAPE_PILL);
         synthui_lamp_set_color(sl, SYNTHUI_LAMP_COLOR_BLUE);
         synthui_lamp_set_on(sl, kPreset[i].slide);
+        lv_obj_remove_flag(sl, LV_OBJ_FLAG_CLICKABLE);  /* read-out; see accLamp above */
         sldLamp[i] = sl;
 
         lv_obj_t *n = lv_label_create(scr);
@@ -1442,7 +1454,12 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
         snprintf(nb, sizeof nb, "%02d", i + 1);
         lv_label_set_text(n, nb);
         lv_obj_set_style_text_color(n, lv_color_hex(0x5f6a7c), LV_PART_MAIN);
-        lv_obj_set_pos(n, x + LANE_CELL / 2 - 10, y + NUM_DY);
+        /* Width-and-align, not a guessed half-width offset: LANE_CELL wide,
+         * centred text, so centring is exact and independent of the glyph
+         * width of whatever the label happens to hold ("01".."16"). */
+        lv_obj_set_width(n, LANE_CELL);
+        lv_obj_set_style_text_align(n, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_pos(n, x, y + NUM_DY);
         numLabel[i] = n;
     }
 
