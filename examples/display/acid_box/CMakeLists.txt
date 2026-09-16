@@ -168,17 +168,31 @@ teensy_add_executable(acid_box
 # previous default ELF, ITCM gained two long-branch veneers (+16 B) and loop()
 # grew 20 B (the inlined per-pass active test and the step-8 arm), net of
 # alignment.
-# ★ RE-MEASURED 2026-09-16, NEW-25 Task 4: the editor's four extra SynthUI
-# widgets (led_button, lamp, seven_segment, panel_button) overflowed the
-# DEFAULT build's ITCM by 988 B, so the libSynthUI routing rule (excluding
-# only the rotary knob and its GC355 compositor) moved from M2_BT_OUT-only to
-# EVERY configuration -- see the ITCM relief block below.  Headroom now:
-# default 3,156 B, LOOPSTAT 3,012 B, build-bt 11,812 B, build-bench 11,652 B
-# (+448 B on the two non-BT builds, +448/+464 B on the two BT builds -- the
-# non-rotary SynthUI archive moving to flash more than pays for the four new
-# widgets' own code).  QEMU golden ACIDBOX_UI_SUM=0xC03F022E unchanged (still
-# FAIL: UI golden, pending the re-record in a later task) -- routing code to
-# flash did not move a pixel.
+# ★ RE-MEASURED 2026-09-16, NEW-25 Task 4: only TWO of libSynthUI's widgets are
+# actually linked yet -- led_button and lamp (seven_segment and panel_button
+# compile into libSynthUI.a but are gc-sectioned away until a later task
+# references them).  Those two alone overflowed the DEFAULT build's ITCM:
+# led_button 2952 + lamp 1424 B, against a 646 B saving elsewhere (the step
+# lane reusing led_button geometry rather than adding its own), net +3730 B
+# on a 2708 B headroom -- the 988 B `region ITCM overflowed` this task started
+# from.  Fixed by moving the libSynthUI routing rule (excluding only the
+# rotary knob and its GC355 compositor) from M2_BT_OUT-only to EVERY
+# configuration -- see the ITCM relief block below.  Headroom now: default
+# 3,156 B, LOOPSTAT 3,012 B, build-bt 11,812 B, build-bench 11,652 B (+448 B
+# on the two non-BT builds, +448/+464 B on the two BT builds -- the non-rotary
+# SynthUI archive moving to flash more than pays for led_button+lamp's own
+# code).  seven_segment (2878 B) and panel_button (2958 B) land in FLASH under
+# this same rule the moment a later task references them, so their ITCM cost
+# then is ~0 -- already paid for.  QEMU golden ACIDBOX_UI_SUM=0xC03F022E
+# unchanged (still FAIL: UI golden, pending the re-record in a later task) --
+# routing code to flash did not move a pixel.
+# ★ NEXT LEVER IF A LATER TASK OVERFLOWS AGAIN (review note, 2026-09-16):
+# synthui_rotary_knob_gpu.cpp.obj is ~3188 B of .text sitting in ITCM and
+# NEVER EXECUTES in the default/QEMU build -- the GC355 path is silicon-only,
+# gated behind the chip-ID probe.  Routing it to flash would roughly double
+# the default build's headroom.  NOT done here: on silicon it IS per-frame
+# (the GPU compositor runs under a drag), so unlike led_button/lamp this one
+# must be BENCHED before moving, not assumed safe from its QEMU inertness.
 target_link_options(acid_box.elf PRIVATE -Wl,--print-memory-usage)
 # Audio's own dependency set (Wire/SPI/SdFat/SD/SerialFlash) is named exactly as
 # acid_bass_test names it -- import_evkb_audio_full() creates those targets but
@@ -194,17 +208,18 @@ endif()
 # ITCM relief, on EVERY configuration since the NEW-25 SynthUI-editor consumer
 # rework (docs/superpowers/plans/2026-09-15-acid-box-synthui-editor.md, Task 4,
 # pulled forward from Task order because Task 1 proved the tree does not link
-# without it): the editor links four more SynthUI widgets, and the DEFAULT
-# build overflowed ITCM by 988 B before this change -- not just M2_BT_OUT.
+# without it): the editor links two more SynthUI widgets today (led_button,
+# lamp -- see the widget-count note below), and the DEFAULT build overflowed
+# ITCM by 988 B before this change -- not just M2_BT_OUT.
 # Derive a linker script from the core imxrt1176.ld that routes named archives'
 # .text to FLASH (XIP) -- the SAME mechanism the core already uses for
 # libLVGL_flash.a in VGLite mode -- and point ONLY this target at it.
 # This whole derivation used to live entirely inside `if(M2_BT_OUT)`, because
-# only the BT build needed it.  The SynthUI routing rule below now applies
-# UNCONDITIONALLY; the BT-only rules (M2Radio, VGLite, MipiDisplay/Wire/
-# TouchPanel, and the NEW-45 headroom ASSERT) stay gated on M2_BT_OUT exactly
-# as before -- they route archives, and guard a headroom, that only the BT
-# link carries.
+# only the BT build needed it.  The SynthUI routing rule and the NEW-45
+# headroom ASSERT below now both apply UNCONDITIONALLY (the ASSERT moved
+# out of M2_BT_OUT on 2026-09-16 -- see its own comment for why); only the
+# BT-only archive rules (M2Radio, VGLite, MipiDisplay/Wire/TouchPanel) stay
+# gated on M2_BT_OUT, because only the BT link carries those archives.
 # TWO RULES FOR EVERY ROUTING LINE BELOW (NEW-45, spec 2026-09-11-acid-box-itcm-headroom-design.md §5):
 #  1. Route a WHOLE ARCHIVE with EXCLUDE_FILE for named hot exceptions -- never an inclusion list of
 #     objects.  An exclusion rule makes a newly added library file default to FLASH; an inclusion list
@@ -217,69 +232,76 @@ get_target_property(_acidbt_lf acid_box.elf LINK_FLAGS)
 string(REGEX MATCH "-T([^ ]*imxrt1176[.]ld)" _acidbt_ignore "${_acidbt_lf}")
 set(_acidbt_coreld "${CMAKE_MATCH_1}")
 
-# NEW-45: make the ITCM margin legible instead of only fatal.  BT-only: the
-# non-BT configurations do not carry the M2Radio-sized library growth this
-# ASSERT exists to catch.
-if(M2_BT_OUT)
-    set(ACIDBOX_ITCM_MIN_HEADROOM "2048" CACHE STRING "Fail the M2_BT_OUT link when ITCM headroom drops below this many bytes.  2048 because measured headroom after the NEW-45 VGLite routing is ~9.8 KB: low enough that it never nags, high enough that a growth the size of the one that opened NEW-45 (+412 B from a library pin bump) reports a named headroom failure instead of a raw 'region ITCM overflowed' link error")
-endif()
+# NEW-45: make the ITCM margin legible instead of only fatal.  EVERY
+# configuration now, not only M2_BT_OUT -- corrected 2026-09-16.  It used to
+# be BT-only on the theory that only the M2Radio-sized library growth needed
+# catching; this very commit is the counter-example, since the 988 B overflow
+# that started Task 4 was in the DEFAULT build, from SynthUI, not from
+# M2Radio.  Measured margins bear that out directly: 3,156 B (default) / 3,012
+# B (LOOPSTAT) against 11,812 / 11,652 B (build-bt / build-bench) -- the
+# builds that used to carry the guard have 3.7x the margin of the ones that
+# didn't.  The non-BT builds are now the TIGHT ones, and are guarded for
+# exactly that reason.
+set(ACIDBOX_ITCM_MIN_HEADROOM "2048" CACHE STRING "Fail the link when ITCM headroom drops below this many bytes.  2048 because measured headroom after the NEW-45 VGLite routing is ~9.8 KB on the BT builds and ~3 KB on the non-BT builds: low enough that neither nags, high enough that a growth the size of the one that opened NEW-45 (+412 B from a library pin bump) or the one that opened Task 4 (+3730 B from two SynthUI widgets, 988 B over the old non-BT headroom) reports a named headroom failure instead of a raw 'region ITCM overflowed' link error")
 
 if(_acidbt_coreld AND EXISTS "${_acidbt_coreld}")
     file(READ "${_acidbt_coreld}" _acidbt_ld)
 
-    if(M2_BT_OUT)
-        # Two halves:
-        #   * --print-memory-usage prints region used/size/percent on EVERY link, so a shrinking margin shows up
-        #     in ordinary build output rather than only at the cliff;
-        #   * an ASSERT so the next NEW-41-sized library growth reports "ITCM headroom below 2048" instead of
-        #     "region ITCM overflowed by 140 bytes".  ld cannot interpolate a number into an ASSERT message, so
-        #     the literal is injected here at configure time along with the expression.
-        # WHAT THE REGION ACTUALLY HOLDS, measured rather than assumed: .text.itcm is 252336 B at VMA 0, so it
-        # ends at 252336, and .ARM.exidx is 8 B at VMA 252340 -- 4 B of alignment padding sits between them.  The
-        # region's true top is therefore 252348, and 252348 is the number --print-memory-usage reports.  The
-        # ASSERT sums SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) = 252344, so it does NOT see that padding and is
-        # still 4 B OPTIMISTIC.  It is not exact and is not claimed to be: a .text.itcm-only assert would have
-        # been 12 B optimistic, this one is 4, and 4 B cannot decide anything against a 2048 B floor.  Recorded
-        # here rather than hidden, because a guard whose slack is undocumented is a guard nobody can reason about.
-        # The exact expression is ADDR(.ARM.exidx) + SIZEOF(.ARM.exidx) - ORIGIN(ITCM), and it is DECLINED
-        # deliberately: this linker script already measures the region as SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx),
-        # in _itcm_block_count EIGHTEEN LINES ABOVE this assert (line 146 against 165 in the generated
-        # acid_box_itcm.ld).  One convention that is 4 B loose beats two that disagree -- inventing a third way to
-        # measure ITCM in the same file is how the two get out of step later.
-        string(REPLACE
-            "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")"
-            "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")
+    # Two halves:
+    #   * --print-memory-usage prints region used/size/percent on EVERY link, so a shrinking margin shows up
+    #     in ordinary build output rather than only at the cliff;
+    #   * an ASSERT so the next NEW-41-sized (or Task-4-sized) library growth reports "ITCM headroom below
+    #     2048" instead of "region ITCM overflowed by 140 bytes".  ld cannot interpolate a number into an
+    #     ASSERT message, so the literal is injected here at configure time along with the expression.
+    # WHAT THE REGION ACTUALLY HOLDS, measured rather than assumed: .text.itcm is 252336 B at VMA 0, so it
+    # ends at 252336, and .ARM.exidx is 8 B at VMA 252340 -- 4 B of alignment padding sits between them.  The
+    # region's true top is therefore 252348, and 252348 is the number --print-memory-usage reports.  The
+    # ASSERT sums SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) = 252344, so it does NOT see that padding and is
+    # still 4 B OPTIMISTIC.  It is not exact and is not claimed to be: a .text.itcm-only assert would have
+    # been 12 B optimistic, this one is 4, and 4 B cannot decide anything against a 2048 B floor.  Recorded
+    # here rather than hidden, because a guard whose slack is undocumented is a guard nobody can reason about.
+    # The exact expression is ADDR(.ARM.exidx) + SIZEOF(.ARM.exidx) - ORIGIN(ITCM), and it is DECLINED
+    # deliberately: this linker script already measures the region as SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx),
+    # in _itcm_block_count EIGHTEEN LINES ABOVE this assert (line 146 against 165 in the generated
+    # acid_box_itcm.ld).  One convention that is 4 B loose beats two that disagree -- inventing a third way to
+    # measure ITCM in the same file is how the two get out of step later.
+    string(REPLACE
+        "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")"
+        "ASSERT(__text_csf_end <= 0x30FC0000, \"Image overlaps the EEPROM flash region (top 256K)\")
 	ASSERT(SIZEOF(.text.itcm) + SIZEOF(.ARM.exidx) <= LENGTH(ITCM) - ${ACIDBOX_ITCM_MIN_HEADROOM}, \"NEW-45: ITCM headroom below ${ACIDBOX_ITCM_MIN_HEADROOM} bytes -- see docs/superpowers/specs/2026-09-11-acid-box-itcm-headroom-design.md\")"
-            _acidbt_ld "${_acidbt_ld}")
-        # string(REPLACE) is a SILENT NO-OP when its anchor does not match, and the anchor above is a specific
-        # line of the CORE imxrt1176.ld -- which lives in ANOTHER REPOSITORY (teensy-cores, resolved via
-        # TEENSY_LIB_ROOT or fetched at the SHA evkb.cmake pins).  Reword that line upstream and the headroom
-        # ASSERT quietly stops being injected while every build keeps passing with no guard at all: precisely
-        # the silent-failure class this whole feature exists to close, relocated one level up.  So check it.
-        # ASYMMETRY, which is why only this one is checked: if the OTHER string(REPLACE) below (anchored on
-        # *libLVGL_flash.a:(.text*)) ever fails to match, every routing rule vanishes, ITCM overflows and the
-        # link fails loudly on its own -- that failure is self-announcing.  This one's failure is silence.
-        string(FIND "${_acidbt_ld}" "NEW-45: ITCM headroom" _acidbt_found)
-        if(_acidbt_found EQUAL -1)
-            message(FATAL_ERROR
-                "M2_BT_OUT: the NEW-45 ITCM headroom ASSERT was NOT injected into the derived linker script. "
-                "The EEPROM-assert line this rule anchors on has changed in the core script "
-                "(${_acidbt_coreld}), so string(REPLACE) matched nothing and did nothing.  Left unchecked "
-                "this build would link UNGUARDED and the next library growth would report a raw 'region ITCM "
-                "overflowed by N bytes' instead of a named headroom failure.  Re-anchor the string(REPLACE) "
-                "in examples/display/acid_box/CMakeLists.txt against that script's current ASSERT text.")
-        endif()
+        _acidbt_ld "${_acidbt_ld}")
+    # string(REPLACE) is a SILENT NO-OP when its anchor does not match, and the anchor above is a specific
+    # line of the CORE imxrt1176.ld -- which lives in ANOTHER REPOSITORY (teensy-cores, resolved via
+    # TEENSY_LIB_ROOT or fetched at the SHA evkb.cmake pins).  Reword that line upstream and the headroom
+    # ASSERT quietly stops being injected while every build keeps passing with no guard at all: precisely
+    # the silent-failure class this whole feature exists to close, relocated one level up.  So check it.
+    # ASYMMETRY, which is why only this one is checked: if the OTHER string(REPLACE) below (anchored on
+    # *libLVGL_flash.a:(.text*)) ever fails to match, every routing rule vanishes, ITCM overflows and the
+    # link fails loudly on its own -- that failure is self-announcing.  This one's failure is silence.
+    string(FIND "${_acidbt_ld}" "NEW-45: ITCM headroom" _acidbt_found)
+    if(_acidbt_found EQUAL -1)
+        message(FATAL_ERROR
+            "acid_box: the NEW-45 ITCM headroom ASSERT was NOT injected into the derived linker script. "
+            "The EEPROM-assert line this rule anchors on has changed in the core script "
+            "(${_acidbt_coreld}), so string(REPLACE) matched nothing and did nothing.  Left unchecked "
+            "this build would link UNGUARDED and the next library growth would report a raw 'region ITCM "
+            "overflowed by N bytes' instead of a named headroom failure.  Re-anchor the string(REPLACE) "
+            "in examples/display/acid_box/CMakeLists.txt against that script's current ASSERT text.")
     endif()
 
     # SynthUI routing -- applies to EVERY configuration; anchored the same place
     # the BT-only rules anchor (right after the core's own libLVGL_flash.a rule).
     set(_acidbt_routing "*libLVGL_flash.a:(.text*)
-	/* NEW-25 consumer rework: the editor links four more SynthUI widgets
-	   (led_button, lamp, seven_segment, panel_button) and ITCM is the
-	   binding constraint -- the default build had 2,708 B of headroom.
+	/* NEW-25 consumer rework: the editor links two more SynthUI widgets today
+	   (led_button, lamp -- seven_segment and panel_button compile into the
+	   archive but are gc-sectioned out until a later task references them)
+	   and ITCM is the binding constraint -- the default build had 2,708 B of
+	   headroom before led_button+lamp (net +3730 B) overflowed it by 988 B.
 	   These widgets are called per DRAW CALL at UI rate, the same shape as
 	   MipiDisplay/Wire/TouchPanel, which measured fine from flash on
-	   2026-09-11 (NEW-45 arm b) with the I-cache covering them.
+	   2026-09-11 (NEW-45 arm b) with the I-cache covering them.  Routing the
+	   WHOLE archive means seven_segment/panel_button land in flash too, the
+	   moment something references them -- their ITCM cost is paid now, at 0.
 	   EXCLUDED and kept in ITCM: the rotary knob and its GC355 compositor,
 	   which run per FRAME under a drag (wedge-delta + pre-flip compose).
 	   Whole archive with an exclusion, per NEW-45 rule 1, so a NEW SynthUI
@@ -328,10 +350,24 @@ if(_acidbt_coreld AND EXISTS "${_acidbt_coreld}")
 
     string(REPLACE "*libLVGL_flash.a:(.text*)" "${_acidbt_routing}" _acidbt_ld "${_acidbt_ld}")
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/acid_box_itcm.ld" "${_acidbt_ld}")
+    # LINK_DEPENDS: the derived script is generated by this configure step, not
+    # referenced by any source file the generator already tracks, so without
+    # this a routing-rule edit rewrites acid_box_itcm.ld but ninja/make sees no
+    # reason to relink against it -- the stale binary would keep the OLD
+    # routing until something else (a source edit, a clean build) forced a
+    # relink.  Verified: "grep acid_box_itcm.ld build/CMakeFiles/acid_box.elf.dir/build.make"
+    # finds it after this line, found nothing before.
+    set_property(TARGET acid_box.elf APPEND PROPERTY
+        LINK_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/acid_box_itcm.ld")
     string(REPLACE "${_acidbt_coreld}"
                    "${CMAKE_CURRENT_BINARY_DIR}/acid_box_itcm.ld" _acidbt_lf "${_acidbt_lf}")
+    # -Wl,--print-memory-usage is NOT re-added here: target_link_options() above
+    # already puts it on this target's link line unconditionally, and LINK_FLAGS
+    # is a SEPARATE property that the linker driver also sees -- appending it a
+    # second time here printed the region table TWICE on every link (found in
+    # review, 2026-09-16).  One flag, one property.
     set_target_properties(acid_box.elf PROPERTIES
-        LINK_FLAGS "${_acidbt_lf} -Wl,--print-memory-usage")
+        LINK_FLAGS "${_acidbt_lf}")
 else()
     message(WARNING "acid_box: could not find the core imxrt1176.ld in LINK_FLAGS to derive the ITCM routing linker script; ITCM may overflow")
 endif()
