@@ -479,7 +479,8 @@ DAREA=$(grep -a -oE "led_button_damage max=[0-9]+" "$OUT" | head -1 | cut -d= -f
 grep -qE "led_button_damage max=[0-9]+ total=[0-9]+ steps=64 tail=6\r?$" "$OUT" || { echo "FAIL: delta sequence length changed (expected steps=64 tail=6)"; exit 1; }
 # DRAW TASKS, PER OP (NEW-50).  The mechanism the area bounds cannot see:
 # LVGL renders one pass per invalidated area, and lv_draw_rect allocates a
-# task before any clip test (lv_draw_sw.c rejects it afterwards) out of a heap
+# task before any clip test (lv_draw_sw_fill.c / lv_draw_sw_border.c reject it
+# afterwards, against t->clip_area) out of a heap
 # in uncached SDRAM.  A cue change is four strips, so a led_draw that stopped
 # clipping its layers costs 4 x 12 = 48 tasks -- with every golden and the
 # delta-equality guard still GREEN.  cue's bound is the one with teeth; lit,
@@ -562,7 +563,8 @@ In `synthui_led_button_set_cue()` replace `lv_obj_invalidate(obj);   /* the beze
 ```cpp
 /* NEW-50: a layer is drawn only when its area meets the clip.  LVGL renders
  * one pass per invalidated area, and lv_draw_rect allocates a draw task
- * BEFORE any clip test (lv_draw_sw.c rejects it in execute_drawing, after
+ * BEFORE any clip test (lv_draw_sw_fill.c:56 / lv_draw_sw_border.c:97 reject
+ * it against t->clip_area, downstream of execute_drawing, after
  * the malloc, evaluate and dispatch) out of a heap in uncached SDRAM.
  * Without this test the four cue strips cost 4 x 12 draw tasks where the
  * whole-key invalidate cost 12; with it, bezel fill + bezel border + well

@@ -68,9 +68,17 @@ implied fix.
    the tree and re-entering `LV_EVENT_DRAW_MAIN` for every area.
 
 3. **`lv_draw_rect` allocates a task before any clip test.** `lv_draw_add_task`
-   mallocs unconditionally; the clip rejection is at `lv_draw_sw.c:447`, inside
-   `execute_drawing`, i.e. *after* allocation, list insertion, `evaluate_cb` and
-   dispatch.
+   mallocs unconditionally; the clip rejection happens per primitive, downstream
+   of `execute_drawing` — `lv_draw_sw_fill.c:56` and `lv_draw_sw_border.c:97`
+   each test the task's area against `t->clip_area` and return — i.e. *after*
+   allocation, list insertion, `evaluate_cb` and dispatch.
+   ★ **Corrected 2026-09-16, found in review:** this cited `lv_draw_sw.c:447`
+   until a reviewer opened that file. Line 447 is inside `parallel_debug_draw()`,
+   which is compiled out (`LVGL/port/lv_conf.h:611`, `LV_USE_PARALLEL_DRAW_DEBUG
+   0`) — dead debug-overlay code, not the rejection path. The allocate-then-reject
+   mechanism is unchanged; only the citation was wrong, and it had propagated into
+   the plan, the gate comment and the Linear issue. **A grep hit is not a citation
+   until you have read what encloses it.**
 
 4. **LVGL's heap is the 1 MB pool in external SDRAM on a core with no D-cache**
    (`LVGL/port/lv_conf.h:117` + `LV_ATTRIBUTE_LARGE_RAM_ARRAY` →
