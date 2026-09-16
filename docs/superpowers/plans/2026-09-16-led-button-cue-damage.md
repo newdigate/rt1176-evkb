@@ -315,7 +315,7 @@ This is the enabling change for the instrument in Task 3: `lv_draw_finalize_task
 
 - [ ] **Step 1: Replace `led_radius` with the header's conversion and give every dsc its object.** In `src/synthui_led_button.cpp`:
 
-Delete the `led_radius` function (lines 103-107) and replace every `led_radius(` call in `led_draw` with `synthui_led_button_radius_px(` (seven call sites: bezel, well, cap ×3, highlight, halo, led, base — `grep -n led_radius` must return nothing afterwards).
+Delete the `led_radius` function (lines 103-107) and replace every `led_radius(` call in `led_draw` with `synthui_led_button_radius_px(` (NINE call sites: bezel, well, cap ×3, highlight, halo, led, base — `grep -n led_radius` must return nothing afterwards).
 
 Add after `led_circle_area()`:
 
