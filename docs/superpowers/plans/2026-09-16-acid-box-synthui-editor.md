@@ -363,8 +363,11 @@ Expected: all three present, in that order. `STEP[2]=note33 gate1` proves the st
 Copy the example to the scratchpad so nothing in the repo changes:
 
 ```bash
-cp -R $AB $S/ab_probe && cd $S/ab_probe && rm -rf build build-* 
+mkdir -p $S/examples/display && cp -R $AB $S/examples/display/ab_probe
+cp $EVKB/evkb.cmake $S/evkb.cmake
+cd $S/examples/display/ab_probe && rm -rf build build-*
 ```
+The example's `CMakeLists.txt` includes `${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake`, so the copy must sit at the same depth (`<root>/examples/<category>/<name>`) with an `evkb.cmake` at that root, or the configure fails on a missing include. Deleting every `build*` directory first is also required: their caches carry absolute paths, and two of them carry real firmware blobs.
 In `$S/ab_probe/acid_box.cpp`, at the end of `build_ui` and after `select_step(0)`, add:
 
 ```cpp
@@ -374,7 +377,7 @@ In `$S/ab_probe/acid_box.cpp`, at the end of `build_ui` and after `select_step(0
 ```
 Build and boot it bounded:
 ```bash
-cd $S/ab_probe && cmake -B build -DCMAKE_TOOLCHAIN_FILE=$EVKB/toolchain/rt1170-evkb.toolchain.cmake >/dev/null && cmake --build build >/dev/null 2>&1
+cd $S/examples/display/ab_probe && cmake -B build -DCMAKE_TOOLCHAIN_FILE=$EVKB/toolchain/rt1170-evkb.toolchain.cmake >/dev/null && cmake --build build >/dev/null 2>&1
 QRUN_TIMEOUT=25 $EVKB/tools/qrun -M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on \
   -kernel build/acid_box.elf -display none -serial file:$S/ab_probe.uart
 grep "^SELECT=" $S/ab_probe.uart | head -8
@@ -384,7 +387,7 @@ Expected exactly: `SELECT=0`, `SELECT=15`, `SELECT=14`, `SELECT=13`, `SELECT=14`
 - [ ] **Step 3: Delete the probe**
 
 ```bash
-rm -rf $S/ab_probe $S/ab_probe.uart
+rm -rf $S/examples $S/evkb.cmake $S/ab_probe.uart
 cd $EVKB && git status --short   # must show no change under examples/display/acid_box
 ```
 
