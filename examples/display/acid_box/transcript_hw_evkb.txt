@@ -1,5 +1,111 @@
 acid_box -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
 ================================================================================
+2026-09-16, SYNTHUI STEP EDITOR (spec docs/superpowers/specs/2026-09-15-acid-box-synthui-editor-design.md,
+plan docs/superpowers/plans/2026-09-16-acid-box-synthui-editor.md Task 7; Linear NEW-51).
+Image [BUILD: Sep 16 2026 12:08:47] for the default build; the BT section used
+build-bench (the real 131,840-byte IW416 image, LOOPSTAT on, M2_BT_TARGET_NAME=Shokz).
+Flashed with tools/rt1170-flash.sh (the .hex), console on the MCU-Link VCOM.
+The landscape present is unchanged; what changed is the scene inside it.
+
+--- GPU GOLDEN ------------------------------------------------------------------
+ACIDBOX_ENGINE=gpu                       (the GC355 compositor, not a sw fallback)
+ACIDBOX_UI_SUM=0xEA5AB843                THREE boots, bit-identical
+ACIDBOX_GPU_ERR=0                        every boot and throughout the session
+ACIDBOX_ROT ops=1 full=1 px=921600 us=17486 errors=0
+ACIDBOX_ROT_EQ pass=1 fail=0 us=30356    at boot; pass=148 fail=0 across the session
+
+The landscape gpu golden 0x2231070B is RETIRED by this rework, as the sw golden
+0xE871BF09 was retired in favour of 0xBB2AEE59. Two golden sets as always, never
+reconciled: the sw one is LVGL's software renderer under QEMU, this one is the
+GC355 composite on glass.
+
+--- FENCES AND GUARDS, whole session --------------------------------------------
+ACIDBOX_VSYNC flips=2745 isrs=2745 timeouts=0     (every line, no exceptions)
+ACIDBOX_ROT_EQ ... fail=0                          (every line)
+219 bars played.
+
+--- TOUCH CORRECTNESS, by hand ---------------------------------------------------
+Taps across the lane select AND toggle, printing the pair the firmware owes:
+  SELECT=13 / STEP[13]=note31 gate0 ...     SELECT=15 / STEP[15]=...
+  SELECT=1  / STEP[1]=...                   SELECT=3  / STEP[3]=...
+  SELECT=5  / STEP[5]=...                   SELECT=7  / STEP[7]=...
+  SELECT=9  / STEP[9]=...
+★ A TAP ON THE ALREADY-SELECTED KEY behaves: three consecutive SELECT=2 lines with
+  STEP[2] gate1 -> gate0 -> gate1 between them. The key stays selected and only
+  its gate moves -- the clear-then-set of the same latch is a no-op, as designed.
+★ PREV/NEXT WRITE NO PATTERN: a SELECT=0 with no STEP line after it. That is the
+  whole point of the selection-only path, and it is the one thing the QEMU gate
+  cannot reach (the touch script's instants are fixed and cannot press them).
+
+--- BY EYE AND BY FINGER, the four things nothing prints ---------------------------
+Confirmed on glass by the operator, 2026-09-16. None of these is reachable by the
+gate, a host test or a golden, which is the only reason they are listed at all:
+  * PREV/NEXT SHOW A PRESS -- they light while held and go dark on release,
+    INCLUDING when the finger slides OFF the button before lifting (the
+    PRESS_LOST path). This is the whole content of the momentary-`on` fix; the
+    widget's own draw never reads LV_STATE_PRESSED, so without it a press painted
+    nothing while the LED key 12 px away sank.
+  * A FINGER DRAGGED ACROSS THE LANE does not snag: the 32 accent/slide lamps had
+    LV_OBJ_FLAG_CLICKABLE cleared for exactly this, and the seven-segment readout
+    likewise.
+  * THE CHEVRONS READ CLEARLY at glyph scale 0.85, and the ACC caption clears the
+    SLD key (4 px, measured in the software frame and confirmed adequate on glass).
+  * NO SCANOUT FLASH anywhere while playing. Checksums cannot see a scanout tear
+    -- they are read after the flush -- so an eye is the only instrument for it.
+Operator's summary: "looks amazing".
+
+--- TOUCH LATENCY, ACIDBOX_LOOPSTAT, two separate boots --------------------------
+The statistics are cumulative per boot, so the two phases are two RUNS, not two
+windows inside one -- a percentile cannot be differenced.
+
+  transport STOPPED, dragging and tapping   n=229   p50 29.3 ms  p95 37.8 ms  worst pass 22 ms
+  transport PLAYING, same gestures          n=1138  p50 29.1 ms  p95 66.8 ms  worst pass 52 ms
+
+★★ THIS IS THE NEW-50 MEASUREMENT, and it is why that issue now carries a number
+instead of an argument. The MEDIAN does not move (29 ms either way); the running
+playhead nearly DOUBLES the 95th percentile, 37.8 -> 66.8 ms. The mechanism is
+not in doubt: `synthui_led_button_set_cue` invalidates the WHOLE 100 px key to
+change a 3.5-unit bezel ring, and the poller moves the cue twice per 33 ms tick,
+so the playhead alone repaints ~600,000 px/s to move a ring. QEMU cannot see any
+of this -- the pipeline is vsync-locked at 30 fps, so flip counts are a ceiling,
+not headroom (measured: damage AREA through the present path grew only +0.08%).
+★ For scale, the landscape baseline that this rework replaced read a 43-49 ms
+median with 80-112 ms tails while dragging. So the editor's median is BETTER and
+its tail sits inside the old one: the rework is not a regression, and NEW-50 is
+an improvement available, not a defect shipped.
+
+--- M2_BT_OUT (build-bench: real IW416 image, LOOPSTAT on, Shokz OpenMove) -------
+ITCM headroom 11,412 B at link (250,732 of 262,144 used); the NEW-45 floor ASSERT
+is green and now guards every configuration, not just the BT ones.
+
+  bt_link  links=1 lost=0 reason=0x0 reconnect_ms=0 scan=0     (stable throughout)
+  bt_cred  sent=116063 returned=116063 ... credmin=0 clamp=0 l2frag=0 l2fragdrop=0
+  bt_hb    blocks=578432 packets=118405 drops=455 pcmdrops=9 hw=64
+  bt_mem   heap=220 stack_free_min=156176
+
+★★ ONGOING DROPS ARE ZERO, and the cumulative line above is why that has to be
+said carefully. `drops` last CHANGED at blocks=33,082 -- about 96 s in, during
+bring-up and the first connect -- and then stayed at 455 for **1,582 consecutive
+heartbeats** while blocks ran 33,082 -> 578,432. That is ~26 minutes and ~545,000
+audio blocks of continuous streaming with NOT ONE new dropped packet or PCM block.
+Reading the lifetime totals as a failure would be the same error NEW-42 recorded:
+a counter read across a deliberate start-up transient is not comparable to one
+read stationary.
+★ Touch while STREAMING: p50 26.4 ms, p95 ~70 ms (n=1841) -- within noise of the
+playing figure above, so the BT stack costs the UI essentially nothing here. The
+loop slots show why the picture changes shape rather than degrades: LVGL falls
+from ~91%% of wall time to ~50%% as enc/poll/txb take their share, and the frame
+interval stretches only when nothing on screen is changing.
+
+--- CROSS-REFERENCE: the widget's own bench ---------------------------------------
+examples/display/synthui_led_button_test/transcript_hw_evkb.txt, same session:
+its goldens are bit-identical to QEMU's, and its >= 30 fps criterion MISSED at
+20.6 fps on a deliberately worst-case animation (the cue swept across all 16 keys
+every 15 ms). Same root cause as the p95 tail above, same first lever: NEW-50.
+
+================================================================================
+acid_box -- HARDWARE, MIMXRT1170-EVKB + RK055HDMIPI4MA0
+================================================================================
 2026-09-15, LANDSCAPE (spec docs/superpowers/specs/2026-09-14-acid-box-landscape-design.md
 section 8; plan Task 12).  Layout C on a logical 1280x720 canvas presented
 rotated 90 degrees CLOCKWISE on the glass through the PXP

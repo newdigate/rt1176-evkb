@@ -57,9 +57,12 @@ the honest answer and NEW-25's plan says to file it as its own issue.
 per 33 ms poller tick, not sixteen times per 15 ms. Its own bench numbers are in
 examples/display/acid_box/transcript_hw_evkb.txt.
 
-=== WHAT WAS NOT DONE HERE ===
+=== EYES ON GLASS ===
 
-The eyes-on-glass pass (ivory caps, the four LED colours, the sunk latch, the
-red cue bezel, the grey disabled keys, dots present at 34 px and absent at 32)
-belongs to the same bench session as acid_box's and is recorded there; this
-example's own scene was confirmed only through the checksums above.
+This example's own 4x4 bank was confirmed through the checksums above only. The
+widget's appearance and its press behaviour WERE confirmed on glass in the same
+session, through its consumer: acid_box's 16-key lane, where the operator checked
+that a key sinks and rises under a finger, that the prev/next panel buttons light
+while held and clear on a slide-off release, that a drag across the lane does not
+snag, and that nothing flashes. See
+examples/display/acid_box/transcript_hw_evkb.txt, section "BY EYE AND BY FINGER".
