@@ -65,15 +65,15 @@ Replace the pattern-band constants with the block below. `LANE_PITCH_Y` is the o
 /* pattern band */
 static constexpr int LANE_X0 = 16,  LANE_Y0 = 96, LANE_CELL = 100, LANE_PITCH_X = 108;
 /* Row pitch grew 112 -> 134 for the lamp strip and the step number: 100 px key
- * + 12 px lamps + an 11 px number + spacing.  ROW 0 DOES NOT MOVE, which is
+ * + 12 px lamps + a 16 px number + spacing.  ROW 0 DOES NOT MOVE, which is
  * what keeps touch_script.txt valid -- cell 2 is still 232..331 x 96..195 and
- * the gate's tap still lands at (281,143).  Row 1 therefore sits at y 230 and
- * the lane's last pixel row is 96 + 134 + 100 + 33 = 363, clear of the knob
+ * the gate's tap still lands at (281,143).  Row 1 therefore sits at y 230; its
+ * number's box is 348..363 and its last INK row measures 360, clear of the knob
  * row at 520. */
 static constexpr int LANE_PITCH_Y = 134;
 static constexpr int LAMP_DY = 105, LAMP_W = 40, LAMP_H = 12;
 static constexpr int LAMP_ACC_DX = 8, LAMP_SLD_DX = 52;
-static constexpr int NUM_DY = 122;      /* step-number label top, centred on the key */
+static constexpr int NUM_DY = 118;      /* step-number label top; SHIPPED 118, not the 122 first written: a default-font label is 16 px tall, so 122 put row 0's number under row 1's key */
 ```
 
 - [ ] **Step 4: Widen the per-cell state arrays**
@@ -177,7 +177,9 @@ Replace the lane loop in `build_ui` with:
         snprintf(nb, sizeof nb, "%02d", i + 1);
         lv_label_set_text(n, nb);
         lv_obj_set_style_text_color(n, lv_color_hex(0x5f6a7c), LV_PART_MAIN);
-        lv_obj_set_pos(n, x + LANE_CELL / 2 - 10, y + NUM_DY);
+        lv_obj_set_width(n, LANE_CELL);
+        lv_obj_set_style_text_align(n, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_pos(n, x, y + NUM_DY);   /* SHIPPED form: centring must not depend on a guessed glyph width */
         numLabel[i] = n;
     }
 ```
@@ -301,7 +303,9 @@ In `build_ui`, replace the ACC/SLD button construction with:
 and add, after the WAVE button:
 
 ```cpp
-    /* step readout: < [NN] > .  Momentary panel buttons -- `on` is never set. */
+    /* step readout: < [NN] > .  SHIPPED via mkpanelbtn(), which also drives `on`
+     * momentarily from PRESSED / RELEASED / PRESS_LOST / INDEV_RESET: this widget's
+     * draw never reads LV_STATE_PRESSED, so without that a press paints nothing. */
     lv_obj_t *prev = synthui_panel_button_create(scr);
     lv_obj_set_size(prev, PREV_W, STEP_H);
     lv_obj_set_pos(prev, PREV_X, STEP_Y);
@@ -513,7 +517,7 @@ Open `$S/fb.png` (send it to the user with SendUserFile) and confirm, item by it
 - step numbers 01..16 under the lamps, with 01 brighter than the rest;
 - key 1 visibly SUNK (the selection latch) and no key showing a red cue bezel (the transport is stopped);
 - the editor column: pitch knob at A1, ACC lit amber, SLD dark, SAW, and `01` on the seven-segment between the two panel buttons (their blue-grey body with its pale sheen band is the widget's default; the accent only paints while a button is pressed, so neither shows it in a boot frame);
-- the step row's measured extents, to be recorded in the transcript: prev 1080..1123, seven-segment ink 1130..1212 (the readout is 84 px wide and paints 83 of them — column 1213 is background, not a clipping bug), next 1220..1263, all y 300..355; the STEP caption 1154..1186, centred on the readout;
+- the step row's measured extents, to be recorded in the transcript: prev 1080..1123, seven-segment ink 1130..1212 (the readout is 84 px wide and paints 83 of them — column 1213 is background, not a clipping bug), next 1220..1263, all y 300..355; the STEP caption 1152..1187 at y 369..378;
 - the reserved empty band is now y 379..519, NOT the "308..520" the old comments claimed: the step row and its caption occupy 300..378 and row 1's step numbers reach y 364. Correct that phrase wherever it appears in `run_qemu.sh` and in the transcript's own description while you are re-recording them;
 - the eight sound knobs along the bottom at their boot angles; nothing mirrored or lying on its side.
 
@@ -638,6 +642,14 @@ Confirm on glass, and write each result into the transcript:
 - prev/next move the sunk key and the readout, wrapping 16→1 and 1→16, with no `STEP[...]` line printed;
 - PLAY runs the red cue bezel along the lane in step order, and the cue and the sunk selected key coexist on the same step;
 - `ACIDBOX_VSYNC ... timeouts=0` across the run and no scanout flash by eye over a few hundred frames.
+
+- [ ] **Step 3b: Four things only a finger can check**
+
+None of these is reachable by the gate, a host test or a golden:
+- **prev/next light while held and go dark on release**, including when the finger slides OFF the button before lifting (the PRESS_LOST path) and when a drag starts on the button. The whole content of the momentary-press commit is invisible to every automated check.
+- **A finger dragged across the lane** does not stick on a lamp: 32 invisible 40x12 read-outs sit under the keys, which is exactly what clearing their CLICKABLE flag was for.
+- **A tap on the ALREADY-selected key** clears and re-sets the same latch; the gate never does it and it is the obvious human gesture.
+- **The 0.85 glyph scale and the ACC/SLD caption clearance on GLASS.** Both were accepted from a QEMU software frame; silicon composites on the GC355 and the panel has its own pixel pitch. Confirm the chevrons read clearly and that the ACC caption does not touch the SLD key (measured 4 px apart in the software frame).
 
 - [ ] **Step 4: Performance and the BT build**
 

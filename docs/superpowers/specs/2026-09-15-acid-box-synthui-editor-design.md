@@ -66,8 +66,8 @@ Row 0 and every existing hit target keep their coordinates; see §5.
 LANE_X0 = 16, LANE_Y0 = 96, LANE_CELL = 100, LANE_PITCH_X = 108
 LANE_PITCH_Y = 134            /* was 112: +12 lamp, +11 number, spacing */
 LAMP_DY = 105, LAMP_W = 40, LAMP_H = 12, LAMP_ACC_DX = 8, LAMP_SLD_DX = 52
-NUM_DY = 122                  /* label top; 11 px font, centred on the key */
-/* lane bottom: 96 + 134 + 100 + 33 = 363; knob row at 520 is clear */
+NUM_DY = 118                  /* label top; a 16 px default-font label, centred by width */
+/* lane bottom: row 1's number box is 348..363, ink to 360; knob row at 520 is clear */
 
 /* editor column, x 1080..1264 (NOTE_X/NOTE_Y unchanged) */
 ACC_X = 1080, SLD_X = 1176, TOG_Y = 148, TOG_KEY = 56
@@ -89,8 +89,11 @@ point; re-derive before assuming.
 Colours: lane LEDs `SYNTHUI_LED_BUTTON_RED`; ACC key `AMBER`, SLD key
 `BLUE`; accent lamp `SYNTHUI_LAMP_COLOR_AMBER`, slide lamp
 `SYNTHUI_LAMP_COLOR_BLUE`, both `SYNTHUI_LAMP_SHAPE_PILL`; seven-segment
-default blue face; panel buttons `SYNTHUI_PANEL_BUTTON_ACCENT_PALE`, `on`
-never set (momentary). Step-number labels `0x5F6A7C`, the selected step's
+default blue face; panel buttons `SYNTHUI_PANEL_BUTTON_ACCENT_PALE`, with `on`
+driven momentarily from the press events (**corrected 2026-09-16**: this was
+first written as "`on` never set", which would have made the accent dead code
+and left the buttons with no visible press at all, because the widget's draw
+never reads `LV_STATE_PRESSED`). Step-number labels `0x5F6A7C`, the selected step's
 number `0xF2F1EA` (updated in `select_step`); "ACC"/"SLD"/"STEP" labels the
 existing knob-label grey `0x9AA0B8`.
 
@@ -100,8 +103,10 @@ existing knob-label grey `0x9AA0B8`.
   becomes the LedButton objects; new `accLamp[16]`, `sldLamp[16]`,
   `numLabel[16]`, `accKey`, `sldKey`, `stepSeg`.
 - Construction stays in `build_ui()` under `UIBUILD_FN` (`.progmem.acid_uibuild`,
-  runs once); new helpers `mkkey()`, `mklamp()`, `mkpanelbtn()` are
-  `UIBUILD_FN` too. Run-time paths (`select_step`, `commit_selected`,
+  runs once). **As built (2026-09-16), only `mkpanelbtn()` exists**: it earns its
+  place because four event registrations must match on both buttons. The lane and
+  the two LED keys are constructed inline, since `build_ui` is flash-resident
+  either way and one-use helpers would add call sites without removing repetition. Run-time paths (`select_step`, `commit_selected`,
   `ui_poll`, the callbacks) stay where they are.
 - Two new callbacks `cbPrev`/`cbNext`; `cbStepTap` unchanged.
 - `mkbtn()` stays for the four transport buttons and WAVE.
