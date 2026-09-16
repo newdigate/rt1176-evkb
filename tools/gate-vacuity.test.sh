@@ -943,6 +943,45 @@ if [ -d "$EVKB/$LBT" ] && [ -f "$EVKB/$LBT/transcript_qemu.txt" ]; then
     [ "$rc" -ne 0 ] || result=1
     echo "$OUT_TEXT" | grep -q "^FAIL: delta render differs from full render" || result=1
     report "led_button_delta_mismatch_fails_by_name" $result
+
+    # NEW-50: the per-op draw-task line and the re-derived cue bounds.
+    # ALL THREE DEMONSTRATED 2026-09-16 the only way that settles it -- by
+    # disabling the gate assertion each one is tied to (the [ -n "$TLINE" ]
+    # presence check, [ "$TCUE" -le 23 ] and [ "$CUE" -le 900 ] in
+    # synthui_led_button_test/run_qemu.sh) and re-running this suite: exactly
+    # these three cases went FAIL and the other 62 stayed PASS.  A case that
+    # passes whether or not the gate still asserts is decoration.
+    #
+    # The per-op draw-task line.  Absent, it must fail by name -- an
+    # absent counter is not a pass (same rule as the area line above).
+    grep -v "^led_button_tasks_op " "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_notasks.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_notasks.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: per-op draw-task line missing" || result=1
+    report "led_button_missing_tasks_line_fails" $result
+
+    # cue one task over its bound, by name.  cmp guards the mutation: a sed
+    # that matched nothing would replay the green fixture.
+    sed 's|^\(led_button_tasks_op lit=[0-9]* press=[0-9]*\) cue=23 |\1 cue=24 |' \
+        "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_tasksover.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_tasksover.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$LBT/transcript_qemu.txt" "$WORK/lb_tasksover.txt" && result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: cue draw tasks above its bound" || result=1
+    report "led_button_cue_tasks_over_bound_fails_by_name" $result
+
+    # cue one pixel over its re-derived 900, by name -- the bound that moved
+    # an order of magnitude and would be the first to be quietly loosened.
+    sed 's|^\(led_button_damage_op lit=[0-9]* press=[0-9]*\) cue=900 |\1 cue=901 |' \
+        "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_cueover.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_cueover.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$LBT/transcript_qemu.txt" "$WORK/lb_cueover.txt" && result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: cue damage above its box" || result=1
+    report "led_button_cue_over_bound_fails_by_name" $result
 else
     echo "SKIP: synthui_led_button_test vacuity (example or fixture missing)"
 fi
