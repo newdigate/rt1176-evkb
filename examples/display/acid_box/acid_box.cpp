@@ -50,7 +50,8 @@
 #include "lvgl_gt911_indev.h"
 #include "synthui_rotary_knob.h"
 #include "synthui_rotary_knob_gpu.h"
-#include "synthui_step.h"
+#include "synthui_led_button.h"
+#include "synthui_lamp.h"
 #if defined(ACIDBOX_LOOPSTAT)
 #include "loopstat_pct.h"
 #endif
@@ -1116,7 +1117,17 @@ static constexpr int TEMPO_DN_X = 560, TEMPO_UP_X = 690, TEMPO_BTN_W = 50;
 static constexpr int BPM_X = 624,   BPM_Y = 35;
 static constexpr int PLAY_X = 1040, STOP_X = 1156, TRANSPORT_BTN_W = 100;   /* PLAY 1040..1139 x 20..67; the gate's tap lands at (1088,43) */
 /* pattern band */
-static constexpr int LANE_X0 = 16,  LANE_Y0 = 96, LANE_CELL = 100, LANE_PITCH_X = 108, LANE_PITCH_Y = 112;
+static constexpr int LANE_X0 = 16,  LANE_Y0 = 96, LANE_CELL = 100, LANE_PITCH_X = 108;
+/* Row pitch grew 112 -> 134 for the lamp strip and the step number: 100 px key
+ * + 12 px lamps + an 11 px number + spacing.  ROW 0 DOES NOT MOVE, which is
+ * what keeps touch_script.txt valid -- cell 2 is still 232..331 x 96..195 and
+ * the gate's tap still lands at (281,143).  Row 1 therefore sits at y 230 and
+ * the lane's last pixel row is 96 + 134 + 100 + 33 = 363, clear of the knob
+ * row at 520. */
+static constexpr int LANE_PITCH_Y = 134;
+static constexpr int LAMP_DY = 105, LAMP_W = 40, LAMP_H = 12;
+static constexpr int LAMP_ACC_DX = 8, LAMP_SLD_DX = 52;
+static constexpr int NUM_DY = 122;      /* step-number label top, centred on the key */
 /* cell 2 is 232..331 x 96..195 -- the gate's edit target; its tap lands at (281,143) */
 static constexpr int PITCH_X = 912, PITCH_Y = 96, PITCH_SIZE = 150;
 static constexpr int NOTE_X = 1080, NOTE_Y = 110;
@@ -1131,7 +1142,8 @@ static constexpr int KNOB_LABEL_DX = 50, KNOB_LABEL_DY = 152;
  * 366 us with ~5 us per op, so per-rect ops win until the damage union is
  * 915456 logical px -- 99.33 % of the frame.  At or above it, ONE full-frame op. */
 static constexpr uint32_t ACIDBOX_ROT_FULL_THRESHOLD_PX = 915456u;
-static lv_obj_t *stepCell[16];
+static lv_obj_t *stepCell[16];          /* synthui_led_button: lit = gate, cue = playhead, latched pressed = selected */
+static lv_obj_t *accLamp[16], *sldLamp[16], *numLabel[16];
 static lv_obj_t *playBtnLabel, *bpmLabel, *noteLabel, *accBtn, *sldBtn, *waveBtnLabel;
 static lv_obj_t *pitchKnob;
 static int selectedStep = 0;
@@ -1202,7 +1214,9 @@ static const char *noteName(uint8_t n)
 static void commit_selected(uint8_t note, bool gate, bool accent, bool slide)
 {
     seq.step(selectedStep, note, gate, accent, slide);
-    synthui_step_set(stepCell[selectedStep], gate, accent, slide);
+    synthui_led_button_set_lit(stepCell[selectedStep], gate);
+    synthui_lamp_set_on(accLamp[selectedStep], accent);
+    synthui_lamp_set_on(sldLamp[selectedStep], slide);
     lv_label_set_text(noteLabel, gate ? noteName(note) : "--");
     lv_obj_set_style_bg_color(accBtn, accent ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
     lv_obj_set_style_bg_color(sldBtn, slide  ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
@@ -1217,14 +1231,17 @@ static void commit_selected(uint8_t note, bool gate, bool accent, bool slide)
  * after un-resting starts somewhere musical. */
 static void select_step(int i)
 {
-    synthui_step_set_selected(stepCell[selectedStep], false);
+    synthui_led_button_set_pressed(stepCell[selectedStep], false);
+    lv_obj_set_style_text_color(numLabel[selectedStep], lv_color_hex(0x5f6a7c), LV_PART_MAIN);
     selectedStep = i;
-    synthui_step_set_selected(stepCell[i], true);
+    synthui_led_button_set_pressed(stepCell[i], true);
+    lv_obj_set_style_text_color(numLabel[i], lv_color_hex(0xf2f1ea), LV_PART_MAIN);
     const AcidStep st = seq.step(i);
     synthui_rotary_knob_set_angle(pitchKnob, noteToAngle(st.note ? st.note : 33));
     lv_label_set_text(noteLabel, st.gate ? noteName(st.note) : "--");
     lv_obj_set_style_bg_color(accBtn, st.accent ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
     lv_obj_set_style_bg_color(sldBtn, st.slide  ? lv_color_hex(0x5b62b8) : lv_color_hex(0x232b3a), LV_PART_MAIN);
+    CONSOLE.printf("SELECT=%d\n", i);
 }
 
 /* A tap does BOTH: it selects the cell for editing and toggles its gate.  One
@@ -1291,8 +1308,8 @@ static void ui_poll(lv_timer_t *t)
     const bool play = transport.playing();
     const int  s    = play ? seq.currentStep() : -1;
     if (s != shownCursor) {
-        if (shownCursor >= 0) synthui_step_set_cursor(stepCell[shownCursor], false);
-        if (s >= 0)           synthui_step_set_cursor(stepCell[s], true);
+        if (shownCursor >= 0) synthui_led_button_set_cue(stepCell[shownCursor], false);
+        if (s >= 0)           synthui_led_button_set_cue(stepCell[s], true);
         shownCursor = s;
     }
     if ((int)play != shownPlaying) {
@@ -1392,14 +1409,41 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
     lv_obj_set_pos(stop, STOP_X, BAR_Y);
     lv_obj_set_size(stop, TRANSPORT_BTN_W, BAR_BTN_H);
 
-    /* step lane: 2x8 of LANE_CELL px cells at LANE_PITCH_X/Y */
+    /* step lane: 2x8 keys, each with an accent lamp, a slide lamp and a number */
     for (int i = 0; i < 16; i++) {
-        lv_obj_t *c = synthui_step_create(scr);
+        const int x = LANE_X0 + (i % 8) * LANE_PITCH_X;
+        const int y = LANE_Y0 + (i / 8) * LANE_PITCH_Y;
+        lv_obj_t *c = synthui_led_button_create(scr);
         lv_obj_set_size(c, LANE_CELL, LANE_CELL);
-        lv_obj_set_pos(c, LANE_X0 + (i % 8) * LANE_PITCH_X, LANE_Y0 + (i / 8) * LANE_PITCH_Y);
-        synthui_step_set(c, kPreset[i].gate, kPreset[i].accent, kPreset[i].slide);
+        lv_obj_set_pos(c, x, y);
+        synthui_led_button_set_color(c, SYNTHUI_LED_BUTTON_RED);
+        synthui_led_button_set_lit(c, kPreset[i].gate);
         lv_obj_add_event_cb(c, cbStepTap, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         stepCell[i] = c;
+
+        lv_obj_t *al = synthui_lamp_create(scr);
+        lv_obj_set_size(al, LAMP_W, LAMP_H);
+        lv_obj_set_pos(al, x + LAMP_ACC_DX, y + LAMP_DY);
+        synthui_lamp_set_shape(al, SYNTHUI_LAMP_SHAPE_PILL);
+        synthui_lamp_set_color(al, SYNTHUI_LAMP_COLOR_AMBER);
+        synthui_lamp_set_on(al, kPreset[i].accent);
+        accLamp[i] = al;
+
+        lv_obj_t *sl = synthui_lamp_create(scr);
+        lv_obj_set_size(sl, LAMP_W, LAMP_H);
+        lv_obj_set_pos(sl, x + LAMP_SLD_DX, y + LAMP_DY);
+        synthui_lamp_set_shape(sl, SYNTHUI_LAMP_SHAPE_PILL);
+        synthui_lamp_set_color(sl, SYNTHUI_LAMP_COLOR_BLUE);
+        synthui_lamp_set_on(sl, kPreset[i].slide);
+        sldLamp[i] = sl;
+
+        lv_obj_t *n = lv_label_create(scr);
+        char nb[4];
+        snprintf(nb, sizeof nb, "%02d", i + 1);
+        lv_label_set_text(n, nb);
+        lv_obj_set_style_text_color(n, lv_color_hex(0x5f6a7c), LV_PART_MAIN);
+        lv_obj_set_pos(n, x + LANE_CELL / 2 - 10, y + NUM_DY);
+        numLabel[i] = n;
     }
 
     /* editor: pitch detent knob + note name + ACC/SLD toggles + SAW/SQR */
