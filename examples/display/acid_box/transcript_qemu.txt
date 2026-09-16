@@ -93,6 +93,17 @@ review saw bar 4 step 0 at 0.3205 in three of four runs; under 6 spinners bar 4
 step 0 read 0.2556 / 0.3205 / 0.3205, bar 5 0.4182 / 0.2885 / 0.4182, and the
 pre-edit window's step 0 0.4244 / 0.2578 / 0.3188 — the lowest gated reading on
 record, 0.2556, 12x the floor.  Neither threshold was moved, then or now.
+RE-RECORDED 2026-09-16 (SynthUI editor rework, plan
+docs/superpowers/plans/2026-09-16-acid-box-synthui-editor.md): the step row
+grew prev/next press feedback, a shared helper, a bounded select_step index
+and its own STEP caption.  Only the boot golden moved (0xE871BF09 ->
+0xBB2AEE59); the audio behaviour is unmoved -- the third-column step-2 table
+below (bars 1..6: 0.0001, 0.0001, 0.0003, 0.3928, 0.3925, 0.3854) reproduced
+bit-for-bit against the prior capture.  The frame was dumped with a no-touch
+script, its FNV-1a checked against the printed sum two independent ways, and
+looked at by the controller before the golden was pinned -- see THE BOOT
+GOLDEN below for what was checked and the corrected reserved-band extent
+(y 379..519, not the 308..520 earlier comments claimed).
 
 ================================================================================
 WHAT THIS GATE PROVES
@@ -131,44 +142,46 @@ and the rt1062 half of `usb_descriptor_survey`.  That is the GPL firewall
 working, not a regression.
 
 ================================================================================
-THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-09-15, incremental guard)
+THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-09-16, SynthUI editor rework)
 ================================================================================
 ==== captured UART ====
 === BOOT ===
-[APP: acid_box] [VER: v1] [BUILD: Sep 15 2026 12:57:42]
+[APP: acid_box] [VER: v1] [BUILD: Sep 16 2026 09:19:39]
 ACIDBOX_BEGIN
 CODEC_OK
 PANEL_OK
 ACIDBOX_ENGINE=sw
-ACIDBOX_UI_SUM=0xE871BF09
+SELECT=0
+ACIDBOX_UI_SUM=0xBB2AEE59
 PLAYING=0
-ACIDBOX_ROT ops=1 full=1 px=921600 us=118235 errors=0
-ACIDBOX_ROT_EQ pass=1 fail=0 us=11218
+ACIDBOX_ROT ops=1 full=1 px=921600 us=114238 errors=0
+ACIDBOX_ROT_EQ pass=1 fail=0 us=10951
 I2C_OK
 ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
 ACIDBOX_DONE
 PLAYING=1
-ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3732,0.0001,0.3851,0.4102,0.3934,0.0002,0.3808,0.3704,0.4201,0.3924,0.0002,0.3916]
+ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3732,0.0001,0.3851,0.4102,0.3934,0.0002,0.3808,0.3704,0.4201,0.3924,0.0002,0.3870]
 ACIDBOX_VSYNC flips=22 isrs=22 timeouts=0
-ACIDBOX_ROT ops=46 full=2 px=2437376 us=310630 errors=0
-ACIDBOX_ROT_EQ pass=2 fail=0 us=1375
-ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3646,0.4297,0.3885,0.0002,0.3876]
+ACIDBOX_ROT ops=46 full=2 px=2437376 us=305674 errors=0
+ACIDBOX_ROT_EQ pass=2 fail=0 us=1359
+ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3628,0.4297,0.3885,0.0002,0.3876]
 ACIDBOX_VSYNC flips=38 isrs=38 timeouts=0
-ACIDBOX_ROT ops=86 full=2 px=3025152 us=384330 errors=0
-ACIDBOX_ROT_EQ pass=3 fail=0 us=1514
+ACIDBOX_ROT ops=86 full=2 px=3025152 us=383029 errors=0
+ACIDBOX_ROT_EQ pass=3 fail=0 us=1902
+SELECT=2
 STEP[2]=note33 gate1 acc0 sld0
-ACIDBOX_BAR=3 RMS=[0.4275,0.3866,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3677,0.3708,0.4237,0.3894,0.0005,0.3879]
+ACIDBOX_BAR=3 RMS=[0.4147,0.3866,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3621,0.3708,0.4090,0.3894,0.0005,0.3879]
 ACIDBOX_VSYNC flips=55 isrs=55 timeouts=0
-ACIDBOX_ROT ops=135 full=2 px=3705344 us=473448 errors=0
-ACIDBOX_ROT_EQ pass=4 fail=0 us=1399
-ACIDBOX_BAR=4 RMS=[0.4292,0.3813,0.3928,0.3753,0.3739,0.0003,0.3823,0.4175,0.3883,0.0002,0.3804,0.3704,0.4288,0.3916,0.0001,0.3879]
+ACIDBOX_ROT ops=138 full=2 px=3723776 us=469638 errors=0
+ACIDBOX_ROT_EQ pass=4 fail=0 us=1464
+ACIDBOX_BAR=4 RMS=[0.4292,0.3813,0.3928,0.3753,0.3626,0.0003,0.3823,0.4175,0.3613,0.0002,0.3804,0.3704,0.4288,0.3916,0.0001,0.3879]
 ACIDBOX_VSYNC flips=71 isrs=71 timeouts=0
-ACIDBOX_ROT ops=175 full=2 px=4293120 us=550352 errors=0
-ACIDBOX_ROT_EQ pass=5 fail=0 us=1524
-ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3727,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3887]
+ACIDBOX_ROT ops=178 full=2 px=4311552 us=544336 errors=0
+ACIDBOX_ROT_EQ pass=5 fail=0 us=1320
+ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3700,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3887]
 ACIDBOX_VSYNC flips=87 isrs=87 timeouts=0
-ACIDBOX_ROT ops=215 full=2 px=4880896 us=629114 errors=0
-ACIDBOX_ROT_EQ pass=6 fail=0 us=2111
+ACIDBOX_ROT ops=218 full=2 px=4899328 us=620694 errors=0
+ACIDBOX_ROT_EQ pass=6 fail=0 us=1439
 CUTOFF=639.5
 CUTOFF=511.2
 CUTOFF=408.7
@@ -178,10 +191,10 @@ CUTOFF=202.2
 CUTOFF=161.6
 CUTOFF=129.2
 CUTOFF=103.3
-ACIDBOX_BAR=6 RMS=[0.4298,0.3893,0.3854,0.3726,0.3742,0.0001,0.3780,0.3860,0.3926,0.0001,0.3975,0.3730,0.3937,0.4018,0.0002,0.3784]
+ACIDBOX_BAR=6 RMS=[0.4298,0.3893,0.3854,0.3726,0.3738,0.0002,0.3659,0.3860,0.3926,0.0001,0.3975,0.3730,0.3937,0.4018,0.0002,0.3784]
 ACIDBOX_VSYNC flips=107 isrs=107 timeouts=0
-ACIDBOX_ROT ops=264 full=2 px=5610496 us=725608 errors=0
-ACIDBOX_ROT_EQ pass=7 fail=0 us=1481
+ACIDBOX_ROT ops=267 full=2 px=5629952 us=715777 errors=0
+ACIDBOX_ROT_EQ pass=7 fail=0 us=1347
 
 (Bar 6 straddles the drag, whose landing instant moves with render timing
 between runs -- the gate selects its pre/post windows dynamically for exactly
@@ -190,9 +203,9 @@ full-frame present lands on the next refresh; every per-bar witness reads
 full=2, and ops climbs by ~40-50 a bar, all of them per-rect presents.  The
 guard's pass count is boot + one per bar, 7 after six bars: each bar's check
 is armed at step 8 and finished well before the seam that prints it.  The boot
-guard line's us= (11218) is the synchronous check's whole cost; every per-bar
-us= (1375..2111 here) is one chunk of 8 sampled rows, the costliest pass of
-that bar's check.  Bar 3's step 0 reads 0.4275 here and 0.4147 in most runs --
+guard line's us= (10951) is the synchronous check's whole cost; every per-bar
+us= (1320..1902 here) is one chunk of 8 sampled rows, the costliest pass of
+that bar's check.  Bar 3's step 0 reads 0.4147 here, matching most runs --
 the cell the header's AUDIO note is about.  Nine drag prints
 from ten samples: the first sample is the press itself and carries no
 movement.  The gate asserts timeouts=0, errors=0 and fail=0 -- never
@@ -201,8 +214,8 @@ flips==isrs, and never a pinned ops, px or us.)
 The gate's verdict, printed after the capture (indented here, so that a replay
 of this file as a capture never shows a verdict line of its own):
 
-  pre-edit  window: ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3646,0.4297,0.3885,0.0002,0.3876]
-  post-edit window: ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3727,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3887]
+  pre-edit  window: ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3628,0.4297,0.3885,0.0002,0.3876]
+  post-edit window: ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3700,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3887]
   PASS: acid box -- boot golden, rotated present + equality guard, injected play/edit/drag, step 2 silent before the tap and sounding after
 
 READ THE THIRD COLUMN, which is step 2:
@@ -345,27 +358,47 @@ which is why both drags finish at 103.3 Hz.
 ================================================================================
 THE BOOT GOLDEN — the frame was LOOKED AT
 ================================================================================
-The golden is 0xE871BF09 (the boot sum line), FNV-1a over the whole
-3686400-byte PRESENTED framebuffer, re-goldened 2026-09-15 for the landscape
-build: the logical 1280x720 scene after the CW90 PXP present, dumped from a
-no-touch boot with the recipe below (scanned buffer at 0x80684080) and viewed
-upright.  Its FNV-1a equals the printed sum, and that was recomputed two
-independent ways -- over the raw dump, and by mapping the upright PNG back to
-the portrait buffer with X=0 -- so the inspected image IS this golden's frame.
-What the eye checked: "ACID BOX" top-left; -, "128.0", + centred; a PLAY glyph
-(not PAUSE: the box is stopped) and STOP top-right; the 2x8 lane top-left
-matching kPreset cell for cell (bright 0,1,3,4,6,7 / 8,10,11,12,13,15; dark
-rests 2,5,9,14; accent dots on 0,7,12; slide bars on 3,10,15; the white
-selection border on cell 0); the editor beside it -- pitch knob at A1 (-35 deg),
-ACC lit, SLD dark, SAW; the empty reserved band (logical y 308..520); the eight
-sound knobs CUTOFF, RESO, ENV MOD, DECAY, ACCENT, DIST, SUB, SLIDE T along the
-bottom at their boot angles (CUTOFF +21.5, RESO +14, ENV MOD +28, DECAY +9,
-ACCENT +56, DIST -98, SUB -84, SLIDE T +7.5); nothing mirrored -- every label
-reads left to right.  Bit-identical across two gate runs.
+The golden is 0xBB2AEE59 (the boot sum line), FNV-1a over the whole
+3686400-byte PRESENTED framebuffer, re-goldened 2026-09-16 for the SynthUI
+editor rework (plan docs/superpowers/plans/2026-09-16-acid-box-synthui-editor.md):
+the same logical 1280x720 landscape scene, dumped from a no-touch boot with the
+recipe below (scanned buffer still at 0x80684080) and viewed upright by the
+controller before this golden was pinned.  Its FNV-1a equals the printed sum,
+recomputed independently over the raw dump -- so the inspected image IS this
+golden's frame.  What the eye checked: "ACID BOX" top-left; -, "128.0", +
+centred; PLAY and STOP top-right, all unchanged; the 2x8 lane, ivory keys, a
+red LED lit on the gated steps and dark on the four rests, which appear as
+keys 03, 06, 10 and 15 (preset indices 2, 5, 9, 14); amber accent lamps under
+keys 01, 08, 13 (indices 0, 7, 12) and blue slide lamps under 04, 11, 16
+(indices 3, 10, 15), matching kPreset; step numbers 01..16 under the lamps,
+01 brightened as the selected one, and key 01 visibly sunk against its
+neighbours; no key shows a red cue bezel (the transport is stopped at boot,
+as it must be); the editor column: pitch knob at A1, ACC lit amber, SLD dark,
+SAW, and "01" on the seven-segment (with its ghost segments) between two
+panel buttons whose double chevrons now read clearly at 0.85 glyph scale; the
+eight sound knobs CUTOFF, RESO, ENV MOD, DECAY, ACCENT, DIST, SUB, SLIDE T
+along the bottom at their boot angles (CUTOFF +21.5, RESO +14, ENV MOD +28,
+DECAY +9, ACCENT +56, DIST -98, SUB -84, SLIDE T +7.5); nothing mirrored or
+on its side -- every label reads left to right.  A cosmetic property worth
+recording so a later reader does not file it as a bug: at 44 px wide the
+panel buttons' bezel radius rounds to 1 px, so prev/next are the only
+square-cornered objects on a panel of rounded ones.  Accepted as-is.
+Measured extents: prev 1080..1123, seven-segment ink 1130..1212 of an 84 px
+box (column 1213 is background, not a clipping bug), next 1220..1263, all
+y 300..355; the STEP caption 1152..1187, centred on the readout, at
+y 369..378; the lane's row-1 ink (the step numbers) reaches y 360; the
+reserved empty band is y 379..519, NOT the "308..520" earlier comments
+claimed -- the step row and its caption occupy 300..378 and row 1's step
+numbers reach y 364.  Bit-identical across two gate runs.
 
-History: 0xD3BC88D7 (2026-08-18, the old knob), 0x25B30A96 (2026-08-27, the
-synthui_rotary_knob swap, portrait; it HELD through the 2026-08-28 db
-pipeline).  The 2026-08-27 re-inspection used the same recipe below (monitor
+History: 0xE871BF09 (2026-09-15, LANDSCAPE: layout C presented CW90 through
+the PXP; checked "ACID BOX" top-left, -/128.0/+ centred, PLAY/STOP top-right,
+the 2x8 lane matching kPreset cell for cell, pitch A1, ACC lit/SLD dark/SAW,
+the reserved band (then read as logical y 308..520 -- since corrected, see
+above), all eight knob boot angles; nothing mirrored; bit-identical across
+two gate runs), 0xD3BC88D7 (2026-08-18, the old knob), 0x25B30A96
+(2026-08-27, the synthui_rotary_knob swap, portrait; it HELD through the
+2026-08-28 db pipeline).  The 2026-08-27 re-inspection used the same recipe below (monitor
 socket /tmp/rkmon.sock — short, same 104-byte cap) and checked: all 9 knobs
 render the notch design (body/inner discs + index wedge) with the bounded track
 arc spanning ±140 with round caps and its gap at 6 o'clock; the same boot
@@ -386,7 +419,8 @@ wrong), so the frame was dumped out of QEMU's monitor and inspected:
       -monitor unix:/tmp/acidmon.sock,server,nowait &
   sleep 12
   printf 'xp/1wx 0x4080820c\n' | nc -U /tmp/acidmon.sock     # -> the scanned buffer:
-                                                             #    0x80684080 (2026-09-15);
+                                                             #    0x80684080 (2026-09-15,
+                                                             #    unchanged 2026-09-16);
                                                              #    0x80100040 (2026-08-18)
   printf 'pmemsave 0x80684080 0x384000 "/tmp/fb.raw"\n' | nc -U /tmp/acidmon.sock
   convert -size 720x1280 -depth 8 bgra:/tmp/fb.raw -alpha off -rotate -90 /tmp/fb.png
@@ -412,14 +446,20 @@ reproduce" panic starts here.
 ★ THE MONITOR SOCKET PATH MUST BE SHORT.  A Unix socket path is capped at 104
 bytes; a session scratchpad path blew it and QEMU exited 1 with the whole
 diagnosis in the -D log ("UNIX socket path ... is too long") and nothing on the
-console.  /tmp/acidmon.sock.
+console.  /tmp/acidmon.sock.  Met again 2026-09-16: this session's own
+scratchpad path is 106 bytes on its own, well over the cap, and the fix is the
+same shape every time -- a short `/tmp/<name>` symlink to the scratchpad
+directory (`ln -s "$SCRATCHPAD" /tmp/abd`, 21 bytes), used only for the
+monitor socket and the files the monitor commands touch (fb.uart, fb.raw);
+the next person who hits this should reach for the same trick rather than
+re-diagnosing it.
 
-VERIFIED (2026-08-18 golden 0xD3BC88D7, 2026-08-27 for 0x25B30A96, and
-2026-09-15 for 0xE871BF09): the dump's own FNV-1a equals what the firmware
-printed, so the inspected image IS this golden's frame.  (The same script also
-reproduces the anti-golden as a control: FNV-1a over 3686400 zero bytes is
-0x9BC99DC5, the value the gate rejects by name -- recomputed 2026-09-15; the
-buffer size did not change with the rotation.)
+VERIFIED (2026-08-18 golden 0xD3BC88D7, 2026-08-27 for 0x25B30A96, 2026-09-15
+for 0xE871BF09, and 2026-09-16 for 0xBB2AEE59): the dump's own FNV-1a equals
+what the firmware printed, so the inspected image IS this golden's frame.
+(The same script also reproduces the anti-golden as a control: FNV-1a over
+3686400 zero bytes is 0x9BC99DC5, the value the gate rejects by name --
+recomputed 2026-09-15; the buffer size did not change with the rotation.)
 
 WHAT THE EYE CHECKED in the PORTRAIT frame (2026-08-18 and 2026-08-27), at 1x
 and at 2x on the two knob rows -- kept as history; the landscape list is above:

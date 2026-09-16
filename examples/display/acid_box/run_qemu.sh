@@ -242,10 +242,35 @@ NBARS_ALL=$(grep -c "^ACIDBOX_BAR=" "$OUT" || true)
 # recomputed to the same value, and viewed upright: "ACID BOX" top-left,
 # -/128.0/+ centred, PLAY/STOP top-right; the 2x8 lane top-left matching the
 # preset (accent dots 0,7,12; slide bars 3,10,15; rests 2,5,9,14 dark; cell 0
-# selected); pitch knob at A1, ACC lit, SLD dark, SAW; the empty band; the
-# eight knobs CUTOFF..SLIDE T along the bottom at their boot angles; nothing
-# mirrored. Bit-identical across two runs.
-grep -qE "ACIDBOX_UI_SUM=0xE871BF09\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
+# selected); pitch knob at A1, ACC lit, SLD dark, SAW; the reserved empty band
+# (logical y 379..519); the eight knobs CUTOFF..SLIDE T along the bottom at
+# their boot angles; nothing mirrored. Bit-identical across two runs.
+# Re-goldened 2026-09-16 (SynthUI editor rework, plan
+# docs/superpowers/plans/2026-09-16-acid-box-synthui-editor.md): the step row
+# grew prev/next press feedback, a shared helper, a bounded select_step index
+# and its own STEP caption. The scanned buffer (0x80684080, unchanged) was
+# pmemsaved from a no-touch boot -- see transcript_qemu.txt for the recipe --
+# and viewed upright, with the frame confirmed correct by the controller
+# before this golden was pinned. Checked: "ACID BOX" top-left; -/128.0/+
+# centred; PLAY and STOP top-right, all unchanged; the 2x8 lane, ivory keys,
+# red LED lit on the gated steps and dark on the four rests (keys 03, 06, 10,
+# 15 -- preset indices 2, 5, 9, 14); amber accent lamps under keys 01, 08, 13
+# (indices 0, 7, 12) and blue slide lamps under 04, 11, 16 (indices 3, 10,
+# 15), matching kPreset; step numbers 01..16 under the lamps, 01 brightened as
+# the selected one, key 01 visibly sunk against its neighbours; no key shows a
+# red cue bezel (the transport is stopped at boot); the editor column: pitch
+# knob at A1, ACC lit amber, SLD dark, SAW, and "01" on the seven-segment
+# (with its ghost segments) between two panel buttons whose double chevrons
+# now read clearly at 0.85 glyph scale; the eight sound knobs along the
+# bottom at their boot angles, nothing mirrored or on its side. Cosmetic, and
+# accepted as-is: at 44 px wide the panel buttons' bezel radius rounds to 1
+# px, so prev/next are the only square-cornered objects on a panel of rounded
+# ones. Measured extents (prev 1080..1123, seven-segment ink 1130..1212 of an
+# 84 px box, next 1220..1263, row y 300..355, STEP caption 1152..1187 at y
+# 369..378, lane ink to y 360, reserved band from y 379) match the values
+# already recorded in acid_box.cpp's own comment. Bit-identical across two
+# runs.
+grep -qE "ACIDBOX_UI_SUM=0xBB2AEE59\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
 # The all-zero framebuffer, rejected BY NAME: 0x9BC99DC5 is the FNV of 3686400
 # zero bytes.  A blank frame is a real failure mode in this tree
 # (vglite_lvgl_test) and is otherwise indistinguishable from any other mismatch.
