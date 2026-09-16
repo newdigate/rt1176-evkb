@@ -396,3 +396,63 @@ median frame is fill rather than per-task churn.
 the honest answer and gets its own issue. NEW-23's fader is the precedent, but
 it argues for one less strongly than it looks: that fader animates a cap that
 genuinely moves, while this widget repaints to move a ring.
+
+---
+
+## 10. Measured (software close-out, 2026-09-16)
+
+Sweep **141/141/0** (`gates: 141 passed`, exit 0; `-l` 141), vacuity **66/66**,
+`LICENSE-AUDIT: PASS`, fresh-user `-DEVKB_FORCE_FETCH=ON` verified by RUNNING
+the gate on the GitHub-fetched ELF. SynthUI pinned at `567ad9b`. No new gate.
+
+| claim | predicted | measured |
+|---|---|---|
+| band at 100 px | 9 | **9** ✓ |
+| `cue` area bound | 900 | **900** ✓ |
+| overall `damage max` | 6640 | **6640** ✓ |
+| four goldens unmoved | yes | **yes** ✓ (`0xD474F06D`, `0x463C3371`, `0xBB2AEE59`; `0xEA5AB843` silicon, not re-measured) |
+| `cue` tasks at 100 px | 12 | **12** ✓ |
+| `cue` tasks, bound-setting key | ~20 at 32/34 px | **23** — a LATCHED 34 px key, §10.1 |
+| clip-unaware mutant | 48 | **48** ✓ |
+| task count "stays flat" | flat | **REFUTED as stated** — §10.1 |
+| ITCM headroom | neutral | **byte-identical**: 2,884 / 11,604 / 11,412 / 2,756 B |
+
+Sequence-wide damage total also fell, 276492 → 199924.
+
+### 10.1 The refutation
+
+§2 predicted "task count stays flat at 12". Measured `lit=10 press=12 cue=23
+color=10` against a 12/12/12/12 baseline. Both halves of that are true of
+different keys, and the distinction matters:
+
+* At **100 px — the size acid_box's lane uses** — it is flat at 12. The band
+  (9) stops short of the cap's inset (x=10), so each strip draws only bezel
+  fill + bezel border + well: 3 × 4 = 12.
+* At **32/34 px** the band is 4 against a cap inset of 3, so the strips reach
+  the cap group. On a key LATCHED pressed the moving layers shift 1 px, taking
+  `cap_top` out of the top strip and sliding `base` into the bottom one:
+  3 + 6 + 7 + 7 = 23. The LCG reaches that case once, at step 62 on key 12.
+
+So the task bound is set by the **smallest** key in the scene while every area
+bound beside it is set by the largest. Anyone copying this pattern to another
+widget should derive the bound over *every* size the sequence touches rather
+than assuming the largest dominates.
+
+The consumer-facing conclusion is unchanged and now measured: for acid_box the
+win is **pixel work** (~25,000 px of overlapping fills, gradients and AA down to
+~4,000) at an unchanged task count.
+
+### 10.2 Corrections this work made to itself
+
+1. **The clip-rejection citation was wrong** — see §2's ★ note. Corrected in
+   four places.
+2. **The planned acid_box RED demo did not exercise its own assertion.** An
+   unconditional per-tick screen invalidate makes `ops == full`, so the
+   pre-existing check fires first. An intermittent one (1 in 7) is required:
+   `ops=252 full=82`.
+3. **`acid_box/transcript_qemu.txt` is a document, not a capture.** The planned
+   `cp` would have destroyed ~550 lines of curated changelog and analysis.
+
+### 10.3 Still open
+
+The 30 fps criterion. §9's bench list is unchanged and unstarted.

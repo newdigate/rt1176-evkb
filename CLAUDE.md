@@ -675,6 +675,79 @@ re-run 141/141/0 and `LICENSE-AUDIT: PASS` after it. The seven SELF-BUILDING gat
 twelve SynthUI-linking ones were rebuilt BEFORE that sweep, because an `evkb.cmake` edit makes
 the self-building gates reconfigure inside their 120 s budget and read as `exit status 124`.
 
+✅ **Measured 2026-09-16: 141 gates discovered, 141 passed, 0 failed, 0 SKIP** (`gates: 141 passed`,
+exit 0; `-l` reports 141), on the **NEW-50 LedButton cue-damage** close-out -- fully clean, no red to
+disposition, and EVERY member of the load-sensitivity class green in the sweep itself
+(`cm4_audio_test` 4 s, `cm4_wire_int_slave_test` 2 s, `m2_rx_demo[txaggr]` 24 s, `m2_uap_lwip[uap]`
+5 s, `bt_tone_test[media]` 51 s, `synthui_slide_toggle_test` 20 s). Vacuity **66/66** (four new
+negatives), `LICENSE-AUDIT: PASS` after the sweep (`acid_box` 25759 dep paths,
+`synthui_led_button_test` 24703). SynthUI pushed and pinned at **`567ad9b`**; fresh-user
+`-DEVKB_FORCE_FETCH=ON` verified by RUNNING the gate on the GitHub-fetched ELF (the configure log
+shows `fetching … @ 567ad9b`). **No new gate -- 141 unchanged**: this narrows an existing widget's
+damage, it does not add a capability.
+★ **`synthui_led_button_set_cue()` now damages the bezel's border RING as four non-overlapping
+strips** of depth `ceil(R - (R-bw)/sqrt2) + 1` -- 9 px at the lane's 100 px key -- instead of the
+whole 100 px key. Gate bounds re-derived from `synthui_led_button_math.h`: `cue` **10000 -> 900**
+(one strip, 100 x 9) and the overall `damage max` **10000 -> 6640** (the largest op is now press).
+Sequence-wide damage total 276492 -> 199924. ALL FOUR GOLDENS UNMOVED: `0xD474F06D`, `0x463C3371`,
+acid_box sw `0xBB2AEE59`, and gpu `0xEA5AB843` (silicon-only, not re-measured this session).
+★★ **NARROWING A DAMAGE BOX CAN BE A PESSIMISATION, and no golden or area bound can see it.**
+LVGL renders ONE PASS PER INVALIDATED AREA, and `lv_draw_rect` allocates a draw task BEFORE any clip
+test -- the rejection is per primitive in `lv_draw_sw_fill.c:56` / `lv_draw_sw_border.c:97`, after the
+malloc, evaluate and dispatch -- out of the 1 MB heap that `lv_conf.h` puts in UNCACHED external
+SDRAM (NEW-23 measured that churn at ~90 us/task). So four strips against a clip-unaware `led_draw`
+cost **48** draw tasks where the whole-key invalidate cost 12. `led_draw` therefore became
+clip-aware in the same change (the pattern `slide_toggle`, `piano_key`, `level_meter` and
+`seven_segment` already used; `led_button` was the one that did not). **DEMONSTRATED: with
+`led_in_clip` forced to `return true`, `cue=48`, the gate red -- and both goldens AND delta equality
+still GREEN.** That asymmetry is the entire argument for the new `led_button_tasks_op` counter.
+★ **`led_draw` issues TWELVE draw tasks, not the nine the issue assumed** -- the bezel's single
+`lv_draw_rect` yields both a FILL and a BORDER task (11 unlit, no halo).
+★ **A widget whose descriptors lack `base.obj` CANNOT BE INSTRUMENTED**: `lv_draw.c` sends
+`LV_EVENT_DRAW_TASK_ADDED` only when it is set, and `lv_draw_rect_dsc_init` leaves it NULL. None of
+the sibling widgets set it either. Setting it is pixel-neutral *structurally*, not just by golden
+match -- the event cannot fire at all unless the object also carries
+`LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS`, which only the test sets.
+★★ **MY OWN "task count stays flat" PREDICTION WAS REFUTED, and the refutation is the useful part.**
+Measured `led_button_tasks_op lit=10 press=12 cue=23 color=10` against a pre-change baseline of
+12/12/12/12. At **100 px -- the size acid_box's lane actually uses** -- it IS flat at 12: band 9
+stops short of the cap's inset at x=10, so each strip draws only bezel fill + bezel border + well.
+At **32/34 px** the band is 4 against a cap inset of 3, so the strips DO reach the cap group, and on
+a LATCHED small key the moving layers shift 1 px so `cap_top` leaves the top strip while `base`
+slides into the bottom one: 3+6+7+7 = **23**. So the gate's task bound is set by the SMALLEST key in
+the scene, not the largest -- the opposite of every AREA bound beside it, and worth knowing before
+copying this pattern. The win for the consumer is therefore PIXEL WORK (~25,000 px of overlapping
+fills, gradients and AA down to ~4,000), with task count unchanged at its size.
+★ **acid_box gained ONE assertion, `full <= 2`** -- the only witness for an LVGL inv-buffer overflow.
+`LV_INV_BUF_SIZE` is 32 and the playhead now damages EIGHT areas per step (two `set_cue` calls x four
+boxes); on overflow LVGL invalidates the WHOLE SCREEN, whose signature is "every golden green and
+every frame a full present". The two start-up presents are the only legitimate ones, forced
+deterministically by the rotation port's two-presents-stale invariant, so a hard bound is right
+rather than brittle. ITCM headroom unchanged to the byte: `build` 2,884 / `build-bt` 11,604 /
+`build-bench` 11,412 / `build-loopstat` 2,756 B.
+★★ **A RED DEMO MUST BE CHECKED FOR WHICH ASSERTION CAUGHT IT.** The planned demo for that bound --
+an unconditional `lv_obj_invalidate(lv_screen_active())` per poller tick -- makes `ops == full`, so
+the PRE-EXISTING "damage path never ran" check fires first and the new bound is never reached. An
+INTERMITTENT invalidate (1 tick in 7) is what exercises it: `ops=252 full=82`, golden still green.
+★★ **CHECK WHETHER A FIXTURE IS A CAPTURE OR A DOCUMENT BEFORE OVERWRITING IT.**
+`acid_box/transcript_qemu.txt` is a hand-maintained NARRATIVE -- changelog, prose analysis and
+cross-referenced measurements -- with the raw UART in only one section. The planned
+`cp build/acid_box.uart transcript_qemu.txt` would have destroyed ~550 lines. The real change was a
+splice plus reconciliation of the quoted numbers (81 insertions / 32 deletions), proved by replaying
+the result through the gate with the vacuity suite's own `fake-qemu` stub: exit 0.
+★ **A grep hit is not a citation until you have read what encloses it.** This work cited
+`lv_draw_sw.c:447` for the clip rejection through the spec, the plan, a gate comment and a Linear
+issue before a reviewer opened the file: line 447 is inside `parallel_debug_draw()`, compiled out by
+`LV_USE_PARALLEL_DRAW_DEBUG 0` (`LVGL/port/lv_conf.h:611`). Mechanism unchanged, citation wrong,
+all four corrected.
+★ **THE 30 fps QUESTION IS STILL OPEN.** QEMU is vsync-locked at 30, so flip counts are a ceiling and
+fps there is meaningless. The bench must re-run both measurements as RUNS, not windows: acid_box
+touch p95 STOPPED vs PLAYING against 37.8 / 66.8 ms, and `synthui_led_button_test` Phase B against
+20.6 fps, plus the gpu golden `0xEA5AB843`. **Prediction on record:** the gain is bounded by however
+much of that 48.6 ms median frame is fill rather than per-task churn. If it does not clear 30 fps, a
+GC355 compositor for `led_button` is the honest next step and gets its own issue -- noting NEW-23's
+fader earned one by animating a cap that genuinely MOVES, while this widget repaints to move a ring.
+
 ★★ **SILICON, 2026-09-16 (bench): both halves ACCEPTED, and the one criterion that MISSED is
 now a measured number rather than an argument.** acid_box: `ACIDBOX_ENGINE=gpu`, gpu golden
 **`0xEA5AB843`** on THREE boots bit-identical (the landscape `0x2231070B` retired),
