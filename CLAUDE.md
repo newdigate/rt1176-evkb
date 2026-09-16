@@ -668,6 +668,30 @@ walk does not spend 30 s paging stale bonds before it inquires.
   connected" that looked like the DAP wedge was the board being switched OFF.
 
 ✅ **Measured 2026-09-16: 141 gates discovered, 141 passed, 0 failed, 0 SKIP** (`gates: 141 passed`,
+exit 0; 141 PASS lines; 23m40s wall, 10:13:34-10:37:14 BST), on the **acid_box SynthUI step editor**
+close-out (spec `docs/superpowers/specs/2026-09-15-acid-box-synthui-editor-design.md`) --
+`rt1176:display/acid_box` green in 17 s. `LICENSE-AUDIT: PASS`, 120 manifests, `examples/display/acid_box`
+walked at 25759 dep paths. Vacuity **62/62** (run during Task 5). Fresh-user `-DEVKB_FORCE_FETCH=ON`
+verified by RUNNING the gate against the GitHub-fetched ELF -- SynthUI cloned at
+`b599ae1548678f103d58db4e191c7b17f3e356e4`, build clean, gate PASS (`gate=0`).
+★ **The gate count is UNCHANGED at 141** -- this rework adds no new gate, it only moves one golden. The
+new step editor (the 2x8 `synthui_led_button` lane -- LED=gate, red bezel=playhead, sunk=selected -- amber
+ACC and blue SLD keys, a `synthui_seven_segment` step readout between REWIND/FORWARD panel buttons) is
+driven by the SAME touch-script sequence the gate already ran; only the rendered frame changed, so only the
+UI golden moved, `0xE871BF09` -> `0xBB2AEE59`. The gpu golden (`0x2231070B`) is untouched here and is
+re-recorded on silicon in Task 7, not yet done.
+★ **ITCM headroom, all four configurations, before -> after the rework**: default 2,708 -> 2,884 B
+(259,260 B used), LOOPSTAT 2,564 -> 2,756 B (259,388 B used), `build-bt` 11,364 -> 11,604 B (250,540 B
+used), `build-bench` 11,188 -> 11,412 B (250,732 B used). Headroom GREW despite the editor pulling in two
+more SynthUI widgets, because libSynthUI itself was routed to flash to make room for them.
+★ **The first `build-bench-configs.sh -n` run FAILED both nm-diffs, and it was staleness, not a proxy
+mismatch.** The hand-configured `build-bt` and `build-bench` predated the editor-column commits, so the
+fresh check dirs carried `cbPrevStep`/`cbNextStep`/`cbPanelDown`/`cbPanelUp` and the human-owned dirs did
+not. Rebuilding those two in place turned both nm-diffs green (`build-benchcheck-bench == build-bench`,
+`build-benchcheck-bt == build-bt`). The tool's own failure text names both possibilities -- the symbol list
+is what discriminates.
+
+✅ **Measured 2026-09-16: 141 gates discovered, 141 passed, 0 failed, 0 SKIP** (`gates: 141 passed`,
 exit 0; `-l` reports 141; 23m42s wall -- re-measured after the final-review fixes moved the example; an
 identical 141/141/0 ran hours earlier on the pre-fix tree), on the **NEW-25 SynthUI LedButton** close-out -- fully clean, no red to
 disposition, the new `display/synthui_led_button_test` green in 20 s on its first sweep. `LICENSE-AUDIT: PASS`
