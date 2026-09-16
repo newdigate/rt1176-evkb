@@ -14,10 +14,16 @@
  * 12/14/15 -> led_button_delta_crc vs led_button_fresh_crc, per-op damage
  * maxima (led_button_damage_op), led_button_damage engagement,
  * led_button_vsync, crc_done, and a PASS/FAIL token gated on delta equality.
- * Keys 13..15 are excluded from the LCG so the engagement bound (10000 px)
- * is exactly the largest legitimate box of a 100 px key (a cue change
- * repaints the whole key); a 150 px key's cue would be 22500 and say
- * nothing about engagement.
+ * Keys 13..15 are excluded from the LCG so every per-op bound is exactly the
+ * op's box on a 100 px key: press 6640 (the cap group at both offsets), lit
+ * and colour 1450 (the halo), cue 900 (ONE bezel-ring strip, 100 x 9 --
+ * NEW-50; it was 10000, the whole key, before).  A 150 px key would make
+ * each of those larger and say nothing about engagement.
+ * led_button_tasks_op (NEW-50) counts draw tasks per setter call, max per
+ * op, from LV_EVENT_DRAW_TASK_ADDED on the keys: it is the only number that
+ * can see led_draw losing its per-layer clip test, which would make a cue
+ * change cost 48 tasks (four strips x twelve layers) while every golden and
+ * the delta-equality guard stayed green.
  * The LCG alone cannot exercise every damage box: keys 0..12 are all square
  * and none is held by LV_STATE_PRESSED, so a centring-offset error in a
  * non-square key's damage box, or in the lit box at the LV_STATE_PRESSED
@@ -41,11 +47,16 @@
  * golden -- would catch it, which is why that branch had no coverage before.
  * The tail also closes a hole a whole-key-invalidate regression could hide
  * behind: with square, unpressed keys only, set_lit/set_color/set_pressed
- * falling back to lv_obj_invalidate(obj) still measures max=10000 (a cue
- * change already reaches that) and still passes delta equality -- per-op
- * damage maxima (led_button_damage_op) are what catch it, since
- * lit/press/color would then read 10000 too instead of their small
- * legitimate boxes.
+ * falling back to lv_obj_invalidate(obj) still passes delta equality (a
+ * bigger box is still a CORRECT box) -- per-op damage maxima
+ * (led_button_damage_op) are what catch it, since lit/press/color would then
+ * read 10000 instead of their small legitimate boxes.
+ * ★ Until NEW-50 the OVERALL max could not see that regression either,
+ * because a cue change legitimately repainted the whole 10000 px key and the
+ * overall bound was 10000 to suit it.  Now that cue damages only the bezel
+ * ring (900), the overall bound is press's 6640, so a whole-key fallback
+ * trips that too -- the per-op maxima are still what NAME which setter
+ * regressed, which is the reason they exist.
  * Phase B (after crc_done, ungated): a playhead cue sweep + LED chaser
  * across all 16 keys, measuring frame time (led_button_fps). */
 #include <Arduino.h>

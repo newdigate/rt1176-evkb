@@ -13,7 +13,13 @@
 #       -> "FAIL: lit damage above its box (lit=10000 > 1450)"
 #     (delta equality stays GREEN for this one -- led_button_delta_eq=PASS,
 #      led_button_damage_op lit=10000 press=6640 cue=10000 color=1450 -- a
-#      bigger box is still a correct box, so only the per-op bound can see it)
+#      bigger box is still a correct box, so only the per-op bound can see it.
+#      ★ That reading was true when cue's own bound was 10000 and the overall
+#      max had to be 10000 to suit it.  Since NEW-50 cue damages only the
+#      bezel ring and the overall max is press's 6640, so lit=10000 would trip
+#      that too -- the per-op bound is now what NAMES the guilty setter rather
+#      than the only thing that notices.  The demo above was run against the
+#      pre-NEW-50 bounds and is left as recorded.)
 #   - synthui_led_button_lit_box: rect_px(&L.halo, L.dy_px) -> rect_px(&L.led, L.dy_px)
 #     (SynthUI src/synthui_led_button_math.h)
 #       -> "FAIL: delta render differs from full render (0xBFBA0971 vs 0xB34EDF19)"
@@ -30,6 +36,28 @@
 #   (0xB34EDF19 is exactly the PRE-fix final golden: with RELEASED/PRESS_LOST
 #    deleted, key 12 never un-sinks, so the mutant's stuck pixels are
 #    bit-identical to the old tail that never touched key 12 at all.)
+#
+# Demonstrated RED 2026-09-16 (NEW-50, cue band + clip-aware led_draw):
+#   - synthui_led_button_set_cue left at lv_obj_invalidate(obj) (the pre-NEW-50
+#     widget, no mutant needed) against the re-derived bound
+#       -> "FAIL: cue damage above its box (cue=10000 > 900)"
+#   - cue_boxes corner term dropped (band = bw + 1; SynthUI
+#     src/synthui_led_button_math.h) -- the strips miss the ring on the corner
+#     diagonals, and the stale corners of every key whose cue toggled an odd
+#     number of times leave the delta render different from a fresh one
+#       -> "FAIL: delta render differs from full render (0xA70BCB79 vs 0x463C3371)"
+#   - led_in_clip made `return true` (SynthUI src/synthui_led_button.cpp):
+#     four strips x 12 unconditional layers
+#       -> "FAIL: cue draw tasks above its bound (cue=48 > 23)"
+#     with led_button_crc=0xD474F06D, led_button_fresh_crc=0x463C3371 and
+#     led_button_delta_eq=PASS all still GREEN -- the whole argument for the
+#     task counter existing.  Baseline MEASURED before NEW-50 (the counter
+#     landed one commit ahead of the widget change, against the whole-key
+#     set_cue, and 9a34fd2 records it): tasks_op 12/12/12/12.
+#     (lit and color rose to 12 too in this run -- every op loses its clip,
+#     not just cue -- but the cue check runs first and exits the script, so
+#     only the cue FAIL prints; full line was led_button_tasks_op lit=12
+#     press=12 cue=48 color=12.)
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 EVKB=$(cd "$DIR/../../.." && pwd)
