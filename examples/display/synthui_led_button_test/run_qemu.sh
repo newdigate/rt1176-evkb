@@ -83,29 +83,52 @@ grep -qE "led_button_delta_eq=PASS\r?$" "$OUT" || { echo "FAIL: delta equality";
 # where it used to be left sunk. Verified via the two QEMU runs and the
 # mutant demo above, not merely accepted because the run printed it.
 [ "$DFUL" = "0x463C3371" ] || { echo "FAIL: led_button final-state checksum ($DFUL)"; exit 1; }
-# ENGAGEMENT, PER OP. The single max catches a setter reverting to FULL-SCREEN
-# invalidation (921600 px); it cannot see a lit/colour/press setter reverting
-# to WHOLE-KEY invalidation, because a cue change legitimately repaints a whole
-# 100 px key (10000).  So each op has its own bound, equal to its box on the
-# largest key the sequence touches: lit and colour = the halo, 58x25 = 1450;
-# pressed = the cap group at both offsets, 80x83 = 6640; cue = the key, 10000.
-# These are EXACT measured boxes, re-derived from synthui_led_button_math.h:
-# a deliberate layout change trips them loudly and they must then be
-# re-derived from the math, never loosened to whatever the run printed.
-DAREA=$(grep -a -oE "led_button_damage max=[0-9]+" "$OUT" | head -1 | cut -d= -f2)
-[ -n "$DAREA" ] && [ "$DAREA" -gt 0 ] || { echo "FAIL: delta damage guard missing or zero"; exit 1; }
-[ "$DAREA" -le 10000 ] || { echo "FAIL: delta damage not engaged (max=$DAREA)"; exit 1; }
-grep -qE "led_button_damage max=[0-9]+ total=[0-9]+ steps=64 tail=6\r?$" "$OUT" || { echo "FAIL: delta sequence length changed (expected steps=64 tail=6)"; exit 1; }
+# ENGAGEMENT, PER OP. Each op has its own bound, equal to its box on the
+# largest key the sequence touches (keys 0..12: 100 px and 32/34 px): lit and
+# colour = the halo, 58x25 = 1450; pressed = the cap group at both offsets,
+# 80x83 = 6640; cue = ONE of the four bezel-ring strips (NEW-50), the top or
+# bottom one, 100 x band 9 = 900 (band = ceil(R - (R-bw)/sqrt2) + 1 with
+# R=17, bw=4).  These are EXACT boxes re-derived from
+# synthui_led_button_math.h: a deliberate layout change trips them loudly and
+# they must then be re-derived from the math, never loosened to whatever the
+# run printed.  The per-op checks come BEFORE the overall max so a regression
+# is named by its op.
 OPLINE=$(grep -a -oE "led_button_damage_op lit=[0-9]+ press=[0-9]+ cue=[0-9]+ color=[0-9]+" "$OUT" | head -1)
 [ -n "$OPLINE" ] || { echo "FAIL: per-op damage line missing"; exit 1; }
 op() { echo "$OPLINE" | grep -oE "$1=[0-9]+" | cut -d= -f2; }
 LIT=$(op lit); PRS=$(op press); CUE=$(op cue); COL=$(op color)
 [ "$LIT" -gt 0 ] && [ "$PRS" -gt 0 ] && [ "$CUE" -gt 0 ] && [ "$COL" -gt 0 ] \
     || { echo "FAIL: an op was never exercised ($OPLINE)"; exit 1; }
-[ "$LIT" -le 1450 ]  || { echo "FAIL: lit damage above its box (lit=$LIT > 1450)"; exit 1; }
-[ "$COL" -le 1450 ]  || { echo "FAIL: colour damage above its box (color=$COL > 1450)"; exit 1; }
-[ "$PRS" -le 6640 ]  || { echo "FAIL: press damage above its box (press=$PRS > 6640)"; exit 1; }
-[ "$CUE" -le 10000 ] || { echo "FAIL: cue damage above its box (cue=$CUE > 10000)"; exit 1; }
+[ "$LIT" -le 1450 ] || { echo "FAIL: lit damage above its box (lit=$LIT > 1450)"; exit 1; }
+[ "$COL" -le 1450 ] || { echo "FAIL: colour damage above its box (color=$COL > 1450)"; exit 1; }
+[ "$PRS" -le 6640 ] || { echo "FAIL: press damage above its box (press=$PRS > 6640)"; exit 1; }
+[ "$CUE" -le 900 ]  || { echo "FAIL: cue damage above its box (cue=$CUE > 900)"; exit 1; }
+# Overall max: the largest legitimate box is now press (6640).  Redundant
+# with the per-op bounds above, kept because it is the FULL-SCREEN tripwire
+# (921600) and the vacuity suite pins its presence.
+DAREA=$(grep -a -oE "led_button_damage max=[0-9]+" "$OUT" | head -1 | cut -d= -f2)
+[ -n "$DAREA" ] && [ "$DAREA" -gt 0 ] || { echo "FAIL: delta damage guard missing or zero"; exit 1; }
+[ "$DAREA" -le 6640 ] || { echo "FAIL: delta damage not engaged (max=$DAREA)"; exit 1; }
+grep -qE "led_button_damage max=[0-9]+ total=[0-9]+ steps=64 tail=6\r?$" "$OUT" || { echo "FAIL: delta sequence length changed (expected steps=64 tail=6)"; exit 1; }
+# DRAW TASKS, PER OP (NEW-50).  The mechanism the area bounds cannot see:
+# LVGL renders one pass per invalidated area, and lv_draw_rect allocates a
+# task before any clip test (lv_draw_sw_fill.c / lv_draw_sw_border.c reject it
+# afterwards, against t->clip_area) out of a heap in uncached SDRAM.  A cue
+# change is four strips, so a led_draw that stopped clipping its layers costs
+# 4 x 12 = 48 tasks (12 = led_draw's task count for a LIT key: the bezel's
+# single lv_draw_rect yields both a FILL and a BORDER task, one of twelve
+# layers; 11 for an unlit key, which skips the halo) -- with every golden and
+# the delta-equality guard still GREEN.  cue's bound is the one with teeth;
+# lit, press and colour are single-pass ops whose counts can only rise if a
+# setter starts emitting more than one box.  Bounds are pinned from the
+# measured run WITH their derivation (Task 4 of the plan), and re-derived,
+# never loosened.
+TLINE=$(grep -a -oE "led_button_tasks_op lit=[0-9]+ press=[0-9]+ cue=[0-9]+ color=[0-9]+" "$OUT" | head -1)
+[ -n "$TLINE" ] || { echo "FAIL: per-op draw-task line missing"; exit 1; }
+tk() { echo "$TLINE" | grep -oE "$1=[0-9]+" | cut -d= -f2; }
+TLIT=$(tk lit); TPRS=$(tk press); TCUE=$(tk cue); TCOL=$(tk color)
+[ "$TLIT" -gt 0 ] && [ "$TPRS" -gt 0 ] && [ "$TCUE" -gt 0 ] && [ "$TCOL" -gt 0 ] \
+    || { echo "FAIL: an op created no draw task ($TLINE)"; exit 1; }
 # vsync-fence health (db pipeline): a timeout means the tear-free property
 # silently degraded with every golden still green.
 # A vsync-fence red during a full sweep is the documented load-sensitivity class

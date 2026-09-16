@@ -105,6 +105,11 @@ static void opaque_bg(lv_obj_t *scr)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 }
 
+/* Forward declaration: build_bank() wires this to LV_EVENT_DRAW_TASK_ADDED,
+ * but its definition sits below (with the rest of the delta-guard state) to
+ * keep that block together rather than moving it above build_bank(). */
+static void delta_task_cb(lv_event_t *e);
+
 /* Build the bank from the mutable state arrays. Both the golden and the fresh
  * reference pass use this, so the object hierarchy is identical. */
 static lv_obj_t *build_bank(void)
@@ -132,6 +137,8 @@ static lv_obj_t *build_bank(void)
         synthui_led_button_set_cue(b, g_cue[i]);
         synthui_led_button_set_disabled(b, k->disabled);
         if (k->lv_state) lv_obj_add_state(b, LV_STATE_PRESSED);
+        lv_obj_add_flag(b, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+        lv_obj_add_event_cb(b, delta_task_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
         g_key[i] = b;
     }
     return scr;
@@ -168,6 +175,44 @@ static long    s_delta_total = 0;
 static bool    s_delta_record = false;
 static int     s_delta_op = 0;
 static int32_t s_op_max[LED_OP_COUNT];
+
+/* NEW-50: draw tasks per single setter call, max per op.  Counted from
+ * LV_EVENT_DRAW_TASK_ADDED on the keys (LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS,
+ * set in build_bank so the golden and fresh passes are identical), so the
+ * title label never enters the count.  This is the number that sees what
+ * no area bound and no golden can: LVGL renders one pass per invalidated
+ * area and lv_draw_rect allocates a task BEFORE any clip test, so a
+ * narrower damage box that led_draw does not clip against costs MORE
+ * tasks, not fewer -- four strips x 12 = 48 against the whole key's 12
+ * (12 = led_draw's task count for a LIT key: the bezel's single
+ * lv_draw_rect yields both a FILL and a BORDER task, one of twelve layers;
+ * 11 for an unlit key, which skips the halo). */
+static int32_t s_op_tasks[LED_OP_COUNT];
+static int32_t s_tasks_step = 0;
+
+static void delta_task_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_delta_record) s_tasks_step++;
+}
+
+/* One refresh per setter: fold this step's task count into its op's max.
+ * TRAP: any new TRACKED step must call delta_refr(), never lv_refr_now(NULL)
+ * directly -- s_op_tasks is reset and folded ONLY here, so a raw
+ * lv_refr_now(NULL) still counts into s_tasks_step (delta_task_cb fires
+ * regardless) but that count is never folded into s_op_tasks and is
+ * silently dropped from the bound, with no error anywhere.  Unlike
+ * delta_inv_cb (a persistent LV_EVENT_INVALIDATE_AREA callback that cannot
+ * be bypassed this way), this guard is opt-in per call site.  The one
+ * remaining raw lv_refr_now(NULL) in this file (the untracked key-12
+ * restore in delta_run_sequence) is safe only because s_delta_record is
+ * false there, so neither guard is recording. */
+static void delta_refr(void)
+{
+    s_tasks_step = 0;
+    lv_refr_now(NULL);
+    if (s_tasks_step > s_op_tasks[s_delta_op]) s_op_tasks[s_delta_op] = s_tasks_step;
+}
 
 static void delta_inv_cb(lv_event_t *e)
 {
@@ -230,6 +275,7 @@ static uint32_t delta_run_sequence(void)
     s_delta_maxarea = 0;
     s_delta_total = 0;
     for (int i = 0; i < LED_OP_COUNT; i++) s_op_max[i] = 0;
+    for (int i = 0; i < LED_OP_COUNT; i++) s_op_tasks[i] = 0;
     s_delta_record = true;
 
     for (int step = 0; step < LED_BUTTON_DELTA_STEPS; step++) {
@@ -257,7 +303,7 @@ static uint32_t delta_run_sequence(void)
             synthui_led_button_set_color(g_key[idx], g_color[idx]);
             break;
         }
-        lv_refr_now(NULL);
+        delta_refr();
     }
 
     /* Scripted tail: keys 14 (non-square, unpressed) and 15 (held pressed via
@@ -265,22 +311,22 @@ static uint32_t delta_run_sequence(void)
     s_delta_op = LED_OP_PRESSED;                    /* (a) non-square press box, ox=20 */
     g_pressed[14] = true;
     synthui_led_button_set_pressed(g_key[14], true);
-    lv_refr_now(NULL);
+    delta_refr();
 
     s_delta_op = LED_OP_LIT;                         /* (b) lit box at the pressed offset */
     g_lit[14] = false;
     synthui_led_button_set_lit(g_key[14], false);
-    lv_refr_now(NULL);
+    delta_refr();
 
     s_delta_op = LED_OP_COLOR;                       /* (c) LV_STATE_PRESSED key's lit box */
     g_color[15] = SYNTHUI_LED_BUTTON_AMBER;
     synthui_led_button_set_color(g_key[15], SYNTHUI_LED_BUTTON_AMBER);
-    lv_refr_now(NULL);
+    delta_refr();
 
     s_delta_op = LED_OP_LIT;                         /* (d) halo removed, LV_STATE_PRESSED offset */
     g_lit[15] = false;
     synthui_led_button_set_lit(g_key[15], false);
-    lv_refr_now(NULL);
+    delta_refr();
 
     /* Key 12 takes part in the LCG above (LCG_KEYS=13 is keys 0..12), and
      * with this file's fixed seed it deterministically ends the 64 steps
@@ -309,11 +355,11 @@ static uint32_t delta_run_sequence(void)
      * handling nothing ever un-sinks it back to match a fresh render. */
     s_delta_op = LED_OP_PRESSED;                     /* (e) key 12 pressed via the scripted indev */
     touch_drive(g_key[12], true);
-    lv_refr_now(NULL);
+    delta_refr();
 
     s_delta_op = LED_OP_PRESSED;                     /* (f) key 12 released at the same point */
     touch_drive(g_key[12], false);
-    lv_refr_now(NULL);
+    delta_refr();
 
     s_delta_record = false;
     return sum_active_screen();
@@ -475,6 +521,9 @@ void setup()
     Serial1.printf("led_button_damage_op lit=%ld press=%ld cue=%ld color=%ld\n",
                    (long)s_op_max[LED_OP_LIT], (long)s_op_max[LED_OP_PRESSED],
                    (long)s_op_max[LED_OP_CUE], (long)s_op_max[LED_OP_COLOR]);
+    Serial1.printf("led_button_tasks_op lit=%ld press=%ld cue=%ld color=%ld\n",
+                   (long)s_op_tasks[LED_OP_LIT], (long)s_op_tasks[LED_OP_PRESSED],
+                   (long)s_op_tasks[LED_OP_CUE], (long)s_op_tasks[LED_OP_COLOR]);
     Serial1.printf("led_button_vsync flips=%lu isrs=%lu timeouts=%lu\n",
                    (unsigned long)lvgl_mipi_panel_flips(),
                    (unsigned long)lvgl_mipi_panel_vsync_isrs(),
