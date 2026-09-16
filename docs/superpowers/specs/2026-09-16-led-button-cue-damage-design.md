@@ -92,10 +92,17 @@ whole-key invalidation costs 12 — while every number the gate prints improves.
 With clip-awareness, each strip draws only bezel fill + bezel border + well:
 **4 × 3 = 12 tasks, flat against today's 12.**
 
+★ **REFUTED AS STATED — see §10.1, and do not read the sentence above without
+it.** It holds at the **100 px** key this widget ships at in acid_box's lane,
+and NOT at 32/34 px, where the band reaches the cap group and a latched key
+measures **23**. The task bound is therefore set by the SMALLEST key in a
+scene, the opposite of every area bound. ★ Note also that this claim was
+settled by the QEMU gate on the same day, **not** on the bench as §9 below
+anticipated — §9's bench list covers the fps question only.
+
 **So the win is pixel work, not task count.** Today a cue change repaints
 ~25,000 px of overlapping fills, gradients and antialiased edges across the
-key; after, ~4,000 px in four thin strips. That is the honest expectation and
-section 9 records it as a prediction to be refuted or confirmed on the bench.
+key; after, ~4,000 px in four thin strips. That part was confirmed.
 
 Making `led_draw` clip-aware is not an invention: `synthui_level_meter`,
 `synthui_piano_key`, `synthui_slide_toggle` and `synthui_seven_segment` all
@@ -391,6 +398,13 @@ re-run both measurements of section 1.1 as **runs, not windows**:
 **The prediction on record, so it can be refuted:** task count stays flat and
 pixel work drops ~6×, so the gain is bounded by however much of the 48.6 ms
 median frame is fill rather than per-task churn.
+
+★ **Half of that was settled in QEMU the same day and does not need the bench.**
+Task count is deterministic and the gate now measures it: flat at 12 on the
+100 px key, 23 on a latched 34 px one (§10.1) — so the "stays flat" half is
+REFUTED as a general claim and CONFIRMED at the lane's size. Pixel work
+likewise fell as predicted. **What is left for the bench is only whether that
+buys 30 fps**, which QEMU cannot answer at all.
 
 **If it does not clear 30 fps**, a GC355 compositor for `led_button` becomes
 the honest answer and gets its own issue. NEW-23's fader is the precedent, but
