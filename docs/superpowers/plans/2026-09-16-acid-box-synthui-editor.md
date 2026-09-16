@@ -8,6 +8,8 @@
 
 **Tech Stack:** LVGL 9.4 (vendored), SynthUI (sibling checkout, pinned `b599ae1`), MipiDisplay RK055 + PXP CW90 present, Teensyduino-style core for i.MX RT1176, CMake + qemu2 through `tools/qrun`, ARM GCC 10.
 
+> **Execution note (2026-09-16).** Task 4 was PULLED FORWARD to run immediately after Task 1: with the new widgets referenced, the default build overflows ITCM by 988 B, so the branch does not link until Task 4's routing lands. Task 1 was verified by applying that routing temporarily and reverting it. Execution order is 1, 4, 2, 3, 5, 6, 7.
+
 ## Global Constraints
 
 - `$EVKB` = `/Users/nicholasnewdigate/Development/rt1170/evkb`, `$AB` = `$EVKB/examples/display/acid_box`, `$SYNTHUI` = `/Users/nicholasnewdigate/Development/SynthUI`, `S` = the session scratchpad directory.
@@ -183,7 +185,7 @@ Replace the lane loop in `build_ui` with:
 - [ ] **Step 9: Build**
 
 Run: `cd $AB && cmake --build build 2>&1 | tail -5`
-Expected: links, no warnings from `acid_box.cpp`. A `synthui_step` symbol error means a call was missed — `grep -n synthui_step acid_box.cpp` must return nothing.
+Expected: `acid_box.cpp` compiles with no warnings, and the LINK FAILS with `region 'ITCM' overflowed by ~988 bytes` — the new widgets do not fit until Task 4's routing lands, which is why Task 4 now runs next. To verify this task's own behaviour, apply Task 4's `EXCLUDE_FILE` rule temporarily, build, run, then `git checkout -- CMakeLists.txt` so the commit stays `acid_box.cpp`-only. A `synthui_step` symbol error means a call was missed — `grep -n synthui_step acid_box.cpp` must return nothing.
 
 - [ ] **Step 10: Boot and read the tokens (golden expected to fail)**
 
@@ -635,6 +637,7 @@ Confirm on glass, and write each result into the transcript:
 - [ ] **Step 4: Performance and the BT build**
 
 - Touch p95 from an `ACIDBOX_LOOPSTAT` build, compared against the landscape figures (median 1 s windows 43–49 ms). "Not worse" is the bar; the tail is a known open item and not this rework's to close.
+- **The playhead's draw cost, measured with the transport RUNNING** (NEW-50). The lane's per-tick draw-task count roughly doubled: `synthui_led_button`'s draw issues about 9 rects where `synthui_step` issued at most 4, and `set_cue` repaints the whole key for a bezel-only change. Damage AREA is flat (+0.08 % of present-path pixels, measured in QEMU) and QEMU cannot see the rest, because the pipeline is vsync-locked at 30 fps and flip counts are a ceiling. So report the LVGL slot and touch p95 in two conditions — transport STOPPED and transport PLAYING — and put both in the transcript. If playing is materially worse, NEW-50 (narrowing `set_cue` to the bezel band) becomes the fix; if not, it stays a cleanup and the widget spec's simplicity argument stands.
 - Flash the `M2_BT_OUT` build, confirm the NEW-45 ITCM headroom ASSERT is green at link, stream to the Shokz and confirm `pcmdrops=0`.
 
 - [ ] **Step 5: Commit the transcript**
