@@ -1146,7 +1146,9 @@ static constexpr int PREV_X = 1080, PREV_W = 44;
 static constexpr int SEG_X  = 1130, SEG_W  = 84;
 static constexpr int NEXT_X = 1220, NEXT_W = 44;
 static constexpr int STEP_LABEL_X = 1152, STEP_LABEL_Y = 366;
-/* y 308..520 is RESERVED: empty on purpose (spec section 6), not centred away */
+/* y 379..519 is RESERVED: empty on purpose, not centred away -- the step row
+ * (300..355 + the 366..378 caption) and row 1's step numbers (reaching 364)
+ * both sit above it. */
 /* sound knobs */
 static constexpr int KNOB_X0 = 16,  KNOB_Y0 = 520, KNOB_SIZE = 150, KNOB_PITCH = 158;   /* CUTOFF: 16..165 x 520..669; the drag lands at x 89, y 583..647 */
 static constexpr int KNOB_LABEL_DX = 50, KNOB_LABEL_DY = 152;
@@ -1245,6 +1247,11 @@ static void commit_selected(uint8_t note, bool gate, bool accent, bool slide)
  * after un-resting starts somewhere musical. */
 static void select_step(int i)
 {
+    /* i indexes stepCell[]/numLabel[] with no bounds check below; refusing an
+     * out-of-range i here (rather than merely widening the readout buffer)
+     * fixes the cause both that array indexing AND -Wformat-truncation were
+     * reacting to -- an unproven i, not an undersized sb. */
+    if ((unsigned)i >= 16u) return;
     synthui_led_button_set_pressed(stepCell[selectedStep], false);
     lv_obj_set_style_text_color(numLabel[selectedStep], lv_color_hex(0x5f6a7c), LV_PART_MAIN);
     selectedStep = i;
@@ -1255,7 +1262,7 @@ static void select_step(int i)
     lv_label_set_text(noteLabel, st.gate ? noteName(st.note) : "--");
     synthui_led_button_set_lit(accKey, st.accent);
     synthui_led_button_set_lit(sldKey, st.slide);
-    char sb[16];
+    char sb[4];
     snprintf(sb, sizeof sb, "%02d", i + 1);
     synthui_seven_segment_set_text(stepSeg, sb);
     CONSOLE.printf("SELECT=%d\n", i);
@@ -1287,6 +1294,14 @@ static void cbPrevStep(lv_event_t *e)
 { (void)e; select_step((selectedStep + 15) % 16); }
 static void cbNextStep(lv_event_t *e)
 { (void)e; select_step((selectedStep + 1) % 16); }
+/* synthui_panel_button's own draw reads only `on` and DISABLED -- it never
+ * looks at LV_STATE_PRESSED -- so a bare CLICKED handler paints no feedback
+ * on the way down.  Drive `on` momentarily from here instead of touching
+ * SynthUI: lit for the press, dark again on release OR on PRESS_LOST (a
+ * finger sliding off the button with no RELEASED event, which would
+ * otherwise leave it lit forever). */
+static void cbPanelDown(lv_event_t *e){ synthui_panel_button_set_on(lv_event_get_target_obj(e), true); }
+static void cbPanelUp  (lv_event_t *e){ synthui_panel_button_set_on(lv_event_get_target_obj(e), false); }
 
 static void cbPlay(lv_event_t *e)
 {
@@ -1368,6 +1383,28 @@ UIBUILD_FN static lv_obj_t *mkbtn(lv_obj_t *par, const char *txt, lv_event_cb_t 
     lv_obj_center(l);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
     if (labelOut) *labelOut = l;
+    return b;
+}
+/* Shared prev/next construction: size/pos/glyph/accent/glyph-scale plus the
+ * CLICKED action and the two momentary press/release handlers, all in one
+ * place so the momentary wiring cannot be attached to one button and
+ * forgotten on the other. */
+UIBUILD_FN static lv_obj_t *mkpanelbtn(lv_obj_t *scr, int x, int w,
+                                       synthui_panel_button_glyph_t glyph,
+                                       lv_event_cb_t cb)
+{
+    lv_obj_t *b = synthui_panel_button_create(scr);
+    lv_obj_set_size(b, w, STEP_H);
+    lv_obj_set_pos(b, x, STEP_Y);
+    synthui_panel_button_set_glyph(b, glyph);
+    synthui_panel_button_set_accent(b, SYNTHUI_PANEL_BUTTON_ACCENT_PALE);
+    /* The widget normalises glyph size on WIDTH; at 44x56 that lands the
+     * chevron around 27 px and it reads as a faint mark, so open it up. */
+    synthui_panel_button_set_glyph_scale(b, 0.85f);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(b, cbPanelDown, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_PRESS_LOST, NULL);
     return b;
 }
 UIBUILD_FN static lv_obj_t *mkknob(lv_obj_t *scr, int i, const char *name,
@@ -1519,25 +1556,16 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
     lv_obj_set_pos(wave, WAVE_X, WAVE_Y);
     lv_obj_set_size(wave, WAVE_W, WAVE_H);
 
-    /* step readout: < [NN] > .  Momentary panel buttons -- `on` is never set. */
-    lv_obj_t *prev = synthui_panel_button_create(scr);
-    lv_obj_set_size(prev, PREV_W, STEP_H);
-    lv_obj_set_pos(prev, PREV_X, STEP_Y);
-    synthui_panel_button_set_glyph(prev, SYNTHUI_PANEL_BUTTON_GLYPH_REWIND);
-    synthui_panel_button_set_accent(prev, SYNTHUI_PANEL_BUTTON_ACCENT_PALE);
-    lv_obj_add_event_cb(prev, cbPrevStep, LV_EVENT_CLICKED, NULL);
+    /* step readout: < [NN] > . */
+    mkpanelbtn(scr, PREV_X, PREV_W, SYNTHUI_PANEL_BUTTON_GLYPH_REWIND, cbPrevStep);
 
     stepSeg = synthui_seven_segment_create(scr);
     lv_obj_set_size(stepSeg, SEG_W, STEP_H);
     lv_obj_set_pos(stepSeg, SEG_X, STEP_Y);
     synthui_seven_segment_set_text(stepSeg, "01");
+    lv_obj_remove_flag(stepSeg, LV_OBJ_FLAG_CLICKABLE);  /* read-out; see accLamp above */
 
-    lv_obj_t *next = synthui_panel_button_create(scr);
-    lv_obj_set_size(next, NEXT_W, STEP_H);
-    lv_obj_set_pos(next, NEXT_X, STEP_Y);
-    synthui_panel_button_set_glyph(next, SYNTHUI_PANEL_BUTTON_GLYPH_FORWARD);
-    synthui_panel_button_set_accent(next, SYNTHUI_PANEL_BUTTON_ACCENT_PALE);
-    lv_obj_add_event_cb(next, cbNextStep, LV_EVENT_CLICKED, NULL);
+    mkpanelbtn(scr, NEXT_X, NEXT_W, SYNTHUI_PANEL_BUTTON_GLYPH_FORWARD, cbNextStep);
 
     lv_obj_t *stepLbl = lv_label_create(scr);
     lv_label_set_text(stepLbl, "STEP");
