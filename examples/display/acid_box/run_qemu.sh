@@ -290,7 +290,12 @@ NBARS_ALL=$(grep -c "^ACIDBOX_BAR=" "$OUT" || true)
 # synthui_panel_button (same rects; PLAY dark at boot).  Two runs bit-identical;
 # the frame was dumped with a no-touch script, its FNV-1a matched the printed
 # sum, and it was looked at before this value was written here.
-grep -qE "ACIDBOX_UI_SUM=0xE7711DD4\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
+# MOVED 2026-09-17 (NEW-54, 2 of 3): 0xE7711DD4 -> 0x66D7CCFE.  Tempo -/+ became DOWN/UP
+# panel buttons and the bpm label a full-height synthui_seven_segment (618..773);
+# UP moved 690 -> 780.  Two runs bit-identical, frame dumped and looked at, ink
+# extents measured: DOWN 560..609, readout 618..773, UP 780..829, all five bar
+# widgets spanning rows 20..67.
+grep -qE "ACIDBOX_UI_SUM=0x66D7CCFE\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
 # The all-zero framebuffer, rejected BY NAME: 0x9BC99DC5 is the FNV of 3686400
 # zero bytes.  A blank frame is a real failure mode in this tree
 # (vglite_lvgl_test) and is otherwise indistinguishable from any other mismatch.

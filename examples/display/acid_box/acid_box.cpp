@@ -1115,8 +1115,16 @@ static void idleUi()
 /* top bar */
 static constexpr int TITLE_X = 24,  TITLE_Y = 36;
 static constexpr int BAR_Y = 20,    BAR_BTN_H = 48;
-static constexpr int TEMPO_DN_X = 560, TEMPO_UP_X = 690, TEMPO_BTN_W = 50;
-static constexpr int BPM_X = 624,   BPM_Y = 35;
+/* The readout scales on HEIGHT (u = h/112) and its width follows the text: five
+ * cells "128.0" are (4*76 + 44 + 112*tan 6deg) * BAR_BTN_H/112 (= 48/112) =
+ * 154.19 px and the widget ceils the last cell's edge to 155, hence a 156 px
+ * box and UP at 780.  FIVE cells is an invariant, not the boot value:
+ * transport.tempo() clamps to 20..999 (Audio/transport.cpp), so "%3d.%d" is
+ * always 5 chars.  Widen that range and this box must widen with it -- the
+ * widget CLIPS to its own coords, and the boot golden (128.0) cannot see it.
+ * None of the three is tapped by the gate. */
+static constexpr int TEMPO_DN_X = 560, TEMPO_UP_X = 780, TEMPO_BTN_W = 50;
+static constexpr int TEMPO_SEG_X = 618, TEMPO_SEG_W = 156;   /* 618..773 x 20..67 */
 static constexpr int PLAY_X = 1040, STOP_X = 1156, TRANSPORT_BTN_W = 100;   /* PLAY 1040..1139 x 20..67 -- PINNED: the gate's tap lands at (1088,43) */
 /* pattern band */
 static constexpr int LANE_X0 = 16,  LANE_Y0 = 96, LANE_CELL = 100, LANE_PITCH_X = 108;
@@ -1146,7 +1154,10 @@ static constexpr int ACC_LABEL_X = 1142, SLD_LABEL_X = 1238, TOG_LABEL_Y = 168;
 static constexpr int WAVE_X = 1080, WAVE_Y = 222, WAVE_W = 184, WAVE_H = 56;
 static constexpr int STEP_Y = 300,  STEP_H = 56;
 static constexpr int PREV_X = 1080, PREV_W = 44;
-static constexpr int SEG_X  = 1130, SEG_W  = 84;
+/* The editor column's readout, and the second seven-segment in this file: 84 px
+ * is hand-set for a two-cell "NN" rather than derived, so copy the TEMPO_SEG_W
+ * derivation above (:1118-1125), not this number, when sizing a new one. */
+static constexpr int STEP_SEG_X = 1130, STEP_SEG_W = 84;
 static constexpr int NEXT_X = 1220, NEXT_W = 44;
 static constexpr int STEP_LABEL_X = 1152, STEP_LABEL_Y = 366;
 /* y 379..519 is RESERVED: empty on purpose, not centred away -- the step row
@@ -1162,7 +1173,7 @@ static constexpr int KNOB_LABEL_DX = 50, KNOB_LABEL_DY = 152;
 static constexpr uint32_t ACIDBOX_ROT_FULL_THRESHOLD_PX = 915456u;
 static lv_obj_t *stepCell[16];          /* synthui_led_button: lit = gate, cue = playhead, latched pressed = selected */
 static lv_obj_t *accLamp[16], *sldLamp[16], *numLabel[16];
-static lv_obj_t *playBtn, *bpmLabel, *noteLabel, *waveBtnLabel;
+static lv_obj_t *playBtn, *tempoSeg, *noteLabel, *waveBtnLabel;
 static lv_obj_t *accKey, *sldKey, *stepSeg;
 static lv_obj_t *pitchKnob;
 static int selectedStep = 0;
@@ -1335,12 +1346,13 @@ static void cbWave(lv_event_t *e)
 
 /* 33 ms poller: cursor ring, PLAY's lit state, bpm readout (spec §3.3).
  *
- * ★ EVERY WRITE IS GUARDED BY A CHANGE TEST, AND NOT AS AN OPTIMISATION.
- * lv_label_set_text() reallocates and invalidates unconditionally, so an
- * unguarded poller would dirty two labels 30 times a second forever -- a
- * permanent full-rate repaint on a panel whose software render costs tens of
- * milliseconds.  The `shown*` caches start at values no reading can equal, so
- * the first call always paints. */
+ * ★ EVERY WRITE IS GUARDED BY A CHANGE TEST, AND FOR PLAY_LIT THAT IS NOT AN
+ * OPTIMISATION.  An unguarded poller would re-send the same widget state 30
+ * times a second forever; the SynthUI setters early-out on no change, but the
+ * PLAY_LIT print would not, and the guard is what keeps that a per-transition
+ * line.  shownPlaying and shownBpm10 start at -1, which no reading can equal,
+ * so both fire on the first call; shownCursor's -1 IS the stopped reading, so
+ * its branch correctly does nothing at boot -- there is no cue to paint. */
 static int shownCursor  = -1;
 static int shownPlaying = -1;
 static int shownBpm10   = -1;
@@ -1371,9 +1383,13 @@ static void ui_poll(lv_timer_t *t)
     const int bpm10 = (int)lroundf(transport.tempo() * 10.0f);
     if (bpm10 != shownBpm10) {
         shownBpm10 = bpm10;
+        /* %3d: a FIXED five-cell field.  The widget's width follows its text,
+         * so "99.0" would be one cell narrower than "100.0" and the digits
+         * would jump; the leading space renders as an all-ghost cell instead.
+         * Same-length text also keeps set_text on its per-cell damage path. */
         char b[16];
-        snprintf(b, sizeof b, "%d.%d", bpm10 / 10, bpm10 % 10);
-        lv_label_set_text(bpmLabel, b);
+        snprintf(b, sizeof b, "%3d.%d", bpm10 / 10, bpm10 % 10);
+        synthui_seven_segment_set_text(tempoSeg, b);
     }
 }
 
@@ -1483,15 +1499,18 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
 #if defined(ACIDBOX_LOOPSTAT)
     ls_attach_title(title);        /* tap = synthetic knob wiggle on/off (bench) */
 #endif
-    lv_obj_t *dn = mkbtn(scr, "-", cbTempoDn, NULL);
-    lv_obj_set_pos(dn, TEMPO_DN_X, BAR_Y);
-    lv_obj_set_size(dn, TEMPO_BTN_W, BAR_BTN_H);
-    bpmLabel = lv_label_create(scr);
-    lv_obj_set_style_text_color(bpmLabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_pos(bpmLabel, BPM_X, BPM_Y);
-    lv_obj_t *up = mkbtn(scr, "+", cbTempoUp, NULL);
-    lv_obj_set_pos(up, TEMPO_UP_X, BAR_Y);
-    lv_obj_set_size(up, TEMPO_BTN_W, BAR_BTN_H);
+    mkpanelbtn(scr, TEMPO_DN_X, BAR_Y, TEMPO_BTN_W, BAR_BTN_H,
+               SYNTHUI_PANEL_BUTTON_GLYPH_DOWN, SYNTHUI_PANEL_BUTTON_ACCENT_PALE,
+               PANEL_GLYPH_SCALE_DEFAULT, cbTempoDn, PANEL_MOMENTARY);
+    tempoSeg = synthui_seven_segment_create(scr);
+    lv_obj_set_size(tempoSeg, TEMPO_SEG_W, BAR_BTN_H);
+    lv_obj_set_pos(tempoSeg, TEMPO_SEG_X, BAR_Y);
+    /* no set_text: ui_poll(NULL) at the end of build_ui() primes it before the
+     * first frame -- the constructor default is "888" */
+    lv_obj_remove_flag(tempoSeg, LV_OBJ_FLAG_CLICKABLE);  /* read-out; see accLamp below */
+    mkpanelbtn(scr, TEMPO_UP_X, BAR_Y, TEMPO_BTN_W, BAR_BTN_H,
+               SYNTHUI_PANEL_BUTTON_GLYPH_UP, SYNTHUI_PANEL_BUTTON_ACCENT_PALE,
+               PANEL_GLYPH_SCALE_DEFAULT, cbTempoUp, PANEL_MOMENTARY);
     /* PLAY's `on` is STATE -- lit while the transport runs, set by ui_poll --
      * so it is the one PANEL_STATEFUL button.  The widget has no PAUSE glyph
      * (and the DC reference has none), which is why the old play/pause label
@@ -1597,8 +1616,8 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
                PANEL_MOMENTARY);
 
     stepSeg = synthui_seven_segment_create(scr);
-    lv_obj_set_size(stepSeg, SEG_W, STEP_H);
-    lv_obj_set_pos(stepSeg, SEG_X, STEP_Y);
+    lv_obj_set_size(stepSeg, STEP_SEG_W, STEP_H);
+    lv_obj_set_pos(stepSeg, STEP_SEG_X, STEP_Y);
     synthui_seven_segment_set_text(stepSeg, "01");
     lv_obj_remove_flag(stepSeg, LV_OBJ_FLAG_CLICKABLE);  /* read-out; see accLamp above */
 
@@ -1630,8 +1649,8 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
      * away, while the caller renders as soon as the first lv_timer_handler()
      * returns; whether the 33 ms tick beat the first flush would then decide
      * whether ACIDBOX_UI_SUM covers a bpm readout saying "128.0" or the
-     * lv_label default "Text".  Priming it here makes the first frame a
-     * function of engine state and nothing else. */
+     * seven-segment constructor's default "888".  Priming it here makes the
+     * first frame a function of engine state and nothing else. */
     ui_poll(NULL);
     lv_timer_create(ui_poll, 33, NULL);
     return scr;
