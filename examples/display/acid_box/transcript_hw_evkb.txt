@@ -515,3 +515,68 @@ STILL OWED -- and it is now only what a human can do
     GT911::begin() succeeds and the part reports its true device ID, so the
     bus and the controller are proven; the contact path is not.
 The board is currently left free-running the shipped image, ready for both.
+
+================================================================================
+RE-RECORDED 2026-09-17 (NEW-50 bench: cue band + clip-aware led_draw)
+================================================================================
+build-loopstat (ACIDBOX_LOOPSTAT=ON, M2_BT_OUT=OFF), SynthUI 567ad9b, eleven
+boots in one session.
+
+--- WHAT HELD ------------------------------------------------------------------
+  ACIDBOX_UI_SUM=0xEA5AB843     UNMOVED -- the gpu golden survives NEW-50
+  ACIDBOX_GPU_ERR=0             every boot
+  ACIDBOX_ROT_EQ fail=0         every CLEAN boot (see the exception below)
+  ACIDBOX_ROT   full<=2         every CLEAN boot
+NEW-50 changes no rendered pixel on silicon, as it changed none in QEMU.
+
+--- TOUCH LATENCY: INCONCLUSIVE, and the reason is worth more than a number -----
+  transport STOPPED, clean   n=1473   p50 29.2 ms  p95 36.4 ms
+  transport PLAYING, clean   n=1706   p50 29.3 ms  p95 57.6 ms
+  transport PLAYING, clean   n=442    p50 40.1 ms  p95 131.5 ms   <-- same build!
+  (NEW-51 baseline: STOPPED p95 37.8, PLAYING p95 66.8)
+
+The STOPPED case is unchanged (36.4 vs 37.8), which is EXPECTED and is a useful
+control rather than a null result: with the playhead parked, set_cue is never
+called, so NEW-50's changed code path is inert and the number SHOULD not move.
+The PLAYING case reads 57.6 ms against 66.8 -- but the other clean playing run
+on the same build read 131.5 ms.
+★★ THE SCATTER BETWEEN TWO CLEAN RUNS OF THE SAME BUILD IS LARGER THAN THE
+EFFECT.  Hand gestures are the uncontrolled variable and they dominate.  The
+playhead-inflation ratio computed from the better-sampled pair falls 1.77x ->
+1.58x, which is a real direction of travel and NOT a result anyone should quote
+as a measurement.  This is exactly the "a controlled A/B is owed" note the
+landscape session left, still owed.
+
+--- THE ONE FAILURE, AND WHY IT IS NOT PINNED ON NEW-50 -------------------------
+One boot read ACIDBOX_ROT_EQ pass=104 fail=5 with ACIDBOX_ROT full=12.  Filed as
+NEW-53.  Segmenting all eleven boots by condition:
+
+  wiggle + stopped               1156 s (19 min)   full=1    fail=0
+  wiggle + stopped                394 s            full=1    fail=0
+  wiggle + playing                 20 s            full=2    fail=0
+  wiggle + playing                 73 s            full=2    fail=0
+  playing + gestures, no wiggle   103 s            full=2    fail=0
+  wiggle + playing + gestures      85 s            full=12   fail=5   <-- only this
+
+Only the TRIPLE load fails.  Nineteen minutes of wiggle alone is clean.
+★ The old-build control was DELIBERATELY NOT RUN.  Its premise is "reproduce the
+failing condition on pre-NEW-50 firmware and compare", and the failing condition
+needs heavy human gesturing -- so the comparison would differ in the gestures as
+much as in the firmware.  A number that cannot be defended is worse than none.
+What is missing is an INSTRUMENT, not a run: a reproducible multi-area load.
+NEW-53 records that, and notes synthui_led_button_test's deterministic 288 ms
+Phase B frame as the candidate.
+
+--- BENCH TRAP: THE TITLE LABEL TOGGLES WIGGLE ----------------------------------
+ls_title_cb gives the title lv_obj_set_ext_click_area(24), a finger-sized halo,
+and a tap toggles the eight-knob sweep.  It was hit BY ACCIDENT mid-gesture and
+stayed on for a whole run; the only tell is a bare `wiggle=1` line in the stream
+(the loopstat `wiggle=` slot is MICROSECONDS, so `wiggle=1` there means ~1 us,
+i.e. OFF -- the two look alike and mean opposite things).  That contaminated run
+was briefly mistaken for a NEW-50 silicon regression before the segmentation
+above was done.  ★ Check for a bare `wiggle=` toggle line before trusting any
+latency or present-path number from this build.
+★ A second trap from the same session: the boot BANNER is not captured across
+the USB CDC drop after SW4, so "no BOOT line" does NOT mean the board did not
+reset.  ACIDBOX_ROT ops= and ACIDBOX_VSYNC flips= both restart at 1 and are the
+reliable witnesses.

@@ -66,3 +66,47 @@ that a key sinks and rises under a finger, that the prev/next panel buttons ligh
 while held and clear on a slide-off release, that a drag across the lane does not
 snag, and that nothing flashes. See
 examples/display/acid_box/transcript_hw_evkb.txt, section "BY EYE AND BY FINGER".
+
+================================================================================
+NEW-50 RE-MEASUREMENT, 2026-09-17 -- the >= 30 fps criterion is MET
+================================================================================
+Image [BUILD: Sep 16 2026 18:41:54] (the .hex), SynthUI 567ad9b, console on the
+MCU-Link VCOM.  SEVEN boots, SW4 between each.
+
+  Phase B    mfps_med = 34193 33928 33698 34192 33486 33788 33865
+             median 33.9 fps, range 33.5..34.2, spread 2.1 %
+             us_med  29245 29474 29675 29246 29863 29596 29529  (29.2..29.9 ms)
+
+  NEW-25 baseline (four boots, same animation):  20.6 fps, us_med 48574
+
+So the criterion MISSED at 20.6 fps is now MET at 33.9 -- a 1.66x improvement,
+median frame 48.6 -> 29.2 ms, on the same deliberately worst-case animation (the
+cue swept across all 16 keys every 15 ms).
+
+★ THE IMAGE IS PROVABLY THE NEW ONE, and not by its timestamp.  The old firmware
+cannot print `cue=900` or a `led_button_tasks_op` line at all:
+  led_button_damage_op lit=1450 press=6640 cue=900 color=1450
+  led_button_tasks_op  lit=10 press=12 cue=23 color=10
+Both reproduced identically on all seven boots, as did the goldens
+(0xD474F06D / 0x463C3371), led_button_delta_eq=PASS and
+led_button_vsync flips=73 isrs=73 timeouts=0.
+
+★ THE SILICON GOLDEN STILL EQUALS THE QEMU GOLDEN, bit for bit -- the property
+NEW-25 recorded survives NEW-50, as it must for a widget that links no VGLite.
+
+★★ BUT THE TAIL GREW, DETERMINISTICALLY, AND IT IS FILED AS NEW-53.
+  us_max = 288557 288456 288497 288406 288649 288576 288480
+That is 0.08 % spread across seven boots -- not a glitch.  The NEW-25 baseline's
+worst frame was 97100 us; this is ~288500.  So the MEDIAN improved 1.66x while
+the WORST frame grew ~3x.  It is a genuine refresh, not a harness artefact: the
+sample is one refresh's own REFR_START->REFR_READY duration and the first frame
+after the screen load is skipped (g_fps_skip).
+The untested hypothesis is the one this whole issue turns on -- LVGL renders one
+pass per invalidated area, a cue change now emits FOUR areas where it emitted
+one, and Phase B fires every 15 ms against a ~30 ms refresh, so two anim ticks
+can accumulate and 16 keys x 5 areas approaches LV_INV_BUF_SIZE = 32, past which
+LVGL invalidates the whole screen.  A full 720x1280 software render is the right
+order of magnitude for 288 ms.  UNVERIFIED; NEW-53 step 1 is to count areas per
+refresh, which can be done in QEMU without silicon.
+★ Being deterministic, this is also the reproducible multi-area load that
+NEW-53's other half (an acid_box ROT_EQ failure) lacks.
