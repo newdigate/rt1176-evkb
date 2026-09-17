@@ -239,7 +239,8 @@ NBARS_ALL=$(grep -c "^ACIDBOX_BAR=" "$OUT" || true)
 # seen; the knob pilot's clamped arc and the VGLite GPU frame were both perfectly
 # reproducible AND visibly wrong.  Silicon confirmed the landscape frame on
 # 2026-09-15 (transcript_hw_evkb.txt, LANDSCAPE): upright by eye, all four lane
-# corners touch-correct, gpu golden 0x2231070B on three boots -- a separate
+# corners touch-correct, gpu golden 0x2231070B on three boots (retired
+# 2026-09-16 -> 0xEA5AB843; NEW-54 moves it again) -- a separate
 # golden set from this sw one, never reconciled.
 #
 # ★ ANCHORED WITH \r?$, AND THE ANCHOR IS LOAD-BEARING.  Measured in Task 4:
@@ -295,7 +296,11 @@ NBARS_ALL=$(grep -c "^ACIDBOX_BAR=" "$OUT" || true)
 # UP moved 690 -> 780.  Two runs bit-identical, frame dumped and looked at, ink
 # extents measured: DOWN 560..609, readout 618..773, UP 780..829, all five bar
 # widgets spanning rows 20..67.
-grep -qE "ACIDBOX_UI_SUM=0x66D7CCFE\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
+# MOVED 2026-09-17 (NEW-54, 3 of 3): 0x66D7CCFE -> 0x18B7B637.  SAW/SQR became a
+# synthui_slide_toggle on its old rect, panel 0x6D7A85 (the widget's glyph colour
+# is fixed dark, so the plate must stay visible).  mkbtn() and lv_button are gone
+# from this example.  Two runs bit-identical, frame dumped and looked at.
+grep -qE "ACIDBOX_UI_SUM=0x18B7B637\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
 # The all-zero framebuffer, rejected BY NAME: 0x9BC99DC5 is the FNV of 3686400
 # zero bytes.  A blank frame is a real failure mode in this tree
 # (vglite_lvgl_test) and is otherwise indistinguishable from any other mismatch.

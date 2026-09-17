@@ -54,6 +54,7 @@
 #include "synthui_lamp.h"
 #include "synthui_seven_segment.h"
 #include "synthui_panel_button.h"
+#include "synthui_slide_toggle.h"
 #if defined(ACIDBOX_LOOPSTAT)
 #include "loopstat_pct.h"
 #endif
@@ -1173,7 +1174,7 @@ static constexpr int KNOB_LABEL_DX = 50, KNOB_LABEL_DY = 152;
 static constexpr uint32_t ACIDBOX_ROT_FULL_THRESHOLD_PX = 915456u;
 static lv_obj_t *stepCell[16];          /* synthui_led_button: lit = gate, cue = playhead, latched pressed = selected */
 static lv_obj_t *accLamp[16], *sldLamp[16], *numLabel[16];
-static lv_obj_t *playBtn, *tempoSeg, *noteLabel, *waveBtnLabel;
+static lv_obj_t *playBtn, *tempoSeg, *noteLabel;
 static lv_obj_t *accKey, *sldKey, *stepSeg;
 static lv_obj_t *pitchKnob;
 static int selectedStep = 0;
@@ -1205,14 +1206,25 @@ static inline float noteToAngle(uint8_t note)
 }
 
 /* One callback per sound knob.  CUTOFF, DECAY and SLIDE T are exponential
- * because they are frequency and time; the five 0..1 amounts are linear. */
-static void cbRes(lv_event_t *e){ acid.resonance (knob01((lv_obj_t *)lv_event_get_target(e))); }
-static void cbEnv(lv_event_t *e){ acid.envMod    (knob01((lv_obj_t *)lv_event_get_target(e))); }
-static void cbAcc(lv_event_t *e){ acid.accent    (knob01((lv_obj_t *)lv_event_get_target(e))); }
-static void cbDst(lv_event_t *e){ acid.distortion(knob01((lv_obj_t *)lv_event_get_target(e))); }
-static void cbSub(lv_event_t *e){ acid.subLevel  (knob01((lv_obj_t *)lv_event_get_target(e))); }
-static void cbDec(lv_event_t *e){ acid.decay    (expmap(knob01((lv_obj_t *)lv_event_get_target(e)), 0.03f, 2.0f)); }
-static void cbSld(lv_event_t *e){ acid.slideTime(expmap(knob01((lv_obj_t *)lv_event_get_target(e)), 0.01f, 0.3f)); }
+ * because they are frequency and time; the five 0..1 amounts are linear.
+ *
+ * ★ EVERY CALLBACK IN THIS FILE ASKS FOR current_target, NOT target, AND THE
+ * TWO ARE IDENTICAL TODAY -- the point is that they would stop being so
+ * SILENTLY.  Each cb is registered directly on the widget it then queries, so
+ * current_target (the object the handler was added to) is the one meant;
+ * target is whatever the event STARTED on, which becomes a child the moment
+ * any of these widgets gains one carrying LV_OBJ_FLAG_EVENT_BUBBLE.  A widget
+ * getter handed a foreign object would not complain: LVGL/port/lv_conf.h:586
+ * sets LV_USE_ASSERT_OBJ 0, so LV_ASSERT_OBJ compiles to nothing.
+ * current_target is immune by construction, so it is used at all 12 sites
+ * rather than at the ones that looked risky. */
+static void cbRes(lv_event_t *e){ acid.resonance (knob01(lv_event_get_current_target_obj(e))); }
+static void cbEnv(lv_event_t *e){ acid.envMod    (knob01(lv_event_get_current_target_obj(e))); }
+static void cbAcc(lv_event_t *e){ acid.accent    (knob01(lv_event_get_current_target_obj(e))); }
+static void cbDst(lv_event_t *e){ acid.distortion(knob01(lv_event_get_current_target_obj(e))); }
+static void cbSub(lv_event_t *e){ acid.subLevel  (knob01(lv_event_get_current_target_obj(e))); }
+static void cbDec(lv_event_t *e){ acid.decay    (expmap(knob01(lv_event_get_current_target_obj(e)), 0.03f, 2.0f)); }
+static void cbSld(lv_event_t *e){ acid.slideTime(expmap(knob01(lv_event_get_current_target_obj(e)), 0.01f, 0.3f)); }
 
 /* Cutoff also prints, because the gate's drag assertion needs a value it can
  * order.  ★ print(float, digits), NOT printf("%.1f") -- see the identical note
@@ -1221,7 +1233,7 @@ static void cbSld(lv_event_t *e){ acid.slideTime(expmap(knob01((lv_obj_t *)lv_ev
  * line and leave the gate parsing "CUTOFF=" with nothing after it. */
 static void cbCut(lv_event_t *e)
 {
-    const float hz = expmap(knob01((lv_obj_t *)lv_event_get_target(e)), 20.0f, 12000.0f);
+    const float hz = expmap(knob01(lv_event_get_current_target_obj(e)), 20.0f, 12000.0f);
     acid.cutoff(hz);
     CONSOLE.print("CUTOFF=");
     CONSOLE.println(hz, 1);
@@ -1294,7 +1306,7 @@ static void cbStepTap(lv_event_t *e)
 }
 static void cbPitch(lv_event_t *e)
 {
-    const uint8_t note = angleToNote(synthui_rotary_knob_get_angle((lv_obj_t *)lv_event_get_target(e)));
+    const uint8_t note = angleToNote(synthui_rotary_knob_get_angle(lv_event_get_current_target_obj(e)));
     const AcidStep st = seq.step(selectedStep);
     commit_selected(note, st.gate, st.accent, st.slide);
 }
@@ -1318,8 +1330,8 @@ static void cbNextStep(lv_event_t *e)
  * acid_box deletes no objects, but the LedButton widget next door handles
  * this exact case for the same reason, and a momentary button left lit is
  * the same class of bug either way). */
-static void cbPanelDown(lv_event_t *e){ synthui_panel_button_set_on(lv_event_get_target_obj(e), true); }
-static void cbPanelUp  (lv_event_t *e){ synthui_panel_button_set_on(lv_event_get_target_obj(e), false); }
+static void cbPanelDown(lv_event_t *e){ synthui_panel_button_set_on(lv_event_get_current_target_obj(e), true); }
+static void cbPanelUp  (lv_event_t *e){ synthui_panel_button_set_on(lv_event_get_current_target_obj(e), false); }
 
 static void cbPlay(lv_event_t *e)
 {
@@ -1333,15 +1345,15 @@ static void cbTempoUp(lv_event_t *e)
 { (void)e; transport.tempo(transport.tempo() + 1.0f); }
 static void cbTempoDn(lv_event_t *e)
 { (void)e; transport.tempo(transport.tempo() - 1.0f); }
+/* VALUE_CHANGED from the slide toggle, which cycles its own value on a tap
+ * anywhere in its box and then sends this.  0 = SAW (knob left), 1 = SQR (two
+ * positions, pinned below: the widget supports up to 4, and a third would need
+ * this to stop being a bool -- TRI or PULSE would read as SQUARE here).  The
+ * widget holds the only UI copy of the state; the voice keeps the truth. */
 static void cbWave(lv_event_t *e)
 {
-    (void)e;
-    /* Mirrors default_patch()'s WAVEFORM_SAWTOOTH; the voice keeps the truth,
-     * this only remembers which way to flip next. */
-    static bool square = false;
-    square = !square;
+    const bool square = synthui_slide_toggle_get_value(lv_event_get_current_target_obj(e)) != 0;
     acid.waveform(square ? WAVEFORM_SQUARE : WAVEFORM_SAWTOOTH);
-    lv_label_set_text(waveBtnLabel, square ? "SQR" : "SAW");
 }
 
 /* 33 ms poller: cursor ring, PLAY's lit state, bpm readout (spec §3.3).
@@ -1394,25 +1406,13 @@ static void ui_poll(lv_timer_t *t)
 }
 
 /* UIBUILD_FN puts the ONE-SHOT scene construction in FLASH (.progmem, XIP):
- * build_ui() runs once from setup(), and mkbtn()/mkknob() only from build_ui().
+ * build_ui() runs once from setup(), and mkpanelbtn()/mkknob() only from build_ui().
  * noinline is load-bearing -- without it build_ui() inlines into setup(),
  * which the default build leaves in ITCM.  Nothing touch, the poller or the
  * audio path drives at run time carries it (the callbacks, ui_poll(),
  * select_step(), commit_selected() stay in ITCM); the default build's ITCM
  * headroom had fallen to 836 B with the landscape rework. */
 #define UIBUILD_FN __attribute__((section(".progmem.acid_uibuild"), noinline))
-UIBUILD_FN static lv_obj_t *mkbtn(lv_obj_t *par, const char *txt, lv_event_cb_t cb,
-                                  lv_obj_t **labelOut)
-{
-    lv_obj_t *b = lv_button_create(par);
-    lv_obj_set_style_bg_color(b, lv_color_hex(0x232b3a), LV_PART_MAIN);
-    lv_obj_t *l = lv_label_create(b);
-    lv_label_set_text(l, txt);
-    lv_obj_center(l);
-    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
-    if (labelOut) *labelOut = l;
-    return b;
-}
 /* Shared panel-button construction: size/pos/glyph/accent/glyph-scale plus the
  * CLICKED action and -- for a PANEL_MOMENTARY button -- the press/release
  * handlers, all in one place so the momentary wiring cannot be attached to one
@@ -1606,9 +1606,31 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
     lv_obj_set_style_text_color(sldLbl, lv_color_hex(0x9aa0b8), LV_PART_MAIN);
     lv_obj_set_pos(sldLbl, SLD_LABEL_X, TOG_LABEL_Y);
 
-    lv_obj_t *wave = mkbtn(scr, "SAW", cbWave, &waveBtnLabel);
-    lv_obj_set_pos(wave, WAVE_X, WAVE_Y);
+    /* The plate is VISIBLE on purpose: the widget paints an opaque panel over
+     * its whole box and draws its glyphs in a fixed #232526 (no glyph-colour
+     * setter), so matching the plate to this screen's #101820 would erase the
+     * legends.  0x6D7A85 is one of the DC reference's own four panel colours.
+     * Boot value 0 = SAW mirrors default_patch()'s WAVEFORM_SAWTOOTH.
+     *
+     * ★ set_value() SENDS NO EVENT and early-outs when the value is unchanged
+     * (synthui_slide_toggle.cpp: `if (toggle->value == clamped) return;`, then
+     * invalidate only).  That is what makes this boot call safe -- it is a
+     * no-op against the constructor's own default of 0, and cbWave neither
+     * runs nor needs to, since default_patch() has already set the voice by
+     * the time build_ui() is called.  It is also the trap for whoever adds a
+     * preset loader: a programmatic set_value moves the knob ON GLASS and
+     * leaves acid.waveform() untouched, so the picture and the voice part
+     * company silently.  The fix when that day comes is a small
+     * set_wave(bool) writing BOTH, called by the loader and by cbWave. */
+    lv_obj_t *wave = synthui_slide_toggle_create(scr);
     lv_obj_set_size(wave, WAVE_W, WAVE_H);
+    lv_obj_set_pos(wave, WAVE_X, WAVE_Y);
+    synthui_slide_toggle_set_positions(wave, 2);
+    synthui_slide_toggle_set_left_glyph(wave, SYNTHUI_SLIDE_TOGGLE_GLYPH_SAW);
+    synthui_slide_toggle_set_right_glyph(wave, SYNTHUI_SLIDE_TOGGLE_GLYPH_SQUARE);
+    synthui_slide_toggle_set_panel_color(wave, 0x6D7A85u);
+    synthui_slide_toggle_set_value(wave, 0);
+    lv_obj_add_event_cb(wave, cbWave, LV_EVENT_VALUE_CHANGED, NULL);
 
     /* step readout: < [NN] > . */
     mkpanelbtn(scr, PREV_X, STEP_Y, PREV_W, STEP_H, SYNTHUI_PANEL_BUTTON_GLYPH_REWIND,
