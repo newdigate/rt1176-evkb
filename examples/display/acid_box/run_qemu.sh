@@ -40,6 +40,7 @@
 #   ▶            PLAY_X=1040, BAR_Y=20, 100x48 -> logical 1040..1139 x 20..67
 #                centre (1090,44) -> physical (675,1090) -> 93.75%,85.2%
 #                -> P 94 85 -> raw (676,1088) -> logical (1088,43)    ✔ inside
+#                (since NEW-54 ▶ is a synthui_panel_button; the rect is unchanged)
 #   step cell 2  LANE_X0+2*108=232, LANE_Y0=96, 100x100 -> 232..331 x 96..195
 #                centre (282,146) -> physical (573,282)  -> 79.6%,22.0%
 #                -> P 80 22 -> raw (576,281)  -> logical (281,143)    ✔ inside
@@ -285,7 +286,11 @@ NBARS_ALL=$(grep -c "^ACIDBOX_BAR=" "$OUT" || true)
 # 369..378, lane ink to y 360, reserved band from y 379) match the values
 # already recorded in acid_box.cpp's own comment. Bit-identical across two
 # runs.
-grep -qE "ACIDBOX_UI_SUM=0xBB2AEE59\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
+# MOVED 2026-09-17 (NEW-54, 1 of 3): 0xBB2AEE59 -> 0xE7711DD4.  PLAY and STOP became
+# synthui_panel_button (same rects; PLAY dark at boot).  Two runs bit-identical;
+# the frame was dumped with a no-touch script, its FNV-1a matched the printed
+# sum, and it was looked at before this value was written here.
+grep -qE "ACIDBOX_UI_SUM=0xE7711DD4\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
 # The all-zero framebuffer, rejected BY NAME: 0x9BC99DC5 is the FNV of 3686400
 # zero bytes.  A blank frame is a real failure mode in this tree
 # (vglite_lvgl_test) and is otherwise indistinguishable from any other mismatch.
@@ -294,6 +299,22 @@ grep -q "ACIDBOX_UI_SUM=0x9BC99DC5" "$OUT" \
 
 # --- the injected gestures ---------------------------------------------------
 grep -qE "^PLAYING=1$" "$OUT" || { echo "FAIL: PLAY tap never landed"; exit 1; }
+# NEW-54: PLAY's lit state now MEANS "playing", and no golden can see it -- the
+# boot golden is taken before this script taps PLAY, and PLAYING= is printed by
+# cbPlay from the TRANSPORT.  PLAY_LIT= is read back from the WIDGET
+# (synthui_panel_button_get_on) where the poller sets it, so it cannot agree
+# with PLAYING= by construction.  BY LINE NUMBER: a PLAY_LIT=1 printed BEFORE the
+# tap (an inverted set_on() does exactly that, at boot) must not satisfy it, and
+# an unordered grep would accept it.  (A live run of that mutant is ALSO caught
+# by the boot golden, since a lit PLAY changes the boot frame; the deleted
+# set_on() is the mutant ONLY these two checks can see.)
+# DEMONSTRATED RED twice (set_on deleted; set_on inverted) -- transcript_qemu.txt.
+LIT_FIRST=$(grep -E "^PLAY_LIT=[01]" "$OUT" | head -1 | tr -d '\r')
+[ "$LIT_FIRST" = "PLAY_LIT=0" ] \
+    || { echo "FAIL: PLAY not dark at boot (first PLAY_LIT line: '${LIT_FIRST:-none}')"; exit 1; }
+PLAYING_LN=$(grep -n "^PLAYING=1$" "$OUT" | head -1 | cut -d: -f1)
+awk -v p="$PLAYING_LN" 'NR>p && /^PLAY_LIT=1\r?$/ { ok=1 } END { exit ok ? 0 : 1 }' "$OUT" \
+    || { echo "FAIL: PLAY never lit after the tap"; exit 1; }
 # The preset has step 2 as a REST (note 0, gate 0), and cbStepTap parks a rest on
 # A1 when it turns it on, so this exact string is the tap's signature: any other
 # note or gate value means the finger hit a different cell.

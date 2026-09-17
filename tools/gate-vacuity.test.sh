@@ -882,6 +882,18 @@ if [ -d "$EVKB/$ACB" ] && [ -f "$EVKB/$ACB/transcript_qemu.txt" ]; then
     echo "$OUT_TEXT" | grep -q "^FAIL: full-frame presents above start-up" || result=1
     report "acb_full_presents_over_bound_fails_by_name" $result
 
+    # NEW-54: PLAY's lit state is invisible to every golden (the boot frame is
+    # taken before the tap), so the PLAY_LIT witness is the only thing between
+    # a deleted set_on() and a green gate.  A capture with no lit line after
+    # the tap must fail by name.  cmp guards the mutation.
+    grep -v "^PLAY_LIT=1$" "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_neverlit.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_neverlit.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$ACB/transcript_qemu.txt" "$WORK/acb_neverlit.txt" && result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: PLAY never lit after the tap" || result=1
+    report "acb_play_never_lit_fails_by_name" $result
+
     sed 's|^ACIDBOX_UI_SUM=0x........|ACIDBOX_UI_SUM=0xBADBADBA|' \
         "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_badsum.txt"
     run_gate "$ACB" "run_qemu.sh" "$WORK/acb_badsum.txt"; rc=$?

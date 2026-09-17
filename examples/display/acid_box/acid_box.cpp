@@ -1117,7 +1117,7 @@ static constexpr int TITLE_X = 24,  TITLE_Y = 36;
 static constexpr int BAR_Y = 20,    BAR_BTN_H = 48;
 static constexpr int TEMPO_DN_X = 560, TEMPO_UP_X = 690, TEMPO_BTN_W = 50;
 static constexpr int BPM_X = 624,   BPM_Y = 35;
-static constexpr int PLAY_X = 1040, STOP_X = 1156, TRANSPORT_BTN_W = 100;   /* PLAY 1040..1139 x 20..67; the gate's tap lands at (1088,43) */
+static constexpr int PLAY_X = 1040, STOP_X = 1156, TRANSPORT_BTN_W = 100;   /* PLAY 1040..1139 x 20..67 -- PINNED: the gate's tap lands at (1088,43) */
 /* pattern band */
 static constexpr int LANE_X0 = 16,  LANE_Y0 = 96, LANE_CELL = 100, LANE_PITCH_X = 108;
 /* Row pitch grew 112 -> 134 for the lamp strip and the step number: 100 px key
@@ -1162,7 +1162,7 @@ static constexpr int KNOB_LABEL_DX = 50, KNOB_LABEL_DY = 152;
 static constexpr uint32_t ACIDBOX_ROT_FULL_THRESHOLD_PX = 915456u;
 static lv_obj_t *stepCell[16];          /* synthui_led_button: lit = gate, cue = playhead, latched pressed = selected */
 static lv_obj_t *accLamp[16], *sldLamp[16], *numLabel[16];
-static lv_obj_t *playBtnLabel, *bpmLabel, *noteLabel, *waveBtnLabel;
+static lv_obj_t *playBtn, *bpmLabel, *noteLabel, *waveBtnLabel;
 static lv_obj_t *accKey, *sldKey, *stepSeg;
 static lv_obj_t *pitchKnob;
 static int selectedStep = 0;
@@ -1333,7 +1333,7 @@ static void cbWave(lv_event_t *e)
     lv_label_set_text(waveBtnLabel, square ? "SQR" : "SAW");
 }
 
-/* 33 ms poller: cursor ring, play label, bpm readout (spec §3.3).
+/* 33 ms poller: cursor ring, PLAY's lit state, bpm readout (spec §3.3).
  *
  * ★ EVERY WRITE IS GUARDED BY A CHANGE TEST, AND NOT AS AN OPTIMISATION.
  * lv_label_set_text() reallocates and invalidates unconditionally, so an
@@ -1359,7 +1359,12 @@ static void ui_poll(lv_timer_t *t)
     }
     if ((int)play != shownPlaying) {
         shownPlaying = (int)play;
-        lv_label_set_text(playBtnLabel, play ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+        synthui_panel_button_set_on(playBtn, play);
+        /* The gate's only view of the lit state (run_qemu.sh, NEW-54): read
+         * BACK from the widget, so this cannot agree with cbPlay's PLAYING=
+         * line by construction.  Prints once at boot (shownPlaying starts at
+         * -1) and once per transition -- inside the change guard, never per tick. */
+        CONSOLE.printf("PLAY_LIT=%d\n", synthui_panel_button_get_on(playBtn) ? 1 : 0);
     }
     /* One decimal, assembled from INTEGERS: see cbCut's note on %f.  tempo() is
      * clamped to 20..999 by the transport, so both halves stay non-negative. */
@@ -1392,27 +1397,36 @@ UIBUILD_FN static lv_obj_t *mkbtn(lv_obj_t *par, const char *txt, lv_event_cb_t 
     if (labelOut) *labelOut = l;
     return b;
 }
-/* Shared prev/next construction: size/pos/glyph/accent/glyph-scale plus the
- * CLICKED action and the two momentary press/release handlers, all in one
- * place so the momentary wiring cannot be attached to one button and
- * forgotten on the other. */
-UIBUILD_FN static lv_obj_t *mkpanelbtn(lv_obj_t *scr, int x, int w,
+/* Shared panel-button construction: size/pos/glyph/accent/glyph-scale plus the
+ * CLICKED action and -- when `momentary` -- the press/release handlers, all in
+ * one place so the momentary wiring cannot be attached to one button and
+ * forgotten on another.  `momentary` is false only for PLAY, whose `on` is
+ * STATE (owned by ui_poll), not press feedback.
+ *
+ * `scale`: the widget sizes its glyph from the SMALLER of its two dimensions
+ * (min(vw, vh) in synthui_panel_button_compute_geom), not from its width.  At
+ * the step row's 44x56 the default 0.62 lands the chevron around 27 px and it
+ * reads as a faint mark, so prev/next pass 0.85; the 100x48 and 50x48 top-bar
+ * buttons get a ~30 px glyph from the default. */
+static constexpr float PANEL_GLYPH_DEFAULT = 0.62f;   /* = the widget constructor's own default */
+UIBUILD_FN static lv_obj_t *mkpanelbtn(lv_obj_t *scr, int x, int y, int w, int h,
                                        synthui_panel_button_glyph_t glyph,
-                                       lv_event_cb_t cb)
+                                       uint32_t accent, float scale,
+                                       lv_event_cb_t cb, bool momentary)
 {
     lv_obj_t *b = synthui_panel_button_create(scr);
-    lv_obj_set_size(b, w, STEP_H);
-    lv_obj_set_pos(b, x, STEP_Y);
+    lv_obj_set_size(b, w, h);
+    lv_obj_set_pos(b, x, y);
     synthui_panel_button_set_glyph(b, glyph);
-    synthui_panel_button_set_accent(b, SYNTHUI_PANEL_BUTTON_ACCENT_PALE);
-    /* The widget normalises glyph size on WIDTH; at 44x56 that lands the
-     * chevron around 27 px and it reads as a faint mark, so open it up. */
-    synthui_panel_button_set_glyph_scale(b, 0.85f);
+    synthui_panel_button_set_accent(b, accent);
+    synthui_panel_button_set_glyph_scale(b, scale);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_event_cb(b, cbPanelDown, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_RELEASED, NULL);
-    lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_PRESS_LOST, NULL);
-    lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_INDEV_RESET, NULL);
+    if (momentary) {
+        lv_obj_add_event_cb(b, cbPanelDown, LV_EVENT_PRESSED, NULL);
+        lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_RELEASED, NULL);
+        lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_PRESS_LOST, NULL);
+        lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_INDEV_RESET, NULL);
+    }
     return b;
 }
 UIBUILD_FN static lv_obj_t *mkknob(lv_obj_t *scr, int i, const char *name,
@@ -1470,12 +1484,17 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
     lv_obj_t *up = mkbtn(scr, "+", cbTempoUp, NULL);
     lv_obj_set_pos(up, TEMPO_UP_X, BAR_Y);
     lv_obj_set_size(up, TEMPO_BTN_W, BAR_BTN_H);
-    lv_obj_t *play = mkbtn(scr, LV_SYMBOL_PLAY, cbPlay, &playBtnLabel);
-    lv_obj_set_pos(play, PLAY_X, BAR_Y);
-    lv_obj_set_size(play, TRANSPORT_BTN_W, BAR_BTN_H);
-    lv_obj_t *stop = mkbtn(scr, LV_SYMBOL_STOP, cbStop, NULL);
-    lv_obj_set_pos(stop, STOP_X, BAR_Y);
-    lv_obj_set_size(stop, TRANSPORT_BTN_W, BAR_BTN_H);
+    /* PLAY's `on` is STATE -- lit while the transport runs, set by ui_poll --
+     * so it is the one panel button that is NOT momentary.  The widget has no
+     * PAUSE glyph (and the DC reference has none), which is why today's
+     * play/pause label swap became a lit/dark PLAY: a tap while playing still
+     * pauses (cbPlay), and paused and stopped both read as PLAY dark. */
+    playBtn = mkpanelbtn(scr, PLAY_X, BAR_Y, TRANSPORT_BTN_W, BAR_BTN_H,
+                         SYNTHUI_PANEL_BUTTON_GLYPH_PLAY, SYNTHUI_PANEL_BUTTON_ACCENT_GREEN,
+                         PANEL_GLYPH_DEFAULT, cbPlay, false);
+    mkpanelbtn(scr, STOP_X, BAR_Y, TRANSPORT_BTN_W, BAR_BTN_H,
+               SYNTHUI_PANEL_BUTTON_GLYPH_STOP, SYNTHUI_PANEL_BUTTON_ACCENT_PALE,
+               PANEL_GLYPH_DEFAULT, cbStop, true);
 
     /* step lane: 2x8 keys, each with an accent lamp, a slide lamp and a number */
     for (int i = 0; i < 16; i++) {
@@ -1565,7 +1584,8 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
     lv_obj_set_size(wave, WAVE_W, WAVE_H);
 
     /* step readout: < [NN] > . */
-    mkpanelbtn(scr, PREV_X, PREV_W, SYNTHUI_PANEL_BUTTON_GLYPH_REWIND, cbPrevStep);
+    mkpanelbtn(scr, PREV_X, STEP_Y, PREV_W, STEP_H, SYNTHUI_PANEL_BUTTON_GLYPH_REWIND,
+               SYNTHUI_PANEL_BUTTON_ACCENT_PALE, 0.85f, cbPrevStep, true);
 
     stepSeg = synthui_seven_segment_create(scr);
     lv_obj_set_size(stepSeg, SEG_W, STEP_H);
@@ -1573,7 +1593,8 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
     synthui_seven_segment_set_text(stepSeg, "01");
     lv_obj_remove_flag(stepSeg, LV_OBJ_FLAG_CLICKABLE);  /* read-out; see accLamp above */
 
-    mkpanelbtn(scr, NEXT_X, NEXT_W, SYNTHUI_PANEL_BUTTON_GLYPH_FORWARD, cbNextStep);
+    mkpanelbtn(scr, NEXT_X, STEP_Y, NEXT_W, STEP_H, SYNTHUI_PANEL_BUTTON_GLYPH_FORWARD,
+               SYNTHUI_PANEL_BUTTON_ACCENT_PALE, 0.85f, cbNextStep, true);
 
     lv_obj_t *stepLbl = lv_label_create(scr);
     lv_label_set_text(stepLbl, "STEP");

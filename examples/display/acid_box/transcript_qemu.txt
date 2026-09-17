@@ -125,6 +125,28 @@ full (ops==full identically) and is instead caught by the PRE-EXISTING
 "ops == full" check above this one, firing first; an INTERMITTENT version
 (one call in seven) leaves ops>full true and trips this bound by name,
 measured full=82 against the ops=252 total in that run.
+RE-RECORDED 2026-09-17 (NEW-54, 1 of 3 -- transport; spec
+docs/superpowers/specs/2026-09-17-acid-box-synthui-top-bar-design.md): PLAY and
+STOP became synthui_panel_button on their old rects, so touch_script.txt is
+UNTOUCHED and the tap still lands at (1088,43).  The widget has no PAUSE glyph,
+so PLAY's `on` now carries "playing": lit green while the transport runs, dark
+when paused or stopped.  The boot golden moved 0xBB2AEE59 -> 0xE7711DD4.  One new
+token, printed by the poller from the WIDGET's own getter:
+    PLAY_LIT=0   at boot, before the sum line
+    PLAY_LIT=1   after PLAYING=1
+The gate asserts the first is 0 and that a 1 follows PLAYING=1 BY LINE NUMBER.
+DEMONSTRATED RED twice.  set_on() deleted -> "FAIL: PLAY never lit after the tap"
+  -- the mutant NOTHING else in this gate can see (golden, gestures, audio all
+  green; that run's boot sum was still 0xE7711DD4).  set_on(!play) -> a live run
+  fails "FAIL: UI golden" first (a PLAY lit at boot changes the boot frame, to
+  0xFDD7C2DA); with the sum line patched back so the new checks are reached,
+  "FAIL: PLAY not dark at boot (first PLAY_LIT line: 'PLAY_LIT=1')", and on that
+  capture an unordered grep for the lit line exits 0 while the ordered check
+  exits 1.
+ITCM headroom, default build: 2884 -> 2884 B, measured the same way before and
+after (262144 - (.ARM.exidx addr + size)).  Unmoved to the byte; no mechanism is
+claimed for that beyond the measurement -- build_ui() and mkpanelbtn() are
+.progmem, so only ui_poll()'s new readback and print are ITCM-resident at all.
 
 ================================================================================
 WHAT THIS GATE PROVES
@@ -163,46 +185,48 @@ and the rt1062 half of `usb_descriptor_survey`.  That is the GPL firewall
 working, not a regression.
 
 ================================================================================
-THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-09-16, NEW-50 full-frame-present bound)
+THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-09-17, NEW-54 transport)
 ================================================================================
 ==== captured UART ====
 === BOOT ===
-[APP: acid_box] [VER: v1] [BUILD: Sep 16 2026 19:43:01]
+[APP: acid_box] [VER: v1] [BUILD: Sep 17 2026 12:15:05]
 ACIDBOX_BEGIN
 CODEC_OK
 PANEL_OK
 ACIDBOX_ENGINE=sw
 SELECT=0
-ACIDBOX_UI_SUM=0xBB2AEE59
+PLAY_LIT=0
+ACIDBOX_UI_SUM=0xE7711DD4
 PLAYING=0
-ACIDBOX_ROT ops=1 full=1 px=921600 us=116818 errors=0
-ACIDBOX_ROT_EQ pass=1 fail=0 us=11901
+ACIDBOX_ROT ops=1 full=1 px=921600 us=115494 errors=0
+ACIDBOX_ROT_EQ pass=1 fail=0 us=10946
 I2C_OK
 ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
 ACIDBOX_DONE
 PLAYING=1
-ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3731,0.0001,0.3851,0.4065,0.3934,0.0002,0.3808,0.3704,0.4201,0.3924,0.0002,0.3870]
-ACIDBOX_VSYNC flips=22 isrs=22 timeouts=0
-ACIDBOX_ROT ops=46 full=2 px=2437376 us=328131 errors=0
-ACIDBOX_ROT_EQ pass=2 fail=0 us=1532
-ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3646,0.3790,0.3885,0.0002,0.3876]
-ACIDBOX_VSYNC flips=38 isrs=38 timeouts=0
-ACIDBOX_ROT ops=86 full=2 px=3025152 us=403357 errors=0
-ACIDBOX_ROT_EQ pass=3 fail=0 us=1734
+PLAY_LIT=1
+ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3732,0.0001,0.3851,0.4102,0.3735,0.0002,0.3808,0.3704,0.4201,0.3924,0.0002,0.3916]
+ACIDBOX_VSYNC flips=17 isrs=17 timeouts=0
+ACIDBOX_ROT ops=39 full=2 px=2366464 us=297619 errors=0
+ACIDBOX_ROT_EQ pass=2 fail=0 us=1646
+ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3646,0.4297,0.3885,0.0002,0.3876]
+ACIDBOX_VSYNC flips=33 isrs=33 timeouts=0
+ACIDBOX_ROT ops=79 full=2 px=2954240 us=371819 errors=0
+ACIDBOX_ROT_EQ pass=3 fail=0 us=1523
 SELECT=2
 STEP[2]=note33 gate1 acc0 sld0
-ACIDBOX_BAR=3 RMS=[0.4275,0.3866,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3677,0.3553,0.4237,0.3894,0.0005,0.3879]
-ACIDBOX_VSYNC flips=56 isrs=56 timeouts=0
-ACIDBOX_ROT ops=141 full=2 px=3701504 us=493621 errors=0
-ACIDBOX_ROT_EQ pass=4 fail=0 us=1911
-ACIDBOX_BAR=4 RMS=[0.4037,0.3813,0.3928,0.3753,0.3739,0.0003,0.3823,0.4175,0.3883,0.0002,0.3804,0.3704,0.4288,0.3916,0.0001,0.3879]
-ACIDBOX_VSYNC flips=72 isrs=72 timeouts=0
-ACIDBOX_ROT ops=181 full=2 px=4289280 us=569080 errors=0
-ACIDBOX_ROT_EQ pass=5 fail=0 us=1776
+ACIDBOX_BAR=3 RMS=[0.4275,0.3843,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3677,0.3708,0.4237,0.3894,0.0005,0.3879]
+ACIDBOX_VSYNC flips=50 isrs=50 timeouts=0
+ACIDBOX_ROT ops=132 full=2 px=3633152 us=457376 errors=0
+ACIDBOX_ROT_EQ pass=4 fail=0 us=3481
+ACIDBOX_BAR=4 RMS=[0.4292,0.3813,0.3928,0.3753,0.3739,0.0003,0.3823,0.4175,0.3883,0.0002,0.3804,0.3704,0.4288,0.3916,0.0001,0.3879]
+ACIDBOX_VSYNC flips=66 isrs=66 timeouts=0
+ACIDBOX_ROT ops=172 full=2 px=4220928 us=532469 errors=0
+ACIDBOX_ROT_EQ pass=5 fail=0 us=1915
 ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3727,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3887]
-ACIDBOX_VSYNC flips=88 isrs=88 timeouts=0
-ACIDBOX_ROT ops=221 full=2 px=4877056 us=644255 errors=0
-ACIDBOX_ROT_EQ pass=6 fail=0 us=1668
+ACIDBOX_VSYNC flips=82 isrs=82 timeouts=0
+ACIDBOX_ROT ops=212 full=2 px=4808704 us=610281 errors=0
+ACIDBOX_ROT_EQ pass=6 fail=0 us=1646
 CUTOFF=639.5
 CUTOFF=511.2
 CUTOFF=408.7
@@ -212,10 +236,10 @@ CUTOFF=202.2
 CUTOFF=161.6
 CUTOFF=129.2
 CUTOFF=103.3
-ACIDBOX_BAR=6 RMS=[0.4298,0.3893,0.3854,0.3726,0.3742,0.0001,0.3847,0.3860,0.3926,0.0001,0.3975,0.3730,0.3937,0.4018,0.0002,0.3784]
-ACIDBOX_VSYNC flips=108 isrs=108 timeouts=0
-ACIDBOX_ROT ops=269 full=2 px=5602560 us=736511 errors=0
-ACIDBOX_ROT_EQ pass=7 fail=0 us=1537
+ACIDBOX_BAR=6 RMS=[0.4298,0.3893,0.3854,0.3840,0.4064,0.0002,0.3659,0.3860,0.3679,0.0001,0.3975,0.3730,0.3937,0.4018,0.0002,0.3784]
+ACIDBOX_VSYNC flips=102 isrs=102 timeouts=0
+ACIDBOX_ROT ops=260 full=2 px=5534208 us=702336 errors=0
+ACIDBOX_ROT_EQ pass=7 fail=0 us=1838
 
 (Bar 6 straddles the drag, whose landing instant moves with render timing
 between runs -- the gate selects its pre/post windows dynamically for exactly
@@ -379,15 +403,18 @@ which is why both drags finish at 103.3 Hz.
 ================================================================================
 THE BOOT GOLDEN — the frame was LOOKED AT
 ================================================================================
-The golden is 0xBB2AEE59 (the boot sum line), FNV-1a over the whole
-3686400-byte PRESENTED framebuffer, re-goldened 2026-09-16 for the SynthUI
-editor rework (plan docs/superpowers/plans/2026-09-16-acid-box-synthui-editor.md):
+The golden is 0xE7711DD4 (the boot sum line), FNV-1a over the whole
+3686400-byte PRESENTED framebuffer, re-goldened 2026-09-17 for the NEW-54
+transport (plan docs/superpowers/plans/2026-09-17-acid-box-synthui-top-bar.md):
 the same logical 1280x720 landscape scene, dumped from a no-touch boot with the
 recipe below (scanned buffer still at 0x80684080) and viewed upright by the
 controller before this golden was pinned.  Its FNV-1a equals the printed sum,
 recomputed independently over the raw dump -- so the inspected image IS this
 golden's frame.  What the eye checked: "ACID BOX" top-left; -, "128.0", +
-centred; PLAY and STOP top-right, all unchanged; the 2x8 lane, ivory keys, a
+centred; PLAY and STOP top-right as panel buttons, PLAY's triangle DARK
+(stopped) -- periwinkle faces with the bright sheen band along the top, glyphs
+the widget's dark slate (48,48,72) rather than the green accent, and both rects
+measured unmoved at x 1040..1139 and 1156..1255, y 20..67; the 2x8 lane, ivory keys, a
 red LED lit on the gated steps and dark on the four rests, which appear as
 keys 03, 06, 10 and 15 (preset indices 2, 5, 9, 14); amber accent lamps under
 keys 01, 08, 13 (indices 0, 7, 12) and blue slide lamps under 04, 11, 16
@@ -413,7 +440,8 @@ y 379..519, NOT the "308..520" earlier comments claimed -- the step row and
 its caption occupy 300..378 and row 1's step numbers clear of it above.
 Bit-identical across two gate runs.
 
-History: 0xE871BF09 (2026-09-15, LANDSCAPE: layout C presented CW90 through
+History: 0xBB2AEE59 (2026-09-16, the SynthUI editor rework; checked as listed
+above with stock LVGL PLAY/STOP), 0xE871BF09 (2026-09-15, LANDSCAPE: layout C presented CW90 through
 the PXP; checked "ACID BOX" top-left, -/128.0/+ centred, PLAY/STOP top-right,
 the 2x8 lane matching kPreset cell for cell, pitch A1, ACC lit/SLD dark/SAW,
 the reserved band (then read as logical y 308..520 -- since corrected, see
@@ -477,7 +505,7 @@ the next person who hits this should reach for the same trick rather than
 re-diagnosing it.
 
 VERIFIED (2026-08-18 golden 0xD3BC88D7, 2026-08-27 for 0x25B30A96, 2026-09-15
-for 0xE871BF09, and 2026-09-16 for 0xBB2AEE59): the dump's own FNV-1a equals
+for 0xE871BF09, 2026-09-16 for 0xBB2AEE59, and 2026-09-17 for 0xE7711DD4): the dump's own FNV-1a equals
 what the firmware printed, so the inspected image IS this golden's frame.
 (The same script also reproduces the anti-golden as a control: FNV-1a over
 3686400 zero bytes is 0x9BC99DC5, the value the gate rejects by name --
