@@ -894,6 +894,26 @@ if [ -d "$EVKB/$ACB" ] && [ -f "$EVKB/$ACB/transcript_qemu.txt" ]; then
     echo "$OUT_TEXT" | grep -q "^FAIL: PLAY never lit after the tap" || result=1
     report "acb_play_never_lit_fails_by_name" $result
 
+    # ...and the OTHER half of the same witness: a PLAY already lit at boot is
+    # what an INVERTED set_on() produces.  A live run of that mutant is caught
+    # by the boot golden first (the frame really does change), so this ordered
+    # pair is the only place the boot-dark check itself is shown to fire.
+    sed 's|^PLAY_LIT=0$|PLAY_LIT=1|' \
+        "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_litatboot.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_litatboot.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$ACB/transcript_qemu.txt" "$WORK/acb_litatboot.txt" && result=1
+    # The PARENTHETICAL is part of the assertion, not decoration: the bare
+    # message also fires for a capture with NO PLAY_LIT line at all ('none'),
+    # and cmp proves only THAT the fixture changed, not HOW.  Without it, a
+    # future edit turning this sed into a deletion would leave the case green
+    # while testing a different scenario -- and this is the only automated
+    # place the boot-dark assertion fires.
+    echo "$OUT_TEXT" \
+        | grep -q "^FAIL: PLAY not dark at boot (first PLAY_LIT line: 'PLAY_LIT=1')" || result=1
+    report "acb_lit_at_boot_fails_by_name" $result
+
     sed 's|^ACIDBOX_UI_SUM=0x........|ACIDBOX_UI_SUM=0xBADBADBA|' \
         "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_badsum.txt"
     run_gate "$ACB" "run_qemu.sh" "$WORK/acb_badsum.txt"; rc=$?

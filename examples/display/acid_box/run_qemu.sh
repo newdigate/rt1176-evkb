@@ -309,11 +309,31 @@ grep -qE "^PLAYING=1$" "$OUT" || { echo "FAIL: PLAY tap never landed"; exit 1; }
 # by the boot golden, since a lit PLAY changes the boot frame; the deleted
 # set_on() is the mutant ONLY these two checks can see.)
 # DEMONSTRATED RED twice (set_on deleted; set_on inverted) -- transcript_qemu.txt.
+# ★ WHAT IT DOES NOT PROVE: this reads the widget's STORED FLAG, not that a lit
+# PLAY renders any differently.  The inverted mutant showed the rendering does
+# change (its boot sum was 0xFDD7C2DA against this golden's 0xE7711DD4), but that
+# was a one-off manual measurement -- nothing here checks it, and a second
+# checksum taken mid-animation would not reproduce.
 LIT_FIRST=$(grep -E "^PLAY_LIT=[01]" "$OUT" | head -1 | tr -d '\r')
 [ "$LIT_FIRST" = "PLAY_LIT=0" ] \
     || { echo "FAIL: PLAY not dark at boot (first PLAY_LIT line: '${LIT_FIRST:-none}')"; exit 1; }
-PLAYING_LN=$(grep -n "^PLAYING=1$" "$OUT" | head -1 | cut -d: -f1)
-awk -v p="$PLAYING_LN" 'NR>p && /^PLAY_LIT=1\r?$/ { ok=1 } END { exit ok ? 0 : 1 }' "$OUT" \
+# PLAY_LN is hoisted from the gesture-order block below and GUARDED, because an
+# empty p would make awk's `NR > p` a STRING comparison that is true for every
+# line -- silently turning the ordered check into the unordered grep the comment
+# above says must not be accepted.  A vacuous pass, not a failure.
+# ★ STATUS OF THIS GUARD, so it is not read as inheriting the DEMONSTRATED RED
+# above: it is UNREACHABLE today and was NOT shown to fail -- the
+# `grep -qE "^PLAYING=1$"` at the top of this block exits first with "PLAY tap
+# never landed", so nothing can reach here with PLAY_LN empty.  It is kept
+# because PLAY_LN has THREE consumers, and an empty one is vacuous in BOTH
+# directions: `NR > p` (the lit check above) fires on EVERY line, while
+# `NR < p` (the boot-silence check below, "audio before ▶") fires on NO line --
+# measured, not reasoned, on a two-line fixture that really does carry a bar
+# before the tap.  The second of those was latent BEFORE NEW-54; the hoist
+# closes it too, which is the argument for a guard nothing can currently trip.
+PLAY_LN=$(grep -n "^PLAYING=1$" "$OUT" | head -1 | cut -d: -f1)
+[ -n "$PLAY_LN" ] || { echo "FAIL: no PLAYING=1 line to order against"; exit 1; }
+awk -v p="$PLAY_LN" 'NR>p && /^PLAY_LIT=1\r?$/ { ok=1 } END { exit ok ? 0 : 1 }' "$OUT" \
     || { echo "FAIL: PLAY never lit after the tap"; exit 1; }
 # The preset has step 2 as a REST (note 0, gate 0), and cbStepTap parks a rest on
 # A1 when it turns it on, so this exact string is the tap's signature: any other
@@ -321,7 +341,7 @@ awk -v p="$PLAYING_LN" 'NR>p && /^PLAY_LIT=1\r?$/ { ok=1 } END { exit ok ? 0 : 1
 grep -qE "^STEP\[2\]=note33 gate1" "$OUT" \
     || { echo "FAIL: step-2 tap never wrote the pattern"; exit 1; }
 
-PLAY_LN=$(grep -n "^PLAYING=1$"          "$OUT" | head -1 | cut -d: -f1)
+# PLAY_LN is set (and checked non-empty) above, with the PLAY_LIT ordering.
 STEP_LN=$(grep -n "^STEP\[2\]=note33 gate1" "$OUT" | head -1 | cut -d: -f1)
 CUT_LN=$(grep -n  "CUTOFF="              "$OUT" | head -1 | cut -d: -f1)
 [ -n "$CUT_LN" ] || { echo "FAIL: the cutoff drag produced no CUTOFF line"; exit 1; }

@@ -143,6 +143,11 @@ DEMONSTRATED RED twice.  set_on() deleted -> "FAIL: PLAY never lit after the tap
   "FAIL: PLAY not dark at boot (first PLAY_LIT line: 'PLAY_LIT=1')", and on that
   capture an unordered grep for the lit line exits 0 while the ordered check
   exits 1.
+Both halves are also pinned in CI, one vacuity negative each against this
+fixture (`acb_play_never_lit_fails_by_name` strips the lit line, and
+`acb_lit_at_boot_fails_by_name` flips the boot one) -- the second exists
+because a LIVE inverted run is caught by the boot golden first, so nothing
+else ever shows the boot-dark assertion firing.  Suite total 66 -> 68.
 ITCM headroom, default build: 2884 -> 2884 B, measured the same way before and
 after (262144 - (.ARM.exidx addr + size)).  Unmoved to the byte; no mechanism is
 claimed for that beyond the measurement -- build_ui() and mkpanelbtn() are

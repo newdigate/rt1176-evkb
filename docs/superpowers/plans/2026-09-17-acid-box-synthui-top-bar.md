@@ -30,7 +30,7 @@
 | `$AB/acid_box.cpp` | geometry constants, `mkpanelbtn()`, `build_ui()`, `ui_poll()`, `cbWave`, deletion of `mkbtn()` | 1, 2, 3 |
 | `$AB/run_qemu.sh` | the software golden (moved ×3), the `PLAY_LIT` assertions, the GEOMETRY header note | 1, 2, 3 |
 | `$AB/transcript_qemu.txt` | fixture + narrative: re-record entries, the capture block, the eye-check record | 1, 2, 3 |
-| `$EVKB/tools/gate-vacuity.test.sh` | one new negative, `acb_play_never_lit_fails_by_name` | 1 |
+| `$EVKB/tools/gate-vacuity.test.sh` | two new negatives, `acb_play_never_lit_fails_by_name` and `acb_lit_at_boot_fails_by_name` | 1 |
 | `$EVKB/examples/README.md`, `$EVKB/CLAUDE.md` | the example's description; the close-out measurement | 4 |
 | `$AB/transcript_hw_evkb.txt` | the silicon record | 5 |
 
@@ -210,13 +210,38 @@ insert:
 # by the boot golden, since a lit PLAY changes the boot frame; the deleted
 # set_on() is the mutant ONLY these two checks can see.)
 # DEMONSTRATED RED twice (set_on deleted; set_on inverted) -- transcript_qemu.txt.
+# ★ WHAT IT DOES NOT PROVE: this reads the widget's STORED FLAG, not that a lit
+# PLAY renders any differently.  The inverted mutant showed the rendering does
+# change (its boot sum was 0xFDD7C2DA against this golden's 0xE7711DD4), but that
+# was a one-off manual measurement -- nothing here checks it, and a second
+# checksum taken mid-animation would not reproduce.
 LIT_FIRST=$(grep -E "^PLAY_LIT=[01]" "$OUT" | head -1 | tr -d '\r')
 [ "$LIT_FIRST" = "PLAY_LIT=0" ] \
     || { echo "FAIL: PLAY not dark at boot (first PLAY_LIT line: '${LIT_FIRST:-none}')"; exit 1; }
-PLAYING_LN=$(grep -n "^PLAYING=1$" "$OUT" | head -1 | cut -d: -f1)
-awk -v p="$PLAYING_LN" 'NR>p && /^PLAY_LIT=1\r?$/ { ok=1 } END { exit ok ? 0 : 1 }' "$OUT" \
+# PLAY_LN is hoisted from the gesture-order block below and GUARDED, because an
+# empty p would make awk's `NR > p` a STRING comparison that is true for every
+# line -- silently turning the ordered check into the unordered grep the comment
+# above says must not be accepted.  A vacuous pass, not a failure.
+# ★ STATUS OF THIS GUARD, so it is not read as inheriting the DEMONSTRATED RED
+# above: it is UNREACHABLE today and was NOT shown to fail -- the
+# `grep -qE "^PLAYING=1$"` at the top of this block exits first with "PLAY tap
+# never landed", so nothing can reach here with PLAY_LN empty.  It is kept
+# because PLAY_LN has THREE consumers, and an empty one is vacuous in BOTH
+# directions: `NR > p` (the lit check above) fires on EVERY line, while
+# `NR < p` (the boot-silence check below, "audio before ▶") fires on NO line --
+# measured, not reasoned, on a two-line fixture that really does carry a bar
+# before the tap.  The second of those was latent BEFORE NEW-54; the hoist
+# closes it too, which is the argument for a guard nothing can currently trip.
+PLAY_LN=$(grep -n "^PLAYING=1$" "$OUT" | head -1 | cut -d: -f1)
+[ -n "$PLAY_LN" ] || { echo "FAIL: no PLAYING=1 line to order against"; exit 1; }
+awk -v p="$PLAY_LN" 'NR>p && /^PLAY_LIT=1\r?$/ { ok=1 } END { exit ok ? 0 : 1 }' "$OUT" \
     || { echo "FAIL: PLAY never lit after the tap"; exit 1; }
 ```
+
+Then, in the gesture-order block nine lines below, replace the now-duplicate
+`PLAY_LN=$(grep -n "^PLAYING=1$" …)` assignment with a comment saying it is set
+and checked above — one assignment, one guard, one name. (Measured: with an
+empty `p`, `awk 'NR>p'` compares strings and accepts EVERY line, exit 0.)
 
 (acid_box prints these with `printf("…\n")`, which emits a bare `\n` — the existing `^PLAYING=1$` assertion directly above relies on the same fact — but the new checks tolerate a `\r` anyway, because `println` elsewhere in this file does emit one and the next edit should not have to know which was used.)
 
@@ -229,21 +254,29 @@ Expected: `FAIL: PLAY not dark at boot (first PLAY_LIT line: 'none')`
 
 ```c
 /* Shared panel-button construction: size/pos/glyph/accent/glyph-scale plus the
- * CLICKED action and -- when `momentary` -- the press/release handlers, all in
- * one place so the momentary wiring cannot be attached to one button and
- * forgotten on another.  `momentary` is false only for PLAY, whose `on` is
- * STATE (owned by ui_poll), not press feedback.
+ * CLICKED action and -- for a PANEL_MOMENTARY button -- the press/release
+ * handlers, all in one place so the momentary wiring cannot be attached to one
+ * button and forgotten on another.  The two modes are EXCLUSIVE, not merely
+ * different: cbPanelDown/cbPanelUp OWN `on`, so a stateful button built
+ * PANEL_MOMENTARY would have its state clobbered on every press and release.
+ * PLAY is the one PANEL_STATEFUL button today -- its `on` is STATE, owned by
+ * ui_poll, not press feedback.
  *
- * `scale`: the widget sizes its glyph from the SMALLER of its two dimensions
+ * The scales: the widget sizes its glyph from the SMALLER of its two dimensions
  * (min(vw, vh) in synthui_panel_button_compute_geom), not from its width.  At
  * the step row's 44x56 the default 0.62 lands the chevron around 27 px and it
- * reads as a faint mark, so prev/next pass 0.85; the 100x48 and 50x48 top-bar
- * buttons get a ~30 px glyph from the default. */
-static constexpr float PANEL_GLYPH_DEFAULT = 0.62f;   /* = the widget constructor's own default */
+ * reads as a faint mark, so prev/next pass PANEL_GLYPH_SCALE_STEP; the 100x48
+ * transport buttons get a ~30 px glyph from the default. */
+enum PanelBtnPress { PANEL_STATEFUL, PANEL_MOMENTARY };
+/* SynthUI exports no macro for its own default, so this COMMENT is the only
+ * link between the two -- if synthui_panel_button's constructor default ever
+ * moves, nothing here will fail to compile. */
+static constexpr float PANEL_GLYPH_SCALE_DEFAULT = 0.62f;   /* = the widget constructor's own default */
+static constexpr float PANEL_GLYPH_SCALE_STEP    = 0.85f;   /* prev/next at 44x56; see above */
 UIBUILD_FN static lv_obj_t *mkpanelbtn(lv_obj_t *scr, int x, int y, int w, int h,
                                        synthui_panel_button_glyph_t glyph,
                                        uint32_t accent, float scale,
-                                       lv_event_cb_t cb, bool momentary)
+                                       lv_event_cb_t cb, PanelBtnPress press)
 {
     lv_obj_t *b = synthui_panel_button_create(scr);
     lv_obj_set_size(b, w, h);
@@ -252,7 +285,7 @@ UIBUILD_FN static lv_obj_t *mkpanelbtn(lv_obj_t *scr, int x, int y, int w, int h
     synthui_panel_button_set_accent(b, accent);
     synthui_panel_button_set_glyph_scale(b, scale);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
-    if (momentary) {
+    if (press == PANEL_MOMENTARY) {
         lv_obj_add_event_cb(b, cbPanelDown, LV_EVENT_PRESSED, NULL);
         lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_RELEASED, NULL);
         lv_obj_add_event_cb(b, cbPanelUp, LV_EVENT_PRESS_LOST, NULL);
@@ -266,11 +299,13 @@ Update the two existing call sites in `build_ui()`:
 
 ```c
     mkpanelbtn(scr, PREV_X, STEP_Y, PREV_W, STEP_H, SYNTHUI_PANEL_BUTTON_GLYPH_REWIND,
-               SYNTHUI_PANEL_BUTTON_ACCENT_PALE, 0.85f, cbPrevStep, true);
+               SYNTHUI_PANEL_BUTTON_ACCENT_PALE, PANEL_GLYPH_SCALE_STEP, cbPrevStep,
+               PANEL_MOMENTARY);
 ```
 ```c
     mkpanelbtn(scr, NEXT_X, STEP_Y, NEXT_W, STEP_H, SYNTHUI_PANEL_BUTTON_GLYPH_FORWARD,
-               SYNTHUI_PANEL_BUTTON_ACCENT_PALE, 0.85f, cbNextStep, true);
+               SYNTHUI_PANEL_BUTTON_ACCENT_PALE, PANEL_GLYPH_SCALE_STEP, cbNextStep,
+               PANEL_MOMENTARY);
 ```
 
 - [ ] **Step 5: PLAY and STOP.** In the statics, change `static lv_obj_t *playBtnLabel, *bpmLabel, *noteLabel, *waveBtnLabel;` to:
@@ -283,16 +318,16 @@ In `build_ui()` replace the six lines creating `play` and `stop` with:
 
 ```c
     /* PLAY's `on` is STATE -- lit while the transport runs, set by ui_poll --
-     * so it is the one panel button that is NOT momentary.  The widget has no
+     * so it is the one PANEL_STATEFUL button.  The widget has no
      * PAUSE glyph (and the DC reference has none), which is why today's
      * play/pause label swap became a lit/dark PLAY: a tap while playing still
      * pauses (cbPlay), and paused and stopped both read as PLAY dark. */
     playBtn = mkpanelbtn(scr, PLAY_X, BAR_Y, TRANSPORT_BTN_W, BAR_BTN_H,
                          SYNTHUI_PANEL_BUTTON_GLYPH_PLAY, SYNTHUI_PANEL_BUTTON_ACCENT_GREEN,
-                         PANEL_GLYPH_DEFAULT, cbPlay, false);
+                         PANEL_GLYPH_SCALE_DEFAULT, cbPlay, PANEL_STATEFUL);
     mkpanelbtn(scr, STOP_X, BAR_Y, TRANSPORT_BTN_W, BAR_BTN_H,
                SYNTHUI_PANEL_BUTTON_GLYPH_STOP, SYNTHUI_PANEL_BUTTON_ACCENT_PALE,
-               PANEL_GLYPH_DEFAULT, cbStop, true);
+               PANEL_GLYPH_SCALE_DEFAULT, cbStop, PANEL_MOMENTARY);
 ```
 
 `mkpanelbtn` is defined AFTER `mkbtn` and before `mkknob`, i.e. before `build_ui` — no forward declaration needed.
@@ -392,7 +427,7 @@ ITCM headroom, default build: 2884 -> <Step 7 number> B.
 
 - [ ] **Step 15: Replay the fixture.** Procedure D. Expected: `PASS: acid box …`.
 
-- [ ] **Step 16: The vacuity negative.** In `$EVKB/tools/gate-vacuity.test.sh`, inside the acid_box section, directly before the `sed 's|^ACIDBOX_UI_SUM=0x........|…` case, insert:
+- [ ] **Step 16: The vacuity negatives (TWO).** In `$EVKB/tools/gate-vacuity.test.sh`, inside the acid_box section, directly before the `sed 's|^ACIDBOX_UI_SUM=0x........|…` case, insert BOTH cases below. One pins each half of the witness: the ordered check, and the boot-dark check. The boot-dark half needs its own case because a LIVE inverted-`set_on()` run is caught by the boot golden first, so nothing else ever shows that assertion firing.
 
 ```sh
     # NEW-54: PLAY's lit state is invisible to every golden (the boot frame is
@@ -406,13 +441,35 @@ ITCM headroom, default build: 2884 -> <Step 7 number> B.
     cmp -s "$EVKB/$ACB/transcript_qemu.txt" "$WORK/acb_neverlit.txt" && result=1
     echo "$OUT_TEXT" | grep -q "^FAIL: PLAY never lit after the tap" || result=1
     report "acb_play_never_lit_fails_by_name" $result
+
+    # ...and the OTHER half of the same witness: a PLAY already lit at boot is
+    # what an INVERTED set_on() produces.  A live run of that mutant is caught
+    # by the boot golden first (the frame really does change), so this ordered
+    # pair is the only place the boot-dark check itself is shown to fire.
+    sed 's|^PLAY_LIT=0$|PLAY_LIT=1|' \
+        "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_litatboot.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_litatboot.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$ACB/transcript_qemu.txt" "$WORK/acb_litatboot.txt" && result=1
+    # The PARENTHETICAL is part of the assertion, not decoration: the bare
+    # message also fires for a capture with NO PLAY_LIT line at all ('none'),
+    # and cmp proves only THAT the fixture changed, not HOW.  Without it, a
+    # future edit turning this sed into a deletion would leave the case green
+    # while testing a different scenario -- and this is the only automated
+    # place the boot-dark assertion fires.
+    echo "$OUT_TEXT" \
+        | grep -q "^FAIL: PLAY not dark at boot (first PLAY_LIT line: 'PLAY_LIT=1')" || result=1
+    report "acb_lit_at_boot_fails_by_name" $result
 ```
 
-Verify it in isolation with Procedure D's `replay`:
+Verify BOTH in isolation with Procedure D's `replay` (the indentation rule above is
+what keeps these `sed`/`grep -v` mutations confined to the capture block):
 ```bash
 grep -v "^PLAY_LIT=1$" "$AB/transcript_qemu.txt" > "$S/neverlit.txt" && replay "$S/neverlit.txt"
+sed 's|^PLAY_LIT=0$|PLAY_LIT=1|' "$AB/transcript_qemu.txt" > "$S/litatboot.txt" && replay "$S/litatboot.txt"
 ```
-Expected: `FAIL: PLAY never lit after the tap`. (The full suite runs in Task 4.)
+Expected: `FAIL: PLAY never lit after the tap`, then `FAIL: PLAY not dark at boot (first PLAY_LIT line: 'PLAY_LIT=1')`. The suite total goes 66 -> **68**, not 67. (The full suite runs in Task 4.)
 
 - [ ] **Step 17: Commit.**
 
@@ -456,14 +513,14 @@ static constexpr int TEMPO_SEG_X = 618, TEMPO_SEG_W = 156;   /* 618..773 x 20..6
 ```c
     mkpanelbtn(scr, TEMPO_DN_X, BAR_Y, TEMPO_BTN_W, BAR_BTN_H,
                SYNTHUI_PANEL_BUTTON_GLYPH_DOWN, SYNTHUI_PANEL_BUTTON_ACCENT_PALE,
-               PANEL_GLYPH_DEFAULT, cbTempoDn, true);
+               PANEL_GLYPH_SCALE_DEFAULT, cbTempoDn, PANEL_MOMENTARY);
     tempoSeg = synthui_seven_segment_create(scr);
     lv_obj_set_size(tempoSeg, TEMPO_SEG_W, BAR_BTN_H);
     lv_obj_set_pos(tempoSeg, TEMPO_SEG_X, BAR_Y);
     lv_obj_remove_flag(tempoSeg, LV_OBJ_FLAG_CLICKABLE);  /* read-out; see accLamp below */
     mkpanelbtn(scr, TEMPO_UP_X, BAR_Y, TEMPO_BTN_W, BAR_BTN_H,
                SYNTHUI_PANEL_BUTTON_GLYPH_UP, SYNTHUI_PANEL_BUTTON_ACCENT_PALE,
-               PANEL_GLYPH_DEFAULT, cbTempoUp, true);
+               PANEL_GLYPH_SCALE_DEFAULT, cbTempoUp, PANEL_MOMENTARY);
 ```
 
 (No `set_text` here: `ui_poll(NULL)` at the end of `build_ui()` paints "128.0" before the first frame — that is what the RUN THE POLLER ONCE comment guarantees. In that comment, change `or the lv_label default "Text"` to `or an empty seven-segment readout`.)
@@ -653,7 +710,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - [ ] **Step 1: Bench configurations still link, and the proxies still match.**
 `cd "$EVKB" && tools/build-bench-configs.sh -n 2>&1 | tail -12` — Expected: every declared configuration `OK`, both `nm-diff OK`. If an nm-diff fails, read the SYMBOL LIST before anything else: the human-owned dir being stale (Task 3 Step 11 skipped) and a real proxy mismatch print the same verdict.
 
-- [ ] **Step 2: Vacuity, alone.** `cd "$EVKB" && sh tools/gate-vacuity.test.sh 2>&1 | tee "$S/vacuity.log" | grep -c "^PASS:"` → **67**, and `grep "^FAIL:\|^SKIP:" "$S/vacuity.log"` → empty. (~9 min. If it aborts mid-suite with a missing `$WORK/…` file, two suites overlapped — run it again, alone.)
+- [ ] **Step 2: Vacuity, alone.** `cd "$EVKB" && sh tools/gate-vacuity.test.sh 2>&1 | tee "$S/vacuity.log" | grep -c "^PASS:"` → **68** (66 + NEW-54's two), and `grep "^FAIL:\|^SKIP:" "$S/vacuity.log"` → empty. (~9 min. If it aborts mid-suite with a missing `$WORK/…` file, two suites overlapped — run it again, alone.)
 
 - [ ] **Step 3: Sweep.** Read `docs/KNOWN-BROKEN-GATES.md` first. `cd "$EVKB" && ./tools/run-all-qemu-gates.sh 2>&1 | tee "$S/sweep.log" | tail -5` (~24 min). Target `gates: 141 passed`. Any red that is not `display/acid_box`: re-run that gate ALONE and idle before believing it (the load-sensitivity class), and report names, not counts.
 
@@ -661,9 +718,9 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 5: `examples/README.md`.** In the display row's acid_box description, after `a \`synthui_seven_segment\` step readout between REWIND/FORWARD panel buttons,` insert ` and since NEW-54 a top bar on the same family -- PLAY (lit green while playing) and STOP panel buttons, a seven-segment tempo readout between DOWN/UP panel buttons -- plus a \`synthui_slide_toggle\` for SAW/SQR,`.
 
-- [ ] **Step 6: `CLAUDE.md`.** Add a `✅ **Measured 2026-09-17 …` block above the 2026-09-16 NEW-50 block, stating only what was measured: the sweep line, vacuity 67/67, audit PASS, gate count unchanged at 141, the three golden moves with reasons, the four ITCM before→after numbers and whether the prediction held, the three widget facts from the spec's §2, both RED demos with their exact FAIL lines, and "gpu golden `0xEA5AB843` is STALE until the NEW-54 bench". Also update the two earlier mentions of the sw golden `0xBB2AEE59` as the CURRENT value (search for it) with a `(superseded 2026-09-17 by NEW-54: <NEW3>)` note rather than rewriting history.
+- [ ] **Step 6: `CLAUDE.md`.** Add a `✅ **Measured 2026-09-17 …` block above the 2026-09-16 NEW-50 block, stating only what was measured: the sweep line, vacuity 68/68, audit PASS, gate count unchanged at 141, the three golden moves with reasons, the four ITCM before→after numbers and whether the prediction held, the three widget facts from the spec's §2, both RED demos with their exact FAIL lines, and "gpu golden `0xEA5AB843` is STALE until the NEW-54 bench". Also update the two earlier mentions of the sw golden `0xBB2AEE59` as the CURRENT value (search for it) with a `(superseded 2026-09-17 by NEW-54: <NEW3>)` note rather than rewriting history.
 
-- [ ] **Step 7: Commit the docs.** `git add examples/README.md CLAUDE.md && git commit` with the message `docs: NEW-54 software close-out -- <the sweep's gates: line>, vacuity 67/67, audit PASS, golden 0xBB2AEE59 -> <NEW3> in three recorded moves, ITCM default 2884 -> <n> B` plus the trailer.
+- [ ] **Step 7: Commit the docs.** `git add examples/README.md CLAUDE.md && git commit` with the message `docs: NEW-54 software close-out -- <the sweep's gates: line>, vacuity 68/68, audit PASS, golden 0xBB2AEE59 -> <NEW3> in three recorded moves, ITCM default 2884 -> <n> B` plus the trailer.
 
 - [ ] **Step 8: Linear + memory.** Update NEW-54's description with a **Measured** table (sweep, vacuity, audit, bench check, goldens, ITCM) and leave it In Progress with "Outstanding: the bench". Write `memory/new54-acid-box-top-bar.md` (type `project`) and its one-line pointer in `MEMORY.md`.
 
@@ -689,5 +746,5 @@ Use the `flashing-rt1170-evkb` skill for the flash/console procedure. **Detach `
 ## Self-Review (done at writing time)
 
 - **Spec coverage:** §3 transport → T1; tempo → T2; waveform → T3; §4 code shape → T1 S4-6, T2 S1-4, T3 S1-5; §5.1 golden ×3 → T1 S8-11, T2 S6-9, T3 S7-10; §5.2 witness → T1 S2/S6; §5.3 RED demos → T1 S12-13; §5.4 fixture + vacuity → Procedures C/D, T1 S14-16, T4 S2; §5.5 comments → T1 S11; §6 ITCM → Procedure A, T3 S11; §7 close-out → T4; §8 bench → T5; §9 risks → T1 S8's stop condition, Procedure C's diff review.
-- **Names used consistently:** `playBtn`, `tempoSeg`, `PANEL_GLYPH_DEFAULT`, `mkpanelbtn(scr, x, y, w, h, glyph, accent, scale, cb, momentary)`, `TEMPO_SEG_X/W`, `PLAY_LIT=`, `acb_play_never_lit_fails_by_name`, FAIL texts `PLAY not dark at boot` / `PLAY never lit after the tap`.
+- **Names used consistently:** `playBtn`, `tempoSeg`, `PANEL_GLYPH_SCALE_DEFAULT`, `PANEL_GLYPH_SCALE_STEP`, `mkpanelbtn(scr, x, y, w, h, glyph, accent, scale, cb, press)` with `press` one of `PANEL_STATEFUL` / `PANEL_MOMENTARY`, `TEMPO_SEG_X/W`, `PLAY_LIT=`, `acb_play_never_lit_fails_by_name`, `acb_lit_at_boot_fails_by_name`, FAIL texts `PLAY not dark at boot` / `PLAY never lit after the tap` / `no PLAYING=1 line to order against`.
 - **Deliberate placeholders:** `<NEW1>`, `<NEW2>`, `<NEW3>` and the measured numbers are values that do not exist until the step that measures them; each is defined by the step that produces it.
