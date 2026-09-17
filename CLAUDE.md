@@ -740,16 +740,35 @@ the result through the gate with the vacuity suite's own `fake-qemu` stub: exit 
 issue before a reviewer opened the file: line 447 is inside `parallel_debug_draw()`, compiled out by
 `LV_USE_PARALLEL_DRAW_DEBUG 0` (`LVGL/port/lv_conf.h:611`). Mechanism unchanged, citation wrong,
 all four corrected.
-★ **THE 30 fps QUESTION IS STILL OPEN.** QEMU is vsync-locked at 30, so flip counts are a ceiling and
-fps there is meaningless. The bench must re-run both measurements as RUNS, not windows: acid_box
-touch p95 STOPPED vs PLAYING against 37.8 / 66.8 ms, and `synthui_led_button_test` Phase B against
-20.6 fps, plus the gpu golden `0xEA5AB843`. **Prediction on record:** the gain is bounded by however
-much of that 48.6 ms median frame is fill rather than per-task churn. If it does not clear 30 fps, a
-GC355 compositor for `led_button` is the honest next step -- **filed as NEW-52, blocked by NEW-50**,
-noting NEW-23's fader earned one by animating a cap that genuinely MOVES while this widget repaints
-to move a ring, and that acid_box's 2,884 B of ITCM headroom may not fit one (`synthui_rotary_knob_gpu`
-is ~3,188 B). ★ The bench should report WHERE THE FRAME GOES, not just fps: NEW-50's win was pixel
-work, so if the residue is per-task churn a GPU compositor moves the fill and leaves the churn.
+★★ **THE 30 fps CRITERION IS MET -- MEASURED ON SILICON 2026-09-17, SEVEN BOOTS.**
+`synthui_led_button_test` Phase B reads **33.9 fps median** (33486..34193, spread 2.1 %) against the
+NEW-25 baseline's **20.6 fps** -- a 1.66x improvement, median frame 48.6 -> 29.2 ms, on the same
+worst-case animation. Goldens `0xD474F06D` / `0x463C3371`, `delta_eq=PASS`, `timeouts=0` identical on
+all seven, and the silicon golden still EQUALS the QEMU one. The image is provably the new one without
+appealing to a timestamp: the old firmware cannot print `cue=900` or a `led_button_tasks_op` line at all.
+★ acid_box: gpu golden **`0xEA5AB843` UNMOVED**, `GPU_ERR=0`, `ROT_EQ fail=0` and `full<=2` on every
+CLEAN boot. **NEW-52 (the GC355 compositor fallback) is therefore CLOSED as not needed.**
+★★ **The acid_box TOUCH measurement is INCONCLUSIVE, and reporting that is the result.** Stopped
+36.4 ms (vs 37.8) is unchanged -- the EXPECTED control, since with the playhead parked `set_cue` is
+never called and NEW-50's path is inert. Playing read 57.6 ms (vs 66.8) on one clean run and **131.5 ms
+on another clean run of the SAME build**: the scatter between two runs EXCEEDS the effect, because hand
+gestures are the uncontrolled variable. The inflation ratio falls 1.77x -> 1.58x, which is a direction
+of travel and NOT a number to quote. The landscape session's "a controlled A/B is owed" note is STILL owed.
+★★ **TWO FINDINGS FILED AS NEW-53, neither attributed to NEW-50.** (a) Phase B's worst frame is
+**288.5 ms, reproducing to 0.08 % across seven boots**, where the baseline's was 97 ms -- the median
+improved 1.66x while the tail grew 3x. Being deterministic it is also the reproducible multi-area load
+this tree lacks. (b) ONE acid_box run read `ROT_EQ fail=5` / `full=12`; segmenting eleven boots shows it
+needs wiggle + playhead + gestures TOGETHER -- nineteen minutes of wiggle ALONE is clean, as is
+playing+gestures. **The old-build control was deliberately NOT run**: the failing condition needs human
+gesturing, so an old-vs-new comparison would differ in the gestures as much as in the firmware. What is
+missing is an INSTRUMENT, not a run.
+★★ **BENCH TRAP: acid_box's title label toggles `wiggle`** (an 8-knob 66 Hz sweep) through a 24 px
+extended click area. Hit by accident mid-gesture it stayed on for a whole run and was briefly mistaken
+for a NEW-50 silicon regression. The only tell is a BARE `wiggle=1` line -- the loopstat `wiggle=` slot
+is MICROSECONDS, so `wiggle=1` THERE means OFF. The two look identical and mean opposite things.
+★ **A second trap: the boot BANNER is not captured across the USB CDC drop after SW4**, so "no BOOT
+line" does NOT mean the board did not reset. `ACIDBOX_ROT ops=` and `ACIDBOX_VSYNC flips=` restart at 1
+and are the reliable witnesses -- diagnosing by the banner cost two wasted gesture runs.
 
 ★★ **SILICON, 2026-09-16 (bench): both halves ACCEPTED, and the one criterion that MISSED is
 now a measured number rather than an argument.** acid_box: `ACIDBOX_ENGINE=gpu`, gpu golden
