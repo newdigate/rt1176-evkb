@@ -186,6 +186,14 @@ teensy_add_executable(acid_box
 # used).  QEMU golden ACIDBOX_UI_SUM=0xBB2AEE59 -- the re-record for the
 # editor's own frame happened in a later task; routing code to flash did not
 # move a pixel by itself.
+# ★ SUPERSEDED 2026-09-17 by NEW-54 (top bar and SAW/SQR onto SynthUI widgets):
+# golden 0xBB2AEE59 -> 0x18B7B637, and the headroom above reads 2,900 / 2,756 /
+# 11,604 / 11,428 B.  The four numbers are annotated rather than replaced
+# because the paragraph is a dated merge measurement -- but note that THREE of
+# them did not move, which makes the one that did (the default build, +16 B)
+# easy to miss.  That +16 is one quantum of an instrument quantised to 16 bytes
+# (.text.itcm ends with ALIGN(16); see CLAUDE.md's 2026-09-17 block), so it is
+# indistinguishable from no change at all.
 # ★ One 2,048 B floor (the NEW-45 ASSERT below) guards all four builds, but
 # their headroom differs by about 4x -- in practice it guards the non-BT
 # builds, which is the right call: they are the tight ones, while the BT
