@@ -119,8 +119,8 @@ comment is corrected while it moves — the widget normalises glyph size on the
 **`mkbtn()` is deleted** with its last caller (the third commit), and with it
 this file's only use of `lv_button`.
 
-**Statics**: `playBtnLabel`, `bpmLabel`, `waveBtnLabel` → `playBtn`,
-`tempoSeg`, `waveTog`.
+**Statics**: `playBtnLabel`, `bpmLabel` → `playBtn`, `tempoSeg`;
+`waveBtnLabel` is deleted with no replacement (`cbWave` reads its event target).
 
 **Callbacks**: `cbPlay`, `cbStop`, `cbTempoUp`, `cbTempoDn` unchanged.
 `cbWave` is attached to `LV_EVENT_VALUE_CHANGED` (the toggle cycles its own
@@ -161,8 +161,11 @@ all-zeros anti-golden check stays. The gate count stays **141**.
 
 **5.2 The PLAY-lit witness.** The golden is the BOOT frame, taken before the
 script taps PLAY, and `PLAYING=1` is printed by `cbPlay` from the transport. So
-with PLAY's lit state now carrying meaning, a deleted or inverted `set_on()`
-would leave every existing assertion green. `PLAY_LIT=` is read back from the
+with PLAY's lit state now carrying meaning, a DELETED `set_on()` would leave
+every existing assertion green. (Corrected while writing the plan: an INVERTED
+one would not — it lights PLAY at boot, which changes the boot frame, so the
+golden catches that mutant by a different route. The deleted call is the one
+only a witness can see.) `PLAY_LIT=` is read back from the
 **widget** (`get_on`), not from the transport, so it cannot agree with
 `PLAYING=` by construction. Asserted by line number:
 
@@ -180,12 +183,14 @@ one):
 
 1. `set_on()` deleted → the readback prints `PLAY_LIT=0` after play → "never
    lit" must fire.
-2. `set_on(playBtn, !play)` → `PLAY_LIT=1` appears only at boot, BEFORE
-   `PLAYING=1`, and `PLAY_LIT=0` after it. An UNORDERED `grep -q '^PLAY_LIT=1$'`
-   would ACCEPT this mutant — the boot line satisfies it — so this is the demo
-   that shows the line-number ordering is load-bearing. Both new checks fail
-   on it (first line is not 0; no `PLAY_LIT=1` after `PLAYING=1`); the record
-   states which fired first and confirms the other by reordering.
+2. `set_on(playBtn, !play)` → a live run fails `FAIL: UI golden` FIRST (PLAY
+   lit at boot moves the boot frame, and the golden check precedes the gesture
+   checks) — recorded as such, because a demo caught by a pre-existing check
+   says nothing about the new one. The new checks are then exercised on that
+   same capture with its sum line patched back to the golden: the first-line
+   check must fire, an UNORDERED `grep -q '^PLAY_LIT=1$'` must exit 0 (it would
+   accept the mutant — the boot line satisfies it) and the ordered check must
+   exit 1. `run_qemu.sh` is not edited to stage any of this.
 
 **5.4 Fixture and vacuity.** `transcript_qemu.txt` is BOTH a curated ~630-line
 narrative AND the vacuity suite's fixture. It is **spliced** in every commit
