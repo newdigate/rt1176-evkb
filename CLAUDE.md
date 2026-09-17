@@ -675,6 +675,75 @@ re-run 141/141/0 and `LICENSE-AUDIT: PASS` after it. The seven SELF-BUILDING gat
 twelve SynthUI-linking ones were rebuilt BEFORE that sweep, because an `evkb.cmake` edit makes
 the self-building gates reconfigure inside their 120 s budget and read as `exit status 124`.
 
+✅ **Measured 2026-09-17: 141 gates discovered, 141 passed, 0 failed, 0 SKIP** (`gates: 141 passed`,
+exit 0; `-l` reports 141; the runner's own header reads `Running 141 QEMU gate(s)`), on the **NEW-54
+acid_box top bar** SOFTWARE close-out -- fully clean, no red to disposition, `rt1176:display/acid_box`
+green in 18 s, and EVERY member of the load-sensitivity class green in the sweep itself
+(`cm4_audio_test` 3 s, `cm4_wire_int_slave_test` 1 s, `m2_rx_demo[txaggr]` 23 s, `m2_uap_lwip[uap]`
+4 s, `bt_tone_test[media]` 51 s, `synthui_slide_toggle_test` 20 s). Vacuity **68/68** (two new
+negatives, `acb_play_never_lit_fails_by_name` and `acb_lit_at_boot_fails_by_name`), `LICENSE-AUDIT:
+PASS` after the sweep (120 manifests; `examples/display/acid_box` walked at 25759 dep paths),
+`BENCH-BUILDS: PASS` with both nm-diffs matching (`build-benchcheck-bench == build-bench`,
+`build-benchcheck-bt == build-bt`). **No SynthUI change and NO `evkb.cmake` pin bump**, so no push,
+no fresh-user cycle and no rebuild of the other SynthUI-linking examples was owed.
+★ **The gate count is UNCHANGED at 141** -- this moves acid_box's last stock-LVGL controls onto
+SynthUI widgets, it adds no capability and no gate. The UI golden moved three times, once per control
+commit, each recorded in `run_qemu.sh:290/294/299` beside the assertion it moved:
+`0xBB2AEE59` -> `0xE7711DD4` (PLAY/STOP became `synthui_panel_button`) -> `0x66D7CCFE` (tempo -/+
+became DOWN/UP panel buttons and the BPM label a `synthui_seven_segment`) -> **`0x18B7B637`**
+(SAW/SQR became a `synthui_slide_toggle`). Each was recorded from two bit-identical gate runs AND a
+no-touch frame dump whose FNV-1a equalled the printed sum, with the frame LOOKED AT before pinning.
+★ **The gpu golden `0xEA5AB843` is STALE until the NEW-54 bench.** It was measured on glass
+2026-09-16 (three boots bit-identical) on the pre-top-bar scene; the top bar changes the composited
+frame, so silicon owes a re-record. Two golden sets as always, never reconciled.
+★ **ITCM headroom, before -> after NEW-54**: `build` 2884 -> **2900**, `build-loopstat` 2756 ->
+**2756**, `build-bt` 11604 -> **11604**, `build-bench` 11412 -> **11428**. The pre-registered
+prediction (the default build moves by less than 300 B over the whole plan) **HELD**.
+★★ **AND THAT METRIC IS QUANTISED TO 16 BYTES, so `{+16, 0, 0, +16}` is ONE NULL RESULT wearing two
+faces.** `imxrt1176.ld:64` ends `.text.itcm` with `. = ALIGN(16)`; `.fini` (4 B) and `.ARM.exidx`
+(8 B) follow it in ITCM, so the headroom procedure reads `262144 - ALIGN16(itcm end) - 12` --
+verified in all four builds, whose `.text.itcm` sizes (259232 / 259376 / 250528 / 250704) are every
+one of them a multiple of 16. A constant minus a 16-aligned quantity can only move in multiples of
+16, and whether a given build spends its quantum is a function of its own residue, not of how much
+code changed. **Read a future acid_box headroom delta of +/-16 as NOISE; only a multiple of 32 is
+signal.** Worth writing down because this file quotes acid_box headroom figures throughout, and the
+same null result got framed three ways across NEW-54's three commits ("unmoved to the byte",
+"unmoved to the byte again", "+16 B") before the quantisation was noticed.
+★ **Deleting the last `lv_button` CALL SITE freed nothing, and `lv_button` is still linked.** The
+default image carries **19** `lv_button`/`lv_buttonmatrix` symbols -- 16 in ITCM totalling **1,940 B**
+(the bulk of it `lv_buttonmatrix_event`, 1,164 B) plus 100 B in DTCM -- because
+`lv_theme_default.c:789` and `:834` name `&lv_button_class` and `&lv_buttonmatrix_class` BY ADDRESS
+in `lv_obj_check_type` calls, and `--gc-sections` cannot follow past an address-taken class. Recorded
+so nobody repeats the experiment expecting to reclaim ITCM by removing the last use.
+★ **Three widget facts shaped the design, each found by READING the widget rather than assuming from
+its name, and each closed off the obvious port** (spec §2). `synthui_panel_button` has **no PAUSE
+glyph**, so the play/pause label swap could not carry over and PLAY's `on` state carries "playing"
+instead. `synthui_slide_toggle` paints an OPAQUE plate over its whole box and fixes its glyph colour
+at `#232526` with a `set_panel_color()` but NO glyph-colour setter, so matching the plate to
+acid_box's `#101820` ground would have left dark-on-darker legends -- hence the visible `0x6D7A85`
+plate. `synthui_seven_segment` scales on HEIGHT (`u = h/112`) and its width FOLLOWS ITS TEXT, neither
+fitting its box nor centring, so the tempo cluster widened and the readout is a fixed five-cell
+`"%3d.%d"` field ("99.0" is one cell narrower than "100.0").
+★★ **PLAY's lit state is invisible to every golden, which is why it has a witness.** The boot frame
+is captured BEFORE the gate taps PLAY, so a `set_on()` that never runs changes no pinned pixel.
+`PLAY_LIT=` is read back from the WIDGET (`synthui_panel_button_get_on`) where the poller sets it, so
+it cannot agree with the transport's `PLAYING=` by construction, and it is asserted BY LINE NUMBER.
+**DEMONSTRATED RED twice**: `set_on()` deleted -> `FAIL: PLAY never lit after the tap` **with the boot
+golden still GREEN** -- the mutant nothing else in the gate can see; `set_on(!play)` -> a live run
+fails `FAIL: UI golden` first (a lit PLAY changes the boot frame), and with the sum patched back,
+`FAIL: PLAY not dark at boot (first PLAY_LIT line: 'PLAY_LIT=1')`. **On that capture an unordered
+grep exits 0 and the ordered check exits 1**, which is the whole argument for asserting by line
+number rather than by presence.
+★★ **A CLAIM OF BIT-IDENTICAL STEP-2 RMS IS WITHDRAWN IN PLACE, on three captures' evidence.** Earlier
+paragraphs of `acid_box/transcript_qemu.txt` claimed the step-2 column reproduced bar-for-bar between
+re-recordings. Across NEW-54's three captures it read `0.3854` -> `0.3854` -> `0.3570` at bar 6, with
+other columns wiggling throughout (bar 4 column 7: 0.4175 -> 0.3984), so the middle capture's
+identity was luck. The gate asserts THRESHOLDS in that window and never magnitudes -- `< 0.005`
+before the edit, `> 0.02` after -- and that shape held across all three. Nothing in THIS file ever
+asserted those magnitudes (checked), so nothing here needed correcting; the transcript's own
+paragraphs did. ★ `touch_script.txt` is UNTOUCHED (SHA-256 still `d1bae9e7f117a6c1...`, empty diff vs
+master): PLAY's rect did not move, so the gate's tap at (1088,43) still lands.
+
 ✅ **Measured 2026-09-16: 141 gates discovered, 141 passed, 0 failed, 0 SKIP** (`gates: 141 passed`,
 exit 0; `-l` reports 141), on the **NEW-50 LedButton cue-damage** close-out -- fully clean, no red to
 disposition, and EVERY member of the load-sensitivity class green in the sweep itself
@@ -690,7 +759,8 @@ strips** of depth `ceil(R - (R-bw)/sqrt2) + 1` -- 9 px at the lane's 100 px key 
 whole 100 px key. Gate bounds re-derived from `synthui_led_button_math.h`: `cue` **10000 -> 900**
 (one strip, 100 x 9) and the overall `damage max` **10000 -> 6640** (the largest op is now press).
 Sequence-wide damage total 276492 -> 199924. ALL FOUR GOLDENS UNMOVED: `0xD474F06D`, `0x463C3371`,
-acid_box sw `0xBB2AEE59`, and gpu `0xEA5AB843` (silicon-only, not re-measured this session).
+acid_box sw `0xBB2AEE59` (superseded 2026-09-17 by NEW-54: `0x18B7B637`), and gpu `0xEA5AB843`
+(silicon-only, not re-measured this session; STALE since NEW-54 changed the composited frame).
 ★★ **NARROWING A DAMAGE BOX CAN BE A PESSIMISATION, and no golden or area bound can see it.**
 LVGL renders ONE PASS PER INVALIDATED AREA, and `lv_draw_rect` allocates a draw task BEFORE any clip
 test -- the rejection is per primitive in `lv_draw_sw_fill.c:56` / `lv_draw_sw_border.c:97`, after the
@@ -814,7 +884,8 @@ verified by RUNNING the gate against the GitHub-fetched ELF -- SynthUI cloned at
 new step editor (the 2x8 `synthui_led_button` lane -- LED=gate, red bezel=playhead, sunk=selected -- amber
 ACC and blue SLD keys, a `synthui_seven_segment` step readout between REWIND/FORWARD panel buttons) is
 driven by the SAME touch-script sequence the gate already ran; only the rendered frame changed, so only the
-UI golden moved, `0xE871BF09` -> `0xBB2AEE59`. The gpu golden (`0x2231070B`) is untouched here and is
+UI golden moved, `0xE871BF09` -> `0xBB2AEE59` (itself superseded 2026-09-17 by NEW-54's top bar:
+`0x18B7B637`). The gpu golden (`0x2231070B`) is untouched here and is
 re-recorded on silicon in Task 7, not yet done.
 ★ **ITCM headroom, all four configurations, before -> after the rework**: default 2,708 -> 2,884 B
 (259,260 B used), LOOPSTAT 2,564 -> 2,756 B (259,388 B used), `build-bt` 11,364 -> 11,604 B (250,540 B
