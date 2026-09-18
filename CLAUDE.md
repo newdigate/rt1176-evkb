@@ -757,6 +757,39 @@ above nominal** — it read 16 at every tempo from 128 to 500, because presents 
 "~155 BPM" inferred from Δflips=14 in the arm-A re-run was soft, and only the direct test (readout
 set to 128.0 → starved stopped) is load-bearing there. ★ At 999 the seam is caught one poll-pair in
 twelve: `pass+starved` reached 13,964 against `ACIDBOX_BAR=1126`.
+★★ **NEW-53 FINDING A (the 288 ms `synthui_led_button_test` frame) RESOLVED 2026-09-18, and the filed
+hypothesis had the right trigger and the WRONG VICTIM.** The trigger holds: the sweep's first tick asks
+for 44 invalidates (Phase A leaves nine keys cued and its own lit pattern; the tick clears eight of
+them = 32 strips and re-lights twelve), `LV_INV_BUF_SIZE` (32) overflows and LVGL substitutes the whole
+screen. But that full RENDER is 227.5 ms and `g_fps_skip` DISCARDED it. The 288 ms sample is the NEXT
+frame, which rendered 6,552 px: its cost is `refr_sync_areas` — LVGL's DIRECT double-buffer sync
+copying the previous frame's rendered area (all 921,600 px) from the on-screen buffer into the draw
+buffer through `lv_memcpy`'s word loop over uncached SDRAM — **260 ms for 3.7 MB, 14 MB/s** with the
+panel scanning out (the v6 bench read 174 ms for the same copy with no scanout), plus a 12 ms vsync
+wait and 16 ms of strips. Five final-build boots agree to 0.05 %; two diagnostic boots to 0.03 %.
+★ **QEMU showed the structure before silicon was touched** — the new per-frame anatomy
+(`led_button_frame … px= sync_px= ev= inv= full= ticks=`, `sync_areas` read through `lvgl_private.h`
+at REFR_START) printed `ev=44 inv=1 full=1 px=921600` on the skipped frame and `sync_px=921600` on
+frame 0 there too, with fictitious durations (18 ms for the copy: host memcpy). Structure is
+machine-independent; the 288 is not. The host LCG replay predicted the 44 before either ran.
+★ **A full-screen change in the db pipeline costs ~515 ms over TWO refreshes** (227 render + 288
+sync), for any consumer that dirties more than 32 areas in a tick — or loads a screen. The test now
+discards BOTH transition frames and prints them as `led_button_transition`, so `led_button_fps`
+measures the sweep alone (`us_max` 85.4..85.6 ms — the lit-boundary frame: 8 strips + 11 halo boxes,
+every fourth tick, 74 ms mean against 25 ms steady-state) while the platform number stays in every
+run's output. Goldens, `delta_eq`, `damage_op`, `tasks_op` and `timeouts=0` unmoved on all seven boots.
+★ **The copy is NOT fixed, deliberately.** `lvgl_pxp_copy` (v6) does it in 13 ms and nothing in the
+db pipeline installs it — and nothing can, as is: the PXP writes X:=0 on every 32-bit output while the
+sw renderer's fills write X=0xFF (`lv_color_to_u32`), so a synced region would differ from a rendered
+one in a byte every db checksum hashes and `led_button_delta_crc` (synced + rendered) would stop
+equalling `led_button_fresh_crc` (all rendered). A byte-preserving accelerated sync (eDMA
+memory-to-memory, or a PXP ARGB8888 alpha-passthrough probe) is its own design with its own silicon
+probe: NEW-55.
+★ **The 128-byte printf truncation (the UAC2 P4 lesson) returned wearing a firmware face**: the
+~130-character transition line lost its `=1\n` and the next line ran on from `ticks`, byte-identical
+on three boots — deterministic, so it read as a firmware artefact until the BYTES were looked at. QEMU
+printed the same line whole only because its durations are shorter. Lines longer than ~120 characters
+print in two calls now.
 ★★ **THE INSTRUMENT NEW-53 SAID WAS MISSING NOW EXISTS, and it corrects NEW-53's own conclusion.**
 Tempo prints nothing, but `ACIDBOX_VSYNC flips` advances with WALL TIME while `ACIDBOX_BAR` advances
 with TEMPO, so **delta-flips-per-bar reconstructs the tempo history from a timestamp-free log**
@@ -909,7 +942,9 @@ of travel and NOT a number to quote. The landscape session's "a controlled A/B i
 ★★ **TWO FINDINGS FILED AS NEW-53, neither attributed to NEW-50.** (a) Phase B's worst frame is
 **288.5 ms, reproducing to 0.08 % across seven boots**, where the baseline's was 97 ms -- the median
 improved 1.66x while the tail grew 3x. Being deterministic it is also the reproducible multi-area load
-this tree lacks. (b) ONE acid_box run read `ROT_EQ fail=5` / `full=12`; segmenting eleven boots shows it
+this tree lacks. (RESOLVED 2026-09-18 -- see the NEW-53 FINDING A entry in the NEW-54 block: a 3.7 MB
+CPU double-buffer sync copy after a 44-area first tick, not a render; the sweep's own tail is 85 ms.)
+(b) ONE acid_box run read `ROT_EQ fail=5` / `full=12`; segmenting eleven boots shows it
 needs wiggle + playhead + gestures TOGETHER -- nineteen minutes of wiggle ALONE is clean, as is
 playing+gestures. **The old-build control was deliberately NOT run**: the failing condition needs human
 gesturing, so an old-vs-new comparison would differ in the gestures as much as in the firmware. What is

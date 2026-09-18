@@ -1,5 +1,5 @@
 === BOOT ===
-[APP: synthui_led_button_test] [VER: v1] [BUILD: Sep 16 2026 18:41:54]
+[APP: synthui_led_button_test] [VER: v1] [BUILD: Sep 18 2026 16:58:32]
 SYNTHUI_LED_BUTTON_BEGIN
 PANEL_OK
 led_button_scene=16 grid=4x4
@@ -15,5 +15,72 @@ led_button_tasks_op lit=10 press=12 cue=23 color=10
 led_button_vsync flips=73 isrs=73 timeouts=0
 crc_done
 PASS: SynthUI led_button render verified
-led_button_fps frames=64 mfps_med=76511 us_med=13070 us_min=5610 us_max=21549
-led_button_mem total=1045208 used_pct=2 max_used=14192 frag_pct=1
+led_button_fps frames=64 mfps_med=54141 us_med=18470 us_min=5838 us_max=70389
+led_button_transition i=0 us=145986 sync_us=188 render_us=145596 wait_us=0 px=921600 sync_px=0 ev=52 inv=1 full=1 ticks=2
+led_button_transition i=1 us=39078 sync_us=18797 render_us=20091 wait_us=0 px=6552 sync_px=921600 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=0 us=43593 sync_us=1829 render_us=41104 wait_us=1511 px=19376 sync_px=6552 ev=19 inv=19 full=0 ticks=1
+led_button_frame i=1 us=15925 sync_us=845 render_us=14986 wait_us=0 px=6552 sync_px=19376 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=2 us=26257 sync_us=470 render_us=25744 wait_us=0 px=9828 sync_px=6552 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=3 us=60458 sync_us=1548 render_us=58843 wait_us=0 px=24348 sync_px=9828 ev=26 inv=22 full=0 ticks=2
+led_button_frame i=4 us=15052 sync_us=1736 render_us=12419 wait_us=411 px=6552 sync_px=24348 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=5 us=32848 sync_us=535 render_us=32206 wait_us=0 px=20720 sync_px=6552 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=6 us=7620 sync_us=1030 render_us=6565 wait_us=0 px=7604 sync_px=20720 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=7 us=16963 sync_us=265 render_us=16581 wait_us=0 px=12704 sync_px=7604 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=8 us=43061 sync_us=621 render_us=42338 wait_us=0 px=22652 sync_px=12704 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=9 us=10272 sync_us=2777 render_us=7437 wait_us=2116 px=6552 sync_px=22652 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=10 us=55065 sync_us=432 render_us=54536 wait_us=0 px=24348 sync_px=6552 ev=26 inv=22 full=0 ticks=2
+led_button_frame i=11 us=18470 sync_us=3455 render_us=14987 wait_us=2471 px=6552 sync_px=24348 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=12 us=16167 sync_us=296 render_us=15827 wait_us=0 px=9828 sync_px=6552 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=13 us=52237 sync_us=1114 render_us=51062 wait_us=0 px=26344 sync_px=9828 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=14 us=9348 sync_us=1256 render_us=8023 wait_us=0 px=6552 sync_px=26344 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=15 us=35846 sync_us=460 render_us=35264 wait_us=0 px=17028 sync_px=6552 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=16 us=13990 sync_us=4652 render_us=9305 wait_us=3503 px=7604 sync_px=17028 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=17 us=17109 sync_us=201 render_us=16871 wait_us=0 px=12704 sync_px=7604 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=18 us=46551 sync_us=1279 render_us=45186 wait_us=0 px=24348 sync_px=12704 ev=26 inv=22 full=0 ticks=2
+led_button_frame i=19 us=11073 sync_us=1626 render_us=9414 wait_us=0 px=6552 sync_px=24348 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=20 us=60090 sync_us=483 render_us=59500 wait_us=0 px=26344 sync_px=6552 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=21 us=17074 sync_us=1574 render_us=15476 wait_us=0 px=6552 sync_px=26344 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=22 us=14238 sync_us=263 render_us=13935 wait_us=0 px=9828 sync_px=6552 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=23 us=36608 sync_us=384 render_us=36163 wait_us=0 px=22652 sync_px=9828 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=24 us=7482 sync_us=1723 render_us=5717 wait_us=1172 px=6552 sync_px=22652 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=25 us=28666 sync_us=271 render_us=28342 wait_us=0 px=18724 sync_px=6552 ev=26 inv=22 full=0 ticks=2
+led_button_frame i=26 us=8807 sync_us=1136 render_us=7562 wait_us=0 px=7604 sync_px=18724 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=27 us=19668 sync_us=206 render_us=19376 wait_us=0 px=12704 sync_px=7604 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=28 us=40476 sync_us=1668 render_us=38728 wait_us=0 px=26344 sync_px=12704 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=29 us=8936 sync_us=1036 render_us=7786 wait_us=0 px=6552 sync_px=26344 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=30 us=46301 sync_us=648 render_us=45491 wait_us=0 px=22652 sync_px=6552 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=31 us=16816 sync_us=2918 render_us=13864 wait_us=1737 px=6552 sync_px=22652 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=32 us=10268 sync_us=252 render_us=9929 wait_us=0 px=9828 sync_px=6552 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=33 us=26143 sync_us=1197 render_us=24897 wait_us=0 px=24348 sync_px=9828 ev=26 inv=22 full=0 ticks=2
+led_button_frame i=34 us=12924 sync_us=3099 render_us=9790 wait_us=1559 px=6552 sync_px=24348 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=35 us=24923 sync_us=310 render_us=24573 wait_us=0 px=20720 sync_px=6552 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=36 us=6386 sync_us=595 render_us=5759 wait_us=0 px=7604 sync_px=20720 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=37 us=8740 sync_us=129 render_us=8574 wait_us=0 px=12704 sync_px=7604 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=38 us=25861 sync_us=1201 render_us=24610 wait_us=0 px=22652 sync_px=12704 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=39 us=7366 sync_us=778 render_us=6516 wait_us=0 px=6552 sync_px=22652 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=40 us=30897 sync_us=292 render_us=30535 wait_us=0 px=24348 sync_px=6552 ev=26 inv=22 full=0 ticks=2
+led_button_frame i=41 us=5838 sync_us=815 render_us=4999 wait_us=0 px=6552 sync_px=24348 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=42 us=10251 sync_us=227 render_us=9996 wait_us=0 px=9828 sync_px=6552 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=43 us=22221 sync_us=370 render_us=21802 wait_us=0 px=26344 sync_px=9828 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=44 us=12044 sync_us=1025 render_us=10957 wait_us=0 px=7000 sync_px=26344 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=45 us=25971 sync_us=707 render_us=25219 wait_us=0 px=20876 sync_px=7000 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=46 us=9667 sync_us=541 render_us=9084 wait_us=0 px=9428 sync_px=20876 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=47 us=20230 sync_us=521 render_us=19672 wait_us=0 px=23376 sync_px=9428 ev=26 inv=22 full=0 ticks=2
+led_button_frame i=48 us=8008 sync_us=862 render_us=7117 wait_us=0 px=9828 sync_px=23376 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=49 us=19011 sync_us=314 render_us=18659 wait_us=0 px=26344 sync_px=9828 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=50 us=6637 sync_us=737 render_us=5872 wait_us=0 px=9828 sync_px=26344 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=51 us=58602 sync_us=5814 render_us=52731 wait_us=0 px=22652 sync_px=9828 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=52 us=7558 sync_us=977 render_us=6546 wait_us=0 px=6552 sync_px=22652 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=53 us=7794 sync_us=346 render_us=7420 wait_us=0 px=7000 sync_px=6552 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=54 us=42808 sync_us=769 render_us=41968 wait_us=0 px=22572 sync_px=7000 ev=26 inv=22 full=0 ticks=2
+led_button_frame i=55 us=17997 sync_us=6090 render_us=11875 wait_us=5365 px=9428 sync_px=22572 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=56 us=62247 sync_us=1219 render_us=60952 wait_us=0 px=25372 sync_px=9428 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=57 us=30645 sync_us=17285 render_us=13238 wait_us=16020 px=6552 sync_px=25372 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=58 us=9640 sync_us=264 render_us=9338 wait_us=0 px=6552 sync_px=6552 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=59 us=49235 sync_us=440 render_us=48674 wait_us=0 px=22652 sync_px=6552 ev=27 inv=23 full=0 ticks=2
+led_button_frame i=60 us=12997 sync_us=5734 render_us=7231 wait_us=4551 px=6552 sync_px=22652 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=61 us=19753 sync_us=314 render_us=19272 wait_us=0 px=9828 sync_px=6552 ev=16 inv=12 full=0 ticks=2
+led_button_frame i=62 us=70389 sync_us=1133 render_us=69191 wait_us=0 px=24348 sync_px=9828 ev=26 inv=22 full=0 ticks=2
+led_button_frame i=63 us=28866 sync_us=13741 render_us=15079 wait_us=12946 px=6552 sync_px=24348 ev=8 inv=8 full=0 ticks=1
+led_button_frame_max i=62 us=70389 sync_px=9828 px=24348 full=0
+led_button_mem total=1045264 used_pct=2 max_used=14236 frag_pct=1

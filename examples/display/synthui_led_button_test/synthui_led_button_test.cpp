@@ -58,13 +58,18 @@
  * trips that too -- the per-op maxima are still what NAME which setter
  * regressed, which is the reason they exist.
  * Phase B (after crc_done, ungated): a playhead cue sweep + LED chaser
- * across all 16 keys, measuring frame time (led_button_fps). */
+ * across all 16 keys, measuring frame time (led_button_fps) after the
+ * two-frame Phase A -> B transition is discarded and printed on its own
+ * (led_button_transition -- NEW-53 finding A, see the Phase B block), with
+ * every timed frame's anatomy (led_button_frame: sync / render / vsync wait,
+ * pixels rendered and copied, areas asked for and kept). */
 #include <Arduino.h>
 #include <string.h>
 #include <math.h>
 #include "Display.h"
 #include "lvgl_rt1176.h"
 #include "lvgl_mipi_panel.h"
+#include "lvgl_private.h"   /* disp->inv_p / inv_areas / sync_areas: the per-frame anatomy (NEW-53) */
 #include "synthui_led_button.h"
 
 #ifdef LED_BUTTON_EYEBALL_HOLD
@@ -380,23 +385,120 @@ static uint32_t delta_run_sequence(void)
 #define LED_BUTTON_FPS_MAX 512
 static uint32_t g_fps_us[LED_BUTTON_FPS_MAX];
 static volatile uint32_t g_fps_n = 0, g_fps_frames = 0;
-static volatile bool g_fps_timing = false, g_fps_skip = false;
+static volatile bool g_fps_timing = false;
+static volatile uint8_t g_fps_skip = 0;       /* rendered frames still to discard */
 static volatile bool g_fps_rendered = false;
 static volatile uint32_t g_fps_t0 = 0;
 static uint32_t g_anim_step = 0;
 
+/* NEW-53 finding A: the per-frame anatomy behind led_button_fps.  One record
+ * per TIMED refresh (plus the transition frames, below), splitting
+ * REFR_START -> REFR_READY into the three things a db-pipeline refresh does
+ * in order (lv_refr.c, lv_display_refr_timer): SYNC (refr_sync_areas -- wait
+ * for the previous flip, then copy the previous frame's rendered areas from
+ * the on-screen buffer into the one about to be drawn), RENDER (RENDER_START
+ * -> RENDER_READY) and the tail (flush + flip).  What is copied is read from
+ * the display's own sync_areas list at REFR_START, BEFORE the sync runs,
+ * which is why lvgl_private.h is included: no public API exposes it, and the
+ * copy is the CPU's builtin word loop over uncached SDRAM (lv_draw_buf_copy
+ * default handler; this example never installs lvgl_pxp_copy).  `inv` is
+ * disp->inv_p at REFR_START (after the 32-slot buffer's dedup and
+ * overflow-to-screen); `ev` counts LV_EVENT_INVALIDATE_AREA since the
+ * previous refresh (the requests BEFORE dedup, so ev=44 inv=1 full=1 reads
+ * "44 areas asked for, the buffer overflowed, the whole screen was
+ * substituted"); `ticks` is how many key_anim_cb calls fed this refresh.
+ *
+ * ★ THE TRANSITION IS TWO FRAMES, AND THE SECOND IS THE EXPENSIVE ONE.
+ * Phase A leaves nine keys cued and its own lit pattern; the sweep's first
+ * tick clears eight of them (32 strips) and re-lights twelve keys -- 44
+ * invalidates against a steady-state tick's 8 -- so LV_INV_BUF_SIZE (32)
+ * overflows and LVGL substitutes the whole screen.  Frame 1 renders it
+ * (MEASURED 2026-09-18: 227.5 ms, two boots).  Frame 2 then has to bring the
+ * OTHER buffer up to date before it can draw its 8 strips: refr_sync_areas
+ * copies 921,600 px through the word loop -- 260 ms, 14 MB/s with the panel
+ * scanning out (the v6 bench read 174 ms for the same copy with no scanout)
+ * -- plus a 12 ms vsync wait and 16 ms of strips: 288 ms, the us_max that
+ * NEW-53 filed as a deterministic tail, with px=6552 and sync_px=921600.
+ * A single skipped frame therefore discarded the render and TIMED the copy.
+ * Both are discarded now and printed as led_button_transition, so the
+ * platform cost of a full-screen change in this pipeline (~515 ms over two
+ * refreshes) stays on record in every run while led_button_fps measures the
+ * sweep alone.  Any consumer that dirties more than 32 areas in one tick pays
+ * the same two frames; the PXP copy (lvgl_pxp_copy, 13 ms/frame) is not a
+ * drop-in because it writes X:=0 where the sw renderer fills 0xFF, which
+ * every db-pipeline delta-equality guard would see. */
+#define LED_BUTTON_TRANSITION_FRAMES 2
+struct FrameStat {
+    uint32_t us, sync_us, render_us, wait_us, px, sync_px;
+    uint16_t ev, inv, ticks;
+    uint8_t  full;
+};
+static FrameStat g_frame[LED_BUTTON_FPS_MAX];
+static FrameStat g_frame_skipped[LED_BUTTON_TRANSITION_FRAMES];
+static FrameStat g_frame_cur;                 /* the refresh in flight */
+static volatile uint32_t g_frame_ev = 0, g_frame_ticks = 0;
+static uint32_t g_frame_t_render0 = 0, g_frame_t_render1 = 0;
+static uint32_t g_frame_wait0 = 0, g_frame_px0 = 0;
+
+static void frame_begin(lv_display_t *disp)
+{
+    FrameStat *f = &g_frame_cur;
+    memset(f, 0, sizeof *f);
+    f->ev    = (uint16_t)g_frame_ev;    g_frame_ev = 0;
+    f->ticks = (uint16_t)g_frame_ticks; g_frame_ticks = 0;
+    f->inv   = disp->inv_p;
+    const int32_t hres = lv_display_get_horizontal_resolution(disp);
+    const int32_t vres = lv_display_get_vertical_resolution(disp);
+    for (uint16_t i = 0; i < disp->inv_p; i++) {
+        const lv_area_t *a = &disp->inv_areas[i];
+        if (lv_area_get_width(a) == hres && lv_area_get_height(a) == vres) f->full = 1;
+    }
+    for (const lv_area_t *a = (const lv_area_t *)lv_ll_get_head(&disp->sync_areas);
+         a != NULL; a = (const lv_area_t *)lv_ll_get_next(&disp->sync_areas, a)) {
+        f->sync_px += (uint32_t)lv_area_get_size(a);
+    }
+    g_frame_wait0 = lvgl_mipi_panel_wait_us();
+    g_frame_px0   = lvgl_mipi_panel_flushed_px();
+    g_frame_t_render0 = g_frame_t_render1 = 0;
+}
+
+static void frame_end(FrameStat *out, uint32_t t0, uint32_t t1)
+{
+    *out = g_frame_cur;
+    out->us        = t1 - t0;
+    out->wait_us   = lvgl_mipi_panel_wait_us() - g_frame_wait0;
+    out->px        = lvgl_mipi_panel_flushed_px() - g_frame_px0;
+    out->sync_us   = g_frame_t_render0 ? g_frame_t_render0 - t0 : 0;
+    out->render_us = g_frame_t_render1 ? g_frame_t_render1 - g_frame_t_render0 : 0;
+}
+
+static void frame_inv_cb(lv_event_t *e)
+{
+    (void)e;
+    if (g_fps_timing) g_frame_ev++;
+}
+
 static void fps_refr_cb(lv_event_t *e)
 {
     switch (lv_event_get_code(e)) {
-    case LV_EVENT_REFR_START:   g_fps_t0 = micros(); break;
-    case LV_EVENT_RENDER_READY: g_fps_rendered = true; break;
+    case LV_EVENT_REFR_START:
+        g_fps_t0 = micros();
+        if (g_fps_timing) frame_begin(lv_display_get_default());
+        break;
+    case LV_EVENT_RENDER_START: g_frame_t_render0 = micros(); break;
+    case LV_EVENT_RENDER_READY: g_frame_t_render1 = micros(); g_fps_rendered = true; break;
     case LV_EVENT_REFR_READY:
         if (g_fps_rendered && g_fps_timing) {
-            if (g_fps_skip) g_fps_skip = false;
-            else {
+            const uint32_t t1 = micros();
+            if (g_fps_skip) {
+                g_fps_skip--;
+                frame_end(&g_frame_skipped[LED_BUTTON_TRANSITION_FRAMES - 1 - g_fps_skip], g_fps_t0, t1);
+            } else {
                 g_fps_frames++;
-                if (g_fps_n < LED_BUTTON_FPS_MAX)
-                    g_fps_us[g_fps_n++] = micros() - g_fps_t0;
+                if (g_fps_n < LED_BUTTON_FPS_MAX) {
+                    frame_end(&g_frame[g_fps_n], g_fps_t0, t1);
+                    g_fps_us[g_fps_n++] = t1 - g_fps_t0;
+                }
             }
         }
         g_fps_rendered = false;
@@ -405,10 +507,26 @@ static void fps_refr_cb(lv_event_t *e)
     }
 }
 
+/* Two printf calls per line, deliberately: the core's Serial printf formats
+ * through a 128-byte buffer and TRUNCATES past it (the UAC2 P4 lesson), and
+ * the full transition line runs to ~130 characters -- on the bench its
+ * "ticks=1\n" was cut and the next line ran on from "ticks", identically on
+ * three boots.  QEMU printed it whole only because its values are shorter. */
+static void frame_print(const char *tag, uint32_t i, const FrameStat *f)
+{
+    Serial1.printf("%s i=%lu us=%lu sync_us=%lu render_us=%lu wait_us=%lu",
+                   tag, (unsigned long)i, (unsigned long)f->us, (unsigned long)f->sync_us,
+                   (unsigned long)f->render_us, (unsigned long)f->wait_us);
+    Serial1.printf(" px=%lu sync_px=%lu ev=%u inv=%u full=%u ticks=%u\n",
+                   (unsigned long)f->px, (unsigned long)f->sync_px, (unsigned)f->ev,
+                   (unsigned)f->inv, (unsigned)f->full, (unsigned)f->ticks);
+}
+
 static void key_anim_cb(lv_timer_t *t)
 {
     (void)t;
     g_anim_step++;
+    g_frame_ticks++;
     const uint32_t head = g_anim_step % 16;
     for (int i = 0; i < 16; i++) {
         synthui_led_button_set_cue(g_key[i], i == (int)head);
@@ -422,13 +540,18 @@ static void key_fps_phase(const char *tag, uint32_t target_frames)
     if (!cbs_added) {
         lv_display_t *disp = lv_display_get_default();
         lv_display_add_event_cb(disp, fps_refr_cb, LV_EVENT_REFR_START, NULL);
+        lv_display_add_event_cb(disp, fps_refr_cb, LV_EVENT_RENDER_START, NULL);
         lv_display_add_event_cb(disp, fps_refr_cb, LV_EVENT_RENDER_READY, NULL);
         lv_display_add_event_cb(disp, fps_refr_cb, LV_EVENT_REFR_READY, NULL);
+        lv_display_add_event_cb(disp, frame_inv_cb, LV_EVENT_INVALIDATE_AREA, NULL);
         cbs_added = true;
     }
     g_fps_n = 0;
     g_fps_frames = 0;
-    g_fps_skip = true;
+    g_frame_ev = 0;
+    g_frame_ticks = 0;
+    memset(g_frame_skipped, 0, sizeof g_frame_skipped);
+    g_fps_skip = LED_BUTTON_TRANSITION_FRAMES;
     g_fps_timing = true;
 
     lv_timer_t *anim = lv_timer_create(key_anim_cb, 15, NULL);
@@ -464,6 +587,22 @@ static void key_fps_phase(const char *tag, uint32_t target_frames)
                    (unsigned long)s[n / 2],
                    (unsigned long)s[0],
                    (unsigned long)s[n - 1]);
+
+    /* NEW-53 finding A: the anatomy of the discarded transition frames, then
+     * of every timed frame, then the index of the worst.  Ungated like the fps
+     * line -- QEMU's durations are fiction, but ev/inv/full/px/sync_px are
+     * structure, and the same on both machines. */
+    for (uint32_t i = 0; i < LED_BUTTON_TRANSITION_FRAMES; i++)
+        frame_print("led_button_transition", i, &g_frame_skipped[i]);
+    uint32_t imax = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        frame_print("led_button_frame", i, &g_frame[i]);
+        if (g_frame[i].us > g_frame[imax].us) imax = i;
+    }
+    Serial1.printf("led_button_frame_max i=%lu us=%lu sync_px=%lu px=%lu full=%u\n",
+                   (unsigned long)imax, (unsigned long)g_frame[imax].us,
+                   (unsigned long)g_frame[imax].sync_px, (unsigned long)g_frame[imax].px,
+                   (unsigned)g_frame[imax].full);
 }
 
 void setup()

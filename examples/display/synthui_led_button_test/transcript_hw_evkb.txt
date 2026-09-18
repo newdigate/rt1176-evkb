@@ -108,5 +108,133 @@ can accumulate and 16 keys x 5 areas approaches LV_INV_BUF_SIZE = 32, past which
 LVGL invalidates the whole screen.  A full 720x1280 software render is the right
 order of magnitude for 288 ms.  UNVERIFIED; NEW-53 step 1 is to count areas per
 refresh, which can be done in QEMU without silicon.
+  (VERIFIED 2026-09-18, next section: the overflow is real and it is the
+  FIRST tick, not an accumulation of two -- Phase A's leftover state, not the
+  sweep -- and the 288 ms frame is not the full render at all.  The render is
+  227 ms and g_fps_skip discarded it; the 288 ms is the NEXT frame copying the
+  whole screen into the other buffer.)
 ★ Being deterministic, this is also the reproducible multi-area load that
 NEW-53's other half (an acid_box ROT_EQ failure) lacks.
+
+================================================================================
+NEW-53 FINDING A, 2026-09-18 -- the 288 ms frame is a 3.7 MB CPU COPY, not a render
+================================================================================
+Two images, same session, console on the MCU-Link VCOM, SW4 between boots.
+  DIAGNOSTIC build [BUILD: Sep 18 2026 16:24:19]: per-frame anatomy added
+    (led_button_frame / led_button_frame_skipped), one skipped frame as
+    before.  TWO boots.
+  FINAL build [BUILD: Sep 18 2026 16:58:32]: two transition frames discarded
+    and printed as led_button_transition, each line printed in two calls
+    (below).  FIVE boots across its two revisions (three of 16:39:00, two of
+    16:58:32; the revisions differ only in how the line is printed).
+
+=== THE MECHANISM, READ OFF THE DIAGNOSTIC BUILD (both boots, verbatim) ===
+
+led_button_fps frames=64 mfps_med=38461 us_med=26000 us_min=18617 us_max=288034
+led_button_frame_skipped i=0 us=227566 sync_us=39 render_us=227467 wait_us=0 px=921600 sync_px=0 ev=44 inv=1 full=1 ticks=1
+led_button_frame i=0 us=288034 sync_us=272333 render_us=15578 wait_us=11684 px=6552 sync_px=921600 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=45 us=85295 sync_us=15063 render_us=70013 wait_us=12744 px=23068 sync_px=5580 ev=19 inv=19 full=0 ticks=1
+  (boot 2: us_max=288049, skipped render_us=227514, frame 0 sync_us=272338 --
+   every field within 0.03 %)
+
+Read in order:
+  1. The SKIPPED frame asked for 44 areas (ev=44) in ONE tick (ticks=1),
+     LVGL's 32-slot inv buffer overflowed and substituted the screen (inv=1
+     full=1), and the whole 921,600 px were RENDERED: 227.5 ms.  g_fps_skip
+     discarded it, as designed.  Why 44: Phase A leaves NINE keys cued (the
+     LCG toggles cue on keys 0..12) and its own lit pattern; the sweep's first
+     tick clears eight of them (8 x 4 strips) and re-lights twelve keys.  A
+     steady-state tick is 8 areas.  Replayed on the host from the example's
+     own kKeys/LCG/tail (scratch lcg_replay.c) BEFORE the boot; the boot
+     agreed.
+  2. Frame 0 -- the 288 ms us_max -- rendered 6,552 px (two keys' bezel
+     rings).  Its cost is sync_us=272338: refr_sync_areas, LVGL's DIRECT
+     double-buffer sync, copying the previous frame's rendered area (all
+     921,600 px, sync_px) from the on-screen buffer into the one about to be
+     drawn, with lv_memcpy's word loop over uncached SDRAM.  260.6 ms once the
+     11.7 ms vsync wait inside it is taken out: 14.2 MB/s.  The v6 bench
+     (lvgl_pxp_copy_bench transcript, case 14, 8888) measured the same
+     lv_draw_buf_copy at 174 ms with no panel scanning out; the LCDIFv2's
+     221 MB/s of SDRAM reads are the difference.
+  3. Nothing else in 64 frames copies more than 24,568 px.  The next slowest
+     frames are the LIT-BOUNDARY ones (every fourth tick re-lights a third of
+     the bank: ev=19 = 8 strips + 11 halos), 85 ms, render 70 ms.
+
+QEMU showed the SAME structure before silicon was touched (ev=52 inv=1 full=1
+on the skipped frame -- two ticks there, QEMU's first refresh lands later --
+and sync_px=921600 on frame 0) with fictitious durations (18 ms for the copy:
+host memcpy speed).  Structure is machine-independent; the 288 is not.
+
+So NEW-50's transcript had the trigger right and the victim wrong: it
+predicted "a full 720x1280 software render" for the 288 ms; the render is 227
+ms and was never in the fps sample.  What the sample caught was the copy that
+a full render OBLIGES the next frame to make in this pipeline.  Both are
+platform costs of a full-screen change in the db pipeline: ~515 ms of dead UI
+over two refreshes, for ANY consumer that dirties more than 32 areas in a tick
+-- or loads a screen.
+
+=== THE FIX IN THE TEST, AND WHAT IT LEAVES ON RECORD ===
+
+The transition is a Phase A -> B artefact, not the sweep the fps criterion is
+about, and a one-frame skip discarded its render while TIMING its copy.  Both
+frames are now discarded and printed as led_button_transition, so the platform
+number stays in every run's output; led_button_fps measures the sweep alone.
+FINAL build, boot 2 of 16:58:32, verbatim:
+
+led_button_crc=0xD474F06D
+led_button_fresh_crc=0x463C3371
+led_button_delta_eq=PASS
+led_button_damage_op lit=1450 press=6640 cue=900 color=1450
+led_button_tasks_op lit=10 press=12 cue=23 color=10
+led_button_vsync flips=73 isrs=73 timeouts=0
+led_button_fps frames=64 mfps_med=36166 us_med=27650 us_min=19098 us_max=85536
+led_button_transition i=0 us=227619 sync_us=39 render_us=227519 wait_us=0 px=921600 sync_px=0 ev=44 inv=1 full=1 ticks=1
+led_button_transition i=1 us=287979 sync_us=272283 render_us=15576 wait_us=11649 px=6552 sync_px=921600 ev=8 inv=8 full=0 ticks=1
+led_button_frame i=0 us=29794 sync_us=13983 render_us=15735 wait_us=12629 px=6552 sync_px=6552 ev=8 inv=8 full=0 ticks=1
+led_button_frame_max i=33 us=85536 sync_px=6552 px=23068 full=0
+led_button_mem total=1045264 used_pct=2 max_used=14296 frag_pct=1
+
+  us_max over the five final-build boots: 85389 85634 85512 85348 85536
+  transition i=0 render_us: 227521 227473 227486 227485 227519
+  transition i=1 sync_us:   272260 272377 272401 272310 272283
+  Goldens 0xD474F06D / 0x463C3371, delta_eq=PASS, timeouts=0, damage_op and
+  tasks_op unchanged on every boot: the instrument moved no pixel.
+
+★ THE SWEEP'S OWN TAIL IS THE LIT BOUNDARY, 3x THE MEDIAN, EVERY FOURTH TICK.
+Over the three 16:39:00 boots (189 timed frames): the 141 steady-state frames
+(ev=8) average 25.3 ms; the 48 boundary frames (ev=19, 8 strips + 11 halo
+boxes) average 74.2 ms -- ~4.5 ms per 1450-px halo repaint, ten draw tasks
+each.  The vsync wait inside a frame averages 6.2 ms, max 16.0 (one refresh
+period), and is INCLUDED in us_*: the fps line measures REFR_START ->
+REFR_READY, and in the db pipeline that begins by waiting for the previous
+flip to land.  Median 27.7 ms is therefore ~21 ms of work.
+
+★ BENCH TRAP, FOUND ON THE 16:39:00 BUILD: the core's Serial printf formats
+through a 128-byte buffer and TRUNCATES past it (the UAC2 P4 lesson, met
+again).  The transition line runs to ~130 characters on silicon, so its
+"=1\n" was cut and the frame-0 line ran on from "ticks" -- byte-identical on
+three boots, so it read like a deterministic firmware artefact rather than a
+capture fault.  QEMU printed the same line whole only because its (fictitious)
+durations were shorter.  frame_print now prints each line in two calls.  A
+printf that silently truncates is the same class as the acid_box notes'
+mid-write final line: read a suspicious line's BYTES before theorising.
+
+★ The first boot after tools/rt1170-flash.sh carries no banner and here also
+lost its tail (SW4 pressed while it was still printing the table; 83 frame
+lines for two boots).  Both are capture facts, not firmware ones; the
+transition lines and led_button_frame_max are the freshness witnesses -- the
+old image cannot print them.
+
+=== WHAT IS NOT FIXED, AND WHY NOT HERE ===
+
+The copy itself.  lvgl_pxp_copy (v6) does this copy in 13 ms/frame and is
+installed by nothing in the db pipeline -- and it cannot simply be, because
+the PXP writes X:=0 on every 32-bit output (v6/v7, architectural) while the
+sw renderer's opaque fills write X=0xFF (lv_color_to_u32): a synced region
+would then differ from a rendered one in a byte every db-pipeline checksum
+hashes, and led_button_delta_crc (a mix of synced and rendered regions) would
+stop equalling led_button_fresh_crc (all rendered).  A byte-preserving
+accelerated sync -- eDMA memory-to-memory, or a PXP ARGB8888 probe that
+measures whether the alpha byte passes through -- is its own design with its
+own silicon probe, filed rather than improvised.  Until then: a full-screen
+change in the db pipeline costs ~227 + ~288 ms, and LV_INV_BUF_SIZE is 32.
