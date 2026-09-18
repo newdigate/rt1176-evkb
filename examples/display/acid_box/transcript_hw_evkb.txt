@@ -722,3 +722,70 @@ The next bench re-runs arm A and reads WHICH counter moves.
 4. KEEP THE RAW CAPTURE.  NEW-53's eleven boots cannot be re-analysed with the
    delta-flips instrument because only the narrative survives: this file carries
    two ROT_EQ lines and ZERO ACIDBOX_BAR lines.  Hence bench-captures/ above.
+
+================================================================================
+NEW-53 -- ROT_EQ SPLIT, ARM A RE-RUN: IT IS STARVATION  (bench 2026-09-18)
+================================================================================
+Image: build/acid_box.elf at evkb c841d6c, [BUILD: Sep 18 2026 12:02:03] -- the
+split-counter firmware, gated 0x18B7B637 in QEMU minutes before flashing.  gpu
+golden 0xA67828E9 UNMOVED by the split, as it must be (a console line changed,
+no pixel).  Board released after.
+
+THE QUESTION: NEW-54's arm A reached ROT_EQ fail=363 and the counter could not
+say whether the presented frame was WRONG or the check had merely NEVER
+FINISHED.  The split (c841d6c) made those two numbers.  This is the reading.
+
+THE ANSWER, in one line, taken at the end of a 2,829-bar run with the operator
+reproducing arm A (cutoff drags from the first bar, tempo tests to both rails,
+intermittent knob gestures throughout):
+
+    ACIDBOX_ROT_EQ pass=2910 mismatch=0 starved=2577 fail=2577 us=3163
+
+**mismatch=0 across 5,487 checks.  The picture was never wrong.**  Every one of
+the 2,577 failures was a check still armed when the next was armed -- a flip
+pending on every loop() pass it was given.  NEW-53 is a loop() SCHEDULING
+shortfall, not a rendering defect, and NEW-54's fail=363 (and NEW-53's original
+fail=5, carried since 2026-09-16 as a suspected rendering defect) now read the
+same way.  Raw per-bar witnesses: bench-captures/new53-witness-armA.csv
+(bar,flips,dflips,pass,mismatch,starved).
+
+--- TWO CONTRIBUTORS, BOTH loop() BUDGET, SEPARATED BY TWO HANDS-OFF WINDOWS ----
+Onset was at bar 124, delta-flips 16 (nominal ~128 BPM), under continuous
+cutoff dragging (1,803 CUTOFF samples by bar 522) -- so heavy GESTURES starve
+the check at nominal tempo.  Then the two windows that settled what persists:
+
+  hands off, tempo where the operator left it (delta-flips 14, ~155 BPM):
+      60 bars -> starved +37 of ~65 checks   STILL STARVING, no gestures at all
+  hands off, tempo returned to exactly 128.0 (delta-flips 16):
+      60 checks -> pass +60, starved +0     STOPPED DEAD
+
+**The "sticky state" NEW-54's arm A could not identify was the TEMPO the
+operator left it at.**  The per-bar check arms at step 8 and needs ten
+flip-free passes (80 sampled rows, 8 per pass) before the next step 8; a faster
+bar shrinks that budget below what this scene's loop() affords, with no gesture
+involved.  Gestures starve it transiently; an elevated tempo starves it
+persistently; returning to 128 recovers it at once.  That is why NEW-54's
+arm A "never recovered": its tempo tests ended above 128 and nobody put it back.
+And why its arm B (untouched from boot, tempo never moved) ran 1,762 bars clean.
+
+--- ★ THE BAR NUMBER UNDERCOUNTS AFTER ANY FAST-TEMPO EXCURSION ----------------
+pass+starved ran ~2 per printed bar after bar 300, and it is the BAR line that
+is wrong: the seam print needs two consecutive 33 ms polls to land exactly on
+steps 15 and 0, while the check arms on any single poll that lands on step 8.
+At 999 BPM a step lasts 15 ms and most seams are missed; at 128 BPM every step
+is sampled ~3.5 times and the two agree 1:1 (they did, to bar 300).  So
+pass+mismatch+starved is the honest bar count, and every ACIDBOX_BAR= number
+after a fast excursion -- NEW-54's "broke at 1694" included -- is a lower bound.
+
+--- WHAT THE SPLIT DID NOT CHANGE ---------------------------------------------
+gpu golden 0xA67828E9 (unmoved), GPU_ERR=0, VSYNC timeouts=0 and ROT errors=0
+throughout, full<=2 throughout.  The instrument is still that a check is
+counted a failure when it does not finish -- the split only says WHICH.
+
+--- WHAT NEW-53 IS NOW ---------------------------------------------------------
+A scheduling question with a measured, reversible trigger: at what tempo, and
+under what gesture load, does loop() stop affording ten flip-free passes per
+half bar -- and is the right fix a bigger chunk per pass, arming earlier than
+step 8, or accepting a per-bar check that spans bars.  Not a rendering issue.
+Finding A (the deterministic 288 ms frame in synthui_led_button_test) is
+untouched by any of this.

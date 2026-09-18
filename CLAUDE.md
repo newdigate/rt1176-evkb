@@ -730,6 +730,18 @@ green run leaves both counters 0, so no green gate could show which site feeds w
 firmware printed **`mismatch=1..6 starved=0`** and the gate named the mismatch path, where pre-split
 it could only say "failed during the run". The STARVED path stays QEMU-unreachable and is a silicon
 claim. The next acid_box bench reads WHICH counter moves under NEW-54's arm-A gestures.
+★★ **IT READ STARVED (bench 2026-09-18, same day): `pass=2910 mismatch=0 starved=2577` over 2,829
+bars reproducing arm A.** The picture was never wrong; NEW-53 is a `loop()` scheduling shortfall,
+and NEW-54's `fail=363` and NEW-53's original `fail=5` read the same way. **The "sticky state" was
+the TEMPO the operator left it at**: hands off at ~155 BPM still starved ~55 % of checks; hands off
+at exactly 128.0 starved ZERO of 60. The per-bar check arms at step 8 and needs ten flip-free
+passes before the next step 8 — a faster bar shrinks that budget; heavy gestures starve it
+transiently at nominal tempo (onset bar 124 under continuous cutoff drags). Fully reversible.
+★ **`ACIDBOX_BAR=` UNDERCOUNTS after any fast-tempo excursion**: the seam print needs two
+consecutive 33 ms polls to land on steps 15 and 0, the arm needs one poll on step 8, so at 999 BPM
+most seams are missed while checks still arm. `pass+mismatch+starved` is the honest bar count;
+every bar number after a fast excursion (NEW-54's "broke at 1694" included) is a lower bound.
+Witnesses: `examples/display/acid_box/bench-captures/new53-witness-armA.csv`.
 ★★ **THE INSTRUMENT NEW-53 SAID WAS MISSING NOW EXISTS, and it corrects NEW-53's own conclusion.**
 Tempo prints nothing, but `ACIDBOX_VSYNC flips` advances with WALL TIME while `ACIDBOX_BAR` advances
 with TEMPO, so **delta-flips-per-bar reconstructs the tempo history from a timestamp-free log**
