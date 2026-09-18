@@ -756,10 +756,16 @@ Replace `examples/display/lvgl_pxp_copy_bench/lvgl_pxp_copy_bench.cpp` with:
  *                                            has X=0xFF);  src=mixed: RGB
  *                                            identity, X==0xFF -- proves the
  *                                            override is what writes it
+ *   arm=pxp_affa  as pxp_aff but the surfaces declared PXP_ARGB8888 (OUT
+ *                 encoding 0x00, the one the RM describes as carrying an
+ *                 alpha component; pxp_aff's XRGB8888 is 0x04 RGB888).
+ *                 Same bytes in memory, so src=xff byte identity holds if
+ *                 the bit works at 0x00 -- the arm that separates "silicon
+ *                 ignores the bit" from "ignores it for RGB888".
  *   arm=edma      lvgl_edma_copy_rect        byte identity, any source
  *
  * CORRECTNESS (QEMU-gated): every arm MATCHes its contract on every case, by
- * name; the count is pinned (112).  TIMING (hardware-only): DWT cycles per
+ * name; the count is pinned (126).  TIMING (hardware-only): DWT cycles per
  * arm per case, plus ref_us for the lv_draw_buf_copy reference of the same
  * case.  QEMU's numbers are vacuous and the transcript says so.  Decision
  * rule (spec 2): the fastest byte-preserving arm under one refresh period
@@ -804,8 +810,8 @@ static constexpr Fmt FMTS[] = {
     { "8888", LV_COLOR_FORMAT_XRGB8888, 4u, 0xC3A5F00Du, 0x1E2D3C4Bu },
 };
 
-enum Arm : uint8_t { ARM_CPU_CLIB, ARM_PXP_X0, ARM_PXP_AFF, ARM_EDMA };
-static const char *const ARM_TAG[] = { "cpu_clib", "pxp_x0", "pxp_aff", "edma" };
+enum Arm : uint8_t { ARM_CPU_CLIB, ARM_PXP_X0, ARM_PXP_AFF, ARM_PXP_AFFA, ARM_EDMA };
+static const char *const ARM_TAG[] = { "cpu_clib", "pxp_x0", "pxp_aff", "pxp_affa", "edma" };
 enum Src : uint8_t { SRC_MIXED, SRC_XFF };          /* X byte: whatever the seed gives / forced 0xFF */
 static const char *const SRC_TAG[] = { "mixed", "xff" };
 enum Contract : uint8_t { CON_BYTES, CON_X0, CON_XFF };
@@ -818,6 +824,7 @@ static constexpr Run RUNS[] = {
     { ARM_PXP_X0,   SRC_MIXED, CON_X0,    false },   /* 565: CON_X0 is byte identity */
     { ARM_PXP_AFF,  SRC_XFF,   CON_BYTES, true  },
     { ARM_PXP_AFF,  SRC_MIXED, CON_XFF,   true  },
+    { ARM_PXP_AFFA, SRC_XFF,   CON_BYTES, true  },   /* OUT encoding 0x00 (ARGB8888) */
     { ARM_EDMA,     SRC_MIXED, CON_BYTES, false },
 };
 
@@ -902,14 +909,21 @@ static const char *run_arm(Arm arm, const Fmt &F, const Case &c, uint32_t *us) {
             memcpy(dp + r * stride, sp + r * stride, (size_t)c.w * F.bpp);
         break;
     case ARM_PXP_X0:
-    case ARM_PXP_AFF: {
-        const auto pxp_fmt = (F.bpp == 2u) ? PXP_RGB565 : PXP_XRGB8888;
+    case ARM_PXP_AFF:
+    case ARM_PXP_AFFA: {
+        /* pxp_affa declares the SAME bytes as ARGB8888 -- OUT encoding 0x00
+         * instead of XRGB8888's 0x04 RGB888 -- because RM 52.6.3 introduces
+         * OUT_CTRL[ALPHA] with "when generating an output buffer with an
+         * alpha component": a MISMATCH on pxp_aff alone could mean the bit
+         * is honoured only at 0x00, and this arm says which. */
+        const auto pxp_fmt = (F.bpp == 2u) ? PXP_RGB565
+                           : (arm == ARM_PXP_AFFA) ? PXP_ARGB8888 : PXP_XRGB8888;
         /* Offset-base sub-rect surfaces, the v7 idiom; 2880 fits uint16_t. */
         PXPSurface ssrc(const_cast<uint8_t *>(sp), c.w, c.h, pxp_fmt, (uint16_t)stride);
         PXPSurface sdst(dp, c.w, c.h, pxp_fmt, (uint16_t)stride);
         PXPOp op = PXP.op();
         op.source(ssrc).output(sdst);
-        if (arm == ARM_PXP_AFF) op.alphaOut(0xFF);
+        if (arm == ARM_PXP_AFF || arm == ARM_PXP_AFFA) op.alphaOut(0xFF);
         const PXPError pe = op.run();      /* synchronous: program + enable + wait */
         if (pe != PXP_OK) err = pxp_err_name(pe);
         break; }
@@ -1019,7 +1033,7 @@ Run:
 ```bash
 cd examples/display/lvgl_pxp_copy_bench && rm -rf build && cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake > /dev/null && cmake --build build 2>&1 | grep -E "error|text" ; ./run_qemu.sh > /tmp/bench_gate.txt 2>&1; grep -a -c "^CASE .* MATCH " pxp_copy_bench.uart; grep -a "MISMATCH\|ERR=\|SCANOUT\|EDMA_OK\|CASES=" pxp_copy_bench.uart | head
 ```
-Expected: `112` MATCH lines, no MISMATCH/ERR, `SCANOUT=1`, `EDMA_OK`, `CASES=112`. (The OLD gate script fails on the count — that is Step 4's job.) If `pxp_aff src=mixed` MISMATCHes in QEMU, Task 1's model change is wrong; if `edma` MISMATCHes, compare `GOT` against the `cpu_clib` line of the same case: an equal sum means the copy is right and the contract application is wrong, an unequal one means a band/offset bug — the host suite's cases are the first place to add the failing shape.
+Expected: `126` MATCH lines, no MISMATCH/ERR, `SCANOUT=1`, `EDMA_OK`, `CASES=126`. (The OLD gate script fails on the count — that is Step 4's job.) If `pxp_aff src=mixed` MISMATCHes in QEMU, Task 1's model change is wrong; if `edma` MISMATCHes, compare `GOT` against the `cpu_clib` line of the same case: an equal sum means the copy is right and the contract application is wrong, an unequal one means a band/offset bug — the host suite's cases are the first place to add the failing shape.
 
 - [ ] **Step 4: Rewrite the gate**
 
@@ -1037,7 +1051,7 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-# 112 cases, each a 3.7 MB fill + copy + checksum twice over: ~30 s in QEMU.
+# 126 cases, each a 3.7 MB fill + copy + checksum twice over: ~35 s in QEMU.
 QRUN_TIMEOUT="${QRUN_TIMEOUT:-90}"; export QRUN_TIMEOUT
 ELF="$DIR/$(gate_build_dir)/lvgl_pxp_copy_bench.elf"; OUT="$DIR/pxp_copy_bench.uart"
 rm -f "$OUT" "$DIR/pxp_copy_bench.dbg"
@@ -1073,13 +1087,14 @@ for i in $(seq 1 14); do
         check $i $f pxp_x0   mixed
         check $i $f edma     mixed
     done
-    check $i 8888 pxp_aff xff
-    check $i 8888 pxp_aff mixed
+    check $i 8888 pxp_aff  xff
+    check $i 8888 pxp_aff  mixed
+    check $i 8888 pxp_affa xff
 done
 grep -q "MISMATCH" "$OUT" && { echo "FAIL: at least one case mismatched"; exit 1; }
 grep -q " ERR=" "$OUT" && { echo "FAIL: at least one arm errored"; exit 1; }
 # The count pin catches a matrix edit that forgot the loops above.
-grep -q "^CASES=112$" "$OUT" || { echo "FAIL: case count"; exit 1; }
+grep -q "^CASES=126$" "$OUT" || { echo "FAIL: case count"; exit 1; }
 grep -q "COPY_BENCH_OK" "$OUT" || { echo "FAIL: bench verdict withheld"; exit 1; }
 # Timings are NOT asserted anywhere: hardware-only, vacuous in QEMU.
 [ -f "$DIR/pxp_copy_bench.dbg" ] || { echo "FAIL: no guest-error log"; exit 1; }
@@ -1191,13 +1206,14 @@ CASE i=14 f=8888 arm=cpu_clib src=mixed r=720x1280+0+0 REF=… GOT=… MATCH ref
 CASE i=14 f=8888 arm=pxp_x0   src=mixed … MATCH … us=~13000
 CASE i=14 f=8888 arm=pxp_aff  src=xff   … MATCH … us=~13000
 CASE i=14 f=8888 arm=pxp_aff  src=mixed … MATCH …
+CASE i=14 f=8888 arm=pxp_affa src=xff   … MATCH … us=~13000
 CASE i=14 f=8888 arm=edma     src=mixed … MATCH … us=?
 ```
-Every REF/GOT pair byte-identical between the two boots; zero MISMATCH/ERR. A `pxp_aff` MISMATCH refutes the alpha override (record it; eDMA carries §6); an `edma` MISMATCH or `EDMA_ERR` is a bug to fix before deciding (compare against `cpu_clib`'s GOT for the same case).
+Every REF/GOT pair byte-identical between the two boots; zero MISMATCH/ERR. A `pxp_aff` MISMATCH with `pxp_affa` MATCH means the bit works only at OUT encoding 0x00 (the handler then declares ARGB8888 surfaces -- same bytes); both MISMATCH refutes the alpha override (record it; eDMA carries §6); an `edma` MISMATCH or `EDMA_ERR` is a bug to fix before deciding (compare against `cpu_clib`'s GOT for the same case).
 
 - [ ] **Step 3: Apply the decision rule and write it down**
 
-Winner = the fastest byte-preserving arm (`pxp_aff` on the xff source, or `edma`) with `us < 33000` on `i=14 f=8888`. Append to `transcript_hw_evkb.txt` a section `NEW-55 PROBE, <date>` with: the build stamp, both boots' `i=14` lines for every arm, the `i=1`/`i=2` (16×16) and `i=10` (719×1) lines for every arm (the crossover inputs), the count of MATCH lines (`224` over two boots), the decision and the rule it followed, and the no-scanout v6 column beside the new scanout numbers. Commit: `git add examples/display/lvgl_pxp_copy_bench/transcript_hw_evkb.txt && git commit -m "lvgl_pxp_copy_bench: NEW-55 probe benched -- <winner> wins at <us> us per full frame (cpu_lv <ref_us>, cpu_clib <us>, pxp_x0 <us>, edma <us>), every arm MATCH on two boots"`.
+Winner = the fastest byte-preserving arm (`pxp_aff` on the xff source, `pxp_affa` if only the 0x00 encoding honours the bit -- then the handler declares ARGB8888 surfaces -- or `edma`) with `us < 33000` on `i=14 f=8888`. Append to `transcript_hw_evkb.txt` a section `NEW-55 PROBE, <date>` with: the build stamp, both boots' `i=14` lines for every arm, the `i=1`/`i=2` (16×16) and `i=10` (719×1) lines for every arm (the crossover inputs), the count of MATCH lines (`224` over two boots), the decision and the rule it followed, and the no-scanout v6 column beside the new scanout numbers. Commit: `git add examples/display/lvgl_pxp_copy_bench/transcript_hw_evkb.txt && git commit -m "lvgl_pxp_copy_bench: NEW-55 probe benched -- <winner> wins at <us> us per full frame (cpu_lv <ref_us>, cpu_clib <us>, pxp_x0 <us>, edma <us>), every arm MATCH on two boots"`.
 
 Then release the board: `tools/rt1170-flash.sh --unlock`.
 
