@@ -747,7 +747,7 @@ Replace `examples/display/lvgl_pxp_copy_bench/lvgl_pxp_copy_bench.cpp` with:
  * X:=0.  NEW-55 (2026-09-18) turned that into the probe that picks the db
  * pipeline's sync copy: FOUR ARMS, each with ITS OWN BYTE CONTRACT, timed
  * with the panel SCANNING OUT (the v6 numbers had no scanout and read 174 ms
- * where the pipeline reads 260 for the same full-frame copy).
+ * where the pipeline reads 260 for the same full-frame copy).  FIVE arms.
  *
  *   arm=cpu_clib  newlib memcpy per row      byte identity   (the CPU floor)
  *   arm=pxp_x0    PXP.blit                   RGB identity, X:=0 (v7's contract)
@@ -765,7 +765,7 @@ Replace `examples/display/lvgl_pxp_copy_bench/lvgl_pxp_copy_bench.cpp` with:
  *   arm=edma      lvgl_edma_copy_rect        byte identity, any source
  *
  * CORRECTNESS (QEMU-gated): every arm MATCHes its contract on every case, by
- * name; the count is pinned (126).  TIMING (hardware-only): DWT cycles per
+ * name; the count is pinned (140).  TIMING (hardware-only): DWT cycles per
  * arm per case, plus ref_us for the lv_draw_buf_copy reference of the same
  * case.  QEMU's numbers are vacuous and the transcript says so.  Decision
  * rule (spec 2): the fastest byte-preserving arm under one refresh period
@@ -825,6 +825,7 @@ static constexpr Run RUNS[] = {
     { ARM_PXP_AFF,  SRC_XFF,   CON_BYTES, true  },
     { ARM_PXP_AFF,  SRC_MIXED, CON_XFF,   true  },
     { ARM_PXP_AFFA, SRC_XFF,   CON_BYTES, true  },   /* OUT encoding 0x00 (ARGB8888) */
+    { ARM_PXP_AFFA, SRC_MIXED, CON_XFF,   true  },   /* both rows: honoured at 0x00 vs forwards the PS alpha */
     { ARM_EDMA,     SRC_MIXED, CON_BYTES, false },
 };
 
@@ -1033,7 +1034,7 @@ Run:
 ```bash
 cd examples/display/lvgl_pxp_copy_bench && rm -rf build && cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.cmake > /dev/null && cmake --build build 2>&1 | grep -E "error|text" ; ./run_qemu.sh > /tmp/bench_gate.txt 2>&1; grep -a -c "^CASE .* MATCH " pxp_copy_bench.uart; grep -a "MISMATCH\|ERR=\|SCANOUT\|EDMA_OK\|CASES=" pxp_copy_bench.uart | head
 ```
-Expected: `126` MATCH lines, no MISMATCH/ERR, `SCANOUT=1`, `EDMA_OK`, `CASES=126`. (The OLD gate script fails on the count — that is Step 4's job.) If `pxp_aff src=mixed` MISMATCHes in QEMU, Task 1's model change is wrong; if `edma` MISMATCHes, compare `GOT` against the `cpu_clib` line of the same case: an equal sum means the copy is right and the contract application is wrong, an unequal one means a band/offset bug — the host suite's cases are the first place to add the failing shape.
+Expected: `140` MATCH lines, no MISMATCH/ERR, `SCANOUT=1`, `EDMA_OK`, `CASES=140`. (The OLD gate script fails on the count — that is Step 4's job.) If `pxp_aff src=mixed` MISMATCHes in QEMU, Task 1's model change is wrong; if `edma` MISMATCHes, compare `GOT` against the `cpu_clib` line of the same case: an equal sum means the copy is right and the contract application is wrong, an unequal one means a band/offset bug — the host suite's cases are the first place to add the failing shape.
 
 - [ ] **Step 4: Rewrite the gate**
 
@@ -1041,7 +1042,7 @@ Replace `examples/display/lvgl_pxp_copy_bench/run_qemu.sh` with:
 
 ```sh
 #!/bin/sh
-# lvgl_pxp_copy_bench -- four sync-copy arms against LVGL's lv_draw_buf_copy,
+# lvgl_pxp_copy_bench -- five sync-copy arms against LVGL's lv_draw_buf_copy,
 # each on its own byte contract (NEW-55; v7's PXP contract kept as arm=pxp_x0).
 # Demonstrated RED (NEW-55): the edma arm's lines stripped from the fixture
 # and a MISMATCH injected on a pxp_aff line both fail by name (vacuity suite).
@@ -1051,7 +1052,7 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-# 126 cases, each a 3.7 MB fill + copy + checksum twice over: ~35 s in QEMU.
+# 140 cases, each a 3.7 MB fill + copy + checksum twice over: ~30 s in QEMU.
 QRUN_TIMEOUT="${QRUN_TIMEOUT:-90}"; export QRUN_TIMEOUT
 ELF="$DIR/$(gate_build_dir)/lvgl_pxp_copy_bench.elf"; OUT="$DIR/pxp_copy_bench.uart"
 rm -f "$OUT" "$DIR/pxp_copy_bench.dbg"
@@ -1090,43 +1091,22 @@ for i in $(seq 1 14); do
     check $i 8888 pxp_aff  xff
     check $i 8888 pxp_aff  mixed
     check $i 8888 pxp_affa xff
+    check $i 8888 pxp_affa mixed
 done
 grep -q "MISMATCH" "$OUT" && { echo "FAIL: at least one case mismatched"; exit 1; }
 grep -q " ERR=" "$OUT" && { echo "FAIL: at least one arm errored"; exit 1; }
 # The count pin catches a matrix edit that forgot the loops above.
-grep -q "^CASES=126$" "$OUT" || { echo "FAIL: case count"; exit 1; }
+grep -q "^CASES=140$" "$OUT" || { echo "FAIL: case count"; exit 1; }
 grep -q "COPY_BENCH_OK" "$OUT" || { echo "FAIL: bench verdict withheld"; exit 1; }
 # Timings are NOT asserted anywhere: hardware-only, vacuous in QEMU.
 [ -f "$DIR/pxp_copy_bench.dbg" ] || { echo "FAIL: no guest-error log"; exit 1; }
 grep -q "guest" "$DIR/pxp_copy_bench.dbg" && { echo "FAIL: guest errors"; exit 1; }
-echo "PASS: four sync-copy arms match their contracts across the matrix"
+echo "PASS: five sync-copy arms match their contracts across the matrix"
 ```
 
 Run: `./run_qemu.sh | tail -1; echo "gate=$?"` → `PASS…`, `gate=0`. Note the wall time; it must stay well under the runner's 120 s budget.
 
-- [ ] **Step 5: The fake QEMU must create the `-D` file**
-
-In `tools/gate-vacuity.test.sh:48-59`, replace the fake-qemu heredoc with:
-
-```sh
-cat > "$WORK/fake-qemu" <<'FAKE'
-#!/bin/sh
-target=""; dbg=""; prev=""
-for a in "$@"; do
-    case "$a" in file:*) [ "$prev" = "-serial" ] && target="${a#file:}" ;; esac
-    [ "$prev" = "-D" ] && dbg="$a"
-    prev="$a"
-done
-# A real QEMU creates its -D log at start; gates that assert the log exists
-# (lvgl_pxp_copy_bench) would otherwise fail for the harness's reason.
-[ -n "$dbg" ] && : > "$dbg"
-if [ -n "${FAKE_CAPTURE:-}" ]; then
-    [ -n "$target" ] && cat "$FAKE_CAPTURE" > "$target"
-    sleep 300      # qrun's gtimeout and the gate's own reap both bound this
-fi
-exit 0
-FAKE
-```
+- [ ] **Step 5: (retired) the fake QEMU and the `-D` log** — `tools/qrun` intercepts `-D` and creates the log itself before the (real or fake) QEMU runs, so the bench gate's `.dbg` assertion already holds under vacuity replay; nothing to change in the fake (a branch was written, found inert in review, and dropped).
 
 - [ ] **Step 6: Re-capture the fixture and add the vacuity section**
 
@@ -1178,7 +1158,7 @@ Expected: **73** PASS (70 + the three new), no FAIL. ~18 min; nothing else runni
 - [ ] **Step 8: Commit**
 
 ```bash
-git add examples/display/lvgl_pxp_copy_bench tools/gate-vacuity.test.sh && git commit -m "lvgl_pxp_copy_bench: four sync-copy arms (newlib memcpy, PXP X:=0, PXP alphaOut 0xFF, eDMA bands) each on its own byte contract, panel scanning out, 112 cases pinned; fake-qemu creates the -D log; two vacuity negatives (NEW-55)"
+git add examples/display/lvgl_pxp_copy_bench tools/gate-vacuity.test.sh && git commit -m "lvgl_pxp_copy_bench: five sync-copy arms (newlib memcpy, PXP X:=0, PXP alphaOut 0xFF on RGB888 and on ARGB8888, eDMA bands) each on its own byte contract, panel scanning out, 140 cases pinned; two vacuity negatives (NEW-55)"
 ```
 
 ---
@@ -1207,9 +1187,10 @@ CASE i=14 f=8888 arm=pxp_x0   src=mixed … MATCH … us=~13000
 CASE i=14 f=8888 arm=pxp_aff  src=xff   … MATCH … us=~13000
 CASE i=14 f=8888 arm=pxp_aff  src=mixed … MATCH …
 CASE i=14 f=8888 arm=pxp_affa src=xff   … MATCH … us=~13000
+CASE i=14 f=8888 arm=pxp_affa src=mixed … MATCH …
 CASE i=14 f=8888 arm=edma     src=mixed … MATCH … us=?
 ```
-Every REF/GOT pair byte-identical between the two boots; zero MISMATCH/ERR. A `pxp_aff` MISMATCH with `pxp_affa` MATCH means the bit works only at OUT encoding 0x00 (the handler then declares ARGB8888 surfaces -- same bytes); both MISMATCH refutes the alpha override (record it; eDMA carries §6); an `edma` MISMATCH or `EDMA_ERR` is a bug to fix before deciding (compare against `cpu_clib`'s GOT for the same case).
+Every REF/GOT pair byte-identical between the two boots; zero MISMATCH/ERR. `pxp_affa` has two rows: both MATCH means the bit is honoured at OUT encoding 0x00 (if `pxp_aff` MISMATCHed, the handler then declares ARGB8888 surfaces -- same bytes); `xff` MATCH with `mixed` MISMATCH means 0x00 merely forwards the PS alpha byte (still byte-identical for LVGL's 0xFF buffers, but a different mechanism -- record it as such); every alpha row MISMATCH refutes the override (record it; eDMA carries §6); an `edma` MISMATCH or `EDMA_ERR` is a bug to fix before deciding (compare against `cpu_clib`'s GOT for the same case).
 
 - [ ] **Step 3: Apply the decision rule and write it down**
 
