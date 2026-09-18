@@ -118,14 +118,15 @@ gate_require_capture "$OUT"
 echo "==== captured UART ===="; cat "$OUT"
 
 # THE CAPTURE THE ASSERTIONS PARSE.  The reap can cut the FINAL line mid-token
-# -- a last "ACIDBOX_ROT_EQ pass=7 fail=0 us=" with no digits, or a vsync line
-# ending "timeouts=" -- and every per-line witness check below would then report
-# a named failure the firmware never had.  A final line with no terminator is
-# not evidence either way, so it is dropped here (the $(...) strips a trailing
-# \n, so a complete capture compares empty and is copied whole).  The existence
-# check and the printed capture above used the raw capture; from here on EVERY
-# assertion reads $OUT, which names the parsed copy.  The bare `echo` ends the
-# printed capture's cut line, or the verdict below would be glued onto it
+# -- a last "ACIDBOX_ROT_EQ pass=7 mismatch=0 starved=0 fail=0 us=" with no
+# digits, or a vsync line ending "timeouts=" -- and every per-line witness
+# check below would then report a named failure the firmware never had.  A
+# final line with no terminator is not evidence either way, so it is dropped
+# here (the $(...) strips a trailing \n, so a complete capture compares empty
+# and is copied whole).  The existence check and the printed capture above used
+# the raw capture; from here on EVERY assertion reads $OUT, which names the
+# parsed copy.  The bare `echo` ends the printed capture's cut line, or the
+# verdict below would be glued onto it
 # (measured: "...fail=0 us=FAIL: ...", which no ^FAIL: reader can see).
 OUTP=$(gate_capture_path "$DIR" acid_box.parse)
 gate_tmp "$OUTP"
@@ -205,10 +206,50 @@ ROT_FULL=$(printf '%s\n' "$ROT_LAST" | sed 's/.* full=\([0-9]*\).*/\1/')
 # largest SINGLE-PASS stall of the last check (the boot check's whole cost; a
 # per-bar check's costliest chunk), printed for the silicon bench and never
 # gated (QEMU time is a fiction).
-grep -qE "^ACIDBOX_ROT_EQ pass=[1-9][0-9]* fail=0 us=[0-9]+\r?$" "$OUT" \
+# NEW-53: fail is the SUM of two things that mean different things, printed
+# components-then-total so the " fail=0 us=" anchor below stays contiguous.
+grep -qE "^ACIDBOX_ROT_EQ pass=[1-9][0-9]* mismatch=0 starved=0 fail=0 us=[0-9]+\r?$" "$OUT" \
     || { echo "FAIL: rotation equality guard line missing"; exit 1; }
+# NEW-53: WHICH failure.  `mismatch` = rot_eq_rows() found a sampled row where
+# the PRESENTED buffer differs from a CPU rotation of the canvas -- the picture
+# is wrong (acid_box.cpp:929 boot, :971 per bar).  `starved` = a check was still
+# armed when the next was armed: a flip was pending on every pass it was given
+# and it NEVER FINISHED (:942) -- loop() did not get enough flip-free passes.
+# Both are failures (a guard that quietly stops finishing must not read like
+# one that keeps passing), but a rendering defect and a scheduling shortfall are
+# different faults, and until NEW-54's bench the counter could not say which.
+# THESE RUN BEFORE THE ` fail=0 us=` CHECK BELOW, and the order is the whole
+# point: fail is the DERIVED SUM, so a real mismatch or starve ALSO carries
+# fail>0 on the same line.  Behind that check these could only ever fire on a
+# capture whose fail disagreed with its components -- which the firmware cannot
+# print.  MEASURED in review, with the ordering the other way round: captures
+# shaped `mismatch=1 ... fail=1` and `starved=1 ... fail=1` both printed the
+# generic "failed during the run", i.e. the gate could not say which fault it
+# saw on any real data, which was this change's entire purpose.
+grep -E "^ACIDBOX_ROT_EQ " "$OUT" | grep -vqE " mismatch=0 " \
+    && { echo "FAIL: rotation equality guard saw a MISMATCH -- the presented frame differed from the canvas"; exit 1; }
+grep -E "^ACIDBOX_ROT_EQ " "$OUT" | grep -vqE " starved=0 " \
+    && { echo "FAIL: rotation equality guard was STARVED -- a check never reached a verdict"; exit 1; }
+# The historic catch-all, kept BEHIND the two by-name checks -- and it is not
+# decoration there.  The two above name every fault the CURRENT firmware can
+# report, so what reaches this one is a line whose fail DISAGREES with its
+# components (`mismatch=0 starved=0 fail=1`): the shape a regression that
+# re-introduced a STORED s_rotEqFail would print, incremented somewhere the
+# component counters are not.  That is the sum invariant in its negative form,
+# placed where it can actually fire -- which is why a separate sum check below
+# would be redundant rather than merely unreachable.  It is also the
+# pre-existing vacuity case's mutation (fail alone, 0 -> 1), which is how that
+# case still lands on this message.
 grep -E "^ACIDBOX_ROT_EQ " "$OUT" | grep -vqE " fail=0 us=[0-9]+\r?$" \
     && { echo "FAIL: rotation equality guard failed during the run"; exit 1; }
+# NO SUM CHECK HERE, deliberately.  fail == mismatch + starved holds BY
+# CONSTRUCTION: the firmware DERIVES fail in the print (there is no stored
+# s_rotEqFail any more), so no capture this firmware can produce violates it --
+# the guarantee is the derivation, not a gate check.  One was written here and
+# deleted in review as REDUNDANT: the only violating shape is
+# `mismatch=0 starved=0 fail>0`, and the catch-all above already names it (and
+# is what the pre-existing vacuity case demonstrates).  A sum check would add a
+# second message for a case already covered, and could fire on nothing else.
 EQ_PASS=$(grep -E "^ACIDBOX_ROT_EQ " "$OUT" | tail -1 | tr -d '\r' | sed 's/.*pass=\([0-9]*\).*/\1/')
 # Bars counted only up to the LAST equality line: the reap can land between a
 # bar line and the guard line that follows it, and that bar is not evidence

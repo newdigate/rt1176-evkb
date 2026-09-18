@@ -690,6 +690,17 @@ i.e. loop() load, STARVATION IS AT LEAST AS PLAUSIBLE AS A RENDERING FAULT.
 ★ ACTION: split the counter into mismatch= and starved=.  Until then NO acid_box
 ROT_EQ fail>0 reading can be attributed to either cause -- NEW-53's fail=5
 included, which has been carried as a suspected rendering defect since 2026-09-16.
+★ DONE 2026-09-18 (NEW-53, first action), and the count above was WRONG: there
+are THREE increment sites, not two.  rot_equality_check_boot() at :922 (:929
+after the split) also incremented it, and it is a MISMATCH -- a synchronous
+check of all 80 rows cannot starve.  The line now reads
+`pass= mismatch= starved= fail= us=` with fail the DERIVED sum, so every capture
+above stays comparable; the gate names each fault separately and does so BEFORE
+the fail=0 catch-all, because fail is the sum and a real fault carries fail>0 on
+the same line.  Demonstrated on a REAL defect, not a doctored capture (the f7
+recipe, port made to forget the previous present's damage): six per-bar checks
+read `mismatch=1..6 starved=0`, which pre-split was an unattributable fail=1..6.
+The next bench re-runs arm A and reads WHICH counter moves.
 
 --- BENCH-INSTRUMENT TRAPS MET THIS SESSION (all the analyst's, not the board's)
 1. READING A LIVE CAPTURE WITHOUT DROPPING THE FINAL LINE MANUFACTURES FAILURES.

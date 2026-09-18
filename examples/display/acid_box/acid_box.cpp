@@ -809,6 +809,13 @@ static_assert((uint32_t)UI_W == PANEL_HEIGHT && (uint32_t)UI_H == PANEL_WIDTH,
  * exhaustive one.  The formula here is written out on purpose rather than
  * calling the port's helper -- a guard that shares the code it checks is not
  * a check.
+ *   fail= is the SUM of two counters that mean different things.  mismatch=
+ *   is a real one -- a sampled row differed (the boot check, or a per-bar
+ *   chunk).  starved= is a check that was still armed when the next was armed:
+ *   a flip was pending on every pass it was given and it never reached a
+ *   verdict.  Both are failures, but a wrong picture and a loop() that could
+ *   not find a flip-free pass are different faults; NEW-54's bench reached
+ *   fail=363 under knob and tempo gestures and could not say which (NEW-53).
  *
  * WHY NO RENDER CAN INTERVENE: every compare runs from setup() (after the
  * boot frame) or from audio_probe_poll(), which loop() and idleUi() run AFTER
@@ -880,7 +887,7 @@ static_assert((uint32_t)UI_W == PANEL_HEIGHT && (uint32_t)UI_H == PANEL_WIDTH,
 #define ROT_EQ_CHUNK  8u                               /* sampled rows per loop pass */
 static_assert(PANEL_HEIGHT % ROT_EQ_STRIDE == 0,
               "the sampled rows must cover the panel to its last stride");
-static uint32_t s_rotEqPass = 0, s_rotEqFail = 0, s_rotEqUs = 0;
+static uint32_t s_rotEqPass = 0, s_rotEqMismatch = 0, s_rotEqStarved = 0, s_rotEqUs = 0;
 /* The incremental check in progress (touched from the loop thread only). */
 static bool     s_rotEqActive = false;   /* armed, no verdict yet */
 static bool     s_rotEqOk     = true;    /* every chunk so far matched */
@@ -919,20 +926,20 @@ ROTWIT_FN static void rot_equality_check_boot(void)
 {
     const uint32_t t0 = micros();            /* the flip_sync() wait is part of the cost */
     lvgl_mipi_panel_flip_sync();
-    if (rot_eq_rows(0, ROT_EQ_ROWS)) s_rotEqPass++; else s_rotEqFail++;
+    if (rot_eq_rows(0, ROT_EQ_ROWS)) s_rotEqPass++; else s_rotEqMismatch++;
     s_rotEqUs = micros() - t0;               /* one pass: the whole check */
 }
 
 /* Arms a per-bar check.  A check STILL ACTIVE when the next is armed never
  * reached a verdict -- a flip was pending on every pass it was given -- and it
- * is counted as a FAIL here, never
+ * is counted as STARVED here (and so in fail, the sum), never
  * silently dropped: a guard that quietly stops finishing would otherwise read
  * exactly like a guard that keeps passing.  Its largest pass so far becomes
  * us=, so the line's us always belongs to the last verdict counted. */
 ROTWIT_FN static void rot_equality_begin(void)
 {
     if (s_rotEqActive) {
-        s_rotEqFail++;
+        s_rotEqStarved++;
         s_rotEqUs = s_rotEqMaxUs;
     }
     s_rotEqActive = true;
@@ -961,7 +968,7 @@ ROTWIT_FN static void rot_equality_step(void)
     const uint32_t us = micros() - t0;
     if (us > s_rotEqMaxUs) s_rotEqMaxUs = us;
     if (!s_rotEqOk || s_rotEqRow >= ROT_EQ_ROWS) {
-        if (s_rotEqOk) s_rotEqPass++; else s_rotEqFail++;
+        if (s_rotEqOk) s_rotEqPass++; else s_rotEqMismatch++;
         s_rotEqUs     = s_rotEqMaxUs;
         s_rotEqActive = false;
     }
@@ -978,8 +985,10 @@ ROTWIT_FN static void print_rot_lines(void)
     /* us= here is the largest SINGLE-PASS stall of the last check to reach a
      * verdict (the boot check: its whole cost; per bar: its costliest chunk),
      * never the check's total -- see the witnesses' header above. */
-    CONSOLE.printf("ACIDBOX_ROT_EQ pass=%lu fail=%lu us=%lu\n",
-                   (unsigned long)s_rotEqPass, (unsigned long)s_rotEqFail,
+    CONSOLE.printf("ACIDBOX_ROT_EQ pass=%lu mismatch=%lu starved=%lu fail=%lu us=%lu\n",
+                   (unsigned long)s_rotEqPass, (unsigned long)s_rotEqMismatch,
+                   (unsigned long)s_rotEqStarved,
+                   (unsigned long)(s_rotEqMismatch + s_rotEqStarved),   /* fail is DERIVED: it cannot drift from its parts */
                    (unsigned long)s_rotEqUs);
 }
 

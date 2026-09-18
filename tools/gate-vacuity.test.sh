@@ -869,6 +869,39 @@ if [ -d "$EVKB/$ACB" ] && [ -f "$EVKB/$ACB/transcript_qemu.txt" ]; then
     echo "$OUT_TEXT" | grep -q "^FAIL: equality guard stopped reporting after bar" || result=1
     report "acb_guard_stops_after_boot_fails_by_name" $result
 
+    # NEW-53: the split.  Each component must be SHOWN to fire, and on a line
+    # THE FIRMWARE CAN ACTUALLY PRINT: fail is the derived sum, so a real
+    # mismatch or starve carries fail=1 too, and each mutation bumps both.
+    # (The first version bumped the component alone and left fail=0.  That was
+    # a workaround for the wrong ordering -- the by-name checks then sat behind
+    # the " fail=0 us=" check, so an honest mutation tripped that one instead.
+    # Review reordered the gate; the inconsistent mutation went with the
+    # ordering that forced it.  NEW-50's lesson, twice over: know WHICH
+    # assertion caught the demo, and check that it can fire on real data.)
+    # There is no third case for fail == mismatch + starved because a check of
+    # it would be REDUNDANT, not because nothing violates it: the one violating
+    # shape is `mismatch=0 starved=0 fail>0`, which the pre-existing
+    # acb_equality_guard_fires case already produces and the gate's catch-all
+    # already names.  No capture the firmware can produce violates it at all --
+    # fail is DERIVED in the print.
+    awk '/^ACIDBOX_ROT_EQ pass=2 / && !done { sub(/mismatch=0/, "mismatch=1"); sub(/fail=0/, "fail=1"); done=1 } { print }' \
+        "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_mismatch.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_mismatch.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$ACB/transcript_qemu.txt" "$WORK/acb_mismatch.txt" && result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: rotation equality guard saw a MISMATCH" || result=1
+    report "acb_rot_eq_mismatch_fails_by_name" $result
+
+    awk '/^ACIDBOX_ROT_EQ pass=2 / && !done { sub(/starved=0/, "starved=1"); sub(/fail=0/, "fail=1"); done=1 } { print }' \
+        "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_starved.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_starved.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$ACB/transcript_qemu.txt" "$WORK/acb_starved.txt" && result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: rotation equality guard was STARVED" || result=1
+    report "acb_rot_eq_starved_fails_by_name" $result
+
     # NEW-50: full-frame presents above start-up's two must fail by name --
     # the inv-buffer-overflow signature is every golden green and every frame
     # a full present.  Every ROT line is rewritten so the LAST one (the one

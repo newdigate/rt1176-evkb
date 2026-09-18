@@ -106,8 +106,15 @@ with
 grep -qE "^ACIDBOX_ROT_EQ pass=[1-9][0-9]* mismatch=0 starved=0 fail=0 us=[0-9]+\r?$" "$OUT" \
     || { echo "FAIL: rotation equality guard line missing"; exit 1; }
 ```
-Leave the next check (`grep -vqE " fail=0 us=[0-9]+\r?$"`) EXACTLY as it is. Directly after it, before `EQ_PASS=`, insert:
+Leave the next check (`grep -vqE " fail=0 us=[0-9]+\r?$"`) textually as it is, but MOVE it to sit
+AFTER the two new by-name checks below *(corrected during review: as first written this step put the
+by-name checks after it, where they could not fire on real data -- `fail` is the derived sum, so a
+real mismatch or starve carries `fail>0` and that check names the run generically first. Measured on
+two firmware-shaped captures.)* Before it, and directly after the line-exists check, insert:
 
+*(corrected during review: the line numbers below are PRE-SPLIT.* Step 5 inserts seven header lines
+above all three sites, so what shipped in the gate is `:929` boot, `:971` per bar, `:942` starved —
+this block's `:922`/`:964`/`:935` name the tree as found, not the tree this step produces.)*
 ```sh
 # NEW-53: WHICH failure.  `mismatch` = rot_eq_rows() found a sampled row where
 # the PRESENTED buffer differs from a CPU rotation of the canvas -- the picture
@@ -117,22 +124,18 @@ Leave the next check (`grep -vqE " fail=0 us=[0-9]+\r?$"`) EXACTLY as it is. Dir
 # Both are failures (a guard that quietly stops finishing must not read like
 # one that keeps passing), but a rendering defect and a scheduling shortfall are
 # different faults, and until NEW-54's bench the counter could not say which.
-# These run AFTER the fail=0 check above so the pre-existing vacuity mutation
-# (fail=0 -> fail=1) still lands on the pre-existing message.
+# THESE RUN BEFORE THE ` fail=0 us=` CHECK BELOW: fail is the DERIVED SUM, so a
+# real mismatch or starve also carries fail>0 on the same line, and behind that
+# check these could only fire on a capture the firmware cannot print.
 grep -E "^ACIDBOX_ROT_EQ " "$OUT" | grep -vqE " mismatch=0 " \
     && { echo "FAIL: rotation equality guard saw a MISMATCH -- the presented frame differed from the canvas"; exit 1; }
 grep -E "^ACIDBOX_ROT_EQ " "$OUT" | grep -vqE " starved=0 " \
     && { echo "FAIL: rotation equality guard was STARVED -- a check never reached a verdict"; exit 1; }
-# fail is derived (mismatch + starved) in the firmware, so this can only fire if
-# a third increment path is added and the print is not updated -- a tripwire.
-awk '/^ACIDBOX_ROT_EQ / {
-        m = $0; sub(/.*mismatch=/, "", m); sub(/[^0-9].*/, "", m)
-        s = $0; sub(/.*starved=/,  "", s); sub(/[^0-9].*/, "", s)
-        f = $0; sub(/.*fail=/,     "", f); sub(/[^0-9].*/, "", f)
-        if (m + s != f + 0) bad = 1
-     } END { exit bad ? 1 : 0 }' "$OUT" \
-    || { echo "FAIL: rotation equality guard fail != mismatch + starved"; exit 1; }
 ```
+*(corrected during review: a sum check `fail == mismatch + starved` was specified here and is NOT in
+the tree. It cannot fire — `fail` is derived in the print, so it cannot disagree with its parts, and
+behind the checks above every field is already pinned to 0. `run_qemu.sh` carries a comment saying so
+in its place.)* Then the ` fail=0 us=` check, moved down, as the historic catch-all.
 Also update the reap-cut example at `:121`: `"ACIDBOX_ROT_EQ pass=7 fail=0 us="` → `"ACIDBOX_ROT_EQ pass=7 mismatch=0 starved=0 fail=0 us="`. `sh -n run_qemu.sh` → clean.
 
 - [ ] **Step 4: Run against UNCHANGED firmware.** `./run_qemu.sh 2>&1 | tail -1` → **`FAIL: rotation equality guard line missing`** (the old lines carry no `mismatch=`). That is the RED. Record it.
@@ -178,6 +181,12 @@ a re-capture only because the line format moved.  Why: NEW-54's bench read
 fail=363 under gestures and could not say whether the frame was wrong or loop()
 was starved -- the two land on the same counter (acid_box.cpp:922/:964 vs :935).
 ```
+*(corrected during review: the paragraph that SHIPPED differs from this draft.* The sum-tripwire
+sentence is gone — `fail` is derived, so nothing violates it; the line numbers are the POST-split
+`:929`/`:971`/`:942` with a note that the spec cites the pre-split ones; and it records the check
+ORDER, why it matters, and the `f7` re-run that demonstrates the wiring. Read the file, not this
+block.)*
+
   `grep -c "^ACIDBOX_ROT_EQ .*mismatch=" transcript_qemu.txt` → 7 (all in the capture block).
 
 - [ ] **Step 8: Replay.** Procedure D: `replay "$AB/transcript_qemu.txt"` → `PASS`.
@@ -186,13 +195,18 @@ was starved -- the two land on the same counter (acid_box.cpp:922/:964 vs :935).
 
 ```sh
     # NEW-53: the split.  Each component must be SHOWN to fire.  The mutation
-    # bumps ONLY the component and leaves fail=0 -- deliberately inconsistent --
-    # because bumping fail too would trip the pre-existing " fail=0 us=" check
-    # first, with its pre-existing message, and the NEW check would never be
-    # reached (NEW-50's lesson: know WHICH assertion caught the demo).  The sum
-    # invariant needs no case of its own: both mutations here break it as a side
-    # effect, and it runs after the component checks by design.
-    awk '/^ACIDBOX_ROT_EQ pass=2 / && !done { sub(/mismatch=0/, "mismatch=1"); done=1 } { print }' \
+    # bumps the component AND fail together, so the line is one the FIRMWARE
+    # CAN PRINT (fail is the derived sum).  *(corrected during review: as first
+    # written this block bumped ONLY the component and left fail=0 --
+    # "deliberately inconsistent" -- because with the by-name checks placed
+    # behind the " fail=0 us=" check an honest mutation tripped that one first.
+    # That was a workaround for the ordering defect, not a property of the
+    # fixture; the gate was reordered and the mutation made honest with it.
+    # NEW-50's lesson twice over: know WHICH assertion caught the demo, and
+    # check it can fire on data the firmware can produce.)*  There is no third
+    # case for the sum: the firmware derives fail, so there is nothing to
+    # mutate and no gate asserts it.
+    awk '/^ACIDBOX_ROT_EQ pass=2 / && !done { sub(/mismatch=0/, "mismatch=1"); sub(/fail=0/, "fail=1"); done=1 } { print }' \
         "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_mismatch.txt"
     run_gate "$ACB" "run_qemu.sh" "$WORK/acb_mismatch.txt"; rc=$?
     result=0
@@ -201,7 +215,7 @@ was starved -- the two land on the same counter (acid_box.cpp:922/:964 vs :935).
     echo "$OUT_TEXT" | grep -q "^FAIL: rotation equality guard saw a MISMATCH" || result=1
     report "acb_rot_eq_mismatch_fails_by_name" $result
 
-    awk '/^ACIDBOX_ROT_EQ pass=2 / && !done { sub(/starved=0/, "starved=1"); done=1 } { print }' \
+    awk '/^ACIDBOX_ROT_EQ pass=2 / && !done { sub(/starved=0/, "starved=1"); sub(/fail=0/, "fail=1"); done=1 } { print }' \
         "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_starved.txt"
     run_gate "$ACB" "run_qemu.sh" "$WORK/acb_starved.txt"; rc=$?
     result=0
@@ -228,8 +242,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - [ ] **Step 1: Vacuity, alone.** `cd "$EVKB" && sh tools/gate-vacuity.test.sh 2>&1 | tee "$S/vac.log" | grep -c "^PASS:"` → **70**; `grep "^FAIL:\|^SKIP:" "$S/vac.log"` → empty.
 - [ ] **Step 2: Sweep.** Read `docs/KNOWN-BROKEN-GATES.md`. `./tools/run-all-qemu-gates.sh 2>&1 | tee "$S/sweep.log" | tail -3` → `gates: 141 passed`, exit 0. Any red not `display/acid_box`: re-run alone, idle, report by NAME.
 - [ ] **Step 3: Audit, AFTER the sweep.** `LICENSE_AUDIT_EVKB=$(pwd) tools/license-audit.sh 2>&1 | tail -1` → `LICENSE-AUDIT: PASS`.
-- [ ] **Step 4: `CLAUDE.md`.** In the NEW-54 block's `★★ ROT_EQ fail CONFLATES …` paragraph, append: `**SPLIT 2026-09-18 (NEW-53, first action)**: the line now reads `pass= mismatch= starved= fail= us=` with `fail` the derived sum; the gate asserts each component by name and the sum as a tripwire; `:922` (the boot check) was a third increment site the NEW-54 write-up missed, and it is a mismatch. Golden unmoved, vacuity 68 -> 70, sweep <the gates: line>. The next acid_box bench reads WHICH counter moves under NEW-54's arm-A gestures.` Commit the doc with the real sweep line in the message.
-- [ ] **Step 5: Linear NEW-53** — append a short "First action DONE" note with the commit SHA and what the next bench must do. **Memory** — one paragraph in `memory/new54-acid-box-top-bar.md` under the `ROT_EQ fail` bullet: `SPLIT 2026-09-18 (branch new-53-rot-eq-split-counter): three increment sites, not two — the boot check at :922 is a mismatch.` Update its `MEMORY.md` hook.
+- [ ] **Step 4: `CLAUDE.md`.** In the NEW-54 block's `★★ ROT_EQ fail CONFLATES …` paragraph, append: `**SPLIT 2026-09-18 (NEW-53, first action)**: the line now reads `pass= mismatch= starved= fail= us=` with `fail` the derived sum; the gate asserts each component BY NAME, and it does so BEFORE the pre-existing `fail=0` check, because `fail` is the derived sum and a real fault carries `fail>0` on the same line -- behind it the by-name checks could never fire on data the firmware can print (measured). There is NO sum check: `fail == mismatch + starved` holds by construction in the print, and a check of it cannot fire. `:929` (the boot check, post-split numbering) was a third increment site the NEW-54 write-up missed, and it is a mismatch. Golden unmoved, vacuity 68 -> 70, sweep <the gates: line>. The next acid_box bench reads WHICH counter moves under NEW-54's arm-A gestures.` Commit the doc with the real sweep line in the message.
+- [ ] **Step 5: Linear NEW-53** — append a short "First action DONE" note with the commit SHA and what the next bench must do. **Memory** — one paragraph in `memory/new54-acid-box-top-bar.md` under the `ROT_EQ fail` bullet: `SPLIT 2026-09-18 (branch new-53-rot-eq-split-counter): three increment sites, not two — the boot check (:929 post-split) is a mismatch. ★ Two gate checks that could not fire were caught in review, both from the plan: a sum check (fail is DERIVED, so nothing violates it) and the by-name checks placed behind the fail=0 catch-all (fail is the sum, so a real fault trips that one first — measured). The wiring is demonstrated by re-running the f7 broken-port recipe against the split build: mismatch=1..6 starved=0.` Update its `MEMORY.md` hook.
 - [ ] **Step 6: Stop.** Merge and the bench are the user's call.
 
 ---

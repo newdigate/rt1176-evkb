@@ -246,6 +246,45 @@ window against the < 0.005 silence bound, and 0.35..0.40 after against the
 > 0.02 sounding bound.  The gate bounds thresholds there, never magnitudes.
 No gesture touches the toggle and touch_script.txt is UNTOUCHED.
 
+RE-RECORDED 2026-09-18 (NEW-53, first action -- the ROT_EQ split): the guard's
+one `fail=` counter became `mismatch=` (a sampled row differed: the picture is
+wrong) and `starved=` (a check still armed when the next was armed: it never
+finished), with `fail=` kept as their SUM so every earlier capture stays
+comparable.  fail==mismatch+starved holds BY CONSTRUCTION -- the print derives
+it and no s_rotEqFail is stored -- so the gate asserts it NOWHERE: a check of it
+was written in review and deleted, because it cannot fire on any capture the
+firmware can produce -- and a check that cannot fire is decoration.
+Printed components-then-total so the gate's existing " fail=0 us=" anchor stays
+contiguous.
+★ THE BY-NAME CHECKS RUN BEFORE THAT ANCHOR CHECK, and the order is the whole
+point.  fail is the DERIVED SUM, so a real mismatch or starve also carries
+fail>0 on the SAME line; behind the fail=0 check the by-name ones could only
+fire on a capture whose fail disagreed with its components, which the firmware
+cannot print.  Measured in review with the order the other way round: captures
+shaped `mismatch=1 ... fail=1` and `starved=1 ... fail=1` BOTH printed the
+generic "failed during the run" -- the gate could not say which fault it saw on
+any real data, which was this change's entire purpose.  Both vacuity mutations
+are firmware-shaped for the same reason (component AND fail together); the
+earlier inconsistent ones were a workaround for the wrong ordering.
+★ DEMONSTRATED ON A REAL DEFECT, not a doctored capture -- the f7 recipe below,
+run against the SPLIT build: the port made to forget the previous present's
+damage (rot_flush_cb passing 0 for nprev to lvgl_panel_rot_plan), acid_box
+rebuilt, the real gate run.  The boot golden HELD at 0x18B7B637 and every
+present counted errors=0, the boot guard line stayed clean
+(`pass=1 mismatch=0 starved=0 fail=0`), and the six per-bar checks read
+`pass=1 mismatch=1..6 starved=0 fail=1..6` -- so a genuine RENDERING fault
+lands wholly on the mismatch counter and none of it on starved, and the gate
+said "rotation equality guard saw a MISMATCH" where f7 pre-split could only say
+"failed during the run".  That is the firmware WIRING shown, which no green run
+can show (a green run has both counters at 0).  Port reverted, rebuilt, same
+gate PASSED, LVGL checkout clean at its pinned 3037281.
+NO pixel changed by the split itself: the golden is UNMOVED at 0x18B7B637, and
+this is a re-capture only because the line format moved.  Why: NEW-54's bench read
+fail=363 under gestures and could not say whether the frame was wrong or loop()
+was starved -- the two land on the same counter (acid_box.cpp:929/:971 vs :942,
+which the spec and this commit's parent cite by their PRE-SPLIT numbers 922/964
+and 935; the seven header lines this change adds moved every one of them).
+
 ================================================================================
 WHAT THIS GATE PROVES
 ================================================================================
@@ -284,11 +323,11 @@ and the rt1062 half of `usb_descriptor_survey`.  That is the GPL firewall
 working, not a regression.
 
 ================================================================================
-THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-09-17, NEW-54 waveform)
+THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-09-18, NEW-53 ROT_EQ split)
 ================================================================================
 ==== captured UART ====
 === BOOT ===
-[APP: acid_box] [VER: v1] [BUILD: Sep 17 2026 14:03:30]
+[APP: acid_box] [VER: v1] [BUILD: Sep 18 2026 09:41:06]
 ACIDBOX_BEGIN
 CODEC_OK
 PANEL_OK
@@ -297,35 +336,35 @@ SELECT=0
 PLAY_LIT=0
 ACIDBOX_UI_SUM=0x18B7B637
 PLAYING=0
-ACIDBOX_ROT ops=1 full=1 px=921600 us=114796 errors=0
-ACIDBOX_ROT_EQ pass=1 fail=0 us=10870
+ACIDBOX_ROT ops=1 full=1 px=921600 us=116450 errors=0
+ACIDBOX_ROT_EQ pass=1 mismatch=0 starved=0 fail=0 us=12109
 I2C_OK
 ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
 ACIDBOX_DONE
 PLAYING=1
 PLAY_LIT=1
-ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3732,0.0001,0.3851,0.4102,0.3934,0.0002,0.3808,0.3696,0.4201,0.3924,0.0002,0.3870]
+ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3732,0.0001,0.3851,0.4102,0.3934,0.0002,0.3780,0.3704,0.4201,0.3924,0.0002,0.3916]
 ACIDBOX_VSYNC flips=17 isrs=17 timeouts=0
-ACIDBOX_ROT ops=39 full=2 px=2366464 us=302297 errors=0
-ACIDBOX_ROT_EQ pass=2 fail=0 us=1938
-ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3628,0.4297,0.3885,0.0002,0.3876]
+ACIDBOX_ROT ops=39 full=2 px=2366464 us=297565 errors=0
+ACIDBOX_ROT_EQ pass=2 mismatch=0 starved=0 fail=0 us=1679
+ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0002,0.3814,0.4141,0.3863,0.0002,0.3688,0.3646,0.4297,0.3885,0.0002,0.3876]
 ACIDBOX_VSYNC flips=33 isrs=33 timeouts=0
-ACIDBOX_ROT ops=79 full=2 px=2954240 us=381832 errors=0
-ACIDBOX_ROT_EQ pass=3 fail=0 us=1327
+ACIDBOX_ROT ops=79 full=2 px=2954240 us=373963 errors=0
+ACIDBOX_ROT_EQ pass=3 mismatch=0 starved=0 fail=0 us=2316
 SELECT=2
 STEP[2]=note33 gate1 acc0 sld0
-ACIDBOX_BAR=3 RMS=[0.4147,0.3866,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3677,0.3708,0.4237,0.3894,0.0005,0.3879]
+ACIDBOX_BAR=3 RMS=[0.4275,0.3866,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3677,0.3708,0.4237,0.3894,0.0005,0.3879]
 ACIDBOX_VSYNC flips=51 isrs=51 timeouts=0
-ACIDBOX_ROT ops=134 full=2 px=3633664 us=472540 errors=0
-ACIDBOX_ROT_EQ pass=4 fail=0 us=1725
-ACIDBOX_BAR=4 RMS=[0.4292,0.3778,0.3836,0.3753,0.3739,0.0003,0.3823,0.3984,0.3883,0.0002,0.3804,0.3704,0.4089,0.3916,0.0001,0.3879]
+ACIDBOX_ROT ops=134 full=2 px=3630592 us=460514 errors=0
+ACIDBOX_ROT_EQ pass=4 mismatch=0 starved=0 fail=0 us=1582
+ACIDBOX_BAR=4 RMS=[0.4292,0.3813,0.3928,0.3715,0.3739,0.0003,0.3823,0.4175,0.3883,0.0002,0.3775,0.3704,0.4288,0.3916,0.0001,0.3879]
 ACIDBOX_VSYNC flips=67 isrs=67 timeouts=0
-ACIDBOX_ROT ops=174 full=2 px=4221440 us=550986 errors=0
-ACIDBOX_ROT_EQ pass=5 fail=0 us=1660
-ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3727,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4114,0.3749,0.0001,0.3887]
+ACIDBOX_ROT ops=174 full=2 px=4218368 us=535260 errors=0
+ACIDBOX_ROT_EQ pass=5 mismatch=0 starved=0 fail=0 us=1941
+ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3727,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3887]
 ACIDBOX_VSYNC flips=83 isrs=83 timeouts=0
-ACIDBOX_ROT ops=214 full=2 px=4809216 us=632098 errors=0
-ACIDBOX_ROT_EQ pass=6 fail=0 us=1431
+ACIDBOX_ROT ops=214 full=2 px=4806144 us=609580 errors=0
+ACIDBOX_ROT_EQ pass=6 mismatch=0 starved=0 fail=0 us=1449
 CUTOFF=639.5
 CUTOFF=511.2
 CUTOFF=408.7
@@ -335,10 +374,10 @@ CUTOFF=202.2
 CUTOFF=161.6
 CUTOFF=129.2
 CUTOFF=103.3
-ACIDBOX_BAR=6 RMS=[0.4298,0.3797,0.3570,0.3840,0.4064,0.0002,0.3659,0.3860,0.3926,0.0001,0.3975,0.3730,0.3937,0.4018,0.0002,0.3784]
+ACIDBOX_BAR=6 RMS=[0.4025,0.3893,0.3854,0.3726,0.3742,0.0001,0.3936,0.3860,0.3926,0.0001,0.3975,0.3730,0.3937,0.4018,0.0002,0.3784]
 ACIDBOX_VSYNC flips=103 isrs=103 timeouts=0
-ACIDBOX_ROT ops=263 full=2 px=5539840 us=729877 errors=0
-ACIDBOX_ROT_EQ pass=7 fail=0 us=1517
+ACIDBOX_ROT ops=263 full=2 px=5535744 us=704562 errors=0
+ACIDBOX_ROT_EQ pass=7 mismatch=0 starved=0 fail=0 us=1534
 
 (Bar 6 straddles the drag, whose landing instant moves with render timing
 between runs -- the gate selects its pre/post windows dynamically for exactly
@@ -732,6 +771,16 @@ re-golden repeated case (b) against 0x25B30A96 -> 0x25B30A97: FAIL: UI golden.)
     with fail=1 through fail=6 across six bars -- and the gate said:
         FAIL: rotation equality guard failed during the run
     The port restored and rebuilt, the same gate PASSED.
+
+    f7 RE-RUN AGAINST THE SPLIT BUILD, 2026-09-18 (NEW-53).  Same recipe, same
+    boot golden 0x18B7B637, same errors=0, and the six per-bar lines now read
+    pass=1 mismatch=1..6 starved=0 fail=1..6 -- the whole of a real rendering
+    fault on the mismatch counter, none on starved -- with the gate saying:
+        FAIL: rotation equality guard saw a MISMATCH -- the presented frame differed from the canvas
+    This is the only demonstration in the tree that the increments are wired to
+    the counters they name: a green run leaves both at 0, so a swap of the two
+    would be invisible to every other check here.  Port restored, rebuilt, gate
+    PASSED, LVGL clean at its pinned 3037281.
 
 UNDER LOAD.  Re-run with 6 spinners on an 8-core host: PASS, pre-edit window
 bar 2, post-edit window bar 4 (bar 5 idle).  The windows MOVE and the gate does

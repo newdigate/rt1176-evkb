@@ -51,8 +51,13 @@ working verbatim.
   unmodified, so the split cannot silently weaken what is already proven;
 - captures stay comparable across the change — including NEW-54's two committed arms
   (`bench-captures/new54-witness-*.csv`) and NEW-53's `fail=5`;
-- **`fail == mismatch + starved` becomes a checkable invariant.** A third increment path added later
-  breaks the equality and the gate names it. Replacing `fail` outright would lose that tripwire.
+- **`fail == mismatch + starved` holds BY CONSTRUCTION** — the firmware derives `fail` in the print
+  and keeps no `s_rotEqFail`, so the total cannot disagree with its parts and there is nothing for a
+  gate to check. *(corrected during implementation: the gate check was unreachable behind the
+  component checks.* This bullet originally claimed the equality was a checkable invariant and a
+  tripwire for a future third increment path; both halves were wrong — a derived total cannot drift,
+  and the check was written, found unreachable, and deleted. Keeping `fail` is justified by the two
+  bullets above on their own.*)*
 
 Rejected: `pass= mismatch= starved= us=` with no `fail`. Tidier, but it rewrites every reader and
 assertion and proves nothing new.
@@ -82,8 +87,21 @@ makes the gate edit the RED-first step: the unchanged firmware fails it by name.
 Alongside that, the gate adds:
 
 - a `mismatch=0` assertion, failing by name — **the rendering-correctness check**;
-- a `starved=0` assertion, failing by name — **the scheduling check**;
-- the sum invariant `fail == mismatch + starved`, failing by name.
+- a `starved=0` assertion, failing by name — **the scheduling check**.
+
+*(corrected during implementation: the gate check was unreachable behind the component checks.* A
+third assertion — the sum `fail == mismatch + starved` — was listed here, written, and then deleted:
+by the time it ran, the `fail=0` check at `:210` and the two new component checks had pinned all
+three fields on every line to 0, so `0 + 0 == 0` and it could never fire. `run_qemu.sh` carries a
+comment in its place saying why there is no check.*)*
+
+*(corrected during review: the component checks were unreachable on real data behind the `fail=0`
+check.* Both by-name checks are placed **BEFORE** the pre-existing ` fail=0 us=` check, not after it.
+`fail` is the derived sum, so a real mismatch or starve carries `fail>0` on the same line and the
+`fail=0` check fires first — behind it, the by-name checks could only fire on a capture whose `fail`
+disagreed with its components, which the firmware cannot print. Measured with the original ordering:
+captures shaped `mismatch=1 … fail=1` and `starved=1 … fail=1` both printed the generic "failed
+during the run". The `fail=0` check stays behind them as the historic catch-all.*)*
 
 ★ **This cannot make the gate more load-sensitive**, and that is worth stating because this tree has
 six gates in a documented load-sensitivity class. `fail=0` already implies `mismatch=0` and
@@ -98,11 +116,21 @@ added so each component is SHOWN to fire rather than assumed — the suite's own
 - `acb_rot_eq_mismatch_fails_by_name` — `mismatch=0` → `mismatch=1` on a per-bar line;
 - `acb_rot_eq_starved_fails_by_name` — `starved=0` → `starved=1` on a per-bar line.
 
+*(corrected during review: the component checks were unreachable on real data behind the `fail=0`
+check.* Each mutation bumps `fail` **together with** its component, so the mutated line is one the
+firmware could actually print — `fail` is the derived sum. The first version bumped the component
+alone, leaving `fail=0`, which was a workaround for the ordering defect above rather than a
+property of the fixture; with the checks reordered it is neither needed nor honest.*)*
+
 Each carries the suite's `cmp` mutation guard. Vacuity **68 → 70**.
 
-The sum invariant deliberately gets no vacuity case: the mutations above each break it as a side
-effect, so a dedicated one would prove nothing the two already prove. This is recorded rather than
-left to look like an omission.
+There is no third vacuity case because there is nothing to mutate: the firmware derives `fail` from
+its two parts in the print, so the sum cannot disagree with them and no gate asserts it. *(corrected
+during implementation: the gate check was unreachable behind the component checks.* This paragraph
+originally said the sum needed no case because the two mutations above break it as a side effect.
+That is true and immaterial — the component check fires first, so the sum check was never evaluated
+on a broken line at all. The honest reason is the one above: the invariant is a property of the
+firmware's print, not a claim a gate could test.*)*
 
 ## 6. What must NOT move
 
@@ -123,6 +151,16 @@ finding A (the deterministic 288 ms frame) is untouched.
 
 QEMU: gate green with the new assertions, goldens unmoved, sweep 141/0/0, vacuity 70/70, audit PASS.
 Both new negatives demonstrated RED by name.
+
+*(added during review: the WIRING is demonstrated in QEMU after all.)* A green run leaves both
+counters at 0, so no green gate can show that `:929`/`:971` feed `mismatch` and `:942` feeds
+`starved` — swapping them would go red nowhere. The `f7` recipe closes that: the LVGL port made to
+forget the previous present's damage (`rot_flush_cb` passing 0 for `nprev`), acid_box rebuilt, the
+real gate run. Six per-bar checks read `mismatch=1..6 starved=0`, the boot golden held at
+`0x18B7B637`, and the gate named the mismatch path — where the same recipe pre-split could only say
+"failed during the run". Port reverted, gate green again, LVGL clean at its pin. Recorded in
+`transcript_qemu.txt` (RE-RECORDED 2026-09-18 and the `f7` entry). The STARVED path remains
+QEMU-unreachable and stays a silicon claim.
 
 Silicon (NEW-53, not this change): re-run NEW-54's arm A — playing plus knob/tempo gestures, ~50 min
 past bar 1700 — and read which counter moves. That single reading decides whether NEW-53 is a
