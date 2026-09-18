@@ -790,6 +790,11 @@ probe: NEW-55.
 on three boots — deterministic, so it read as a firmware artefact until the BYTES were looked at. QEMU
 printed the same line whole only because its durations are shorter. Lines longer than ~120 characters
 print in two calls now.
+✅ **Measured 2026-09-18 on that close-out (evkb `ebf6bdf`): 141 gates discovered, 140 passed, 1 failed,
+0 SKIP**; `display/synthui_led_button_test` green in 21 s; vacuity **70/70**; `LICENSE-AUDIT: PASS` after
+the sweep. The one red is `audio/bt_sink_test` (`seqgaps=6 under=579 bad=6`, the driver timing out on
+the drop window at 79 s) — it links nothing this change touches, and it PASSES ALONE, idle, in 48 s: the
+socket-driven BT gates' documented load-sensitivity class, not a regression.
 ★★ **THE INSTRUMENT NEW-53 SAID WAS MISSING NOW EXISTS, and it corrects NEW-53's own conclusion.**
 Tempo prints nothing, but `ACIDBOX_VSYNC flips` advances with WALL TIME while `ACIDBOX_BAR` advances
 with TEMPO, so **delta-flips-per-bar reconstructs the tempo history from a timestamp-free log**
