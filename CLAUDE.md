@@ -749,7 +749,14 @@ makes no step TRANSITION (gate red by exactly one: "ran 6 times for 6 bars + boo
 arms too, at whatever step it lands on. Gated on `playing()` so STOP's rewind cannot arm a phantom
 check. Golden unmoved, step-0 RMS unchanged (0.41..0.43), ITCM 2900 → 2868 (the edge logic is in the
 ITCM-resident poller — two quanta, real). Sweep 141/141/0, vacuity 70/70, audit PASS. 999 BPM
-(0.24 s a bar) will still starve: a ceiling for the bench to place, not a defect this removes.
+(0.24 s a bar) will still starve: a ceiling for the bench to place, not a defect this removes. **PLACED the same afternoon**: hands off, 60 checks per point, `starved=0` at
+128 / 155 / 200 / 300 / **500**, then 79 of 100 at 999 — the ceiling is between 500 and 999, four
+times any musical tempo; `mismatch=0` on every line. ★ **The Δflips-per-bar tempo proxy SATURATES
+above nominal** — it read 16 at every tempo from 128 to 500, because presents track the playhead
+(16 cue moves a bar) more than wall time. It separates SLOW bars from nominal and nothing finer; the
+"~155 BPM" inferred from Δflips=14 in the arm-A re-run was soft, and only the direct test (readout
+set to 128.0 → starved stopped) is load-bearing there. ★ At 999 the seam is caught one poll-pair in
+twelve: `pass+starved` reached 13,964 against `ACIDBOX_BAR=1126`.
 ★★ **THE INSTRUMENT NEW-53 SAID WAS MISSING NOW EXISTS, and it corrects NEW-53's own conclusion.**
 Tempo prints nothing, but `ACIDBOX_VSYNC flips` advances with WALL TIME while `ACIDBOX_BAR` advances
 with TEMPO, so **delta-flips-per-bar reconstructs the tempo history from a timestamp-free log**

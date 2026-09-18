@@ -789,3 +789,44 @@ half bar -- and is the right fix a bigger chunk per pass, arming earlier than
 step 8, or accepting a per-bar check that spans bars.  Not a rendering issue.
 Finding A (the deterministic 288 ms frame in synthui_led_button_test) is
 untouched by any of this.
+
+================================================================================
+NEW-53 -- THE FIX: ARM AT STEP 0.  Ceiling placed by tempo sweep  (bench 2026-09-18)
+================================================================================
+Image: build/acid_box.elf at evkb c112474, [BUILD: Sep 18 2026 13:05:14] -- the
+equality check now arms at STEP 0 (bar start) and on the stopped->playing edge,
+giving it the whole bar instead of the second half.  gpu golden 0xA67828E9
+UNMOVED (no pixel).  Two boots.  Board released after.  Witnesses:
+bench-captures/new53-witness-step0.csv.
+
+Hands off at each tempo, 60 checks per point (100 at 999), counted by
+pass+starved because the BAR line undercounts at speed:
+
+    tempo   bar     pass  starved   note
+    128.0   1.875s   65      0      (the pre-fix arm also passed here)
+    155     1.55 s   65      0      pre-fix, hands off at this tempo: ~55 % starved
+    200     1.2  s   60      0
+    300     0.8  s   63      0      pre-fix budget here was 0.4 s: would have starved
+    500     0.48 s   60      0
+    999     0.24 s   21     79      the ceiling is between 500 and 999
+
+mismatch=0 on every line of the run.  The starvation NEW-54 hit at ~155 hands-off
+is gone; the check now holds to 500 BPM, four times any musical tempo, and only
+the transport's own rail defeats it.  Not chased further: 500..999 is not a
+range this instrument needs.
+
+--- ★ THE Δflips-PER-BAR TEMPO PROXY SATURATES ABOVE NOMINAL ------------------
+It read 16 at 128, 155, 200, 300 AND 500.  Presents track the PLAYHEAD -- 16
+cue moves per bar whatever the tempo -- more than they track wall time, so
+Δflips/bar is flat for any bar shorter than nominal.  It still separates SLOW
+bars from nominal (40..600 at the low rail, measured in NEW-54's arm A), which
+is the discrimination that mattered there; but the "~155 BPM" this file
+inferred from Δflips=14 in the arm-A re-run above was soft -- that tempo could
+have been anything from ~140 up.  The decisive test in that section was the
+direct one (tempo set back to 128.0 by the readout -> starved stopped), and it
+stands.  Read Δflips/bar as slow-vs-not, never as a number above nominal.
+
+--- ★ THE BAR LINE UNDERCOUNTS 12x AT 999 -------------------------------------
+pass+starved reached 13,964 with ACIDBOX_BAR=1126 printed: at 15 ms a step the
+15->0 seam is caught by two consecutive 33 ms polls about one time in twelve.
+Every bar number after a 999 excursion is a floor, not a count.
