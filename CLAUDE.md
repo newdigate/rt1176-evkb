@@ -693,9 +693,49 @@ commit, each recorded in `run_qemu.sh:290/294/299` beside the assertion it moved
 became DOWN/UP panel buttons and the BPM label a `synthui_seven_segment`) -> **`0x18B7B637`**
 (SAW/SQR became a `synthui_slide_toggle`). Each was recorded from two bit-identical gate runs AND a
 no-touch frame dump whose FNV-1a equalled the printed sum, with the frame LOOKED AT before pinning.
-★ **The gpu golden `0xEA5AB843` is STALE until the NEW-54 bench.** It was measured on glass
-2026-09-16 (three boots bit-identical) on the pre-top-bar scene; the top bar changes the composited
-frame, so silicon owes a re-record. Two golden sets as always, never reconciled.
+★ **The gpu golden is `0xA67828E9`** -- BENCHED 2026-09-18, FOUR boots bit-identical, retiring
+`0xEA5AB843` (which was measured on the pre-top-bar scene). `ACIDBOX_ENGINE=gpu`, `GPU_ERR=0`,
+`PLAY_LIT=0` before the sum on every boot. Two golden sets as always, never reconciled: silicon
+composites the knobs on the GC355, QEMU does not.
+★★ **THE BENCH MET EVERY CRITERION BUT `ROT_EQ fail=0`, and the miss is a CONTROLLED PAIR.** Same
+firmware, gestures the only variable: arm A (playing + knob/tempo gestures) ran clean to bar 1694
+then failed to `fail=363` and was still climbing; arm B (playing, UNTOUCHED) ran clean to bar 1762 --
+**past the point where arm A broke**. So GESTURES are necessary and ELAPSED TIME ALONE IS NOT
+SUFFICIENT. `full` never exceeded 2 in either arm, so this is NOT NEW-50's inv-buffer signature.
+Onset in arm A was 22 bars of untouched play AFTER the last gesture -- delayed, and it never
+recovered. Per-bar witnesses for both arms are committed at
+`examples/display/acid_box/bench-captures/new54-witness-{gestured,untouched}.csv`.
+★★ **`ROT_EQ fail` CONFLATES A WRONG PICTURE WITH A STARVED CHECK, so no reading of it -- NEW-53's
+`fail=5` included -- can be attributed to either cause.** `acid_box.cpp:964` increments it on a real
+mismatch (a sampled row of the presented buffer differs from a CPU rotation of the canvas);
+`:935` increments it when a check was still armed as the next was armed, i.e. a flip was pending on
+every pass it was given and THE CHECK NEVER FINISHED (`rot_equality_step()` returns early whenever
+`isrs + timeouts < flips`). This run cannot separate them: `us=` is indistinguishable between the
+regimes, `pass` kept incrementing while `fail` climbed, and 239 lines carry `flips!=isrs` -- exactly
+the condition the starvation path needs. Arm A's gestures were knob drags and tempo presses, i.e.
+`loop()` load, so **starvation is at least as plausible as a rendering fault**. ACTION: split it
+into `mismatch=` and `starved=` before anyone benches this again.
+★★ **THE INSTRUMENT NEW-53 SAID WAS MISSING NOW EXISTS, and it corrects NEW-53's own conclusion.**
+Tempo prints nothing, but `ACIDBOX_VSYNC flips` advances with WALL TIME while `ACIDBOX_BAR` advances
+with TEMPO, so **delta-flips-per-bar reconstructs the tempo history from a timestamp-free log**
+(~17 = 128 BPM). Arm A by band: nominal 2030 bars / 229 fail increments (0.11 per bar), slow 33 /
+114 (**3.45**), fast 32 / 15 (0.47). ★ The operator's FIRST tempo test was ENTIRELY clean, which
+REFUTES this session's own seven-segment hypothesis -- NEW-54's new widget is exonerated as the
+trigger by the operator's own evidence; tempo excursions only multiply an ALREADY-failing state.
+★ And NEW-53 concluded the failure needs "wiggle + playing + gestures TOGETHER" -- but the arm it
+cleared, "playing + gestures, no wiggle", ran **103 seconds**. Arm A ran the same condition for
+**~53 minutes** and broke. **Wiggle is not necessary**, and arm A had none STRUCTURALLY: the whole
+mechanism is `ACIDBOX_LOOPSTAT`-guarded and `strings build/acid_box.elf | grep -c wiggle` is 0.
+★ Which narrows a trap recorded here: "the title label toggles wiggle, the tell is a bare
+`wiggle=1` line" is true only of LOOPSTAT builds. In the DEFAULT build -- every gate run, and this
+bench -- tapping the title does nothing and no `wiggle=` line can appear, so checking for one there
+is VACUOUS. This session recorded "bare wiggle=1: 0" as evidence before noticing that.
+★ **Reading a LIVE capture without dropping the final line manufactures failures**: a monitor
+grepping `-vc 'timeouts=0'` counted a line caught mid-write as a timeout and announced a VSYNC
+TIMEOUT that did not exist. `run_qemu.sh` already guards exactly this; a live reader needs the same
+`sed '$d'`. Also: truncating a capture under a live writer loses the next lines behind a NUL gap
+(rotate instead), and `grep -c` over a multi-boot capture over-counts (read the VALUE, not the
+line count).
 ★ **ITCM headroom, before -> after NEW-54**: `build` 2884 -> **2900**, `build-loopstat` 2756 ->
 **2756**, `build-bt` 11604 -> **11604**, `build-bench` 11412 -> **11428**. The pre-registered
 prediction (the default build moves by less than 300 B over the whole plan) **HELD**.

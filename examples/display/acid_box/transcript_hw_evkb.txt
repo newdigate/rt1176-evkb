@@ -580,3 +580,134 @@ latency or present-path number from this build.
 the USB CDC drop after SW4, so "no BOOT line" does NOT mean the board did not
 reset.  ACIDBOX_ROT ops= and ACIDBOX_VSYNC flips= both restart at 1 and are the
 reliable witnesses.
+
+================================================================================
+NEW-54 -- TOP BAR AND SAW/SQR ON SynthUI WIDGETS  (bench 2026-09-17/18)
+================================================================================
+Image: examples/display/acid_box/build/acid_box.elf, [BUILD: Sep 17 2026 14:03:30]
+-- the banner stamp equals the flashed ELF's and the stamp recorded in
+transcript_qemu.txt, so the board ran the GATE-VERIFIED image, not a rebuild.
+Branch new-54-acid-box-synthui-top-bar (evkb 99e7ff3); no SynthUI change, no pin
+bump.  Flashed with tools/rt1170-flash.sh; console detached for every LinkServer
+operation.
+
+--- THE GPU GOLDEN ------------------------------------------------------------
+ACIDBOX_UI_SUM=0xA67828E9, FOUR boots bit-identical (three SW4 boots plus arm B's).
+RETIRES 0xEA5AB843 (NEW-51, 2026-09-16).  Reason: the transport, the tempo
+cluster and SAW/SQR are now SynthUI widgets, so the rendered frame changed BY
+DESIGN.  Every boot: ACIDBOX_ENGINE=gpu, ACIDBOX_GPU_ERR=0, PLAY_LIT=0 before the
+sum, ACIDBOX_ROT ops=1 full=1 errors=0, ACIDBOX_ROT_EQ pass=1 fail=0,
+ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0.
+The QEMU sw golden is 0x18B7B637 and the two NEVER reconcile: silicon composites
+the knobs on the GC355.  Two golden sets, as since NEW-20.
+
+--- WHAT THE OPERATOR CHECKED BY HAND (nothing here is machine-visible) --------
+  PLAY lights green on play, dark on PAUSE, dark on STOP ....... PASS
+  STOP / DOWN / UP light while held, clear on a SLIDE-OFF ...... PASS
+  tempo across 99<->100 and held to both rails (20.0, 999.0):
+      the readout box never jumps ............................. PASS
+  a tap anywhere on the toggle slides the knob and the timbre
+      changes saw<->square BY EAR ............................. PASS
+  no scanout flash throughout .................................. PASS
+Console corroborated the three it can see: PLAYING=1 -> PLAY_LIT=1,
+PLAYING=0 -> PLAY_LIT=0 (both the pause and the stop path), and the FORWARD
+button printing SELECT=1 with NO STEP[...] line -- the selection-only path the
+QEMU touch script cannot reach.
+★ Incidental confirmation: four consecutive PLAYING=0 lines with NO PLAY_LIT
+reprint.  cbStop prints unconditionally; the witness fires only on a real
+transition.  That is the per-transition property run_qemu.sh asserts, shown on
+silicon by accident.
+★ The tempo readout prints NOTHING.  The operator's eyes are the only instrument
+for the five-cell field and the 156 px box, which is why it needed a bench at all.
+
+--- NOT MET: ACIDBOX_ROT_EQ fail=0 --------------------------------------------
+Two arms, SAME firmware, gestures the only variable.  Raw per-bar witnesses for
+both are committed as bench-captures/new54-witness-{gestured,untouched}.csv
+(boot,bar,flips,dflips,cum_fail).
+
+  ARM A  playing + knob/tempo gestures   clean to bar 1694, then fail -> 363
+                                          and STILL CLIMBING when it ended
+                                          (2096 bars; full<=2, timeouts=0,
+                                           errors=0 throughout)
+  ARM B  playing, UNTOUCHED               clean to bar 1762: pass=1762 fail=0
+                                          (full<=2, timeouts=0, errors=0)
+
+ARM B RAN PAST THE POINT WHERE ARM A BROKE AND STAYED CLEAN.  So GESTURES are
+necessary and ELAPSED TIME ALONE IS NOT SUFFICIENT.  Onset in arm A was 22 bars
+of untouched play AFTER the last gesture (CUTOFF=12000.0, bar 1672) -- DELAYED,
+not concurrent, and once begun it never recovered.
+full= never exceeded 2 in either arm, so this is NOT NEW-50's inv-buffer-overflow
+signature.  flips!=isrs appears on 239 arm-A lines but FIRST at line 321, long
+before the onset: unrelated, and deliberately not asserted (the port's guard
+skips a pass while a flip is pending).
+
+--- ★★ THE INSTRUMENT NEW-53 SAID WAS MISSING ---------------------------------
+Tempo changes print nothing, so gesture activity was thought unmeasurable in a
+capture.  It is not: ACIDBOX_VSYNC flips advances with WALL TIME while
+ACIDBOX_BAR advances with TEMPO, so DELTA-FLIPS-PER-BAR reconstructs the tempo
+history from a log carrying no timestamps (~17 = 128 BPM).  Arm A:
+
+    band                bars   fail increments   per bar
+    nominal (~128)      2030         229          0.11
+    slow (low rail)       33         114          3.45
+    fast (high rail)      32          15          0.47
+
+★★ The operator's FIRST tempo test was ENTIRELY CLEAN (bars 1573..1618, slow
+excursions, fail increment ZERO).  So tempo changes do NOT cause the failure --
+which REFUTES this session's own seven-segment hypothesis and exonerates NEW-54's
+new widget as the trigger, on the operator's own evidence.  Once the failing
+state exists, tempo excursions multiply it ~30x.
+
+--- ★★ THIS CORRECTS NEW-53's RECORDED CONCLUSION -----------------------------
+The segmentation above (THE ONE FAILURE, AND WHY IT IS NOT PINNED ON NEW-50)
+concludes the failure needs WIGGLE + PLAYING + GESTURES TOGETHER.  Read its
+sample sizes: the arm it cleared, "playing + gestures, no wiggle", ran 103 s.
+Arm A ran the SAME condition for ~53 MINUTES, 31x longer, and reached fail=363.
+WIGGLE IS NOT NECESSARY.
+★ And arm A had no wiggle STRUCTURALLY, not merely by observation: the whole
+wiggle mechanism (ls_wiggle_cb, ls_attach_title, the wiggle=%d print at
+acid_box.cpp:522) is ACIDBOX_LOOPSTAT-guarded, and `strings build/acid_box.elf |
+grep -c wiggle` is 0 in the default build.  Which also NARROWS the trap recorded
+above: "the title label toggles wiggle, the tell is a bare wiggle=1 line" is true
+only of LOOPSTAT builds.  In the default build -- every gate run, and this bench
+-- tapping the title does nothing and no wiggle= line can appear either way, so
+checking for one there proves nothing.  This session recorded "bare wiggle=1: 0"
+as evidence before noticing the check was VACUOUS.
+
+--- ★★ AND ROT_EQ fail CONFLATES TWO DIFFERENT FAILURES -----------------------
+s_rotEqFail is incremented from TWO places in acid_box.cpp:
+  * :964  a real MISMATCH -- a sampled row of the PRESENTED buffer differs from a
+          CPU rotation of the canvas.  THE PICTURE IS WRONG.
+  * :935  a STARVED check -- still armed when the next is armed, "a flip was
+          pending on every pass it was given".  rot_equality_step() returns early
+          whenever isrs + timeouts < flips.  THE CHECK NEVER FINISHED.
+A rendering defect and a loop() scheduling shortfall land on the SAME counter,
+and this run cannot separate them: us= is indistinguishable between the regimes
+(~3170..3321 failing vs ~3175..3323 clean, so passes WERE running), pass kept
+incrementing while fail climbed, and 239 lines carry flips!=isrs -- exactly the
+condition :935 needs.  Given arm A's gestures were knob drags and tempo presses,
+i.e. loop() load, STARVATION IS AT LEAST AS PLAUSIBLE AS A RENDERING FAULT.
+★ ACTION: split the counter into mismatch= and starved=.  Until then NO acid_box
+ROT_EQ fail>0 reading can be attributed to either cause -- NEW-53's fail=5
+included, which has been carried as a suspected rendering defect since 2026-09-16.
+
+--- BENCH-INSTRUMENT TRAPS MET THIS SESSION (all the analyst's, not the board's)
+1. READING A LIVE CAPTURE WITHOUT DROPPING THE FINAL LINE MANUFACTURES FAILURES.
+   A monitor testing `grep -vc 'timeouts=0'` while the console was still writing
+   counted a line caught mid-write as a timeout and announced "VSYNC TIMEOUT at
+   bar 1221".  There was none.  run_qemu.sh already guards this ("...would report
+   a named failure the firmware never had"); a live reader needs the same sed '$d'.
+   Arm A's finding is unaffected -- analysed from a STATIC copy, and resting on
+   356 separate non-fail=0 lines with monotonically climbing values.
+2. TRUNCATING THE CAPTURE UNDER A LIVE WRITER does not restart it: the reader
+   keeps its offset, the next writes land past a NUL gap, and the arm's opening
+   lines (banner included) are lost.  Rotate, or stop the reader.
+3. grep -c ON A MULTI-BOOT CAPTURE OVER-COUNTS.  Arm B's ACIDBOX_BAR= line count
+   read 1072 against a last bar NUMBER of 997, because the file held two boots.
+   Read the VALUE in the line, never the line count.  (Read first as "duplicate
+   lines" -- wrong: both the silicon and QEMU captures have ZERO adjacent
+   duplicates.  Repeated ROT_EQ lines are the firmware correctly reprinting
+   UNCHANGED counters when no new verdict landed that bar.)
+4. KEEP THE RAW CAPTURE.  NEW-53's eleven boots cannot be re-analysed with the
+   delta-flips instrument because only the narrative survives: this file carries
+   two ROT_EQ lines and ZERO ACIDBOX_BAR lines.  Hence bench-captures/ above.
