@@ -285,6 +285,22 @@ was starved -- the two land on the same counter (acid_box.cpp:929/:971 vs :942,
 which the spec and this commit's parent cite by their PRE-SPLIT numbers 922/964
 and 935; the seven header lines this change adds moved every one of them).
 
+RE-RECORDED 2026-09-18 (NEW-53, the fix -- the equality check now ARMS AT STEP 0,
+the bar start, and on the stopped->playing edge, instead of at step 8): the
+per-bar check gets the WHOLE bar (1.875 s at 128 BPM) rather than its second
+half (~0.94 s).  The NEW-53 bench measured that budget as the whole defect --
+mismatch=0 across 5,487 checks, starved 0 % hands-off at 128 and ~55 % at ~155
+BPM -- so doubling it is the fix; 999 BPM (0.24 s a bar) will still starve, a
+ceiling the bench measures rather than this change removes.  ★ The play EDGE
+arms too: at boot the sequencer already sits at step 0 while stopped, so the
+first poll records lastSeenStep=0 and PLAY makes no step transition -- a bare
+s==0 arm never fired for bar 1 (measured: "guard ran 6 times for 6 bars +
+boot", red by exactly one).  Gated on playing() so STOP's rewind to 0 cannot
+arm a phantom check.  Golden UNMOVED at 0x18B7B637 (no pixel); pass=7 as
+before; step-0 RMS unchanged (0.41..0.43 across bars 2..6, where the check's
+chunks now land after the seam print instead of mid-bar); ITCM 2900 -> 2868
+(the edge logic is in the ITCM-resident poller: two 16-B quanta, real).
+
 ================================================================================
 WHAT THIS GATE PROVES
 ================================================================================
@@ -323,11 +339,11 @@ and the rt1062 half of `usb_descriptor_survey`.  That is the GPL firewall
 working, not a regression.
 
 ================================================================================
-THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-09-18, NEW-53 ROT_EQ split)
+THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-09-18, NEW-53 arm-at-step-0 fix)
 ================================================================================
 ==== captured UART ====
 === BOOT ===
-[APP: acid_box] [VER: v1] [BUILD: Sep 18 2026 09:41:06]
+[APP: acid_box] [VER: v1] [BUILD: Sep 18 2026 13:05:14]
 ACIDBOX_BEGIN
 CODEC_OK
 PANEL_OK
@@ -336,35 +352,35 @@ SELECT=0
 PLAY_LIT=0
 ACIDBOX_UI_SUM=0x18B7B637
 PLAYING=0
-ACIDBOX_ROT ops=1 full=1 px=921600 us=116450 errors=0
-ACIDBOX_ROT_EQ pass=1 mismatch=0 starved=0 fail=0 us=12109
+ACIDBOX_ROT ops=1 full=1 px=921600 us=115492 errors=0
+ACIDBOX_ROT_EQ pass=1 mismatch=0 starved=0 fail=0 us=11126
 I2C_OK
 ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
 ACIDBOX_DONE
 PLAYING=1
 PLAY_LIT=1
-ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3732,0.0001,0.3851,0.4102,0.3934,0.0002,0.3780,0.3704,0.4201,0.3924,0.0002,0.3916]
+ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3732,0.0001,0.3851,0.4065,0.3934,0.0002,0.3780,0.3696,0.4201,0.3924,0.0002,0.3916]
 ACIDBOX_VSYNC flips=17 isrs=17 timeouts=0
-ACIDBOX_ROT ops=39 full=2 px=2366464 us=297565 errors=0
-ACIDBOX_ROT_EQ pass=2 mismatch=0 starved=0 fail=0 us=1679
-ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0002,0.3814,0.4141,0.3863,0.0002,0.3688,0.3646,0.4297,0.3885,0.0002,0.3876]
+ACIDBOX_ROT ops=39 full=2 px=2366464 us=319975 errors=0
+ACIDBOX_ROT_EQ pass=2 mismatch=0 starved=0 fail=0 us=4744
+ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3646,0.4297,0.3885,0.0002,0.3876]
 ACIDBOX_VSYNC flips=33 isrs=33 timeouts=0
-ACIDBOX_ROT ops=79 full=2 px=2954240 us=373963 errors=0
-ACIDBOX_ROT_EQ pass=3 mismatch=0 starved=0 fail=0 us=2316
+ACIDBOX_ROT ops=79 full=2 px=2954240 us=399739 errors=0
+ACIDBOX_ROT_EQ pass=3 mismatch=0 starved=0 fail=0 us=1686
 SELECT=2
 STEP[2]=note33 gate1 acc0 sld0
-ACIDBOX_BAR=3 RMS=[0.4275,0.3866,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3677,0.3708,0.4237,0.3894,0.0005,0.3879]
+ACIDBOX_BAR=3 RMS=[0.4147,0.3866,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3677,0.3553,0.4237,0.3894,0.0005,0.3879]
 ACIDBOX_VSYNC flips=51 isrs=51 timeouts=0
-ACIDBOX_ROT ops=134 full=2 px=3630592 us=460514 errors=0
-ACIDBOX_ROT_EQ pass=4 mismatch=0 starved=0 fail=0 us=1582
-ACIDBOX_BAR=4 RMS=[0.4292,0.3813,0.3928,0.3715,0.3739,0.0003,0.3823,0.4175,0.3883,0.0002,0.3775,0.3704,0.4288,0.3916,0.0001,0.3879]
+ACIDBOX_ROT ops=135 full=2 px=3632384 us=496478 errors=0
+ACIDBOX_ROT_EQ pass=4 mismatch=0 starved=0 fail=0 us=2321
+ACIDBOX_BAR=4 RMS=[0.4292,0.3813,0.3928,0.3753,0.3739,0.0003,0.3823,0.3984,0.3567,0.0002,0.3804,0.3704,0.4288,0.3916,0.0001,0.3879]
 ACIDBOX_VSYNC flips=67 isrs=67 timeouts=0
-ACIDBOX_ROT ops=174 full=2 px=4218368 us=535260 errors=0
-ACIDBOX_ROT_EQ pass=5 mismatch=0 starved=0 fail=0 us=1941
+ACIDBOX_ROT ops=175 full=2 px=4220160 us=581782 errors=0
+ACIDBOX_ROT_EQ pass=5 mismatch=0 starved=0 fail=0 us=2116
 ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3727,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3887]
 ACIDBOX_VSYNC flips=83 isrs=83 timeouts=0
-ACIDBOX_ROT ops=214 full=2 px=4806144 us=609580 errors=0
-ACIDBOX_ROT_EQ pass=6 mismatch=0 starved=0 fail=0 us=1449
+ACIDBOX_ROT ops=215 full=2 px=4807936 us=668429 errors=0
+ACIDBOX_ROT_EQ pass=6 mismatch=0 starved=0 fail=0 us=1593
 CUTOFF=639.5
 CUTOFF=511.2
 CUTOFF=408.7
@@ -374,10 +390,10 @@ CUTOFF=202.2
 CUTOFF=161.6
 CUTOFF=129.2
 CUTOFF=103.3
-ACIDBOX_BAR=6 RMS=[0.4025,0.3893,0.3854,0.3726,0.3742,0.0001,0.3936,0.3860,0.3926,0.0001,0.3975,0.3730,0.3937,0.4018,0.0002,0.3784]
+ACIDBOX_BAR=6 RMS=[0.4298,0.3893,0.3854,0.3726,0.3742,0.0001,0.3898,0.4024,0.3926,0.0001,0.3975,0.3730,0.3937,0.4018,0.0002,0.3784]
 ACIDBOX_VSYNC flips=103 isrs=103 timeouts=0
-ACIDBOX_ROT ops=263 full=2 px=5535744 us=704562 errors=0
-ACIDBOX_ROT_EQ pass=7 mismatch=0 starved=0 fail=0 us=1534
+ACIDBOX_ROT ops=264 full=2 px=5537536 us=776648 errors=0
+ACIDBOX_ROT_EQ pass=7 mismatch=0 starved=0 fail=0 us=2155
 
 (Bar 6 straddles the drag, whose landing instant moves with render timing
 between runs -- the gate selects its pre/post windows dynamically for exactly

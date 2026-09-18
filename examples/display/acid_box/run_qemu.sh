@@ -198,7 +198,9 @@ ROT_FULL=$(printf '%s\n' "$ROT_LAST" | sed 's/.* full=\([0-9]*\).*/\1/')
 [ "$ROT_FULL" -le 2 ] || { echo "FAIL: full-frame presents above start-up's two (full=$ROT_FULL)"; exit 1; }
 # The EQUALITY GUARD: the presented buffer must equal the rotated canvas on
 # every sampled row -- at boot (full-frame path, one synchronous check) and once
-# per bar (damage path: an INCREMENTAL check armed at step 8, 8 sampled rows per
+# per bar (damage path: an INCREMENTAL check armed at step 0 -- bar start; step 8
+# until 2026-09-18, when NEW-53 measured the half-bar budget as the whole
+# starvation defect -- 8 sampled rows per
 # loop pass, passes with a flip pending skipped, its verdict printed at the
 # seam).  fail=0 on every line, and the last pass count must cover boot + every
 # bar that has a guard line after it -- so each bar's check must FINISH before
@@ -456,8 +458,8 @@ echo "post-edit window: $POST"
 # across the six runs above, step 0 of bars 2+ read 0.4147..0.4298 in all but
 # two readings, both at bar 4 -- 0.3765 idle and 0.3205 loaded, the old build's
 # exact value, so something else still stalls polling at that seam at times
-# (unidentified).  The window minimum, 0.3438, was step 8 -- where the check is
-# now armed -- in one loaded pre-edit window; step 8 also read 0.3735 and 0.3751
+# (unidentified).  The window minimum, 0.3438, was step 8 -- where the check was
+# armed (at step 0 since 2026-09-18; NEW-53) -- in one loaded pre-edit window; step 8 also read 0.3735 and 0.3751
 # in old-build runs, so these runs do not settle whether the chunks lower it.
 # (Numbers and runs: transcript_qemu.txt.)  Neither threshold may be moved to
 # make a run pass.

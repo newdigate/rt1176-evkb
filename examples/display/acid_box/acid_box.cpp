@@ -828,7 +828,8 @@ static_assert((uint32_t)UI_W == PANEL_HEIGHT && (uint32_t)UI_H == PANEL_WIDTH,
  *     wait up to a frame) and all 80 sampled rows in one call.  The stall is
  *     irrelevant in setup(), and it is the first ACIDBOX_ROT_EQ line (pass=1).
  *   * PER BAR: INCREMENTAL.  rot_equality_begin() arms a check when the
- *     sequencer enters step 8 (mid-bar), and rot_equality_step() runs from
+ *     sequencer enters step 0 (bar start; step 8 until 2026-09-18, see the
+ *     arm site), and rot_equality_step() runs from
  *     every audio_probe_poll() pass once the transport has played
  *     (currentStep() stays >= 0 after STOP -- only seq.clear() resets it), comparing
  *     ROT_EQ_CHUNK sampled rows per pass until all 80 are done; the 15->0 seam
@@ -1011,6 +1012,7 @@ ROTWIT_FN static void print_rot_lines(void)
  * property of the transport, not a startup transient that settles. */
 static float    stepPeakRms[16];
 static int      lastSeenStep = -1;
+static bool     lastSeenPlaying = false;   /* the stopped->playing edge arms a check too (below) */
 static uint32_t barsDone = 0;
 static void audio_probe_poll(void)
 {
@@ -1029,16 +1031,36 @@ static void audio_probe_poll(void)
 #endif
     }
     /* The per-bar equality check, one chunk per pass once the transport has
-     * played (armed at step 8 below).  The active test is inlined HERE so a pass with
+     * played (armed at step 0 below).  The active test is inlined HERE so a pass with
      * no check in progress never makes the flash call. */
     if (s_rotEqActive) rot_equality_step();
-    if (s != lastSeenStep) {
-        /* Mid-bar: arm this bar's equality check, so it has the second half
-         * of the bar (~0.94 s at 128 BPM) to finish before the seam below
-         * prints its verdict -- the gate's pass >= bars+1 needs every bar's
-         * check COMPLETE by that bar's seam line.  An unfinished one is
-         * counted a FAIL by the next arm. */
-        if (s == 8) rot_equality_begin();
+    /* ★ THE PLAY EDGE MUST ARM TOO.  At boot the sequencer already sits at
+     * step 0 while STOPPED, so the first poll records lastSeenStep = 0 and a
+     * later PLAY produces no step TRANSITION -- an arm keyed on s == 0 alone
+     * never fires for bar 1 (measured: "guard ran 6 times for 6 bars + boot",
+     * the gate's pass >= bars+1 red by exactly one).  Step 8 never had this
+     * because step 8 only ever arrives by transition.  The edge arms at
+     * WHATEVER step it lands on, so a bar resumed from PAUSE mid-way still
+     * gets a check (with the bar's remainder as budget -- a late resume can
+     * starve that one check, and that is a true statement, not a defect). */
+    const bool playing  = transport.playing();
+    const bool playEdge = playing && !lastSeenPlaying;
+    lastSeenPlaying = playing;
+    if (s != lastSeenStep || playEdge) {
+        /* Bar start: arm this bar's equality check, so it has the WHOLE bar
+         * (1.875 s at 128 BPM) to finish before the seam below prints its
+         * verdict -- the gate's pass >= bars+1 needs every bar's check
+         * COMPLETE by that bar's seam line.  An unfinished one is counted
+         * STARVED by the next arm.
+         * ★ It was armed at step 8 (half a bar, ~0.94 s) until 2026-09-18,
+         * and the NEW-53 bench measured that budget as the whole defect: at
+         * 128 BPM it sufficed (0 of 60 starved, hands off), at ~155 BPM it
+         * did not (~55 % starved, hands off, no gestures).  Arming at the
+         * seam doubles the budget; 999 BPM (0.24 s a bar) will still starve.
+         * ★ Gated on playing(): stop() rewinds to step 0, and a bare s == 0
+         * would arm a phantom check on every STOP and drift pass by one.
+         * The play EDGE arms too, at any step -- see the note above. */
+        if (playEdge || (s == 0 && playing)) rot_equality_begin();
         /* 15 -> 0 is the loop seam.  Anchoring on the seam rather than on
          * "s == 0" means a bar is only reported once the whole 16-step table
          * has been filled, so no line can carry a half-measured window. */
@@ -1075,8 +1097,10 @@ static void audio_probe_poll(void)
                            (unsigned long)lvgl_mipi_panel_flips(),
                            (unsigned long)lvgl_mipi_panel_vsync_isrs(),
                            (unsigned long)lvgl_mipi_panel_vsync_timeouts());
-            /* The verdict of the check armed at step 8 -- no compare runs
-             * here any more (it was the ~31 ms seam stall). */
+            /* The verdict of the check armed at this bar's start (the arm
+             * above ran first in this same pass, so a still-active check was
+             * already counted STARVED) -- no compare runs here any more (it
+             * was the ~31 ms seam stall). */
             print_rot_lines();
         }
         lastSeenStep = s;

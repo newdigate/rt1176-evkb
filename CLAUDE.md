@@ -742,6 +742,14 @@ consecutive 33 ms polls to land on steps 15 and 0, the arm needs one poll on ste
 most seams are missed while checks still arm. `pass+mismatch+starved` is the honest bar count;
 every bar number after a fast excursion (NEW-54's "broke at 1694" included) is a lower bound.
 Witnesses: `examples/display/acid_box/bench-captures/new53-witness-armA.csv`.
+★ **FIXED the same day: the check now ARMS AT STEP 0** (bar start) and on the stopped→playing edge,
+giving it the whole bar (1.875 s at 128) instead of the second half (~0.94 s). ★ A bare `s == 0`
+arm never fired for bar 1 — at boot the sequencer already sits at step 0 while stopped, so PLAY
+makes no step TRANSITION (gate red by exactly one: "ran 6 times for 6 bars + boot"); the play EDGE
+arms too, at whatever step it lands on. Gated on `playing()` so STOP's rewind cannot arm a phantom
+check. Golden unmoved, step-0 RMS unchanged (0.41..0.43), ITCM 2900 → 2868 (the edge logic is in the
+ITCM-resident poller — two quanta, real). Sweep 141/141/0, vacuity 70/70, audit PASS. 999 BPM
+(0.24 s a bar) will still starve: a ceiling for the bench to place, not a defect this removes.
 ★★ **THE INSTRUMENT NEW-53 SAID WAS MISSING NOW EXISTS, and it corrects NEW-53's own conclusion.**
 Tempo prints nothing, but `ACIDBOX_VSYNC flips` advances with WALL TIME while `ACIDBOX_BAR` advances
 with TEMPO, so **delta-flips-per-bar reconstructs the tempo history from a timestamp-free log**
