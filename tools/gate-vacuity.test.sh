@@ -1064,4 +1064,36 @@ else
     echo "SKIP: synthui_led_button_test vacuity (example or fixture missing)"
 fi
 
+# --- 17. lvgl_pxp_copy_bench: green fixture passes; an arm's lines stripped
+# and a MISMATCH injected fail by name (NEW-55).  The arms are the probe that
+# chose the db pipeline's sync copy: a gate that could pass without one of
+# them would let a dead arm read as measured.
+PCB="examples/display/lvgl_pxp_copy_bench"
+if [ -d "$EVKB/$PCB" ] && [ -f "$EVKB/$PCB/transcript_qemu.txt" ]; then
+    run_gate "$PCB" "run_qemu.sh" "$EVKB/$PCB/transcript_qemu.txt"; rc=$?
+    [ "$rc" -eq 0 ] && result=0 || result=1
+    report "green_still_passes_lvgl_pxp_copy_bench" $result
+
+    grep -v "arm=edma " "$EVKB/$PCB/transcript_qemu.txt" > "$WORK/pcb_noedma.txt"
+    run_gate "$PCB" "run_qemu.sh" "$WORK/pcb_noedma.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: case f=565 arm=edma src=mixed i=1 did not match" || result=1
+    report "pxp_copy_bench_missing_arm_fails_by_name" $result
+
+    # Exactly the i=1 pxp_aff mixed-source line (r=16x16+0+0 is unique to
+    # case 1) flipped to MISMATCH; the cmp proves the mutant applied, since an
+    # unmatched sed would replay the green fixture and pass vacuously.
+    sed 's|\(arm=pxp_aff src=mixed r=16x16+0+0 REF=0x........ GOT=0x........\) MATCH |\1 MISMATCH |' \
+        "$EVKB/$PCB/transcript_qemu.txt" > "$WORK/pcb_mismatch.txt"
+    result=0
+    cmp -s "$EVKB/$PCB/transcript_qemu.txt" "$WORK/pcb_mismatch.txt" && { echo "FAIL: mismatch mutant did not apply"; result=1; }
+    run_gate "$PCB" "run_qemu.sh" "$WORK/pcb_mismatch.txt"; rc=$?
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: case f=8888 arm=pxp_aff src=mixed i=1 did not match" || result=1
+    report "pxp_copy_bench_mismatch_fails_by_name" $result
+else
+    echo "SKIP: lvgl_pxp_copy_bench vacuity (example or fixture missing)"
+fi
+
 exit $FAILED

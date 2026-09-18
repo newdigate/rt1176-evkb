@@ -1,3 +1,4 @@
+SUPERSEDED 2026-09-19 -- this is the v7 two-arm record; the NEW-55 five-arm probe with the panel scanning out is appended below once benched.
 PXP vs CPU for LVGL's cross-buffer sync copy — hardware measurement (v7 dual-format)
 ====================================================================================
 
