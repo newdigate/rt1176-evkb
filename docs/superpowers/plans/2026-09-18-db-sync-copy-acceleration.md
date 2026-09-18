@@ -74,18 +74,33 @@ with:
      * (fill, PS copy, AS composite, rotation) honours it.  Modelled for
      * NEW-55: the LVGL port's sync copy uses ALPHA=0xFF to make a PXP copy
      * byte-identical to the CPU copy of an LVGL buffer (whose X byte is
-     * always 0xFF).  Silicon-verified in lvgl_pxp_copy_bench's pxp_aff arm
-     * (transcript_hw_evkb.txt, NEW-55 section). */
+     * always 0xFF).  MODELLED FROM THE RM, NOT YET MEASURED: the silicon
+     * reading is taken in Task 5's lvgl_pxp_copy_bench pxp_aff arm.  If that
+     * arm reads MISMATCH, silicon does not honour the bit and this model is
+     * what is wrong (spec 2026-09-18-db-sync-copy-acceleration §4.2). */
     const bool alpha_override = s->regs[PXP_OUT_CTRL / 4] & (1u << 23);
     const uint8_t alpha_value = (s->regs[PXP_OUT_CTRL / 4] >> 24) & 0xFF;
+    /* The bit with a 16-bit OUT format (ARGB1555/ARGB4444 carry alpha in
+     * the pixel, not in byte 3) stays unmodelled -- and loud. */
+    if (alpha_override && out_bpp != 4) {
+        qemu_log_mask(LOG_UNIMP,
+                      "imxrt_pxp: OUT_CTRL[ALPHA_OUTPUT] with a %u-byte OUT "
+                      "format not modelled (16-bit alpha formats carry alpha "
+                      "in the pixel, not in byte 3)\n", out_bpp);
+    }
 ```
+
+(QEMU style forbids mixed declarations: put the two `const` declarations in the function's declaration block beside `out_bpp`, with the comment; the `LOG_UNIMP` goes where the old trap was.) Once Task 5 has measured the bit, replace the "NOT YET MEASURED" sentence with the measured citation, the way `:473-479` cites the v7 DIAG dump.
 
 - [ ] **Step 2: Apply it at the pixel write**
 
 At the `dma_memory_write` near `:636`, insert before the write:
 
 ```c
-            /* OUT_CTRL[ALPHA_OUTPUT]: override byte 3 of a 32-bit output. */
+            /* OUT_CTRL[ALPHA_OUTPUT]: override byte 3 of a 32-bit output.
+             * out_bpp == 4 is exact here: the OUT FORMAT namespace has only
+             * 0x00/0x04 at 4 bpp (RM 52.6.3 has no OUT 0x24 -- pxp_bpp()'s
+             * 0x24 arm is the PS-only RGBA8888 encoding). */
             if (out_bpp == 4 && alpha_override) {
                 pix[3] = alpha_value;
             }
@@ -124,7 +139,11 @@ Run, from the evkb repo:
 ```
 Expected: all three `PASS`. The bit is clear in every existing op, so nothing may move — three green controls are the proof the rebuild changed nothing it should not have.
 
-- [ ] **Step 5: Commit and push qemu2**
+- [ ] **Step 5: Throwaway RED — prove the SET path is live before anything depends on it**
+
+In `~/Development/PXP/PXP.cpp` `_program()`, temporarily OR `(1u << 23) | (0xFFu << 24)` into the `PXP_OUT_CTRL` write (uncommitted), rebuild the bench and run its gate: the 32-bit cases must read MISMATCH by name (the v6 oracle expects X:=0) while the 565 cases still MATCH. Revert (`git -C ~/Development/PXP checkout PXP.cpp`), rebuild, gate PASS again. This exercises the bit position, the shift, the placement after the AS block and the `out_bpp == 4` gate — everything except silicon — and separates a model bug from a library bug before Task 4 lands both on one gate.
+
+- [ ] **Step 6: Commit and push qemu2**
 
 ```bash
 cd ~/Development/qemu2 && git add hw/dma/imxrt_pxp.c && git commit -m "imxrt_pxp: model OUT_CTRL[ALPHA_OUTPUT] -- byte 3 of a 32-bit output is OUT_CTRL[ALPHA] when set, the measured computed-alpha 0 otherwise (NEW-55)" && git push
