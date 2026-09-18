@@ -8,11 +8,12 @@ finding this closes — see `examples/display/acid_box/transcript_hw_evkb.txt`, 
 
 ## 1. The problem, measured
 
-`ACIDBOX_ROT_EQ`'s `fail` counter is incremented from **two places** in `acid_box.cpp`, and they
-mean different things:
+`ACIDBOX_ROT_EQ`'s `fail` counter is incremented from **three places** in `acid_box.cpp`, and they
+mean two different things:
 
 | site | meaning | implication |
 |---|---|---|
+| `:922` | `rot_equality_check_boot()` — the SYNCHRONOUS boot check found a sampled row that differed. It compares all 80 rows in one call, so it cannot starve; this site is a mismatch, and the NEW-54 write-up missed it | **the picture is wrong** |
 | `:964` | `rot_eq_rows()` found a sampled row where the PRESENTED buffer differs from a CPU rotation of the canvas | **the picture is wrong** |
 | `:935` | a check still armed when the next was armed — "a flip was pending on every pass it was given", so it never reached a verdict (`rot_equality_step()` returns early whenever `isrs + timeouts < flips`) | **the check never finished** — `loop()` did not get enough flip-free passes |
 
@@ -36,8 +37,13 @@ defect is not that starvation counts — it is that it counts *indistinguishably
 One line moves:
 
 ```
-ACIDBOX_ROT_EQ pass=1696 fail=0 mismatch=0 starved=0 us=3303
+ACIDBOX_ROT_EQ pass=1696 mismatch=0 starved=0 fail=0 us=3303
 ```
+
+The order is **components then total**, and that is load-bearing rather than aesthetic: the gate's
+second existing assertion (`run_qemu.sh:210`) anchors on ` fail=0 us=[0-9]+\r?$` being CONTIGUOUS, so
+putting the new fields ahead of `fail=` keeps that regex — and both existing vacuity mutations —
+working verbatim.
 
 `fail` is **kept as the sum**, and that is the design decision rather than a convenience:
 
@@ -55,6 +61,7 @@ assertion and proves nothing new.
 
 Two counters replace one; `s_rotEqFail` becomes a derived sum, not stored state:
 
+- `:922` (`rot_equality_check_boot`, the synchronous boot check) increments `s_rotEqMismatch`.
 - `:935` (`rot_equality_begin`, the "still active" branch) increments `s_rotEqStarved`.
 - `:964` (`rot_equality_step`, the `!s_rotEqOk` branch) increments `s_rotEqMismatch`.
 - The print emits `fail=` as `mismatch + starved`, so the sum cannot drift from its parts by
@@ -66,7 +73,13 @@ reader knows which number they are looking at.
 
 ## 4. Gate
 
-`run_qemu.sh` keeps its two existing checks unchanged and adds:
+`run_qemu.sh:208` is **STRENGTHENED** — it required `pass=N fail=0 us=M` contiguous, which any
+insertion breaks, and it is re-pinned to the FULL new format
+(`pass=N mismatch=0 starved=0 fail=0 us=M`). That is a tightening, never a weakening, and it is what
+makes the gate edit the RED-first step: the unchanged firmware fails it by name. `run_qemu.sh:210`
+(` fail=0 us=` anchored at end of line) survives VERBATIM, which is what the field order in §2 buys.
+
+Alongside that, the gate adds:
 
 - a `mismatch=0` assertion, failing by name — **the rendering-correctness check**;
 - a `starved=0` assertion, failing by name — **the scheduling check**;
