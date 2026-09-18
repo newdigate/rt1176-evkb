@@ -715,6 +715,21 @@ regimes, `pass` kept incrementing while `fail` climbed, and 239 lines carry `fli
 the condition the starvation path needs. Arm A's gestures were knob drags and tempo presses, i.e.
 `loop()` load, so **starvation is at least as plausible as a rendering fault**. ACTION: split it
 into `mismatch=` and `starved=` before anyone benches this again.
+★ **SPLIT 2026-09-18 (NEW-53, first action)**: the line now reads `pass= mismatch= starved= fail= us=`
+with `fail` the derived sum, so every earlier capture stays comparable. The gate asserts each
+component BY NAME, and it does so BEFORE the pre-existing `fail=0` check, because `fail` is the
+derived sum and a real fault carries `fail>0` on the same line -- behind it the by-name checks could
+never fire on data the firmware can print (measured on two firmware-shaped captures, found in
+review). There is NO sum check: `fail == mismatch + starved` holds by construction in the print, and
+a check of it cannot fire. `:929` (the boot check, post-split numbering) was a THIRD increment site
+this write-up missed, and it is a mismatch. Golden unmoved at `0x18B7B637`, ITCM 2900 B unmoved,
+vacuity 68 -> **70/70**, sweep **`gates: 141 passed`** (exit 0, 0 failed, 0 SKIP, `display/acid_box`
+green in 18 s), `LICENSE-AUDIT: PASS`. ★ The WIRING is demonstrated in QEMU, not merely asserted: a
+green run leaves both counters 0, so no green gate could show which site feeds which counter -- the
+`f7` recipe (the LVGL port made to forget the previous present's damage) rebuilt against the split
+firmware printed **`mismatch=1..6 starved=0`** and the gate named the mismatch path, where pre-split
+it could only say "failed during the run". The STARVED path stays QEMU-unreachable and is a silicon
+claim. The next acid_box bench reads WHICH counter moves under NEW-54's arm-A gestures.
 ★★ **THE INSTRUMENT NEW-53 SAID WAS MISSING NOW EXISTS, and it corrects NEW-53's own conclusion.**
 Tempo prints nothing, but `ACIDBOX_VSYNC flips` advances with WALL TIME while `ACIDBOX_BAR` advances
 with TEMPO, so **delta-flips-per-bar reconstructs the tempo history from a timestamp-free log**
