@@ -17,6 +17,7 @@ evkb_library_dir(LVGL _lvgl_dir)
 teensy_add_executable(synthui_panel_button_test
     synthui_panel_button_test.cpp
     ${_lvgl_dir}/port/lvgl_mipi_panel.cpp
+    ${_lvgl_dir}/port/lvgl_pxp_copy.cpp
 )
 teensy_target_link_libraries(synthui_panel_button_test cores MipiDisplay PXP)
 

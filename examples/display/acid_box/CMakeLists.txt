@@ -147,6 +147,7 @@ endif()
 teensy_add_executable(acid_box
     acid_box.cpp
     ${_lvgl_dir}/port/lvgl_mipi_panel.cpp
+    ${_lvgl_dir}/port/lvgl_pxp_copy.cpp
     ${_lvgl_dir}/port/lvgl_gt911_indev.cpp
     ${M2_BT_OUT_SRCS})
 # ITCM margin on EVERY link, not only M2_BT_OUT.  The landscape rework (spec
@@ -194,6 +195,22 @@ teensy_add_executable(acid_box
 # easy to miss.  That +16 is one quantum of an instrument quantised to 16 bytes
 # (.text.itcm ends with ALIGN(16); see CLAUDE.md's 2026-09-17 block), so it is
 # indistinguishable from no change at all.
+# ★ RE-MEASURED 2026-09-19, NEW-55 Task 6 (the sync-copy handler installed from
+# lvgl_mipi_panel_create_db): headroom 2,804 / 2,660 / 11,524 / 11,332 B
+# (259,340 / 259,484 / 250,620 / 250,812 B used).  All four fell 64-96 B against
+# the line above, and NONE of it is Task 6's -- MEASURED by a controlled A/B, not
+# argued: with this task's LVGL-port and CMakeLists changes reverted in place,
+# `build` relinked to the IDENTICAL 259,340 B, and `nm` finds zero
+# lvgl_pxp_copy_* / lvgl_mipi_panel_sync_* / _create_db symbols in any of the
+# four ELFs.  acid_box calls create_rotated(), never create_db(), so
+# --gc-sections drops the handler and its installer entirely; adding
+# port/lvgl_pxp_copy.cpp to the source list above costs this example 0 B.
+# The 64-96 B belongs to the PXP pin bump earlier on this branch (PXP 354eda7,
+# PXPOp::alphaOut): libPXP is NOT in the flash-routing rules below, so its new
+# OUT_CTRL[ALPHA_OUTPUT] code in PXPOp::_program() lands in ITCM -- and acid_box
+# links PXP for the rotated present.  Worth writing down because the obvious
+# reading ("the new sync-copy source file cost us ITCM") is wrong, and the four
+# deltas differ (64/96/80/96) only because the metric is 16-B quantised.
 # ★ One 2,048 B floor (the NEW-45 ASSERT below) guards all four builds, but
 # their headroom differs by about 4x -- in practice it guards the non-BT
 # builds, which is the right call: they are the tight ones, while the BT

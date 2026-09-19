@@ -14,7 +14,8 @@ evkb_library_dir(LVGL _lvgl_dir)
 
 teensy_add_executable(lvgl_rpi_panel_test
     lvgl_rpi_panel_test.cpp
-    ${_lvgl_dir}/port/lvgl_mipi_panel.cpp)
+    ${_lvgl_dir}/port/lvgl_mipi_panel.cpp
+    ${_lvgl_dir}/port/lvgl_pxp_copy.cpp)
 teensy_target_link_libraries(lvgl_rpi_panel_test cores MipiDisplay Wire PXP)
 
 # LVGL is a plain CMake static-lib target (like CMSIS-DSP), not a

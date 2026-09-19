@@ -696,6 +696,14 @@ void setup()
                        (unsigned long)mm.max_used, (unsigned)mm.frag_pct);
     }
 
+    /* NEW-55: witness that create_db()'s accelerated sync copy ENGAGED.  An
+     * installed handler that never runs leaves every golden green while the
+     * 260 ms CPU copy stays in the pipeline, so the gate pins copies>0. */
+    Serial1.printf("led_button_sync copies=%lu fallbacks=%lu errors=%lu\n",
+                   (unsigned long)lvgl_mipi_panel_sync_copies(),
+                   (unsigned long)lvgl_mipi_panel_sync_copy_fallbacks(),
+                   (unsigned long)lvgl_mipi_panel_sync_copy_errors());
+
     /* keep animating for an eyes/camera pass */
     lv_timer_create(key_anim_cb, 15, NULL);
 }

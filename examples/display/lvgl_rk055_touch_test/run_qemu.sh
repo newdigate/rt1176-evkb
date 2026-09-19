@@ -87,8 +87,23 @@ grep -q "^FLIPS=0$" "$OUT" && { echo "FAIL: no flips -- the db path is not live"
 grep -q "^VSYNC_TIMEOUTS=0$" "$OUT" || { echo "FAIL: a vsync wait gave up"; exit 1; }
 # v6 adoption corroboration (the IDLE_POLLS idiom): the PXP sync-copy handler
 # must exist AND have engaged.  NOT pinned exactly -- the copy count tracks
-# the touch-driven redraws.  Correctness is carried by the pre-touch golden
-# above: a wrong copy moves LVGL_SUM.
+# the touch-driven redraws.
+# ★ CORRECTION, NEW-55 2026-09-19.  This block used to end "Correctness is
+# carried by the pre-touch golden above: a wrong copy moves LVGL_SUM", and
+# that is FALSE -- MEASURED, not argued.  LVGL_SUM is checksummed on the
+# FIRST refresh, before the indev exists, and the first refresh has no
+# previous frame to sync from, so NO sync-copied pixel is inside it.
+# NEW-55 changed the copy's 32-bit byte contract (byte 3 now 0xFF via
+# alphaOut, where v6 wrote 0) and LVGL_SUM did not move at all, while the
+# flip test's second-frame sum did.  What this gate really carries about
+# the copy is engagement (PXP_COPIES>0) and health (PXP_ERRORS=0); the
+# byte contract is measured on silicon (lvgl_pxp_copy_bench, NEW-55
+# PROBE) and is not asserted here.
+# ★ PXP_COPIES/PXP_FALLBACKS also SHIFTED (11/50 -> ~50/18) because the
+# port installs the handler with a 0-px area threshold where this example
+# used 1024: small rectangles the CPU used to take are now accelerated.
+# Both counters vary run to run with the touch polling, which is exactly
+# why neither is pinned.
 grep -q "^PXP_COPIES=" "$OUT" || { echo "FAIL: pxp copy count missing"; exit 1; }
 grep -q "^PXP_COPIES=0$" "$OUT" && { echo "FAIL: handler installed but never engaged"; exit 1; }
 # A dying PXP is loud by name, not a drifting fallback ratio.

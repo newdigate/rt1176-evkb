@@ -190,6 +190,10 @@ TLIT=$(tk lit); TPRS=$(tk press); TCUE=$(tk cue); TCOL=$(tk color)
 # (docs/KNOWN-BROKEN-GATES.md): re-run this gate idle before treating it as a
 # regression.
 grep -qE "led_button_vsync flips=[0-9]+ isrs=[0-9]+ timeouts=0\r?$" "$OUT" || { echo "FAIL: vsync fence unhealthy or missing"; exit 1; }
+# NEW-55: the db pipeline's accelerated sync copy must have ENGAGED (the
+# rk055 IDLE_POLLS idiom -- an installed handler that never runs would leave
+# every golden green and the 260 ms copy in place) and never errored.
+grep -qE "led_button_sync copies=[1-9][0-9]* fallbacks=[0-9]+ errors=0\r?$" "$OUT" || { echo "FAIL: sync-copy handler did not engage cleanly"; exit 1; }
 grep -q "crc_done" "$OUT" || { echo "FAIL: no completion token"; exit 1; }
 grep -q "PASS: SynthUI led_button render verified" "$OUT" || { echo "FAIL: render verification token missing"; exit 1; }
 echo "PASS: SynthUI led_button render verified"

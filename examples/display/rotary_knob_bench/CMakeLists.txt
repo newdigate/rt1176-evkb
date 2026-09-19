@@ -44,7 +44,8 @@ evkb_library_dir(LVGL _lvgl_dir)
 teensy_add_executable(rotary_knob_bench
     rotary_knob_bench.cpp
     rk_geometry.cpp
-    ${_lvgl_dir}/port/lvgl_mipi_panel.cpp)
+    ${_lvgl_dir}/port/lvgl_mipi_panel.cpp
+    ${_lvgl_dir}/port/lvgl_pxp_copy.cpp)
 teensy_target_link_libraries(rotary_knob_bench cores MipiDisplay PXP)
 
 # LVGL and VGLite are plain CMake static-lib targets;

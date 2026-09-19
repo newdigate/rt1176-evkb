@@ -1060,6 +1060,30 @@ if [ -d "$EVKB/$LBT" ] && [ -f "$EVKB/$LBT/transcript_qemu.txt" ]; then
     cmp -s "$EVKB/$LBT/transcript_qemu.txt" "$WORK/lb_cueover.txt" && result=1
     echo "$OUT_TEXT" | grep -q "^FAIL: cue damage above its box" || result=1
     report "led_button_cue_over_bound_fails_by_name" $result
+
+    # NEW-55: the sync-copy witness.  create_db() installs the PXP-backed
+    # buf_copy handler; this line is the only evidence in the gate that it
+    # ENGAGED, and an installed handler that never runs leaves every golden
+    # green while the 260 ms CPU copy stays in the pipeline.  Absent, it must
+    # fail by name -- an absent counter is not a pass.
+    grep -v "^led_button_sync " "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_nosync.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_nosync.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: sync-copy handler did not engage cleanly" || result=1
+    report "led_button_sync_line_missing_fails" $result
+
+    # ...and PRESENT but reading zero copies -- the shape a handler that is
+    # installed and never engages actually produces.  cmp guards the mutation:
+    # a sed that matched nothing would replay the green fixture.
+    sed 's|^led_button_sync copies=[0-9]*|led_button_sync copies=0|' \
+        "$EVKB/$LBT/transcript_qemu.txt" > "$WORK/lb_synczero.txt"
+    run_gate "$LBT" "run_qemu.sh" "$WORK/lb_synczero.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$LBT/transcript_qemu.txt" "$WORK/lb_synczero.txt" && result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: sync-copy handler did not engage cleanly" || result=1
+    report "led_button_sync_never_engaged_fails" $result
 else
     echo "SKIP: synthui_led_button_test vacuity (example or fixture missing)"
 fi

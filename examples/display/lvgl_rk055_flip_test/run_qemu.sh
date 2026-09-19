@@ -23,6 +23,15 @@ gate_reap $P
 gate_require_capture "$OUT"
 echo "==== captured UART ===="; cat "$OUT"
 
+# DEMONSTRATED RED (NEW-55, 2026-09-19) for the FLIP_B_SUM pin below, which is
+# this gate's only witness of the sync copy's 32-bit byte contract.  Deleting
+# `if (bpp == 4u) op.alphaOut(0xFF);` from LVGL's port/lvgl_pxp_copy.cpp and
+# rebuilding made this gate exit 1 with
+#   FAIL: buffer-B golden moved -- the sync copy's byte contract changed
+# and the mutant's sum came back as EXACTLY v6's old value, 0xB90DE065, while
+# FLIP_A_SUM (the un-synced control) did not move -- so the A pin is not
+# merely duplicating the B pin.  Without these two greps the same mutant left
+# the gate fully GREEN.
 grep -q "PANEL_OK"            "$OUT" || { echo "FAIL: panel bring-up"; exit 1; }
 grep -q "MODE=DOUBLE_BUFFER"  "$OUT" || { echo "FAIL: wrong build variant in the gate"; exit 1; }
 # THE CORE CLAIM -- the panel SCANNED buffer A, then buffer B (model latches
@@ -63,11 +72,32 @@ grep -q "^VSYNCS=120$"         "$OUT" || { echo "FAIL: vsync count -- the flush_
 # are runtime-dependent -- pinning them would flake by design.
 grep -q "^VSYNC_ISRS=120$" "$OUT" || { echo "FAIL: ISR did not retire every flip"; exit 1; }
 grep -q "^VSYNC_TIMEOUTS=0$"   "$OUT" || { echo "FAIL: a vsync wait gave up"; exit 1; }
+# The byte contract, pinned directly.  B is the first refresh WITH a previous
+# frame to sync from, so its sum is the only token in the tree that moved when
+# the copy's byte 3 went 0 -> 0xFF (NEW-55); A is the control -- first refresh,
+# no sync, so a copy defect must move B and leave A alone.  Deterministic:
+# two runs bit-identical, 2026-09-19.  Was 0xB90DE065 under v6's X:=0.
+grep -q "^FLIP_A_SUM=0x1C8E7D65 PANEL_A_SUM=0x1C8E7D65$" "$OUT" || { echo "FAIL: buffer-A golden moved (the un-synced control)"; exit 1; }
+grep -q "^FLIP_B_SUM=0x4B7E8C65 PANEL_B_SUM=0x4B7E8C65$" "$OUT" || { echo "FAIL: buffer-B golden moved -- the sync copy's byte contract changed"; exit 1; }
 # v6 adoption corroboration (the IDLE_POLLS idiom): the PXP sync-copy handler
 # must exist AND have engaged.  NOT pinned exactly -- the copy count tracks
 # the animation's invalidation pattern, and a pinned value here would be
-# vacuous precision.  Correctness is carried by the byte-identical tokens
-# above: a wrong copy moves the FLIP sums and the MATCH pair.
+# vacuous precision.  Correctness is carried by the two goldens just pinned:
+# FLIP_B_SUM is the DIRECT witness of the copy's byte contract (a wrong copy
+# moves it, with FLIP_A_SUM as the un-synced control), and the MATCH pair is
+# the separate firmware-vs-model cross-check -- it says the panel really
+# scanned the bytes the firmware summed, not that those bytes are right.
+# ★ NEW-55, 2026-09-19: the handler moved into lvgl_mipi_panel_create_db()
+# (this example no longer installs it) and its 32-bit copy now carries
+# alphaOut(0xFF), so byte 3 of a sync-copied pixel is 0xFF where v6's copy
+# wrote 0.  FLIP_B_SUM/PANEL_B_SUM therefore MOVED, 0xB90DE065 ->
+# 0x4B7E8C65, on two bit-identical runs; the fixture is re-captured.
+# FLIP_A_SUM is UNCHANGED (0x1C8E7D65) because buffer A is the FIRST
+# refresh, which has no previous frame to sync from.  Until the pin above
+# was added this gate had NO assertion on either sum, and so went green
+# straight through that deliberate change of contract -- which is why the
+# pin exists.  The contract's silicon evidence is separate
+# (lvgl_pxp_copy_bench, NEW-55 PROBE, arm=pxp_aff, two boots).
 grep -q "^PXP_COPIES=" "$OUT" || { echo "FAIL: pxp copy count missing"; exit 1; }
 grep -q "^PXP_COPIES=0$" "$OUT" && { echo "FAIL: handler installed but never engaged"; exit 1; }
 # A dying PXP is loud by name, not a drifting fallback ratio.
