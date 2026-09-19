@@ -675,11 +675,21 @@ re-run 141/141/0 and `LICENSE-AUDIT: PASS` after it. The seven SELF-BUILDING gat
 twelve SynthUI-linking ones were rebuilt BEFORE that sweep, because an `evkb.cmake` edit makes
 the self-building gates reconfigure inside their 120 s budget and read as `exit status 124`.
 
-✅ **Measured 2026-09-19: SWEEP_PLACEHOLDER** on the **NEW-55 db-pipeline sync copy**
+✅ **Measured 2026-09-19: 141 gates discovered, 140 passed, 1 failed, 0 SKIP** on the **NEW-55 db-pipeline sync copy**
 close-out -- the double-buffer sync that NEW-53 finding A measured at 260 ms per full frame now runs on
 the PXP with `OUT_CTRL[ALPHA_OUTPUT]=1, ALPHA=0xFF`, installed by `lvgl_mipi_panel_create_db()` for all
-eleven db consumers. Vacuity **VACUITY_PLACEHOLDER** (70 -> 73 with the bench's three cases, -> 75 with the
-`led_button_sync` pair), `LICENSE-AUDIT: AUDIT_PLACEHOLDER` after the sweep. Pins: PXP **`354eda7`**
+eleven db consumers. Vacuity **75/75** (70 -> 73 with the bench's three cases, -> 75 with the
+`led_button_sync` pair), `LICENSE-AUDIT: PASS` after the sweep. `lvgl_pxp_copy_bench` green in 29 s,
+`synthui_led_button_test` 20 s, `lvgl_rk055_flip_test` 10 s; every other db gate green in the sweep.
+★ **The one red is `audio/bt_sink_test`, and this time it did NOT pass idle** -- five re-runs at host
+loads of 13..30 (the desktop alone was ~2.5 cores that afternoon on an 8-core machine) all failed the
+same way (`bad=3..4 seqgaps=2..5 under=118..366`, the stream stopping at 24..74 of 150 packets: bytes
+lost on the 115200-baud HCI chardev, the documented class), including one against a QEMU rebuilt at
+the previous day's commit, so the model is excluded; and this branch changes NOTHING the gate reads
+(`git diff master...HEAD -- examples/audio tools/gate-lib.sh tools/qrun` is empty; only the LVGL and
+PXP pins moved, which the sink links neither of). It passed idle in 48 s the previous evening. **A
+clean pass on a quiet host is still owed** and is the one open item of this close-out; it is not a
+regression of this work, and it is recorded rather than re-run into a green by luck. Pins: PXP **`354eda7`**
 (`PXPOp::alphaOut`), LVGL **`8b0799c`** (the install + the eDMA handler); fresh-user
 `-DEVKB_FORCE_FETCH=ON` verified by RUNNING `synthui_led_button_test`'s gate on the GitHub-fetched ELF
 (`led_button_sync copies=765 fallbacks=0 errors=0`, PASS). qemu2 **`b313293975`** models the bit
