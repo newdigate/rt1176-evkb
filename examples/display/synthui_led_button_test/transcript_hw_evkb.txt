@@ -238,3 +238,59 @@ accelerated sync -- eDMA memory-to-memory, or a PXP ARGB8888 probe that
 measures whether the alpha byte passes through -- is its own design with its
 own silicon probe, filed rather than improvised.  Until then: a full-screen
 change in the db pipeline costs ~227 + ~288 ms, and LV_INV_BUF_SIZE is 32.
+
+================================================================================
+NEW-55 RATIFICATION, 2026-09-19 -- the db pipeline's sync copy on the PXP
+================================================================================
+Image [BUILD: Sep 19 2026 10:33:28] (the .hex), evkb 35e81fb (create_db installs
+lvgl_pxp_copy with alphaOut(0xFF), LVGL port 8b0799c, PXP 354eda7), console on
+the MCU-Link VCOM.  THREE boots (the flash tool's reset + two SW4).
+
+  led_button_crc=0xD474F06D  led_button_fresh_crc=0x463C3371  led_button_delta_eq=PASS
+  led_button_damage_op lit=1450 press=6640 cue=900 color=1450
+  led_button_tasks_op  lit=10 press=12 cue=23 color=10
+  led_button_vsync flips=73 isrs=73 timeouts=0
+  led_button_sync copies=636 fallbacks=0 errors=0                     (all three boots)
+
+  led_button_transition i=0 us=228462 render_us=228361 px=921600 ev=52 inv=1 full=1
+  led_button_transition i=1 us=38544 sync_us=22760 render_us=15708 wait_us=4316 px=6552 sync_px=921600
+  led_button_transition i=1 us=38684 sync_us=22891 render_us=15716 wait_us=4471 ...   (boot 2)
+  led_button_transition i=1 us=38696 sync_us=22913 render_us=15706 wait_us=4455 ...   (boot 3)
+  led_button_fps frames=64 mfps_med=35053/35713/35829 us_med=28528/28001/27910
+                 us_min=15236/15251/15244 us_max=80087/80068/80111
+
+★★ THE NUMBER NEW-55 EXISTS FOR: the full-screen SYNC COPY read
+`sync_us=272,283` on 2026-09-18 (finding A, above) and reads **22,760..22,913**
+now -- 18.4 ms of copy once the 4.4 ms vsync wait inside it is taken out, against
+the probe's 17.3 ms for a single rectangle (the sync is ~30 pieces, the full
+screen minus this frame's eight strips).  The transition frame is 38.6 ms where
+it was 288; a full-screen change in the db pipeline now costs ~267 ms over its
+two refreshes (228 render + 38.6) where it cost 515.  Under the pre-registered
+bound (sync_us < 33,000, one refresh period): MET, by a factor of 1.4.
+★ The goldens, the equality guard, the damage and task bounds and the vsync fence
+are unmoved on every boot -- the copy is byte-identical to the CPU copy it
+replaced, on silicon as in QEMU.  `led_button_sync copies=636 fallbacks=0
+errors=0`: the handler engaged on every eligible rectangle and the PXP never
+erred.
+★ Steady state moved a little, in the right direction: us_min 18.5..19.1 -> 15.2
+(every frame's small sync copies now go through the PXP too), us_max 85.4..85.6
+-> 80.1 (the lit-boundary frame's), us_med 27.7..28.5 unchanged within noise.
+The full RENDER (transition i=0) is 228 ms as before: the sw renderer's cost,
+not this issue's.
+★ The transition now reads ticks=2 ev=52 where the 2026-09-18 runs read ticks=1
+ev=44: the first, uncounted refresh (which syncs the screen-load render) got 14x
+faster, so the anim's second tick lands before the first counted refresh, as it
+already did in QEMU.  Same overflow, same full render; a timing consequence of
+the fix, not a change in what is measured.
+
+The rest of the ratification (spec §6.3), same session, one line each:
+  synthui_fader_test  (GPU path, 3 boots): fd_engine=gpu fd_crc=0x814F4047 fd_delta_eq=PASS
+      fd_damage max=3234 fd_gpu_err=0 timeouts=0 mfps_med=30440 -- the VETO did not fire
+  synthui_knob_test   (GPU path, 4 boots): KNOB_SUM_ALL=0xA5399CF5 (all six sums as
+      recorded) KNOB_DELTA_SEQ=FULL=0x7C9EC8DB EQ=PASS rk_gpu_err=0 32.07 fps -- unmoved
+  lvgl_rk055_flip_test (3 boots): FLIP_A_SUM=0x1C8E7D65 FLIP_B_SUM=0x4B7E8C65 -- equal to
+      QEMU's re-recorded pins; PXP_COPIES=122 FALLBACKS=0 ERRORS=0 VSYNC_TIMEOUTS=0
+  lvgl_rk055_touch_test (1 boot): LVGL_SUM=0x3244D69A unmoved (pre-touch golden)
+  acid_box (control, 1 boot, PLAY then hands off, 122 bars): ACIDBOX_UI_SUM=0xA67828E9
+      ENGINE=gpu GPU_ERR=0 ROT_EQ pass=122 mismatch=0 starved=0 full=2 timeouts=0 --
+      no sync path, nothing moved

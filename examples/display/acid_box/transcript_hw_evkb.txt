@@ -830,3 +830,5 @@ stands.  Read Δflips/bar as slow-vs-not, never as a number above nominal.
 pass+starved reached 13,964 with ACIDBOX_BAR=1126 printed: at 15 ms a step the
 15->0 seam is caught by two consecutive 33 ms polls about one time in twelve.
 Every bar number after a 999 excursion is a floor, not a count.
+
+★ NEW-55 ratification 2026-09-19 (the db pipeline sync copy moved to the PXP with alphaOut(0xFF)): see examples/display/synthui_led_button_test/transcript_hw_evkb.txt, "NEW-55 RATIFICATION" -- this example's silicon tokens were re-read that session and are UNMOVED (the flip test's B golden equals its new QEMU pin).

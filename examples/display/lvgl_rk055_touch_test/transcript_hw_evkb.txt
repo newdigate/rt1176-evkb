@@ -295,3 +295,5 @@ CENSUS type=BOX_SHADOW bucket=38400 n=141
 CENSUS type=LABEL bucket=1024 n=117
 CENSUS_TASKS=661  CENSUS_EVAL_NS=1026
 (live-finger ritual: DRAG_END x=612 moves=22; PXP_ERRORS=0; UNDERRUNS=0/10)
+
+★ NEW-55 ratification 2026-09-19 (the db pipeline sync copy moved to the PXP with alphaOut(0xFF)): see examples/display/synthui_led_button_test/transcript_hw_evkb.txt, "NEW-55 RATIFICATION" -- this example's silicon tokens were re-read that session and are UNMOVED (the flip test's B golden equals its new QEMU pin).

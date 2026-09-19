@@ -141,3 +141,5 @@ tools/rt1170-console.py. Flash: LinkServer 26.6.137, flash load -> verify
 (VCOM free) -> attach reader -> reset via backgrounded `LinkServer run`,
 per the standing bench order. (The board was subsequently reflashed to
 acid_box for its own silicon check the same session.)
+
+★ NEW-55 ratification 2026-09-19 (the db pipeline sync copy moved to the PXP with alphaOut(0xFF)): see examples/display/synthui_led_button_test/transcript_hw_evkb.txt, "NEW-55 RATIFICATION" -- this example's silicon tokens were re-read that session and are UNMOVED (the flip test's B golden equals its new QEMU pin).
