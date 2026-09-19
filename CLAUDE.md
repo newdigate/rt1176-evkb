@@ -675,6 +675,79 @@ re-run 141/141/0 and `LICENSE-AUDIT: PASS` after it. The seven SELF-BUILDING gat
 twelve SynthUI-linking ones were rebuilt BEFORE that sweep, because an `evkb.cmake` edit makes
 the self-building gates reconfigure inside their 120 s budget and read as `exit status 124`.
 
+✅ **Measured 2026-09-19: SWEEP_PLACEHOLDER** on the **NEW-55 db-pipeline sync copy**
+close-out -- the double-buffer sync that NEW-53 finding A measured at 260 ms per full frame now runs on
+the PXP with `OUT_CTRL[ALPHA_OUTPUT]=1, ALPHA=0xFF`, installed by `lvgl_mipi_panel_create_db()` for all
+eleven db consumers. Vacuity **VACUITY_PLACEHOLDER** (70 -> 73 with the bench's three cases, -> 75 with the
+`led_button_sync` pair), `LICENSE-AUDIT: AUDIT_PLACEHOLDER` after the sweep. Pins: PXP **`354eda7`**
+(`PXPOp::alphaOut`), LVGL **`8b0799c`** (the install + the eDMA handler); fresh-user
+`-DEVKB_FORCE_FETCH=ON` verified by RUNNING `synthui_led_button_test`'s gate on the GitHub-fetched ELF
+(`led_button_sync copies=765 fallbacks=0 errors=0`, PASS). qemu2 **`b313293975`** models the bit
+(comment updated at `2fa6ea058d`). **No new gate -- 141 unchanged.** Spec
+`docs/superpowers/specs/2026-09-18-db-sync-copy-acceleration-design.md`, plan
+`docs/superpowers/plans/2026-09-18-db-sync-copy-acceleration.md`, records in
+`lvgl_pxp_copy_bench/transcript_hw_evkb.txt` ("NEW-55 PROBE") and
+`synthui_led_button_test/transcript_hw_evkb.txt` ("NEW-55 RATIFICATION").
+★★ **THE NUMBER: `led_button_transition i=1 sync_us` 272,283 -> 22,760..22,913 (three boots)** -- the
+transition frame 288 -> 38.6 ms, a full-screen change in the db pipeline **515 -> 267 ms** over its two
+refreshes (the 228 ms full RENDER is the sw renderer's and untouched). Under the pre-registered bound
+(< 33 ms, one refresh period) by 1.4x. Nine synthui goldens, every delta-equality guard, `damage_op`,
+`tasks_op` and `timeouts=0` UNMOVED on every boot; `us_min` 18.5 -> 15.2 and `us_max` 85.5 -> 80.1 as
+the steady-state small syncs moved to the PXP too; `us_med` unchanged.
+★★ **THE PROBE DECIDED IT, NOT THE PLAN, and two of the plan's expectations were refuted by it.**
+`lvgl_pxp_copy_bench` grew FIVE arms with the panel SCANNING OUT (the v7 bench had no panel -- 174 ms
+where the pipeline pays 260; the new reference column reproduces 260.6 exactly). Full 720x1280 XRGB8888,
+two boots, every arm MATCH on its own byte contract, every REF/GOT identical across boots: `cpu_lv`
+260.6 ms; **`cpu_clib` (newlib memcpy) 989.6 ms -- 3.8x SLOWER than LVGL's word loop**, refuting "the CPU
+floor, likely <= 2x faster" (a byte/halfword prologue plus per-word stalls on uncached SDRAM; not chased,
+the bound is known in the wrong direction); `pxp_x0` 17.3; **`pxp_aff` 17.3, byte-identical to the CPU
+copy of an X=0xFF source AND X==0xFF where the source held C3/5D/FF/19** -- silicon honours the override,
+at BOTH 32-bit OUT encodings (a `pxp_affa` arm with the same bytes declared ARGB8888, OUT 0x00, was added
+in review because RM 52.6.3's "when generating an output buffer with an alpha component" does not name
+RGB888; it MATCHed too, on both source rows, so the handler keeps XRGB8888); **`edma` 49.7 ms, correct
+and byte-preserving on every cell -- and it loses** (over 33 ms, 2.9x the PXP). It stays in the port
+(`lvgl_edma_copy.{h,cpp}`, `lvgl_edma_bands.h` host-tested with three mutants red) as the only
+accelerated copy this tree has that preserves EVERY byte with no invariant about the writer. The
+16x16 case is a 28x PXP win (6 vs 169 us), so the crossover threshold is 0; the single-row case is a
+6 % PXP win with scanout where v7 measured a tie without -- the `>= 2 rows` rule stays.
+★★ **WHY THE PXP COPY IS BYTE-IDENTICAL FOR LVGL, STATED ONCE: X ≡ 0xFF in every LVGL-rendered XRGB8888
+buffer.** Opaque fills write `lv_color_to_u32` (0xFF in byte 3); every blended write
+(`lv_color_24_24_mix`) touches bytes 0-2 only; every db example paints an opaque screen background
+first. So `alphaOut(0xFF)` reproduces the CPU copy exactly -- and the GC355 compositors (fader, knob)
+write 0xFF there too, MEASURED: their silicon equality guards (`fd_delta_eq`, `KNOB_DELTA_EQ`) held on
+the GPU path, which was the check pre-registered to VETO the probe's winner (spec §5.3). It did not fire.
+★★ **THE CONTRACT IS PINNED IN QEMU, TWICE, BOTH SHOWN RED.** Indirectly by every db delta-equality
+guard: the presented buffer holds sync-COPIED regions (earlier steps) plus this step's render, the fresh
+render holds none -- with the override deleted from the handler, `synthui_led_button_test` printed
+`led_button_delta_crc=0x03DB4339` vs fresh `0x463C3371`, `FAIL: delta render differs from full render`,
+**with the boot golden `0xD474F06D` still GREEN** (the first refresh has nothing to sync -- the boot golden
+is blind to the copy). Directly by `lvgl_rk055_flip_test`, whose buffer-B sum is the ONE token in the
+tree that moved when the byte contract changed (`0xB90DE065` -> `0x4B7E8C65`; buffer A, the un-synced
+first refresh, did not) -- now PINNED, and the same deletion returned exactly v6's `0xB90DE065`. **So the
+new qemu2 floor is `b313293975`**: an older model leaves X:=0 in synced regions and every db gate fails
+BY NAME on its equality guard -- red, not SKIP. (The touch test's `LVGL_SUM` did NOT move and its gate
+comment had claimed a wrong copy would move it: it is checksummed on the first refresh, before any sync.
+Corrected in place.)
+★ **`create_db()` installs; each consumer compiles the handler.** The port's sources are compiled per
+example, so `lvgl_mipi_panel.cpp`'s call to `lvgl_pxp_copy_install()` made 15 CMakeLists add
+`port/lvgl_pxp_copy.cpp` (all 17 panel examples link PXP already) -- a db consumer that forgets it fails
+to LINK, loudly. `lvgl_rk055_{flip,touch}_test` dropped their own `install(1024)`; a later install
+REPLACES the threshold, so `create_db()`'s 0 wins. `create_rotated()` (acid_box) installs nothing: no
+sync path, and its control run read `0xA67828E9`, `ROT_EQ mismatch=0 starved=0`, `full=2`, unmoved.
+★ **acid_box ITCM headroom 2868 -> 2804 B (`build`), and NOT from this install** -- the handler is
+unreferenced there and `--gc-sections` drops it (A/B: deleting the source from its CMakeLists relinks
+to the identical 259,340 B). The 64/96/80/96 B across its four dirs is `PXPOp::_program()` growing with
+`alphaOut` -- libPXP is ITCM-resident in acid_box for the rotated present -- quantised to 16 as ever.
+Recorded in `acid_box/CMakeLists.txt`; routing libPXP to flash is the lever if it is ever needed.
+★ **Two review corrections worth their lines.** The QEMU model and the PXP setter were first written
+with "silicon-verified" comments BEFORE the bench ran -- both reworded to "MODELLED FROM THE RM, NOT YET
+MEASURED" until Task 5 measured it, then cited. And a fake-qemu `-D` branch written for the vacuity
+harness was found INERT in review (`tools/qrun` intercepts `-D` and creates the log itself) and dropped
+rather than left with a false rationale.
+★ Bench mechanics: with the sync 14x faster, the transition's first uncounted refresh now finishes
+before the anim's second tick, so `led_button_transition i=0` reads `ticks=2 ev=52` where 2026-09-18
+read `ticks=1 ev=44` -- same overflow, same 228 ms render, a timing consequence of the fix.
+
 ✅ **Measured 2026-09-17: 141 gates discovered, 141 passed, 0 failed, 0 SKIP** (`gates: 141 passed`,
 exit 0; `-l` reports 141; the runner's own header reads `Running 141 QEMU gate(s)`), on the **NEW-54
 acid_box top bar** SOFTWARE close-out -- fully clean, no red to disposition, `rt1176:display/acid_box`
@@ -778,13 +851,14 @@ discards BOTH transition frames and prints them as `led_button_transition`, so `
 measures the sweep alone (`us_max` 85.4..85.6 ms — the lit-boundary frame: 8 strips + 11 halo boxes,
 every fourth tick, 74 ms mean against 25 ms steady-state) while the platform number stays in every
 run's output. Goldens, `delta_eq`, `damage_op`, `tasks_op` and `timeouts=0` unmoved on all seven boots.
-★ **The copy is NOT fixed, deliberately.** `lvgl_pxp_copy` (v6) does it in 13 ms and nothing in the
+★ **The copy is NOT fixed, deliberately** (FIXED the next day -- NEW-55, the block above: PXP with the alpha
+override, 22.9 ms). `lvgl_pxp_copy` (v6) does it in 13 ms and nothing in the
 db pipeline installs it — and nothing can, as is: the PXP writes X:=0 on every 32-bit output while the
 sw renderer's fills write X=0xFF (`lv_color_to_u32`), so a synced region would differ from a rendered
 one in a byte every db checksum hashes and `led_button_delta_crc` (synced + rendered) would stop
 equalling `led_button_fresh_crc` (all rendered). A byte-preserving accelerated sync (eDMA
 memory-to-memory, or a PXP ARGB8888 alpha-passthrough probe) is its own design with its own silicon
-probe: NEW-55.
+probe: NEW-55 (DONE 2026-09-19, the block above).
 ★ **The 128-byte printf truncation (the UAC2 P4 lesson) returned wearing a firmware face**: the
 ~130-character transition line lost its `=1\n` and the next line ran on from `ticks`, byte-identical
 on three boots — deterministic, so it read as a firmware artefact until the BYTES were looked at. QEMU

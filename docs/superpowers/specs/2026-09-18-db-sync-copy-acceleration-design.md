@@ -128,3 +128,9 @@ PXP (if `alphaOut` lands) and LVGL (the port) pushed and pinned; fresh-user veri
 ## 9. Out of scope
 
 `LV_INV_BUF_SIZE` (moves the cliff, costs render passes — NEW-50's lesson); the 227 ms full-screen **render** (the sw renderer's cost, a separate finding); ARGB8888 buffers whose alpha means something (the v6 header's reserved alpha-engine design); triple buffering.
+
+## 10. Measured (postscript, 2026-09-19)
+
+The probe (§3) ran on 2026-09-19, two boots, every arm MATCH on its contract, every REF/GOT identical across boots (`lvgl_pxp_copy_bench/transcript_hw_evkb.txt`, "NEW-55 PROBE"). Full 720×1280 XRGB8888 with the panel scanning out: `cpu_lv` 260.6 ms (the pipeline's number, reproduced), `cpu_clib` **989.6 ms** (newlib `memcpy` is 3.8× *slower* than LVGL's word loop — §2's "the CPU floor" was wrong in direction), `pxp_x0` 17.3, `pxp_aff` 17.3 and byte-identical to the CPU copy of an X=0xFF source at BOTH OUT encodings (a `pxp_affa` ARGB8888-declared arm was added in review and matched on both source rows), `edma` 49.7 ms and byte-preserving on every cell. By §2's rule the PXP alpha override won; the eDMA handler stays in the port as the byte-preserving-for-any-writer fallback (§5.3).
+
+Ratification (§6.3): `led_button_transition i=1 sync_us` **272,283 → 22,760..22,913** (three boots; bound < 33,000 met); nine synthui goldens, every delta-equality guard, damage/task bounds and vsync fences unmoved; the fader and knob GPU-path equality guards held (the veto did not fire); `lvgl_rk055_flip_test`'s buffer-B sum moved once (`0xB90DE065 → 0x4B7E8C65`) and is now pinned as the direct QEMU witness of the byte contract; the touch test's `LVGL_SUM` did not move (first refresh, no sync — its gate comment had claimed otherwise and was corrected); acid_box control unmoved. qemu2 floor `b313293975`; pins PXP `354eda7`, LVGL `8b0799c`.
