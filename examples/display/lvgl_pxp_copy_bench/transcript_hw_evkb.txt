@@ -118,3 +118,242 @@ PXP_COPY_BENCH_DONE
    full-screen 8888 moves 2x the bytes of 565 in 13.0 vs 12.3 ms --
    ~283 MB/s effective on the 32-bit path (3.686 MB in 13.0 ms), consistent
    with v6's AXI figure once byte volume is accounted for.
+
+================================================================================
+NEW-55 PROBE, 2026-09-19 -- five sync-copy arms, panel scanning out
+================================================================================
+Image [BUILD: Sep 19 2026 00:03:07] (the .hex), evkb branch new-55-db-sync-copy
+(bench 3fced54; PXP 354eda7 with PXPOp::alphaOut; LVGL port f3021d8 with the
+eDMA handler; qemu2 b313293975 models OUT_CTRL[ALPHA_OUTPUT]).  Flashed with
+tools/rt1170-flash.sh, console on the MCU-Link VCOM, SW4 between boots.
+TWO BOOTS: 140 cases each, every REF/GOT pair BYTE-IDENTICAL across the two,
+zero MISMATCH, zero ERR, COPY_BENCH_OK on both.  Every full-frame timing
+agrees between the boots to 0.1 %; five of the 280 cells differ by 5..9 %, all
+of them sub-3 ms copies (the widest: 16x16 RGB565 pxp_x0, 135 vs 83 us --
+scheduling jitter at the scale of one scanout line), none on a decision row.
+
+Why this run differs from the v7 record above it: the PANEL SCANS OUT for the
+whole measurement (SCANOUT=1 -- Display.begin() + a static fill; the LCDIFv2
+reads ~221 MB/s of SDRAM the whole time).  The v7 bench had no panel, and that
+is the gap NEW-53 finding A found: v7's 174 ms full-frame CPU copy is 260 ms
+in the pipeline.  This run's reference column reproduces the pipeline's number
+(ref_us 260,4xx..260,6xx on every full-frame row), so the timings below are
+the ones the db pipeline pays.  Also: the timed window here opens before the
+PXPSurface/PXPOp construction (v7 opened it after) -- sub-microsecond, stated
+so the two tables are not assumed to share an instrument.
+
+=== THE DECISION TABLE: 720x1280 XRGB8888 (i=14 f=8888), boot 2 =============
+
+  arm        src    contract                        us       vs cpu_lv
+  cpu_lv     --     (LVGL's lv_draw_buf_copy)       260,649  1.00x  the reference
+  cpu_clib   mixed  byte identity                   989,559  0.26x  MATCH -- SLOWER
+  pxp_x0     mixed  RGB identity, X:=0 (v7)          17,293  15.1x  MATCH
+  pxp_aff    xff    byte identity with cpu_lv        17,277  15.1x  MATCH
+  pxp_aff    mixed  RGB identity, X==0xFF            17,290  15.1x  MATCH
+  pxp_affa   xff    byte identity (OUT 0x00)         17,284  15.1x  MATCH
+  pxp_affa   mixed  RGB identity, X==0xFF (OUT 0x00) 17,270  15.1x  MATCH
+  edma       mixed  byte identity                    49,659   5.2x  MATCH
+
+  RGB565 full frame (i=14 f=565): cpu_lv 134,279  cpu_clib 494,839  pxp_x0 16,218
+  edma 24,142 -- the same ordering.
+
+★★ DECISION, by the rule pre-registered in the spec (§2: the fastest
+byte-preserving arm whose full-frame copy is under one refresh period, 33 ms,
+with the panel scanning out): **pxp_aff -- the PXP with OUT_CTRL[ALPHA_OUTPUT]=1,
+ALPHA=0xFF -- at 17.3 ms.**  Task 6 proceeds on variant 6a.
+
+★ SILICON HONOURS THE ALPHA OVERRIDE, AT BOTH 32-BIT OUT ENCODINGS.  pxp_aff
+(surfaces XRGB8888, OUT encoding 0x04 RGB888) and pxp_affa (the same bytes
+declared ARGB8888, OUT encoding 0x00) both MATCH on BOTH source rows: the
+xff row proves byte identity with the CPU copy for a source whose X byte is
+0xFF (every LVGL-rendered XRGB8888 buffer), the mixed row proves the byte the
+PXP writes is the OVERRIDE (X==0xFF where the source held C3/5D/FF/19...), not
+the source's.  The RM's "when generating an output buffer with an alpha
+component" (52.6.3) does not exclude RGB888; the model's uniform treatment of
+0x00 and 0x04 (qemu2 b313293975) was right, and its "NOT YET MEASURED" comment
+can now cite this section.  The ARGB8888 encoding is therefore NOT needed for
+the handler; it stays XRGB8888.
+
+★ THE eDMA ARM IS CORRECT AND HONEST -- and it loses.  Byte-preserving on the
+mixed source in all 28 cells, 49.7 ms per full frame (5.2x the CPU, 32-byte
+bursts, three 960-B bands), 14 us at 16x16, 76 us at the 4-byte-aligned
++13+7 offset (its slow regime), 24 ms at RGB565.  It is over the 33 ms
+criterion, and the PXP is 2.9x faster still.  It stays in the port
+(lvgl_edma_copy.{h,cpp}, host-tested planner) as the only accelerated copy this
+tree has that preserves EVERY byte with no invariant about the writer -- the
+answer if a buffer whose X byte carries meaning ever needs syncing.
+
+★★ NEWLIB memcpy IS 3.8x SLOWER THAN LVGL's WORD LOOP ON THIS MEMORY.  cpu_clib
+read 989.6 ms per full frame (8888) and 494.8 (565) against lv_memcpy's 260.6 /
+134.3 -- and 278 us against 169 at 16x16.  The plan called it "the CPU floor,
+likely <=2x faster"; it is a ceiling.  Not investigated (the arm exists to
+bound the CPU, and the bound is now known in the wrong direction); the likely
+mechanism is newlib-nano's byte/halfword prologue and unrolled LDR/STR pairs
+each stalling on an uncached SDRAM read, where lv_memcpy's 8x-unrolled word
+loop issues the same loads with less overhead per word.  Recorded because the
+obvious "just use memcpy" is refuted by measurement, not argument.
+
+=== CROSSOVER INPUTS (boot 2, f=8888; cpu_lv ref_us first) ===================
+
+  16x16+0+0   ref 169  cpu_clib 278  pxp_x0 6    pxp_aff 5/6  pxp_affa 6/6  edma 14
+  16x16+13+7  ref 170  cpu_clib 276  pxp_x0 9    pxp_aff 8/9  pxp_affa 7/9  edma 76
+  719x1+1+0   ref 205  cpu_clib 786  pxp_x0 195  pxp_aff 193  pxp_affa 193  edma 210
+  1x1280+719  ref 1356 cpu_clib 1361 pxp_x0 371  pxp_aff 374  pxp_affa 373  edma 412
+
+  The PXP wins at 16x16 by 28x (6 us against 169), so the handler's area
+  threshold is 0: there is no rectangle small enough for the CPU to win.  The
+  single-row case is now a marginal PXP win with scanout (193 vs 205) where v7
+  measured a dead tie without; the handler's >= 2 rows rule stays as it is --
+  the gain is 6 % on a 200 us copy and the rule is documented on the v7 tie.
+
+=== CONSOLE CAPTURE, boot 2, verbatim (boot 1 identical in every REF/GOT) ====
+
+PXP_COPY_BENCH_BEGIN
+SCANOUT=1
+ALLOC_OK
+PXP_OK
+EDMA_OK
+CASE i=1 f=565 arm=cpu_clib src=mixed r=16x16+0+0 REF=0xA57430D6 GOT=0xA57430D6 MATCH ref_us=135 us=140
+CASE i=1 f=565 arm=pxp_x0 src=mixed r=16x16+0+0 REF=0xA57430D6 GOT=0xA57430D6 MATCH ref_us=83 us=6
+CASE i=1 f=565 arm=edma src=mixed r=16x16+0+0 REF=0xA57430D6 GOT=0xA57430D6 MATCH ref_us=135 us=8
+CASE i=2 f=565 arm=cpu_clib src=mixed r=16x16+13+7 REF=0x33EDA9DE GOT=0x33EDA9DE MATCH ref_us=137 us=138
+CASE i=2 f=565 arm=pxp_x0 src=mixed r=16x16+13+7 REF=0x33EDA9DE GOT=0x33EDA9DE MATCH ref_us=136 us=8
+CASE i=2 f=565 arm=edma src=mixed r=16x16+13+7 REF=0x33EDA9DE GOT=0x33EDA9DE MATCH ref_us=137 us=75
+CASE i=3 f=565 arm=cpu_clib src=mixed r=64x64+0+0 REF=0xB56B891E GOT=0xB56B891E MATCH ref_us=970 us=2235
+CASE i=3 f=565 arm=pxp_x0 src=mixed r=64x64+0+0 REF=0xB56B891E GOT=0xB56B891E MATCH ref_us=968 us=76
+CASE i=3 f=565 arm=edma src=mixed r=64x64+0+0 REF=0xB56B891E GOT=0xB56B891E MATCH ref_us=968 us=108
+CASE i=4 f=565 arm=cpu_clib src=mixed r=64x64+13+7 REF=0x8F90ECBA GOT=0x8F90ECBA MATCH ref_us=974 us=2233
+CASE i=4 f=565 arm=pxp_x0 src=mixed r=64x64+13+7 REF=0x8F90ECBA GOT=0x8F90ECBA MATCH ref_us=976 us=107
+CASE i=4 f=565 arm=edma src=mixed r=64x64+13+7 REF=0x8F90ECBA GOT=0x8F90ECBA MATCH ref_us=977 us=1176
+CASE i=5 f=565 arm=cpu_clib src=mixed r=120x140+0+0 REF=0x82F6A852 GOT=0x82F6A852 MATCH ref_us=2660 us=8872
+CASE i=5 f=565 arm=pxp_x0 src=mixed r=120x140+0+0 REF=0x82F6A852 GOT=0x82F6A852 MATCH ref_us=2534 us=309
+CASE i=5 f=565 arm=edma src=mixed r=120x140+0+0 REF=0x82F6A852 GOT=0x82F6A852 MATCH ref_us=2762 us=2430
+CASE i=6 f=565 arm=cpu_clib src=mixed r=120x140+599+1139 REF=0xA7DE156E GOT=0xA7DE156E MATCH ref_us=2771 us=8881
+CASE i=6 f=565 arm=pxp_x0 src=mixed r=120x140+599+1139 REF=0xA7DE156E GOT=0xA7DE156E MATCH ref_us=2772 us=436
+CASE i=6 f=565 arm=edma src=mixed r=120x140+599+1139 REF=0xA7DE156E GOT=0xA7DE156E MATCH ref_us=2773 us=4742
+CASE i=7 f=565 arm=cpu_clib src=mixed r=200x160+8+48 REF=0x5FE05E32 GOT=0x5FE05E32 MATCH ref_us=4940 us=17179
+CASE i=7 f=565 arm=pxp_x0 src=mixed r=200x160+8+48 REF=0x5FE05E32 GOT=0x5FE05E32 MATCH ref_us=4937 us=572
+CASE i=7 f=565 arm=edma src=mixed r=200x160+8+48 REF=0x5FE05E32 GOT=0x5FE05E32 MATCH ref_us=4938 us=4612
+CASE i=8 f=565 arm=cpu_clib src=mixed r=360x320+0+0 REF=0x25E89642 GOT=0x25E89642 MATCH ref_us=16775 us=61852
+CASE i=8 f=565 arm=pxp_x0 src=mixed r=360x320+0+0 REF=0x25E89642 GOT=0x25E89642 MATCH ref_us=16775 us=2049
+CASE i=8 f=565 arm=edma src=mixed r=360x320+0+0 REF=0x25E89642 GOT=0x25E89642 MATCH ref_us=16768 us=16502
+CASE i=9 f=565 arm=cpu_clib src=mixed r=360x320+180+480 REF=0xE69BE20A GOT=0xE69BE20A MATCH ref_us=16777 us=61715
+CASE i=9 f=565 arm=pxp_x0 src=mixed r=360x320+180+480 REF=0xE69BE20A GOT=0xE69BE20A MATCH ref_us=16776 us=2912
+CASE i=9 f=565 arm=edma src=mixed r=360x320+180+480 REF=0xE69BE20A GOT=0xE69BE20A MATCH ref_us=16773 us=16496
+CASE i=10 f=565 arm=cpu_clib src=mixed r=719x1+1+0 REF=0xFF3A28B6 GOT=0xFF3A28B6 MATCH ref_us=107 us=396
+CASE i=10 f=565 arm=pxp_x0 src=mixed r=719x1+1+0 REF=0xFF3A28B6 GOT=0xFF3A28B6 MATCH ref_us=107 us=105
+CASE i=10 f=565 arm=edma src=mixed r=719x1+1+0 REF=0xFF3A28B6 GOT=0xFF3A28B6 MATCH ref_us=108 us=211
+CASE i=11 f=565 arm=cpu_clib src=mixed r=1x1280+719+0 REF=0x5CA0CF36 GOT=0x5CA0CF36 MATCH ref_us=683 us=684
+CASE i=11 f=565 arm=pxp_x0 src=mixed r=1x1280+719+0 REF=0x5CA0CF36 GOT=0x5CA0CF36 MATCH ref_us=684 us=360
+CASE i=11 f=565 arm=edma src=mixed r=1x1280+719+0 REF=0x5CA0CF36 GOT=0x5CA0CF36 MATCH ref_us=684 us=409
+CASE i=12 f=565 arm=cpu_clib src=mixed r=720x640+0+320 REF=0x65F58A8A GOT=0x65F58A8A MATCH ref_us=67342 us=247270
+CASE i=12 f=565 arm=pxp_x0 src=mixed r=720x640+0+320 REF=0x65F58A8A GOT=0x65F58A8A MATCH ref_us=67126 us=8175
+CASE i=12 f=565 arm=edma src=mixed r=720x640+0+320 REF=0x65F58A8A GOT=0x65F58A8A MATCH ref_us=67315 us=12070
+CASE i=13 f=565 arm=cpu_clib src=mixed r=720x640+0+640 REF=0xAC5C9FAE GOT=0xAC5C9FAE MATCH ref_us=67148 us=247272
+CASE i=13 f=565 arm=pxp_x0 src=mixed r=720x640+0+640 REF=0xAC5C9FAE GOT=0xAC5C9FAE MATCH ref_us=67141 us=8177
+CASE i=13 f=565 arm=edma src=mixed r=720x640+0+640 REF=0xAC5C9FAE GOT=0xAC5C9FAE MATCH ref_us=67131 us=12074
+CASE i=14 f=565 arm=cpu_clib src=mixed r=720x1280+0+0 REF=0x752C05AE GOT=0x752C05AE MATCH ref_us=134270 us=494839
+CASE i=14 f=565 arm=pxp_x0 src=mixed r=720x1280+0+0 REF=0x752C05AE GOT=0x752C05AE MATCH ref_us=134282 us=16200
+CASE i=14 f=565 arm=edma src=mixed r=720x1280+0+0 REF=0x752C05AE GOT=0x752C05AE MATCH ref_us=134240 us=24142
+CASE i=1 f=8888 arm=cpu_clib src=mixed r=16x16+0+0 REF=0xD1DC59DA GOT=0xD1DC59DA MATCH ref_us=170 us=278
+CASE i=1 f=8888 arm=pxp_x0 src=mixed r=16x16+0+0 REF=0x2A38931D GOT=0x2A38931D MATCH ref_us=170 us=6
+CASE i=1 f=8888 arm=pxp_aff src=xff r=16x16+0+0 REF=0x65634551 GOT=0x65634551 MATCH ref_us=170 us=6
+CASE i=1 f=8888 arm=pxp_aff src=mixed r=16x16+0+0 REF=0x65634551 GOT=0x65634551 MATCH ref_us=169 us=6
+CASE i=1 f=8888 arm=pxp_affa src=xff r=16x16+0+0 REF=0x65634551 GOT=0x65634551 MATCH ref_us=169 us=6
+CASE i=1 f=8888 arm=pxp_affa src=mixed r=16x16+0+0 REF=0x65634551 GOT=0x65634551 MATCH ref_us=169 us=6
+CASE i=1 f=8888 arm=edma src=mixed r=16x16+0+0 REF=0xD1DC59DA GOT=0xD1DC59DA MATCH ref_us=169 us=14
+CASE i=2 f=8888 arm=cpu_clib src=mixed r=16x16+13+7 REF=0xACF414AE GOT=0xACF414AE MATCH ref_us=171 us=278
+CASE i=2 f=8888 arm=pxp_x0 src=mixed r=16x16+13+7 REF=0x2011417F GOT=0x2011417F MATCH ref_us=170 us=9
+CASE i=2 f=8888 arm=pxp_aff src=xff r=16x16+13+7 REF=0xD2EBE903 GOT=0xD2EBE903 MATCH ref_us=170 us=9
+CASE i=2 f=8888 arm=pxp_aff src=mixed r=16x16+13+7 REF=0xD2EBE903 GOT=0xD2EBE903 MATCH ref_us=170 us=8
+CASE i=2 f=8888 arm=pxp_affa src=xff r=16x16+13+7 REF=0xD2EBE903 GOT=0xD2EBE903 MATCH ref_us=169 us=9
+CASE i=2 f=8888 arm=pxp_affa src=mixed r=16x16+13+7 REF=0xD2EBE903 GOT=0xD2EBE903 MATCH ref_us=170 us=7
+CASE i=2 f=8888 arm=edma src=mixed r=16x16+13+7 REF=0xACF414AE GOT=0xACF414AE MATCH ref_us=170 us=76
+CASE i=3 f=8888 arm=cpu_clib src=mixed r=64x64+0+0 REF=0x9A04CACA GOT=0x9A04CACA MATCH ref_us=1539 us=4461
+CASE i=3 f=8888 arm=pxp_x0 src=mixed r=64x64+0+0 REF=0x833AFE23 GOT=0x833AFE23 MATCH ref_us=1531 us=80
+CASE i=3 f=8888 arm=pxp_aff src=xff r=64x64+0+0 REF=0x61A8EA83 GOT=0x61A8EA83 MATCH ref_us=1535 us=80
+CASE i=3 f=8888 arm=pxp_aff src=mixed r=64x64+0+0 REF=0x61A8EA83 GOT=0x61A8EA83 MATCH ref_us=1527 us=80
+CASE i=3 f=8888 arm=pxp_affa src=xff r=64x64+0+0 REF=0x61A8EA83 GOT=0x61A8EA83 MATCH ref_us=1532 us=79
+CASE i=3 f=8888 arm=pxp_affa src=mixed r=64x64+0+0 REF=0x61A8EA83 GOT=0x61A8EA83 MATCH ref_us=1537 us=80
+CASE i=3 f=8888 arm=edma src=mixed r=64x64+0+0 REF=0x9A04CACA GOT=0x9A04CACA MATCH ref_us=1532 us=215
+CASE i=4 f=8888 arm=cpu_clib src=mixed r=64x64+13+7 REF=0x6029DA7A GOT=0x6029DA7A MATCH ref_us=1543 us=4461
+CASE i=4 f=8888 arm=pxp_x0 src=mixed r=64x64+13+7 REF=0x0435ABCF GOT=0x0435ABCF MATCH ref_us=1536 us=139
+CASE i=4 f=8888 arm=pxp_aff src=xff r=64x64+13+7 REF=0xFA5D4C97 GOT=0xFA5D4C97 MATCH ref_us=1533 us=99
+CASE i=4 f=8888 arm=pxp_aff src=mixed r=64x64+13+7 REF=0xFA5D4C97 GOT=0xFA5D4C97 MATCH ref_us=1535 us=140
+CASE i=4 f=8888 arm=pxp_affa src=xff r=64x64+13+7 REF=0xFA5D4C97 GOT=0xFA5D4C97 MATCH ref_us=1538 us=139
+CASE i=4 f=8888 arm=pxp_affa src=mixed r=64x64+13+7 REF=0xFA5D4C97 GOT=0xFA5D4C97 MATCH ref_us=1531 us=140
+CASE i=4 f=8888 arm=edma src=mixed r=64x64+13+7 REF=0x6029DA7A GOT=0x6029DA7A MATCH ref_us=1533 us=1174
+CASE i=5 f=8888 arm=cpu_clib src=mixed r=120x140+0+0 REF=0x7053CECE GOT=0x7053CECE MATCH ref_us=5536 us=18055
+CASE i=5 f=8888 arm=pxp_x0 src=mixed r=120x140+0+0 REF=0x7E413651 GOT=0x7E413651 MATCH ref_us=5322 us=330
+CASE i=5 f=8888 arm=pxp_aff src=xff r=120x140+0+0 REF=0x9F333095 GOT=0x9F333095 MATCH ref_us=5308 us=334
+CASE i=5 f=8888 arm=pxp_aff src=mixed r=120x140+0+0 REF=0x9F333095 GOT=0x9F333095 MATCH ref_us=5541 us=328
+CASE i=5 f=8888 arm=pxp_affa src=xff r=120x140+0+0 REF=0x9F333095 GOT=0x9F333095 MATCH ref_us=5532 us=331
+CASE i=5 f=8888 arm=pxp_affa src=mixed r=120x140+0+0 REF=0x9F333095 GOT=0x9F333095 MATCH ref_us=5542 us=330
+CASE i=5 f=8888 arm=edma src=mixed r=120x140+0+0 REF=0x7053CECE GOT=0x7053CECE MATCH ref_us=5537 us=877
+CASE i=6 f=8888 arm=cpu_clib src=mixed r=120x140+599+1139 REF=0x3D48CECE GOT=0x3D48CECE MATCH ref_us=5539 us=18038
+CASE i=6 f=8888 arm=pxp_x0 src=mixed r=120x140+599+1139 REF=0x10E46FD3 GOT=0x10E46FD3 MATCH ref_us=5540 us=583
+CASE i=6 f=8888 arm=pxp_aff src=xff r=120x140+599+1139 REF=0x0C7DA7A3 GOT=0x0C7DA7A3 MATCH ref_us=5545 us=585
+CASE i=6 f=8888 arm=pxp_aff src=mixed r=120x140+599+1139 REF=0x0C7DA7A3 GOT=0x0C7DA7A3 MATCH ref_us=5318 us=588
+CASE i=6 f=8888 arm=pxp_affa src=xff r=120x140+599+1139 REF=0x0C7DA7A3 GOT=0x0C7DA7A3 MATCH ref_us=5540 us=584
+CASE i=6 f=8888 arm=pxp_affa src=mixed r=120x140+599+1139 REF=0x0C7DA7A3 GOT=0x0C7DA7A3 MATCH ref_us=5542 us=585
+CASE i=6 f=8888 arm=edma src=mixed r=120x140+599+1139 REF=0x3D48CECE GOT=0x3D48CECE MATCH ref_us=5315 us=4741
+CASE i=7 f=8888 arm=cpu_clib src=mixed r=200x160+8+48 REF=0x5EFB8C92 GOT=0x5EFB8C92 MATCH ref_us=9659 us=34350
+CASE i=7 f=8888 arm=pxp_x0 src=mixed r=200x160+8+48 REF=0xFB34B820 GOT=0xFB34B820 MATCH ref_us=9658 us=613
+CASE i=7 f=8888 arm=pxp_aff src=xff r=200x160+8+48 REF=0xBDD65B88 GOT=0xBDD65B88 MATCH ref_us=9887 us=612
+CASE i=7 f=8888 arm=pxp_aff src=mixed r=200x160+8+48 REF=0xBDD65B88 GOT=0xBDD65B88 MATCH ref_us=9870 us=610
+CASE i=7 f=8888 arm=pxp_affa src=xff r=200x160+8+48 REF=0xBDD65B88 GOT=0xBDD65B88 MATCH ref_us=9657 us=610
+CASE i=7 f=8888 arm=pxp_affa src=mixed r=200x160+8+48 REF=0xBDD65B88 GOT=0xBDD65B88 MATCH ref_us=9878 us=608
+CASE i=7 f=8888 arm=edma src=mixed r=200x160+8+48 REF=0x5EFB8C92 GOT=0x5EFB8C92 MATCH ref_us=9853 us=1671
+CASE i=8 f=8888 arm=cpu_clib src=mixed r=360x320+0+0 REF=0x71EC9E0E GOT=0x71EC9E0E MATCH ref_us=33540 us=123461
+CASE i=8 f=8888 arm=pxp_x0 src=mixed r=360x320+0+0 REF=0xA4DBF02C GOT=0xA4DBF02C MATCH ref_us=33548 us=2185
+CASE i=8 f=8888 arm=pxp_aff src=xff r=360x320+0+0 REF=0x3671B02C GOT=0x3671B02C MATCH ref_us=33542 us=2187
+CASE i=8 f=8888 arm=pxp_aff src=mixed r=360x320+0+0 REF=0x3671B02C GOT=0x3671B02C MATCH ref_us=33536 us=2185
+CASE i=8 f=8888 arm=pxp_affa src=xff r=360x320+0+0 REF=0x3671B02C GOT=0x3671B02C MATCH ref_us=33547 us=2181
+CASE i=8 f=8888 arm=pxp_affa src=mixed r=360x320+0+0 REF=0x3671B02C GOT=0x3671B02C MATCH ref_us=33692 us=2185
+CASE i=8 f=8888 arm=edma src=mixed r=360x320+0+0 REF=0x71EC9E0E GOT=0x71EC9E0E MATCH ref_us=33544 us=6136
+CASE i=9 f=8888 arm=cpu_clib src=mixed r=360x320+180+480 REF=0xFC93ACC2 GOT=0xFC93ACC2 MATCH ref_us=33537 us=123456
+CASE i=9 f=8888 arm=pxp_x0 src=mixed r=360x320+180+480 REF=0xD864F3CF GOT=0xD864F3CF MATCH ref_us=33528 us=3874
+CASE i=9 f=8888 arm=pxp_aff src=xff r=360x320+180+480 REF=0x6F488AEB GOT=0x6F488AEB MATCH ref_us=33543 us=3697
+CASE i=9 f=8888 arm=pxp_aff src=mixed r=360x320+180+480 REF=0x6F488AEB GOT=0x6F488AEB MATCH ref_us=33534 us=3870
+CASE i=9 f=8888 arm=pxp_affa src=xff r=360x320+180+480 REF=0x6F488AEB GOT=0x6F488AEB MATCH ref_us=33523 us=3698
+CASE i=9 f=8888 arm=pxp_affa src=mixed r=360x320+180+480 REF=0x6F488AEB GOT=0x6F488AEB MATCH ref_us=33525 us=3877
+CASE i=9 f=8888 arm=edma src=mixed r=360x320+180+480 REF=0xFC93ACC2 GOT=0xFC93ACC2 MATCH ref_us=33523 us=32963
+CASE i=10 f=8888 arm=cpu_clib src=mixed r=719x1+1+0 REF=0xCE6C111B GOT=0xCE6C111B MATCH ref_us=205 us=790
+CASE i=10 f=8888 arm=pxp_x0 src=mixed r=719x1+1+0 REF=0xA8FFF0B6 GOT=0xA8FFF0B6 MATCH ref_us=207 us=193
+CASE i=10 f=8888 arm=pxp_aff src=xff r=719x1+1+0 REF=0x60D245FB GOT=0x60D245FB MATCH ref_us=205 us=193
+CASE i=10 f=8888 arm=pxp_aff src=mixed r=719x1+1+0 REF=0x60D245FB GOT=0x60D245FB MATCH ref_us=205 us=194
+CASE i=10 f=8888 arm=pxp_affa src=xff r=719x1+1+0 REF=0x60D245FB GOT=0x60D245FB MATCH ref_us=205 us=136
+CASE i=10 f=8888 arm=pxp_affa src=mixed r=719x1+1+0 REF=0x60D245FB GOT=0x60D245FB MATCH ref_us=205 us=194
+CASE i=10 f=8888 arm=edma src=mixed r=719x1+1+0 REF=0xCE6C111B GOT=0xCE6C111B MATCH ref_us=205 us=210
+CASE i=11 f=8888 arm=cpu_clib src=mixed r=1x1280+719+0 REF=0x69D5D032 GOT=0x69D5D032 MATCH ref_us=1357 us=1360
+CASE i=11 f=8888 arm=pxp_x0 src=mixed r=1x1280+719+0 REF=0x3AD2C177 GOT=0x3AD2C177 MATCH ref_us=1357 us=374
+CASE i=11 f=8888 arm=pxp_aff src=xff r=1x1280+719+0 REF=0x9F774B7B GOT=0x9F774B7B MATCH ref_us=1357 us=371
+CASE i=11 f=8888 arm=pxp_aff src=mixed r=1x1280+719+0 REF=0x9F774B7B GOT=0x9F774B7B MATCH ref_us=1358 us=374
+CASE i=11 f=8888 arm=pxp_affa src=xff r=1x1280+719+0 REF=0x9F774B7B GOT=0x9F774B7B MATCH ref_us=1231 us=376
+CASE i=11 f=8888 arm=pxp_affa src=mixed r=1x1280+719+0 REF=0x9F774B7B GOT=0x9F774B7B MATCH ref_us=1356 us=373
+CASE i=11 f=8888 arm=edma src=mixed r=1x1280+719+0 REF=0x69D5D032 GOT=0x69D5D032 MATCH ref_us=1357 us=414
+CASE i=12 f=8888 arm=cpu_clib src=mixed r=720x640+0+320 REF=0xFE51C002 GOT=0xFE51C002 MATCH ref_us=130203 us=494820
+CASE i=12 f=8888 arm=pxp_x0 src=mixed r=720x640+0+320 REF=0x7318D56C GOT=0x7318D56C MATCH ref_us=130216 us=8573
+CASE i=12 f=8888 arm=pxp_aff src=xff r=720x640+0+320 REF=0x0B0A6FD4 GOT=0x0B0A6FD4 MATCH ref_us=130443 us=8712
+CASE i=12 f=8888 arm=pxp_aff src=mixed r=720x640+0+320 REF=0x0B0A6FD4 GOT=0x0B0A6FD4 MATCH ref_us=130425 us=8717
+CASE i=12 f=8888 arm=pxp_affa src=xff r=720x640+0+320 REF=0x0B0A6FD4 GOT=0x0B0A6FD4 MATCH ref_us=130439 us=8571
+CASE i=12 f=8888 arm=pxp_affa src=mixed r=720x640+0+320 REF=0x0B0A6FD4 GOT=0x0B0A6FD4 MATCH ref_us=130213 us=8565
+CASE i=12 f=8888 arm=edma src=mixed r=720x640+0+320 REF=0xFE51C002 GOT=0xFE51C002 MATCH ref_us=130215 us=24749
+CASE i=13 f=8888 arm=cpu_clib src=mixed r=720x640+0+640 REF=0xACF1F8D6 GOT=0xACF1F8D6 MATCH ref_us=130213 us=494838
+CASE i=13 f=8888 arm=pxp_x0 src=mixed r=720x640+0+640 REF=0x447FB701 GOT=0x447FB701 MATCH ref_us=130345 us=8700
+CASE i=13 f=8888 arm=pxp_aff src=xff r=720x640+0+640 REF=0x20D7BEE9 GOT=0x20D7BEE9 MATCH ref_us=130234 us=8566
+CASE i=13 f=8888 arm=pxp_aff src=mixed r=720x640+0+640 REF=0x20D7BEE9 GOT=0x20D7BEE9 MATCH ref_us=130194 us=8582
+CASE i=13 f=8888 arm=pxp_affa src=xff r=720x640+0+640 REF=0x20D7BEE9 GOT=0x20D7BEE9 MATCH ref_us=130430 us=8711
+CASE i=13 f=8888 arm=pxp_affa src=mixed r=720x640+0+640 REF=0x20D7BEE9 GOT=0x20D7BEE9 MATCH ref_us=130437 us=8712
+CASE i=13 f=8888 arm=edma src=mixed r=720x640+0+640 REF=0xACF1F8D6 GOT=0xACF1F8D6 MATCH ref_us=130434 us=24723
+CASE i=14 f=8888 arm=cpu_clib src=mixed r=720x1280+0+0 REF=0xB8268C46 GOT=0xB8268C46 MATCH ref_us=260649 us=989559
+CASE i=14 f=8888 arm=pxp_x0 src=mixed r=720x1280+0+0 REF=0x21B07D6D GOT=0x21B07D6D MATCH ref_us=260640 us=17293
+CASE i=14 f=8888 arm=pxp_aff src=xff r=720x1280+0+0 REF=0x4E03ACB9 GOT=0x4E03ACB9 MATCH ref_us=260631 us=17277
+CASE i=14 f=8888 arm=pxp_aff src=mixed r=720x1280+0+0 REF=0x4E03ACB9 GOT=0x4E03ACB9 MATCH ref_us=260432 us=17290
+CASE i=14 f=8888 arm=pxp_affa src=xff r=720x1280+0+0 REF=0x4E03ACB9 GOT=0x4E03ACB9 MATCH ref_us=260417 us=17284
+CASE i=14 f=8888 arm=pxp_affa src=mixed r=720x1280+0+0 REF=0x4E03ACB9 GOT=0x4E03ACB9 MATCH ref_us=260663 us=17270
+CASE i=14 f=8888 arm=edma src=mixed r=720x1280+0+0 REF=0xB8268C46 GOT=0xB8268C46 MATCH ref_us=260649 us=49659
+NOTE timings are hardware-only; QEMU numbers are vacuous
+CASES=140
+COPY_BENCH_OK
+PXP_COPY_BENCH_DONE
