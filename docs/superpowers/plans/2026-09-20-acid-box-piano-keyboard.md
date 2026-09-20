@@ -273,7 +273,7 @@ For each mutant: apply it to `keyboard_map.h`, run `tests/run.sh`, confirm it fa
 | Mutant | Edit | Must fail |
 |---|---|---|
 | top C dropped | `d <= 12` → `d <= 11` | `note36 in view 1 is the TOP C`, `C4 in view 3 is the top C`, `top C keeps view 1` (the geometry checks, e.g. `P 32 64 hits the top C`, must stay green) |
-| snap ignores "visible" | delete the `if (kb_key_for_note(...) >= 0) return view;` line | `top C keeps view 1` (got 2) |
+| snap ignores "visible" | replace the `if (kb_key_for_note(...) >= 0) return view;` line with `(void)view;` (deleting it leaves `view` unused and `-Werror` stops the build — a mutant that does not compile demonstrates nothing; measured 2026-09-20) | `top C keeps view 1` (got 2) |
 | clamp off by one | `if (v > KB_OCT_MAX) v = KB_OCT_MAX;` → `v = KB_OCT_MAX - 1;` | `C4 snaps view 1 -> 3 (clamped)`, `note127 clamps high to view 3` |
 
 Then replace the run.sh header sentence "Demonstrated RED: see Task 1 Step 5 …" with what you measured, in this form (fill N and the date from your run):
