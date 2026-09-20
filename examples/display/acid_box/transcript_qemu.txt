@@ -557,8 +557,45 @@ which is why both drags finish at 103.3 Hz.
 ================================================================================
 THE BOOT GOLDEN — the frame was LOOKED AT
 ================================================================================
-The golden is 0x18B7B637 (the boot sum line), FNV-1a over the whole
-3686400-byte PRESENTED framebuffer, re-goldened 2026-09-17 for the NEW-54
+The golden is 0x149FB9E2 (the boot sum line), FNV-1a over the whole
+3686400-byte PRESENTED framebuffer, re-goldened 2026-09-20 for the piano
+keyboard (spec docs/superpowers/specs/2026-09-20-acid-box-piano-keyboard-design.md,
+plan docs/superpowers/plans/2026-09-20-acid-box-piano-keyboard.md): dumped from
+a no-touch boot with the recipe below (scanned buffer still at 0x80684080),
+the dump's own FNV-1a equal to the printed sum, bit-identical across two gate
+runs, and LOOKED AT at 1x, at 2x on the keyboard band and editor column, and at
+4x on the octave row.  What the eye checked, beyond the NEW-54 list that
+follows (all of which still holds except the pitch knob and the empty band):
+  * the keyboard fills the formerly reserved band: 8 white keys x 16..870,
+    y 384..513, and 5 black keys over C-D, D-E, F-G, G-A and A-B, none over
+    E-F or B-C; blacks drawn ON TOP of the whites they overhang.
+  * every white key's dark-red LED sits BELOW the black keys (centre y ~472,
+    blacks end at 461) with its ridged pad under it, the pad's bottom edge
+    INSIDE the key -- the squat 105x130 key needed zone_top 0.62 and
+    pad_height 0 (auto-fit); the widget's 48 px default pad would have run
+    17 px past the key's bottom.  Every black key: LED near its top, pad inside.
+  * exactly ONE lit LED, bright red with its bloom ring, on the white A (6th
+    white key) -- step 0 of the preset is A1, and the view boots at octave 1.
+  * the octave row beside the keyboard, on the STEP row's x's: a DOWN triangle
+    (1080..1123), a single seven-segment "1" with its ghost segments, and an UP
+    triangle (1220..1263), the caption OCTAVE centred beneath, clear of the
+    knob row.  Lit-segment ink measured at x 1176..1185 inside a 46 px box
+    (1149..1194): unclipped on both sides.
+  * the note name A1 in Montserrat 28, centred in the pitch knob's old slot
+    (912..1061 x 96..245); no knob there.
+
+  ★ THE FIRST DUMP WAS REPRODUCIBLE AND WRONG, and only the look caught it.
+  The first build summed 0xB639E93F on every run, its dump's FNV matched --
+  and its octave readout showed NOTHING BUT GHOST SEGMENTS: the lit "1" was
+  clipped away entirely, because the box had been sized at 30 px from a cell
+  width mis-derived as 27.9 px.  A seven-segment DIGIT cell is 76 viewbox
+  units and the 44 in acid_box.cpp's tempo note ("4*76 + 44") is the DOT, so
+  one digit at h = 56 is (76 + 112*tan 6deg)/2 = 43.9 px.  The widget clips to
+  its own coords without complaint.  Pinned by reproduction alone, that frame
+  would have been this example's golden.
+
+The PREVIOUS golden, 0x18B7B637 (superseded 2026-09-20), FNV-1a over the whole
+3686400-byte PRESENTED framebuffer, was re-goldened 2026-09-17 for the NEW-54
 waveform toggle (plan docs/superpowers/plans/2026-09-17-acid-box-synthui-top-bar.md):
 the same logical 1280x720 landscape scene, dumped from a no-touch boot with the
 recipe below (scanned buffer still at 0x80684080) and viewed upright by the
@@ -600,7 +637,9 @@ y 379..519, NOT the "308..520" earlier comments claimed -- the step row and
 its caption occupy 300..378 and row 1's step numbers clear of it above.
 Bit-identical across two gate runs.
 
-History: 0x66D7CCFE (2026-09-17, NEW-54 tempo; the same scene with the tempo
+History: 0x18B7B637 (2026-09-17, NEW-54 waveform toggle; the scene described
+in the paragraph above, with the pitch knob and the empty reserved band),
+0x66D7CCFE (2026-09-17, NEW-54 tempo; the same scene with the tempo
 cluster on SynthUI and SAW/SQR still a stock LVGL button),
 0xE7711DD4 (2026-09-17, NEW-54 transport; the same scene with PLAY and
 STOP on synthui_panel_button and the tempo cluster still stock LVGL -/128.0/+),
@@ -670,7 +709,7 @@ re-diagnosing it.
 
 VERIFIED (2026-08-18 golden 0xD3BC88D7, 2026-08-27 for 0x25B30A96, 2026-09-15
 for 0xE871BF09, 2026-09-16 for 0xBB2AEE59, 2026-09-17 for 0xE7711DD4,
-2026-09-17 for 0x66D7CCFE, and 2026-09-17 for 0x18B7B637): the dump's own FNV-1a equals
+2026-09-17 for 0x66D7CCFE, 2026-09-17 for 0x18B7B637, and 2026-09-20 for 0x149FB9E2): the dump's own FNV-1a equals
 what the firmware printed, so the inspected image IS this golden's frame.
 (The same script also reproduces the anti-golden as a control: FNV-1a over
 3686400 zero bytes is 0x9BC99DC5, the value the gate rejects by name --

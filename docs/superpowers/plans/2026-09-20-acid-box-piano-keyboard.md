@@ -348,11 +348,13 @@ Replace the comment block that begins `/* y 379..519 is RESERVED: empty on purpo
  * column beside it, the octave row on the STEP row's exact x's.
  * ★ The octave readout is ONE cell, and it does NOT reuse STEP_SEG_W: the
  * seven-segment's width follows its text and it never centres, so a lone digit
- * in the 84 px box would sit hard left.  One cell at h = 56 is
- * (44 + 112*tan 6deg) * 56/112 = 27.9 px -> a 30 px box, centred between the
- * buttons (1123..1220 -> centre 1171.5).  The widget CLIPS to its coords. */
+ * in the 84 px box would sit hard left.  One DIGIT cell at h = 56 is
+ * (76 + 112*tan 6deg) * 56/112 = 43.9 px -> a 46 px box, centred between the
+ * buttons (1123..1220 -> centre 1171.5).  The widget CLIPS to its coords.
+ * (CORRECTED during execution: the plan first said 27.9 px / 30 px -- the 44 in
+ * the tempo note is the DOT's cell -- and Task 3's frame dump caught it.) */
 static constexpr int OCT_Y = 420;
-static constexpr int OCT_SEG_X = 1157, OCT_SEG_W = 30;
+static constexpr int OCT_SEG_X = 1149, OCT_SEG_W = 46;
 static constexpr int OCT_LABEL_Y = 486;
 ```
 

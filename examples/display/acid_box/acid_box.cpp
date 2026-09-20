@@ -1206,11 +1206,15 @@ static constexpr int STEP_LABEL_X = 1152, STEP_LABEL_Y = 366;
  * column beside it, the octave row on the STEP row's exact x's.
  * ★ The octave readout is ONE cell, and it does NOT reuse STEP_SEG_W: the
  * seven-segment's width follows its text and it never centres, so a lone digit
- * in the 84 px box would sit hard left.  One cell at h = 56 is
- * (44 + 112*tan 6deg) * 56/112 = 27.9 px -> a 30 px box, centred between the
- * buttons (1123..1220 -> centre 1171.5).  The widget CLIPS to its coords. */
+ * in the 84 px box would sit hard left.  One DIGIT cell at h = 56 is
+ * (76 + 112*tan 6deg) * 56/112 = 43.9 px -> a 46 px box, centred between the
+ * buttons (1123..1220 -> centre 1171.5).  ★ 76, NOT 44: in the tempo note's
+ * "4*76 + 44" the 44 is the DOT's cell (synthui_seven_segment_math.h: 76 for a
+ * digit, 44 for punctuation).  Reading it as "pitch 76, last cell 44" gave a
+ * 30 px box, and the widget CLIPS to its coords: the first frame dump showed
+ * the lit "1" cut off entirely with only ghost segments left (2026-09-20). */
 static constexpr int OCT_Y = 420;
-static constexpr int OCT_SEG_X = 1157, OCT_SEG_W = 30;
+static constexpr int OCT_SEG_X = 1149, OCT_SEG_W = 46;
 static constexpr int OCT_LABEL_Y = 486;
 /* sound knobs */
 static constexpr int KNOB_X0 = 16,  KNOB_Y0 = 520, KNOB_SIZE = 150, KNOB_PITCH = 158;   /* CUTOFF: 16..165 x 520..669; the drag lands at x 89, y 583..647 */

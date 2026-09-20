@@ -58,10 +58,14 @@ Read from the widget sources, not assumed from their names.
      ≈ 23 px here).
 4. **The seven-segment's width follows its text and it does not centre**
    (NEW-54 §2). A one-digit readout therefore gets its OWN derived box rather
-   than the step readout's 84 px: one cell at h = 56 is
-   (44 + 112·tan 6°) × 56/112 = 27.9 px → a 30 px box, centred between the two
+   than the step readout's 84 px: one DIGIT cell at h = 56 is
+   (76 + 112·tan 6°) × 56/112 = 43.9 px → a 46 px box, centred between the two
    buttons. The widget CLIPS to its coords and a golden would pin a clipped
-   digit, so the frame dump of §7 checks it.
+   digit, so the frame dump of §7 checks it. ★ CORRECTED 2026-09-20 by that
+   very check: this section first derived 27.9 px / a 30 px box by misreading
+   the tempo note's "4·76 + 44" — the 44 is the DOT's cell, a digit is 76
+   (`synthui_seven_segment_math.h`) — and the first frame dump showed the lit
+   "1" clipped away entirely.
 5. **A panel button has one lightable state, `on`, already spent on the
    momentary press flash** — which is why the octave buttons carry no
    "note is that way" indicator (decision 3.4).
@@ -129,7 +133,7 @@ Updates the lit key and the digit. No pattern write.
 | white keys ×8 (C D E F G A B C) | 105×130 at `x = 16 + w·107`, y 384..513 — 16..870, under the lane's 8 columns |
 | black keys ×5 (C# D# F# G# A#) | 64×78 at x = 90, 197, 411, 518, 625, y 384..461; CREATED AFTER the whites so they draw and hit-test on top |
 | octave − | 1080..1123 × 420..475 (`PREV_X`/`PREV_W`) |
-| octave digit | 1157..1186 × 420..475 (30 px, §2.4) |
+| octave digit | 1149..1194 × 420..475 (46 px, §2.4) |
 | octave + | 1220..1263 × 420..475 (`NEXT_X`/`NEXT_W`) |
 | `OCTAVE` caption | centred on x 1172, y 486 |
 | note label | centred in the freed 912..1061 × 96..245 |

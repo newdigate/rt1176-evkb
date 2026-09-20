@@ -343,7 +343,20 @@ NBARS_ALL=$(grep -c "^ACIDBOX_BAR=" "$OUT" || true)
 # synthui_slide_toggle on its old rect, panel 0x6D7A85 (the widget's glyph colour
 # is fixed dark, so the plate must stay visible).  mkbtn() and lv_button are gone
 # from this example.  Two runs bit-identical, frame dumped and looked at.
-grep -qE "ACIDBOX_UI_SUM=0x18B7B637\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
+# MOVED 2026-09-20 (piano keyboard, spec 2026-09-20): 0x18B7B637 -> 0x149FB9E2.  The
+# pitch knob became a 13-key synthui_piano_key keyboard in the formerly reserved
+# band (x 16..870, y 384..513) with a view-only octave row beside it
+# (DOWN / one-digit seven-segment / UP on the STEP row's x's); the note name
+# moved into the knob's old slot in Montserrat 28.  Two runs bit-identical; the
+# frame was dumped with a no-touch script, its FNV-1a matched the printed sum,
+# and it was looked at: white-key LED and pad clear of the black keys and inside
+# the key, one lit LED (white A), the octave digit unclipped.
+# ★ THE LOOK EARNED ITS KEEP: the FIRST dump (0xB639E93F, perfectly reproducible)
+# showed the octave digit CLIPPED AWAY -- only ghost segments in a 30 px box,
+# from a cell width mis-derived as 27.9 px (a digit cell is 76 units, not 44;
+# the 44 in the tempo note is the dot).  Pinning by reproduction alone would
+# have goldened a readout that shows nothing.  Box now 46 px (1149..1194).
+grep -qE "ACIDBOX_UI_SUM=0x149FB9E2\r?$" "$OUT" || { echo "FAIL: UI golden"; exit 1; }
 # The all-zero framebuffer, rejected BY NAME: 0x9BC99DC5 is the FNV of 3686400
 # zero bytes.  A blank frame is a real failure mode in this tree
 # (vglite_lvgl_test) and is otherwise indistinguishable from any other mismatch.
