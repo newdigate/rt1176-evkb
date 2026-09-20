@@ -675,6 +675,76 @@ re-run 141/141/0 and `LICENSE-AUDIT: PASS` after it. The seven SELF-BUILDING gat
 twelve SynthUI-linking ones were rebuilt BEFORE that sweep, because an `evkb.cmake` edit makes
 the self-building gates reconfigure inside their 120 s budget and read as `exit status 124`.
 
+✅ **Measured 2026-09-20: 141 gates discovered, 141 passed, 0 failed, 0 SKIP** (`gates: 141 passed`,
+exit 0; the runner's own header reads `Running 141 QEMU gate(s)`), on the **acid_box PIANO KEYBOARD**
+SOFTWARE close-out (spec `docs/superpowers/specs/2026-09-20-acid-box-piano-keyboard-design.md`, plan
+`docs/superpowers/plans/2026-09-20-acid-box-piano-keyboard.md`) -- fully clean, `rt1176:display/acid_box`
+green in 19 s, and every member of the load-sensitivity class green in the sweep itself (`cm4_audio_test`
+4 s, `cm4_wire_int_slave_test` 2 s, `m2_rx_demo[txaggr]` 23 s, `m2_uap_lwip[uap]` 4 s,
+`bt_tone_test[media]` 50 s, `synthui_slide_toggle_test` 20 s). ★ **`audio/bt_sink_test` PASSED in 39 s**
+-- the clean quiet-host pass the NEW-55 close-out recorded as owed (host load 2.5 at sweep start); nothing
+on this branch touches what that gate reads. Vacuity **77/77** (75 + `acb_audition_while_playing_fails_by_name`
+and `acb_key_lit_missing_fails_by_name`), `LICENSE-AUDIT: PASS` after the sweep (`examples/display/acid_box`
+walked at 25762 dep paths), `BENCH-BUILDS: PASS` with both nm-diffs matching, acid_box host tests 22 -> 62
+checks (`tests/run.sh`, the new `keyboard_map` suite is 40). **No SynthUI change and NO `evkb.cmake` pin
+bump**, so no push, no fresh-user cycle. **The gate count is UNCHANGED at 141.**
+★ **What changed**: the editor's pitch detent knob became a 13-key `synthui_piano_key` keyboard
+(C[o]..C[o+1]) in the band the geometry block had marked RESERVED (x 16..870, y 384..513; 8 whites
+105x130 at a 107 px pitch under the lane's columns, 5 blacks 64x78 created AFTER the whites so they draw
+and hit-test on top), with an octave row beside it on the STEP row's exact x's -- DOWN / one-digit
+`synthui_seven_segment` / UP, `PANEL_MOMENTARY` panel buttons. Four decisions, each the user's:
+the octave buttons are **VIEW ONLY** (they re-map the keys and never write the pattern -- the view is
+STATE, because the top C of one view and the bottom C of the next are the same note); a held key
+**auditions only while the transport is not playing** (`acid.noteOn` from user context is safe: the voice
+self-guards and keeps an 8-deep held stack; the REMEMBERED note is released, so paging mid-hold cannot
+orphan a `noteOff`); a key press **PRESERVES the gate**, as the knob did; and the lit key is PianoKey's
+own `lit` LED showing the selected step's STORED note, rests included. Range grew C1..C3 -> C1..C4.
+All note<->key arithmetic and key rects live in a pure C99 `keyboard_map.h`, host-tested.
+★ **UI golden `0x18B7B637` -> `0x149FB9E2`**; the gpu golden `0xA67828E9` is STALE (the compositor now
+sees 8 knobs, and the scene changed) -- a four-boot re-bench is owed (plan Task 9).
+★★ **THE FIRST DUMP WAS PERFECTLY REPRODUCIBLE AND WRONG, AND ONLY THE LOOK CAUGHT IT.** The first build
+summed `0xB639E93F` on every run with the dump's FNV matching -- and its octave readout showed NOTHING
+BUT GHOST SEGMENTS: the lit digit was clipped away entirely. I had sized the box at 30 px from a cell
+width mis-derived as 27.9 px by misreading this file's own tempo note: in "4*76 + 44" the 44 is the
+DOT's cell and a DIGIT is 76 (`synthui_seven_segment_math.h`), so one digit at h = 56 is 43.9 px -> a
+46 px box. The widget clips to its coords without complaint. Pinned by reproduction alone, a readout
+that displays nothing would be this example's golden -- the spec had even named the risk, and the
+derivation beside the warning was the thing that was wrong. **Read a widget's geometry from its math
+header, not from a comment about a different string.**
+★★ **AN LVGL FONT IS A DTCM COST IN THIS TREE, NOT A FLASH COST** -- and the spec said flash until it
+was checked. `LV_ATTRIBUTE_LARGE_CONST` is empty in `lv_conf.h` and `imxrt1176.ld` collects `.rodata*`
+into `.data > DTCM`, so linking Montserrat 28 for ONE note label cost **37,293 B of DTCM** (measured
+from the object, then confirmed: `.data+.bss` 51,451 -> 88,923 / 53,167 -> 90,635 / 102,769 -> 140,269 /
+104,477 -> 141,977 B across `build` / `-loopstat` / `-bt` / `-bench`). It fits (34..55 % of 256 KB);
+dropping one `set_style_text_font()` line returns all of it. ITCM went the OTHER way: headroom 2,804 ->
+**2,916** / 2,660 -> 2,772 / 11,524 -> 11,620 / 11,332 -> 11,444 B, +96..112 B -- a multiple of 32, so
+signal: the knob's angle maps left ITCM and the keyboard's callbacks are flash-resident (`UIEVT_FN`).
+Both pre-registered predictions HELD.
+★ **PianoKey facts worth knowing before the next consumer**: it never reads `LV_STATE_PRESSED` (the
+class handles `DRAW_MAIN` only), so the consumer drives `set_pressed()` from PRESSED / RELEASED /
+PRESS_LOST / INDEV_RESET; its geometry is normalised to WIDTH and drawn for a tall 46x158 key, and the
+constructor's `pad_height` default of **48 px overruns a 130 px key by 17 px** -- `pad_height = 0`
+selects its auto-fit, and a squat white key needs `zone_top` 0.62 to clear 78 px blacks; `set_lit`
+damages only the LED's bloom box (~33x33 px) while `set_pressed` repaints the whole key.
+★★ **`KEY_LIT=` is READ BACK from the 13 widgets, and one mutant proves why.** DEMONSTRATED RED five
+ways, each by name: top C dropped (`KEY_LIT=-1`), audition not gated on `playing()`, `noteOff` dropped on
+release, blacks created under the whites (the A# tap writes note 45 -- a live run hits the boot golden
+first, at `0x20DD3739`), and **the lit key frozen after boot, which leaves the BOOT GOLDEN GREEN**: the
+boot frame pins the lit key exactly once, before any touch. The gate's four new taps assert the top-C
+boundary from BOTH sides (note 36 is key 12 in view 1 and key 0 after octave +), that the octave button
+writes no `STEP` line, and -- by LINE NUMBER -- that no `AUDITION=` follows `PLAYING=1` while the
+stopped audition before it is legitimate.
+★ **The gate's tap landings are pinned ON THE HOST**: `tests/keyboard_map_test.c` maps each
+`touch_script.txt` `P a b` through the GT911 model's integer arithmetic and hit-tests it against
+`kb_key_rect()`, blacks first, so a geometry edit that strands a tap fails by name in a second instead
+of as a mystery in QEMU. ★ **A mutant that does not COMPILE has demonstrated nothing**: deleting the
+keep-the-view early return left `view` unused, `-Werror` stopped the build, and the harness (which greps
+`^FAIL`) printed silence that read like a pass. The mutant is `(void)view;` in its place.
+★ **Silicon bench OWED (plan Task 9), none of it visible to any gate**: audition audible while stopped
+and paused and silent while playing; no stuck note on slide-off-then-release; the 6.1 mm black keys hit
+reliably; the pressed look; whether the ~1.6 mm lit LED reads at arm's length (a named spec risk -- the
+widget has no LED size or colour knob); fences over >= 200 bars; the four-boot gpu golden.
+
 ✅ **Measured 2026-09-19: 141 gates discovered, 140 passed, 1 failed, 0 SKIP** on the **NEW-55 db-pipeline sync copy**
 close-out -- the double-buffer sync that NEW-53 finding A measured at 260 ms per full frame now runs on
 the PXP with `OUT_CTRL[ALPHA_OUTPUT]=1, ALPHA=0xFF`, installed by `lvgl_mipi_panel_create_db()` for all
@@ -774,9 +844,10 @@ SynthUI widgets, it adds no capability and no gate. The UI golden moved three ti
 commit, each recorded in `run_qemu.sh:290/294/299` beside the assertion it moved:
 `0xBB2AEE59` -> `0xE7711DD4` (PLAY/STOP became `synthui_panel_button`) -> `0x66D7CCFE` (tempo -/+
 became DOWN/UP panel buttons and the BPM label a `synthui_seven_segment`) -> **`0x18B7B637`**
-(SAW/SQR became a `synthui_slide_toggle`). Each was recorded from two bit-identical gate runs AND a
+(SAW/SQR became a `synthui_slide_toggle`; superseded 2026-09-20 by the piano keyboard: `0x149FB9E2`). Each was recorded from two bit-identical gate runs AND a
 no-touch frame dump whose FNV-1a equalled the printed sum, with the frame LOOKED AT before pinning.
-★ **The gpu golden is `0xA67828E9`** -- BENCHED 2026-09-18, FOUR boots bit-identical, retiring
+★ **The gpu golden is `0xA67828E9`** (STALE since 2026-09-20: the piano keyboard changed the
+composited frame; a four-boot re-bench is owed) -- BENCHED 2026-09-18, FOUR boots bit-identical, retiring
 `0xEA5AB843` (which was measured on the pre-top-bar scene). `ACIDBOX_ENGINE=gpu`, `GPU_ERR=0`,
 `PLAY_LIT=0` before the sum on every boot. Two golden sets as always, never reconciled: silicon
 composites the knobs on the GC355, QEMU does not.
