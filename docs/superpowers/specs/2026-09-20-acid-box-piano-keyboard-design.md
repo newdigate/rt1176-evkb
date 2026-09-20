@@ -138,8 +138,13 @@ Touch sizes on glass: white 10 × 12.4 mm (its exposed lower zone 10 × 5 mm),
 black 6.1 × 7.4 mm; the lane's cells are 9.5 mm.
 
 The note label uses Montserrat 28 (enabled in `lv_conf.h`, not yet linked by
-acid_box — const glyph data, so flash). If it costs ITCM beyond noise (§8) it
-stays at the default 14.
+acid_box). ★ Its glyph data is NOT a flash cost here: `LV_ATTRIBUTE_LARGE_CONST`
+is empty and `imxrt1176.ld` collects `.rodata*` into `.data > DTCM`, so the
+font's **37,293 B** (measured from the built `lv_font_montserrat_28.c.obj`)
+lands in DTCM. DTCM holds 51 KB (default build) to 104 KB (`build-bench`) of
+256 KB today, so it fits in every configuration; §8 records the cost. If any
+of the four builds fails to link, or ITCM moves beyond noise, the label stays
+at the default 14.
 
 ## 6. Code shape (all in `examples/display/acid_box/`)
 
@@ -164,7 +169,8 @@ stays at the default 14.
   Every callback asks for `current_target`, per the file's standing rule.
 
 **Witness tokens**
-* `OCT=<n>` — on every view change (button or snap), and once at boot.
+* `OCT=<n>` — printed by every `refresh_keyboard()` (so at boot, on every
+  select, commit and page), immediately before `KEY_LIT`.
 * `AUDITION=<note>` / `AUDITION=off`.
 * `KEY_LIT=<k>` — READ BACK by scanning the 13 widgets with
   `synthui_piano_key_get_lit` (−1 = none, and a second lit key is reported as
@@ -213,9 +219,14 @@ pad inside the key), the unclipped octave digit, the note label. gpu
 is a hand-maintained DOCUMENT: splice and reconcile, never overwrite, then
 replay it through the gate with the vacuity suite's fake QEMU.
 
-## 8. ITCM — recorded, not trusted
+## 8. ITCM and DTCM — recorded, not trusted
 
-Before → after for all four configurations (`build`, `build-loopstat`,
+DTCM: `.data` + `.bss` before → after for all four configurations.
+Pre-registered: `.data` grows by the Montserrat 28 glyph data (≈ 37.3 KB) plus
+well under 1 KB of new state, and nothing else (today: `build` 51,451 B,
+`build-loopstat` 53,167 B, `build-bt` 102,769 B, `build-bench` 104,477 B).
+
+ITCM: before → after for all four configurations (`build`, `build-loopstat`,
 `build-bt`, `build-bench`), read from `--print-memory-usage`. Pre-registered:
 the default build's headroom (2804 B, no floor) does NOT shrink — the knob
 maps and their `roundf` leave ITCM, the new callbacks are flash-resident.
