@@ -55,6 +55,8 @@
 #include "synthui_seven_segment.h"
 #include "synthui_panel_button.h"
 #include "synthui_slide_toggle.h"
+#include "synthui_piano_key.h"
+#include "keyboard_map.h"
 #if defined(ACIDBOX_LOOPSTAT)
 #include "loopstat_pct.h"
 #endif
@@ -1127,7 +1129,8 @@ static void idleUi()
  *
  * Layout C (spec 2026-09-14-acid-box-landscape-design.md section 6) on a
  * LOGICAL 1280x720 frame: the transport bar, the 2x8 step lane with the
- * selected-step editor beside it, an EMPTY band reserved for later work, and
+ * selected-step editor beside it, the 13-key note keyboard with its octave row
+ * (spec 2026-09-20; the band was empty and reserved until then), and
  * the eight sound knobs along the bottom edge -- nearest the player once the
  * board lies flat, turned counter-clockwise.  The panel is still the RK055's
  * 720x1280 glass: the port presents this frame rotated 90 degrees clockwise
@@ -1179,8 +1182,12 @@ static constexpr int LAMP_ACC_DX = 8, LAMP_SLD_DX = 52;
  * 214..229, clear of row 1's y 230 top edge. */
 static constexpr int NUM_DY = 118;
 /* cell 2 is 232..331 x 96..195 -- the gate's edit target; its tap lands at (281,143) */
-static constexpr int PITCH_X = 912, PITCH_Y = 96, PITCH_SIZE = 150;
-static constexpr int NOTE_X = 1080, NOTE_Y = 110;
+/* The old pitch knob's slot, 912..1061 x 96..245, holds the note name: a
+ * NOTE_W-wide centred label in Montserrat 28 (32 px line), so NOTE_Y centres
+ * it in the 150 px slot.  ★ That font's glyph data is a DTCM cost, not flash:
+ * LV_ATTRIBUTE_LARGE_CONST is empty and imxrt1176.ld collects .rodata* into
+ * .data > DTCM -- 37,293 B, measured (spec 2026-09-20 section 5). */
+static constexpr int NOTE_X = 912, NOTE_W = 150, NOTE_Y = 155;
 static constexpr int ACC_X = 1080,  SLD_X = 1176, TOG_Y = 148, TOG_KEY = 56;
 /* Tightest clearance on the panel: from these two hand-tuned literals the ACC
  * caption's ink ends at x 1171 and the SLD key starts at x 1176 -- 4 px. */
@@ -1194,9 +1201,17 @@ static constexpr int PREV_X = 1080, PREV_W = 44;
 static constexpr int STEP_SEG_X = 1130, STEP_SEG_W = 84;
 static constexpr int NEXT_X = 1220, NEXT_W = 44;
 static constexpr int STEP_LABEL_X = 1152, STEP_LABEL_Y = 366;
-/* y 379..519 is RESERVED: empty on purpose, not centred away -- the step row
- * (300..355 + the 366..378 caption) and row 1's step numbers (ink to 360)
- * both sit above it. */
+/* y 379..519 -- RESERVED until 2026-09-20 -- holds the 13-key keyboard
+ * (keyboard_map.h owns its rects: x 16..870, y 384..513) and, in the editor
+ * column beside it, the octave row on the STEP row's exact x's.
+ * ★ The octave readout is ONE cell, and it does NOT reuse STEP_SEG_W: the
+ * seven-segment's width follows its text and it never centres, so a lone digit
+ * in the 84 px box would sit hard left.  One cell at h = 56 is
+ * (44 + 112*tan 6deg) * 56/112 = 27.9 px -> a 30 px box, centred between the
+ * buttons (1123..1220 -> centre 1171.5).  The widget CLIPS to its coords. */
+static constexpr int OCT_Y = 420;
+static constexpr int OCT_SEG_X = 1157, OCT_SEG_W = 30;
+static constexpr int OCT_LABEL_Y = 486;
 /* sound knobs */
 static constexpr int KNOB_X0 = 16,  KNOB_Y0 = 520, KNOB_SIZE = 150, KNOB_PITCH = 158;   /* CUTOFF: 16..165 x 520..669; the drag lands at x 89, y 583..647 */
 static constexpr int KNOB_LABEL_DX = 50, KNOB_LABEL_DY = 152;
@@ -1209,7 +1224,10 @@ static lv_obj_t *stepCell[16];          /* synthui_led_button: lit = gate, cue =
 static lv_obj_t *accLamp[16], *sldLamp[16], *numLabel[16];
 static lv_obj_t *playBtn, *tempoSeg, *noteLabel;
 static lv_obj_t *accKey, *sldKey, *stepSeg;
-static lv_obj_t *pitchKnob;
+static lv_obj_t *pianoKey[KB_KEYS];     /* index = semitone above the view's bottom C */
+static lv_obj_t *octSeg;
+static int viewOct = KB_OCT_MIN;        /* VIEW state: which octave the 13 keys point at */
+static int auditionNote = -1;           /* the note a held key is sounding, or -1 */
 static int selectedStep = 0;
 
 /* knob -> parameter maps (spec §4).  Every knob is created with an EXPLICIT
@@ -1220,23 +1238,6 @@ static inline float knob01(lv_obj_t *k)
 { return (synthui_rotary_knob_get_angle(k) + 140.0f) / 280.0f; }
 static inline float expmap(float t, float lo, float hi)
 { return lo * powf(hi / lo, t); }
-
-/* Pitch map: 25 semitones C1(24)..C3(48), one detent each, so detent_step is
- * 280/24 -- 24 intervals between 25 stops, not 25.  The knob snaps onto the
- * lattice anchored at min_deg (synthui_knob_math.h), which is exactly the
- * lattice these two functions assume. */
-static inline uint8_t angleToNote(float deg)
-{ return (uint8_t)(24 + (int)roundf((deg + 140.0f) / (280.0f / 24.0f))); }
-static inline float noteToAngle(uint8_t note)
-{
-    /* Clamped because seq.step() accepts the full 0..127 MIDI range while this
-     * knob only spans C1..C3: an out-of-range note would otherwise park the
-     * pointer outside the drawn end stops, drawing a position the user cannot
-     * reach and this map cannot round-trip. */
-    if (note < 24) note = 24;
-    if (note > 48) note = 48;
-    return -140.0f + (float)(note - 24) * (280.0f / 24.0f);
-}
 
 /* One callback per sound knob.  CUTOFF, DECAY and SLIDE T are exponential
  * because they are frequency and time; the five 0..1 amounts are linear.
@@ -1281,6 +1282,48 @@ static const char *noteName(uint8_t n)
     return buf;
 }
 
+/* UIEVT_FN: tap-rate UI code in FLASH (.progmem, XIP) -- the same pattern as
+ * UIBUILD_FN/ROTWIT_FN.  Nothing here runs per frame; the I-cache (NEW-36)
+ * covers it, and the default build's ITCM has no floor to spend. */
+#define UIEVT_FN __attribute__((section(".progmem.acid_uievt"), noinline))
+
+/* A rest stored as note 0 is not a pitch any key can show -- park it on A1, the
+ * same rule cbStepTap commits when it un-rests a step. */
+static inline uint8_t display_note(const AcidStep &st) { return st.note ? st.note : 33; }
+
+/* Release whatever a held key is sounding.  The REMEMBERED note is released,
+ * never a recomputed one, so paging the view mid-hold cannot orphan a noteOff.
+ * noteOn/noteOff take their own __disable_irq() guards (synth_acidbass.h), so a
+ * user-context call is safe against the PIT note pump. */
+UIEVT_FN static void audition_off(void)
+{
+    if (auditionNote < 0) return;
+    acid.noteOff((uint8_t)auditionNote);
+    auditionNote = -1;
+    CONSOLE.printf("AUDITION=off\n");
+}
+
+/* Light the selected step's STORED note if it is on the visible 13 keys (rests
+ * included -- a key press preserves the gate, spec decision 4), set the octave
+ * digit, and print the gate's witnesses.
+ * ★ KEY_LIT is READ BACK from the 13 widgets, so it cannot agree with the model
+ * by construction (the PLAY_LIT lesson): a set_lit() that never runs shows up
+ * here and nowhere else once the boot frame has been taken. */
+UIEVT_FN static void refresh_keyboard(void)
+{
+    const AcidStep st = seq.step(selectedStep);
+    const int want = kb_key_for_note(display_note(st), viewOct);
+    for (int k = 0; k < KB_KEYS; k++) synthui_piano_key_set_lit(pianoKey[k], k == want);
+    const char ob[2] = { (char)('0' + viewOct), 0 };
+    synthui_seven_segment_set_text(octSeg, ob);
+    int lit = -1, n = 0;
+    for (int k = 0; k < KB_KEYS; k++)
+        if (synthui_piano_key_get_lit(pianoKey[k])) { lit = k; n++; }
+    CONSOLE.printf("OCT=%d\n", viewOct);
+    if (n > 1) CONSOLE.printf("KEY_LIT=MULTI\n");
+    else       CONSOLE.printf("KEY_LIT=%d\n", lit);
+}
+
 /* Write the selected step's FULL state back as ONE seq.step() call and refresh
  * its cell and the editor readouts.  The single write is the atomic transaction
  * of spec §3.3: seq.step() takes its own __disable_irq() guard internally, so a
@@ -1298,12 +1341,13 @@ static void commit_selected(uint8_t note, bool gate, bool accent, bool slide)
     CONSOLE.printf("STEP[%d]=note%u gate%d acc%d sld%d\n",
                    selectedStep, (unsigned)note,
                    gate ? 1 : 0, accent ? 1 : 0, slide ? 1 : 0);
+    refresh_keyboard();     /* AFTER the STEP line: the next KEY_LIT is this commit's */
 }
 
 /* Pure VIEW change: moves the editor onto step i without touching the
  * pattern, so it emits no STEP token.  A rest has note 0 in the preset, which
- * is not a pitch the knob can show -- park it on A1 so the first pitch edit
- * after un-resting starts somewhere musical. */
+ * no key can show -- display_note() parks it on A1.  The view keeps its octave
+ * if the note is already on the keys, else snaps (kb_view_for_note). */
 static void select_step(int i)
 {
     /* i indexes stepCell[]/numLabel[] with no bounds check below; refusing an
@@ -1317,7 +1361,7 @@ static void select_step(int i)
     synthui_led_button_set_pressed(stepCell[i], true);
     lv_obj_set_style_text_color(numLabel[i], lv_color_hex(0xf2f1ea), LV_PART_MAIN);
     const AcidStep st = seq.step(i);
-    synthui_rotary_knob_set_angle(pitchKnob, noteToAngle(st.note ? st.note : 33));
+    viewOct = kb_view_for_note(display_note(st), viewOct);
     lv_label_set_text(noteLabel, st.gate ? noteName(st.note) : "--");
     synthui_led_button_set_lit(accKey, st.accent);
     synthui_led_button_set_lit(sldKey, st.slide);
@@ -1325,6 +1369,7 @@ static void select_step(int i)
     snprintf(sb, sizeof sb, "%02d", i + 1);
     synthui_seven_segment_set_text(stepSeg, sb);
     CONSOLE.printf("SELECT=%d\n", i);
+    refresh_keyboard();
 }
 
 /* A tap does BOTH: it selects the cell for editing and toggles its gate.  One
@@ -1337,12 +1382,45 @@ static void cbStepTap(lv_event_t *e)
     const AcidStep st = seq.step(i);
     commit_selected(st.note ? st.note : 33, !st.gate, st.accent, st.slide);
 }
-static void cbPitch(lv_event_t *e)
+/* A key edits AND (when not playing) sounds, on PRESSED -- one event, so the
+ * note you hear is the note that was written.  The gate is PRESERVED, as the
+ * knob did (spec decision 4).  PianoKey never reads LV_STATE_PRESSED, so the
+ * pressed look is driven from here -- the PANEL_MOMENTARY shape. */
+UIEVT_FN static void cbKeyPress(lv_event_t *e)
 {
-    const uint8_t note = angleToNote(synthui_rotary_knob_get_angle(lv_event_get_current_target_obj(e)));
+    const int k = (int)(intptr_t)lv_event_get_user_data(e);
+    const uint8_t note = (uint8_t)(kb_base(viewOct) + k);
+    synthui_piano_key_set_pressed(lv_event_get_current_target_obj(e), true);
     const AcidStep st = seq.step(selectedStep);
     commit_selected(note, st.gate, st.accent, st.slide);
+    if (!transport.playing()) {
+        audition_off();                 /* never two auditions held at once */
+        /* 127 / 80 are AudioStepSequencer's own accent/normal defaults
+         * (seq_step.h); it exports no getters. */
+        acid.noteOn(note, st.accent ? 127 : 80, false);
+        auditionNote = note;
+        CONSOLE.printf("AUDITION=%u\n", (unsigned)note);
+    }
 }
+/* RELEASED, PRESS_LOST and INDEV_RESET all land here: any way the press can
+ * end must end the sound. */
+UIEVT_FN static void cbKeyRelease(lv_event_t *e)
+{
+    synthui_piano_key_set_pressed(lv_event_get_current_target_obj(e), false);
+    audition_off();
+}
+/* VIEW ONLY: the octave buttons re-map the keys and never write the pattern
+ * (spec decision 2).  Clamped silently, as tempo is. */
+UIEVT_FN static void set_view_oct(int v)
+{
+    if (v < KB_OCT_MIN) v = KB_OCT_MIN;
+    if (v > KB_OCT_MAX) v = KB_OCT_MAX;
+    if (v == viewOct) return;
+    viewOct = v;
+    refresh_keyboard();
+}
+UIEVT_FN static void cbOctDn(lv_event_t *e) { (void)e; set_view_oct(viewOct - 1); }
+UIEVT_FN static void cbOctUp(lv_event_t *e) { (void)e; set_view_oct(viewOct + 1); }
 static void cbAccBtn(lv_event_t *e)
 { (void)e; const AcidStep st = seq.step(selectedStep); commit_selected(st.note, st.gate, !st.accent, st.slide); }
 static void cbSldBtn(lv_event_t *e)
@@ -1415,6 +1493,7 @@ static void ui_poll(lv_timer_t *t)
         shownCursor = s;
     }
     if ((int)play != shownPlaying) {
+        if (play) audition_off();   /* defensive: one pointer cannot hold a key and press PLAY today */
         shownPlaying = (int)play;
         synthui_panel_button_set_on(playBtn, play);
         /* The gate's only view of the lit state (run_qemu.sh, NEW-54): read
@@ -1605,19 +1684,12 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
         numLabel[i] = n;
     }
 
-    /* editor: pitch detent knob + note name + ACC/SLD toggles + SAW/SQR */
-    pitchKnob = synthui_rotary_knob_create(scr);
-    lv_obj_set_size(pitchKnob, PITCH_SIZE, PITCH_SIZE);
-    lv_obj_set_pos(pitchKnob, PITCH_X, PITCH_Y);
-    /* detents are input behavior on the rotary widget (no visual mode):
-     * bounded well + 24 semitone stops on the ±140 lattice the pitch maps
-     * above assume. */
-    synthui_rotary_knob_set_mode(pitchKnob, SYNTHUI_ROTARY_MODE_BOUNDED);
-    synthui_rotary_knob_set_range(pitchKnob, -140.0f, 140.0f);
-    synthui_rotary_knob_set_detent_step(pitchKnob, 280.0f / 24.0f);
-    lv_obj_add_event_cb(pitchKnob, cbPitch, LV_EVENT_VALUE_CHANGED, NULL);
+    /* editor: note name (in the old pitch-knob slot) + ACC/SLD toggles + SAW/SQR */
     noteLabel = lv_label_create(scr);
     lv_obj_set_style_text_color(noteLabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(noteLabel, &lv_font_montserrat_28, LV_PART_MAIN);
+    lv_obj_set_width(noteLabel, NOTE_W);
+    lv_obj_set_style_text_align(noteLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_pos(noteLabel, NOTE_X, NOTE_Y);
     accKey = synthui_led_button_create(scr);
     lv_obj_set_size(accKey, TOG_KEY, TOG_KEY);
@@ -1684,6 +1756,53 @@ UIBUILD_FN static lv_obj_t *build_ui(void)
     lv_label_set_text(stepLbl, "STEP");
     lv_obj_set_style_text_color(stepLbl, lv_color_hex(0x9aa0b8), LV_PART_MAIN);
     lv_obj_set_pos(stepLbl, STEP_LABEL_X, STEP_LABEL_Y);
+
+    /* keyboard: 13 keys, C[o]..C[o+1].  ★ WHITES FIRST, BLACKS SECOND --
+     * creation order IS z-order, for drawing and for the hit test alike, so a
+     * black key wins the 32 px it overhangs each neighbour (the gate's A# tap
+     * is the witness).  zone_top and pad_height are SET, not defaulted: the
+     * widget was drawn for a tall 46x158 key, and its default 48 px pad would
+     * run 17 px past the bottom of a 130 px one; 0 selects its own auto-fit.
+     * 0.62 puts a white key's LED 88 px down, clear of the blacks' 78. */
+    for (int pass = 0; pass < 2; pass++) {
+        for (int k = 0; k < KB_KEYS; k++) {
+            const bool black = kb_is_black(k);
+            if (black != (pass == 1)) continue;
+            int x, y, w, h;
+            kb_key_rect(k, &x, &y, &w, &h);
+            lv_obj_t *key = synthui_piano_key_create(scr);
+            lv_obj_set_pos(key, x, y);
+            lv_obj_set_size(key, w, h);
+            synthui_piano_key_set_type(key, black ? SYNTHUI_PIANO_KEY_BLACK : SYNTHUI_PIANO_KEY_WHITE);
+            synthui_piano_key_set_zone_top(key, black ? 0.10f : 0.62f);
+            synthui_piano_key_set_pad_height(key, 0.0f);
+            void *ud = (void *)(intptr_t)k;
+            lv_obj_add_event_cb(key, cbKeyPress,   LV_EVENT_PRESSED,     ud);
+            lv_obj_add_event_cb(key, cbKeyRelease, LV_EVENT_RELEASED,    ud);
+            lv_obj_add_event_cb(key, cbKeyRelease, LV_EVENT_PRESS_LOST,  ud);
+            lv_obj_add_event_cb(key, cbKeyRelease, LV_EVENT_INDEV_RESET, ud);
+            pianoKey[k] = key;
+        }
+    }
+
+    /* octave row: v [N] ^ on the STEP row's x's, beside the keys it re-maps */
+    mkpanelbtn(scr, PREV_X, OCT_Y, PREV_W, STEP_H, SYNTHUI_PANEL_BUTTON_GLYPH_DOWN,
+               SYNTHUI_PANEL_BUTTON_ACCENT_PALE, PANEL_GLYPH_SCALE_STEP, cbOctDn,
+               PANEL_MOMENTARY);
+    octSeg = synthui_seven_segment_create(scr);
+    lv_obj_set_size(octSeg, OCT_SEG_W, STEP_H);
+    lv_obj_set_pos(octSeg, OCT_SEG_X, OCT_Y);
+    synthui_seven_segment_set_text(octSeg, "1");
+    lv_obj_remove_flag(octSeg, LV_OBJ_FLAG_CLICKABLE);  /* read-out; see accLamp above */
+    mkpanelbtn(scr, NEXT_X, OCT_Y, NEXT_W, STEP_H, SYNTHUI_PANEL_BUTTON_GLYPH_UP,
+               SYNTHUI_PANEL_BUTTON_ACCENT_PALE, PANEL_GLYPH_SCALE_STEP, cbOctUp,
+               PANEL_MOMENTARY);
+    lv_obj_t *octLbl = lv_label_create(scr);
+    lv_label_set_text(octLbl, "OCTAVE");
+    lv_obj_set_style_text_color(octLbl, lv_color_hex(0x9aa0b8), LV_PART_MAIN);
+    lv_obj_set_width(octLbl, NEXT_X + NEXT_W - PREV_X);
+    lv_obj_set_style_text_align(octLbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_pos(octLbl, PREV_X, OCT_LABEL_Y);
 
     /* Sound knobs, one row along the bottom edge.  Boot angles are the INVERSE
      * of each map applied to default_patch()'s values, so the first frame
