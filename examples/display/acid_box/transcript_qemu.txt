@@ -339,48 +339,67 @@ and the rt1062 half of `usb_descriptor_survey`.  That is the GPL firewall
 working, not a regression.
 
 ================================================================================
-THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-09-18, NEW-53 arm-at-step-0 fix)
+THE PASSING RUN  (./run_qemu.sh, idle host — re-captured 2026-09-20, piano keyboard)
 ================================================================================
 ==== captured UART ====
 === BOOT ===
-[APP: acid_box] [VER: v1] [BUILD: Sep 18 2026 13:05:14]
+[APP: acid_box] [VER: v1] [BUILD: Sep 20 2026 10:03:24]
 ACIDBOX_BEGIN
 CODEC_OK
 PANEL_OK
 ACIDBOX_ENGINE=sw
 SELECT=0
+OCT=1
+KEY_LIT=9
 PLAY_LIT=0
-ACIDBOX_UI_SUM=0x18B7B637
+ACIDBOX_UI_SUM=0x149FB9E2
 PLAYING=0
-ACIDBOX_ROT ops=1 full=1 px=921600 us=115492 errors=0
-ACIDBOX_ROT_EQ pass=1 mismatch=0 starved=0 fail=0 us=11126
+ACIDBOX_ROT ops=1 full=1 px=921600 us=112069 errors=0
+ACIDBOX_ROT_EQ pass=1 mismatch=0 starved=0 fail=0 us=11301
 I2C_OK
 ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
 ACIDBOX_DONE
+STEP[0]=note33 gate1 acc1 sld0
+OCT=1
+KEY_LIT=9
+AUDITION=33
+AUDITION=off
 PLAYING=1
 PLAY_LIT=1
-ACIDBOX_BAR=1 RMS=[0.1843,0.3907,0.0001,0.3776,0.3732,0.0001,0.3851,0.4065,0.3934,0.0002,0.3780,0.3696,0.4201,0.3924,0.0002,0.3916]
-ACIDBOX_VSYNC flips=17 isrs=17 timeouts=0
-ACIDBOX_ROT ops=39 full=2 px=2366464 us=319975 errors=0
-ACIDBOX_ROT_EQ pass=2 mismatch=0 starved=0 fail=0 us=4744
-ACIDBOX_BAR=2 RMS=[0.4244,0.3786,0.0001,0.3711,0.3731,0.0003,0.3814,0.4141,0.3863,0.0002,0.3688,0.3646,0.4297,0.3885,0.0002,0.3876]
-ACIDBOX_VSYNC flips=33 isrs=33 timeouts=0
-ACIDBOX_ROT ops=79 full=2 px=2954240 us=399739 errors=0
-ACIDBOX_ROT_EQ pass=3 mismatch=0 starved=0 fail=0 us=1686
+ACIDBOX_BAR=1 RMS=[0.2149,0.3772,0.0001,0.3708,0.3728,0.0003,0.3704,0.4137,0.3854,0.0002,0.3681,0.3640,0.4298,0.3894,0.0002,0.3880]
+ACIDBOX_VSYNC flips=19 isrs=19 timeouts=0
+ACIDBOX_ROT ops=43 full=2 px=2414336 us=295559 errors=0
+ACIDBOX_ROT_EQ pass=2 mismatch=0 starved=0 fail=0 us=1476
+ACIDBOX_BAR=2 RMS=[0.4140,0.3860,0.0003,0.3736,0.3734,0.0003,0.3882,0.4125,0.3940,0.0002,0.3687,0.3708,0.4232,0.3886,0.0005,0.3877]
+ACIDBOX_VSYNC flips=35 isrs=35 timeouts=0
+ACIDBOX_ROT ops=83 full=2 px=3002112 us=372750 errors=0
+ACIDBOX_ROT_EQ pass=3 mismatch=0 starved=0 fail=0 us=1423
 SELECT=2
+OCT=1
+KEY_LIT=9
 STEP[2]=note33 gate1 acc0 sld0
-ACIDBOX_BAR=3 RMS=[0.4147,0.3866,0.0003,0.3735,0.3736,0.0003,0.3877,0.4133,0.3942,0.0002,0.3677,0.3553,0.4237,0.3894,0.0005,0.3879]
-ACIDBOX_VSYNC flips=51 isrs=51 timeouts=0
-ACIDBOX_ROT ops=135 full=2 px=3632384 us=496478 errors=0
-ACIDBOX_ROT_EQ pass=4 mismatch=0 starved=0 fail=0 us=2321
-ACIDBOX_BAR=4 RMS=[0.4292,0.3813,0.3928,0.3753,0.3739,0.0003,0.3823,0.3984,0.3567,0.0002,0.3804,0.3704,0.4288,0.3916,0.0001,0.3879]
-ACIDBOX_VSYNC flips=67 isrs=67 timeouts=0
-ACIDBOX_ROT ops=175 full=2 px=4220160 us=581782 errors=0
-ACIDBOX_ROT_EQ pass=5 mismatch=0 starved=0 fail=0 us=2116
-ACIDBOX_BAR=5 RMS=[0.4182,0.3844,0.3925,0.3727,0.3752,0.0001,0.3880,0.4142,0.3778,0.0005,0.3684,0.3693,0.4280,0.3870,0.0001,0.3887]
-ACIDBOX_VSYNC flips=83 isrs=83 timeouts=0
-ACIDBOX_ROT ops=215 full=2 px=4807936 us=668429 errors=0
-ACIDBOX_ROT_EQ pass=6 mismatch=0 starved=0 fail=0 us=1593
+OCT=1
+KEY_LIT=9
+STEP[2]=note36 gate1 acc0 sld0
+OCT=1
+KEY_LIT=12
+OCT=2
+KEY_LIT=0
+STEP[2]=note46 gate1 acc0 sld0
+OCT=2
+KEY_LIT=10
+ACIDBOX_BAR=3 RMS=[0.4292,0.3800,0.0003,0.3749,0.3735,0.0003,0.3814,0.4172,0.3875,0.0002,0.3804,0.3694,0.4289,0.3918,0.0001,0.3884]
+ACIDBOX_VSYNC flips=58 isrs=58 timeouts=0
+ACIDBOX_ROT ops=163 full=2 px=3886080 us=487227 errors=0
+ACIDBOX_ROT_EQ pass=4 mismatch=0 starved=0 fail=0 us=1401
+ACIDBOX_BAR=4 RMS=[0.4176,0.3849,0.3624,0.3756,0.3679,0.0002,0.3938,0.4105,0.3917,0.0001,0.3780,0.3700,0.4244,0.3925,0.0003,0.3857]
+ACIDBOX_VSYNC flips=74 isrs=74 timeouts=0
+ACIDBOX_ROT ops=203 full=2 px=4473856 us=563551 errors=0
+ACIDBOX_ROT_EQ pass=5 mismatch=0 starved=0 fail=0 us=1468
+ACIDBOX_BAR=5 RMS=[0.4249,0.3909,0.3604,0.3721,0.3704,0.0001,0.3906,0.4198,0.3878,0.0004,0.3811,0.3698,0.4160,0.3932,0.0002,0.3914]
+ACIDBOX_VSYNC flips=90 isrs=90 timeouts=0
+ACIDBOX_ROT ops=243 full=2 px=5061632 us=636956 errors=0
+ACIDBOX_ROT_EQ pass=6 mismatch=0 starved=0 fail=0 us=1460
 CUTOFF=639.5
 CUTOFF=511.2
 CUTOFF=408.7
@@ -390,25 +409,34 @@ CUTOFF=202.2
 CUTOFF=161.6
 CUTOFF=129.2
 CUTOFF=103.3
-ACIDBOX_BAR=6 RMS=[0.4298,0.3893,0.3854,0.3726,0.3742,0.0001,0.3898,0.4024,0.3926,0.0001,0.3975,0.3730,0.3937,0.4018,0.0002,0.3784]
-ACIDBOX_VSYNC flips=103 isrs=103 timeouts=0
-ACIDBOX_ROT ops=264 full=2 px=5537536 us=776648 errors=0
-ACIDBOX_ROT_EQ pass=7 mismatch=0 starved=0 fail=0 us=2155
+ACIDBOX_BAR=6 RMS=[0.4247,0.3882,0.3752,0.3743,0.3680,0.0003,0.3811,0.4196,0.3840,0.0001,0.3919,0.4172,0.3953,0.3828,0.0002,0.3749]
+ACIDBOX_VSYNC flips=109 isrs=109 timeouts=0
+ACIDBOX_ROT ops=291 full=2 px=5787136 us=728226 errors=0
+ACIDBOX_ROT_EQ pass=7 mismatch=0 starved=0 fail=0 us=1485
 
 (Bar 6 straddles the drag, whose landing instant moves with render timing
 between runs -- the gate selects its pre/post windows dynamically for exactly
 that reason.  The boot rotation witness reads full=1 because the second forced
 full-frame present lands on the next refresh; every per-bar witness reads
-full=2, and ops climbs by ~40-55 a bar, all of them per-rect presents.  The
+full=2, and ops climbs by ~40-80 a bar, all of them per-rect presents.  The
 guard's pass count is boot + one per bar, 7 after six bars: each bar's check
-is armed at step 8 and finished well before the seam that prints it.  The boot
-guard line's us= (11901) is the synchronous check's whole cost; every per-bar
-us= (1532..1911 here) is one chunk of 8 sampled rows, the costliest pass of
-that bar's check.  Bar 3's step 0 reads 0.4275 here, matching most runs --
-the cell the header's AUDIO note is about.  Nine drag prints
-from ten samples: the first sample is the press itself and carries no
-movement.  The gate asserts timeouts=0, errors=0 and fail=0 -- never
-flips==isrs, and never a pinned ops, px or us.)
+is armed at step 0 (and on the play edge; NEW-53) and finished well before the
+seam that prints it.  The boot guard line's us= (11301) is the synchronous
+check's whole cost; every per-bar us= (1401..1485 here) is one chunk of 8
+sampled rows, the costliest pass of that bar's check.  Bar 3's step 0 reads
+0.4292 here, matching most runs -- the cell the header's AUDIO note is about.
+Nine drag prints from ten samples: the first sample is the press itself and
+carries no movement.  The gate asserts timeouts=0, errors=0 and fail=0 -- never
+flips==isrs, and never a pinned ops, px or us.
+  THE KEYBOARD TOKENS (2026-09-20), in the order the capture shows them: the
+  boot select prints the octave view and the read-back lit key (view 1, key 9
+  = A); the stopped A press commits step 0 unchanged and sounds (an audition
+  line for note 33, then its "off") BEFORE the play tap; after the cell-2 tap
+  the top C writes note 36 and lights key 12, octave + re-maps the view to 2
+  and the SAME note lights key 0, and the black A# writes note 46 and lights
+  key 10.  No audition line follows the play tap.  Step 2 therefore sounds at
+  A#2 in the post-edit window (0.35..0.39 across this session's runs) where it
+  sounded at A1 before; the gate asserts thresholds there, never magnitudes.)
 
 The gate's verdict, printed after the capture (indented here, so that a replay
 of this file as a capture never shows a verdict line of its own):

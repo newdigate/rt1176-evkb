@@ -947,6 +947,30 @@ if [ -d "$EVKB/$ACB" ] && [ -f "$EVKB/$ACB/transcript_qemu.txt" ]; then
         | grep -q "^FAIL: PLAY not dark at boot (first PLAY_LIT line: 'PLAY_LIT=1')" || result=1
     report "acb_lit_at_boot_fails_by_name" $result
 
+    # Piano keyboard (spec 2026-09-20): keys must only EDIT while the transport
+    # plays.  An AUDITION line after PLAYING=1 must fail by name -- and the
+    # stopped audition earlier in the same fixture must NOT be what trips it,
+    # which is why the gate orders by line number.  cmp guards the mutation.
+    awk '{ print } /^PLAYING=1$/ && !done { print "AUDITION=40"; done = 1 }' \
+        "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_audplaying.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_audplaying.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$ACB/transcript_qemu.txt" "$WORK/acb_audplaying.txt" && result=1
+    echo "$OUT_TEXT" | grep -q "^FAIL: a key auditioned while the transport was playing" || result=1
+    report "acb_audition_while_playing_fails_by_name" $result
+
+    # ...and the lit key's only witness: with every KEY_LIT line gone the gate
+    # must say so, not pass on the strength of the STEP tokens alone.
+    grep -v "^KEY_LIT=" "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_nokeylit.txt"
+    run_gate "$ACB" "run_qemu.sh" "$WORK/acb_nokeylit.txt"; rc=$?
+    result=0
+    [ "$rc" -ne 0 ] || result=1
+    cmp -s "$EVKB/$ACB/transcript_qemu.txt" "$WORK/acb_nokeylit.txt" && result=1
+    echo "$OUT_TEXT" \
+        | grep -q "^FAIL: boot lit key is not A (first KEY_LIT line: 'none')" || result=1
+    report "acb_key_lit_missing_fails_by_name" $result
+
     sed 's|^ACIDBOX_UI_SUM=0x........|ACIDBOX_UI_SUM=0xBADBADBA|' \
         "$EVKB/$ACB/transcript_qemu.txt" > "$WORK/acb_badsum.txt"
     run_gate "$ACB" "run_qemu.sh" "$WORK/acb_badsum.txt"; rc=$?
