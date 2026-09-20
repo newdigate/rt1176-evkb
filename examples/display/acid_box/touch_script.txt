@@ -8,7 +8,8 @@
 # res*pct/100 in integers, so P 94 85 -> (676,1088) -> logical (1088,43).
 #
 # pad 1: 25 instants (~0.5 s); pads 2/3: 300 instants (~2.6 bars at 128 BPM
-# under this tree's ~0.81x QEMU audio clock).
+# under this tree's ~0.81x QEMU audio clock).  Keyboard taps (spec 2026-09-20)
+# sit 10 instants apart; their landings are pinned in tests/keyboard_map_test.c.
 R
 R
 R
@@ -23,6 +24,18 @@ R
 R
 R
 R
+R
+R
+R
+R
+R
+R
+R
+R
+R
+R
+R
+P 32 47
 R
 R
 R
@@ -337,6 +350,42 @@ R
 R
 R
 P 80 22
+R
+R
+R
+R
+R
+R
+R
+R
+R
+R
+R
+P 32 64
+R
+R
+R
+R
+R
+R
+R
+R
+R
+R
+R
+P 38 97
+R
+R
+R
+R
+R
+R
+R
+R
+R
+R
+R
+P 42 51
 R
 R
 R

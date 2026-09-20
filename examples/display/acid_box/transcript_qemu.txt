@@ -463,7 +463,8 @@ lowering the 0.02 floor to accommodate it.
 THE TOUCH SCRIPT — generated, never hand-counted
 ================================================================================
 Regenerate with exactly this, run from the example directory (this is the block
-that produced the committed touch_script.txt; 640 instants):
+that produced the committed touch_script.txt; 688 instants since the
+2026-09-20 keyboard taps, 640 before them):
 
   {
     echo "# acid_box gate script -- GENERATED, never hand-counted.  Regenerate with"
@@ -476,18 +477,27 @@ that produced the committed touch_script.txt; 640 instants):
     echo "# res*pct/100 in integers, so P 94 85 -> (676,1088) -> logical (1088,43)."
     echo "#"
     echo "# pad 1: 25 instants (~0.5 s); pads 2/3: 300 instants (~2.6 bars at 128 BPM"
-    echo "# under this tree's ~0.81x QEMU audio clock)."
+    echo "# under this tree's ~0.81x QEMU audio clock).  Keyboard taps (spec 2026-09-20)"
+    echo "# sit 10 instants apart; their landings are pinned in tests/keyboard_map_test.c."
     for i in $(seq 25);  do echo R; done     # pad 1
+    echo "P 32 47"; echo R                    # tap KEY A, STOPPED  (lands 601,489): audition + STEP[0]=note33
+    for i in $(seq 10);  do echo R; done
     echo "P 94 85"; echo R                    # tap PLAY        (logical 1090,44)
     for i in $(seq 300); do echo R; done     # pad 2
     echo "P 80 22"; echo R                    # tap STEP CELL 2 (logical 282,146)
+    for i in $(seq 10);  do echo R; done
+    echo "P 32 64"; echo R                    # tap KEY top C       (lands 819,489): STEP[2]=note36, KEY_LIT=12
+    for i in $(seq 10);  do echo R; done
+    echo "P 38 97"; echo R                    # tap OCTAVE +        (lands 1241,446): OCT=2, KEY_LIT=0
+    for i in $(seq 10);  do echo R; done
+    echo "P 42 51"; echo R                    # tap KEY A# (black)  (lands 652,417): STEP[2]=note46
     for i in $(seq 300); do echo R; done     # pad 3
     for x in 19 18 17 16 15 14 13 12 11 10; do echo "P $x 7"; done   # drag CUTOFF: logical (91, 583->647), downward
     echo R
   } > touch_script.txt
 
-(This block reproduces the committed file BYTE FOR BYTE -- cmp'd 2026-09-15,
-header included.  `grep -cE '^(P|R|\.)' touch_script.txt` == 640.  The trailing
+(This block reproduces the committed file BYTE FOR BYTE -- cmp'd 2026-09-20,
+header included.  `grep -cE '^(P|R|\.)' touch_script.txt` == 688.  The trailing
 comments name the TARGET centres; the model's integer truncation lands the taps
 at logical (1088,43) and (281,143) and the drag at x 89 -- see GEOMETRY.)
 

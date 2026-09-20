@@ -414,6 +414,69 @@ CUT_LN=$(grep -n  "CUTOFF="              "$OUT" | head -1 | cut -d: -f1)
 [ "$STEP_LN" -gt "$PLAY_LN" ] || { echo "FAIL: gesture order — edit before play"; exit 1; }
 [ "$CUT_LN"  -gt "$STEP_LN" ] || { echo "FAIL: gesture order — drag before edit"; exit 1; }
 
+# --- the keyboard (spec 2026-09-20) -----------------------------------------
+# Four injected taps: the lit A key while STOPPED, then -- playing, step 2
+# selected -- the top C, the octave + button, and the black A#.
+# ★ KEY_LIT= is READ BACK from the 13 widgets (synthui_piano_key_get_lit), so it
+# cannot agree with the model by construction.  The boot golden pins the lit key
+# ONCE, at boot; only these lines see it MOVE.
+grep -q "^KEY_LIT=MULTI" "$OUT" && { echo "FAIL: more than one piano key lit"; exit 1; }
+KL_FIRST=$(grep -E "^KEY_LIT=" "$OUT" | head -1 | tr -d '\r')
+[ "$KL_FIRST" = "KEY_LIT=9" ] \
+    || { echo "FAIL: boot lit key is not A (first KEY_LIT line: '${KL_FIRST:-none}')"; exit 1; }
+OCT_FIRST=$(grep -E "^OCT=" "$OUT" | head -1 | tr -d '\r')
+[ "$OCT_FIRST" = "OCT=1" ] \
+    || { echo "FAIL: boot octave view is not 1 (first OCT line: '${OCT_FIRST:-none}')"; exit 1; }
+
+# 1. STOPPED: the key sounds for as long as it is held, and no longer.  The tap
+#    rewrites the note step 0 already holds, so every RMS window downstream is
+#    untouched.  Both AUDITION lines must fall BEFORE the play tap.
+AUD_LN=$(grep -n "^AUDITION=33" "$OUT" | head -1 | cut -d: -f1)
+[ -n "$AUD_LN" ] || { echo "FAIL: stopped key press did not audition (no AUDITION=33)"; exit 1; }
+[ "$AUD_LN" -lt "$PLAY_LN" ] || { echo "FAIL: gesture order — audition after play"; exit 1; }
+awk -v a="$AUD_LN" -v p="$PLAY_LN" 'NR>a && NR<p && /^AUDITION=off\r?$/ { ok=1 } END { exit ok ? 0 : 1 }' "$OUT" \
+    || { echo "FAIL: auditioned note never released before play (no AUDITION=off)"; exit 1; }
+grep -qE "^STEP\[0\]=note33 gate1 acc1 sld0" "$OUT" \
+    || { echo "FAIL: stopped key press did not commit step 0"; exit 1; }
+#    PLAYING: keys only edit.  By LINE NUMBER -- the stopped audition above is
+#    legitimate and an unordered grep could not tell the two apart.
+awk -v p="$PLAY_LN" 'NR>p && /^AUDITION=[0-9]/ { bad=1 } END { exit bad ? 1 : 0 }' "$OUT" \
+    || { echo "FAIL: a key auditioned while the transport was playing"; exit 1; }
+
+# next_key_lit <line>: the first KEY_LIT line after <line>.  commit_selected()
+# prints STEP[..] and THEN refreshes the keyboard, so this is that commit's.
+next_key_lit() { awk -v s="$1" 'NR>s && /^KEY_LIT=/ { sub(/\r$/, ""); print; exit }' "$OUT"; }
+
+# 2. The TOP C of view 1 is note 36 and key 12...
+C36_LN=$(grep -n "^STEP\[2\]=note36 gate1" "$OUT" | head -1 | cut -d: -f1)
+[ -n "$C36_LN" ] || { echo "FAIL: top-C key press never wrote step 2 (want STEP[2]=note36 gate1)"; exit 1; }
+[ "$C36_LN" -gt "$STEP_LN" ] || { echo "FAIL: gesture order — top C before the cell tap"; exit 1; }
+KL=$(next_key_lit "$C36_LN")
+[ "$KL" = "KEY_LIT=12" ] || { echo "FAIL: top C not lit as key 12 (got '${KL:-none}')"; exit 1; }
+
+# 3. ...and after octave + the SAME note is the BOTTOM C, key 0: the boundary
+#    rule seen from both sides.
+OCT2_LN=$(grep -n "^OCT=2" "$OUT" | head -1 | cut -d: -f1)
+[ -n "$OCT2_LN" ] || { echo "FAIL: octave + never paged the view (no OCT=2)"; exit 1; }
+[ "$OCT2_LN" -gt "$C36_LN" ] || { echo "FAIL: gesture order — octave + before the top C"; exit 1; }
+KL=$(next_key_lit "$OCT2_LN")
+[ "$KL" = "KEY_LIT=0" ] || { echo "FAIL: note 36 not shown as the bottom C of view 2 (got '${KL:-none}')"; exit 1; }
+
+# 4. The black A# wins the pixels it overhangs.  At that x a WHITE key is A (45)
+#    or B (47): named separately, because it is a z-order bug and not a miss.
+grep -qE "^STEP\[2\]=note4[57] gate1" "$OUT" \
+    && { echo "FAIL: the A# tap landed on a WHITE key -- black keys are not on top"; exit 1; }
+A46_LN=$(grep -n "^STEP\[2\]=note46 gate1" "$OUT" | head -1 | cut -d: -f1)
+[ -n "$A46_LN" ] || { echo "FAIL: black A# press never wrote step 2 (want STEP[2]=note46 gate1)"; exit 1; }
+[ "$A46_LN" -gt "$OCT2_LN" ] || { echo "FAIL: gesture order — A# before octave +"; exit 1; }
+[ "$CUT_LN" -gt "$A46_LN" ]  || { echo "FAIL: gesture order — drag before the A#"; exit 1; }
+KL=$(next_key_lit "$A46_LN")
+[ "$KL" = "KEY_LIT=10" ] || { echo "FAIL: A# not lit as key 10 (got '${KL:-none}')"; exit 1; }
+#    VIEW ONLY: between the top-C write and the A# write nothing may write the
+#    pattern -- a transposing octave button prints a STEP line in this window.
+awk -v a="$C36_LN" -v b="$A46_LN" 'NR>a && NR<b && /^STEP\[/ { bad=1 } END { exit bad ? 1 : 0 }' "$OUT" \
+    || { echo "FAIL: the octave button wrote the pattern (a STEP line between the top C and the A#)"; exit 1; }
+
 # BOOT IS SILENT, and the firmware header calls that a contract: while the
 # transport is stopped, currentStep() sits at -1 and audio_probe_poll() returns
 # before it can print.  A box that hums on power-up shows up as a bar line ahead
@@ -505,4 +568,4 @@ grep 'CUTOFF=' "$OUT" | sed 's/.*CUTOFF=//' | awk '
       if (v[i] >= v[i-1]) { printf "FAIL: cutoff not strictly decreasing at sample %d (%.1f >= %.1f)\n", i, v[i], v[i-1]; exit 1 }
   }' || exit 1
 
-echo "PASS: acid box -- boot golden, rotated present + equality guard, injected play/edit/drag, step 2 silent before the tap and sounding after"
+echo "PASS: acid box -- boot golden, rotated present + equality guard, injected play/edit/drag, keyboard audition/top-C/octave/black-key, step 2 silent before the tap and sounding after"
