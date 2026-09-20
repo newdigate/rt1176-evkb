@@ -211,6 +211,21 @@ teensy_add_executable(acid_box
 # links PXP for the rotated present.  Worth writing down because the obvious
 # reading ("the new sync-copy source file cost us ITCM") is wrong, and the four
 # deltas differ (64/96/80/96) only because the metric is 16-B quantised.
+# ★ RE-MEASURED 2026-09-20, the piano keyboard (spec 2026-09-20, plan Task 7):
+# headroom 2,916 / 2,772 / 11,620 / 11,444 B (259,228 / 259,372 / 250,524 /
+# 250,700 B used) -- it GREW by 112 / 112 / 96 / 112 B, a multiple of 32 and so
+# signal rather than the 16-B quantum: the pitch knob's angleToNote/noteToAngle
+# maps left ITCM, and the keyboard's callbacks plus refresh_keyboard() are
+# flash-resident (UIEVT_FN, .progmem.acid_uievt).  The pre-registered prediction
+# ("ITCM headroom does not shrink") HELD in all four.
+# DTCM is where this change costs, and it was predicted too: .data+.bss
+# 51,451 -> 88,923 / 53,167 -> 90,635 / 102,769 -> 140,269 / 104,477 -> 141,977 B,
+# +37,468..37,500 B each.  37,293 B of that is Montserrat 28's glyph data for ONE
+# two-to-three-character note label: LV_ATTRIBUTE_LARGE_CONST is empty and
+# imxrt1176.ld collects .rodata* into .data > DTCM, so an LVGL font is a
+# tightly-coupled-RAM cost in this tree, NOT a flash cost.  DTCM stands at
+# 34 % (default) to 55 % (build-bench) after it.  If DTCM ever gets tight,
+# dropping that one set_style_text_font() line returns the whole 37 KB.
 # ★ One 2,048 B floor (the NEW-45 ASSERT below) guards all four builds, but
 # their headroom differs by about 4x -- in practice it guards the non-BT
 # builds, which is the right call: they are the tight ones, while the BT
