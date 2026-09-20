@@ -864,6 +864,43 @@ the same spinners, three runs each, all six PASS with pre-edit bar 2 and
 post-edit bar 5 -- the header's AUDIO note has their readings.
 
 ================================================================================
+THE KEYBOARD — DEMONSTRATED RED, five ways (spec 2026-09-20)
+================================================================================
+  Each mutant was applied, the image rebuilt, the gate run, the exact verdict
+  recorded, and the source restored with git checkout.  2026-09-20.
+
+  A. TOP C DROPPED -- keyboard_map.h, `d <= 12` -> `d <= 11`.  The key press
+     still writes note 36 (the commit path uses base + k), so the pattern token
+     is right and only the lit key is wrong:
+       FAIL: top C not lit as key 12 (got 'KEY_LIT=-1')
+     Boot golden green.  tests/run.sh fails the same mutant by name on the host.
+
+  B. AUDITION NOT GATED -- cbKeyPress, `if (!transport.playing())` -> `if (true)`:
+       FAIL: a key auditioned while the transport was playing
+     Boot golden green.  The stopped audition earlier in the same capture is
+     legitimate, which is why the check is ordered by line number.
+
+  C. NOTEOFF DROPPED -- cbKeyRelease without its audition_off():
+       FAIL: auditioned note never released before play (no AUDITION=off)
+     Boot golden green.  The poller's play-edge clear DOES then print an "off"
+     line -- after the play tap, outside the window, which is why the window is
+     bounded by the play line and not left open-ended.
+
+  D. BLACKS UNDER THE WHITES -- build_ui, `pass == 1` -> `pass == 0`.  A live run
+     is caught by the boot golden FIRST, because the frame really changes
+     (0x20DD3739).  With the golden line temporarily pointed at that sum:
+       FAIL: the A# tap landed on a WHITE key -- black keys are not on top
+     and the capture shows why -- the same tap wrote note 45, the white A of
+     view 2, where the black A# writes 46.
+
+  E. THE LIT KEY NEVER MOVES -- refresh_keyboard's set_lit loop run once only:
+       FAIL: top C not lit as key 12 (got 'KEY_LIT=9')
+     ★ WITH THE BOOT GOLDEN GREEN (0x149FB9E2).  The boot frame pins the lit key
+     exactly once, before any touch; every later move is invisible to it.  This
+     is the mutant only the read-back witness can see, and the reason that
+     witness scans the 13 widgets instead of echoing the model.
+
+================================================================================
 TIMING BUDGET
 ================================================================================
 Idle wall time 18 s, re-measured 2026-09-15 on the landscape build (host load

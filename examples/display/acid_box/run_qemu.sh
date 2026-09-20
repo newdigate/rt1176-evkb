@@ -414,6 +414,11 @@ CUT_LN=$(grep -n  "CUTOFF="              "$OUT" | head -1 | cut -d: -f1)
 [ "$STEP_LN" -gt "$PLAY_LN" ] || { echo "FAIL: gesture order — edit before play"; exit 1; }
 [ "$CUT_LN"  -gt "$STEP_LN" ] || { echo "FAIL: gesture order — drag before edit"; exit 1; }
 
+# DEMONSTRATED RED five ways (2026-09-20) -- transcript_qemu.txt, THE KEYBOARD:
+# top C dropped (KEY_LIT=-1), audition not gated on playing(), noteOff dropped
+# on release, black keys created under the whites (the A# tap writes note 45;
+# a live run hits the boot golden first), and the lit key frozen after boot --
+# the one mutant that leaves the BOOT GOLDEN GREEN and only KEY_LIT can see.
 # --- the keyboard (spec 2026-09-20) -----------------------------------------
 # Four injected taps: the lit A key while STOPPED, then -- playing, step 2
 # selected -- the top C, the octave + button, and the black A#.
