@@ -283,7 +283,8 @@ NBARS_ALL=$(grep -c "^ACIDBOX_BAR=" "$OUT" || true)
 # reproducible AND visibly wrong.  Silicon confirmed the landscape frame on
 # 2026-09-15 (transcript_hw_evkb.txt, LANDSCAPE): upright by eye, all four lane
 # corners touch-correct, gpu golden 0x2231070B on three boots (retired
-# 2026-09-16 -> 0xEA5AB843; NEW-54 moves it again) -- a separate
+# 2026-09-16 -> 0xEA5AB843; NEW-54 -> 0xA67828E9; the piano keyboard ->
+# 0x17FCC4DC, six readings bit-identical, bench 2026-09-20/21) -- a separate
 # golden set from this sw one, never reconciled.
 #
 # ★ ANCHORED WITH \r?$, AND THE ANCHOR IS LOAD-BEARING.  Measured in Task 4:

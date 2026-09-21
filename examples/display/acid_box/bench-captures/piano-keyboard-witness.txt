@@ -1,0 +1,1288 @@
+ACIDBOX_UI_SUM=0x17FCC4DC
+PLAYING=0
+ACIDBOX_ROT ops=1 full=1 px=921600 us=17488 errors=0
+ACIDBOX_ROT_EQ pass=1 mismatch=0 starved=0 fail=0 us=30472
+ACIDBOX_GPU_ERR=0
+ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
+PLAYING=1
+PLAY_LIT=1
+ACIDBOX_BAR=1
+ACIDBOX_VSYNC flips=48 isrs=48 timeouts=0
+ACIDBOX_ROT ops=89 full=2 px=3004160 us=57859 errors=0
+ACIDBOX_ROT_EQ pass=2 mismatch=0 starved=0 fail=0 us=3288
+ACIDBOX_BAR=2
+ACIDBOX_VSYNC flips=64 isrs=64 timeouts=0
+ACIDBOX_ROT ops=129 full=2 px=3591936 us=69281 errors=0
+ACIDBOX_ROT_EQ pass=3 mismatch=0 starved=0 fail=0 us=3314
+ACIDBOX_BAR=3
+ACIDBOX_VSYNC flips=84 isrs=84 timeouts=0
+ACIDBOX_ROT ops=207 full=2 px=4430592 us=85719 errors=0
+ACIDBOX_ROT_EQ pass=4 mismatch=0 starved=0 fail=0 us=3282
+ACIDBOX_BAR=4
+ACIDBOX_VSYNC flips=102 isrs=102 timeouts=0
+ACIDBOX_ROT ops=266 full=2 px=5120768 us=99359 errors=0
+ACIDBOX_ROT_EQ pass=5 mismatch=0 starved=0 fail=0 us=3289
+ACIDBOX_BAR=5
+ACIDBOX_VSYNC flips=122 isrs=122 timeouts=0
+ACIDBOX_ROT ops=339 full=2 px=5971712 us=115948 errors=0
+ACIDBOX_ROT_EQ pass=6 mismatch=0 starved=0 fail=0 us=3294
+ACIDBOX_BAR=6
+ACIDBOX_VSYNC flips=140 isrs=140 timeouts=0
+ACIDBOX_ROT ops=398 full=2 px=6669056 us=129349 errors=0
+ACIDBOX_ROT_EQ pass=7 mismatch=0 starved=0 fail=0 us=3280
+ACIDBOX_BAR=7
+ACIDBOX_VSYNC flips=156 isrs=156 timeouts=0
+ACIDBOX_ROT ops=438 full=2 px=7256832 us=140726 errors=0
+ACIDBOX_ROT_EQ pass=8 mismatch=0 starved=0 fail=0 us=3290
+ACIDBOX_BAR=8
+ACIDBOX_VSYNC flips=172 isrs=172 timeouts=0
+ACIDBOX_ROT ops=478 full=2 px=7844608 us=152498 errors=0
+ACIDBOX_ROT_EQ pass=9 mismatch=0 starved=0 fail=0 us=3167
+ACIDBOX_BAR=9
+ACIDBOX_VSYNC flips=188 isrs=188 timeouts=0
+ACIDBOX_ROT ops=518 full=2 px=8432384 us=164072 errors=0
+ACIDBOX_ROT_EQ pass=10 mismatch=0 starved=0 fail=0 us=3306
+ACIDBOX_BAR=10
+ACIDBOX_VSYNC flips=204 isrs=204 timeouts=0
+ACIDBOX_ROT ops=558 full=2 px=9020160 us=175510 errors=0
+ACIDBOX_ROT_EQ pass=11 mismatch=0 starved=0 fail=0 us=3287
+ACIDBOX_BAR=11
+ACIDBOX_VSYNC flips=220 isrs=220 timeouts=0
+ACIDBOX_ROT ops=598 full=2 px=9607936 us=187117 errors=0
+ACIDBOX_ROT_EQ pass=12 mismatch=0 starved=0 fail=0 us=3161
+ACIDBOX_BAR=12
+ACIDBOX_VSYNC flips=238 isrs=238 timeouts=0
+ACIDBOX_ROT ops=660 full=2 px=10330880 us=201385 errors=0
+ACIDBOX_ROT_EQ pass=13 mismatch=0 starved=0 fail=0 us=3286
+ACIDBOX_BAR=13
+ACIDBOX_VSYNC flips=254 isrs=254 timeouts=0
+ACIDBOX_ROT ops=700 full=2 px=10918656 us=212944 errors=0
+ACIDBOX_ROT_EQ pass=14 mismatch=0 starved=0 fail=0 us=3171
+ACIDBOX_BAR=14
+ACIDBOX_VSYNC flips=270 isrs=270 timeouts=0
+ACIDBOX_ROT ops=740 full=2 px=11506432 us=224337 errors=0
+ACIDBOX_ROT_EQ pass=15 mismatch=0 starved=0 fail=0 us=3312
+ACIDBOX_BAR=15
+ACIDBOX_VSYNC flips=288 isrs=288 timeouts=0
+ACIDBOX_ROT ops=788 full=2 px=12176640 us=237534 errors=0
+ACIDBOX_ROT_EQ pass=16 mismatch=0 starved=0 fail=0 us=3165
+ACIDBOX_BAR=16
+ACIDBOX_VSYNC flips=304 isrs=304 timeouts=0
+ACIDBOX_ROT ops=828 full=2 px=12764416 us=249006 errors=0
+ACIDBOX_ROT_EQ pass=17 mismatch=0 starved=0 fail=0 us=3301
+ACIDBOX_BAR=17
+ACIDBOX_VSYNC flips=322 isrs=322 timeouts=0
+ACIDBOX_ROT ops=878 full=2 px=13402368 us=261323 errors=0
+ACIDBOX_ROT_EQ pass=18 mismatch=0 starved=0 fail=0 us=3286
+ACIDBOX_BAR=18
+ACIDBOX_VSYNC flips=338 isrs=338 timeouts=0
+ACIDBOX_ROT ops=918 full=2 px=13990144 us=272882 errors=0
+ACIDBOX_ROT_EQ pass=19 mismatch=0 starved=0 fail=0 us=3288
+ACIDBOX_BAR=19
+ACIDBOX_VSYNC flips=354 isrs=354 timeouts=0
+ACIDBOX_ROT ops=958 full=2 px=14577920 us=284131 errors=0
+ACIDBOX_ROT_EQ pass=20 mismatch=0 starved=0 fail=0 us=3311
+ACIDBOX_BAR=20
+ACIDBOX_VSYNC flips=370 isrs=370 timeouts=0
+ACIDBOX_ROT ops=998 full=2 px=15165696 us=295801 errors=0
+ACIDBOX_ROT_EQ pass=21 mismatch=0 starved=0 fail=0 us=3288
+ACIDBOX_BAR=21
+ACIDBOX_VSYNC flips=386 isrs=386 timeouts=0
+ACIDBOX_ROT ops=1038 full=2 px=15753472 us=307191 errors=0
+ACIDBOX_ROT_EQ pass=22 mismatch=0 starved=0 fail=0 us=3300
+ACIDBOX_BAR=22
+ACIDBOX_VSYNC flips=402 isrs=402 timeouts=0
+ACIDBOX_ROT ops=1078 full=2 px=16341248 us=318685 errors=0
+ACIDBOX_ROT_EQ pass=23 mismatch=0 starved=0 fail=0 us=3283
+ACIDBOX_BAR=23
+ACIDBOX_VSYNC flips=418 isrs=418 timeouts=0
+ACIDBOX_ROT ops=1118 full=2 px=16929024 us=329993 errors=0
+ACIDBOX_ROT_EQ pass=24 mismatch=0 starved=0 fail=0 us=3292
+ACIDBOX_BAR=24
+ACIDBOX_VSYNC flips=434 isrs=434 timeouts=0
+ACIDBOX_ROT ops=1158 full=2 px=17516800 us=341495 errors=0
+ACIDBOX_ROT_EQ pass=25 mismatch=0 starved=0 fail=0 us=3317
+ACIDBOX_BAR=25
+ACIDBOX_VSYNC flips=450 isrs=450 timeouts=0
+ACIDBOX_ROT ops=1198 full=2 px=18104576 us=353246 errors=0
+ACIDBOX_ROT_EQ pass=26 mismatch=0 starved=0 fail=0 us=3286
+ACIDBOX_BAR=26
+ACIDBOX_VSYNC flips=466 isrs=466 timeouts=0
+ACIDBOX_ROT ops=1238 full=2 px=18692352 us=364534 errors=0
+ACIDBOX_ROT_EQ pass=27 mismatch=0 starved=0 fail=0 us=3304
+ACIDBOX_BAR=27
+ACIDBOX_VSYNC flips=482 isrs=482 timeouts=0
+ACIDBOX_ROT ops=1278 full=2 px=19280128 us=375875 errors=0
+ACIDBOX_ROT_EQ pass=28 mismatch=0 starved=0 fail=0 us=3292
+ACIDBOX_BAR=28
+ACIDBOX_VSYNC flips=498 isrs=498 timeouts=0
+ACIDBOX_ROT ops=1318 full=2 px=19867904 us=387308 errors=0
+ACIDBOX_ROT_EQ pass=29 mismatch=0 starved=0 fail=0 us=3308
+ACIDBOX_BAR=29
+ACIDBOX_VSYNC flips=514 isrs=514 timeouts=0
+ACIDBOX_ROT ops=1358 full=2 px=20455680 us=398855 errors=0
+ACIDBOX_ROT_EQ pass=30 mismatch=0 starved=0 fail=0 us=3292
+ACIDBOX_BAR=30
+ACIDBOX_VSYNC flips=530 isrs=530 timeouts=0
+ACIDBOX_ROT ops=1398 full=2 px=21043456 us=410174 errors=0
+ACIDBOX_ROT_EQ pass=31 mismatch=0 starved=0 fail=0 us=3290
+ACIDBOX_BAR=31
+ACIDBOX_VSYNC flips=546 isrs=546 timeouts=0
+ACIDBOX_ROT ops=1438 full=2 px=21631232 us=421790 errors=0
+ACIDBOX_ROT_EQ pass=32 mismatch=0 starved=0 fail=0 us=3291
+ACIDBOX_BAR=32
+ACIDBOX_VSYNC flips=562 isrs=562 timeouts=0
+ACIDBOX_ROT ops=1478 full=2 px=22219008 us=433307 errors=0
+ACIDBOX_ROT_EQ pass=33 mismatch=0 starved=0 fail=0 us=3299
+ACIDBOX_BAR=33
+ACIDBOX_VSYNC flips=578 isrs=578 timeouts=0
+ACIDBOX_ROT ops=1518 full=2 px=22806784 us=444631 errors=0
+ACIDBOX_ROT_EQ pass=34 mismatch=0 starved=0 fail=0 us=3312
+ACIDBOX_BAR=34
+ACIDBOX_VSYNC flips=594 isrs=594 timeouts=0
+ACIDBOX_ROT ops=1558 full=2 px=23394560 us=456064 errors=0
+ACIDBOX_ROT_EQ pass=35 mismatch=0 starved=0 fail=0 us=3286
+ACIDBOX_BAR=35
+ACIDBOX_VSYNC flips=610 isrs=610 timeouts=0
+ACIDBOX_ROT ops=1598 full=2 px=23982336 us=467573 errors=0
+ACIDBOX_ROT_EQ pass=36 mismatch=0 starved=0 fail=0 us=3316
+ACIDBOX_BAR=36
+ACIDBOX_VSYNC flips=626 isrs=626 timeouts=0
+ACIDBOX_ROT ops=1638 full=2 px=24570112 us=479330 errors=0
+ACIDBOX_ROT_EQ pass=37 mismatch=0 starved=0 fail=0 us=3293
+ACIDBOX_BAR=37
+ACIDBOX_VSYNC flips=642 isrs=642 timeouts=0
+ACIDBOX_ROT ops=1678 full=2 px=25157888 us=490746 errors=0
+ACIDBOX_ROT_EQ pass=38 mismatch=0 starved=0 fail=0 us=3289
+ACIDBOX_BAR=38
+ACIDBOX_VSYNC flips=658 isrs=658 timeouts=0
+ACIDBOX_ROT ops=1718 full=2 px=25745664 us=502064 errors=0
+ACIDBOX_ROT_EQ pass=39 mismatch=0 starved=0 fail=0 us=3295
+ACIDBOX_BAR=39
+ACIDBOX_VSYNC flips=674 isrs=674 timeouts=0
+ACIDBOX_ROT ops=1758 full=2 px=26333440 us=513568 errors=0
+ACIDBOX_ROT_EQ pass=40 mismatch=0 starved=0 fail=0 us=3318
+ACIDBOX_BAR=40
+ACIDBOX_VSYNC flips=690 isrs=690 timeouts=0
+ACIDBOX_ROT ops=1798 full=2 px=26921216 us=525160 errors=0
+ACIDBOX_ROT_EQ pass=41 mismatch=0 starved=0 fail=0 us=3288
+ACIDBOX_BAR=41
+ACIDBOX_VSYNC flips=706 isrs=706 timeouts=0
+ACIDBOX_ROT ops=1838 full=2 px=27508992 us=536589 errors=0
+ACIDBOX_ROT_EQ pass=42 mismatch=0 starved=0 fail=0 us=3167
+ACIDBOX_BAR=42
+ACIDBOX_VSYNC flips=729 isrs=729 timeouts=0
+ACIDBOX_ROT ops=1891 full=2 px=28225280 us=550690 errors=0
+ACIDBOX_ROT_EQ pass=43 mismatch=0 starved=0 fail=0 us=3283
+ACIDBOX_BAR=43
+ACIDBOX_VSYNC flips=758 isrs=758 timeouts=0
+ACIDBOX_ROT ops=1965 full=2 px=29236224 us=570763 errors=0
+ACIDBOX_ROT_EQ pass=44 mismatch=0 starved=0 fail=0 us=3172
+ACIDBOX_BAR=44
+ACIDBOX_VSYNC flips=786 isrs=786 timeouts=0
+ACIDBOX_ROT ops=2029 full=2 px=30055168 us=587069 errors=0
+ACIDBOX_ROT_EQ pass=45 mismatch=0 starved=0 fail=0 us=3283
+ACIDBOX_BAR=45
+ACIDBOX_VSYNC flips=808 isrs=808 timeouts=0
+ACIDBOX_ROT ops=2083 full=2 px=30836224 us=602375 errors=0
+ACIDBOX_ROT_EQ pass=46 mismatch=0 starved=0 fail=0 us=3300
+ACIDBOX_BAR=46
+ACIDBOX_VSYNC flips=824 isrs=824 timeouts=0
+ACIDBOX_ROT ops=2123 full=2 px=31424000 us=613946 errors=0
+ACIDBOX_ROT_EQ pass=47 mismatch=0 starved=0 fail=0 us=3285
+ACIDBOX_BAR=47
+ACIDBOX_VSYNC flips=840 isrs=840 timeouts=0
+ACIDBOX_ROT ops=2163 full=2 px=32011776 us=625245 errors=0
+ACIDBOX_ROT_EQ pass=48 mismatch=0 starved=0 fail=0 us=3309
+ACIDBOX_BAR=48
+ACIDBOX_VSYNC flips=866 isrs=866 timeouts=0
+ACIDBOX_ROT ops=2226 full=2 px=32887296 us=642414 errors=0
+ACIDBOX_ROT_EQ pass=49 mismatch=0 starved=0 fail=0 us=3162
+ACIDBOX_BAR=49
+ACIDBOX_VSYNC flips=890 isrs=890 timeouts=0
+ACIDBOX_ROT ops=2287 full=2 px=33594368 us=656588 errors=0
+ACIDBOX_ROT_EQ pass=50 mismatch=0 starved=0 fail=0 us=3229
+ACIDBOX_BAR=50
+ACIDBOX_VSYNC flips=911 isrs=911 timeouts=0
+ACIDBOX_ROT ops=2354 full=2 px=34419200 us=672686 errors=0
+ACIDBOX_ROT_EQ pass=51 mismatch=0 starved=0 fail=0 us=3289
+ACIDBOX_BAR=51
+ACIDBOX_VSYNC flips=930 isrs=930 timeouts=0
+ACIDBOX_ROT ops=2423 full=2 px=35234304 us=688651 errors=0
+ACIDBOX_ROT_EQ pass=52 mismatch=0 starved=0 fail=0 us=3163
+ACIDBOX_BAR=52
+ACIDBOX_VSYNC flips=946 isrs=946 timeouts=0
+ACIDBOX_ROT ops=2463 full=2 px=35822080 us=700257 errors=0
+ACIDBOX_ROT_EQ pass=53 mismatch=0 starved=0 fail=0 us=3282
+ACIDBOX_BAR=53
+ACIDBOX_VSYNC flips=962 isrs=962 timeouts=0
+ACIDBOX_ROT ops=2503 full=2 px=36409856 us=711707 errors=0
+ACIDBOX_ROT_EQ pass=54 mismatch=0 starved=0 fail=0 us=3301
+ACIDBOX_BAR=54
+ACIDBOX_VSYNC flips=980 isrs=980 timeouts=0
+ACIDBOX_ROT ops=2553 full=2 px=37108736 us=725165 errors=0
+ACIDBOX_ROT_EQ pass=55 mismatch=0 starved=0 fail=0 us=3279
+ACIDBOX_BAR=55
+ACIDBOX_VSYNC flips=998 isrs=998 timeouts=0
+ACIDBOX_ROT ops=2601 full=2 px=37749760 us=737494 errors=0
+ACIDBOX_ROT_EQ pass=56 mismatch=0 starved=0 fail=0 us=3305
+ACIDBOX_BAR=56
+ACIDBOX_VSYNC flips=1014 isrs=1014 timeouts=0
+ACIDBOX_ROT ops=2643 full=2 px=38334464 us=748737 errors=0
+ACIDBOX_ROT_EQ pass=57 mismatch=0 starved=0 fail=0 us=3302
+ACIDBOX_BAR=57
+ACIDBOX_VSYNC flips=1030 isrs=1030 timeouts=0
+ACIDBOX_ROT ops=2683 full=2 px=38922240 us=760254 errors=0
+ACIDBOX_ROT_EQ pass=58 mismatch=0 starved=0 fail=0 us=3298
+ACIDBOX_BAR=58
+ACIDBOX_VSYNC flips=1048 isrs=1048 timeouts=0
+ACIDBOX_ROT ops=2733 full=2 px=39564288 us=772852 errors=0
+ACIDBOX_ROT_EQ pass=59 mismatch=0 starved=0 fail=0 us=3297
+ACIDBOX_BAR=59
+ACIDBOX_VSYNC flips=1064 isrs=1064 timeouts=0
+ACIDBOX_ROT ops=2773 full=2 px=40152064 us=784170 errors=0
+ACIDBOX_ROT_EQ pass=60 mismatch=0 starved=0 fail=0 us=3299
+ACIDBOX_BAR=60
+ACIDBOX_VSYNC flips=1080 isrs=1080 timeouts=0
+ACIDBOX_ROT ops=2813 full=2 px=40739840 us=795662 errors=0
+ACIDBOX_ROT_EQ pass=61 mismatch=0 starved=0 fail=0 us=3301
+ACIDBOX_BAR=61
+ACIDBOX_VSYNC flips=1096 isrs=1096 timeouts=0
+ACIDBOX_ROT ops=2853 full=2 px=41327616 us=807364 errors=0
+ACIDBOX_ROT_EQ pass=62 mismatch=0 starved=0 fail=0 us=3303
+ACIDBOX_BAR=62
+ACIDBOX_VSYNC flips=1112 isrs=1112 timeouts=0
+ACIDBOX_ROT ops=2893 full=2 px=41915392 us=818855 errors=0
+ACIDBOX_ROT_EQ pass=63 mismatch=0 starved=0 fail=0 us=3306
+ACIDBOX_BAR=63
+ACIDBOX_VSYNC flips=1136 isrs=1135 timeouts=0
+ACIDBOX_ROT ops=3008 full=2 px=42972160 us=839947 errors=0
+ACIDBOX_ROT_EQ pass=64 mismatch=0 starved=0 fail=0 us=3301
+ACIDBOX_BAR=64
+ACIDBOX_VSYNC flips=1154 isrs=1154 timeouts=0
+ACIDBOX_ROT ops=3077 full=2 px=43733504 us=854799 errors=0
+ACIDBOX_ROT_EQ pass=65 mismatch=0 starved=0 fail=0 us=3302
+ACIDBOX_BAR=65
+ACIDBOX_VSYNC flips=1170 isrs=1170 timeouts=0
+ACIDBOX_ROT ops=3117 full=2 px=44321280 us=866435 errors=0
+ACIDBOX_ROT_EQ pass=66 mismatch=0 starved=0 fail=0 us=3311
+ACIDBOX_BAR=66
+ACIDBOX_VSYNC flips=1188 isrs=1188 timeouts=0
+ACIDBOX_ROT ops=3167 full=2 px=45020160 us=880068 errors=0
+ACIDBOX_ROT_EQ pass=67 mismatch=0 starved=0 fail=0 us=3310
+ACIDBOX_BAR=67
+ACIDBOX_VSYNC flips=1208 isrs=1208 timeouts=0
+ACIDBOX_ROT ops=3239 full=2 px=45851136 us=896443 errors=0
+ACIDBOX_ROT_EQ pass=68 mismatch=0 starved=0 fail=0 us=3313
+ACIDBOX_BAR=68
+ACIDBOX_VSYNC flips=1230 isrs=1229 timeouts=0
+ACIDBOX_ROT ops=3315 full=2 px=46727936 us=913873 errors=0
+ACIDBOX_ROT_EQ pass=69 mismatch=0 starved=0 fail=0 us=3309
+ACIDBOX_BAR=69
+ACIDBOX_VSYNC flips=1252 isrs=1252 timeouts=0
+ACIDBOX_ROT ops=3401 full=2 px=47695872 us=933141 errors=0
+ACIDBOX_ROT_EQ pass=70 mismatch=0 starved=0 fail=0 us=3294
+ACIDBOX_BAR=70
+ACIDBOX_VSYNC flips=1274 isrs=1274 timeouts=0
+ACIDBOX_ROT ops=3482 full=2 px=48635136 us=951495 errors=0
+ACIDBOX_ROT_EQ pass=71 mismatch=0 starved=0 fail=0 us=3316
+ACIDBOX_BAR=71
+ACIDBOX_VSYNC flips=1298 isrs=1298 timeouts=0
+ACIDBOX_ROT ops=3591 full=2 px=49700096 us=972477 errors=0
+ACIDBOX_ROT_EQ pass=72 mismatch=0 starved=0 fail=0 us=3289
+ACIDBOX_BAR=72
+ACIDBOX_VSYNC flips=1328 isrs=1328 timeouts=0
+ACIDBOX_ROT ops=3735 full=2 px=51128320 us=1000833 errors=0
+ACIDBOX_ROT_EQ pass=73 mismatch=0 starved=0 fail=0 us=3305
+ACIDBOX_BAR=73
+ACIDBOX_VSYNC flips=1349 isrs=1349 timeouts=0
+ACIDBOX_ROT ops=3812 full=2 px=52027136 us=1018299 errors=0
+ACIDBOX_ROT_EQ pass=74 mismatch=0 starved=0 fail=0 us=3163
+ACIDBOX_BAR=74
+ACIDBOX_VSYNC flips=1371 isrs=1371 timeouts=0
+ACIDBOX_ROT ops=3894 full=2 px=52978432 us=1036937 errors=0
+ACIDBOX_ROT_EQ pass=75 mismatch=0 starved=0 fail=0 us=3299
+ACIDBOX_BAR=75
+ACIDBOX_VSYNC flips=1394 isrs=1394 timeouts=0
+ACIDBOX_ROT ops=3993 full=2 px=54000640 us=1057094 errors=0
+ACIDBOX_ROT_EQ pass=76 mismatch=0 starved=0 fail=0 us=3286
+ACIDBOX_BAR=76
+ACIDBOX_VSYNC flips=1413 isrs=1413 timeouts=0
+ACIDBOX_ROT ops=4060 full=2 px=54781696 us=1072482 errors=0
+ACIDBOX_ROT_EQ pass=77 mismatch=0 starved=0 fail=0 us=3170
+ACIDBOX_BAR=77
+ACIDBOX_VSYNC flips=1429 isrs=1429 timeouts=0
+ACIDBOX_ROT ops=4100 full=2 px=55369472 us=1083764 errors=0
+ACIDBOX_ROT_EQ pass=78 mismatch=0 starved=0 fail=0 us=3297
+ACIDBOX_BAR=78
+ACIDBOX_VSYNC flips=1447 isrs=1447 timeouts=0
+ACIDBOX_ROT ops=4158 full=2 px=56080128 us=1097730 errors=0
+ACIDBOX_ROT_EQ pass=79 mismatch=0 starved=0 fail=0 us=3313
+ACIDBOX_BAR=79
+ACIDBOX_VSYNC flips=1469 isrs=1469 timeouts=0
+ACIDBOX_ROT ops=4252 full=2 px=57037312 us=1116619 errors=0
+ACIDBOX_ROT_EQ pass=80 mismatch=0 starved=0 fail=0 us=3300
+ACIDBOX_BAR=80
+ACIDBOX_VSYNC flips=1489 isrs=1489 timeouts=0
+ACIDBOX_ROT ops=4320 full=2 px=57863168 us=1132826 errors=0
+ACIDBOX_ROT_EQ pass=81 mismatch=0 starved=0 fail=0 us=3316
+ACIDBOX_BAR=81
+ACIDBOX_VSYNC flips=1507 isrs=1507 timeouts=0
+ACIDBOX_ROT ops=4380 full=2 px=58577920 us=1146978 errors=0
+ACIDBOX_ROT_EQ pass=82 mismatch=0 starved=0 fail=0 us=3280
+ACIDBOX_BAR=82
+ACIDBOX_VSYNC flips=1525 isrs=1525 timeouts=0
+ACIDBOX_ROT ops=4440 full=2 px=59287552 us=1160938 errors=0
+ACIDBOX_ROT_EQ pass=83 mismatch=0 starved=0 fail=0 us=3299
+ACIDBOX_BAR=83
+ACIDBOX_VSYNC flips=1543 isrs=1543 timeouts=0
+ACIDBOX_ROT ops=4500 full=2 px=59990016 us=1174664 errors=0
+ACIDBOX_ROT_EQ pass=84 mismatch=0 starved=0 fail=0 us=3199
+ACIDBOX_BAR=84
+ACIDBOX_VSYNC flips=1563 isrs=1563 timeouts=0
+ACIDBOX_ROT ops=4564 full=2 px=60780032 us=1190147 errors=0
+ACIDBOX_ROT_EQ pass=85 mismatch=0 starved=0 fail=0 us=3287
+ACIDBOX_BAR=85
+ACIDBOX_VSYNC flips=1583 isrs=1583 timeouts=0
+ACIDBOX_ROT ops=4641 full=2 px=61590016 us=1206374 errors=0
+ACIDBOX_ROT_EQ pass=86 mismatch=0 starved=0 fail=0 us=3313
+ACIDBOX_BAR=86
+ACIDBOX_VSYNC flips=1603 isrs=1602 timeouts=0
+ACIDBOX_ROT ops=4703 full=2 px=62379008 us=1221709 errors=0
+ACIDBOX_ROT_EQ pass=87 mismatch=0 starved=0 fail=0 us=3164
+ACIDBOX_BAR=87
+ACIDBOX_VSYNC flips=1621 isrs=1621 timeouts=0
+ACIDBOX_ROT ops=4764 full=2 px=63119360 us=1236338 errors=0
+ACIDBOX_ROT_EQ pass=88 mismatch=0 starved=0 fail=0 us=3285
+ACIDBOX_BAR=88
+ACIDBOX_VSYNC flips=1641 isrs=1641 timeouts=0
+ACIDBOX_ROT ops=4836 full=2 px=63955456 us=1252687 errors=0
+ACIDBOX_ROT_EQ pass=89 mismatch=0 starved=0 fail=0 us=3279
+ACIDBOX_BAR=89
+ACIDBOX_VSYNC flips=1663 isrs=1663 timeouts=0
+ACIDBOX_ROT ops=4923 full=2 px=64858624 us=1270597 errors=0
+ACIDBOX_ROT_EQ pass=90 mismatch=0 starved=0 fail=0 us=3162
+ACIDBOX_BAR=90
+ACIDBOX_VSYNC flips=1681 isrs=1681 timeouts=0
+ACIDBOX_ROT ops=4981 full=2 px=65575424 us=1284714 errors=0
+ACIDBOX_ROT_EQ pass=91 mismatch=0 starved=0 fail=0 us=3300
+ACIDBOX_BAR=91
+ACIDBOX_VSYNC flips=1699 isrs=1699 timeouts=0
+ACIDBOX_ROT ops=5031 full=2 px=66243840 us=1297561 errors=0
+ACIDBOX_ROT_EQ pass=92 mismatch=0 starved=0 fail=0 us=3163
+ACIDBOX_BAR=92
+ACIDBOX_VSYNC flips=1715 isrs=1715 timeouts=0
+ACIDBOX_ROT ops=5076 full=2 px=66865152 us=1309841 errors=0
+ACIDBOX_ROT_EQ pass=93 mismatch=0 starved=0 fail=0 us=3161
+ACIDBOX_BAR=93
+ACIDBOX_VSYNC flips=1734 isrs=1734 timeouts=0
+ACIDBOX_ROT ops=5139 full=2 px=67601152 us=1324183 errors=0
+ACIDBOX_ROT_EQ pass=94 mismatch=0 starved=0 fail=0 us=3166
+ACIDBOX_BAR=94
+ACIDBOX_VSYNC flips=1751 isrs=1751 timeouts=0
+ACIDBOX_ROT ops=5195 full=2 px=68273664 us=1337448 errors=0
+ACIDBOX_ROT_EQ pass=95 mismatch=0 starved=0 fail=0 us=3297
+ACIDBOX_BAR=95
+ACIDBOX_VSYNC flips=1767 isrs=1767 timeouts=0
+ACIDBOX_ROT ops=5235 full=2 px=68861440 us=1348979 errors=0
+ACIDBOX_ROT_EQ pass=96 mismatch=0 starved=0 fail=0 us=3298
+ACIDBOX_BAR=96
+ACIDBOX_VSYNC flips=1783 isrs=1783 timeouts=0
+ACIDBOX_ROT ops=5275 full=2 px=69449216 us=1360412 errors=0
+ACIDBOX_ROT_EQ pass=97 mismatch=0 starved=0 fail=0 us=3315
+ACIDBOX_BAR=97
+ACIDBOX_VSYNC flips=1799 isrs=1799 timeouts=0
+ACIDBOX_ROT ops=5315 full=2 px=70036992 us=1371879 errors=0
+ACIDBOX_ROT_EQ pass=98 mismatch=0 starved=0 fail=0 us=3301
+ACIDBOX_BAR=98
+ACIDBOX_VSYNC flips=1818 isrs=1818 timeouts=0
+ACIDBOX_ROT ops=5378 full=2 px=70819072 us=1387081 errors=0
+ACIDBOX_ROT_EQ pass=99 mismatch=0 starved=0 fail=0 us=3306
+ACIDBOX_BAR=99
+ACIDBOX_VSYNC flips=1836 isrs=1836 timeouts=0
+ACIDBOX_ROT ops=5426 full=2 px=71451648 us=1399434 errors=0
+ACIDBOX_ROT_EQ pass=100 mismatch=0 starved=0 fail=0 us=3283
+ACIDBOX_BAR=100
+ACIDBOX_VSYNC flips=1855 isrs=1855 timeouts=0
+ACIDBOX_ROT ops=5490 full=2 px=72226816 us=1414679 errors=0
+ACIDBOX_ROT_EQ pass=101 mismatch=0 starved=0 fail=0 us=3316
+ACIDBOX_BAR=101
+ACIDBOX_VSYNC flips=1874 isrs=1874 timeouts=0
+ACIDBOX_ROT ops=5551 full=2 px=72984320 us=1429602 errors=0
+ACIDBOX_ROT_EQ pass=102 mismatch=0 starved=0 fail=0 us=3290
+ACIDBOX_BAR=102
+ACIDBOX_VSYNC flips=1894 isrs=1894 timeouts=0
+ACIDBOX_ROT ops=5623 full=2 px=73792768 us=1445451 errors=0
+ACIDBOX_ROT_EQ pass=103 mismatch=0 starved=0 fail=0 us=3165
+ACIDBOX_BAR=103
+ACIDBOX_VSYNC flips=1912 isrs=1912 timeouts=0
+ACIDBOX_ROT ops=5673 full=2 px=74441984 us=1458204 errors=0
+ACIDBOX_ROT_EQ pass=104 mismatch=0 starved=0 fail=0 us=3290
+ACIDBOX_BAR=104
+ACIDBOX_VSYNC flips=1932 isrs=1932 timeouts=0
+ACIDBOX_ROT ops=5739 full=2 px=75225344 us=1473574 errors=0
+ACIDBOX_ROT_EQ pass=105 mismatch=0 starved=0 fail=0 us=3165
+ACIDBOX_BAR=105
+ACIDBOX_VSYNC flips=1951 isrs=1951 timeouts=0
+ACIDBOX_ROT ops=5801 full=2 px=75970560 us=1488137 errors=0
+ACIDBOX_ROT_EQ pass=106 mismatch=0 starved=0 fail=0 us=3170
+ACIDBOX_BAR=106
+ACIDBOX_VSYNC flips=1968 isrs=1968 timeouts=0
+ACIDBOX_ROT ops=5847 full=2 px=76626432 us=1500993 errors=0
+ACIDBOX_ROT_EQ pass=107 mismatch=0 starved=0 fail=0 us=3157
+ACIDBOX_BAR=107
+ACIDBOX_VSYNC flips=1986 isrs=1986 timeouts=0
+ACIDBOX_ROT ops=5896 full=2 px=77277440 us=1513714 errors=0
+ACIDBOX_ROT_EQ pass=108 mismatch=0 starved=0 fail=0 us=3159
+ACIDBOX_BAR=108
+ACIDBOX_VSYNC flips=2007 isrs=2007 timeouts=0
+ACIDBOX_ROT ops=5970 full=2 px=78098432 us=1529904 errors=0
+ACIDBOX_ROT_EQ pass=109 mismatch=0 starved=0 fail=0 us=3280
+ACIDBOX_BAR=109
+ACIDBOX_VSYNC flips=2024 isrs=2024 timeouts=0
+ACIDBOX_ROT ops=6013 full=2 px=78709504 us=1541791 errors=0
+ACIDBOX_ROT_EQ pass=110 mismatch=0 starved=0 fail=0 us=3295
+ACIDBOX_BAR=110
+ACIDBOX_VSYNC flips=2040 isrs=2040 timeouts=0
+ACIDBOX_ROT ops=6053 full=2 px=79297280 us=1553405 errors=0
+ACIDBOX_ROT_EQ pass=111 mismatch=0 starved=0 fail=0 us=3166
+ACIDBOX_BAR=111
+ACIDBOX_VSYNC flips=2056 isrs=2056 timeouts=0
+ACIDBOX_ROT ops=6093 full=2 px=79885056 us=1564874 errors=0
+ACIDBOX_ROT_EQ pass=112 mismatch=0 starved=0 fail=0 us=3288
+ACIDBOX_BAR=112
+ACIDBOX_VSYNC flips=2104 isrs=2103 timeouts=0
+ACIDBOX_ROT ops=6195 full=2 px=80900352 us=1584343 errors=0
+ACIDBOX_ROT_EQ pass=113 mismatch=0 starved=0 fail=0 us=3166
+ACIDBOX_BAR=113
+ACIDBOX_VSYNC flips=2146 isrs=2146 timeouts=0
+ACIDBOX_ROT ops=6286 full=2 px=81811456 us=1601805 errors=0
+ACIDBOX_ROT_EQ pass=114 mismatch=0 starved=0 fail=0 us=3175
+ACIDBOX_BAR=114
+ACIDBOX_VSYNC flips=2162 isrs=2162 timeouts=0
+ACIDBOX_ROT ops=6326 full=2 px=82399232 us=1613245 errors=0
+ACIDBOX_ROT_EQ pass=115 mismatch=0 starved=0 fail=0 us=3301
+ACIDBOX_BAR=115
+ACIDBOX_VSYNC flips=2180 isrs=2180 timeouts=0
+ACIDBOX_ROT ops=6379 full=2 px=83103488 us=1627182 errors=0
+ACIDBOX_ROT_EQ pass=116 mismatch=0 starved=0 fail=0 us=3299
+ACIDBOX_BAR=116
+ACIDBOX_VSYNC flips=2199 isrs=2199 timeouts=0
+ACIDBOX_ROT ops=6436 full=2 px=83866624 us=1642287 errors=0
+ACIDBOX_ROT_EQ pass=117 mismatch=0 starved=0 fail=0 us=3242
+ACIDBOX_BAR=117
+ACIDBOX_VSYNC flips=2215 isrs=2215 timeouts=0
+ACIDBOX_ROT ops=6476 full=2 px=84454400 us=1653871 errors=0
+ACIDBOX_ROT_EQ pass=118 mismatch=0 starved=0 fail=0 us=3174
+ACIDBOX_BAR=118
+ACIDBOX_VSYNC flips=2231 isrs=2231 timeouts=0
+ACIDBOX_ROT ops=6516 full=2 px=85042176 us=1665448 errors=0
+ACIDBOX_ROT_EQ pass=119 mismatch=0 starved=0 fail=0 us=3297
+ACIDBOX_BAR=119
+ACIDBOX_VSYNC flips=2247 isrs=2247 timeouts=0
+ACIDBOX_ROT ops=6556 full=2 px=85629952 us=1677110 errors=0
+ACIDBOX_ROT_EQ pass=120 mismatch=0 starved=0 fail=0 us=3163
+ACIDBOX_BAR=120
+ACIDBOX_VSYNC flips=2263 isrs=2263 timeouts=0
+ACIDBOX_ROT ops=6596 full=2 px=86217728 us=1688739 errors=0
+ACIDBOX_ROT_EQ pass=121 mismatch=0 starved=0 fail=0 us=3292
+ACIDBOX_BAR=121
+ACIDBOX_VSYNC flips=2279 isrs=2279 timeouts=0
+ACIDBOX_ROT ops=6636 full=2 px=86805504 us=1700030 errors=0
+ACIDBOX_ROT_EQ pass=122 mismatch=0 starved=0 fail=0 us=3165
+ACIDBOX_BAR=122
+ACIDBOX_VSYNC flips=2295 isrs=2295 timeouts=0
+ACIDBOX_ROT ops=6676 full=2 px=87393280 us=1711530 errors=0
+ACIDBOX_ROT_EQ pass=123 mismatch=0 starved=0 fail=0 us=3162
+ACIDBOX_BAR=123
+ACIDBOX_VSYNC flips=2311 isrs=2311 timeouts=0
+ACIDBOX_ROT ops=6716 full=2 px=87981056 us=1722952 errors=0
+ACIDBOX_ROT_EQ pass=124 mismatch=0 starved=0 fail=0 us=3300
+ACIDBOX_BAR=124
+ACIDBOX_VSYNC flips=2327 isrs=2327 timeouts=0
+ACIDBOX_ROT ops=6756 full=2 px=88568832 us=1734381 errors=0
+ACIDBOX_ROT_EQ pass=125 mismatch=0 starved=0 fail=0 us=3296
+ACIDBOX_BAR=125
+ACIDBOX_VSYNC flips=2346 isrs=2346 timeouts=0
+ACIDBOX_ROT ops=6820 full=2 px=89319936 us=1749173 errors=0
+ACIDBOX_ROT_EQ pass=126 mismatch=0 starved=0 fail=0 us=3170
+ACIDBOX_BAR=126
+ACIDBOX_VSYNC flips=2364 isrs=2364 timeouts=0
+ACIDBOX_ROT ops=6870 full=2 px=90028032 us=1763340 errors=0
+ACIDBOX_ROT_EQ pass=127 mismatch=0 starved=0 fail=0 us=3304
+ACIDBOX_BAR=127
+ACIDBOX_VSYNC flips=2382 isrs=2382 timeouts=0
+ACIDBOX_ROT ops=6922 full=2 px=90670592 us=1776232 errors=0
+ACIDBOX_ROT_EQ pass=128 mismatch=0 starved=0 fail=0 us=3303
+ACIDBOX_BAR=128
+ACIDBOX_VSYNC flips=2400 isrs=2400 timeouts=0
+ACIDBOX_ROT ops=6972 full=2 px=91369472 us=1789812 errors=0
+ACIDBOX_ROT_EQ pass=129 mismatch=0 starved=0 fail=0 us=3294
+ACIDBOX_BAR=129
+ACIDBOX_VSYNC flips=2416 isrs=2416 timeouts=0
+ACIDBOX_ROT ops=7012 full=2 px=91957248 us=1801368 errors=0
+ACIDBOX_ROT_EQ pass=130 mismatch=0 starved=0 fail=0 us=3292
+ACIDBOX_BAR=130
+ACIDBOX_VSYNC flips=2438 isrs=2438 timeouts=0
+ACIDBOX_ROT ops=7066 full=2 px=92681216 us=1815697 errors=0
+ACIDBOX_ROT_EQ pass=131 mismatch=0 starved=0 fail=0 us=3296
+ACIDBOX_BAR=131
+ACIDBOX_VSYNC flips=2482 isrs=2482 timeouts=0
+ACIDBOX_ROT ops=7162 full=2 px=93715456 us=1835655 errors=0
+ACIDBOX_ROT_EQ pass=132 mismatch=0 starved=0 fail=0 us=3299
+ACIDBOX_BAR=132
+ACIDBOX_VSYNC flips=2517 isrs=2516 timeouts=0
+ACIDBOX_ROT ops=7241 full=2 px=94695680 us=1854761 errors=0
+ACIDBOX_ROT_EQ pass=133 mismatch=0 starved=0 fail=0 us=3313
+ACIDBOX_BAR=133
+ACIDBOX_VSYNC flips=2544 isrs=2544 timeouts=0
+ACIDBOX_ROT ops=7306 full=2 px=95599872 us=1872443 errors=0
+ACIDBOX_ROT_EQ pass=134 mismatch=0 starved=0 fail=0 us=3168
+ACIDBOX_BAR=134
+ACIDBOX_VSYNC flips=2585 isrs=2585 timeouts=0
+ACIDBOX_ROT ops=7395 full=2 px=96561664 us=1890910 errors=0
+ACIDBOX_ROT_EQ pass=135 mismatch=0 starved=0 fail=0 us=3164
+ACIDBOX_BAR=135
+ACIDBOX_VSYNC flips=2622 isrs=2622 timeouts=0
+ACIDBOX_ROT ops=7473 full=2 px=97331968 us=1906114 errors=0
+ACIDBOX_ROT_EQ pass=136 mismatch=0 starved=0 fail=0 us=3168
+ACIDBOX_BAR=136
+ACIDBOX_VSYNC flips=2652 isrs=2652 timeouts=0
+ACIDBOX_ROT ops=7544 full=2 px=98334464 us=1925700 errors=0
+ACIDBOX_ROT_EQ pass=137 mismatch=0 starved=0 fail=0 us=3191
+ACIDBOX_BAR=137
+ACIDBOX_VSYNC flips=2685 isrs=2685 timeouts=0
+ACIDBOX_ROT ops=7619 full=2 px=99177728 us=1942144 errors=0
+ACIDBOX_ROT_EQ pass=138 mismatch=0 starved=0 fail=0 us=3291
+ACIDBOX_BAR=138
+ACIDBOX_VSYNC flips=2709 isrs=2709 timeouts=0
+ACIDBOX_ROT ops=7678 full=2 px=100018432 us=1958280 errors=0
+ACIDBOX_ROT_EQ pass=139 mismatch=0 starved=0 fail=0 us=3190
+ACIDBOX_BAR=139
+ACIDBOX_VSYNC flips=2725 isrs=2725 timeouts=0
+ACIDBOX_ROT ops=7718 full=2 px=100606208 us=1969849 errors=0
+ACIDBOX_ROT_EQ pass=140 mismatch=0 starved=0 fail=0 us=3167
+ACIDBOX_BAR=140
+ACIDBOX_VSYNC flips=2741 isrs=2741 timeouts=0
+ACIDBOX_ROT ops=7758 full=2 px=101193984 us=1981186 errors=0
+ACIDBOX_ROT_EQ pass=141 mismatch=0 starved=0 fail=0 us=3125
+ACIDBOX_BAR=141
+ACIDBOX_VSYNC flips=2757 isrs=2757 timeouts=0
+ACIDBOX_ROT ops=7798 full=2 px=101781760 us=1992798 errors=0
+ACIDBOX_ROT_EQ pass=142 mismatch=0 starved=0 fail=0 us=3316
+ACIDBOX_BAR=142
+ACIDBOX_VSYNC flips=2773 isrs=2773 timeouts=0
+ACIDBOX_ROT ops=7838 full=2 px=102369536 us=2004309 errors=0
+ACIDBOX_ROT_EQ pass=143 mismatch=0 starved=0 fail=0 us=3249
+ACIDBOX_BAR=143
+ACIDBOX_VSYNC flips=2791 isrs=2791 timeouts=0
+ACIDBOX_ROT ops=7887 full=2 px=103019008 us=2016991 errors=0
+ACIDBOX_ROT_EQ pass=144 mismatch=0 starved=0 fail=0 us=3167
+ACIDBOX_BAR=144
+ACIDBOX_VSYNC flips=2807 isrs=2807 timeouts=0
+ACIDBOX_ROT ops=7927 full=2 px=103606784 us=2028539 errors=0
+ACIDBOX_ROT_EQ pass=145 mismatch=0 starved=0 fail=0 us=3167
+ACIDBOX_BAR=145
+ACIDBOX_VSYNC flips=2823 isrs=2823 timeouts=0
+ACIDBOX_ROT ops=7967 full=2 px=104194560 us=2040100 errors=0
+ACIDBOX_ROT_EQ pass=146 mismatch=0 starved=0 fail=0 us=3167
+ACIDBOX_BAR=146
+ACIDBOX_VSYNC flips=2844 isrs=2844 timeouts=0
+ACIDBOX_ROT ops=8018 full=2 px=104938752 us=2054535 errors=0
+ACIDBOX_ROT_EQ pass=147 mismatch=0 starved=0 fail=0 us=3172
+ACIDBOX_BAR=147
+ACIDBOX_VSYNC flips=2863 isrs=2863 timeouts=0
+ACIDBOX_ROT ops=8065 full=2 px=105669376 us=2068838 errors=0
+ACIDBOX_ROT_EQ pass=148 mismatch=0 starved=0 fail=0 us=3165
+ACIDBOX_BAR=148
+ACIDBOX_VSYNC flips=2889 isrs=2889 timeouts=0
+ACIDBOX_ROT ops=8133 full=2 px=106693632 us=2088385 errors=0
+ACIDBOX_ROT_EQ pass=149 mismatch=0 starved=0 fail=0 us=3267
+ACIDBOX_BAR=149
+ACIDBOX_VSYNC flips=2905 isrs=2905 timeouts=0
+ACIDBOX_ROT ops=8173 full=2 px=107281408 us=2099947 errors=0
+ACIDBOX_ROT_EQ pass=150 mismatch=0 starved=0 fail=0 us=3285
+ACIDBOX_BAR=150
+ACIDBOX_VSYNC flips=2923 isrs=2923 timeouts=0
+ACIDBOX_ROT ops=8227 full=2 px=107987456 us=2113478 errors=0
+ACIDBOX_ROT_EQ pass=151 mismatch=0 starved=0 fail=0 us=3166
+ACIDBOX_BAR=151
+ACIDBOX_VSYNC flips=2941 isrs=2941 timeouts=0
+ACIDBOX_ROT ops=8277 full=2 px=108636672 us=2126328 errors=0
+ACIDBOX_ROT_EQ pass=152 mismatch=0 starved=0 fail=0 us=3163
+ACIDBOX_BAR=152
+ACIDBOX_VSYNC flips=2957 isrs=2957 timeouts=0
+ACIDBOX_ROT ops=8317 full=2 px=109224448 us=2137693 errors=0
+ACIDBOX_ROT_EQ pass=153 mismatch=0 starved=0 fail=0 us=3166
+ACIDBOX_BAR=153
+ACIDBOX_VSYNC flips=2975 isrs=2975 timeouts=0
+ACIDBOX_ROT ops=8377 full=2 px=109923840 us=2151537 errors=0
+ACIDBOX_ROT_EQ pass=154 mismatch=0 starved=0 fail=0 us=3168
+ACIDBOX_BAR=154
+ACIDBOX_VSYNC flips=2997 isrs=2996 timeouts=0
+ACIDBOX_ROT ops=8451 full=2 px=110802688 us=2168750 errors=0
+ACIDBOX_ROT_EQ pass=155 mismatch=0 starved=0 fail=0 us=3306
+ACIDBOX_BAR=155
+ACIDBOX_VSYNC flips=3015 isrs=3015 timeouts=0
+ACIDBOX_ROT ops=8508 full=2 px=111535360 us=2183053 errors=0
+ACIDBOX_ROT_EQ pass=156 mismatch=0 starved=0 fail=0 us=3262
+ACIDBOX_BAR=156
+ACIDBOX_VSYNC flips=3035 isrs=3034 timeouts=0
+ACIDBOX_ROT ops=8572 full=2 px=112359424 us=2199223 errors=0
+ACIDBOX_ROT_EQ pass=157 mismatch=0 starved=0 fail=0 us=3298
+ACIDBOX_BAR=157
+ACIDBOX_VSYNC flips=3053 isrs=3053 timeouts=0
+ACIDBOX_ROT ops=8628 full=2 px=113086464 us=2213345 errors=0
+ACIDBOX_ROT_EQ pass=158 mismatch=0 starved=0 fail=0 us=3158
+ACIDBOX_BAR=158
+ACIDBOX_VSYNC flips=3069 isrs=3069 timeouts=0
+ACIDBOX_ROT ops=8668 full=2 px=113674240 us=2224775 errors=0
+ACIDBOX_ROT_EQ pass=159 mismatch=0 starved=0 fail=0 us=3296
+ACIDBOX_BAR=159
+ACIDBOX_VSYNC flips=3102 isrs=3102 timeouts=0
+ACIDBOX_ROT ops=8747 full=2 px=114639616 us=2243389 errors=0
+ACIDBOX_ROT_EQ pass=160 mismatch=0 starved=0 fail=0 us=3313
+ACIDBOX_BAR=160
+ACIDBOX_VSYNC flips=3123 isrs=3123 timeouts=0
+ACIDBOX_ROT ops=8800 full=2 px=115458816 us=2259239 errors=0
+ACIDBOX_ROT_EQ pass=161 mismatch=0 starved=0 fail=0 us=3294
+ACIDBOX_BAR=161
+ACIDBOX_VSYNC flips=3149 isrs=3149 timeouts=0
+ACIDBOX_ROT ops=8862 full=2 px=116282112 us=2275143 errors=0
+ACIDBOX_ROT_EQ pass=162 mismatch=0 starved=0 fail=0 us=3187
+ACIDBOX_BAR=162
+ACIDBOX_VSYNC flips=3167 isrs=3167 timeouts=0
+ACIDBOX_ROT ops=8918 full=2 px=116984320 us=2288898 errors=0
+ACIDBOX_ROT_EQ pass=163 mismatch=0 starved=0 fail=0 us=3168
+ACIDBOX_BAR=163
+ACIDBOX_VSYNC flips=3185 isrs=3185 timeouts=0
+ACIDBOX_ROT ops=8968 full=2 px=117633536 us=2301382 errors=0
+ACIDBOX_ROT_EQ pass=164 mismatch=0 starved=0 fail=0 us=3300
+ACIDBOX_BAR=164
+ACIDBOX_VSYNC flips=3201 isrs=3201 timeouts=0
+ACIDBOX_ROT ops=9008 full=2 px=118221312 us=2312867 errors=0
+ACIDBOX_ROT_EQ pass=165 mismatch=0 starved=0 fail=0 us=3282
+ACIDBOX_BAR=165
+ACIDBOX_VSYNC flips=3230 isrs=3230 timeouts=0
+ACIDBOX_ROT ops=9078 full=2 px=119195904 us=2331456 errors=0
+ACIDBOX_ROT_EQ pass=166 mismatch=0 starved=0 fail=0 us=3187
+ACIDBOX_BAR=166
+ACIDBOX_VSYNC flips=3247 isrs=3247 timeouts=0
+ACIDBOX_ROT ops=9122 full=2 px=119850496 us=2344145 errors=0
+ACIDBOX_ROT_EQ pass=167 mismatch=0 starved=0 fail=0 us=3309
+ACIDBOX_BAR=167
+ACIDBOX_VSYNC flips=3263 isrs=3263 timeouts=0
+ACIDBOX_ROT ops=9162 full=2 px=120438272 us=2355687 errors=0
+ACIDBOX_ROT_EQ pass=168 mismatch=0 starved=0 fail=0 us=3169
+ACIDBOX_BAR=168
+ACIDBOX_VSYNC flips=3280 isrs=3280 timeouts=0
+ACIDBOX_ROT ops=9209 full=2 px=121082112 us=2368158 errors=0
+ACIDBOX_ROT_EQ pass=169 mismatch=0 starved=0 fail=0 us=3188
+ACIDBOX_BAR=169
+ACIDBOX_VSYNC flips=3297 isrs=3297 timeouts=0
+ACIDBOX_ROT ops=9256 full=2 px=121725952 us=2380755 errors=0
+ACIDBOX_ROT_EQ pass=170 mismatch=0 starved=0 fail=0 us=3144
+ACIDBOX_BAR=170
+ACIDBOX_VSYNC flips=3315 isrs=3315 timeouts=0
+ACIDBOX_ROT ops=9312 full=2 px=122464768 us=2395107 errors=0
+ACIDBOX_ROT_EQ pass=171 mismatch=0 starved=0 fail=0 us=3168
+ACIDBOX_BAR=171
+ACIDBOX_VSYNC flips=3332 isrs=3332 timeouts=0
+ACIDBOX_ROT ops=9357 full=2 px=123090176 us=2407087 errors=0
+ACIDBOX_ROT_EQ pass=172 mismatch=0 starved=0 fail=0 us=3187
+ACIDBOX_BAR=172
+ACIDBOX_VSYNC flips=3351 isrs=3351 timeouts=0
+ACIDBOX_ROT ops=9417 full=2 px=123834880 us=2421846 errors=0
+ACIDBOX_ROT_EQ pass=173 mismatch=0 starved=0 fail=0 us=3185
+ACIDBOX_BAR=173
+ACIDBOX_VSYNC flips=3369 isrs=3369 timeouts=0
+ACIDBOX_ROT ops=9482 full=2 px=124573696 us=2436217 errors=0
+ACIDBOX_ROT_EQ pass=174 mismatch=0 starved=0 fail=0 us=3168
+ACIDBOX_BAR=174
+ACIDBOX_VSYNC flips=3386 isrs=3385 timeouts=0
+ACIDBOX_ROT ops=9527 full=2 px=125209856 us=2448445 errors=0
+ACIDBOX_ROT_EQ pass=175 mismatch=0 starved=0 fail=0 us=3214
+ACIDBOX_BAR=175
+ACIDBOX_VSYNC flips=3404 isrs=3404 timeouts=0
+ACIDBOX_ROT ops=9577 full=2 px=125846016 us=2460841 errors=0
+ACIDBOX_ROT_EQ pass=176 mismatch=0 starved=0 fail=0 us=3166
+ACIDBOX_BAR=176
+ACIDBOX_VSYNC flips=3422 isrs=3422 timeouts=0
+ACIDBOX_ROT ops=9625 full=2 px=126540288 us=2474207 errors=0
+ACIDBOX_ROT_EQ pass=177 mismatch=0 starved=0 fail=0 us=3272
+ACIDBOX_BAR=177
+ACIDBOX_VSYNC flips=3438 isrs=3438 timeouts=0
+ACIDBOX_ROT ops=9665 full=2 px=127128064 us=2485555 errors=0
+ACIDBOX_ROT_EQ pass=178 mismatch=0 starved=0 fail=0 us=3187
+ACIDBOX_BAR=178
+ACIDBOX_VSYNC flips=3455 isrs=3455 timeouts=0
+ACIDBOX_ROT ops=9708 full=2 px=127746816 us=2497620 errors=0
+ACIDBOX_ROT_EQ pass=179 mismatch=0 starved=0 fail=0 us=3310
+ACIDBOX_BAR=179
+ACIDBOX_VSYNC flips=3473 isrs=3473 timeouts=0
+ACIDBOX_ROT ops=9774 full=2 px=128481536 us=2512155 errors=0
+ACIDBOX_ROT_EQ pass=180 mismatch=0 starved=0 fail=0 us=3113
+ACIDBOX_BAR=180
+ACIDBOX_VSYNC flips=3489 isrs=3489 timeouts=0
+ACIDBOX_ROT ops=9814 full=2 px=129069312 us=2523587 errors=0
+ACIDBOX_ROT_EQ pass=181 mismatch=0 starved=0 fail=0 us=3187
+ACIDBOX_BAR=181
+ACIDBOX_VSYNC flips=3505 isrs=3505 timeouts=0
+ACIDBOX_ROT ops=9854 full=2 px=129657088 us=2535008 errors=0
+ACIDBOX_ROT_EQ pass=182 mismatch=0 starved=0 fail=0 us=3174
+ACIDBOX_BAR=182
+ACIDBOX_VSYNC flips=3525 isrs=3525 timeouts=0
+ACIDBOX_ROT ops=9923 full=2 px=130437632 us=2550448 errors=0
+ACIDBOX_ROT_EQ pass=183 mismatch=0 starved=0 fail=0 us=3166
+ACIDBOX_BAR=183
+ACIDBOX_VSYNC flips=3546 isrs=3546 timeouts=0
+ACIDBOX_ROT ops=9995 full=2 px=131275264 us=2566861 errors=0
+ACIDBOX_ROT_EQ pass=184 mismatch=0 starved=0 fail=0 us=3167
+ACIDBOX_BAR=184
+ACIDBOX_VSYNC flips=3565 isrs=3565 timeouts=0
+ACIDBOX_ROT ops=10052 full=2 px=131983616 us=2580806 errors=0
+ACIDBOX_ROT_EQ pass=185 mismatch=0 starved=0 fail=0 us=3188
+ACIDBOX_BAR=185
+ACIDBOX_VSYNC flips=3581 isrs=3581 timeouts=0
+ACIDBOX_ROT ops=10092 full=2 px=132571392 us=2592353 errors=0
+ACIDBOX_ROT_EQ pass=186 mismatch=0 starved=0 fail=0 us=3108
+ACIDBOX_BAR=186
+ACIDBOX_VSYNC flips=3600 isrs=3600 timeouts=0
+ACIDBOX_ROT ops=10157 full=2 px=133351424 us=2607879 errors=0
+ACIDBOX_ROT_EQ pass=187 mismatch=0 starved=0 fail=0 us=3164
+ACIDBOX_BAR=187
+ACIDBOX_VSYNC flips=3618 isrs=3618 timeouts=0
+ACIDBOX_ROT ops=10207 full=2 px=134001664 us=2620565 errors=0
+ACIDBOX_ROT_EQ pass=188 mismatch=0 starved=0 fail=0 us=3162
+ACIDBOX_BAR=188
+ACIDBOX_VSYNC flips=3634 isrs=3634 timeouts=0
+ACIDBOX_ROT ops=10247 full=2 px=134589440 us=2632076 errors=0
+ACIDBOX_ROT_EQ pass=189 mismatch=0 starved=0 fail=0 us=3165
+ACIDBOX_BAR=189
+ACIDBOX_VSYNC flips=3650 isrs=3650 timeouts=0
+ACIDBOX_ROT ops=10287 full=2 px=135177216 us=2643656 errors=0
+ACIDBOX_ROT_EQ pass=190 mismatch=0 starved=0 fail=0 us=3315
+ACIDBOX_BAR=190
+ACIDBOX_VSYNC flips=3666 isrs=3666 timeouts=0
+ACIDBOX_ROT ops=10327 full=2 px=135764992 us=2655151 errors=0
+ACIDBOX_ROT_EQ pass=191 mismatch=0 starved=0 fail=0 us=3310
+ACIDBOX_BAR=191
+ACIDBOX_VSYNC flips=3689 isrs=3689 timeouts=0
+ACIDBOX_ROT ops=10384 full=2 px=136545536 us=2670148 errors=0
+ACIDBOX_ROT_EQ pass=192 mismatch=0 starved=0 fail=0 us=3170
+ACIDBOX_BAR=192
+ACIDBOX_VSYNC flips=3711 isrs=3711 timeouts=0
+ACIDBOX_ROT ops=10441 full=2 px=137265152 us=2684500 errors=0
+ACIDBOX_ROT_EQ pass=193 mismatch=0 starved=0 fail=0 us=3189
+ACIDBOX_BAR=193
+ACIDBOX_VSYNC flips=3731 isrs=3731 timeouts=0
+ACIDBOX_ROT ops=10508 full=2 px=138105344 us=2700985 errors=0
+ACIDBOX_ROT_EQ pass=194 mismatch=0 starved=0 fail=0 us=3240
+ACIDBOX_BAR=194
+ACIDBOX_VSYNC flips=3747 isrs=3747 timeouts=0
+ACIDBOX_ROT ops=10548 full=2 px=138693120 us=2712515 errors=0
+ACIDBOX_ROT_EQ pass=195 mismatch=0 starved=0 fail=0 us=3264
+ACIDBOX_BAR=195
+ACIDBOX_VSYNC flips=3763 isrs=3763 timeouts=0
+ACIDBOX_ROT ops=10588 full=2 px=139280896 us=2724162 errors=0
+ACIDBOX_ROT_EQ pass=196 mismatch=0 starved=0 fail=0 us=3171
+PLAYING=0
+PLAY_LIT=0
+PLAYING=1
+PLAY_LIT=1
+ACIDBOX_BAR=196
+ACIDBOX_VSYNC flips=3786 isrs=3786 timeouts=0
+ACIDBOX_ROT ops=10649 full=2 px=140094464 us=2740068 errors=0
+ACIDBOX_ROT_EQ pass=198 mismatch=0 starved=0 fail=0 us=3171
+ACIDBOX_BAR=197
+ACIDBOX_VSYNC flips=3802 isrs=3802 timeouts=0
+ACIDBOX_ROT ops=10689 full=2 px=140682240 us=2751631 errors=0
+ACIDBOX_ROT_EQ pass=199 mismatch=0 starved=0 fail=0 us=3171
+ACIDBOX_BAR=198
+ACIDBOX_VSYNC flips=3818 isrs=3818 timeouts=0
+ACIDBOX_ROT ops=10729 full=2 px=141270016 us=2762932 errors=0
+ACIDBOX_ROT_EQ pass=200 mismatch=0 starved=0 fail=0 us=3314
+PLAYING=0
+PLAY_LIT=0
+PLAYING=1
+PLAY_LIT=1
+ACIDBOX_BAR=199
+ACIDBOX_VSYNC flips=4068 isrs=4068 timeouts=0
+ACIDBOX_ROT ops=11440 full=2 px=148582912 us=2907233 errors=0
+ACIDBOX_ROT_EQ pass=202 mismatch=0 starved=0 fail=0 us=3125
+ACIDBOX_BAR=200
+ACIDBOX_VSYNC flips=4084 isrs=4084 timeouts=0
+ACIDBOX_ROT ops=11480 full=2 px=149170688 us=2918693 errors=0
+ACIDBOX_ROT_EQ pass=203 mismatch=0 starved=0 fail=0 us=3304
+ACIDBOX_BAR=201
+ACIDBOX_VSYNC flips=4103 isrs=4103 timeouts=0
+ACIDBOX_ROT ops=11540 full=2 px=149912576 us=2933060 errors=0
+ACIDBOX_ROT_EQ pass=204 mismatch=0 starved=0 fail=0 us=3315
+ACIDBOX_BAR=202
+ACIDBOX_VSYNC flips=4123 isrs=4123 timeouts=0
+ACIDBOX_ROT ops=11605 full=2 px=150683904 us=2948550 errors=0
+ACIDBOX_ROT_EQ pass=205 mismatch=0 starved=0 fail=0 us=3315
+ACIDBOX_BAR=203
+ACIDBOX_VSYNC flips=4142 isrs=4142 timeouts=0
+ACIDBOX_ROT ops=11662 full=2 px=151389184 us=2962046 errors=0
+ACIDBOX_ROT_EQ pass=206 mismatch=0 starved=0 fail=0 us=3300
+ACIDBOX_BAR=204
+ACIDBOX_VSYNC flips=4161 isrs=4161 timeouts=0
+ACIDBOX_ROT ops=11724 full=2 px=152150272 us=2977021 errors=0
+ACIDBOX_ROT_EQ pass=207 mismatch=0 starved=0 fail=0 us=3317
+ACIDBOX_BAR=205
+ACIDBOX_VSYNC flips=4177 isrs=4177 timeouts=0
+ACIDBOX_ROT ops=11766 full=2 px=152748288 us=2988654 errors=0
+ACIDBOX_ROT_EQ pass=208 mismatch=0 starved=0 fail=0 us=3172
+ACIDBOX_BAR=206
+ACIDBOX_VSYNC flips=4195 isrs=4195 timeouts=0
+ACIDBOX_ROT ops=11816 full=2 px=153398528 us=3001393 errors=0
+ACIDBOX_ROT_EQ pass=209 mismatch=0 starved=0 fail=0 us=3313
+ACIDBOX_BAR=207
+ACIDBOX_VSYNC flips=4216 isrs=4216 timeouts=0
+ACIDBOX_ROT ops=11891 full=2 px=154247168 us=3018097 errors=0
+ACIDBOX_ROT_EQ pass=210 mismatch=0 starved=0 fail=0 us=3174
+ACIDBOX_BAR=208
+ACIDBOX_VSYNC flips=4235 isrs=4235 timeouts=0
+ACIDBOX_ROT ops=11948 full=2 px=154982400 us=3032275 errors=0
+ACIDBOX_ROT_EQ pass=211 mismatch=0 starved=0 fail=0 us=3319
+ACIDBOX_BAR=209
+ACIDBOX_VSYNC flips=4252 isrs=4252 timeouts=0
+ACIDBOX_ROT ops=11995 full=2 px=155602432 us=3044768 errors=0
+ACIDBOX_ROT_EQ pass=212 mismatch=0 starved=0 fail=0 us=3288
+ACIDBOX_BAR=210
+ACIDBOX_VSYNC flips=4268 isrs=4268 timeouts=0
+ACIDBOX_ROT ops=12035 full=2 px=156190208 us=3056245 errors=0
+ACIDBOX_ROT_EQ pass=213 mismatch=0 starved=0 fail=0 us=3304
+ACIDBOX_BAR=211
+ACIDBOX_VSYNC flips=4287 isrs=4287 timeouts=0
+ACIDBOX_ROT ops=12098 full=2 px=156947968 us=3070940 errors=0
+ACIDBOX_ROT_EQ pass=214 mismatch=0 starved=0 fail=0 us=3310
+ACIDBOX_BAR=212
+ACIDBOX_VSYNC flips=4305 isrs=4305 timeouts=0
+ACIDBOX_ROT ops=12146 full=2 px=157581568 us=3083251 errors=0
+ACIDBOX_ROT_EQ pass=215 mismatch=0 starved=0 fail=0 us=3314
+ACIDBOX_BAR=213
+ACIDBOX_VSYNC flips=4322 isrs=4321 timeouts=0
+ACIDBOX_ROT ops=12191 full=2 px=158223616 us=3095957 errors=0
+ACIDBOX_ROT_EQ pass=216 mismatch=0 starved=0 fail=0 us=3312
+ACIDBOX_BAR=214
+ACIDBOX_VSYNC flips=4339 isrs=4339 timeouts=0
+ACIDBOX_ROT ops=12236 full=2 px=158877440 us=3108645 errors=0
+ACIDBOX_ROT_EQ pass=217 mismatch=0 starved=0 fail=0 us=3171
+ACIDBOX_BAR=215
+ACIDBOX_VSYNC flips=4355 isrs=4355 timeouts=0
+ACIDBOX_ROT ops=12276 full=2 px=159465216 us=3120472 errors=0
+ACIDBOX_ROT_EQ pass=218 mismatch=0 starved=0 fail=0 us=3313
+ACIDBOX_BAR=216
+ACIDBOX_VSYNC flips=4371 isrs=4371 timeouts=0
+ACIDBOX_ROT ops=12316 full=2 px=160052992 us=3132239 errors=0
+ACIDBOX_ROT_EQ pass=219 mismatch=0 starved=0 fail=0 us=3306
+ACIDBOX_BAR=217
+ACIDBOX_VSYNC flips=4387 isrs=4387 timeouts=0
+ACIDBOX_ROT ops=12356 full=2 px=160640768 us=3143617 errors=0
+ACIDBOX_ROT_EQ pass=220 mismatch=0 starved=0 fail=0 us=3172
+ACIDBOX_BAR=218
+ACIDBOX_VSYNC flips=4406 isrs=4406 timeouts=0
+ACIDBOX_ROT ops=12413 full=2 px=161373952 us=3157831 errors=0
+ACIDBOX_ROT_EQ pass=221 mismatch=0 starved=0 fail=0 us=3171
+ACIDBOX_BAR=219
+ACIDBOX_VSYNC flips=4423 isrs=4423 timeouts=0
+ACIDBOX_ROT ops=12460 full=2 px=161995008 us=3170306 errors=0
+ACIDBOX_ROT_EQ pass=222 mismatch=0 starved=0 fail=0 us=3296
+ACIDBOX_BAR=220
+ACIDBOX_VSYNC flips=4439 isrs=4439 timeouts=0
+ACIDBOX_ROT ops=12500 full=2 px=162582784 us=3181827 errors=0
+ACIDBOX_ROT_EQ pass=223 mismatch=0 starved=0 fail=0 us=3309
+ACIDBOX_BAR=221
+ACIDBOX_VSYNC flips=4455 isrs=4455 timeouts=0
+ACIDBOX_ROT ops=12540 full=2 px=163170560 us=3193325 errors=0
+ACIDBOX_ROT_EQ pass=224 mismatch=0 starved=0 fail=0 us=3304
+ACIDBOX_BAR=222
+ACIDBOX_VSYNC flips=4471 isrs=4471 timeouts=0
+ACIDBOX_ROT ops=12580 full=2 px=163758336 us=3204667 errors=0
+ACIDBOX_ROT_EQ pass=225 mismatch=0 starved=0 fail=0 us=3175
+ACIDBOX_BAR=223
+ACIDBOX_VSYNC flips=4491 isrs=4491 timeouts=0
+ACIDBOX_ROT ops=12638 full=2 px=164485888 us=3219036 errors=0
+ACIDBOX_ROT_EQ pass=226 mismatch=0 starved=0 fail=0 us=3303
+ACIDBOX_BAR=224
+ACIDBOX_VSYNC flips=4509 isrs=4509 timeouts=0
+ACIDBOX_ROT ops=12686 full=2 px=165125376 us=3231585 errors=0
+ACIDBOX_ROT_EQ pass=227 mismatch=0 starved=0 fail=0 us=3309
+ACIDBOX_BAR=225
+ACIDBOX_VSYNC flips=4525 isrs=4525 timeouts=0
+ACIDBOX_ROT ops=12726 full=2 px=165713152 us=3243079 errors=0
+ACIDBOX_ROT_EQ pass=228 mismatch=0 starved=0 fail=0 us=3319
+ACIDBOX_BAR=226
+ACIDBOX_VSYNC flips=4543 isrs=4543 timeouts=0
+ACIDBOX_ROT ops=12785 full=2 px=166416640 us=3257022 errors=0
+ACIDBOX_ROT_EQ pass=229 mismatch=0 starved=0 fail=0 us=3322
+ACIDBOX_BAR=227
+ACIDBOX_VSYNC flips=4562 isrs=4562 timeouts=0
+ACIDBOX_ROT ops=12842 full=2 px=167135744 us=3271573 errors=0
+ACIDBOX_ROT_EQ pass=230 mismatch=0 starved=0 fail=0 us=3287
+ACIDBOX_BAR=228
+ACIDBOX_VSYNC flips=4578 isrs=4578 timeouts=0
+ACIDBOX_ROT ops=12882 full=2 px=167723520 us=3282978 errors=0
+ACIDBOX_ROT_EQ pass=231 mismatch=0 starved=0 fail=0 us=3308
+ACIDBOX_BAR=229
+ACIDBOX_VSYNC flips=4594 isrs=4594 timeouts=0
+ACIDBOX_ROT ops=12922 full=2 px=168311296 us=3294306 errors=0
+ACIDBOX_ROT_EQ pass=232 mismatch=0 starved=0 fail=0 us=3171
+ACIDBOX_BAR=230
+ACIDBOX_VSYNC flips=4610 isrs=4610 timeouts=0
+ACIDBOX_ROT ops=12962 full=2 px=168899072 us=3305803 errors=0
+ACIDBOX_ROT_EQ pass=233 mismatch=0 starved=0 fail=0 us=3308
+ACIDBOX_BAR=231
+ACIDBOX_VSYNC flips=4630 isrs=4630 timeouts=0
+ACIDBOX_ROT ops=13020 full=2 px=169593088 us=3319434 errors=0
+ACIDBOX_ROT_EQ pass=234 mismatch=0 starved=0 fail=0 us=3322
+ACIDBOX_BAR=232
+ACIDBOX_VSYNC flips=4646 isrs=4646 timeouts=0
+ACIDBOX_ROT ops=13060 full=2 px=170180864 us=3330733 errors=0
+ACIDBOX_ROT_EQ pass=235 mismatch=0 starved=0 fail=0 us=3323
+ACIDBOX_BAR=233
+ACIDBOX_VSYNC flips=4662 isrs=4662 timeouts=0
+ACIDBOX_ROT ops=13100 full=2 px=170768640 us=3342014 errors=0
+ACIDBOX_ROT_EQ pass=236 mismatch=0 starved=0 fail=0 us=3314
+ACIDBOX_BAR=234
+ACIDBOX_VSYNC flips=4678 isrs=4678 timeouts=0
+ACIDBOX_ROT ops=13140 full=2 px=171356416 us=3353486 errors=0
+ACIDBOX_ROT_EQ pass=237 mismatch=0 starved=0 fail=0 us=3174
+ACIDBOX_BAR=235
+ACIDBOX_VSYNC flips=4694 isrs=4694 timeouts=0
+ACIDBOX_ROT ops=13180 full=2 px=171944192 us=3364983 errors=0
+ACIDBOX_ROT_EQ pass=238 mismatch=0 starved=0 fail=0 us=3170
+ACIDBOX_BAR=236
+ACIDBOX_VSYNC flips=4710 isrs=4710 timeouts=0
+ACIDBOX_ROT ops=13220 full=2 px=172531968 us=3376690 errors=0
+ACIDBOX_ROT_EQ pass=239 mismatch=0 starved=0 fail=0 us=3316
+ACIDBOX_BAR=237
+ACIDBOX_VSYNC flips=4728 isrs=4728 timeouts=0
+ACIDBOX_ROT ops=13270 full=2 px=173224704 us=3390235 errors=0
+ACIDBOX_ROT_EQ pass=240 mismatch=0 starved=0 fail=0 us=3168
+ACIDBOX_BAR=238
+ACIDBOX_VSYNC flips=4752 isrs=4752 timeouts=0
+ACIDBOX_ROT ops=13342 full=2 px=174210816 us=3409570 errors=0
+ACIDBOX_ROT_EQ pass=241 mismatch=0 starved=0 fail=0 us=3172
+ACIDBOX_BAR=239
+ACIDBOX_VSYNC flips=4777 isrs=4777 timeouts=0
+ACIDBOX_ROT ops=13416 full=2 px=175193088 us=3429046 errors=0
+ACIDBOX_ROT_EQ pass=242 mismatch=0 starved=0 fail=0 us=3173
+ACIDBOX_BAR=240
+ACIDBOX_VSYNC flips=4800 isrs=4800 timeouts=0
+ACIDBOX_ROT ops=13484 full=2 px=176083968 us=3446552 errors=0
+ACIDBOX_ROT_EQ pass=243 mismatch=0 starved=0 fail=0 us=3171
+ACIDBOX_BAR=241
+ACIDBOX_VSYNC flips=4820 isrs=4820 timeouts=0
+ACIDBOX_ROT ops=13544 full=2 px=176890368 us=3462144 errors=0
+ACIDBOX_ROT_EQ pass=244 mismatch=0 starved=0 fail=0 us=3170
+ACIDBOX_BAR=242
+ACIDBOX_VSYNC flips=4840 isrs=4840 timeouts=0
+ACIDBOX_ROT ops=13598 full=2 px=177594368 us=3475837 errors=0
+ACIDBOX_ROT_EQ pass=245 mismatch=0 starved=0 fail=0 us=3316
+ACIDBOX_BAR=243
+ACIDBOX_VSYNC flips=4856 isrs=4856 timeouts=0
+ACIDBOX_ROT ops=13638 full=2 px=178182144 us=3487247 errors=0
+ACIDBOX_ROT_EQ pass=246 mismatch=0 starved=0 fail=0 us=3315
+ACIDBOX_BAR=244
+ACIDBOX_VSYNC flips=4872 isrs=4872 timeouts=0
+ACIDBOX_ROT ops=13678 full=2 px=178769920 us=3499047 errors=0
+ACIDBOX_ROT_EQ pass=247 mismatch=0 starved=0 fail=0 us=3302
+ACIDBOX_BAR=245
+ACIDBOX_VSYNC flips=4888 isrs=4888 timeouts=0
+ACIDBOX_ROT ops=13718 full=2 px=179357696 us=3510529 errors=0
+ACIDBOX_ROT_EQ pass=248 mismatch=0 starved=0 fail=0 us=3309
+ACIDBOX_BAR=246
+ACIDBOX_VSYNC flips=4904 isrs=4904 timeouts=0
+ACIDBOX_ROT ops=13758 full=2 px=179945472 us=3522227 errors=0
+ACIDBOX_ROT_EQ pass=249 mismatch=0 starved=0 fail=0 us=3176
+ACIDBOX_BAR=247
+ACIDBOX_VSYNC flips=4920 isrs=4920 timeouts=0
+ACIDBOX_ROT ops=13798 full=2 px=180533248 us=3533779 errors=0
+ACIDBOX_ROT_EQ pass=250 mismatch=0 starved=0 fail=0 us=3286
+=== BOOT ===
+[APP: acid_box] [VER: v1] [BUILD: Sep 20 2026 10:03:24]
+ACIDBOX_ENGINE=gpu
+PLAY_LIT=0
+ACIDBOX_UI_SUM=0x17FCC4DC
+PLAYING=0
+ACIDBOX_ROT ops=1 full=1 px=921600 us=17505 errors=0
+ACIDBOX_ROT_EQ pass=1 mismatch=0 starved=0 fail=0 us=30345
+ACIDBOX_GPU_ERR=0
+ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
+PLAYING=1
+PLAY_LIT=1
+ACIDBOX_BAR=1
+ACIDBOX_VSYNC flips=17 isrs=17 timeouts=0
+ACIDBOX_ROT ops=39 full=2 px=2366464 us=44992 errors=0
+ACIDBOX_ROT_EQ pass=2 mismatch=0 starved=0 fail=0 us=3160
+ACIDBOX_BAR=2
+ACIDBOX_VSYNC flips=33 isrs=33 timeouts=0
+ACIDBOX_ROT ops=79 full=2 px=2954240 us=56423 errors=0
+ACIDBOX_ROT_EQ pass=3 mismatch=0 starved=0 fail=0 us=3289
+ACIDBOX_BAR=3
+ACIDBOX_VSYNC flips=49 isrs=49 timeouts=0
+ACIDBOX_ROT ops=119 full=2 px=3542016 us=67689 errors=0
+ACIDBOX_ROT_EQ pass=4 mismatch=0 starved=0 fail=0 us=3311
+ACIDBOX_BAR=4
+ACIDBOX_VSYNC flips=65 isrs=65 timeouts=0
+ACIDBOX_ROT ops=159 full=2 px=4129792 us=79159 errors=0
+ACIDBOX_ROT_EQ pass=5 mismatch=0 starved=0 fail=0 us=3157
+ACIDBOX_BAR=5
+ACIDBOX_VSYNC flips=81 isrs=81 timeouts=0
+ACIDBOX_ROT ops=199 full=2 px=4717568 us=90439 errors=0
+ACIDBOX_ROT_EQ pass=6 mismatch=0 starved=0 fail=0 us=3292
+ACIDBOX_BAR=6
+ACIDBOX_VSYNC flips=97 isrs=97 timeouts=0
+ACIDBOX_ROT ops=239 full=2 px=5305344 us=101764 errors=0
+ACIDBOX_ROT_EQ pass=7 mismatch=0 starved=0 fail=0 us=3284
+ACIDBOX_BAR=7
+ACIDBOX_VSYNC flips=113 isrs=113 timeouts=0
+ACIDBOX_ROT ops=279 full=2 px=5893120 us=113314 errors=0
+ACIDBOX_ROT_EQ pass=8 mismatch=0 starved=0 fail=0 us=3290
+ACIDBOX_BAR=8
+ACIDBOX_VSYNC flips=129 isrs=129 timeouts=0
+ACIDBOX_ROT ops=319 full=2 px=6480896 us=124695 errors=0
+ACIDBOX_ROT_EQ pass=9 mismatch=0 starved=0 fail=0 us=3274
+ACIDBOX_BAR=9
+ACIDBOX_VSYNC flips=145 isrs=145 timeouts=0
+ACIDBOX_ROT ops=359 full=2 px=7068672 us=136469 errors=0
+ACIDBOX_ROT_EQ pass=10 mismatch=0 starved=0 fail=0 us=3307
+ACIDBOX_BAR=10
+ACIDBOX_VSYNC flips=161 isrs=161 timeouts=0
+ACIDBOX_ROT ops=399 full=2 px=7656448 us=147811 errors=0
+ACIDBOX_ROT_EQ pass=11 mismatch=0 starved=0 fail=0 us=3304
+ACIDBOX_BAR=11
+ACIDBOX_VSYNC flips=177 isrs=177 timeouts=0
+ACIDBOX_ROT ops=439 full=2 px=8244224 us=159466 errors=0
+ACIDBOX_ROT_EQ pass=12 mismatch=0 starved=0 fail=0 us=3317
+ACIDBOX_BAR=12
+ACIDBOX_VSYNC flips=193 isrs=193 timeouts=0
+ACIDBOX_ROT ops=479 full=2 px=8832000 us=170812 errors=0
+ACIDBOX_ROT_EQ pass=13 mismatch=0 starved=0 fail=0 us=3165
+ACIDBOX_BAR=13
+ACIDBOX_VSYNC flips=209 isrs=209 timeouts=0
+ACIDBOX_ROT ops=519 full=2 px=9419776 us=182312 errors=0
+ACIDBOX_ROT_EQ pass=14 mismatch=0 starved=0 fail=0 us=3291
+ACIDBOX_BAR=14
+ACIDBOX_VSYNC flips=225 isrs=225 timeouts=0
+ACIDBOX_ROT ops=559 full=2 px=10007552 us=193760 errors=0
+ACIDBOX_ROT_EQ pass=15 mismatch=0 starved=0 fail=0 us=3314
+ACIDBOX_BAR=15
+ACIDBOX_VSYNC flips=241 isrs=241 timeouts=0
+ACIDBOX_ROT ops=599 full=2 px=10595328 us=205316 errors=0
+ACIDBOX_ROT_EQ pass=16 mismatch=0 starved=0 fail=0 us=3299
+ACIDBOX_BAR=16
+ACIDBOX_VSYNC flips=257 isrs=257 timeouts=0
+ACIDBOX_ROT ops=639 full=2 px=11183104 us=216726 errors=0
+ACIDBOX_ROT_EQ pass=17 mismatch=0 starved=0 fail=0 us=3309
+ACIDBOX_BAR=17
+ACIDBOX_VSYNC flips=273 isrs=273 timeouts=0
+ACIDBOX_ROT ops=679 full=2 px=11770880 us=228299 errors=0
+ACIDBOX_ROT_EQ pass=18 mismatch=0 starved=0 fail=0 us=3304
+ACIDBOX_BAR=18
+ACIDBOX_VSYNC flips=289 isrs=289 timeouts=0
+ACIDBOX_ROT ops=719 full=2 px=12358656 us=239677 errors=0
+ACIDBOX_ROT_EQ pass=19 mismatch=0 starved=0 fail=0 us=3301
+ACIDBOX_BAR=19
+ACIDBOX_VSYNC flips=305 isrs=305 timeouts=0
+ACIDBOX_ROT ops=759 full=2 px=12946432 us=251299 errors=0
+ACIDBOX_ROT_EQ pass=20 mismatch=0 starved=0 fail=0 us=3318
+=== BOOT ===
+[APP: acid_box] [VER: v1] [BUILD: Sep 20 2026 10:03:24]
+ACIDBOX_ENGINE=gpu
+PLAY_LIT=0
+ACIDBOX_UI_SUM=0x17FCC4DC
+PLAYING=0
+ACIDBOX_ROT ops=1 full=1 px=921600 us=17492 errors=0
+ACIDBOX_ROT_EQ pass=1 mismatch=0 starved=0 fail=0 us=30341
+ACIDBOX_GPU_ERR=0
+ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
+PLAYING=1
+PLAY_LIT=1
+ACIDBOX_BAR=1
+ACIDBOX_VSYNC flips=17 isrs=17 timeouts=0
+ACIDBOX_ROT ops=39 full=2 px=2366464 us=45172 errors=0
+ACIDBOX_ROT_EQ pass=2 mismatch=0 starved=0 fail=0 us=3166
+ACIDBOX_BAR=2
+ACIDBOX_VSYNC flips=33 isrs=33 timeouts=0
+ACIDBOX_ROT ops=79 full=2 px=2954240 us=56480 errors=0
+ACIDBOX_ROT_EQ pass=3 mismatch=0 starved=0 fail=0 us=3291
+ACIDBOX_BAR=3
+ACIDBOX_VSYNC flips=49 isrs=49 timeouts=0
+ACIDBOX_ROT ops=119 full=2 px=3542016 us=68073 errors=0
+ACIDBOX_ROT_EQ pass=4 mismatch=0 starved=0 fail=0 us=3172
+ACIDBOX_BAR=4
+ACIDBOX_VSYNC flips=65 isrs=65 timeouts=0
+ACIDBOX_ROT ops=159 full=2 px=4129792 us=79455 errors=0
+ACIDBOX_ROT_EQ pass=5 mismatch=0 starved=0 fail=0 us=3163
+ACIDBOX_BAR=5
+ACIDBOX_VSYNC flips=81 isrs=81 timeouts=0
+ACIDBOX_ROT ops=199 full=2 px=4717568 us=90935 errors=0
+ACIDBOX_ROT_EQ pass=6 mismatch=0 starved=0 fail=0 us=3290
+ACIDBOX_BAR=6
+ACIDBOX_VSYNC flips=97 isrs=97 timeouts=0
+ACIDBOX_ROT ops=239 full=2 px=5305344 us=102278 errors=0
+ACIDBOX_ROT_EQ pass=7 mismatch=0 starved=0 fail=0 us=3169
+ACIDBOX_BAR=7
+ACIDBOX_VSYNC flips=113 isrs=113 timeouts=0
+ACIDBOX_ROT ops=279 full=2 px=5893120 us=113703 errors=0
+ACIDBOX_ROT_EQ pass=8 mismatch=0 starved=0 fail=0 us=3295
+ACIDBOX_BAR=8
+ACIDBOX_VSYNC flips=129 isrs=129 timeouts=0
+ACIDBOX_ROT ops=319 full=2 px=6480896 us=125079 errors=0
+ACIDBOX_ROT_EQ pass=9 mismatch=0 starved=0 fail=0 us=3167
+ACIDBOX_BAR=9
+ACIDBOX_VSYNC flips=145 isrs=145 timeouts=0
+ACIDBOX_ROT ops=359 full=2 px=7068672 us=136332 errors=0
+ACIDBOX_ROT_EQ pass=10 mismatch=0 starved=0 fail=0 us=3308
+ACIDBOX_BAR=10
+ACIDBOX_VSYNC flips=161 isrs=161 timeouts=0
+ACIDBOX_ROT ops=399 full=2 px=7656448 us=147587 errors=0
+ACIDBOX_ROT_EQ pass=11 mismatch=0 starved=0 fail=0 us=3294
+ACIDBOX_BAR=11
+ACIDBOX_VSYNC flips=177 isrs=177 timeouts=0
+ACIDBOX_ROT ops=439 full=2 px=8244224 us=158763 errors=0
+ACIDBOX_ROT_EQ pass=12 mismatch=0 starved=0 fail=0 us=3315
+ACIDBOX_BAR=12
+ACIDBOX_VSYNC flips=193 isrs=193 timeouts=0
+ACIDBOX_ROT ops=479 full=2 px=8832000 us=170224 errors=0
+ACIDBOX_ROT_EQ pass=13 mismatch=0 starved=0 fail=0 us=3297
+ACIDBOX_BAR=13
+ACIDBOX_VSYNC flips=209 isrs=209 timeouts=0
+ACIDBOX_ROT ops=519 full=2 px=9419776 us=181723 errors=0
+ACIDBOX_ROT_EQ pass=14 mismatch=0 starved=0 fail=0 us=3289
+ACIDBOX_BAR=14
+ACIDBOX_VSYNC flips=225 isrs=225 timeouts=0
+ACIDBOX_ROT ops=559 full=2 px=10007552 us=193026 errors=0
+ACIDBOX_ROT_EQ pass=15 mismatch=0 starved=0 fail=0 us=3282
+ACIDBOX_BAR=15
+ACIDBOX_VSYNC flips=241 isrs=241 timeouts=0
+ACIDBOX_ROT ops=599 full=2 px=10595328 us=204738 errors=0
+ACIDBOX_ROT_EQ pass=16 mismatch=0 starved=0 fail=0 us=3311
+ACIDBOX_BAR=16
+ACIDBOX_VSYNC flips=257 isrs=257 timeouts=0
+ACIDBOX_ROT ops=639 full=2 px=11183104 us=216259 errors=0
+ACIDBOX_ROT_EQ pass=17 mismatch=0 starved=0 fail=0 us=3308
+ACIDBOX_BAR=17
+ACIDBOX_VSYNC flips=273 isrs=273 timeouts=0
+ACIDBOX_ROT ops=679 full=2 px=11770880 us=227916 errors=0
+ACIDBOX_ROT_EQ pass=18 mismatch=0 starved=0 fail=0 us=3285
+ACIDBOX_BAR=18
+ACIDBOX_VSYNC flips=289 isrs=289 timeouts=0
+ACIDBOX_ROT ops=719 full=2 px=12358656 us=239480 errors=0
+ACIDBOX_ROT_EQ pass=19 mismatch=0 starved=0 fail=0 us=3297
+ACIDBOX_BAR=19
+ACIDBOX_VSYNC flips=305 isrs=305 timeouts=0
+ACIDBOX_ROT ops=759 full=2 px=12946432 us=251088 errors=0
+ACIDBOX_ROT_EQ pass=20 mismatch=0 starved=0 fail=0 us=3282
+ACIDBOX_BAR=20
+ACIDBOX_VSYNC flips=321 isrs=321 timeouts=0
+ACIDBOX_ROT ops=799 full=2 px=13534208 us=262592 errors=0
+ACIDBOX_ROT_EQ pass=21 mismatch=0 starved=0 fail=0 us=3299
+=== BOOT ===
+[APP: acid_box] [VER: v1] [BUILD: Sep 20 2026 10:03:24]
+ACIDBOX_ENGINE=gpu
+PLAY_LIT=0
+ACIDBOX_UI_SUM=0x17FCC4DC
+PLAYING=0
+ACIDBOX_ROT ops=1 full=1 px=921600 us=17494 errors=0
+ACIDBOX_ROT_EQ pass=1 mismatch=0 starved=0 fail=0 us=30343
+ACIDBOX_GPU_ERR=0
+ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
+PLAYING=1
+PLAY_LIT=1
+ACIDBOX_BAR=1
+ACIDBOX_VSYNC flips=17 isrs=17 timeouts=0
+ACIDBOX_ROT ops=39 full=2 px=2366464 us=45304 errors=0
+ACIDBOX_ROT_EQ pass=2 mismatch=0 starved=0 fail=0 us=3166
+ACIDBOX_BAR=2
+ACIDBOX_VSYNC flips=33 isrs=33 timeouts=0
+ACIDBOX_ROT ops=79 full=2 px=2954240 us=56798 errors=0
+ACIDBOX_ROT_EQ pass=3 mismatch=0 starved=0 fail=0 us=3280
+ACIDBOX_BAR=3
+ACIDBOX_VSYNC flips=49 isrs=49 timeouts=0
+ACIDBOX_ROT ops=119 full=2 px=3542016 us=68340 errors=0
+ACIDBOX_ROT_EQ pass=4 mismatch=0 starved=0 fail=0 us=3283
+ACIDBOX_BAR=4
+ACIDBOX_VSYNC flips=65 isrs=65 timeouts=0
+ACIDBOX_ROT ops=159 full=2 px=4129792 us=79539 errors=0
+ACIDBOX_ROT_EQ pass=5 mismatch=0 starved=0 fail=0 us=3164
+ACIDBOX_BAR=5
+ACIDBOX_VSYNC flips=81 isrs=81 timeouts=0
+ACIDBOX_ROT ops=199 full=2 px=4717568 us=90901 errors=0
+ACIDBOX_ROT_EQ pass=6 mismatch=0 starved=0 fail=0 us=3244
+ACIDBOX_BAR=6
+ACIDBOX_VSYNC flips=97 isrs=97 timeouts=0
+ACIDBOX_ROT ops=239 full=2 px=5305344 us=102457 errors=0
+ACIDBOX_ROT_EQ pass=7 mismatch=0 starved=0 fail=0 us=3227
+ACIDBOX_BAR=7
+ACIDBOX_VSYNC flips=113 isrs=113 timeouts=0
+ACIDBOX_ROT ops=279 full=2 px=5893120 us=114123 errors=0
+ACIDBOX_ROT_EQ pass=8 mismatch=0 starved=0 fail=0 us=3284
+ACIDBOX_BAR=8
+ACIDBOX_VSYNC flips=129 isrs=129 timeouts=0
+ACIDBOX_ROT ops=319 full=2 px=6480896 us=125474 errors=0
+ACIDBOX_ROT_EQ pass=9 mismatch=0 starved=0 fail=0 us=3297
+ACIDBOX_BAR=9
+ACIDBOX_VSYNC flips=145 isrs=145 timeouts=0
+ACIDBOX_ROT ops=359 full=2 px=7068672 us=136895 errors=0
+ACIDBOX_ROT_EQ pass=10 mismatch=0 starved=0 fail=0 us=3281
+ACIDBOX_BAR=10
+ACIDBOX_VSYNC flips=161 isrs=161 timeouts=0
+ACIDBOX_ROT ops=399 full=2 px=7656448 us=148284 errors=0
+ACIDBOX_ROT_EQ pass=11 mismatch=0 starved=0 fail=0 us=3164
+ACIDBOX_BAR=11
+ACIDBOX_VSYNC flips=177 isrs=177 timeouts=0
+ACIDBOX_ROT ops=439 full=2 px=8244224 us=159751 errors=0
+ACIDBOX_ROT_EQ pass=12 mismatch=0 starved=0 fail=0 us=3280
+ACIDBOX_BAR=12
+ACIDBOX_VSYNC flips=193 isrs=193 timeouts=0
+ACIDBOX_ROT ops=479 full=2 px=8832000 us=171023 errors=0
+ACIDBOX_ROT_EQ pass=13 mismatch=0 starved=0 fail=0 us=3160
+ACIDBOX_BAR=13
+ACIDBOX_VSYNC flips=209 isrs=209 timeouts=0
+ACIDBOX_ROT ops=519 full=2 px=9419776 us=182606 errors=0
+ACIDBOX_ROT_EQ pass=14 mismatch=0 starved=0 fail=0 us=3286
+ACIDBOX_BAR=14
+ACIDBOX_VSYNC flips=225 isrs=225 timeouts=0
+ACIDBOX_ROT ops=559 full=2 px=10007552 us=194232 errors=0
+ACIDBOX_ROT_EQ pass=15 mismatch=0 starved=0 fail=0 us=3297
+ACIDBOX_BAR=15
+ACIDBOX_VSYNC flips=241 isrs=241 timeouts=0
+ACIDBOX_ROT ops=599 full=2 px=10595328 us=205693 errors=0
+ACIDBOX_ROT_EQ pass=16 mismatch=0 starved=0 fail=0 us=3287
+ACIDBOX_BAR=16
+ACIDBOX_VSYNC flips=257 isrs=257 timeouts=0
+ACIDBOX_ROT ops=639 full=2 px=11183104 us=217172 errors=0
+ACIDBOX_ROT_EQ pass=17 mismatch=0 starved=0 fail=0 us=3311
+ACIDBOX_BAR=17
+ACIDBOX_VSYNC flips=273 isrs=273 timeouts=0
+ACIDBOX_ROT ops=679 full=2 px=11770880 us=228781 errors=0
+ACIDBOX_ROT_EQ pass=18 mismatch=0 starved=0 fail=0 us=3281
+ACIDBOX_BAR=18
+ACIDBOX_VSYNC flips=289 isrs=289 timeouts=0
+ACIDBOX_ROT ops=719 full=2 px=12358656 us=240322 errors=0
+ACIDBOX_ROT_EQ pass=19 mismatch=0 starved=0 fail=0 us=3300
+=== BOOT ===
+[APP: acid_box] [VER: v1] [BUILD: Sep 20 2026 10:03:24]
+ACIDBOX_ENGINE=gpu
+PLAY_LIT=0
+ACIDBOX_UI_SUM=0x17FCC4DC
+PLAYING=0
+ACIDBOX_ROT ops=1 full=1 px=921600 us=17486 errors=0
+ACIDBOX_ROT_EQ pass=1 mismatch=0 starved=0 fail=0 us=30347
+ACIDBOX_GPU_ERR=0
+ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0
+=== BOOT ===
+[APP: acid_box] [VER: v1] [BUILD: Sep 20 2026 10:03:24]
+ACIDBOX_ENGINE=gpu
+PLAY_LIT=0
+ACIDBOX_UI_SUM=0x17FCC4DC
+PLAYING=0
+ACIDBOX_ROT ops=1 full=1 px=921600 us=17481 errors=0
+ACIDBOX_ROT_EQ pass=1 mismatch=0 starved=0 fail=0 us=30477
+ACIDBOX_GPU_ERR=0
+ACIDBOX_VSYNC flips=1 isrs=1 timeouts=0

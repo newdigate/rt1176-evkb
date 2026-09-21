@@ -700,8 +700,8 @@ self-guards and keeps an 8-deep held stack; the REMEMBERED note is released, so 
 orphan a `noteOff`); a key press **PRESERVES the gate**, as the knob did; and the lit key is PianoKey's
 own `lit` LED showing the selected step's STORED note, rests included. Range grew C1..C3 -> C1..C4.
 All note<->key arithmetic and key rects live in a pure C99 `keyboard_map.h`, host-tested.
-★ **UI golden `0x18B7B637` -> `0x149FB9E2`**; the gpu golden `0xA67828E9` is STALE (the compositor now
-sees 8 knobs, and the scene changed) -- a four-boot re-bench is owed (plan Task 9).
+★ **UI golden `0x18B7B637` -> `0x149FB9E2`**; the gpu golden moved `0xA67828E9` -> **`0x17FCC4DC`** on the
+bench (the compositor now sees 8 knobs, and the scene changed) -- see the BENCHED paragraph below.
 ★★ **THE FIRST DUMP WAS PERFECTLY REPRODUCIBLE AND WRONG, AND ONLY THE LOOK CAUGHT IT.** The first build
 summed `0xB639E93F` on every run with the dump's FNV matching -- and its octave readout showed NOTHING
 BUT GHOST SEGMENTS: the lit digit was clipped away entirely. I had sized the box at 30 px from a cell
@@ -740,10 +740,30 @@ stopped audition before it is legitimate.
 of as a mystery in QEMU. ★ **A mutant that does not COMPILE has demonstrated nothing**: deleting the
 keep-the-view early return left `view` unused, `-Werror` stopped the build, and the harness (which greps
 `^FAIL`) printed silence that read like a pass. The mutant is `(void)view;` in its place.
-★ **Silicon bench OWED (plan Task 9), none of it visible to any gate**: audition audible while stopped
-and paused and silent while playing; no stuck note on slide-off-then-release; the 6.1 mm black keys hit
-reliably; the pressed look; whether the ~1.6 mm lit LED reads at arm's length (a named spec risk -- the
-widget has no LED size or colour knob); fences over >= 200 bars; the four-boot gpu golden.
+★★ **BENCHED 2026-09-20/21 -- ACCEPTED** (`acid_box/transcript_hw_evkb.txt`, THE PIANO KEYBOARD; witness
+lines in `bench-captures/piano-keyboard-witness.txt`). **gpu golden `0x17FCC4DC`**, SIX readings
+bit-identical (the post-flash boot plus five SW4 boots), `ACIDBOX_ENGINE=gpu`, `GPU_ERR=0`, the banner's
+`BUILD:` equal to the flashed image on every SW4 boot. Fences over **247 heavily gestured bars** (241
+pattern writes, 149 selects, 423 CUTOFF samples): `ROT_EQ pass=250 mismatch=0 starved=0`, `timeouts=0`,
+`errors=0`, `full` never above 2. ★ The log alone proves two of the design's claims: **469 auditions, ZERO
+after a `PLAYING=1`** (with 141 pattern writes made while playing -- keys edit silently), and **every
+audition released** (66/66, 403/403; the log's last line is the `off` for C4, the top key of view 3); all
+13 keys were read back lit, all three views visited, the view snapped on select. BY HAND, all correct:
+audition audible stopped AND paused, silent while playing, no stuck note after slide-off-then-lift; the
+6.1 mm black keys reliable; the pressed look visible; **the ~1.6 mm lit LED "clearly readable" at arm's
+length -- the spec's one named risk, retired**; digit whole, clamps at 1 and 3, no scanout flicker.
+★ **ONE spec §9 item was NOT MEASURED, and is recorded as owed rather than met**: touch p95 needs the
+`ACIDBOX_LOOPSTAT` build, which was not flashed; it joins NEW-50's standing "a controlled A/B is owed".
+★★ **I MISREAD MY OWN WATCH AS THE OPERATOR'S SESSION.** A 30-minute log monitor expired with no events
+and I reported "30 minutes on the board"; the log's last write was SEVEN minutes after the flash. A
+monitor's lifetime says nothing about when the data was written -- read the file's mtime. And the silence
+that followed was BENIGN and explicable from the log itself: the transport was stopped and the last line
+was a key's `AUDITION=off`, so the firmware had nothing to print. No SWD probe was needed to tell a quiet
+board from a dead one, and a probe attach mid-session disturbs the bench.
+★ **A relink can land between a sweep and a flash**: a CMakeLists COMMENT edit reconfigured the dir and
+relinked `acid_box.elf` after the close-out sweep. The banner cannot see it (`__DATE__`/`__TIME__` only
+move when the source recompiles). The relinked ELF's gate was re-run green, and its `.text.itcm`
+compared, BEFORE it was flashed -- flash the image you tested, or test the image you are about to flash.
 
 ✅ **Measured 2026-09-19: 141 gates discovered, 140 passed, 1 failed, 0 SKIP** on the **NEW-55 db-pipeline sync copy**
 close-out -- the double-buffer sync that NEW-53 finding A measured at 260 ms per full frame now runs on
@@ -846,8 +866,8 @@ commit, each recorded in `run_qemu.sh:290/294/299` beside the assertion it moved
 became DOWN/UP panel buttons and the BPM label a `synthui_seven_segment`) -> **`0x18B7B637`**
 (SAW/SQR became a `synthui_slide_toggle`; superseded 2026-09-20 by the piano keyboard: `0x149FB9E2`). Each was recorded from two bit-identical gate runs AND a
 no-touch frame dump whose FNV-1a equalled the printed sum, with the frame LOOKED AT before pinning.
-★ **The gpu golden is `0xA67828E9`** (STALE since 2026-09-20: the piano keyboard changed the
-composited frame; a four-boot re-bench is owed) -- BENCHED 2026-09-18, FOUR boots bit-identical, retiring
+★ **The gpu golden is `0xA67828E9`** (RETIRED 2026-09-21 by the piano keyboard's bench:
+`0x17FCC4DC`) -- BENCHED 2026-09-18, FOUR boots bit-identical, retiring
 `0xEA5AB843` (which was measured on the pre-top-bar scene). `ACIDBOX_ENGINE=gpu`, `GPU_ERR=0`,
 `PLAY_LIT=0` before the sum on every boot. Two golden sets as always, never reconciled: silicon
 composites the knobs on the GC355, QEMU does not.

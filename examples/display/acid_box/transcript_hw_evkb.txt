@@ -832,3 +832,68 @@ pass+starved reached 13,964 with ACIDBOX_BAR=1126 printed: at 15 ms a step the
 Every bar number after a 999 excursion is a floor, not a count.
 
 ★ NEW-55 ratification 2026-09-19 (the db pipeline sync copy moved to the PXP with alphaOut(0xFF)): see examples/display/synthui_led_button_test/transcript_hw_evkb.txt, "NEW-55 RATIFICATION" -- this example's silicon tokens were re-read that session and are UNMOVED (the flip test's B golden equals its new QEMU pin).
+
+================================================================================
+THE PIANO KEYBOARD -- ACCEPTED ON SILICON  (bench 2026-09-20/21)
+================================================================================
+Image: build/acid_box.hex at evkb a69881b (branch acid-box-piano-keyboard),
+[BUILD: Sep 20 2026 10:03:24] -- the banner read back on all five SW4 boots, so
+the board ran the image that was flashed.  ★ That image was RELINKED at 12:38
+(a CMakeLists comment edit reconfigured the dir) after the close-out sweep had
+run; its gate was re-run GREEN on the relinked ELF before it was flashed, and
+its .text.itcm was identical (259,216 B).  Spec
+docs/superpowers/specs/2026-09-20-acid-box-piano-keyboard-design.md section 9,
+plan Task 9.  Flashed with tools/rt1170-flash.sh (the .hex); board released
+after.  Witness lines: bench-captures/piano-keyboard-witness.txt.
+
+--- gpu GOLDEN: 0x17FCC4DC, SIX readings bit-identical ------------------------
+The post-flash boot plus FIVE SW4 boots, every one
+  ACIDBOX_ENGINE=gpu   ACIDBOX_UI_SUM=0x17FCC4DC   ACIDBOX_GPU_ERR=0
+with PLAY_LIT=0 printed before the sum, and the keyboard's own boot state
+(octave view 1, read-back lit key 9 = the white A) on each.  RETIRES 0xA67828E9
+(NEW-54): the scene changed and the GC355 now composites 8 knobs, not 9.  Two
+golden sets as always -- the sw one is 0x149FB9E2 -- never reconciled.
+(The post-flash boot's banner and ENGINE line scrolled past before the console
+attached; its sum and GPU_ERR were captured.  SW4 boots 4 and 5 were 18 log
+lines apart -- a quick double press -- so boot 4 has a boot line and no bars.)
+
+--- FENCES, session 1: 247 bars of heavy gesturing, all clean -----------------
+  bars                 ACIDBOX_BAR=247 (a floor after any fast-tempo excursion)
+  equality guard       pass=250 mismatch=0 starved=0
+  vsync                flips=4920 isrs=4920 timeouts=0
+  rotated present      ops=13798 full=2 errors=0   (full never above 2)
+  gpu                  ACIDBOX_GPU_ERR=0
+Gesture load over those bars: 241 pattern writes, 149 step selects, 423 CUTOFF
+drag samples, 66 key auditions.  SW4 boots 1-3 then each played 18-20 bars
+UNTOUCHED, equally clean (pass=19..21, timeouts=0, errors=0, full=2).
+
+--- WHAT THE LOG PROVES ABOUT THE KEYBOARD ------------------------------------
+  * NO AUDITION WHILE PLAYING: 66 auditions in session 1 and 403 in the last
+    boot, ZERO of them on a line following a PLAYING=1 -- with 141 pattern
+    writes made WHILE playing in session 1 (keys editing silently, as designed).
+  * NO STUCK NOTE in the firmware's own account: 66/66 and 403/403 releases;
+    the log's final line is the "off" for note 60 (C4), the top key of view 3.
+  * every one of the 13 keys lit at some point, read back from the widgets
+    (0..12), plus -1 when the view was paged away from the step's note; never
+    the MULTI error value.
+  * all three views visited (1, 2, 3), and the view SNAPS on select: selecting
+    step 3 (A2) from view 1 printed view 2, selecting step 2 printed view 1.
+  * in the last boot every one of 403 step writes carried an audition -- the
+    transport was never started, so every press sounded.
+
+--- BY HAND (the operator's answers; no log can see any of these) -------------
+  AUDITION   a held key SOUNDS while stopped and while PAUSED, is SILENT while
+             playing (the edit is heard when the playhead next reaches the
+             step), and STOPS after a slide-off-then-lift.  All four correct.
+  KEYS       the five black keys (6.1 mm) hit reliably, no accidental whites;
+             the pressed look shows on finger-down and clears on release.
+  LIT LED    CLEARLY READABLE at arm's length.  This retires the spec's named
+             section-11 risk (a ~1.6 mm LED with no size or colour setter).
+  DISPLAY    octave digit whole and unclipped, -/+ clamp at 1 and 3, NO flicker
+             or flashing rectangles around the keyboard band while tapping.
+
+Spec section 9 is MET on every item but ONE, which was NOT MEASURED rather than
+missed: "touch p95 not worse than the NEW-54 bench with the playhead stopped"
+needs the ACIDBOX_LOOPSTAT build, which was not flashed this session.  It stays
+owed, alongside NEW-50's "a controlled A/B is owed" -- hand gestures are the
+uncontrolled variable there, so a one-off reading would not have settled it.
