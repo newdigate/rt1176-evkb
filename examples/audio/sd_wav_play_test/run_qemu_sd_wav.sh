@@ -28,7 +28,8 @@ run_one() {   # $1 = mono|stereo
     MNT=$(diskutil info "${DISK}s1" | sed -n 's/.*Mount Point: *//p')
     cp "$WAV" "$MNT/TEST.WAV"; sync
     diskutil eject "$DISK" >/dev/null
-    # run: SD image (USDHC1) + SAI1 TX tap. -icount couples the guest CPU to
+    # run: SD image (USDHC1 on the EVKB, USDHC2 on nosh: gate_sd_drive picks the
+    # -drive index) + SAI1 TX tap. -icount couples the guest CPU to
     # QEMU_CLOCK_VIRTUAL so the SAI TX frame-clock (which paces the TDR0-drain DMA)
     # and the blocking USDHC wavfile.read() in the graph-update ISR advance in
     # lock-step. Without it the SD read burns virtual time while the SAI timer
@@ -37,7 +38,7 @@ run_one() {   # $1 = mono|stereo
     # interval_timer / tone gates use; here it makes the play->TDR0 path exact.
     "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
         -display none -serial file:"$VCOM" \
-        -drive if=sd,format=raw,file="$IMG" \
+        $(gate_sd_drive "$IMG") \
         -chardev file,id=sai1-tap,path="$TAP" \
         -icount shift=auto \
         -d guest_errors,unimp -D "$DBG" &

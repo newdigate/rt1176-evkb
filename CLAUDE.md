@@ -41,9 +41,10 @@ cmake -B build -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1170-evkb.toolchain.c
 cmake --build build          # produces <name>.elf (+ .hex)
 ```
 
-The two toolchain files (`rt1170-evkb.toolchain.cmake`, `rt1062-evkb.toolchain.cmake`)
-live once at the repo root, in `toolchain/`, and are shared by every example —
-a new example needs no `toolchain/` directory of its own.
+The three toolchain files (`rt1170-evkb.toolchain.cmake`, `rt1062-evkb.toolchain.cmake`,
+`nosh.toolchain.cmake`) live once at the repo root, in `toolchain/`, and are
+shared by every example — a new example needs no `toolchain/` directory of its
+own.
 
 Build dirs configured before 2026-08-14 cached an absolute toolchain path that
 no longer exists; their elfs remain valid (gates run them unchanged), but the
@@ -2719,12 +2720,22 @@ a real regression from what you are doing — read the gate NAMES in the summary
 rather than trusting the count alone.
 
 **The tree is multi-board.** `EVKB_BOARD` selects `rt1176` (MIMXRT1170-EVKB,
-the default) or `rt1062` (MIMXRT1060-EVKB). An example declares the boards it
-supports in a `boards` sidecar file; absent means `rt1176` only, which is why
-most examples have none. Gate ids are `<board>:<category>/<name>` and no gate
-names a QEMU machine — `tools/gate-lib.sh` derives `-M`, `-global`, the build
-directory and the `-serial` chain from the board. Build a non-default board with
-`cmake -B build-rt1062 -DEVKB_BOARD=rt1062 -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1062-evkb.toolchain.cmake`.
+the default), `rt1062` (MIMXRT1060-EVKB) or `nosh` (the Nosh board: the same
+RT1176 and `cores/imxrt1176`, selected inside the core by `TEENSY_BOARD=NOSH`
+from `toolchain/nosh.toolchain.cmake` → `-DARDUINO_NOSH`, `imxrt1176_nosh.ld`;
+128 MB SDRAM at 132 MHz, microSD on USDHC2, no Ethernet, its own pin table).
+An example declares the boards it supports in a `boards` sidecar file; absent
+means `rt1176` only, which is why most examples have none. Gate ids are
+`<board>:<category>/<name>` and no gate names a QEMU machine — `tools/gate-lib.sh`
+derives `-M`, `-global`, the build directory, the `-serial` chain and, for SD
+gates, the `-drive` slot (`gate_sd_drive`: index 0 = USDHC1 on the EVKBs,
+index 1 = USDHC2 on nosh) from the board. Build a non-default board with
+`cmake -B build-rt1062 -DEVKB_BOARD=rt1062 -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/rt1062-evkb.toolchain.cmake`
+or `cmake -B build-nosh -DEVKB_BOARD=nosh -DCMAKE_TOOLCHAIN_FILE=../../../toolchain/nosh.toolchain.cmake`.
+QEMU has no Nosh model, so `nosh` gates boot `mimxrt1170-evk`; a nosh build with
+the rt1170 toolchain (or vice versa) is refused at configure time. Nosh needs a
+core with `imxrt1176_nosh.ld` (teensy-cores ≥ 9fa7f4b), so until the `cores`
+pin is bumped it builds only against the local checkout.
 
 `usb/usb_descriptor_survey` is gated on both boards and is the RT1062's USB
 host proof: it enumerates QEMU's emulated `usb-audio` and reads `46F4:0002` off

@@ -78,6 +78,10 @@ gate_qemu_machine() {
     case "$(gate_board)" in
         rt1176) echo "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on" ;;
         rt1062) echo "-M mimxrt1060-evk -global fsl-imxrt1062.boot-ivt=on" ;;
+        # Nosh is the same RT1176 SoC; QEMU has no Nosh board model, so it boots
+        # the EVKB machine. What differs (USDHC2 for the microSD) is expressed
+        # in gate_sd_drive below, not here.
+        nosh)   echo "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on" ;;
         *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
     esac
 }
@@ -109,6 +113,7 @@ gate_console() {   # gate_console FILE
     case "$(gate_board)" in
         rt1176) echo "-serial file:$1" ;;   # Serial1 == LPUART1
         rt1062) echo "-serial file:$1" ;;   # Serial6 == LPUART1
+        nosh)   echo "-serial file:$1" ;;   # Serial1 == LPUART1 (debug header J11)
         *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
     esac
 }
@@ -120,6 +125,27 @@ gate_build_dir() {
     case "$(gate_board)" in
         rt1176) echo "build" ;;
         rt1062) echo "build-rt1062" ;;
+        nosh)   echo "build-nosh" ;;
+        *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
+    esac
+}
+
+# Emit the -drive that puts a raw card image in the board's microSD slot.
+#
+#   "$QEMU" $(gate_qemu_machine) ... $(gate_sd_drive "$IMG")
+#
+# QEMU's mimxrt1170-evk attaches `-drive if=sd,index=N` to USDHC(N+1). The EVKB
+# microSD (J15) and the SdFat driver's default are USDHC1 -> index 0. Nosh moves
+# the microSD (J5) to USDHC2, because USDHC1 is its M.2 SDIO Wi-Fi slot, and the
+# ARDUINO_NOSH build of SdFat drives USDHC2 -> index 1. A Nosh image booted with
+# the card on index 0 fails SD init outright (verified 2026-11-03), so a gate
+# that hard-codes `-drive if=sd` goes red on nosh for a reason that has nothing
+# to do with what it tests. Ask here instead.
+gate_sd_drive() {   # gate_sd_drive IMAGE
+    case "$(gate_board)" in
+        rt1176) echo "-drive if=sd,index=0,format=raw,file=$1" ;;
+        rt1062) echo "-drive if=sd,index=0,format=raw,file=$1" ;;
+        nosh)   echo "-drive if=sd,index=1,format=raw,file=$1" ;;
         *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
     esac
 }

@@ -223,8 +223,14 @@ run_gate() {
     # "build" dir, no -DEVKB_BOARD, and the toolchain file that actually exists
     # (it is named for the 1170 FAMILY, not the 1176 part — do not "correct" it
     # to $_board). Other boards are suffixed and pass their board explicitly.
-    _bdir=build; _tc=rt1170; _bopt=""
-    [ "$_board" = rt1176 ] || { _bdir="build-$_board"; _tc=$_board; _bopt=" -DEVKB_BOARD=$_board"; }
+    # Toolchain files are not uniformly named: the two EVKBs carry an "-evkb"
+    # suffix, Nosh (not an EVKB) does not. Map explicitly rather than derive.
+    _bdir=build; _tc=rt1170-evkb; _bopt=""
+    case "$_board" in
+        rt1176) ;;
+        nosh)   _bdir="build-$_board"; _tc=nosh; _bopt=" -DEVKB_BOARD=$_board" ;;
+        *)      _bdir="build-$_board"; _tc="$_board-evkb"; _bopt=" -DEVKB_BOARD=$_board" ;;
+    esac
     _log="$RESULT_DIR/$_slug.log"
     _start=$(date +%s)
 
@@ -248,7 +254,7 @@ run_gate() {
         if [ "$BUILD_IF_MISSING" -eq 1 ]; then
             if ! ls "$_dir/$_bdir"/*.elf >/dev/null 2>&1; then
                 ( cd "$_dir" && \
-                  cmake -B "$_bdir"$_bopt -DCMAKE_TOOLCHAIN_FILE="$REPO/toolchain/$_tc-evkb.toolchain.cmake" && \
+                  cmake -B "$_bdir"$_bopt -DCMAKE_TOOLCHAIN_FILE="$REPO/toolchain/$_tc.toolchain.cmake" && \
                   cmake --build "$_bdir" ) >> "$_log" 2>&1
                 if [ $? -ne 0 ]; then
                     echo "BUILD FAILED: $_id" >> "$_log"
@@ -268,7 +274,7 @@ run_gate() {
             fi
         else
             echo "no $_bdir/*.elf in $_dir — build the example for $_board first:" > "$_log"
-            echo "  cd $_dir && cmake -B $_bdir$_bopt -DCMAKE_TOOLCHAIN_FILE=toolchain/$_tc-evkb.toolchain.cmake && cmake --build $_bdir" >> "$_log"
+            echo "  cd $_dir && cmake -B $_bdir$_bopt -DCMAKE_TOOLCHAIN_FILE=toolchain/$_tc.toolchain.cmake && cmake --build $_bdir" >> "$_log"
             echo "SKIP 0" > "$RESULT_DIR/$_slug.result"; return
         fi
     fi

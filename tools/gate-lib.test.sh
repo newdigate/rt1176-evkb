@@ -325,6 +325,60 @@ test_build_dir_rt1062_is_suffixed() {
 }
 test_build_dir_rt1062_is_suffixed; report test_build_dir_rt1062_is_suffixed $?
 
+# nosh: same RT1176 SoC as rt1176 (QEMU has no Nosh model, so it boots the EVKB
+# machine), same LPUART1 console, its own build dir. The microSD slot is the one
+# thing that differs: USDHC2, so the card image goes on -drive index 1. These
+# pin each arm; the sd_drive pair is the regression guard against a gate
+# hard-coding `-drive if=sd` again (a Nosh image then fails SD init outright).
+test_machine_args_nosh_is_the_evkb_machine() {
+    ( . "$LIB"
+      EVKB_BOARD=nosh
+      _got=$(gate_qemu_machine)
+      [ "$_got" = "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on" ] )
+}
+test_machine_args_nosh_is_the_evkb_machine; report test_machine_args_nosh_is_the_evkb_machine $?
+
+test_console_nosh_is_first_slot() {
+    ( . "$LIB"
+      EVKB_BOARD=nosh
+      _got=$(gate_console /tmp/u.txt)
+      [ "$_got" = "-serial file:/tmp/u.txt" ] )
+}
+test_console_nosh_is_first_slot; report test_console_nosh_is_first_slot $?
+
+test_build_dir_nosh_is_suffixed() {
+    ( . "$LIB"
+      EVKB_BOARD=nosh
+      _got=$(gate_build_dir)
+      [ "$_got" = "build-nosh" ] )
+}
+test_build_dir_nosh_is_suffixed; report test_build_dir_nosh_is_suffixed $?
+
+test_sd_drive_rt1176_is_usdhc1() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1176
+      _got=$(gate_sd_drive /tmp/card.img)
+      [ "$_got" = "-drive if=sd,index=0,format=raw,file=/tmp/card.img" ] )
+}
+test_sd_drive_rt1176_is_usdhc1; report test_sd_drive_rt1176_is_usdhc1 $?
+
+test_sd_drive_nosh_is_usdhc2() {
+    ( . "$LIB"
+      EVKB_BOARD=nosh
+      _got=$(gate_sd_drive /tmp/card.img)
+      [ "$_got" = "-drive if=sd,index=1,format=raw,file=/tmp/card.img" ] )
+}
+test_sd_drive_nosh_is_usdhc2; report test_sd_drive_nosh_is_usdhc2 $?
+
+test_sd_drive_unknown_board_fails_loudly() {
+    ( . "$LIB"
+      EVKB_BOARD=rt9999
+      _err=$(gate_sd_drive /tmp/card.img 2>&1 >/dev/null); _rc=$?
+      [ "$_rc" -eq 2 ] || exit 1
+      case "$_err" in *rt9999*) exit 0 ;; *) exit 1 ;; esac )
+}
+test_sd_drive_unknown_board_fails_loudly; report test_sd_drive_unknown_board_fails_loudly $?
+
 # Assert the SPECIFIC failure, not merely "non-zero". A bare non-zero check
 # passes when the function does not exist at all (127, command not found), so
 # it would have gone green before gate_qemu_machine was ever written -- a

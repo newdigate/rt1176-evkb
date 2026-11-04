@@ -99,7 +99,8 @@ cmake --build build
 ./run_qemu.sh        # runs the QEMU gate — asserts the expected UART tokens
 ```
 
-The two toolchain files (`rt1170-evkb.toolchain.cmake`, `rt1062-evkb.toolchain.cmake`)
+The three toolchain files (`rt1170-evkb.toolchain.cmake`, `rt1062-evkb.toolchain.cmake`,
+`nosh.toolchain.cmake` for the Nosh RT1176 board, paired with `-DEVKB_BOARD=nosh`)
 live once at the repo root, in `toolchain/`, and are shared by every example —
 a new example needs no `toolchain/` directory of its own, just the `../../../`
 reach-up to the root.

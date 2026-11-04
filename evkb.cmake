@@ -34,16 +34,30 @@ option(EVKB_FORCE_FETCH "Ignore local sibling checkouts; fetch at the pinned ref
 # Which board this build targets. Drives the core subdir below and the QEMU
 # machine in tools/gate-lib.sh. Default rt1176 so every existing example
 # builds exactly as before without being edited.
-set(EVKB_BOARD "rt1176" CACHE STRING "Target board: rt1176 (MIMXRT1170-EVKB) or rt1062 (MIMXRT1060-EVKB)")
-set_property(CACHE EVKB_BOARD PROPERTY STRINGS rt1176 rt1062)
+set(EVKB_BOARD "rt1176" CACHE STRING "Target board: rt1176 (MIMXRT1170-EVKB), rt1062 (MIMXRT1060-EVKB) or nosh (Nosh RT1176 board)")
+set_property(CACHE EVKB_BOARD PROPERTY STRINGS rt1176 rt1062 nosh)
+# nosh is the same RT1176 silicon and the same core directory as rt1176; what
+# differs is the board (SDRAM 128 MB @ 132 MHz, microSD on USDHC2, no Ethernet,
+# the Nosh pin table) and the macros select that with TEENSY_BOARD=NOSH
+# (-DARDUINO_NOSH, imxrt1176_nosh.ld) -- TEENSY_VERSION stays 117. The toolchain
+# file owns TEENSY_BOARD, exactly as it owns TEENSY_VERSION; we only check it.
 if(EVKB_BOARD STREQUAL "rt1176")
     set(EVKB_CORE_SUBDIR imxrt1176)
     set(_evkb_expected_tv 117)
+    set(_evkb_expected_tb MIMXRT1170_EVKB)
+    set(_evkb_toolchain rt1170-evkb.toolchain.cmake)
 elseif(EVKB_BOARD STREQUAL "rt1062")
     set(EVKB_CORE_SUBDIR teensy4)
     set(_evkb_expected_tv 42)
+    set(_evkb_expected_tb TEENSY41)   # the macros' own name for the 42 build; no toolchain sets it
+    set(_evkb_toolchain rt1062-evkb.toolchain.cmake)
+elseif(EVKB_BOARD STREQUAL "nosh")
+    set(EVKB_CORE_SUBDIR imxrt1176)
+    set(_evkb_expected_tv 117)
+    set(_evkb_expected_tb NOSH)
+    set(_evkb_toolchain nosh.toolchain.cmake)
 else()
-    message(FATAL_ERROR "EVKB_BOARD must be rt1176 or rt1062, got '${EVKB_BOARD}'")
+    message(FATAL_ERROR "EVKB_BOARD must be rt1176, rt1062 or nosh, got '${EVKB_BOARD}'")
 endif()
 # The toolchain file supplies TEENSY_VERSION; the board flag and the toolchain
 # must agree. A mismatch used to configure CLEAN and die deep in the core
@@ -53,7 +67,23 @@ endif()
 if(NOT DEFINED TEENSY_VERSION OR NOT TEENSY_VERSION EQUAL _evkb_expected_tv)
     message(FATAL_ERROR "EVKB_BOARD=${EVKB_BOARD} requires TEENSY_VERSION ${_evkb_expected_tv} "
         "(rt1176 -> 117 via ../../../toolchain/rt1170-evkb.toolchain.cmake, "
-        "rt1062 -> 42 via ../../../toolchain/rt1062-evkb.toolchain.cmake); got '${TEENSY_VERSION}'")
+        "rt1062 -> 42 via ../../../toolchain/rt1062-evkb.toolchain.cmake, "
+        "nosh -> 117 via ../../../toolchain/nosh.toolchain.cmake); got '${TEENSY_VERSION}'")
+endif()
+# Same check for the board within the 117 family. rt1176 accepts an unset
+# TEENSY_BOARD (the macros default it to MIMXRT1170_EVKB); nosh needs it set,
+# which is what nosh.toolchain.cmake does. Without this, EVKB_BOARD=nosh with
+# the rt1170 toolchain would silently build and gate an EVKB image under a
+# `nosh:` gate id -- a vacuous pass of exactly the kind this tree hunts.
+if(_evkb_expected_tv EQUAL 117)
+    if(DEFINED TEENSY_BOARD AND NOT TEENSY_BOARD STREQUAL "" AND NOT TEENSY_BOARD STREQUAL _evkb_expected_tb)
+        message(FATAL_ERROR "EVKB_BOARD=${EVKB_BOARD} requires TEENSY_BOARD ${_evkb_expected_tb} "
+            "(use ../../../toolchain/${_evkb_toolchain}); got '${TEENSY_BOARD}'")
+    endif()
+    if(EVKB_BOARD STREQUAL "nosh" AND (NOT DEFINED TEENSY_BOARD OR TEENSY_BOARD STREQUAL ""))
+        message(FATAL_ERROR "EVKB_BOARD=nosh requires TEENSY_BOARD NOSH: configure with "
+            "-DCMAKE_TOOLCHAIN_FILE=../../../toolchain/nosh.toolchain.cmake (not rt1170-evkb)")
+    endif()
 endif()
 
 # --- TEENSY_LIB_ROOT: where sibling checkouts live ---------------------------
@@ -560,6 +590,15 @@ evkb_library_dir(cores EVKB_CORES_DIR)
 # hundreds of lines later as "Arduino.h: No such file or directory".
 if(NOT EXISTS "${EVKB_CORES_DIR}/core_pins.h")
     message(FATAL_ERROR "resolved core at '${EVKB_CORES_DIR}' has no core_pins.h — stale or empty ${EVKB_BOARD} core checkout?")
+endif()
+# The Nosh board needs a core that knows it (teensy-cores >= 9fa7f4b, 2026-11-03:
+# imxrt1176_nosh.ld + the ARDUINO_NOSH branches). An older core would fail much
+# later with "cannot open linker script imxrt1176_nosh.ld"; name it here. The
+# pinned fetch fallback (`cores` in the manifest above) predates it, so until that
+# pin is bumped nosh builds need the LOCAL teensy-cores checkout.
+if(EVKB_BOARD STREQUAL "nosh" AND NOT EXISTS "${EVKB_CORES_DIR}/imxrt1176_nosh.ld")
+    message(FATAL_ERROR "EVKB_BOARD=nosh: core at '${EVKB_CORES_DIR}' has no imxrt1176_nosh.ld — "
+        "it predates Nosh support (teensy-cores 9fa7f4b); update the checkout or the cores pin")
 endif()
 # Re-point COREPATH at the resolved core (replacing the pre-include value set
 # above). MUST happen BEFORE the first import_arduino_library call — that call

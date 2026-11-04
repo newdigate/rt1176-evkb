@@ -1,0 +1,10 @@
+# Boards this example is built and gated for.
+#
+# nosh is the first example on the Nosh board axis (evkb.cmake EVKB_BOARD=nosh,
+# toolchain/nosh.toolchain.cmake -> TEENSY_BOARD=NOSH -> -DARDUINO_NOSH +
+# imxrt1176_nosh.ld). The gate reads GPIO3 bit 3 toggling over QMP, and
+# LED_BUILTIN is pin 3 = GPIO_AD_04 = GPIO3.3 on both the EVKB and Nosh, so
+# the same assertion proves the Nosh core table, linker script and startup
+# (128 MB SEMC init at 132 MHz) boot and run.
+rt1176
+nosh
