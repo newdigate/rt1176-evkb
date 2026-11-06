@@ -334,7 +334,7 @@ test_machine_args_nosh_is_the_evkb_machine() {
     ( . "$LIB"
       EVKB_BOARD=nosh
       _got=$(gate_qemu_machine)
-      [ "$_got" = "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on" ] )
+      [ "$_got" = "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -global fsl-imxrt1170.sdram-size=128M" ] )
 }
 test_machine_args_nosh_is_the_evkb_machine; report test_machine_args_nosh_is_the_evkb_machine $?
 

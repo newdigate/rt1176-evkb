@@ -79,9 +79,13 @@ gate_qemu_machine() {
         rt1176) echo "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on" ;;
         rt1062) echo "-M mimxrt1060-evk -global fsl-imxrt1062.boot-ivt=on" ;;
         # Nosh is the same RT1176 SoC; QEMU has no Nosh board model, so it boots
-        # the EVKB machine. What differs (USDHC2 for the microSD) is expressed
+        # the EVKB machine with the SoC's SDRAM window grown to Nosh's 128 MB
+        # (two AS4C32M16SC; the EVKB default is 64 MB): a Nosh image is linked
+        # for 128 MB of ERAM and its memory test walks all of it, so the EVKB
+        # window would fault at the 64 MB line for a reason that is not the
+        # firmware's. The other difference (USDHC2 for the microSD) is expressed
         # in gate_sd_drive below, not here.
-        nosh)   echo "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on" ;;
+        nosh)   echo "-M mimxrt1170-evk -global fsl-imxrt1170.boot-xip=on -global fsl-imxrt1170.sdram-size=128M" ;;
         *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
     esac
 }

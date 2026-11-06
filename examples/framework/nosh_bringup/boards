@@ -1,0 +1,7 @@
+# Boards this example is built and gated for.
+#
+# nosh ONLY.  This is the Nosh board's bring-up image: it names the Nosh pin
+# table (NOSH_PIN_*), the 128 MB SEMC window and the USDHC2 microSD, and the
+# source #errors on any other board.  Listing rt1176 would create a gate that
+# fails at configure for a reason that has nothing to do with what it tests.
+nosh
