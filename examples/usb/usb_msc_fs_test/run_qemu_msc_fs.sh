@@ -32,7 +32,7 @@ diskutil partitionDisk "$DISK" 1 MBR "MS-DOS FAT16" RTTEST 100% >/dev/null \
 hdiutil detach "$DISK" >/dev/null
 
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -icount shift=auto -display none \
+    -icount shift=5 -display none \
     -serial file:"$OUT" -d guest_errors -D "$DBG" \
     -drive if=none,id=stick,file="$IMG",format=raw \
     -device usb-storage,drive=stick,bus=usbhost.0,port=1,removable=on &

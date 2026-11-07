@@ -13,7 +13,7 @@ gate_init
 ELF="$DIR/$(gate_build_dir)/interval_timer_test.elf"; OUT="$DIR/it.uart"
 rm -f "$OUT"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -icount shift=auto \
+    -icount shift=5 \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/it.dbg" &
 P=$!; gate_pid $P; sleep 20; gate_reap $P   # -icount couples delay() (DWT) and the PIT (QEMU_CLOCK_VIRTUAL) so counts are deterministic
 gate_require_capture "$OUT"

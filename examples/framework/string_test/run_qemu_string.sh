@@ -13,7 +13,7 @@ gate_init
 ELF="$DIR/$(gate_build_dir)/string_test.elf"; OUT=$(gate_capture_path "$DIR" string.uart)
 rm -f "$OUT"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -icount shift=auto \
+    -icount shift=5 \
     -display none $(gate_console "$OUT") -d guest_errors -D "$(gate_capture_path "$DIR" string.dbg)" &
 P=$!; gate_pid $P; sleep 20; gate_reap $P
 gate_require_capture "$OUT"

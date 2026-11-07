@@ -24,7 +24,7 @@
 # physical root port behaves. The companion-less i.MX EHCI drives HS/FS/LS on
 # the root port directly, so we also cover a FULL-speed device (run C,
 # usb_version=1) -- the path a real 12 Mbit/s keyboard/mouse takes, including
-# its interrupt-IN. -icount shift=auto keeps the EHCI frame timer
+# its interrupt-IN. -icount shift=5 (fixed, not auto: see audio/sd_wav_play_test/run_qemu_sd_wav.sh) keeps the EHCI frame timer
 # (QEMU_CLOCK_VIRTUAL) deterministic against the firmware's polling.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
@@ -56,7 +56,7 @@ rm -f "$SOCK_A" "$SOCK_B" "$SOCK_C"
 
 # Run A: high-speed keyboard on the OTG2 root port.
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -icount shift=auto -display none \
+    -icount shift=5 -display none \
     -serial file:"$OUT_A" -d guest_errors -D "$DIR/usb_kbd.dbg" \
     -qmp unix:"$SOCK_A",server=on,wait=off \
     -device usb-kbd,bus=usbhost.0,port=1 &
@@ -68,7 +68,7 @@ gate_require_capture "$OUT_A"
 
 # Run B: high-speed mouse on the OTG2 root port.
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -icount shift=auto -display none \
+    -icount shift=5 -display none \
     -serial file:"$OUT_B" -d guest_errors -D "$DIR/usb_mouse.dbg" \
     -qmp unix:"$SOCK_B",server=on,wait=off \
     -device usb-mouse,bus=usbhost.0,port=1 &
@@ -81,7 +81,7 @@ gate_require_capture "$OUT_B"
 # Run C: full-speed keyboard (usb_version=1) -- exercises the companion-less
 # FS/LS root-port path (enumeration + interrupt-IN) a real keyboard/mouse uses.
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -icount shift=auto -display none \
+    -icount shift=5 -display none \
     -serial file:"$OUT_C" -d guest_errors -D "$DIR/usb_kbd_fs.dbg" \
     -qmp unix:"$SOCK_C",server=on,wait=off \
     -device usb-kbd,usb_version=1,bus=usbhost.0,port=1 &

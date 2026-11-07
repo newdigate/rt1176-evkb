@@ -8,7 +8,7 @@
 #   MSC_BLOCK_WRITE=PASS / MSC_BLOCK_READ=PASS / MSC_BLOCK_DONE
 #
 # usb-storage is pinned to the single OTG2 root port with port=1 (without it QEMU's
-# convenience auto-hub splices a usb-hub ahead of the device).  -icount shift=auto
+# convenience auto-hub splices a usb-hub ahead of the device).  -icount shift=5
 # keeps the EHCI frame timer deterministic against the firmware's polling.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
@@ -28,7 +28,7 @@ rm -f "$OUT" "$DBG"
 [ -f "$IMG" ] || mkfile -n 64m "$IMG"
 
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -icount shift=auto -display none \
+    -icount shift=5 -display none \
     -serial file:"$OUT" -d guest_errors -D "$DBG" \
     -drive if=none,id=stick,file="$IMG",format=raw \
     -device usb-storage,drive=stick,bus=usbhost.0,port=1,removable=on &

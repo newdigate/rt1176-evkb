@@ -13,7 +13,7 @@ gate_init
 ELF="$DIR/$(gate_build_dir)/rtc_test.elf"; OUT="$DIR/rtc.uart"
 rm -f "$OUT"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -icount shift=auto \
+    -icount shift=5 \
     -display none -serial file:"$OUT" -d guest_errors -D "$DIR/rtc.dbg" &
 P=$!; gate_pid $P; sleep 25; gate_reap $P
 gate_require_capture "$OUT"

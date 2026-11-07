@@ -26,7 +26,7 @@
 # One run: the single-port OTG2 root hub hosts the one usb-midi device, pinned to
 # the root port with port=1.  Without it QEMU's convenience auto-hub (nfree==1)
 # inserts a full-speed usb-hub ahead of the device -- not how the single physical
-# root port behaves; the HID gate pins it for the same reason.  -icount shift=auto
+# root port behaves; the HID gate pins it for the same reason.  -icount shift=5
 # keeps the EHCI frame timer and the GP timer deterministic against the firmware.
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
@@ -44,7 +44,7 @@ OUT="$DIR/midi.uart"; DBG="$DIR/midi.dbg"
 rm -f "$OUT" "$DBG"
 
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -icount shift=auto -display none \
+    -icount shift=5 -display none \
     -serial file:"$OUT" -d guest_errors -D "$DBG" \
     -device usb-midi,bus=usbhost.0,port=1 &
 P=$!; gate_pid $P
