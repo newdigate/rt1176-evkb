@@ -10,10 +10,12 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/$(gate_build_dir)/audiostream_test.elf"; OUT="$DIR/audiostream.uart"
-rm -f "$OUT"
+ELF="$DIR/$(gate_build_dir)/audiostream_test.elf"
+OUT=$(gate_capture_path "$DIR" audiostream.uart)
+DBG=$(gate_capture_path "$DIR" audiostream.dbg)
+rm -f "$OUT" "$DBG"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -display none -serial file:"$OUT" -d guest_errors -D "$DIR/audiostream.dbg" &
+    -display none $(gate_console "$OUT") -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P; sleep 5; gate_reap $P
 gate_require_capture "$OUT"
 echo "==== captured ===="; cat "$OUT"

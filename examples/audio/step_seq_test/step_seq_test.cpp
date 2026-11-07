@@ -2,7 +2,17 @@
 #include "HardwareSerial.h"
 #include <math.h>
 #include <Audio.h>
-#include "control_wm8962.h"   // Audio.h includes control_wm8960.h but NOT this one
+// Board codec. Audio.h pulls in every codec driver EXCEPT the WM8962 (control_wm8960.h is in
+// its include list, control_wm8962.h is not), so the EVKB header is named explicitly. Nosh
+// carries an SGTL5000 on LPI2C5 instead: its driver defaults to Wire2 under ARDUINO_NOSH and
+// declares the 512*Fs / 32*Fs ratios the RT1176 SAI config produces, so only the type changes.
+#if defined(ARDUINO_NOSH)
+#include "control_sgtl5000.h"
+typedef AudioControlSGTL5000 BoardCodec;
+#else
+#include "control_wm8962.h"
+typedef AudioControlWM8962 BoardCodec;
+#endif
 
 #define CONSOLE Serial1
 
@@ -22,7 +32,7 @@ AudioOutputI2S     out;
 AudioConnection    cPk(acid, 0, peak, 0);
 AudioConnection    cL (acid, 0, out,  0);
 AudioConnection    cR (acid, 0, out,  1);
-AudioControlWM8962 wm;
+BoardCodec         wm;
 
 // ★ HOW LONG EACH MEASUREMENT RUNS, and why this number and not another.
 //

@@ -15,8 +15,9 @@ ELF="$DIR/$(gate_build_dir)/sd_wav_play_test.elf"
 
 run_one() {   # $1 = mono|stereo
     KIND="$1"
-    WAV="$DIR/$KIND.wav"; IMG="$DIR/card_$KIND.img"
-    VCOM="$DIR/$KIND.uart"; TAP="$DIR/$KIND.raw"; DBG="$DIR/$KIND.dbg"
+    WAV=$(gate_capture_path "$DIR" "$KIND.wav"); IMG=$(gate_capture_path "$DIR" "card_$KIND.img")
+    VCOM=$(gate_capture_path "$DIR" "$KIND.uart"); TAP=$(gate_capture_path "$DIR" "$KIND.raw")
+    DBG=$(gate_capture_path "$DIR" "$KIND.dbg")
     rm -f "$WAV" "$IMG" "$VCOM" "$TAP" "$DBG"
     python3 "$DIR/gen_wav.py" "$KIND" "$WAV"
     # MBR/FAT16 card image with TEST.WAV seeded (the sd_fs_test recipe + a copy).
@@ -37,7 +38,7 @@ run_one() {   # $1 = mono|stereo
     # stream is scrambled (mid-block phase jumps). Same determinism lever the
     # interval_timer / tone gates use; here it makes the play->TDR0 path exact.
     "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-        -display none -serial file:"$VCOM" \
+        -display none $(gate_console "$VCOM") \
         $(gate_sd_drive "$IMG") \
         -chardev file,id=sai1-tap,path="$TAP" \
         -icount shift=auto \

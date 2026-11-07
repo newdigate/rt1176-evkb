@@ -128,8 +128,13 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-[ "$(gate_board)" = rt1176 ] || {
-    echo "FAIL: this gate is rt1176-only (EVKB_BOARD=$(gate_board)) -- the M.2 socket is on the MIMXRT1170-EVKB"; exit 1; }
+# The M.2 Key E socket (IW416: Bluetooth HCI on LPUART2, the same pads and the
+# same firmware download) is on the MIMXRT1170-EVKB and on Nosh, and on neither
+# 1060 board. Nosh runs this gate on the EVKB machine (gate-lib's nosh arm).
+case "$(gate_board)" in
+    rt1176|nosh) ;;
+    *) echo "FAIL: this gate needs an M.2 socket (EVKB_BOARD=$(gate_board)): rt1176 or nosh"; exit 1 ;;
+esac
 
 fail() { echo "FAIL: $*"; exit 1; }
 
@@ -137,7 +142,7 @@ fail() { echo "FAIL: $*"; exit 1; }
 # other bt_tone_test build. Under the vacuity harness (GATE_VACUITY=1, no ARM
 # toolchain guaranteed) skip the (re)build once the ELF already exists -- same
 # convention as run_qemu_avdtp.sh / run_qemu_baud.sh.
-BUILD_DIR="$DIR/build-media"
+BUILD_DIR="$DIR/$(gate_build_dir)-media"   # build-media on rt1176, build-nosh-media on nosh
 ELF="$BUILD_DIR/bt_tone_test.elf"
 
 if [ "${GATE_VACUITY:-}" = "1" ] && [ -x "$ELF" ]; then
@@ -145,7 +150,7 @@ if [ "${GATE_VACUITY:-}" = "1" ] && [ -x "$ELF" ]; then
 else
     mkdir -p "$BUILD_DIR"
     CONFIGURE_RC=0
-    cmake -S "$DIR" -B "$BUILD_DIR" -DCMAKE_TOOLCHAIN_FILE="$EVKB/toolchain/rt1170-evkb.toolchain.cmake" \
+    cmake -S "$DIR" -B "$BUILD_DIR" $(gate_cmake_board_args "$EVKB") \
           -DM2_BT_TARGET_NAME=FAKE-HEADSET-01 >"$BUILD_DIR/configure.log" 2>&1 || CONFIGURE_RC=$?
     BUILD_RC=0
     if [ "$CONFIGURE_RC" -eq 0 ]; then

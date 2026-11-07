@@ -200,8 +200,13 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-[ "$(gate_board)" = rt1176 ] || {
-    echo "FAIL: this gate is rt1176-only (EVKB_BOARD=$(gate_board)) -- the M.2 socket is on the MIMXRT1170-EVKB"; exit 1; }
+# The M.2 Key E socket (IW416: Bluetooth HCI on LPUART2, the same pads and the
+# same firmware download) is on the MIMXRT1170-EVKB and on Nosh, and on neither
+# 1060 board. Nosh runs this gate on the EVKB machine (gate-lib's nosh arm).
+case "$(gate_board)" in
+    rt1176|nosh) ;;
+    *) echo "FAIL: this gate needs an M.2 socket (EVKB_BOARD=$(gate_board)): rt1176 or nosh"; exit 1 ;;
+esac
 
 fail() { echo "FAIL: $*"; exit 1; }
 
@@ -211,7 +216,7 @@ SINK_GOLDEN=954D2C41      # crc200 over the first 200 decoded blocks of sine.sbc
 # looking for a peer) a sink configures nothing: it listens.  Under the vacuity harness
 # (GATE_VACUITY=1, no ARM toolchain guaranteed) skip the (re)build once the ELF exists, the same
 # convention every other bt gate uses.
-BUILD_DIR="$DIR/build"
+BUILD_DIR="$DIR/$(gate_build_dir)"   # build on rt1176, build-nosh on nosh
 ELF="$BUILD_DIR/bt_sink_test.elf"
 
 if [ "${GATE_VACUITY:-}" = "1" ] && [ -x "$ELF" ]; then
@@ -219,14 +224,14 @@ if [ "${GATE_VACUITY:-}" = "1" ] && [ -x "$ELF" ]; then
 else
     mkdir -p "$BUILD_DIR"
     CONFIGURE_RC=0
-    cmake -S "$DIR" -B "$BUILD_DIR" -DCMAKE_TOOLCHAIN_FILE="$EVKB/toolchain/rt1170-evkb.toolchain.cmake" \
+    cmake -S "$DIR" -B "$BUILD_DIR" $(gate_cmake_board_args "$EVKB") \
           >"$BUILD_DIR/configure.log" 2>&1 || CONFIGURE_RC=$?
     BUILD_RC=0
     if [ "$CONFIGURE_RC" -eq 0 ]; then
         cmake --build "$BUILD_DIR" >"$BUILD_DIR/build.log" 2>&1 || BUILD_RC=$?
     fi
     if [ "$CONFIGURE_RC" -ne 0 ] || [ "$BUILD_RC" -ne 0 ]; then
-        fail "build/ did not build -- see build/configure.log / build.log"
+        fail "$BUILD_DIR did not build -- see its configure.log / build.log"
     fi
 fi
 

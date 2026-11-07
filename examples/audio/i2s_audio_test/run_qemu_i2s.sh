@@ -11,10 +11,12 @@ QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/$(gate_build_dir)/i2s_audio_test.elf"
-VCOM="$DIR/vcom.uart"; DBG="$DIR/i2s.dbg"; TAP="$DIR/tap.raw"
+VCOM=$(gate_capture_path "$DIR" vcom.uart)
+DBG=$(gate_capture_path "$DIR" i2s.dbg)
+TAP=$(gate_capture_path "$DIR" tap.raw)
 rm -f "$VCOM" "$DBG" "$TAP"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -display none -serial file:"$VCOM" \
+    -display none $(gate_console "$VCOM") \
     -chardev file,id=sai1-tap,path="$TAP" \
     -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P

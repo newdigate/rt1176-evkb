@@ -42,6 +42,9 @@ if(EVKB_BOARD STREQUAL "rt1062")
         ${EVKB_AUDIO_DIR}/control_wm8960.cpp
         ${EVKB_AUDIO_DIR}/utility/imxrt_hw.cpp
     )
+elseif(EVKB_BOARD STREQUAL "nosh")
+    # Nosh: SGTL5000 on LPI2C5 (the driver picks Wire2 under ARDUINO_NOSH).
+    target_sources(audiooutput_i2s_test.elf PRIVATE ${EVKB_AUDIO_DIR}/control_sgtl5000.cpp)
 else()
     target_sources(audiooutput_i2s_test.elf PRIVATE ${EVKB_AUDIO_DIR}/control_wm8962.cpp)
 endif()

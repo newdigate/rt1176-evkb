@@ -22,8 +22,15 @@ target_sources(i2s_int_test.elf PRIVATE
     ${EVKB_AUDIO_DIR}/sai1176.c
     ${EVKB_AUDIO_DIR}/output_i2s_int.cpp
     ${EVKB_AUDIO_DIR}/input_i2s_int.cpp
-    ${EVKB_AUDIO_DIR}/control_wm8962.cpp
 )
+# The board codec driver is the one source that differs per board: the sketch's
+# ARDUINO_NOSH arm names AudioControlSGTL5000 (Nosh's codec on LPI2C5), else the
+# EVKB's WM8962.
+if(EVKB_BOARD STREQUAL "nosh")
+    target_sources(i2s_int_test.elf PRIVATE ${EVKB_AUDIO_DIR}/control_sgtl5000.cpp)
+else()
+    target_sources(i2s_int_test.elf PRIVATE ${EVKB_AUDIO_DIR}/control_wm8962.cpp)
+endif()
 target_include_directories(i2s_int_test.elf PRIVATE ${EVKB_AUDIO_DIR})
 
 target_link_libraries(i2s_int_test.elf stdc++)

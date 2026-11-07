@@ -10,10 +10,12 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-ELF="$DIR/$(gate_build_dir)/audio_h_test.elf"; OUT="$DIR/audio_h.uart"
-rm -f "$OUT"
+ELF="$DIR/$(gate_build_dir)/audio_h_test.elf"
+OUT=$(gate_capture_path "$DIR" audio_h.uart)
+DBG=$(gate_capture_path "$DIR" audio_h.dbg)
+rm -f "$OUT" "$DBG"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -display none -serial file:"$OUT" -d guest_errors -D "$DIR/audio_h.dbg" &
+    -display none $(gate_console "$OUT") -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
 for _ in $(seq 1 40); do [ -f "$OUT" ] && grep -q "AUDIOH-DONE" "$OUT" 2>/dev/null && break; sleep 0.25; done
 gate_reap $P

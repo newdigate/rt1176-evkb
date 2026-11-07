@@ -36,10 +36,17 @@ target_sources(sd_wav_play_test.elf PRIVATE
     sd_wav_play_test.cpp
     ${EVKB_AUDIO_DIR}/play_sd_wav.cpp
     ${EVKB_AUDIO_DIR}/output_i2s.cpp
-    ${EVKB_AUDIO_DIR}/control_wm8962.cpp
     ${EVKB_AUDIO_DIR}/spi_interrupt.cpp
     ${EVKB_AUDIO_DIR}/memcpy_audio.S
 )
+# The board codec driver is the one source that differs per board: the sketch's
+# ARDUINO_NOSH arm names AudioControlSGTL5000 (Nosh's codec on LPI2C5), else the
+# EVKB's WM8962.
+if(EVKB_BOARD STREQUAL "nosh")
+    target_sources(sd_wav_play_test.elf PRIVATE ${EVKB_AUDIO_DIR}/control_sgtl5000.cpp)
+else()
+    target_sources(sd_wav_play_test.elf PRIVATE ${EVKB_AUDIO_DIR}/control_wm8962.cpp)
+endif()
 set_source_files_properties(${EVKB_AUDIO_DIR}/memcpy_audio.S PROPERTIES
     LANGUAGE C
     COMPILE_OPTIONS "-x;assembler-with-cpp"

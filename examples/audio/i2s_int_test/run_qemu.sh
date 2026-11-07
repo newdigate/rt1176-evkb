@@ -26,10 +26,11 @@ QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/$(gate_build_dir)/i2s_int_test.elf"
-OUT="$DIR/vcom.uart"
-rm -f "$OUT" "$DIR/i2s_int.dbg"
+OUT=$(gate_capture_path "$DIR" vcom.uart)
+DBG=$(gate_capture_path "$DIR" i2s_int.dbg)
+rm -f "$OUT" "$DBG"
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -display none -serial file:"$OUT" -d guest_errors -D "$DIR/i2s_int.dbg" &
+    -display none $(gate_console "$OUT") -d guest_errors -D "$DBG" &
 P=$!; gate_pid $P
 for _ in $(seq 1 40); do
     [ -f "$OUT" ] && grep -q "I2SINT-DONE" "$OUT" 2>/dev/null && break

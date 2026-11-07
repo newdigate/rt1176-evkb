@@ -73,6 +73,64 @@ bool LocalWM8962::begin(TwoWire &b, uint8_t a) {
     if (!writeReg(0x38, 0x000A)) return false;   // CLK4: ratio 512
     return true;
 }
+
+#if defined(ARDUINO_NOSH)
+// Nosh: SGTL5000 on LPI2C5 at 0x0A (QFN-20, I2C only; VDDD fed externally from
+// +1V8). The register sequence is the Audio library's AudioControlSGTL5000
+// slave path, re-expressed for the core's 48 kHz I2SClass clocks: MCLK = 512*Fs
+// and a frame of two 16-bit slots so SCLK = 32*Fs (CHIP_CLK_CTRL 0x000A,
+// CHIP_I2S_CTRL 0x0130). Local for the same reason as LocalWM8962: this test
+// must not depend on the Audio library. Reads the part id first so a bus with
+// no codec fails here, not on the first write.
+class LocalSGTL5000 {
+public:
+    bool begin(TwoWire &b, uint8_t a = 0x0A);
+private:
+    TwoWire *bus; uint8_t addr;
+    bool writeReg(uint16_t reg, uint16_t val);
+    bool readReg(uint16_t reg, uint16_t *val);
+};
+bool LocalSGTL5000::writeReg(uint16_t reg, uint16_t val) {
+    bus->beginTransmission(addr);
+    bus->write((uint8_t)(reg >> 8)); bus->write((uint8_t)reg);
+    bus->write((uint8_t)(val >> 8)); bus->write((uint8_t)val);
+    return bus->endTransmission() == 0;
+}
+bool LocalSGTL5000::readReg(uint16_t reg, uint16_t *val) {
+    bus->beginTransmission(addr);
+    bus->write((uint8_t)(reg >> 8)); bus->write((uint8_t)reg);
+    if (bus->endTransmission(false) != 0) return false;
+    if (bus->requestFrom(addr, (uint8_t)2) != 2) return false;
+    uint8_t hi = bus->read(), lo = bus->read();
+    *val = ((uint16_t)hi << 8) | lo; return true;
+}
+const uint16_t SGTL_POWER[][2] = {
+    {0x0030, 0x4060},   // CHIP_ANA_POWER: VDDD external, digital linreg off
+    {0x0026, 0x006C},   // CHIP_LINREG_CTRL: VDDA and VDDIO above 3.1 V
+    {0x0028, 0x01F2},   // CHIP_REF_CTRL: VAG 1.575 V, normal ramp
+    {0x002C, 0x0F22},   // CHIP_LINE_OUT_CTRL: LO_VAG 1.65 V, 0.54 mA
+    {0x003C, 0x4446},   // CHIP_SHORT_CTRL
+    {0x0024, 0x0137},   // CHIP_ANA_CTRL: zero-cross detectors, muted
+    {0x0030, 0x40FF},   // CHIP_ANA_POWER: lineout, hp, adc, dac up
+    {0x0002, 0x0073} }; // CHIP_DIG_POWER: everything digital up
+const uint16_t SGTL_ROUTE[][2] = {
+    {0x002E, 0x1D1D},   // CHIP_LINE_OUT_VOL: ~1.3 Vpp
+    {0x0004, 0x000A},   // CHIP_CLK_CTRL: SYS_FS 48 kHz, MCLK 512*Fs
+    {0x0006, 0x0130},   // CHIP_I2S_CTRL: slave, SCLK 32*Fs, 16-bit, I2S
+    {0x000A, 0x0010},   // CHIP_SSS_CTRL: ADC->I2S, I2S->DAC
+    {0x000E, 0x0000},   // CHIP_ADCDAC_CTRL: DAC unmuted
+    {0x0010, 0x3C3C},   // CHIP_DAC_VOL: 0 dB
+    {0x0024, 0x0036} }; // CHIP_ANA_CTRL: line-in selected, outputs unmuted
+bool LocalSGTL5000::begin(TwoWire &b, uint8_t a) {
+    bus = &b; addr = a;
+    uint16_t id;
+    if (!readReg(0x0000, &id) || (id >> 8) != 0xA0) return false;   // CHIP_ID PARTID
+    for (auto &e : SGTL_POWER) if (!writeReg(e[0], e[1])) return false;
+    delay(400);                                                      // analog settle
+    for (auto &e : SGTL_ROUTE) if (!writeReg(e[0], e[1])) return false;
+    return true;
+}
+#endif
 } // anonymous namespace
 
 // 1 kHz @ 48 kHz = 48 samples/cycle. L = full sine, R = half amplitude
@@ -114,7 +172,11 @@ void setup() {
     Serial1.println("STAGE_B_DONE");   // tap capture is checked host-side
 
     Wire2.begin();
+#if defined(ARDUINO_NOSH)
+    static LocalSGTL5000 localCodec;   // 0x0A on the same LPI2C5
+#else
     static LocalWM8962 localCodec;
+#endif
     bool ok = localCodec.begin(Wire2);
     Serial1.println(ok ? "STAGE_C_PASS" : "STAGE_C_FAIL");
 }

@@ -28,8 +28,13 @@ EVKB=$(cd "$DIR/../../.." && pwd)
 QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
-[ "$(gate_board)" = rt1176 ] || {
-    echo "FAIL: this gate is rt1176-only (EVKB_BOARD=$(gate_board)) -- the M.2 socket is on the MIMXRT1170-EVKB"; exit 1; }
+# The M.2 Key E socket (IW416: Bluetooth HCI on LPUART2, the same pads and the
+# same firmware download) is on the MIMXRT1170-EVKB and on Nosh, and on neither
+# 1060 board. Nosh runs this gate on the EVKB machine (gate-lib's nosh arm).
+case "$(gate_board)" in
+    rt1176|nosh) ;;
+    *) echo "FAIL: this gate needs an M.2 socket (EVKB_BOARD=$(gate_board)): rt1176 or nosh"; exit 1 ;;
+esac
 ELF="$DIR/$(gate_build_dir)/bt_tone_test.elf"
 OUT=$(gate_capture_path "$DIR" serial.uart)
 DBG=$(gate_capture_path "$DIR" serial.dbg)

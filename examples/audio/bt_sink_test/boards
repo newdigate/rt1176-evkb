@@ -1,0 +1,9 @@
+# Boards this example is built and gated for, one per line. The M.2 Key E socket
+# (IW416: Bluetooth HCI on LPUART2) is on the MIMXRT1170-EVKB and on Nosh, not on
+# the 1060 boards. The nosh half boots the EVKB machine through gate-lib's nosh
+# arm and plays into Nosh's SGTL5000 (AVRCP volume lands on the DAC digital
+# volume: Nosh has LINE OUT only). The gate builds its own image per board
+# through gate_cmake_board_args. Load-sensitive class on both boards (CLAUDE.md
+# 2026-09-18 note): a red half under a busy host is re-run idle before it counts.
+rt1176
+nosh

@@ -4,7 +4,17 @@
 #include "AudioStream.h"
 #include "play_sd_wav.h"
 #include "output_i2s.h"
+// Board codec. Audio.h pulls in every codec driver EXCEPT the WM8962 (control_wm8960.h is in
+// its include list, control_wm8962.h is not), so the EVKB header is named explicitly. Nosh
+// carries an SGTL5000 on LPI2C5 instead: its driver defaults to Wire2 under ARDUINO_NOSH and
+// declares the 512*Fs / 32*Fs ratios the RT1176 SAI config produces, so only the type changes.
+#if defined(ARDUINO_NOSH)
+#include "control_sgtl5000.h"
+typedef AudioControlSGTL5000 BoardCodec;
+#else
 #include "control_wm8962.h"
+typedef AudioControlWM8962 BoardCodec;
+#endif
 
 // AudioPlaySdWav (0 in / 2 out) -> AudioOutputI2S (SAI1 TX DMA) -> WM8962 -> J101.
 // The SAI1 TX DMA isr pends update_all(), which runs AudioPlaySdWav::update() ->
@@ -12,7 +22,7 @@
 // mirrored to the sai1-tap chardev; check_tap.py asserts it equals TEST.WAV.
 AudioPlaySdWav     playWav;
 AudioOutputI2S     out;
-AudioControlWM8962 wm;                          // I2C/Wire2 codec (HW fidelity)
+BoardCodec         wm;                          // I2C/Wire2 codec (HW fidelity)
 AudioConnection    cL(playWav, 0, out, 0);      // left
 AudioConnection    cR(playWav, 1, out, 1);      // right
 

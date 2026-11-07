@@ -11,7 +11,10 @@ QEMU="$EVKB/tools/qrun"
 . "$EVKB/tools/gate-lib.sh"
 gate_init
 ELF="$DIR/$(gate_build_dir)/sai_rx_test.elf"
-VCOM="$DIR/vcom.uart"; DBG="$DIR/sai_rx.dbg"; INJ="$DIR/inject.raw"; TAP="$DIR/tap.raw"
+VCOM=$(gate_capture_path "$DIR" vcom.uart)
+DBG=$(gate_capture_path "$DIR" sai_rx.dbg)
+INJ=$(gate_capture_path "$DIR" inject.raw)
+TAP=$(gate_capture_path "$DIR" tap.raw)
 python3 "$DIR/gen_inject.py" "$INJ"
 rm -f "$VCOM" "$DBG" "$TAP"
 gate_tmp "$INJ" "$INJ.fifo" "$INJ.fifo.in" "$INJ.fifo.out"
@@ -22,7 +25,7 @@ gate_tmp "$INJ" "$INJ.fifo" "$INJ.fifo.in" "$INJ.fifo.out"
 rm -f "$INJ.fifo"; mkfifo "$INJ.fifo"
 ( cat "$INJ" > "$INJ.fifo" 2>/dev/null ) & gate_pid $!
 "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
-    -display none -serial file:"$VCOM" \
+    -display none $(gate_console "$VCOM") \
     -chardev pipe,id=sai1-rxinject,path="$INJ.fifo" \
     -chardev file,id=sai1-tap,path="$TAP" \
     -d guest_errors -D "$DBG" &

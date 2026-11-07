@@ -16,10 +16,21 @@
 #include <HardwareSerial.h>
 #include <string.h>
 #include <Audio.h>
-// Audio.h pulls in every codec driver EXCEPT this one (control_wm8960.h is in its include list and
-// control_wm8962.h is not), so the WM8962 header must be named explicitly -- same as acid_box.
+// Board codec.  Audio.h pulls in every codec driver EXCEPT the WM8962 (control_wm8960.h is in its
+// include list, control_wm8962.h is not), so the EVKB header is named explicitly -- same as acid_box.
+// Nosh carries an SGTL5000 on the same LPI2C5 bus; its driver defaults to Wire2 under ARDUINO_NOSH.
+// Nosh's only output is LINE OUT (HP_L/HP_R are unconnected), so AVRCP absolute volume lands on the
+// DAC's digital volume there instead of the WM8962's headphone amplifier.
+#if defined(ARDUINO_NOSH)
+#include "control_sgtl5000.h"
+struct BoardCodec : AudioControlSGTL5000 {
+    bool headphoneVolume(uint8_t v) { dacVolume(v / 127.0f); return true; }   // 0..127 -> 0..1
+};
+#else
 #include "control_wm8962.h"
-#include <Wire.h>                  // Wire2 = LPI2C5, the codec's bus (AudioControlWM8962::enable() begins it)
+typedef AudioControlWM8962 BoardCodec;
+#endif
+#include <Wire.h>                  // Wire2 = LPI2C5, the codec's bus (the codec's enable() begins it)
 
 #include <Hci.h>
 #include <HciEvents.h>
@@ -290,7 +301,7 @@ static bool s_bondsLoaded = false;
 static AudioInputBluetooth btin;
 static AudioOutputI2S      i2sOut;
 static AudioConnection     c1(btin, 0, i2sOut, 0), c2(btin, 1, i2sOut, 1);
-static AudioControlWM8962  codec;
+static BoardCodec          codec;
 
 static void btLog(void *, const char *s) { CONSOLE.println(s); }
 // A2dpSink's media callback: main context (the L2cap RX path), NOT an ISR -- the decode happens here, out of the

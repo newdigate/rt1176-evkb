@@ -5,3 +5,4 @@
 # compiles for __IMXRT1062__ anywhere in this tree.
 rt1176
 rt1062
+nosh

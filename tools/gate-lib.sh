@@ -178,6 +178,29 @@ gate_capture_path() {   # gate_capture_path DIR BASENAME
     echo "$1/$(gate_build_dir)/$2"
 }
 
+# Emit the cmake configure arguments that select the current board: its
+# toolchain file and, for every board but rt1176, the -DEVKB_BOARD the file
+# must agree with (evkb.cmake FATALs on a mismatch).
+#
+#   cmake -S "$DIR" -B "$BUILD_DIR" $(gate_cmake_board_args "$EVKB") -DMY_OPTION=...
+#
+# For gates that build their OWN variant image (bt_tone_test's lifecycle/media/
+# soak gates, bt_sink_test): the sweep runner builds only the default ELF per
+# board, so a gate configuring a variant itself used to name the EVKB toolchain
+# file directly -- which built an EVKB image whatever the board and made the
+# gate rt1176-only by accident. rt1176 passes no -DEVKB_BOARD and uses the file
+# named for the 1170 FAMILY (do not "correct" it to rt1176). The same map lives
+# in tools/run-all-qemu-gates.sh run_gate(), which predates this function:
+# keep the two in step.
+gate_cmake_board_args() {   # gate_cmake_board_args REPO_ROOT
+    case "$(gate_board)" in
+        rt1176) echo "-DCMAKE_TOOLCHAIN_FILE=$1/toolchain/rt1170-evkb.toolchain.cmake" ;;
+        rt1062) echo "-DCMAKE_TOOLCHAIN_FILE=$1/toolchain/rt1062-evkb.toolchain.cmake -DEVKB_BOARD=rt1062" ;;
+        nosh)   echo "-DCMAKE_TOOLCHAIN_FILE=$1/toolchain/nosh.toolchain.cmake -DEVKB_BOARD=nosh" ;;
+        *) echo "gate-lib: unknown EVKB_BOARD '$(gate_board)'" >&2; exit 2 ;;
+    esac
+}
+
 gate_cleanup() {
     _rc=$?
     set +e   # trap-only: a dead registered PID must not abort us under the runner's

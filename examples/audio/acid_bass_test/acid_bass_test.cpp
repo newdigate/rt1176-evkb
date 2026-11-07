@@ -4,10 +4,17 @@
                                  // audio examples do, rather than relying on
                                  // Arduino.h to drag it in transitively.
 #include <Audio.h>
-// Audio.h pulls in every codec driver EXCEPT this one -- control_wm8962.h is not
-// in its include list (control_wm8960.h is), so the WM8962 header must be named
-// explicitly, exactly as audiooutput_i2s_test does.
+// Board codec. Audio.h pulls in every codec driver EXCEPT the WM8962 (control_wm8960.h is in
+// its include list, control_wm8962.h is not), so the EVKB header is named explicitly. Nosh
+// carries an SGTL5000 on LPI2C5 instead: its driver defaults to Wire2 under ARDUINO_NOSH and
+// declares the 512*Fs / 32*Fs ratios the RT1176 SAI config produces, so only the type changes.
+#if defined(ARDUINO_NOSH)
+#include "control_sgtl5000.h"
+typedef AudioControlSGTL5000 BoardCodec;
+#else
 #include "control_wm8962.h"
+typedef AudioControlWM8962 BoardCodec;
+#endif
 
 // rt1176-only example: LPUART1 console (`Serial1` on the imxrt1176 core) and
 // the WM8962 codec (control_wm8962.cpp talks Wire2/LPI2C5). Same wiring as
@@ -25,7 +32,7 @@ AudioConnection    cRms(acid, 0, rms,  0);
 AudioConnection    cPk (acid, 0, peak, 0);
 AudioConnection    cL  (acid, 0, out,  0);
 AudioConnection    cR  (acid, 0, out,  1);
-AudioControlWM8962 wm;
+BoardCodec         wm;
 
 // One measurement window: the largest AudioAnalyzeRMS::read() and the largest
 // AudioAnalyzePeak::read() seen over a fixed number of DELIVERED BLOCKS, plus

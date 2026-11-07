@@ -29,7 +29,17 @@
 #include "analyze_peak.h"
 #include "output_i2s_int.h"
 #include "input_i2s_int.h"
+// Board codec. Audio.h pulls in every codec driver EXCEPT the WM8962 (control_wm8960.h is in
+// its include list, control_wm8962.h is not), so the EVKB header is named explicitly. Nosh
+// carries an SGTL5000 on LPI2C5 instead: its driver defaults to Wire2 under ARDUINO_NOSH and
+// declares the 512*Fs / 32*Fs ratios the RT1176 SAI config produces, so only the type changes.
+#if defined(ARDUINO_NOSH)
+#include "control_sgtl5000.h"
+typedef AudioControlSGTL5000 BoardCodec;
+#else
 #include "control_wm8962.h"
+typedef AudioControlWM8962 BoardCodec;
+#endif
 
 #define DISPATCH_TARGET 600u   // ~1.74 s of audio at 344 dispatches/s
 
@@ -42,7 +52,7 @@ AudioConnection        c1(sine1, 0, out, 0);       // left  = sine
 AudioConnection        c2(sine1, 0, out, 1);       // right = sine
 AudioConnection        c3(sine1, 0, synthpeak, 0);
 AudioConnection        c4(in, 1, micpeak, 0);      // mic is the RIGHT channel
-AudioControlWM8962     wm;
+BoardCodec             wm;
 
 void setup() {
     Serial1.begin(115200);

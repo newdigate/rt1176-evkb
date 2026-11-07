@@ -10,15 +10,22 @@
 // wire -- on the MIMXRT1060-EVKB, LPUART1 (GPIO_AD_B0_12/13) is the DAPLink VCOM,
 // whereas LPUART6 only reaches Arduino header pins D0/D1.
 //
-// The CODEC is a genuinely different chip, not a naming difference: the
-// MIMXRT1170-EVKB has a WM8962, the MIMXRT1060-EVKB a WM8960. Different register
-// maps, different drivers. The I2C bus differs too (LPI2C5 vs LPI2C1, both at
-// 0x1A) but needs no guard here -- control_wm8962.cpp uses Wire2 and
-// control_wm8960.cpp uses Wire, so swapping the class swaps the bus.
+// The CODEC is a genuinely different chip per board, not a naming difference: the
+// MIMXRT1170-EVKB has a WM8962, the MIMXRT1060-EVKB a WM8960, Nosh an SGTL5000.
+// Different register maps, different drivers. The I2C bus differs too (LPI2C5 on
+// the 1170 boards, LPI2C1 on the 1060) but needs no guard here -- each driver
+// names its own bus (control_wm8962.cpp Wire2, control_wm8960.cpp Wire,
+// control_sgtl5000.cpp Wire2 under ARDUINO_NOSH), so swapping the class swaps
+// the bus. Nosh's SGTL5000 is also told the 512*Fs / 32*Fs ratios the RT1176
+// SAI config produces (inside its driver, under __IMXRT1176__).
 #if defined(ARDUINO_MIMXRT1060_EVKB)
 #include "control_wm8960.h"
 #define CONSOLE       Serial6
 #define BOARD_CODEC_T AudioControlWM8960
+#elif defined(ARDUINO_NOSH)
+#include "control_sgtl5000.h"
+#define CONSOLE       Serial1
+#define BOARD_CODEC_T AudioControlSGTL5000
 #else
 #include "control_wm8962.h"
 #define CONSOLE       Serial1

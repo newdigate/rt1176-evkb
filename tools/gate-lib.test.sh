@@ -397,4 +397,42 @@ test_unknown_board_fails_loudly() {
 }
 test_unknown_board_fails_loudly; report test_unknown_board_fails_loudly $?
 
+# gate_cmake_board_args: the self-building gates (bt_tone_test's variants,
+# bt_sink_test) configure through this instead of naming a toolchain file, so a
+# nosh sweep gets a Nosh image. rt1176 is the historical configure line byte for
+# byte (no -DEVKB_BOARD); every other board must pass its own or evkb.cmake
+# FATALs on the board/toolchain mismatch. Nosh's file has no "-evkb" suffix.
+test_cmake_args_rt1176_is_the_historical_line() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1176
+      _got=$(gate_cmake_board_args /r)
+      [ "$_got" = "-DCMAKE_TOOLCHAIN_FILE=/r/toolchain/rt1170-evkb.toolchain.cmake" ] )
+}
+test_cmake_args_rt1176_is_the_historical_line; report test_cmake_args_rt1176_is_the_historical_line $?
+
+test_cmake_args_rt1062_names_its_board() {
+    ( . "$LIB"
+      EVKB_BOARD=rt1062
+      _got=$(gate_cmake_board_args /r)
+      [ "$_got" = "-DCMAKE_TOOLCHAIN_FILE=/r/toolchain/rt1062-evkb.toolchain.cmake -DEVKB_BOARD=rt1062" ] )
+}
+test_cmake_args_rt1062_names_its_board; report test_cmake_args_rt1062_names_its_board $?
+
+test_cmake_args_nosh_names_its_board() {
+    ( . "$LIB"
+      EVKB_BOARD=nosh
+      _got=$(gate_cmake_board_args /r)
+      [ "$_got" = "-DCMAKE_TOOLCHAIN_FILE=/r/toolchain/nosh.toolchain.cmake -DEVKB_BOARD=nosh" ] )
+}
+test_cmake_args_nosh_names_its_board; report test_cmake_args_nosh_names_its_board $?
+
+test_cmake_args_unknown_board_fails_loudly() {
+    ( . "$LIB"
+      EVKB_BOARD=rt9999
+      _err=$(gate_cmake_board_args /r 2>&1 >/dev/null); _rc=$?
+      [ "$_rc" -eq 2 ] || exit 1
+      case "$_err" in *rt9999*) exit 0 ;; *) exit 1 ;; esac )
+}
+test_cmake_args_unknown_board_fails_loudly; report test_cmake_args_unknown_board_fails_loudly $?
+
 exit $FAILED
