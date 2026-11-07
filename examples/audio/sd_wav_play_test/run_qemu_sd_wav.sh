@@ -37,11 +37,24 @@ run_one() {   # $1 = mono|stereo
     # keeps draining half-buffers the guest hasn't refilled -> the captured TDR0
     # stream is scrambled (mid-block phase jumps). Same determinism lever the
     # interval_timer / tone gates use; here it makes the play->TDR0 path exact.
+    #
+    # The shift is FIXED, not `auto`. Under shift=auto QEMU re-fits the
+    # instructions-per-virtual-ns ratio at run time, and that re-fit lands a
+    # jump in virtual time on the SAI frame timer: several DMA half-buffer ticks
+    # fire back to back before the software update runs, one 128-frame block
+    # goes out as zeros and the stream resumes 64 frames late. Which gate run
+    # trips it depends only on WHEN playback starts after boot: with play ~50 ms
+    # after boot (the WM8962 path) it never showed; with play ~450 ms after boot
+    # it reproduced on BOTH boards, codec or no codec (2026-11-07: body_mism=4734
+    # of 8704 every run, mono, nosh and rt1176 alike). The Nosh codec exposed it
+    # because AudioControlSGTL5000::enable() carries the Teensy driver's 400 ms
+    # analog-settle delay. A fixed shift has no re-fit; 3, 5 and 7 all pass on
+    # both boards, 5 (32 ns per instruction) is the one pinned here.
     "$QEMU" $(gate_qemu_machine) -kernel "$ELF" \
         -display none $(gate_console "$VCOM") \
         $(gate_sd_drive "$IMG") \
         -chardev file,id=sai1-tap,path="$TAP" \
-        -icount shift=auto \
+        -icount shift=5 \
         -d guest_errors,unimp -D "$DBG" &
     P=$!; gate_pid $P; sleep 20; gate_reap $P
     gate_require_capture "$VCOM"
