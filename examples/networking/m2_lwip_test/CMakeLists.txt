@@ -57,6 +57,33 @@ if(M2RADIO_WIFI_SSID AND M2RADIO_WIFI_PSK)
     add_definitions(-DHAVE_WIFI_CREDS=1)
 endif()
 
+# --- TCP echo oracle -----------------------------------------------------------
+# The echo peer was hard-coded to the ESP8266 soft-AP (192.168.4.1:4712) until
+# 2026-11-17. On a real LAN the oracle is whatever host runs an echo server --
+# e.g. `python3 -c` on the bench Mac -- so make it configurable. Defaults keep
+# every existing build and the QEMU gate byte-identical.
+set(M2_ECHO_HOST "192.168.4.1" CACHE STRING "IPv4 address of the TCP echo oracle")
+set(M2_ECHO_PORT "4712"        CACHE STRING "TCP port of the echo oracle")
+if(NOT M2_ECHO_HOST MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "M2_ECHO_HOST must be a dotted IPv4 address, got '${M2_ECHO_HOST}'")
+endif()
+message(STATUS "TCP echo oracle: ${M2_ECHO_HOST}:${M2_ECHO_PORT}")
+add_definitions(-DM2_ECHO_HOST="${M2_ECHO_HOST}" -DM2_ECHO_PORT=${M2_ECHO_PORT})
+
+# --- IEEE power save after connect ----------------------------------------------
+# connectStation() enables IEEE PS by default (the W10 idle RX-death workaround,
+# found against the ESP8266 soft-AP). On a home router (2026-11-17, Nosh) the link
+# held but lwIP never got a DHCP lease with PS on: the AP buffers frames for a
+# dozing STA and broadcasts only at DTIM. OFF passes psOn=false. Default ON keeps
+# every existing build byte-identical.
+option(M2_WIFI_PS "Enable IEEE power save after each connect (connectStation psOn)" ON)
+if(M2_WIFI_PS)
+    add_definitions(-DM2_WIFI_PS_ON=1)
+else()
+    add_definitions(-DM2_WIFI_PS_ON=0)
+    message(STATUS "IEEE power save: OFF")
+endif()
+
 teensy_add_executable(m2_lwip_test m2_lwip_test.cpp ${M2_FW_SRC})
 teensy_target_link_libraries(m2_lwip_test cores M2Radio lwip)
 target_include_directories(m2_lwip_test.elf PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

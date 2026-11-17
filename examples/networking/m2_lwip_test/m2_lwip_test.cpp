@@ -1,7 +1,8 @@
 // W9: lwip over the IW416 M.2 Wi-Fi link.
 //
 // Hardware proof: DHCP via lwip's own client, then a raw-API TCP echo client
-// against the ESP8266 oracle (192.168.4.1:4712) -- send "M2LWIP hello <n>",
+// against the echo oracle (M2_ECHO_HOST:M2_ECHO_PORT, default the ESP8266
+// soft-AP 192.168.4.1:4712; see CMakeLists.txt) -- send "M2LWIP hello <n>",
 // require the echo byte-exact.  Console: `lwip: ip=... tcp=tx/ok/fail ...`.
 //
 // QEMU proof (run_qemu.sh): the DEVICE-ABSENT path -- QEMU's SD memory card
@@ -119,7 +120,7 @@ static void tcpKick() {
     // TIME_WAIT reaper (tcp_kill_timewait) against MEMP_NUM_TCP_PCB=5. That
     // is expected churn from this test client, not a pcb leak.
     s_lastKick = millis();
-    ip4_addr_t dst; IP4_ADDR(&dst, 192, 168, 4, 1);
+    ip4_addr_t dst; ip4addr_aton(M2_ECHO_HOST, &dst);   // -DM2_ECHO_HOST (CMakeLists.txt)
     s_pcb = tcp_new();
     if (s_pcb == nullptr) return;
     s_expectLen = (uint16_t)snprintf(s_expect, sizeof(s_expect),
@@ -128,7 +129,7 @@ static void tcpKick() {
     tcp_err(s_pcb, echoErr);
     tcp_recv(s_pcb, echoRecv);
     s_busy = true; s_started = millis(); s_tcpTx++;
-    if (tcp_connect(s_pcb, &dst, 4712, echoConnected) != ERR_OK)
+    if (tcp_connect(s_pcb, &dst, M2_ECHO_PORT, echoConnected) != ERR_OK)
         tcp_abort(s_pcb);                      // -> echoErr does the bookkeeping
 }
 
@@ -154,7 +155,7 @@ static const char *statusName(SdioHost::Status s) {
 
 static bool wifiConnect() {
 #if defined(HAVE_WIFI_CREDS)
-    SdioHost::Status c = iw416.connectStation(M2_WIFI_SSID, M2_WIFI_PSK);
+    SdioHost::Status c = iw416.connectStation(M2_WIFI_SSID, M2_WIFI_PSK, 3, M2_WIFI_PS_ON != 0);
     Serial1.print("connect="); Serial1.print(statusName(c));
     Serial1.print(" last_event=0x"); Serial1.println(iw416.lastEvent(), HEX);
     return c == SdioHost::OK;
