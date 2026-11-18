@@ -182,8 +182,47 @@ static_assert(TARGET_TOL >= TARGET_HALF,
 // The ISR counts and does nothing else.  read() is a multi-step I2C
 // transaction over shared Wire state and is explicitly not reentrant, so
 // touching the bus from here would corrupt any poll in flight.
-static volatile uint32_t int_edges = 0;
-static void touch_int_isr() { int_edges++; }
+//
+// INT_EDGES COUNTS ONLY WHILE THE TEST IS POLLING.  The real GT911 pulses INT
+// once per SCAN (~10 ms on the RK055) whether or not its last buffer has been
+// acknowledged, but holds only one buffer.  So whenever this test stops
+// polling for longer than a scan -- every repaint does, for 29-39 ms -- two or
+// three pulses arrive and only one buffer is waiting when polling resumes.
+// Measured on Nosh with timestamped edges: all 10 excess edges of a run fell
+// in those repaint pauses, at one per scan, and the rest paired one-to-one.
+//
+// So the ISR asks how long it has been since the last poll activity.  Within
+// POLL_PAUSE_CYC the edge counts as before.  Later than that the test is in a
+// pause, and the edge only sets edge_pending: however many arrive, the pause
+// contributes ONE edge, folded in at the next poll -- across a pause at most
+// one buffer can be pending.  POLL_PAUSE_CYC (8 ms) is below the shortest
+// measured scan spacing (9.4 ms), so no pause shorter than it can hold two
+// honest pulses, and inside normal polling (~1 ms per poll) nothing is
+// collapsed: a chattering pin still shows as an excess.  The QEMU model pulses
+// once per acknowledged buffer, so it never collapses anything.
+//
+// DWT cycles rather than micros(): micros() updates shared state and is not
+// safe from an ISR.  The counter wraps every ~4.3 s at 996 MHz; a pause that
+// long would read as polling and be counted in full, which errs towards a
+// reported excess, never towards hiding one.
+static uint32_t POLL_PAUSE_CYC = 0;   // 8 ms in cycles, set at the attach
+static volatile uint32_t int_edges     = 0;
+static volatile uint32_t int_edges_raw = 0;
+static volatile uint32_t last_poll_cyc = 0;
+static volatile bool     edge_pending  = false;
+static void touch_int_isr() {
+  int_edges_raw++;
+  if (ARM_DWT_CYCCNT - last_poll_cyc <= POLL_PAUSE_CYC) int_edges++;
+  else edge_pending = true;
+}
+// Called around every read() and before the final count: stamps poll activity
+// and folds a pause's single edge in.
+static void pollActivity() {
+  __disable_irq();
+  if (edge_pending) { int_edges++; edge_pending = false; }
+  last_poll_cyc = ARM_DWT_CYCCNT;
+  __enable_irq();
+}
 
 // --- Observations shared across the phases ---------------------------------
 // Every poll in this file goes through pollTouch(), which is what keeps these
@@ -216,7 +255,9 @@ static uint32_t target_releases = 0;
 [[nodiscard]] static GT911::Poll pollTouch(TouchPoint *pts, uint8_t maxPts,
                                            uint8_t &n) {
   n = 0;
+  pollActivity();
   const GT911::Poll p = touch.read(pts, maxPts, &n);
+  pollActivity();
   switch (p) {
     case GT911::Poll::Contacts:
       buffers++;
@@ -659,7 +700,12 @@ static void reportReadPathGaps() {
 // transcript.  The gate keeps its own copy of the arithmetic because it is the
 // half that names WHICH direction went wrong in the harness output.
 static bool reportInt() {
+  // The real part's edge for the LAST buffer read lands about one scan after
+  // that read, so wait out one scan and fold it in before taking the count.
+  delay(25);
+  pollActivity();
   const uint32_t edges = int_edges;
+  Serial1.printf("INT_EDGES_RAW=%lu\n", (unsigned long)int_edges_raw);
   Serial1.printf("INT_EDGES=%lu\n", (unsigned long)edges);
   Serial1.printf("BUFFERS=%lu\n", (unsigned long)buffers);
   const bool ok = edges >= buffers && edges <= buffers + poll_fails + 1u;
@@ -791,6 +837,8 @@ void setup() {
     // ONLY NOW, once begin() has released INT to an input, may anything else
     // touch that pin.  During bring-up it is an OUTPUT driving the address
     // latch, and an interrupt attached earlier would fight it.
+    POLL_PAUSE_CYC = (F_CPU_ACTUAL / 1000u) * 8u;
+    pollActivity();   // start the pause clock at the attach
     attachInterrupt(digitalPinToInterrupt(TOUCH_INT_PIN), touch_int_isr, RISING);
 
     // The phases run in order and stop at the first failure, but the reporting
