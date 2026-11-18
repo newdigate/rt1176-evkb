@@ -1,0 +1,53 @@
+# Hardware verification -- Nosh board (second board), 2026-11-18
+#
+# Setup: 3.5 mm stereo cable from line out (J8) to line in (J9). Console on J11
+# (LPUART1, PL2303, 115200). Flashed over SWD with nosh-dev-board/tools/nosh_flash.sh,
+# which also starts the image from the host (no SW1 press).
+# Built against Audio 0db101d (the RT1176 config_i2s guard: before it this graph,
+# with AudioOutputI2S and AudioInputI2S together, moved no audio at all).
+#
+# --- J11 console --------------------------------------------------------------
+
+[APP: line_loopback_hw] [VER: v1] [BUILD: Nov 18 2026 12:57:18]
+STAGE_CODEC=PASS
+info record blocks L=344 R=344 of 344 in 998 ms
+info record blocks L=172 R=172 of 172 in 499 ms
+STAGE_RATE=PASS
+info L freq=1000.0Hz level=-5.86dBFS thd=-72.4dB xtalk=-80.3dB dc=-5.2LSB
+STAGE_L_FREQ=PASS
+STAGE_L_LEVEL=PASS
+STAGE_L_THD=PASS
+STAGE_L_XTALK=PASS
+info R freq=1499.8Hz level=-5.76dBFS thd=-73.3dB xtalk=-83.7dB dc=-0.7LSB
+STAGE_R_FREQ=PASS
+STAGE_R_LEVEL=PASS
+STAGE_R_THD=PASS
+STAGE_R_XTALK=PASS
+info floor L=-85.7dBFS R=-85.1dBFS
+STAGE_FLOOR=PASS
+LOOPBACK=PASS
+
+# --- analyze_swd.py (recordings read from SDRAM over SWD, host FFT) ------------
+# python3 analyze_swd.py build-nosh/line_loopback_hw.elf \
+#     --user-script ~/Development/nosh-dev-board/tools/pyocd_notrap.py
+L 1000 Hz: level  -5.86 dBFS  THD  -72.3 dB  SNR  70.0 dB  xtalk  -80.3 dB  fit residual  -79.5 dBFS rms, worst 1024-sample block  -69.7 dBFS
+   H2  -72.6 dBc  H3  -86.6 dBc  H4  -93.8 dBc  H5  -99.2 dBc
+R 1500 Hz: level  -5.76 dBFS  THD  -73.2 dB  SNR  71.4 dB  xtalk  -83.7 dB  fit residual  -80.1 dBFS rms, worst 1024-sample block  -70.0 dBFS
+   H2  -73.4 dBc  H3  -92.9 dBc  H4  -93.7 dBc  H5 -104.7 dBc
+floor L:  -85.7 dBFS rms, peak 9 LSB
+floor R:  -85.1 dBFS rms, peak 7 LSB
+
+# The board's Hann-windowed Goertzel and the host FFT agree to 0.1 dB. Round-trip
+# gain (DAC -> line out level 13 -> line in level 0 -> ADC) is +0.14 / +0.24 dB.
+# Distortion is almost all H2. The sine fit leaves no step anywhere in the 1 s,
+# so no block was dropped or repeated.
+#
+# --- negative check: same image with codec.muteLineout() added (scratch build) --
+# Stands in for an unplugged cable: the record path still runs in real time, but
+# every signal check fails, so a PASS needs the analogue loop.
+info record blocks L=344 R=344 of 344 in 997 ms
+info record blocks L=172 R=172 of 172 in 499 ms
+info L freq=5570.6Hz level=-102.17dBFS thd=8.9dB xtalk=-4.1dB dc=-0.5LSB
+info R freq=11962.4Hz level=-108.01dBFS thd=14.6dB xtalk=-11.9dB dc=-0.5LSB
+info floor L=-86.0dBFS R=-85.2dBFS
+LOOPBACK=FAIL
