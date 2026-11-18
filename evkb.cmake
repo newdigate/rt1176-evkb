@@ -128,7 +128,12 @@ else()
     message(STATUS "teensy-cmake-macros: fetching at the pinned ref")
     FetchContent_Declare(teensy_cmake_macros
         GIT_REPOSITORY https://github.com/newdigate/teensy-cmake-macros
-        GIT_TAG        917062ee01a2f38ac1973f51e0600d01f6a88726)
+        GIT_TAG        80e53f1adca565b71d2d189fd7447b0aac520f72)
+    # 2026-11-18: 917062e -> 80e53f1 (TEENSY_BOARD, 231475a). The old pin had no
+    # board axis: it ignored TEENSY_BOARD=NOSH and linked imxrt1176.ld with
+    # -DARDUINO_MIMXRT1170_EVKB, so every EVKB_FORCE_FETCH Nosh build was silently
+    # an EVKB image (EVKB SEMC timings). EVKB builds are unchanged (TEENSY_BOARD
+    # defaults to MIMXRT1170_EVKB; forced-fetch rt1176 loopback build identical).
 endif()
 FetchContent_MakeAvailable(teensy_cmake_macros)
 include(${teensy_cmake_macros_SOURCE_DIR}/CMakeLists.include.txt)
