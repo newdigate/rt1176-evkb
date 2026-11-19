@@ -53,3 +53,13 @@ public:
 /* The adapter for a file name, by extension (case-blind); nullptr if the
  * format is not one of the four.  The instances are static: one track at a time. */
 TrackSource *track_source_for_name(const char *name);
+
+/* A read that returned nothing before the end of the file (the card went
+ * away) is treated by the adapters as the end of the track; this says whether
+ * that happened since the last open(). */
+bool track_source_read_error();
+
+/* The decoder arena, for other use while NO source is open (the loader builds
+ * its analysis objects there once decoding is over: the fast memory is scarce
+ * and the two are never needed together). */
+void *track_source_arena(size_t *bytes);

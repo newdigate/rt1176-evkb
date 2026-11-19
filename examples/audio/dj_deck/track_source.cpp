@@ -18,13 +18,15 @@ static uint8_t s_win[WIN];
 alignas(16) static uint8_t s_arena[sizeof(ac::mp3::Mp3Decoder) > sizeof(ac::flac::FlacDecoder)
                                        ? sizeof(ac::mp3::Mp3Decoder) : sizeof(ac::flac::FlacDecoder)];
 
+static bool s_read_error = false;
+
 /* A sliding window over [start, limit) of the file. */
 struct Stream {
     SeekableReader *f = nullptr;
     uint64_t base = 0, limit = 0;                   /* file offset of s_win[0]; nothing at or past limit is read */
     uint32_t len = 0, rd = 0;
 
-    void start(SeekableReader *file, uint64_t off, uint64_t lim) { f = file; base = off; limit = lim; len = rd = 0; }
+    void start(SeekableReader *file, uint64_t off, uint64_t lim) { f = file; base = off; limit = lim; len = rd = 0; s_read_error = false; }
     uint64_t pos() const { return base + rd; }
     uint32_t avail() const { return len - rd; }
     const uint8_t *ptr() const { return s_win + rd; }
@@ -39,7 +41,11 @@ struct Stream {
             if (want > WIN - len) want = WIN - len;
             if (f->position() != base + len && !f->seek(base + len)) { limit = base + len; break; }
             const size_t got = f->read(s_win + len, (size_t)want);
-            if (got == 0) { limit = base + len; break; }        /* shorter than it said: that is the end */
+            if (got == 0) {                                     /* nothing more: that is the end of the track */
+                if (base + len < f->size()) s_read_error = true;  /* ...but the file has more: the read failed */
+                limit = base + len;
+                break;
+            }
             len += (uint32_t)got;
         }
         return len;
@@ -401,6 +407,9 @@ static bool ext_is(const char *name, const char *ext)
         if (!a) return true;
     }
 }
+
+bool track_source_read_error() { return s_read_error; }
+void *track_source_arena(size_t *bytes) { if (bytes) *bytes = sizeof(s_arena); return s_arena; }
 
 TrackSource *track_source_for_name(const char *name)
 {

@@ -22,4 +22,10 @@ CLIPS="$DIR/../../audio_codecs_probe/clips"
 for f in $DEC; do $CXX -std=c++17 -O1 -g -I$AC/include -I$AC -c "$f" -o "$OUT/$(echo "$f" | tr '/' '_').o"; done
 $CXX $FLAGS -I"$DIR/../../audio_codecs_probe" "$DIR/track_source_test.cpp" "$DIR/../track_source.cpp" $AC/src/preview/preview_stream.cpp "$OUT"/*.o -o "$OUT/track_source_test"
 "$OUT/track_source_test" "$CLIPS"
+ANA="$AC/src/core/fft.cpp $AC/src/spectrum/desktop_fft.cpp $AC/src/spectrum/spectrum_filterbank.cpp $AC/src/spectrum/spectrum_generator.cpp $AC/src/spectrum/spectrum_reader.cpp \
+$AC/src/tempo/tempo_novelty.cpp $AC/src/tempo/tempo_inducer.cpp $AC/src/tempo/tempo_refiner.cpp $AC/src/tempo/tempo_generator.cpp $AC/src/tempo/tempo_reader.cpp \
+$AC/src/preview/preview_stream.cpp $AC/src/preview/preview_reader.cpp $AC/src/preview/preview_generator.cpp"
+for f in $ANA; do $CXX -std=c++17 -O1 -g -I$AC/include -I$AC -c "$f" -o "$OUT/ana_$(echo "$f" | tr '/' '_').o"; done
+$CXX $FLAGS -I"$DIR/../../audio_codecs_probe" "$DIR/loader_test.cpp" "$DIR/../loader.cpp" "$DIR/../peaks.cpp" "$DIR/../track_source.cpp" "$OUT"/*.o -o "$OUT/loader_test"
+"$OUT/loader_test" "$CLIPS"
 echo "DJ-DECK-HOST-TESTS: PASS"
