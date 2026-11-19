@@ -43,6 +43,8 @@ notes.append(f'chevron_at={sx - WX},{sy - WY}')
 press(576, lane_y, hold=40); rest(GAP)                         # 5: long press; the test injects PRESS_LOST mid-way
 lane_drag('cleared')                                           # 6: no track -> no events
 press(WX + WW // 4, rail_y, hold=4); rest(GAP)
+press(576, lane_y, hold=40); rest(GAP)                         # 7: long press; the test calls set_tables() mid-way
+press(576, lane_y, hold=40); rest(GAP)                         # 8: long press; the test deletes the widget mid-way
 rest(50)
 
 open(__file__.rsplit('/', 1)[0] + '/touch_script.txt', 'w').write(

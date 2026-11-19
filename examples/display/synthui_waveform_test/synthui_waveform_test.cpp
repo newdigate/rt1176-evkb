@@ -28,6 +28,15 @@
  *   4               chevron tap  -> TRACK_REQUEST
  *   5 a long press, PRESS_LOST injected mid-way -> exactly one GRAB_END
  *   6 no track: a lane drag and a rail tap -> no event at all
+ *   7 a long press, set_tables() called mid-way -> the grab ends there
+ *   8 a long press, the widget deleted mid-way  -> the grab ends there
+ *
+ * And three checks that the full-redraw goldens cannot make:
+ *   wf_inc / wf_inc_fresh   a run of small scrolls (both directions), a load
+ *       that grows and a cue that moves, with NOTHING else invalidated, must
+ *       leave the same frame as a full redraw of the final state
+ *   wf_hidden_a / _b        inside a hidden container the widget must not
+ *       touch the frame at all, however often its position changes
  */
 #include <Arduino.h>
 #include <string.h>
@@ -45,7 +54,7 @@ static const uint32_t N0 = (uint32_t)(TOTAL / 128), N1 = N0 / 16, N2 = N1 / 16;
 EXTMEM static int8_t lod0[N0 * 4], lod1[N1 * 4 + 4], lod2[N2 * 4 + 4];
 EXTMEM static synthui_wave_beat_t beats[720], many_beats[5000];
 static synthui_wave_table_t tables[3];
-static lv_obj_t *wf;
+static lv_obj_t *wf, *holder;
 static GT911 touch(Wire2, 9, 6);          /* reset, interrupt: as acid_box */
 
 /* ---- touch phase ---- */
@@ -129,6 +138,17 @@ static uint32_t settle_and_sum(void)
     lvgl_sum_feed(lvgl_mipi_panel_scanned_fb(), PANEL_FB_BYTES);
     return lvgl_sum_value();
 }
+/* The frame as it stands, WITHOUT invalidating anything: let pending work present, then sum. */
+static uint32_t sum_as_is(void)
+{
+    const uint32_t t = millis();
+    while (millis() - t < 400) lvgl_rt1176_loop();
+    lvgl_mipi_panel_flip_sync();
+    lvgl_sum_reset();
+    lvgl_sum_feed(lvgl_mipi_panel_scanned_fb(), PANEL_FB_BYTES);
+    return lvgl_sum_value();
+}
+static void frames(int n) { for (int i = 0; i < n; i++) { const uint32_t t = millis(); while (millis() - t < 40) lvgl_rt1176_loop(); } }
 static void state(const char *name)
 {
     Serial1.printf("wf_crc[%s]=0x%08lX\n", name, (unsigned long)settle_and_sum());
@@ -166,7 +186,12 @@ void setup()
     lv_obj_remove_style_all(scr);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x141C26), 0);
-    wf = synthui_waveform_create(scr);
+    holder = lv_obj_create(scr);                          /* a transparent full-screen parent, to hide later */
+    lv_obj_remove_style_all(holder);
+    lv_obj_set_pos(holder, 0, 0);
+    lv_obj_set_size(holder, 1280, 720);
+    lv_obj_remove_flag(holder, LV_OBJ_FLAG_SCROLLABLE);
+    wf = synthui_waveform_create(holder);
     lv_obj_set_pos(wf, 16, 96);
     lv_obj_set_size(wf, 1120, 408);                       /* lane 336, gap 8, rail 64 */
 
@@ -204,6 +229,18 @@ void setup()
         wait_for(&n_release, 7, "cleared releases");
         Serial1.println("wf_cleared_end");
         synthui_waveform_set_tracking(wf, true);
+        load_track(beats, 720);                                            /* 7 */
+        synthui_waveform_set_zoom(wf, 2048.0); synthui_waveform_set_position(wf, three);
+        wait_for(&n_begin, 3, "third grab");
+        synthui_waveform_set_tables(wf, tables, 3, 2, TOTAL, RATE);
+        Serial1.printf("wf_tables_midgrab begins=%d ends=%d\n", n_begin, n_end);
+        wait_for(&n_release, 8, "third release");
+        wait_for(&n_begin, 4, "fourth grab");                              /* 8 */
+        lv_obj_delete(wf);
+        Serial1.printf("wf_delete_midgrab begins=%d ends=%d\n", n_begin, n_end);
+        wf = synthui_waveform_create(holder);
+        lv_obj_set_pos(wf, 16, 96);
+        lv_obj_set_size(wf, 1120, 408);
     } else {
         Serial1.println("I2C_FAIL");
     }
@@ -232,6 +269,40 @@ void setup()
     synthui_waveform_set_cue(wf, -1);
     synthui_waveform_set_position(wf, (double)(TOTAL - 1));
     state("end");
+    /* incremental paths: only the widget's own invalidations from here to wf_inc */
+    synthui_waveform_set_zoom(wf, 2048.0); synthui_waveform_set_position(wf, three_min);
+    synthui_waveform_set_valid_frames(wf, (uint64_t)three_min - 100000);
+    (void)settle_and_sum();
+    for (int i = 1; i <= 30; i++) { synthui_waveform_set_position(wf, three_min + i * 3000.0); frames(1); }          /* forward, ~1.5 px a step */
+    for (int i = 1; i <= 12; i++) { synthui_waveform_set_position(wf, three_min + 90000.0 - i * 20000.0); frames(1); } /* back, ~10 px a step */
+    for (int i = 1; i <= 8; i++) { synthui_waveform_set_valid_frames(wf, (uint64_t)three_min - 100000 + (uint64_t)i * 60000u); frames(1); }
+    synthui_waveform_set_valid_frames(wf, (uint64_t)three_min + 200000); frames(1);
+    synthui_waveform_set_cue(wf, (int64_t)three_min - 200000); frames(1);
+    synthui_waveform_set_cue(wf, (int64_t)three_min - 300000); frames(1);
+    synthui_waveform_set_tracking(wf, false);
+    synthui_waveform_set_position(wf, three_min + 400000.0); frames(2);        /* head moves across the free view */
+    Serial1.printf("wf_inc=0x%08lX\n", (unsigned long)sum_as_is());
+    /* set_tables() discards the strip and the rail, so the next frame is built from
+     * nothing: invalidating the screen alone would reuse the strip under test. */
+    synthui_waveform_set_tables(wf, tables, 3, 2, TOTAL, RATE);
+    Serial1.printf("wf_inc_fresh=0x%08lX\n", (unsigned long)settle_and_sum());
+    synthui_waveform_set_tracking(wf, true);
+    synthui_waveform_set_cue(wf, -1);
+    synthui_waveform_set_valid_frames(wf, TOTAL);
+
+    /* a hidden ancestor: the widget must leave the frame alone.  The case that
+     * shows it: the position changes in the same refresh in which LVGL redraws
+     * that part of the screen for a reason of its own. */
+    lv_obj_add_flag(holder, LV_OBJ_FLAG_HIDDEN);
+    Serial1.printf("wf_hidden_a=0x%08lX\n", (unsigned long)settle_and_sum());      /* the bare screen */
+    for (int i = 0; i < 6; i++) {
+        synthui_waveform_set_position(wf, 30.0 * RATE + i * 50000.0);
+        lv_obj_invalidate(lv_screen_active());
+        frames(2);
+    }
+    Serial1.printf("wf_hidden_b=0x%08lX\n", (unsigned long)sum_as_is());
+    lv_obj_remove_flag(holder, LV_OBJ_FLAG_HIDDEN);
+
     load_track(many_beats, 5000);
     synthui_waveform_zoom_fit(wf); synthui_waveform_set_position(wf, 0.0);
     state("grid");

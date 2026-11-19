@@ -1,13 +1,13 @@
 synthui_waveform_test under QEMU (rt1176 and nosh machines give the same values)
 Date: 2026-11-19. SynthUI local branch dj-deck.
 Touch expectations come from gen_touch_script.py:
-  grab_dx=102 grab_begin=7938000 grab_last=7729104 seek=3940650 scroll_dx=102 scroll_delta=-208896 chevron_at=1110,170 cleared_dx=102 instants=1067
+  grab_dx=102 grab_begin=7938000 grab_last=7729104 seek=3940650 scroll_dx=102 scroll_delta=-208896 chevron_at=1110,170 cleared_dx=102 instants=1267
 
 === BOOT ===
-[APP: synthui_waveform_test] [VER: v1] [BUILD: Nov 19 2026 13:09:15]
+[APP: synthui_waveform_test] [VER: v1] [BUILD: Nov 19 2026 13:26:23]
 PANEL_OK
 I2C_OK
-wf_ready ms=1078
+wf_ready ms=834
 wf_ev=GRAB_BEGIN frame=7938000
 wf_ev=GRAB_MOVE frame=7886800
 wf_ev=GRAB_MOVE frame=7833552
@@ -22,6 +22,12 @@ wf_ev=GRAB_END frame=7938000
 wf_press_lost begins=2 ends=2
 wf_cleared_begin
 wf_cleared_end
+wf_ev=GRAB_BEGIN frame=7938000
+wf_ev=GRAB_END frame=7938000
+wf_tables_midgrab begins=3 ends=3
+wf_ev=GRAB_BEGIN frame=7938000
+wf_ev=GRAB_END frame=7938000
+wf_delete_midgrab begins=4 ends=4
 wf_crc[empty]=0x4B74D5C5
 wf_crc[fit]=0x7E10C925
 wf_crc[mid]=0x654AD956
@@ -30,6 +36,10 @@ wf_crc[loading]=0x2A12C371
 wf_crc[free]=0xB89D3536
 wf_crc[cue]=0x00E972FF
 wf_crc[end]=0x843DE617
+wf_inc=0x65D64309
+wf_inc_fresh=0x65D64309
+wf_hidden_a=0x76331DC5
+wf_hidden_b=0x76331DC5
 wf_crc[grid]=0x28A0FC77
 wf_grid_lines=79
 wf_crc_cleared=0x4B74D5C5

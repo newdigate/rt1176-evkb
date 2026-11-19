@@ -54,7 +54,13 @@ CL=$(grep -a -oE "wf_crc_cleared=0x[0-9A-F]{8}" "$OUT" | head -1 | cut -d= -f2)
 # --- touch phase (expected values: gen_touch_script.py prints them) ---
 grep -q "I2C_OK" "$OUT" || { echo "FAIL: touch bring-up"; exit 1; }
 grep -q "wf_timeout" "$OUT" && { echo "FAIL: a scripted gesture never arrived: $(grep -a wf_timeout "$OUT" | head -1)"; exit 1; }
-[ "$(grep -a -c "wf_ev=GRAB_BEGIN frame=7938000" "$OUT")" = 2 ] || { echo "FAIL: GRAB_BEGIN (want two, at the head frame)"; exit 1; }
+[ "$(grep -a -c "wf_ev=GRAB_BEGIN frame=7938000" "$OUT")" = 4 ] || { echo "FAIL: GRAB_BEGIN (want four, at the head frame)"; exit 1; }
+grep -a -qE "wf_tables_midgrab begins=3 ends=3\r?$" "$OUT" || { echo "FAIL: set_tables() mid-grab must end the grab ($(grep -a wf_tables_midgrab "$OUT"))"; exit 1; }
+grep -a -qE "wf_delete_midgrab begins=4 ends=4\r?$" "$OUT" || { echo "FAIL: deleting the widget mid-grab must end the grab ($(grep -a wf_delete_midgrab "$OUT"))"; exit 1; }
+val() { grep -a -oE "$1=0x[0-9A-F]{8}" "$OUT" | head -1 | cut -d= -f2; }
+[ -n "$(val wf_inc)" ] && [ "$(val wf_inc)" = "$(val wf_inc_fresh)" ] || { echo "FAIL: incremental updates differ from a full redraw ($(val wf_inc) vs $(val wf_inc_fresh))"; exit 1; }
+[ "$(val wf_inc)" != "$EMPTY" ] || { echo "FAIL: incremental state drew nothing"; exit 1; }
+[ -n "$(val wf_hidden_a)" ] && [ "$(val wf_hidden_a)" = "$(val wf_hidden_b)" ] || { echo "FAIL: a widget in a hidden container still draws ($(val wf_hidden_a) vs $(val wf_hidden_b))"; exit 1; }
 LASTMOVE=$(tr -d '\r' < "$OUT" | awk '/wf_ev=GRAB_END/{exit} /wf_ev=GRAB_MOVE/{sub(/.*frame=/,""); m=$0} END{print m}')
 [ "$LASTMOVE" = 7729104 ] || { echo "FAIL: last GRAB_MOVE of the first drag = $LASTMOVE, want 7729104"; exit 1; }
 grep -a -q "wf_ev=GRAB_END frame=7729104" "$OUT" || { echo "FAIL: GRAB_END of the first drag"; exit 1; }
