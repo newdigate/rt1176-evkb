@@ -1,0 +1,7 @@
+# Boards this example is built and gated for, one per line. rt1176 is the
+# MIMXRT1170-EVKB. nosh is the Nosh board: the same RT1176 with an SGTL5000 codec
+# on LPI2C5 (the sketch's ARDUINO_NOSH arm) and the microSD on USDHC2; its gate
+# boots the EVKB machine through gate-lib's nosh arm (sdram-size=128M) and needs
+# a qemu2 with the SGTL5000 stub at 0x0A on LPI2C5 (fbbd5fd, 2026-11-07).
+rt1176
+nosh
