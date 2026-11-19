@@ -2,6 +2,8 @@
 // failures, cancellation.  Storage is a temp directory; memory is malloc with
 // a live-allocation count; time is a fake clock the test advances.
 #undef NDEBUG
+#include "audio_codecs/tempo/tempo_types.h"
+#include <cstring>
 #include "loader.h"
 #include "probe_decode.h"
 #include "audio_codecs/preview/preview_generator.h"
@@ -49,7 +51,8 @@ struct DirStorage : Storage {
     static void fps_close(SeekableWriter *w) { w->flush(); delete static_cast<preview::FileStreamWriter *>(w); }
 };
 static int g_live = 0;
-static void *t_alloc(size_t n) { g_live++; return std::malloc(n); }
+static bool g_no_mem = false;
+static void *t_alloc(size_t n) { if (g_no_mem) return nullptr; g_live++; return std::malloc(n); }
 static void t_release(void *p) { if (p) { g_live--; std::free(p); } }
 static uint32_t g_clock = 0, g_units = 0, g_tick = 1500;     // each look at the clock costs 1.5 ms: a few units per step()
 static uint32_t t_now() { g_units++; g_clock += g_tick; return g_clock; }
@@ -182,6 +185,36 @@ int main(int argc, char **argv) {
         Loader L(st, mem, BUDGET); st.writes = 0;
         assert(load_once(L) == LoadStage::Done && L.sidecars() == SidecarResult::Saved && st.writes == 2 && L.peaksFromFile() && L.tempoReady());
         assert(exists(st.dir + P + ".att"));
+    }
+    // ---- (g) a .att cut short (a write that ran out of card): not trusted, tempo redone ----
+    {
+        Loader L0(st, mem, BUDGET); assert(load_once(L0) == LoadStage::Done && L0.tempoReady());
+        const uint32_t beats0 = L0.beatCount(); assert(beats0 > 4);
+        L0.cancel();
+        auto att = slurp(st.dir + P + ".att");
+        tempo::AttHeader h; assert(att.size() >= sizeof(h)); std::memcpy(&h, att.data(), sizeof(h));
+        assert(h.total_beats > 4 && h.beat_grid_offset + (uint64_t)h.total_beats * sizeof(tempo::AttBeatMarker) <= att.size());
+        att.resize((size_t)h.beat_grid_offset + 3 * sizeof(tempo::AttBeatMarker));     // the header promises more beats than the file holds
+        spit(st.dir + P + ".att", att);
+        Loader L(st, mem, BUDGET); st.writes = 0;
+        assert(load_once(L) == LoadStage::Done && L.tempoReady() && L.beatCount() == beats0);
+        assert(L.sidecars() == SidecarResult::Saved && st.writes == 2);
+    }
+    // ---- (h) no memory for the analysis: the track is complete and stays, without tempo ----
+    {
+        unlink((st.dir + P + ".apv").c_str()); unlink((st.dir + P + ".asv").c_str()); unlink((st.dir + P + ".att").c_str());
+        Loader L(st, mem, BUDGET); st.writes = 0;
+        assert(L.start(P.c_str()));
+        int steps = 0;
+        while (L.stage() != LoadStage::Done && L.stage() != LoadStage::Failed) {
+            if (L.stage() == LoadStage::Decode && L.decodedFrames() > 0) g_no_mem = true;
+            L.step(5000, t_now); assert(++steps < 4000000);
+        }
+        g_no_mem = false;
+        assert(L.stage() == LoadStage::Done && L.pcm() && L.decodedFrames() == L.totalFrames() && !L.tempoReady());
+        assert(L.sidecars() == SidecarResult::SaveFailed && st.writes == 0);
+        L.cancel(); assert(g_live == 0);
+        Loader L2(st, mem, BUDGET); assert(load_once(L2) == LoadStage::Done && L2.tempoReady());   // sidecars back for the cases below
     }
     // ---- (c) the audio file changes (one more byte): the sidecars are someone else's now ----
     {

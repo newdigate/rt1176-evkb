@@ -97,21 +97,27 @@ static inline void deck_sidecar_name(char *out, size_t cap, const char *audio_pa
 struct CueState {
     int64_t cue = 0;            /* frames */
     bool previewing = false;    /* held down on the cue: playing until release */
+    bool parked = false;        /* put on the cue by this button and not moved since */
 };
 enum class CueAct { None, SetCue, JumpAndPause, PreviewStart, PreviewStop };
 
 /* Press.  Playing: go back to the cue and pause.  Paused away from the cue:
  * the cue is now here.  Paused on the cue: play for as long as it is held.
- * The caller carries the action out (seek, pause, play, show the marker). */
+ * The caller carries the action out (seek, pause, play, show the marker).
+ * "On the cue" is the parked flag, not only the position: a player that is
+ * pausing still runs its ramp-down past the frame it was sent to. */
 static inline CueAct cue_press(CueState &s, bool playing, int64_t pos)
 {
     if (s.previewing) return CueAct::None;
-    if (playing) return CueAct::JumpAndPause;
+    if (playing) { s.parked = true; return CueAct::JumpAndPause; }
     const int64_t d = pos - s.cue;
-    if (d > 1 || d < -1) { s.cue = pos; return CueAct::SetCue; }
+    if (!s.parked && (d > 1 || d < -1)) { s.cue = pos; s.parked = true; return CueAct::SetCue; }
+    s.parked = true;
     s.previewing = true;
     return CueAct::PreviewStart;
 }
+/* The position was moved by something else (play, seek, scratch, rewind). */
+static inline void cue_moved(CueState &s) { if (!s.previewing) s.parked = false; }
 /* Release.  After a preview: back to the cue, paused. */
 static inline CueAct cue_release(CueState &s)
 {

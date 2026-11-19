@@ -67,6 +67,17 @@ void Loader::free_all()
     save_file_ = 0; save_pos_ = 0;
 }
 
+/* The analysis could not be made (no memory, an engine error).  The audio is
+ * complete and playable: finish without tempo and without saving, and say so. */
+void Loader::skip_analysis()
+{
+    if (ana_) { std::destroy_at(ana_); ana_ = nullptr; }
+    if (src_) { src_->close(); src_ = nullptr; }
+    if (audio_) { storage_.close(audio_); audio_ = nullptr; }
+    sidecars_ = SidecarResult::SaveFailed;
+    stage_ = LoadStage::Done;
+}
+
 void Loader::fail(const char *why)
 {
     /* The source and the files are closed; the memory is kept until cancel() or the next start(),
@@ -165,12 +176,15 @@ bool Loader::take_att(const uint8_t *att, size_t size)
     const tempo::AttHeader &h = tr.header();
     const uint32_t n = h.total_beats;
     if (n > 20000u) return false;
+    /* every section the header names must lie inside the file: a write that ran out of card leaves a short one */
+    if (h.beat_grid_offset + (uint64_t)n * sizeof(tempo::AttBeatMarker) > size) return false;
+    if (h.tempo_curve_offset + (uint64_t)h.tempo_curve_count * h.tempo_point_size > size) return false;
     LoaderBeat *b = n ? (LoaderBeat *)mem_.alloc((size_t)n * sizeof(LoaderBeat)) : nullptr;
     if (n && !b) return false;
     uint32_t kept = 0;
     for (uint32_t i = 0; i < n; i++) {
         tempo::AttBeatMarker m;
-        if (!tr.get_beat_at_index(i, &m)) break;
+        if (!tr.get_beat_at_index(i, &m)) { mem_.release(b); return false; }   /* the file is shorter than it says: not trusted */
         const uint64_t frame = (uint64_t)m.time_ms * info_.sample_rate / 1000u;
         if (frame >= total_) break;                               /* the spectrum rounds the track up to whole hops: no beat past the audio */
         if (kept && frame <= b[kept - 1].frame) continue;         /* keep them strictly ascending */
@@ -290,10 +304,10 @@ void Loader::begin_analysis_or_finish()
     att_ = (uint8_t *)mem_.alloc(att_cap_);
     size_t arena_bytes = 0;
     void *arena = track_source_arena(&arena_bytes);
-    if (!asv_ || !att_ || arena_bytes < sizeof(Analysis)) { fail("no memory"); return; }
+    if (!asv_ || !att_ || arena_bytes < sizeof(Analysis)) { skip_analysis(); return; }
     ana_ = new (arena) Analysis((const uint8_t *)pcm_, (size_t)total_ * info_.channels * 2u, asv_, asv_cap_, att_, att_cap_);
     ana_->fft.init();
-    if (!ana_->spectrum.init(ana_->pcm_in, ana_->asv_out, ana_->fft, info_.sample_rate, info_.channels, true)) { fail("decode error"); return; }
+    if (!ana_->spectrum.init(ana_->pcm_in, ana_->asv_out, ana_->fft, info_.sample_rate, info_.channels, true)) { skip_analysis(); return; }
     stage_ = LoadStage::Spectrum;
 }
 
@@ -303,12 +317,12 @@ bool Loader::unit_spectrum()
     if (s == spectrum::GeneratorStatus::Complete) {
         asv_len_ = (size_t)ana_->asv_out.size();
         ana_->asv_in = MemoryReader(asv_, asv_len_);
-        if (!ana_->tempo.init(&ana_->asv_in, &ana_->att_out)) { fail("decode error"); return false; }
+        if (!ana_->tempo.init(&ana_->asv_in, &ana_->att_out)) { skip_analysis(); return false; }
         stage_ = LoadStage::Tempo;
         return true;
     }
     if (s == spectrum::GeneratorStatus::ErrorSource || s == spectrum::GeneratorStatus::ErrorDest || s == spectrum::GeneratorStatus::ErrorBackend) {
-        fail("decode error");
+        skip_analysis();
         return false;
     }
     return true;
@@ -317,7 +331,7 @@ bool Loader::unit_spectrum()
 bool Loader::unit_tempo()
 {
     ana_->tempo.step(64);
-    if (ana_->tempo.has_error()) { fail("decode error"); return false; }
+    if (ana_->tempo.has_error()) { skip_analysis(); return false; }
     if (!ana_->tempo.is_complete()) return true;
     att_len_ = (size_t)ana_->att_out.size();
     std::destroy_at(ana_); ana_ = nullptr;

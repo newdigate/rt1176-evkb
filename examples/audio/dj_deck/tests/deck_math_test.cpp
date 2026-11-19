@@ -71,6 +71,7 @@ int main() {
     assert(cue_press(c, true, 500) == CueAct::None);         // a second press while previewing is ignored
     assert(cue_release(c) == CueAct::PreviewStop && !c.previewing);
     assert(cue_release(c) == CueAct::None);
+    cue_moved(c);                                            // the user seeks away
     assert(cue_press(c, false, 44100) == CueAct::SetCue && c.cue == 44100 && !c.previewing);   // paused elsewhere: set it
     assert(cue_release(c) == CueAct::None);
     assert(cue_press(c, false, 44100) == CueAct::PreviewStart);             // now on it
@@ -79,6 +80,16 @@ int main() {
     assert(cue_release(c) == CueAct::PreviewStop);
     assert(cue_press(c, true, 99999) == CueAct::JumpAndPause && c.cue == 44100);   // playing: back to the cue
     assert(cue_release(c) == CueAct::None);
+    // parked on the cue: the player's ramp-down leaves it a few frames past (64 seen), which must still count as "on it"
+    assert(cue_press(c, false, 44100 + 64) == CueAct::PreviewStart);
+    assert(cue_release(c) == CueAct::PreviewStop);
+    assert(cue_press(c, false, 44100 + 64) == CueAct::PreviewStart);        // and again after a preview
+    assert(cue_release(c) == CueAct::PreviewStop);
+    cue_moved(c);                                                            // play, seek, scratch or rewind: no longer parked
+    assert(cue_press(c, false, 44100 + 64) == CueAct::SetCue && c.cue == 44164);
+    assert(cue_press(c, false, 44164 + 64) == CueAct::PreviewStart);        // a cue just set is parked too
+    assert(cue_release(c) == CueAct::PreviewStop);
+    c.cue = 44100; cue_moved(c);
     c = CueState();
     assert(c.cue == 0 && !c.previewing);
 

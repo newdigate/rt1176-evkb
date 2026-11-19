@@ -40,7 +40,9 @@ void join(char *out, size_t cap, const char *dir, const char *name)
 void list_dir()
 {
     g_count = 0; g_truncated = false; g_page = 0; g_meta_next = 0;
-    g_card_ok = SD.exists("/") || board_sd_begin();
+    /* mediaPresent() asks the card for its status; exists("/") would be answered
+     * from memory with the card out, and the root would list as empty for ever. */
+    g_card_ok = SD.mediaPresent() || board_sd_begin();
     if (!g_card_ok) { Serial1.println("SD_FAIL"); return; }
     File d = SD.open(g_dir);
     if (!d || !d.isDirectory()) { g_card_ok = false; Serial1.println("SD_FAIL"); return; }

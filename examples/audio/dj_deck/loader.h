@@ -81,6 +81,7 @@ public:
 private:
     struct Analysis;
     void fail(const char *why);
+    void skip_analysis();
     void free_all();
     bool unit_probe();
     bool unit_decode();

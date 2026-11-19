@@ -23,12 +23,12 @@ lv_obj_t *g_play_lbl, *g_track_lbl, *g_range_lbl;
 synthui_wave_table_t g_tables[3];
 bool g_have_track = false, g_playable = false;
 TrackInfo g_info;
-uint64_t g_total = 0;
+uint64_t g_total = 0, g_wave_total = 0;      /* g_wave_total: the length the waveform widget was last given */
 CueState g_cue_state;
 float g_range_val = 0.08f, g_pitch_val = 0.0f;
 uint32_t g_bpm_q16 = 0;
 uint32_t g_last_text_ms = 0, g_fader_press_ms = 0, g_notice_until = 0;
-bool g_fader_moved = false;
+bool g_fader_moved = false, g_fader_reset = false;
 double g_last_shown = -1e18;
 
 lv_obj_t *label(lv_obj_t *parent, int x, int y, const lv_font_t *font, uint32_t color, const char *text)
@@ -87,6 +87,7 @@ void on_play(lv_event_t *e)
 {
     if (!clicked(e)) return;
     if (g_player->isPlaying()) g_player->pause(); else g_player->play();
+    cue_moved(g_cue_state);
     show_play();
     Serial1.printf("UI_PLAY=%d\n", (int)g_player->isPlaying());
 }
@@ -94,6 +95,7 @@ void on_rew(lv_event_t *e)
 {
     if (!clicked(e)) return;
     g_player->seek(0.0);
+    cue_moved(g_cue_state);
     Serial1.println("UI_REW");
 }
 void on_cue(lv_event_t *e)
@@ -145,14 +147,21 @@ void on_fader(lv_event_t *e)
 {
     const lv_event_code_t c = lv_event_get_code(e);
     if (c == LV_EVENT_PRESSED) {
+        /* Second tap of a double tap: note it, and reset on RELEASE.  Resetting
+         * here would be undone at once -- the fader has already taken its anchor
+         * from the old value and puts it back on the next PRESSING. */
         const uint32_t now = millis();
-        if (!g_fader_moved && now - g_fader_press_ms < 350) {                             /* double tap: back to zero */
+        g_fader_reset = !g_fader_moved && now - g_fader_press_ms < 350;
+        g_fader_press_ms = now;
+        g_fader_moved = false;
+    } else if (c == LV_EVENT_RELEASED || c == LV_EVENT_PRESS_LOST) {
+        if (g_fader_reset && !g_fader_moved) {
             synthui_fader_set_value(g_fader, 0.5f);
             g_pitch_val = 0.0f;
             apply_pitch();
+            g_fader_moved = true;                 /* a third tap starts a new pair */
         }
-        g_fader_press_ms = now;
-        g_fader_moved = false;
+        g_fader_reset = false;
     } else if (c == LV_EVENT_VALUE_CHANGED) {
         g_fader_moved = true;
         g_pitch_val = deck_pitch_from_fader(synthui_fader_get_value(g_fader), g_range_val);
@@ -164,10 +173,10 @@ void on_wave(lv_event_t *e)
 {
     const lv_event_code_t c = lv_event_get_code(e);
     const double *f = (const double *)lv_event_get_param(e);
-    if (c == synthui_waveform_event(SYNTHUI_WAVE_EV_GRAB_BEGIN)) { g_player->scratchBegin(); Serial1.printf("UI_SCRATCH=begin frame=%ld\n", f ? (long)llround(*f) : -1L); }
+    if (c == synthui_waveform_event(SYNTHUI_WAVE_EV_GRAB_BEGIN)) { g_player->scratchBegin(); cue_moved(g_cue_state); Serial1.printf("UI_SCRATCH=begin frame=%ld\n", f ? (long)llround(*f) : -1L); }
     else if (c == synthui_waveform_event(SYNTHUI_WAVE_EV_GRAB_MOVE)) { if (f) g_player->scratchTo(*f); }
     else if (c == synthui_waveform_event(SYNTHUI_WAVE_EV_GRAB_END)) { g_player->scratchEnd(); Serial1.printf("UI_SCRATCH=end frame=%ld\n", f ? (long)llround(*f) : -1L); }
-    else if (c == synthui_waveform_event(SYNTHUI_WAVE_EV_SEEK)) { if (f) g_player->seek(*f); }
+    else if (c == synthui_waveform_event(SYNTHUI_WAVE_EV_SEEK)) { if (f) { g_player->seek(*f); cue_moved(g_cue_state); } }
     else if (c == synthui_waveform_event(SYNTHUI_WAVE_EV_TRACK_REQUEST)) { synthui_waveform_set_tracking(g_wave, true); checked(g_track, true); }
 }
 void take_tables(const PeakBuilder &peaks)
@@ -229,6 +238,7 @@ void ui_deck_set_track(const char *name, const TrackInfo &info, const int16_t *p
     lv_label_set_text_fmt(g_fmt, "%lu Hz  %u bit  %s", (unsigned long)info.sample_rate, (unsigned)info.bit_depth, info.channels == 1 ? "mono" : "stereo");
     take_tables(peaks);
     synthui_waveform_set_tables(g_wave, g_tables, 3, info.channels, g_total, info.sample_rate);
+    g_wave_total = g_total;
     synthui_waveform_set_beats(g_wave, nullptr, 0);
     synthui_waveform_set_cue(g_wave, 0);
     synthui_waveform_set_tracking(g_wave, true);
@@ -271,7 +281,14 @@ void ui_deck_retable(const PeakBuilder &peaks, uint64_t total)
     const double pos = g_player->positionFrames(), zoom = synthui_waveform_get_zoom(g_wave);
     const bool tracking = synthui_waveform_get_tracking(g_wave);
     take_tables(peaks);
-    g_total = total;
+    if (total == g_wave_total) {
+        /* Same length: the widget already points at g_tables and the peak data
+         * is the same, only packed.  Setting the tables again would end a
+         * scratch that is under the finger. */
+        synthui_waveform_set_valid_frames(g_wave, total);
+        return;
+    }
+    g_total = g_wave_total = total;
     synthui_waveform_set_tables(g_wave, g_tables, 3, g_info.channels, total, g_info.sample_rate);
     synthui_waveform_set_valid_frames(g_wave, total);
     synthui_waveform_set_zoom(g_wave, zoom);
