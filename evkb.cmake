@@ -164,6 +164,7 @@ teensy_declare_library(lwip           lwip                 https://github.com/ne
 teensy_declare_library(USBHost_t36    USBHost_t36          https://github.com/newdigate/USBHost_t36     928bfefc2c9eebcb8e01bb4fd136b2cb6d5017f8 .)
 teensy_declare_library(LVGL           LVGL                 https://github.com/newdigate/LVGL            8b0799c5e9b24c13837a6b27f641488e134d895e .) # NOT Arduino-layout: use import_evkb_lvgl(), not import_evkb_library(). Bumped 2026-09-19 (NEW-55: create_db installs the PXP alphaOut sync copy for every db consumer; eDMA copy handler + host-tested band planner); earlier 2026-09-15 (create_rotated placed in flash, ITCM headroom; earlier same day: rotated present: lvgl_mipi_panel_create_rotated + lvgl_gt911_indev_create_rotated + the pure lvgl_panel_rotation.h with its host suite, acid_box landscape; earlier: 2026-08-30 flip_sync wait_us counter, NEW-23 fps diagnosis).
 teensy_declare_library(SynthUI        SynthUI              https://github.com/newdigate/SynthUI         567ad9b3f7be7419a183bb1bdf821b95386094df .) # NOT Arduino-layout: use import_evkb_synthui(). Bumped 2026-09-16 (NEW-50: set_cue damages the bezel ring as four strips, led_draw clip-aware, draw dscs carry base.obj -- pixel-neutral, verified by all four goldens not moving; earlier: 2026-09-16 (synthui_led_button bezel cue width from the palette, NEW-25 final review -- pixel-neutral, verified by the goldens not moving; earlier: 2026-09-15 synthui_led_button widget, NEW-25; earlier: Bumped 2026-09-07 (synthui_slide_toggle widget, NEW-30; earlier: synthui_piano_key widget, NEW-28; earlier: synthui_level_meter widget, NEW-26; earlier: synthui_seven_segment widget, NEW-29; earlier: synthui_panel_button widget, NEW-27; earlier: synthui_lamp widget, NEW-24; earlier: 2026-08-30 (fader GC355 compositor -- one contour per path, NEW-23; earlier: 2026-08-29 (synthui_fader widget + drag math, NEW-23; earlier: 2026-08-28 (deferred compose for flip displays + annulus well -- tear-free pipeline; gpu well + single-contour track, delta both engines, 32 fps fenced / ~42 compute; earlier: wedge-delta, one-per-pixel composite, unrotated discs; earlier same day: synthui_rotary_knob added, old knob removed)))). History was REWRITTEN before the 2026-08-17 public push (reference/rebirth/ dropped), so every SHA before e132012 is unreachable.
+teensy_declare_library(AudioCodecs    audio-codecs         https://github.com/newdigate/audio-codecs    6f3af7598204ab48e63cb324b45aacc55e986689 .) # NOT Arduino-layout: use import_evkb_audio_codecs(). 2026-11-19: added for the DJ deck (decoders WAV/AIFF/FLAC/MP3 + preview reader, spectrum, tempo). THIS SHA IS LOCAL AND UNPUSHED (branch dj-deck; as_reader() replaces dynamic_cast so it builds with -fno-rtti) -- a forced fetch fails until it is pushed; local-first resolution uses ~/Development/audio-codecs.
 teensy_declare_library(VGLite         VGLite               https://github.com/newdigate/VGLite          2ecb123d9541e623dfb22fa79b753584b6d76c36 .) # NOT Arduino-layout: use import_evkb_vglite(). NXP's VGLite vendored verbatim plus this tree's bare-metal port. Since the v7 (SDK 26.06 LTS) re-vendor it is MIT THROUGHOUT -- the Apache-2.0 vg_lite_flat.{c,h} pair no longer exists upstream; NOTICE records the history.
 teensy_declare_library(EEPROM         EEPROM               https://github.com/newdigate/EEPROM          477c4296040d2061c90779f2841cdb953b5aca81 .)
 teensy_declare_library(Bounce2        Bounce2/src          https://github.com/PaulStoffregen/Bounce2    eb5ab9fad8a15539743315786beb8236e96c8b9a src)
@@ -548,6 +549,62 @@ macro(evkb_claim_audio_owner CORE)
         message(FATAL_ERROR "audio owner already claimed by ${_owner}; cannot also claim ${CORE} (one core owns audio per firmware)")
     endif()
     set_property(GLOBAL PROPERTY EVKB_AUDIO_OWNER "${CORE}")
+endmacro()
+
+# --- audio-codecs --------------------------------------------------------------
+# github.com/newdigate/audio-codecs: C++17 decoders and analysis engines, laid
+# out as include/ + src/ (not an Arduino library).  Only what the firmware
+# uses is compiled, from an EXPLICIT list -- no encoders, no AAC / MP4 / Ogg /
+# Vorbis (they allocate from the heap, which is small and in OCRAM here), no
+# slice engine, no preview GENERATOR (the deck builds its peaks during decode).
+# Link with:  target_link_libraries(<name>.elf AudioCodecs stdc++ m)
+macro(import_evkb_audio_codecs)
+    if(NOT TARGET AudioCodecs)
+        teensy_set_dynamic_properties()   # ensure teensy_flags exists
+        evkb_library_dir(AudioCodecs _evkb_ac_dir)
+        set(_evkb_ac_src
+            src/core/bit_reader.cpp
+            src/core/fft.cpp
+            src/wav/g711.cpp
+            src/wav/sample_converter.cpp
+            src/wav/decoder/wav_parser.cpp
+            src/wav/decoder/wav_decoder.cpp
+            src/aiff/ieee80.cpp
+            src/aiff/sample_converter.cpp
+            src/aiff/decoder/aiff_parser.cpp
+            src/aiff/decoder/aiff_decoder.cpp
+            src/flac/crc.cpp
+            src/flac/md5.cpp
+            src/flac/metadata.cpp
+            src/flac/decoder/rice_decoder.cpp
+            src/flac/decoder/subframe_decoder.cpp
+            src/flac/decoder/channel_decorrelator.cpp
+            src/flac/decoder/flac_decoder.cpp
+            src/mp3/mp3_tables.cpp
+            src/mp3/decoder/bit_reservoir.cpp
+            src/mp3/decoder/huffman_decoder.cpp
+            src/mp3/decoder/requantizer.cpp
+            src/mp3/decoder/imdct.cpp
+            src/mp3/decoder/synthesis_filter.cpp
+            src/mp3/decoder/mp3_decoder.cpp
+            src/preview/preview_stream.cpp
+            src/preview/preview_reader.cpp
+            src/spectrum/desktop_fft.cpp
+            src/spectrum/spectrum_filterbank.cpp
+            src/spectrum/spectrum_generator.cpp
+            src/spectrum/spectrum_reader.cpp
+            src/tempo/tempo_novelty.cpp
+            src/tempo/tempo_inducer.cpp
+            src/tempo/tempo_generator.cpp
+            src/tempo/tempo_reader.cpp)
+        list(TRANSFORM _evkb_ac_src PREPEND "${_evkb_ac_dir}/")
+        add_library(AudioCodecs STATIC ${_evkb_ac_src})
+        target_include_directories(AudioCodecs PUBLIC
+            "${_evkb_ac_dir}/include" "${_evkb_ac_dir}")
+        target_compile_options(AudioCodecs PRIVATE -std=gnu++17)
+        target_link_libraries(AudioCodecs PRIVATE teensy_flags)
+        unset(_evkb_ac_src)
+    endif()
 endmacro()
 
 # import_evkb_audio_full(): build the ENTIRE Audio fork as one `Audio` library
