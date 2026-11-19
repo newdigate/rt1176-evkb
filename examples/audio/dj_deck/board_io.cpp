@@ -59,39 +59,10 @@ private:
 SdStorage g_storage;
 }
 
-#if defined(ARDUINO_NOSH)
-/* Nosh shares one pad, GPIO_SD_B2_05, between the flash read strobe and the SD
- * card: the boot header runs FlexSPI1 at 133 MHz sampling on the DQS pad
- * loopback, and uSDHC2 needs the same pad as CMD.  The moment SD.begin() takes
- * the pad, every read from flash returns junk, and this firmware keeps most of
- * its code there.  So before the card starts, move the flash to the internal
- * loopback, which needs no pad, and to the 60 MHz limit that mode has.
- * Runs from RAM with interrupts off: flash is unreadable part way through. */
-FASTRUN __attribute__((noinline)) static void flash_release_dqs_pad()
-{
-    volatile uint32_t &mcr0 = *(volatile uint32_t *)0x400CC000u;
-    volatile uint32_t &sts0 = *(volatile uint32_t *)0x400CC0E0u;
-    volatile uint32_t &root = *(volatile uint32_t *)0x40CC0A00u;   /* CLOCK_ROOT20 = FLEXSPI1 */
-    __disable_irq();
-    while ((sts0 & 3u) != 3u) { }                 /* sequence and arbitration idle */
-    mcr0 |= 2u;                                   /* MDIS */
-    root = (root & ~0xFFu) | 8u;                  /* same source, /9: 528 / 9 = 58.7 MHz */
-    for (volatile int i = 0; i < 2000; i++) { }
-    mcr0 &= ~(3u << 4);                           /* RXCLKSRC 0: internal loopback */
-    mcr0 &= ~2u;
-    mcr0 |= 1u;                                   /* SWRESET */
-    while (mcr0 & 1u) { }
-    __enable_irq();
-}
-#endif
-
-bool board_sd_begin()
-{
-#if defined(ARDUINO_NOSH)
-    flash_release_dqs_pad();
-#endif
-    return SD.begin(BUILTIN_SDCARD);
-}
+/* Nosh shares GPIO_SD_B2_05 between uSDHC2 CMD and the flash's DQS-pad loopback;
+ * the core's Nosh boot header (bootdata.c) keeps the flash on the internal
+ * loopback, so taking the pad here is safe.  This firmware runs code from flash. */
+bool board_sd_begin() { return SD.begin(BUILTIN_SDCARD); }
 Storage &board_storage() { return g_storage; }
 static void *mem_alloc(size_t n) { return extmem_malloc(n); }
 static void mem_release(void *p) { extmem_free(p); }
