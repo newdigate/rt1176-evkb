@@ -1,0 +1,3 @@
+# rt1176 is the MIMXRT1170-EVKB; nosh is the Nosh board. No board-specific code here.
+rt1176
+nosh

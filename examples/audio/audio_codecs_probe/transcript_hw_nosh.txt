@@ -1,0 +1,68 @@
+audio_codecs_probe on the Nosh board
+====================================
+Date:   2026-11-19
+Board:  Nosh (second board), SW4 = 10, console J11 115200
+Image:  examples/audio/audio_codecs_probe/build-nosh (audio-codecs local branch dj-deck, -Os)
+
+WHAT THE DJ DECK'S LOADER SHOULD BUDGET, scaled from these clips to a 6 minute
+44.1 kHz stereo track (the figures below are per 8 s, or per 2 s for WAV/AIFF):
+
+  decode   WAV / AIFF   about 4 s      (2 s of audio in 10-20 ms)
+           FLAC         about 22 s     (8 s in 0.49 s, 16x real time)
+           MP3          about 47 s     (8 s in 1.05 s, 7.6x real time)
+  spectrum              about 20 s     (8 s in 0.43 s)
+  tempo                 under 1 s      (8 s in 14 ms)
+
+  DECISION (plan rule: switch the FFT to CMSIS-DSP if spectrum + tempo for
+  6 minutes exceeds 60 s): about 21 s, so audio-codecs' own FFT stays, and the
+  .asv and .att files made on the board are byte-identical to the host's
+  (asv_same=1 att_same=1 below).
+
+  THE DECODER MUST LIVE IN DTCM.  With the D-cache off, where the decoder
+  object sits decides its speed.  The same 8 s MP3 clip:
+      object in SDRAM   40.2 s   (0.2x real time: a 6 min track = 30 min)
+      object in OCRAM    9.0 s   (0.9x)
+      object in DTCM     1.05 s  (7.6x)
+  FLAC: 1.68 s in SDRAM, 0.49 s in DTCM.  The probe therefore constructs each
+  decoder when needed in one 131 KB DTCM arena (ARENA line below); the deck
+  needs the same.  -DPROBE_DECODER_IN_SDRAM=1 reproduces the slow figure.
+
+  Memory to plan for: DTCM arena 131,104 bytes (the MP3 decoder; FLAC is
+  98,848). Main-stack peak 66 KB (STACK_PEAK). Tempo's heap peak is 5.4 KB for
+  8 s; if it grows in proportion to length that is about 240 KB for 6 minutes
+  and 360 KB for 9, which the deck must check against its free heap before
+  relying on it (NOT measured here on a long track).
+
+NOT a pass for tempo accuracy: the engine reads this 120.00 BPM click as 122.51
+(and on the host 120.38 for 16 s, 118.27 with 66 beats for 30 s). The gate
+checks that the board equals the host, which it does exactly.
+
+MP3 decode equals the host's within 1 ppm per 4096-frame window and 0 LSB on
+the excerpt, but is not bit-identical (a float decoder on a different CPU).
+On the host the same decoder matches ffmpeg's decode within 1 LSB (78 dB SNR).
+Its output starts with about 2257 frames of encoder/decoder delay and is 3168
+frames longer than the source: gapless information is not read.
+
+=== BOOT ===
+[APP: audio_codecs_probe] [VER: v1] [BUILD: Nov 19 2026 13:56:51]
+ARENA bytes=131104 at=0x20005FB0 mp3=131104 flac=98848 wav=288 aiff=288
+DEC wav short.wav rate=44100 ch=2 bits=16 frames=88200 sum=0x32360340 ms=20 err=0 PASS
+DEC aiff short.aiff rate=44100 ch=2 bits=16 frames=88200 sum=0x32360340 ms=10 err=0 PASS
+DEC flac click.flac rate=44100 ch=2 bits=16 frames=352800 sum=0xA12996D4 ms=488 err=0 PASS
+MP3_MATCH windows=86 worst_window_ppm=1 excerpt_max_lsb=0 bit_identical=0 PASS
+DEC mp3 click.mp3 rate=44100 ch=2 bits=16 frames=355968 sum=0x7490F812 ms=1054 err=0 PASS
+DEC wav short24.wav rate=44100 ch=2 bits=24 frames=22050 sum=0x8EB66C8D ms=7 err=0 PASS
+DEC_BAD wav cut100_frames=14 err=0 half_frames=44094 err=0 PASS
+DEC_BAD aiff cut100_frames=11 err=0 half_frames=44093 err=0 PASS
+DEC_BAD flac cut100_frames=0 err=-100 half_frames=172032 err=-5 PASS
+DEC_BAD mp3 cut100_frames=0 err=-103 half_frames=177408 err=0 PASS
+DEC_BAD wav_zero_data frames=2037 err=0 PASS
+DEC_BAD mp3_junk_lead frames=355968 err=0 PASS
+DEC_BAD mp3_text frames=0 err=-103 PASS
+SPECTRUM bytes=47104 ms=434 PASS
+TEMPO bpm_x100=12251 beats=18 host_bpm_x100=12251 host_beats=18 ms=14 PASS
+TEMPO_INFO asv_same=1 att_same=1 heap_peak=5360 heap_left_in_use=0
+TEMPO_EDGE silence_2s bpm_x100=12000 PASS
+TEMPO_EDGE clip_2s bpm_x100=12000 PASS
+STACK_PEAK=66364
+CODECS_PROBE=PASS

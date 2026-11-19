@@ -580,6 +580,7 @@ macro(import_evkb_audio_codecs)
             src/flac/decoder/subframe_decoder.cpp
             src/flac/decoder/channel_decorrelator.cpp
             src/flac/decoder/flac_decoder.cpp
+            src/flac/encoder/fixed_predictor.cpp   # the decoder restores fixed-predictor subframes with it
             src/mp3/mp3_tables.cpp
             src/mp3/decoder/bit_reservoir.cpp
             src/mp3/decoder/huffman_decoder.cpp
