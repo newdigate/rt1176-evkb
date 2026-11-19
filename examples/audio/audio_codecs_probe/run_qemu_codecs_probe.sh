@@ -26,7 +26,7 @@ for f in "wav short.wav" "aiff short.aiff" "flac click.flac" "mp3 click.mp3" "wa
     grep -a -qE "DEC $f .* PASS" "$OUT" || { echo "FAIL: decode $f"; exit 1; }
 done
 grep -a -qE "DEC wav short24.wav .* bits=24 " "$OUT" || { echo "FAIL: the 24-bit clip was not seen as 24-bit"; exit 1; }
-[ "$(grep -a -c "^DEC_BAD .* PASS" "$OUT")" = 7 ] || { echo "FAIL: corrupt-input cases (want 7 PASS)"; exit 1; }
+[ "$(grep -a -c "^DEC_BAD .* PASS" "$OUT")" = 11 ] || { echo "FAIL: corrupt-input cases (want 11 PASS)"; exit 1; }
 grep -a -q "FAIL" "$OUT" && { echo "FAIL: a stage failed: $(grep -a FAIL "$OUT" | head -1)"; exit 1; }
 true
 grep -a -qE "SPECTRUM bytes=[1-9][0-9]* .* PASS" "$OUT" || { echo "FAIL: spectrum"; exit 1; }

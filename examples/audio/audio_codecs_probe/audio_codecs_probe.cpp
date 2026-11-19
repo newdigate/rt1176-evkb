@@ -227,6 +227,52 @@ void setup()
         Serial1.printf("DEC_BAD mp3_junk_lead frames=%lu err=%d %s\n", (unsigned long)r.frames, r.error, ok ? "PASS" : "FAIL");
         if (!ok) fail();
     }
+    {   /* tag chunks AFTER the audio (ID3 in AIFF, LIST in WAV: artwork, comments) are not audio */
+        uint8_t *buf = (uint8_t *)asv;
+        for (int which = 0; which < 2; which++) {
+            const uint8_t *src = which ? clip_short_aiff : clip_short_wav;
+            const size_t size = (size_t)(which ? clip_short_aiff_end - clip_short_aiff : clip_short_wav_end - clip_short_wav);
+            const size_t extra = 200000;
+            memcpy(buf, src, size);
+            memcpy(buf + size, which ? "ID3 " : "LIST", 4);
+            if (which) { buf[size + 4] = 0; buf[size + 5] = 3; buf[size + 6] = 0x0D; buf[size + 7] = 0x38; }       /* big-endian 199992 */
+            else       { buf[size + 4] = 0x38; buf[size + 5] = 0x0D; buf[size + 6] = 3; buf[size + 7] = 0; }       /* little-endian */
+            for (size_t i = 8; i < extra; i++) buf[size + i] = (uint8_t)(0x7F + (i * 37u));                         /* loud, were it audio */
+            ProbeResult r;
+            if (which) { InArena<aiff::AiffDecoder> d; r = probe_decode_container(*d, buf, size + extra, pcm, PCM_SAMPLES, 16384); }
+            else       { InArena<wav::WavDecoder> d;   r = probe_decode_container(*d, buf, size + extra, pcm, PCM_SAMPLES, 16384); }
+            const bool ok = r.frames == 88200u && probe_fnv(pcm, 88200u * 2u) == 0x32360340u;
+            Serial1.printf("DEC_BAD %s_trailing_chunk frames=%lu err=%d %s\n", which ? "aiff" : "wav", (unsigned long)r.frames, r.error, ok ? "PASS" : "FAIL");
+            if (!ok) fail();
+        }
+    }
+    {   /* 50 KB of noise before the first MP3 frame: random bytes contain false syncs */
+        static const size_t JUNK = 50000;
+        const size_t mp3_size = (size_t)(clip_click_mp3_end - clip_click_mp3);
+        uint8_t *buf = (uint8_t *)asv;
+        uint32_t x = 0x1234567u;
+        for (size_t i = 0; i < JUNK; i++) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; buf[i] = (uint8_t)x; }
+        /* ...and one planted on purpose: a well-formed MPEG-2.5 header with nothing behind it */
+        buf[100] = 0xFF; buf[101] = 0xE3; buf[102] = 0x18; buf[103] = 0xC4;
+        memcpy(buf + JUNK, clip_click_mp3, mp3_size);
+        InArena<mp3::Mp3Decoder> d;
+        const ProbeResult r = probe_decode_mp3(*d, buf, JUNK + mp3_size, pcm, PCM_SAMPLES);
+        const bool ok = r.error == 0 && r.rate == 44100u && r.channels == 2 && r.frames >= 353000u && r.frames <= 356000u;
+        Serial1.printf("DEC_BAD mp3_noise_lead rate=%lu ch=%u frames=%lu err=%d %s\n", (unsigned long)r.rate, (unsigned)r.channels,
+                       (unsigned long)r.frames, r.error, ok ? "PASS" : "FAIL");
+        if (!ok) fail();
+    }
+    {   /* MPEG-2 Layer III (22.05 kHz): the decoder gets these wrong, so they must be refused */
+        uint8_t *buf = (uint8_t *)asv;
+        memset(buf, 0, 4096);
+        /* 0xFF 0xF3: MPEG-2, Layer III, no CRC.  0x80: 64 kbit/s, 22.05 kHz, no padding -> 208-byte frames */
+        for (size_t at = 0; at + 4 < 4096; at += 208) { buf[at] = 0xFF; buf[at + 1] = 0xF3; buf[at + 2] = 0x80; buf[at + 3] = 0xC4; }
+        InArena<mp3::Mp3Decoder> d;
+        const ProbeResult r = probe_decode_mp3(*d, buf, 4096, pcm, PCM_SAMPLES);
+        const bool ok = r.frames == 0 && r.error != 0;
+        Serial1.printf("DEC_BAD mp3_mpeg2 frames=%lu err=%d %s\n", (unsigned long)r.frames, r.error, ok ? "PASS" : "FAIL");
+        if (!ok) fail();
+    }
     {   /* text with an .mp3 name */
         static const char text[] = "This is not an MP3 file. It is a paragraph of plain text that someone renamed. "
                                    "The decoder should find no frame in it and say so, quickly, without reading past the end.";

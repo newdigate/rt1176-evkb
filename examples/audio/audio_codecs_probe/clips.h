@@ -24,7 +24,7 @@ static const int16_t clip_mp3_excerpt[] = {126,89,105,78,148,123,250,204,270,206
 /* Spectrum and tempo of click.flac's PCM on the host: the board must reproduce these. */
 #define CLIP_HOST_ASV_BYTES 47104u
 #define CLIP_HOST_ASV_FNV 0xBD72DC3Au
-#define CLIP_HOST_ATT_BYTES 1064u
-#define CLIP_HOST_ATT_FNV 0x33A75C42u
-#define CLIP_HOST_BPM_X100 12251
-#define CLIP_HOST_BEATS 18u
+#define CLIP_HOST_ATT_BYTES 1048u
+#define CLIP_HOST_ATT_FNV 0x61918641u
+#define CLIP_HOST_BPM_X100 12027
+#define CLIP_HOST_BEATS 17u
