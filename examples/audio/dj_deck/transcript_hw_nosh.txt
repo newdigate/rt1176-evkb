@@ -1,0 +1,134 @@
+dj_deck -- Nosh hardware transcript, 2026-11-19
+Board: Nosh (second board), RK055 panel, SGTL5000, microSD on uSDHC2.
+Image: build-nosh-bench (cmake -DDJ_BENCH=1): the app plus bench_step(), which
+writes audio_codecs_probe's clips to /djbench on the card, deletes their
+sidecars and loads each clip twice with no touch input.  The second load of
+each must reuse the .apv/.asv/.att written by the first.
+
+Load times (ms), loader slice DJ_LOADER_STEP_US=16000, screen paused:
+
+  clip          audio  probe  decode  analysis  total   second load (sidecars reused)
+  short.wav      2 s    175     694      375     1462    1047
+  short.aiff     2 s    384     695      380     1679    1049
+  click.flac     8 s    419    1973     1073     3722    1978
+  click.mp3      8 s    486    2769     1075     4546    2953
+
+Per second of audio that is about 0.25 s (FLAC) and 0.35 s (MP3) of decode,
+so a five-minute MP3 takes about 1 min 45 s to load in full.  A track can be
+played once its first second is decoded, and decode runs 3 to 4 times faster
+than playback at unity pitch.
+
+Slice tuning (plan step 4), same clips, first load:
+  DJ_LOADER_STEP_US=5000, screen updated every loop:  flac 7708, mp3 11478 (slower than real time)
+  DJ_LOADER_STEP_US=16000, screen updated at 5 Hz:    flac 3722, mp3 4546
+
+Tempo: 120.00 BPM (2 s clips), 120.27 (FLAC, 16 beats), 120.26 (MP3, 17 beats);
+the host engine gives the same tempo for each.
+
+Boot finding: Nosh shares pad GPIO_SD_B2_05 between the flash read strobe
+(FlexSPI1 DQS-pad loopback at 133 MHz, set by the boot header) and uSDHC2 CMD.
+SD.begin() takes the pad and every later read from flash returns junk
+(first seen as a UsageFault in SdFat's setSdclk, which this image keeps in
+flash).  board_sd_begin() now moves FlexSPI1 to internal loopback at 58.7 MHz
+from RAM first.  Firmware that runs wholly from RAM never notices.
+
+NOT done on this board: nothing was touched by hand.  Play, pitch, scratch,
+reverse, seek, cue and the browser are covered only by the QEMU gate and the
+unit tests; nobody has listened to the output or tried the gestures on glass,
+and no 3 to 6 minute file, over-length file or card-pull case has been run.
+
+---- J11 capture ----
+=== BOOT ===
+[APP: dj_deck] [VER: v1] [BUILD: Nov 19 2026 15:55:01]
+DISPLAY_OK
+TOUCH_OK
+AUDIO_OK
+SD_OK
+DJ_READY
+BENCH_FILE /djbench/short.wav bytes=352844 OK
+BENCH_FILE /djbench/short.aiff bytes=352854 OK
+BENCH_FILE /djbench/click.flac bytes=635548 OK
+BENCH_FILE /djbench/click.mp3 bytes=129213 OK
+LOAD_START /djbench/short.wav
+FPS=1 stage=1
+PROBE_DONE ms=175
+FORMAT rate=44100 ch=2 bits=16 frames=88200
+PEAKS_SRC=built
+DECODE_DONE ms=694 frames=88200
+FPS=10 stage=3
+TEMPO bpm_x100=12000 beats=5 src=built ms=375
+SIDECARS=SAVED
+LOAD_DONE ms=1462
+LOAD_START /djbench/short.wav
+PROBE_DONE ms=393
+FORMAT rate=44100 ch=2 bits=16 frames=88200
+PEAKS_SRC=file
+FPS=8 stage=2
+DECODE_DONE ms=653 frames=88200
+TEMPO bpm_x100=12000 beats=5 src=file ms=0
+SIDECARS=REUSED
+LOAD_DONE ms=1047
+LOAD_START /djbench/short.aiff
+PROBE_DONE ms=384
+FORMAT rate=44100 ch=2 bits=16 frames=88200
+PEAKS_SRC=built
+FPS=8 stage=2
+DECODE_DONE ms=695 frames=88200
+TEMPO bpm_x100=12000 beats=5 src=built ms=380
+FPS=12 stage=5
+SIDECARS=SAVED
+LOAD_DONE ms=1679
+LOAD_START /djbench/short.aiff
+PROBE_DONE ms=393
+FORMAT rate=44100 ch=2 bits=16 frames=88200
+PEAKS_SRC=file
+FPS=7 stage=2
+DECODE_DONE ms=655 frames=88200
+TEMPO bpm_x100=12000 beats=5 src=file ms=0
+SIDECARS=REUSED
+LOAD_DONE ms=1049
+LOAD_START /djbench/click.flac
+PROBE_DONE ms=419
+FORMAT rate=44100 ch=2 bits=16 frames=352800
+PEAKS_SRC=built
+FPS=8 stage=2
+FPS=13 stage=2
+DECODE_DONE ms=1973 frames=352800
+FPS=14 stage=3
+TEMPO bpm_x100=12027 beats=16 src=built ms=1073
+SIDECARS=SAVED
+LOAD_DONE ms=3722
+LOAD_START /djbench/click.flac
+PROBE_DONE ms=439
+FORMAT rate=44100 ch=2 bits=16 frames=352800
+PEAKS_SRC=file
+FPS=10 stage=2
+FPS=9 stage=2
+DECODE_DONE ms=1538 frames=352800
+TEMPO bpm_x100=12027 beats=16 src=file ms=0
+SIDECARS=REUSED
+LOAD_DONE ms=1978
+LOAD_START /djbench/click.mp3
+PROBE_DONE ms=486
+FORMAT rate=44100 ch=2 bits=16 frames=355968
+PEAKS_SRC=built
+FPS=6 stage=2
+FPS=12 stage=2
+FPS=14 stage=2
+DECODE_DONE ms=2769 frames=355968
+FPS=14 stage=3
+TEMPO bpm_x100=12026 beats=17 src=built ms=1075
+FPS=13 stage=5
+SIDECARS=SAVED
+LOAD_DONE ms=4546
+LOAD_START /djbench/click.mp3
+PROBE_DONE ms=498
+FORMAT rate=44100 ch=2 bits=16 frames=355968
+PEAKS_SRC=file
+FPS=7 stage=2
+FPS=11 stage=2
+DECODE_DONE ms=2454 frames=355968
+TEMPO bpm_x100=12026 beats=17 src=file ms=0
+SIDECARS=REUSED
+LOAD_DONE ms=2953
+BENCH_DONE

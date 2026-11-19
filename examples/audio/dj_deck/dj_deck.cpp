@@ -38,7 +38,7 @@
 
 static const uint64_t PCM_BUDGET_BYTES = 96ull << 20;        /* about 9 minutes of 16-bit stereo at 44.1 kHz */
 #ifndef DJ_LOADER_STEP_US
-#define DJ_LOADER_STEP_US 5000
+#define DJ_LOADER_STEP_US 16000
 #endif
 
 static AudioPlayer          player;
@@ -102,7 +102,14 @@ static void follow_loader()
     }
     if (g_track_shown) {
         player.setAvailableFrames((uint32_t)loader.decodedFrames());
-        ui_deck_set_loaded(loader.decodedFrames(), loader.totalFrames(), loader.peaks(), st, loader.progressPct(), nullptr);
+        /* The screen takes the new extent five times a second, not every loop: each
+         * update redraws the waveform (~40 ms), and a loop that draws no frame gives
+         * its whole time to the loader. */
+        static uint32_t t_ui = 0;
+        if (st != g_stage || millis() - t_ui >= 200) {
+            ui_deck_set_loaded(loader.decodedFrames(), loader.totalFrames(), loader.peaks(), st, loader.progressPct(), nullptr);
+            t_ui = millis();
+        }
     }
     if (g_track_shown && !g_tempo_shown && loader.tempoReady()) {
         ui_deck_set_tempo(loader.bpmQ16(), loader.beats(), loader.beatCount());
@@ -186,12 +193,54 @@ void setup()
     Serial1.println("DJ_READY");
 }
 
+#ifdef DJ_BENCH
+/* Bench mode (-DDJ_BENCH=1): no hands needed.  Writes the probe's clips to
+ * /djbench on the card, removes their sidecars, then loads each one twice --
+ * the first load builds and saves the analysis, the second must reuse it --
+ * and leaves the last one playing.  Tokens: BENCH_FILE, BENCH_DONE. */
+extern "C" const uint8_t clip_short_wav[], clip_short_wav_end[], clip_short_aiff[], clip_short_aiff_end[],
+                         clip_click_flac[], clip_click_flac_end[], clip_click_mp3[], clip_click_mp3_end[];
+static void bench_step()
+{
+    struct Clip { const char *path; const uint8_t *data, *end; };
+    static const Clip clips[] = {
+        {"/djbench/short.wav", clip_short_wav, clip_short_wav_end}, {"/djbench/short.aiff", clip_short_aiff, clip_short_aiff_end},
+        {"/djbench/click.flac", clip_click_flac, clip_click_flac_end}, {"/djbench/click.mp3", clip_click_mp3, clip_click_mp3_end}};
+    static int n = -1;                                       /* -1: write the files; then two loads per clip */
+    const int total = 2 * (int)(sizeof(clips) / sizeof(clips[0]));
+    if (n >= total) return;
+    if (n < 0) {
+        SD.mkdir("/djbench");
+        for (const Clip &c : clips) {
+            char side[64];
+            for (const char *ext : {".apv", ".asv", ".att"}) { snprintf(side, sizeof(side), "%s%s", c.path, ext); SD.remove(side); }
+            SD.remove(c.path);
+            File f = SD.open(c.path, FILE_WRITE);
+            const size_t len = (size_t)(c.end - c.data), put = f ? f.write(c.data, len) : 0;
+            f.close();
+            Serial1.printf("BENCH_FILE %s bytes=%lu %s\n", c.path, (unsigned long)len, put == len ? "OK" : "WRITE_FAIL");
+        }
+        n = 0;
+        load_path(clips[0].path);
+        return;
+    }
+    const LoadStage st = loader.stage();
+    if (st != LoadStage::Done && st != LoadStage::Failed) return;
+    if (++n < total) { load_path(clips[n / 2].path); return; }
+    player.play();
+    Serial1.println("BENCH_DONE");
+}
+#endif
+
 void loop()
 {
     lvgl_rt1176_loop();
     if (lv_screen_active() == scr_deck) ui_deck_tick(); else ui_browser_tick();
     loader.step(DJ_LOADER_STEP_US, board_now_us);
     follow_loader();
+#ifdef DJ_BENCH
+    bench_step();
+#endif
 #ifdef DJ_FPS
     static uint32_t t_fps = 0, f0 = 0;
     if (millis() - t_fps >= 1000) {

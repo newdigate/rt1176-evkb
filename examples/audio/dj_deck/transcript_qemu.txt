@@ -1,0 +1,56 @@
+dj_deck -- QEMU gate transcript (nosh), 2026-11-19
+EVKB_BOARD=nosh ./run_qemu.sh   (./tools/run-all-qemu-gates.sh dj_deck: PASS, 82 s)
+Card image: FAT32, /music/click.wav (8 s, 120 BPM click), /music/.hidden.wav, /music/sub/, /notes.txt.
+Touch script: touch_script.txt (gen_touch_script.py): FILES, row 'music', row 'click.wav', PLAY, ZOOM+ x2, PLAY, CUE.
+
+==== run 1 UART ====
+=== BOOT ===
+[APP: dj_deck] [VER: v1] [BUILD: Nov 19 2026 14:58:15]
+DISPLAY_OK
+TOUCH_OK
+AUDIO_OK
+SD_OK
+DJ_READY
+BROWSE dir=/ n=1
+BROWSE dir=/music n=2
+BROWSE_PICK /music/click.wav
+LOAD_START /music/click.wav
+PROBE_DONE ms=229
+FORMAT rate=44100 ch=2 bits=16 frames=352800
+PEAKS_SRC=built
+DECODE_DONE ms=2085 frames=352800
+TEMPO bpm_x100=12027 beats=16 src=built ms=722
+SIDECARS=SAVED
+LOAD_DONE ms=3310
+UI_PLAY=1
+UI_ZOOM=158
+UI_ZOOM=128
+UI_PLAY=0
+UI_CUE=SetCue frame=83712
+==== run 2 UART ====
+=== BOOT ===
+[APP: dj_deck] [VER: v1] [BUILD: Nov 19 2026 14:58:15]
+DISPLAY_OK
+TOUCH_OK
+AUDIO_OK
+SD_OK
+DJ_READY
+BROWSE dir=/ n=1
+BROWSE dir=/music n=2
+BROWSE_PICK /music/click.wav
+LOAD_START /music/click.wav
+PROBE_DONE ms=166
+FORMAT rate=44100 ch=2 bits=16 frames=352800
+PEAKS_SRC=file
+DECODE_DONE ms=1942 frames=352800
+TEMPO bpm_x100=12027 beats=16 src=file ms=0
+SIDECARS=REUSED
+LOAD_DONE ms=2115
+UI_PLAY=1
+UI_ZOOM=158
+UI_ZOOM=128
+UI_PLAY=0
+UI_CUE=SetCue frame=81024
+DJ_DECK_GATE=PASS
+
+Regression sweep, same day: audio_codecs_probe, audio_player_test, synthui_waveform_test (rt1176 + nosh), acid_box, synthui_fader_test (rt1176), dj_deck (nosh): 9 passed.

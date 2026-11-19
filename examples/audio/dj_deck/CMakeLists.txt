@@ -110,10 +110,19 @@ string(REPLACE "${_dj_coreld}" "${CMAKE_CURRENT_BINARY_DIR}/dj_deck.ld" _dj_lf "
 set_target_properties(dj_deck.elf PROPERTIES LINK_FLAGS "${_dj_lf}")
 
 # Bench options: -DDJ_FPS=1 prints the frame rate once a second while a track loads;
-# -DDJ_LOADER_STEP_US=<n> sets the loader's time slice per loop (default 5000).
+# -DDJ_LOADER_STEP_US=<n> sets the loader's time slice per loop (default 16000).
 if(DJ_FPS)
     target_compile_definitions(dj_deck.elf PRIVATE DJ_FPS=1)
 endif()
 if(DJ_LOADER_STEP_US)
     target_compile_definitions(dj_deck.elf PRIVATE DJ_LOADER_STEP_US=${DJ_LOADER_STEP_US})
+endif()
+# -DDJ_BENCH=1: load the audio_codecs_probe clips from the card with no touch input
+# (see bench_step() in dj_deck.cpp).  The clips are linked into flash.
+if(DJ_BENCH)
+    set(_probe ${CMAKE_CURRENT_LIST_DIR}/../audio_codecs_probe)
+    target_sources(dj_deck.elf PRIVATE ${_probe}/clips_data.S)
+    set_source_files_properties(${_probe}/clips_data.S PROPERTIES LANGUAGE C
+        COMPILE_OPTIONS "-x;assembler-with-cpp;-I${_probe}")
+    target_compile_definitions(dj_deck.elf PRIVATE DJ_BENCH=1 DJ_FPS=1)
 endif()

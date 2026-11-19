@@ -48,10 +48,14 @@ void list_dir()
     for (;;) {
         File f = d.openNextFile();
         if (!f) break;
-        const char *n = f.name();
+        /* copy the name out before close(): the pointer belongs to the File */
+        char n[NAME_MAX_LEN + 1];
+        const char *fn = f.name();
+        const size_t len = fn ? strlen(fn) : 0;
         const bool dir = f.isDirectory();
+        if (len && len < (size_t)NAME_MAX_LEN) memcpy(n, fn, len + 1); else n[0] = 0;
         f.close();
-        if (!n || n[0] == '.' || strlen(n) >= (size_t)NAME_MAX_LEN) continue;
+        if (!n[0] || n[0] == '.') continue;
         if (!dir && !deck_is_audio_name(n)) continue;
         if (g_count >= MAX_ENTRIES) { g_truncated = true; break; }
         Entry &e = g_entries[g_count++];
