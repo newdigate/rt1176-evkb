@@ -18,7 +18,7 @@
  *            playback resumes at rate 1 on scratchEnd
  *   STARVE   setAvailableFrames(3000): holds below it in silence, still
  *            "playing"; resumes when the limit is lifted
- *   POLL     200,000 positionFrames() reads from the main loop while playing:
+ *   POLL     1.5 s of back-to-back positionFrames() reads at rate 0.37:
  *            never backwards, never a jump (a torn 64-bit read would be one)
  */
 #include "Arduino.h"
@@ -168,7 +168,11 @@ void setup() {
     diffs(n2, mn2, mx2);
     CONSOLE.printf("info scratch err_milliframes=%ld held_n=%d held_diff_min=%d held_diff_max=%d resume_diff_min=%d resume_diff_max=%d\n",
                    err_milli, n, mn, mx, mn2, mx2);
+    /* the held blocks must hold the TARGET's sample, not just any constant (zeros would be constant too) */
+    const long held_frame = n ? (long)recL[n - 1] + 32768 : -1;
+    CONSOLE.printf("info scratch held_frame=%ld target=%ld\n", held_frame, lround(target));
     verdict("SCRATCH", labs(err_milli) < 1000 && n >= 2 * AUDIO_BLOCK_SAMPLES && mn >= -1 && mx <= 1
+                       && labs(held_frame - lround(target)) <= 1
                        && !player.isScratching() && n2 > 0 && mn2 == 1 && mx2 == 1);
 
     /* STARVE */
@@ -186,21 +190,25 @@ void setup() {
     CONSOLE.printf("info starve held_at=%ld playing=%d nonzero=%d of %d after=%ld\n", held, (int)still, nz, n, after);
     verdict("STARVE", held <= 2999 && held >= 2990 && still && n > 0 && nz == 0 && after > 3000);
 
-    /* POLL */
-    player.seek(4096);
+    /* POLL: at rate 0.37 the position's low 32 bits change every block, so a
+     * read torn across the two halves shows as a step backwards or a jump.
+     * 1.5 s of back-to-back reads crosses about 500 block updates. */
+    player.pause(); wait_ms(20);
+    player.seek(4096); player.setRate(0.37f); player.play();
     wait_ms(20);
     double prev = player.positionFrames();
-    long back = 0, jump = 0, moved = 0;
-    for (long i = 0; i < 200000; i++) {
+    long back = 0, jump = 0, moved = 0, reads = 0, fractional = 0;
+    const uint32_t tp = millis();
+    while (millis() - tp < 1500) {
         const double p = player.positionFrames();
         const double d = p - prev;
         if (d < 0) back++;
-        if (d > 2.0 * AUDIO_BLOCK_SAMPLES) jump++;
-        if (d > 0) moved++;
-        prev = p;
+        if (d > 2.0 * AUDIO_BLOCK_SAMPLES * 0.37 + 1.0) jump++;
+        if (d > 0) { moved++; if (p != floor(p)) fractional++; }
+        prev = p; reads++;
     }
-    CONSOLE.printf("info poll backwards=%ld jumps=%ld steps=%ld\n", back, jump, moved);
-    verdict("POLL", back == 0 && jump == 0 && moved > 0);
+    CONSOLE.printf("info poll reads=%ld backwards=%ld jumps=%ld steps=%ld fractional=%ld\n", reads, back, jump, moved, fractional);
+    verdict("POLL", back == 0 && jump == 0 && moved >= 100 && fractional >= moved / 2);
 
     player.pause();
     CONSOLE.println(all_ok ? "AUDIO_PLAYER_ALL=PASS" : "AUDIO_PLAYER_ALL=FAIL");

@@ -2,10 +2,11 @@ audio_player_test on the Nosh board
 ===================================
 Date:   2026-11-19
 Board:  Nosh (second board), SW4 = 10, Atmel-ICE on J1, console J11 115200
-Image:  examples/audio/audio_player_test/build-nosh/audio_player_test.elf (Audio 123a247, local)
+Image:  examples/audio/audio_player_test/build-nosh/audio_player_test.elf (Audio 4ef7bb6, local)
+Not checked: listening on line out.
 
 === BOOT ===
-[APP: audio_player_test] [VER: v1] [BUILD: Nov 19 2026 12:21:31]
+[APP: audio_player_test] [VER: v1] [BUILD: Nov 19 2026 12:26:58]
 info unity n=5120 diff_min=1 diff_max=1 right_mismatch=0
 STAGE_UNITY=PASS
 info half n=5120 advance=2559 expect=2559 diff_min=0 diff_max=1
@@ -15,9 +16,10 @@ STAGE_REVERSE=PASS
 info ramp n=3968 diff_min=1 diff_max=2 first2=1292 last1=1397 span=105
 STAGE_RAMP=PASS
 info scratch err_milliframes=0 held_n=2688 held_diff_min=0 held_diff_max=0 resume_diff_min=1 resume_diff_max=1
+info scratch held_frame=30240 target=30240
 STAGE_SCRATCH=PASS
 info starve held_at=2999 playing=1 nonzero=0 of 512 after=7351
 STAGE_STARVE=PASS
-info poll backwards=0 jumps=0 steps=7
+info poll reads=15277864 backwards=0 jumps=0 steps=517 fractional=517
 STAGE_POLL=PASS
 AUDIO_PLAYER_ALL=PASS
