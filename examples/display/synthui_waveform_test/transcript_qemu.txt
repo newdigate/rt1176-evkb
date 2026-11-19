@@ -1,0 +1,20 @@
+synthui_waveform_test under QEMU (rt1176 and nosh machines give the same values)
+Date: 2026-11-19. SynthUI local branch dj-deck.
+The Nosh board, read back over SWD, gave the same checksums for the states
+checked there (mid 0x654AD956, loading 0x2A12C371; free before the chevron fix).
+
+=== BOOT ===
+[APP: synthui_waveform_test] [VER: v1] [BUILD: Nov 19 2026 12:52:28]
+PANEL_OK
+wf_crc[empty]=0x4B74D5C5
+wf_crc[fit]=0x7E10C925
+wf_crc[mid]=0x654AD956
+wf_crc[close]=0x3F0E643C
+wf_crc[loading]=0x2A12C371
+wf_crc[free]=0xB89D3536
+wf_crc[cue]=0x00E972FF
+wf_crc[end]=0x843DE617
+wf_crc[grid]=0x28A0FC77
+wf_grid_lines=79
+wf_crc_cleared=0x4B74D5C5
+crc_done
