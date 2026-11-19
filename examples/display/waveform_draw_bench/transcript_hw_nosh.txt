@@ -1,0 +1,28 @@
+waveform_draw_bench on the Nosh board
+=====================================
+Date:   2026-11-19
+Board:  Nosh (second board), RK055 panel, landscape (rotated present), 32 bpp
+Image:  examples/display/waveform_draw_bench/build-nosh/waveform_draw_bench.elf
+
+DECISION: draw path C.
+  The widget keeps the lane in its own strip (a ring in x; the CPU draws only
+  the columns that scroll in) and copies it into LVGL's canvas with two PXP
+  blits from the pre-flip hook. 30.2 fps, the pipeline's ceiling (baseline
+  30.3; the first baseline run includes one 2 s start-up wait, ignore it).
+  Rule: the first of A, B, C at >= 80 % of baseline and >= 20 fps.
+  A (one lv_draw_rect per column, whole lane redrawn) reaches 13.7 fps: no.
+  B (strip drawn with lv_draw_image) was not built: it is a CPU copy of the
+  1.5 MB lane into SDRAM, slower than A's partial fill by construction.
+  D-est (rotate the strip straight to the scanout buffer) gains nothing over
+  C, so the LVGL port needs no new hook. The port's rotation of the lane
+  costs 12.9 ms per frame and fits inside the 33 ms frame.
+
+=== BOOT ===
+[APP: waveform_draw_bench] [VER: v1] [BUILD: Nov 19 2026 12:35:19]
+PANEL_OK
+ARM=baseline frames=299 ms=11835 fps_x10=252 max_frame_ms=2000 rot_us_per_frame=125 pxp_err=0 rot_err=0
+ARM=A frames=300 ms=21877 fps_x10=137 max_frame_ms=91 rot_us_per_frame=12923 pxp_err=0 rot_err=0
+ARM=C frames=300 ms=9916 fps_x10=302 max_frame_ms=50 rot_us_per_frame=12915 pxp_err=0 rot_err=0
+ARM=D-est frames=300 ms=9894 fps_x10=303 max_frame_ms=46 rot_us_per_frame=125 pxp_err=0 rot_err=0
+ARM=baseline frames=300 ms=9869 fps_x10=303 max_frame_ms=34 rot_us_per_frame=125 pxp_err=0 rot_err=0
+BENCH_DONE
