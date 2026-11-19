@@ -1,0 +1,53 @@
+synthui_waveform_test on the Nosh board (bench build, -DWF_FPS=1)
+=================================================================
+Date:   2026-11-19
+Board:  Nosh (second board), RK055 panel, landscape, 32 bpp
+Image:  examples/display/synthui_waveform_test/build-fps (SynthUI local, branch dj-deck)
+
+Frame rate with the lane scrolling at playback speed, tracking on: 25-26 fps
+at both zooms (the pipeline's ceiling is 30). Per frame: 18 ms for the two
+PXP copies of the 1120x336 lane into LVGL's canvas, 14 ms for the port's
+rotation of the lane into the scanout buffer; 32 ms just misses one 33 ms
+slot. Before the rail was given its own dirty flag it was 22-23 fps.
+The state checksums below equal the QEMU goldens.
+
+NOT checked here: dragging the lane and tapping the rail by hand (the gate
+scripts those under QEMU). The image stays live after wf_fps_done for that.
+
+=== BOOT ===
+[APP: synthui_waveform_test] [VER: v1] [BUILD: Nov 19 2026 13:07:14]
+PANEL_OK
+I2C_FAIL
+wf_crc[empty]=0x4B74D5C5
+wf_crc[fit]=0x7E10C925
+wf_crc[mid]=0x654AD956
+wf_crc[close]=0x3F0E643C
+wf_crc[loading]=0x2A12C371
+wf_crc[free]=0xB89D3536
+wf_crc[cue]=0x00E972FF
+wf_crc[end]=0x843DE617
+wf_crc[grid]=0x28A0FC77
+wf_grid_lines=79
+wf_crc_cleared=0x4B74D5C5
+crc_done
+wf_fps zoom=2048 fps=23 per_frame_us: hook=75388 blits=43043 (n=144) rotate=56142 vsync_wait=4234
+wf_fps zoom=2048 fps=25 per_frame_us: hook=18795 blits=18625 (n=58) rotate=14565 vsync_wait=0
+wf_fps zoom=2048 fps=26 per_frame_us: hook=18176 blits=18005 (n=58) rotate=13925 vsync_wait=0
+wf_fps zoom=2048 fps=26 per_frame_us: hook=18137 blits=17967 (n=58) rotate=13928 vsync_wait=0
+wf_fps zoom=2048 fps=25 per_frame_us: hook=18807 blits=18629 (n=58) rotate=14193 vsync_wait=0
+wf_fps zoom=2048 fps=26 per_frame_us: hook=18510 blits=18331 (n=61) rotate=14360 vsync_wait=0
+wf_fps zoom=2048 fps=25 per_frame_us: hook=18481 blits=18309 (n=57) rotate=14080 vsync_wait=0
+wf_fps zoom=2048 fps=26 per_frame_us: hook=18446 blits=18274 (n=59) rotate=14012 vsync_wait=0
+wf_fps zoom=2048 fps=25 per_frame_us: hook=18557 blits=18380 (n=58) rotate=14201 vsync_wait=0
+wf_fps zoom=2048 fps=26 per_frame_us: hook=18534 blits=18358 (n=60) rotate=14427 vsync_wait=0
+wf_fps zoom=128 fps=24 per_frame_us: hook=22059 blits=18815 (n=55) rotate=14267 vsync_wait=0
+wf_fps zoom=128 fps=25 per_frame_us: hook=19391 blits=18555 (n=56) rotate=13974 vsync_wait=0
+wf_fps zoom=128 fps=26 per_frame_us: hook=18621 blits=17790 (n=58) rotate=13902 vsync_wait=0
+wf_fps zoom=128 fps=25 per_frame_us: hook=19165 blits=18336 (n=55) rotate=13970 vsync_wait=0
+wf_fps zoom=128 fps=25 per_frame_us: hook=19190 blits=18362 (n=56) rotate=13982 vsync_wait=0
+wf_fps zoom=128 fps=25 per_frame_us: hook=18848 blits=18031 (n=56) rotate=13975 vsync_wait=0
+wf_fps zoom=128 fps=26 per_frame_us: hook=18632 blits=17829 (n=58) rotate=13938 vsync_wait=0
+wf_fps zoom=128 fps=25 per_frame_us: hook=19588 blits=18761 (n=57) rotate=14087 vsync_wait=0
+wf_fps zoom=128 fps=25 per_frame_us: hook=18882 blits=18057 (n=56) rotate=13949 vsync_wait=0
+wf_fps zoom=128 fps=26 per_frame_us: hook=18922 blits=18084 (n=59) rotate=14174 vsync_wait=0
+wf_fps_done

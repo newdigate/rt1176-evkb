@@ -1,11 +1,27 @@
 synthui_waveform_test under QEMU (rt1176 and nosh machines give the same values)
 Date: 2026-11-19. SynthUI local branch dj-deck.
-The Nosh board, read back over SWD, gave the same checksums for the states
-checked there (mid 0x654AD956, loading 0x2A12C371; free before the chevron fix).
+Touch expectations come from gen_touch_script.py:
+  grab_dx=102 grab_begin=7938000 grab_last=7729104 seek=3940650 scroll_dx=102 scroll_delta=-208896 chevron_at=1110,170 cleared_dx=102 instants=1067
 
 === BOOT ===
-[APP: synthui_waveform_test] [VER: v1] [BUILD: Nov 19 2026 12:52:28]
+[APP: synthui_waveform_test] [VER: v1] [BUILD: Nov 19 2026 13:09:15]
 PANEL_OK
+I2C_OK
+wf_ready ms=1078
+wf_ev=GRAB_BEGIN frame=7938000
+wf_ev=GRAB_MOVE frame=7886800
+wf_ev=GRAB_MOVE frame=7833552
+wf_ev=GRAB_MOVE frame=7782352
+wf_ev=GRAB_MOVE frame=7729104
+wf_ev=GRAB_END frame=7729104
+wf_ev=SEEK frame=3940650
+wf_scroll_delta=-208896
+wf_ev=TRACK_REQUEST frame=-1
+wf_ev=GRAB_BEGIN frame=7938000
+wf_ev=GRAB_END frame=7938000
+wf_press_lost begins=2 ends=2
+wf_cleared_begin
+wf_cleared_end
 wf_crc[empty]=0x4B74D5C5
 wf_crc[fit]=0x7E10C925
 wf_crc[mid]=0x654AD956

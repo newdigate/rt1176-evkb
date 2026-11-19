@@ -26,3 +26,8 @@ target_link_libraries(synthui_waveform_test.elf SynthUI LVGL VGLite stdc++ m)
 if(WF_HOLD)
     target_compile_definitions(synthui_waveform_test.elf PRIVATE WF_HOLD="${WF_HOLD}")
 endif()
+# Bench only: -DWF_FPS=1 skips the scripted touch phase, then scrolls the lane
+# at playback speed for 10 s at two zooms and prints wf_fps once a second.
+if(WF_FPS)
+    target_compile_definitions(synthui_waveform_test.elf PRIVATE WF_FPS=1)
+endif()
