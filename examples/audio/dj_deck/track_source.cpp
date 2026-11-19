@@ -14,6 +14,12 @@ namespace ac = audio_codecs;
 
 /* ---- fast memory shared by whichever adapter is open -------------------- */
 static const uint32_t WIN = 32768;                  /* holds a whole FLAC frame: 16-bit to block size 8192, 24-bit to 4096 */
+/* The arena has to be in DTCM.  The window need not: it is read once, in order, a few tens of KB
+ * per second of audio, so on the board it goes to OCRAM and leaves 32 KB of DTCM for the stack. */
+#if defined(__IMXRT1176__)
+#include <Arduino.h>
+DMAMEM
+#endif
 static uint8_t s_win[WIN];
 alignas(16) static uint8_t s_arena[sizeof(ac::mp3::Mp3Decoder) > sizeof(ac::flac::FlacDecoder)
                                        ? sizeof(ac::mp3::Mp3Decoder) : sizeof(ac::flac::FlacDecoder)];
@@ -21,7 +27,7 @@ alignas(16) static uint8_t s_arena[sizeof(ac::mp3::Mp3Decoder) > sizeof(ac::flac
 static bool s_read_error = false;
 
 /* A sliding window over [start, limit) of the file. */
-struct Stream {
+struct FileWindow {
     SeekableReader *f = nullptr;
     uint64_t base = 0, limit = 0;                   /* file offset of s_win[0]; nothing at or past limit is read */
     uint32_t len = 0, rd = 0;
@@ -56,7 +62,7 @@ struct Stream {
         else { base = pos() + n; len = rd = 0; }
     }
 };
-static Stream s_stream;
+static FileWindow s_stream;
 
 static bool read_at(SeekableReader &f, uint64_t off, uint8_t *buf, size_t n)
 {
