@@ -1,6 +1,6 @@
 /* deck_math.h - the DJ deck's pure logic: pitch and rate, the BPM readout,
  * time text, the CDJ cue button, which files are audio and how they sort,
- * sidecar names.  No Arduino, no LVGL: host-tested in tests/deck_math_test.cpp.
+ * sidecar names, and when to load the next track by itself.  No Arduino, no LVGL: host-tested in tests/deck_math_test.cpp.
  * Copyright (c) 2026 Nicholas Newdigate
  * SPDX-License-Identifier: MIT */
 #pragma once
@@ -81,6 +81,15 @@ static inline int deck_name_compare(const char *a, bool a_dir, const char *b, bo
     if (a_dir != b_dir) return a_dir ? -1 : 1;
     return deck_casecmp(a, b);
 }
+/* Auto-next: is `cand` a better "file after `current`" than `best` ("" for
+ * none yet)?  Offer every name in the folder; what is left in best is the
+ * audio file that follows current in the list's order, or "" at the end. */
+static inline bool deck_next_better(const char *current, const char *cand, const char *best)
+{
+    if (!cand || !deck_is_audio_name(cand)) return false;
+    if (deck_casecmp(cand, current ? current : "") <= 0) return false;
+    return !best || best[0] == 0 || deck_casecmp(cand, best) < 0;
+}
 /* "<audio path>.<ext>".  If it does not fit, out is the empty string: a
  * shortened sidecar name would belong to some other file. */
 static inline void deck_sidecar_name(char *out, size_t cap, const char *audio_path, const char *ext)
@@ -125,3 +134,80 @@ static inline CueAct cue_release(CueState &s)
     s.previewing = false;
     return CueAct::PreviewStop;
 }
+
+/* ---- auto-next: load the following track when this one has played out --- */
+struct AutoIn {
+    bool playing = false;       /* the player is playing */
+    bool scratching = false;    /* a finger holds the waveform */
+    bool at_end = false;        /* the position is the last frame of a fully loaded track */
+    bool near_end = false;      /* ... or within the last few seconds of one */
+    bool loaded = false;        /* the loader has finished with the track that is playing, and holds nothing else */
+    bool busy = false;          /* the loader is working (decode, analysis or saving) */
+    bool failed = false;        /* the last load failed ... */
+    bool no_memory = false;     /* ... for want of memory */
+    bool playable = false;      /* the track on the deck is loaded far enough to play */
+};
+struct AutoNext {
+    bool enabled = false;       /* the AUTO switch */
+    bool was_playing = false;
+    bool ended = false;         /* the track played out; waiting for the loader to be free */
+    bool auto_load = false;     /* the load in hand was started from here, not by the user */
+    bool want_play = false;     /* ... and is to be played as soon as it can be */
+    bool bg = false;            /* the next track is loading, or loaded, beside the one that is playing */
+    bool no_preload = false;    /* loading early was tried for this track and is not to be tried again */
+};
+enum class AutoAct { None, LoadNext, Play, Preload, DropPreload, Swap };
+
+/* Once per main loop.  The caller carries the action out:
+ *   LoadNext     find the file after the current one and load it, then call
+ *                autonext_loading(), or autonext_none_left() if there is none.
+ *   Play         start the player.
+ *   Preload      near the end of a track: load the file after it (or after
+ *                the early load that has just failed) while this one plays on,
+ *                then autonext_preloading(), or autonext_no_preload() if
+ *                there is none.
+ *   DropPreload  the early load found no memory beside the playing track:
+ *                cancel it.  LoadNext follows when the track has ended.
+ *   Swap         the track has played out and the next is waiting: put it on
+ *                the deck.  Play follows as soon as it can be played.
+ * A track has played out when the player stops by itself on its last frame;
+ * a pause, a seek or a scratch to the end is not that.  LoadNext waits until
+ * the loader has finished with the current track, so its analysis files are
+ * saved first.  A load started from here that fails asks for the file after
+ * it; one the user picked stays failed. */
+static inline AutoAct autonext_tick(AutoNext &s, const AutoIn &in)
+{
+    if (!s.enabled) { s.ended = s.auto_load = s.want_play = false; }
+
+    if (s.bg && in.failed && s.enabled) {
+        if (in.no_memory) { s.bg = false; s.no_preload = true; return AutoAct::DropPreload; }
+        return AutoAct::Preload;
+    }
+    if (!s.bg) {
+        if (s.auto_load && in.failed) return AutoAct::LoadNext;
+        if (s.want_play && in.playable && !in.failed) { s.want_play = false; s.was_playing = true; return AutoAct::Play; }
+    }
+
+    if (in.scratching) s.ended = false;
+    else if (s.enabled && s.was_playing && !in.playing && in.at_end) s.ended = true;
+    if (s.ended && (in.playing || !in.at_end)) s.ended = false;
+    s.was_playing = in.playing && !in.scratching;
+    if (s.ended && s.bg) {
+        s.ended = false; s.bg = false; s.no_preload = false;
+        s.auto_load = s.want_play = true;
+        return AutoAct::Swap;
+    }
+    if (s.ended && !in.busy) { s.ended = false; return AutoAct::LoadNext; }
+    if (s.enabled && !s.bg && !s.no_preload && in.near_end && in.playing && !in.scratching && in.loaded) return AutoAct::Preload;
+    return AutoAct::None;
+}
+/* The caller started the automatic load. */
+static inline void autonext_loading(AutoNext &s) { s.auto_load = true; s.want_play = true; s.ended = false; s.was_playing = false; s.bg = false; s.no_preload = false; }
+/* There was no file to load. */
+static inline void autonext_none_left(AutoNext &s) { s.auto_load = s.want_play = s.ended = false; }
+/* The caller started the early load. */
+static inline void autonext_preloading(AutoNext &s) { s.bg = true; }
+/* There was no file to load early: do not look again for this track. */
+static inline void autonext_no_preload(AutoNext &s) { s.bg = false; s.no_preload = true; }
+/* The user picked a file. */
+static inline void autonext_manual(AutoNext &s) { s.auto_load = s.want_play = s.ended = s.bg = s.no_preload = false; s.was_playing = false; }

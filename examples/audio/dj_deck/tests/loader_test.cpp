@@ -287,6 +287,52 @@ int main(int argc, char **argv) {
         assert(!L.start("/missing.wav") && L.stage() == LoadStage::Failed && !strcmp(L.error(), "read error"));
         L.cancel(); assert(g_live == 0);
     }
+    // ---- (m) startKeeping(): the next track loads while the loaded one stays alive ----
+    {
+        Loader L(st, mem, BUDGET);
+        assert(L.start(P.c_str())); finish(L);
+        assert(L.stage() == LoadStage::Done && L.tempoReady() && L.beatCount() > 0);
+        const int16_t *pcm = L.pcm(); const uint64_t frames = L.totalFrames(); const uint8_t ch = L.info().channels;
+        const int8_t *tab = L.peaks().table(0); const uint32_t pts = L.peaks().points(0);
+        const LoaderBeat *beats = L.beats(); const uint32_t nb = L.beatCount();
+        const uint32_t h_pcm = fnv(pcm, (size_t)frames * ch * 2), h_tab = fnv(tab, (size_t)pts * 2 * ch), h_beats = fnv(beats, nb * sizeof(LoaderBeat));
+        const uint32_t gen = L.generation();
+        HeldTrack held;
+        assert(L.startKeeping("/b.wav", held));
+        assert(held.pcm == pcm && held.beats == beats && held.peaks != nullptr);
+        assert(L.generation() != gen && L.pcm() == nullptr && L.beats() == nullptr);
+        finish(L);
+        assert(L.stage() == LoadStage::Done && L.totalFrames() == 88200 && L.pcm() != pcm);
+        // the kept track is untouched (and still allocated: the sanitizer would say otherwise)
+        assert(fnv(pcm, (size_t)frames * ch * 2) == h_pcm && fnv(tab, (size_t)pts * 2 * ch) == h_tab && fnv(beats, nb * sizeof(LoaderBeat)) == h_beats);
+        const int live = g_live;
+        L.release(held);
+        assert(g_live == live - 3 && held.pcm == nullptr && held.peaks == nullptr && held.beats == nullptr);
+        L.release(held);                                    // empty: nothing happens
+        assert(g_live == live - 3);
+        // only a finished load can be kept: mid-decode it is refused and the load goes on
+        assert(L.start(P.c_str()));
+        while (L.stage() != LoadStage::Decode) L.step(2000, t_now);
+        HeldTrack none;
+        assert(!L.startKeeping("/b.wav", none) && none.pcm == nullptr && L.stage() == LoadStage::Decode);
+        finish(L); assert(L.stage() == LoadStage::Done);
+        // no memory for the next track beside this one: it fails, says why, and the kept one is whole
+        assert(!L.outOfMemory());
+        HeldTrack h2;
+        g_no_mem = true;
+        assert(L.startKeeping("/b.wav", h2));
+        finish(L);
+        g_no_mem = false;
+        assert(L.stage() == LoadStage::Failed && L.outOfMemory() && !strcmp(L.error(), "no memory"));
+        assert(h2.pcm && fnv(h2.pcm, (size_t)frames * ch * 2) == h_pcm);
+        // a next track that cannot be opened at all: the current one is still handed over, and the failure is not "no memory"
+        L.release(h2);
+        assert(L.start(P.c_str())); finish(L);
+        HeldTrack h3;
+        assert(L.startKeeping("/missing.wav", h3) && h3.pcm && L.stage() == LoadStage::Failed && !L.outOfMemory());
+        L.release(h3);
+        L.cancel(); assert(g_live == 0);
+    }
     std::printf("loader_test: all assertions passed\n");
     return 0;
 }

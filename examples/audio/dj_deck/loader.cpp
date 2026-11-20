@@ -87,6 +87,7 @@ void Loader::fail(const char *why)
     if (audio_) { storage_.close(audio_); audio_ = nullptr; }
     if (out_) { storage_.close(out_); out_ = nullptr; }
     snprintf(error_, sizeof(error_), "%s", why);
+    oom_ = strcmp(why, "no memory") == 0;
     stage_ = LoadStage::Failed;
 }
 
@@ -95,7 +96,23 @@ void Loader::cancel()
     free_all();
     generation_++;
     error_[0] = 0;
+    oom_ = false;
     stage_ = LoadStage::Idle;
+}
+bool Loader::startKeeping(const char *path, HeldTrack &held)
+{
+    if (stage_ != LoadStage::Done || held.pcm || held.peaks || held.beats) return false;
+    held.pcm = pcm_; held.peaks = peak_store_; held.beats = beats_;
+    pcm_ = nullptr; peak_store_ = nullptr; beats_ = nullptr;     /* free_all() in start() now leaves them alone */
+    start(path);
+    return true;
+}
+void Loader::release(HeldTrack &held)
+{
+    if (held.pcm) mem_.release(held.pcm);
+    if (held.peaks) mem_.release(held.peaks);
+    if (held.beats) mem_.release(held.beats);
+    held = HeldTrack();
 }
 
 void Loader::sidecar_path(char *out, size_t cap, const char *ext) const { deck_sidecar_name(out, cap, path_, ext); }

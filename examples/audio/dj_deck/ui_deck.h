@@ -5,7 +5,8 @@
 #include "play_buffer.h"
 #include "loader.h"
 
-struct DeckUiCallbacks { void (*open_browser)(); };
+/* auto_next: the AUTO switch above the pitch fader was turned on or off. */
+struct DeckUiCallbacks { void (*open_browser)(); void (*auto_next)(bool on); };
 
 void ui_deck_create(lv_obj_t *screen, AudioPlayer &player, DeckUiCallbacks cb);
 /* A new track: the PCM (still filling) and its peak tables.  Resets cue, zoom and tracking. */

@@ -93,6 +93,187 @@ int main() {
     c = CueState();
     assert(c.cue == 0 && !c.previewing);
 
+    // --- auto-next: loading the next track early, beside the one that is playing ---
+    {
+        // near: playing in the last seconds; loaded: the loader has finished with the track that is playing
+        auto in = [](bool playing, bool near, bool at_end, bool loaded, bool busy = false, bool failed = false, bool no_memory = false, bool playable = false) {
+            AutoIn i; i.playing = playing; i.near_end = near; i.at_end = at_end; i.loaded = loaded; i.busy = busy; i.failed = failed;
+            i.no_memory = no_memory; i.playable = playable; return i;
+        };
+        AutoNext a; a.enabled = true;
+        assert(autonext_tick(a, in(true, false, false, true)) == AutoAct::None);          // not near the end yet
+        assert(autonext_tick(a, in(true, true, false, true)) == AutoAct::Preload);
+        autonext_preloading(a);
+        assert(autonext_tick(a, in(true, true, false, false, true)) == AutoAct::None);    // one at a time
+        assert(autonext_tick(a, in(true, true, false, false, false)) == AutoAct::None);   // it is ready and waits
+        // the track plays out: the waiting one comes forward and plays, with no load in between
+        assert(autonext_tick(a, in(false, true, true, false, false)) == AutoAct::Swap);
+        assert(autonext_tick(a, in(false, false, false, true, false, false, false, true)) == AutoAct::Play);
+        assert(autonext_tick(a, in(true, false, false, true)) == AutoAct::None);
+        // ... and near ITS end the one after it is loaded early in turn
+        assert(autonext_tick(a, in(true, true, false, true)) == AutoAct::Preload);
+
+        // the swap does not wait for the early load to finish: it may still be decoding
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, true, false, true)); autonext_preloading(a);
+        assert(autonext_tick(a, in(false, true, true, false, true)) == AutoAct::Swap);
+        assert(autonext_tick(a, in(false, false, false, false, true, false, false, false)) == AutoAct::None);   // not playable yet
+        assert(autonext_tick(a, in(false, false, false, false, true, false, false, true)) == AutoAct::Play);
+
+        // not while the current track is still loading or being analysed, not paused, not when switched off
+        a = AutoNext(); a.enabled = true;
+        assert(autonext_tick(a, in(true, true, false, false, true)) == AutoAct::None);
+        assert(autonext_tick(a, in(false, true, false, true)) == AutoAct::None);
+        a.enabled = false;
+        assert(autonext_tick(a, in(true, true, false, true)) == AutoAct::None);
+
+        // no room for both tracks: give the early load up, and load the ordinary way when the track has ended
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, true, false, true)); autonext_preloading(a);
+        assert(autonext_tick(a, in(true, true, false, false, false, true, true)) == AutoAct::DropPreload);
+        assert(autonext_tick(a, in(true, true, false, false)) == AutoAct::None);         // the caller cancelled it: loader idle, nothing kept
+        assert(autonext_tick(a, in(true, true, false, false)) == AutoAct::None);         // and it is not tried again for this track
+        assert(autonext_tick(a, in(false, true, true, false)) == AutoAct::LoadNext);
+        autonext_loading(a);
+        assert(autonext_tick(a, in(false, false, false, false, true, false, false, true)) == AutoAct::Play);
+        assert(autonext_tick(a, in(true, true, false, true)) == AutoAct::Preload);       // the next track gets its own try
+
+        // an early load that fails for any other reason: skip that file and load the one after it early
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, true, false, true)); autonext_preloading(a);
+        assert(autonext_tick(a, in(true, true, false, false, false, true, false)) == AutoAct::Preload);
+        autonext_preloading(a);
+        assert(autonext_tick(a, in(true, true, false, false, true)) == AutoAct::None);
+        // ... or, if nothing follows it, stop trying
+        assert(autonext_tick(a, in(true, true, false, false, false, true, false)) == AutoAct::Preload);
+        autonext_no_preload(a);
+        assert(autonext_tick(a, in(true, true, false, false)) == AutoAct::None);
+        assert(autonext_tick(a, in(true, true, false, true)) == AutoAct::None);
+
+        // the last track of the folder: one look for a next file, not one every loop
+        a = AutoNext(); a.enabled = true;
+        assert(autonext_tick(a, in(true, true, false, true)) == AutoAct::Preload);
+        autonext_no_preload(a);
+        assert(autonext_tick(a, in(true, true, false, true)) == AutoAct::None);
+        assert(autonext_tick(a, in(false, true, true, true)) == AutoAct::LoadNext);       // the ordinary path then reports the end
+        autonext_none_left(a);
+        assert(autonext_tick(a, in(false, true, true, true)) == AutoAct::None);
+
+        // the user picks a file while one is waiting: everything automatic is forgotten
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, true, false, true)); autonext_preloading(a);
+        autonext_manual(a);
+        assert(!a.bg && autonext_tick(a, in(false, false, false, false, true)) == AutoAct::None);
+        // switched off with one waiting: the track just ends; switched on again, the waiting one is still used
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, true, false, true)); autonext_preloading(a);
+        a.enabled = false;
+        assert(autonext_tick(a, in(false, true, true, false)) == AutoAct::None);
+        a.enabled = true;
+        assert(autonext_tick(a, in(true, true, false, false)) == AutoAct::None);
+        assert(autonext_tick(a, in(false, true, true, false)) == AutoAct::Swap);
+        // switched off while the early load fails: nothing is skipped or retried behind the user's back
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, true, false, true)); autonext_preloading(a);
+        a.enabled = false;
+        assert(autonext_tick(a, in(true, true, false, false, false, true, false)) == AutoAct::None);
+        assert(autonext_tick(a, in(true, true, false, false, false, true, true)) == AutoAct::None);
+        // a scratch to the end with one waiting is not the end
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, true, false, true)); autonext_preloading(a);
+        { AutoIn i = in(false, true, true, false); i.scratching = true; assert(autonext_tick(a, i) == AutoAct::None); }
+        assert(autonext_tick(a, in(false, true, true, false)) == AutoAct::None);
+    }
+
     std::printf("deck_math_test: all assertions passed\n");
+    // --- auto-next: which file follows the current one in the browser's order ---
+    {
+        const char *folder[] = {"b.wav", "A.wav", "notes.txt", "c.mp3", ".hidden.wav", "B2.flac", "a.wav.apv", "d.aiff"};
+        auto next_after = [&](const char *cur) {
+            static char best[64];
+            best[0] = 0;
+            for (const char *n : folder) if (deck_next_better(cur, n, best)) snprintf(best, sizeof best, "%s", n);
+            return (const char *)best;
+        };
+        assert(!strcmp(next_after("A.wav"), "b.wav"));       // case does not matter, as in the list
+        assert(!strcmp(next_after("b.wav"), "B2.flac"));
+        assert(!strcmp(next_after("B2.flac"), "c.mp3"));     // notes.txt and the sidecar are not audio
+        assert(!strcmp(next_after("c.mp3"), "d.aiff"));
+        assert(!strcmp(next_after("d.aiff"), ""));           // the last file: nothing follows, no wrap
+        assert(!strcmp(next_after("bb.wav"), "c.mp3"));      // the current file need not exist any more
+        assert(!strcmp(next_after(""), "A.wav"));
+        assert(!deck_next_better("a.wav", "a.wav", ""));     // never the same file again
+        assert(!deck_next_better("a.wav", nullptr, "") && !deck_next_better("a.wav", "", ""));
+    }
+
+    // --- auto-next: when to load the next track ---
+    {
+        // AutoIn: playing, scratching, at_end, loader busy, loader failed, track playable
+        AutoNext a;
+        auto in = [](bool playing, bool at_end, bool busy = false, bool failed = false, bool playable = true, bool scratching = false) {
+            AutoIn i; i.playing = playing; i.at_end = at_end; i.busy = busy; i.failed = failed; i.playable = playable; i.scratching = scratching; return i;
+        };
+        // off: a track that plays to its end just stops
+        assert(autonext_tick(a, in(true, false)) == AutoAct::None);
+        assert(autonext_tick(a, in(false, true)) == AutoAct::None);
+        // on: the same thing asks for the next track, once
+        a.enabled = true;
+        assert(autonext_tick(a, in(true, false)) == AutoAct::None);
+        assert(autonext_tick(a, in(false, true)) == AutoAct::LoadNext);
+        assert(autonext_tick(a, in(false, true)) == AutoAct::None);
+        // the caller started the load: play as soon as it can be played
+        autonext_loading(a);
+        assert(autonext_tick(a, in(false, false, true, false, false)) == AutoAct::None);
+        assert(autonext_tick(a, in(false, false, true, false, true)) == AutoAct::Play);
+        assert(autonext_tick(a, in(true, false, true)) == AutoAct::None);
+        // a pause is not an end, and neither is a pause near the end
+        assert(autonext_tick(a, in(false, false)) == AutoAct::None);
+        // an automatic load that fails moves on to the file after it
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, false));
+        assert(autonext_tick(a, in(false, true)) == AutoAct::LoadNext);
+        autonext_loading(a);
+        assert(autonext_tick(a, in(false, false, false, true, false)) == AutoAct::LoadNext);
+        autonext_loading(a);
+        assert(autonext_tick(a, in(false, false, false, true, false)) == AutoAct::LoadNext);     // and again
+        autonext_none_left(a);                                                                  // the folder has no more
+        assert(autonext_tick(a, in(false, false, false, true, false)) == AutoAct::None);
+        // a file the user picked that fails stays failed
+        a = AutoNext(); a.enabled = true;
+        autonext_manual(a);
+        assert(autonext_tick(a, in(false, false, false, true, false)) == AutoAct::None);
+        // a manual load cancels a pending automatic play
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, false)); autonext_tick(a, in(false, true)); autonext_loading(a);
+        autonext_manual(a);
+        assert(autonext_tick(a, in(false, false, true, false, true)) == AutoAct::None);
+        // the end arrives while the analysis is still being saved: wait for the loader
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, false, true));
+        assert(autonext_tick(a, in(false, true, true)) == AutoAct::None);
+        assert(autonext_tick(a, in(false, true, true)) == AutoAct::None);
+        assert(autonext_tick(a, in(false, true, false)) == AutoAct::LoadNext);
+        // ... unless the user moved away from the end or started playing again meanwhile
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, false, true)); autonext_tick(a, in(false, true, true));
+        assert(autonext_tick(a, in(false, false, true)) == AutoAct::None);
+        assert(autonext_tick(a, in(false, false, false)) == AutoAct::None);
+        // a scratch that is dragged to the end is not the track finishing
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, false, false, false, true, true));
+        assert(autonext_tick(a, in(false, true, false, false, true, true)) == AutoAct::None);
+        assert(autonext_tick(a, in(false, true)) == AutoAct::None);
+        // switched off after the end was seen but before the loader was free: nothing happens
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, false, true)); autonext_tick(a, in(false, true, true));
+        a.enabled = false;
+        assert(autonext_tick(a, in(false, true, false)) == AutoAct::None);
+        // switched off while an automatic load is in flight: it is not played and a failure is not skipped
+        a = AutoNext(); a.enabled = true;
+        autonext_tick(a, in(true, false)); autonext_tick(a, in(false, true)); autonext_loading(a);
+        a.enabled = false;
+        assert(autonext_tick(a, in(false, false, false, true, false)) == AutoAct::None);
+    }
+
     return 0;
 }

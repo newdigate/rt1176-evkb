@@ -46,6 +46,10 @@ public:
 struct LoaderMem { void *(*alloc)(size_t); void (*release)(void *); };
 struct LoaderBeat { uint32_t frame; uint8_t downbeat; };        /* the layout of synthui_wave_beat_t */
 
+/* What the player and the screen point at for a loaded track, taken out of the
+ * loader by startKeeping() and given back with release(). */
+struct HeldTrack { int16_t *pcm = nullptr; uint8_t *peaks = nullptr; LoaderBeat *beats = nullptr; };
+
 enum class LoadStage : uint8_t { Idle, Probe, Decode, Spectrum, Tempo, Save, Done, Failed };
 enum class SidecarResult : uint8_t { Pending, Reused, Saved, SaveFailed };
 
@@ -57,12 +61,21 @@ public:
     /* Begin loading; whatever was loaded or loading before is dropped first.
      * False (and stage() Failed) if it cannot even be opened. */
     bool start(const char *path);
+    /* Begin loading while the track loaded now stays alive: its PCM, peak
+     * tables and beats move into `held` (which must be empty) and are no
+     * longer the loader's; give them back with release() once nothing points
+     * at them.  Only a finished load (stage() Done) can be kept: otherwise
+     * false, and nothing changes.  True means the old track was handed over;
+     * whether the new one opened is in stage(), as after start(). */
+    bool startKeeping(const char *path, HeldTrack &held);
+    void release(HeldTrack &held);
     void cancel();                                              /* back to Idle, everything freed */
     /* Work for about budget_us microseconds (it finishes the unit in hand). */
     void step(uint32_t budget_us, uint32_t (*now_us)());
 
     LoadStage stage() const { return stage_; }
     uint8_t progressPct() const;
+    bool outOfMemory() const { return oom_; }                   /* the failure was "no memory": it may fit once other memory is freed */
     const char *error() const { return error_; }                /* "unsupported", "too long (max N min)", "read error", "decode error", "no memory" */
 
     const TrackInfo &info() const { return info_; }
@@ -98,6 +111,7 @@ private:
     uint64_t budget_;
     LoadStage stage_ = LoadStage::Idle;
     char error_[40] = "";
+    bool oom_ = false;
     char path_[256] = "";
     uint32_t generation_ = 0;
 

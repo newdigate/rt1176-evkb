@@ -17,7 +17,7 @@ namespace {
 AudioPlayer *g_player;
 DeckUiCallbacks g_cb;
 lv_obj_t *g_wave, *g_fader, *g_name, *g_fmt, *g_time, *g_left, *g_bpm, *g_pitch, *g_status;
-lv_obj_t *g_play, *g_rew, *g_cue, *g_track, *g_zin, *g_zout, *g_range, *g_files;
+lv_obj_t *g_play, *g_rew, *g_cue, *g_track, *g_zin, *g_zout, *g_range, *g_files, *g_auto;
 lv_obj_t *g_play_lbl, *g_track_lbl, *g_range_lbl;
 
 synthui_wave_table_t g_tables[3];
@@ -143,6 +143,14 @@ void on_range(lv_event_t *e)
     g_pitch_val = deck_pitch_from_fader(synthui_fader_get_value(g_fader), g_range_val);
     apply_pitch();
 }
+void on_auto(lv_event_t *e)
+{
+    if (!clicked(e)) return;
+    const bool on = !lv_obj_has_state(g_auto, LV_STATE_CHECKED);
+    checked(g_auto, on);
+    if (g_cb.auto_next) g_cb.auto_next(on);
+    Serial1.printf("UI_AUTO=%d\n", (int)on);
+}
 void on_fader(lv_event_t *e)
 {
     const lv_event_code_t c = lv_event_get_code(e);
@@ -206,6 +214,9 @@ void ui_deck_create(lv_obj_t *scr, AudioPlayer &player, DeckUiCallbacks cb)
     lv_obj_set_pos(g_wave, 16, 96);
     lv_obj_set_size(g_wave, 1120, 408);
     lv_obj_add_event_cb(g_wave, on_wave, LV_EVENT_ALL, nullptr);
+
+    /* AUTO: when a track has played out, load and play the next file in its folder */
+    g_auto = button(scr, 1152, 12, 112, 72, "AUTO", on_auto);
 
     g_fader = synthui_fader_create(scr);
     lv_obj_set_pos(g_fader, 1152, 96);
