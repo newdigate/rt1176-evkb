@@ -144,9 +144,34 @@ static long analyse(const int16_t *src, uint32_t frames, uint32_t *beats, uint32
     return bpm;
 }
 
+#ifdef AUDIO_CODECS_PROFILE
+/* -DPROBE_PROFILE=1: where the time goes inside each decoder and the spectrum.
+ * PROF <what> <stage>=<microseconds> per line, from the CPU cycle counter. */
+#include "audio_codecs/core/profile.h"
+extern "C" uint32_t audio_codecs_profile_now(void) { return ARM_DWT_CYCCNT; }
+static void prof_reset() { for (uint32_t &a : audio_codecs::profile::acc) a = 0; }
+static void prof_print(const char *what)
+{
+    static const char *const names[audio_codecs::profile::SlotCount] = {
+        "mp3_header", "mp3_scalefac", "mp3_huffman", "mp3_requant", "mp3_reorder_stereo", "mp3_alias", "mp3_imdct", "mp3_synth",
+        "mp3_interleave", "mp3_to_i16", "flac_frame_total", "flac_rice", "flac_lpc", "flac_fixed", "flac_crc", "flac_decorrelate",
+        "spec_step_total", "spec_window", "spec_fft", "spec_bands", "spec_read", "spec_write", "spec_lod1"};
+    const uint32_t per_us = F_CPU_ACTUAL / 1000000u;
+    for (unsigned i = 0; i < audio_codecs::profile::SlotCount; i++)
+        if (audio_codecs::profile::acc[i]) Serial1.printf("PROF %s %s=%lu\n", what, names[i], (unsigned long)(audio_codecs::profile::acc[i] / per_us));
+    prof_reset();
+}
+#else
+static void prof_reset() {}
+static void prof_print(const char *) {}
+#endif
+
 void setup()
 {
     stack_paint();
+#ifdef AUDIO_CODECS_PROFILE
+    ARM_DEMCR |= ARM_DEMCR_TRCENA; ARM_DWT_CTRL |= 1u;
+#endif
     Serial1.begin(115200);
     while (!Serial1 && millis() < 2000) {}
     Serial1.println("=== BOOT ===");
@@ -159,9 +184,11 @@ void setup()
     uint32_t keep_frames = 0;
     for (const ClipInfo &c : clips) {
         const size_t size = (size_t)(c.end - c.data);
+        prof_reset();
         const uint32_t t0 = millis();
         const ProbeResult r = decode_clip(c, c.data, size);
         const uint32_t ms = millis() - t0;
+        prof_print(c.name);
         const uint32_t sum = probe_fnv(pcm, (size_t)r.frames * (r.channels ? r.channels : 1));
         bool ok = r.error == 0 && r.rate == c.rate && r.channels == c.channels && r.frames == c.frames;
         if (strcmp(c.fmt, "mp3")) {
@@ -287,7 +314,9 @@ void setup()
     /* ---- spectrum, then tempo ---- */
     uint32_t beats = 0, asv_bytes = 0, ms_s = 0, ms_t = 0;
     const struct mallinfo m0 = mallinfo();
+    prof_reset();
     const long bpm = analyse(keep, keep_frames, &beats, &asv_bytes, &ms_s, &ms_t);
+    prof_print("analysis");
     const struct mallinfo m1 = mallinfo();
     Serial1.printf("SPECTRUM bytes=%lu ms=%lu %s\n", (unsigned long)asv_bytes, (unsigned long)ms_s, bpm >= 0 || asv_bytes ? "PASS" : "FAIL");
     const bool tempo_ok = bpm == CLIP_HOST_BPM_X100 && beats == CLIP_HOST_BEATS;

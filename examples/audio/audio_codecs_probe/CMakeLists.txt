@@ -9,6 +9,12 @@ include(${CMAKE_CURRENT_LIST_DIR}/../../../evkb.cmake)
 
 # audio-codecs on the RT1176: the four decoders the DJ deck loads, and the
 # spectrum and tempo engines, run over clips held in flash.
+# Bench only: -DPROBE_PROFILE=1 compiles audio-codecs' stage timers in and prints
+# PROF lines (microseconds per stage) after each clip and after the analysis.
+if(PROBE_PROFILE)
+    add_compile_definitions(AUDIO_CODECS_PROFILE=1)
+endif()
+
 import_evkb_audio_codecs()
 
 teensy_add_executable(audio_codecs_probe audio_codecs_probe.cpp)
